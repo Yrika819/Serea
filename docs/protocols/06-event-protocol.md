@@ -1,0 +1,295 @@
+# Event Protocol
+
+Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN for P0**
+
+Events are Serea's structured record of what it did and what it observed. They
+are the substrate for the Android Activity Timeline, the audit trail, and the
+post-incident reconstruction.
+
+The rule that matters: **a human-readable log string is not an event.** Logs
+are for humans reading a terminal. Events are for machines rendering a
+timeline, correlating a cause chain, and proving what happened. Serea has both,
+and they are different things.
+
+---
+
+## 1. Core principle
+
+> Events are structured, durable, ordered, and append-only. Evidence is a
+> fact. Narrative is a rendering.
+
+Three consequences:
+
+1. **Events are the protocol.** The Android client renders them. Any UI that
+   reconstructs state by scraping text is doing it wrong.
+2. **Events are append-only.** There is no update and no delete on the event
+   log. Retention is a deletion of the whole record at the retention horizon,
+   never an edit of history.
+3. **Every event is attributable.** Each carries an `actor` and a `causation`
+   chain back to a user instruction or a durable schedule.
+
+## 2. `SereaEvent`
+
+```json
+{
+  "envelope_version": "1",
+  "surface": "serea.event/1",
+  "message_id": "evt_01JQ8ZB7H2XKM9P4QW7NRT5YCD",
+  "seq": "10427",
+  "kind": "CAPABILITY_COMPLETED",
+  "occurred_at": "2026-10-01T09:14:23.902Z",
+  "correlation_id": "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA",
+  "causation_id": "evt_01JQ8ZB5G1XKP7N9M3QRT2V8WC",
+  "actor": { "kind": "HOST", "id": "serea-core", "version": "0.1.0" },
+  "data_class": "PERSONAL",
+  "trace": { "task_id": "tsk_…", "step_id": "stp_…", "attempt": 1 },
+  "payload": {
+    "capability_id": "calendar.events.list",
+    "status": "SUCCEEDED",
+    "duration_ms": 412,
+    "output_digest": "sha256:…"
+  }
+}
+```
+
+`seq` is a **monotonically increasing, gapless, per-host sequence number**,
+serialized as a decimal string (it will exceed JavaScript's safe integer). It
+is assigned at commit time, inside the same transaction as the state change the
+event describes.
+
+This is what makes the Activity Timeline resumable: a device that reconnects
+says "I have up to `seq` 10427" and receives exactly what it missed.
+
+### 2.1 Actor
+
+| `kind` | Meaning |
+| --- | --- |
+| `HOST` | Serea Core itself — the scheduler, recovery, retention. |
+| `USER` | A human, on a named device. |
+| `MODEL` | A model call, quoted by `model_id`. Never an authority. |
+| `PROVIDER` | An external provider. |
+| `SCHEDULER` | A durable schedule firing. |
+| `SYSTEM` | Maintenance: sync, migration, cleanup. |
+
+An `actor` of kind `MODEL` records that a model was involved. It never records
+that a model *decided* something.
+
+## 3. Event kinds
+
+Frozen at P0. Adding a kind is an architecture-minor change; renaming or
+repurposing one is major.
+
+### 3.1 Task lifecycle
+
+| Kind | When |
+| --- | --- |
+| `TASK_CREATED` | Task durably accepted |
+| `TASK_STARTED` | Task left `RECEIVED` and began work (including on recovery) |
+| `TASK_STATE_CHANGED` | Any legal state transition |
+| `TASK_COMPLETED` | Terminal success |
+| `TASK_FAILED` | Terminal failure, with `reason_code` |
+| `TASK_CANCELLED` | Cancelled, with `cancelled_by` |
+| `TASK_BLOCKED` | Entered `BLOCKED`, with `blocked_reason` |
+| `TASK_RESUMED` | Left `BLOCKED` or `WAITING_*` |
+
+### 3.2 Model activity
+
+| Kind | When |
+| --- | --- |
+| `MODEL_CALLED` | Before dispatch, with `model_id`, `purpose`, token estimate |
+| `MODEL_COMPLETED` | After response, with usage and `finish_reason` |
+| `MODEL_FAILED` | Provider error, with `ModelError` kind |
+| `MODEL_OUTPUT_INVALID` | Structured output failed validation; `repair_attempts` recorded |
+| `MODEL_REPAIRED` | A repair call succeeded |
+| `MODEL_FALLBACK` | Routing advanced to a different model, with `fallback_from` and `reason` |
+
+### 3.3 Capability activity
+
+| Kind | When |
+| --- | --- |
+| `CAPABILITY_REQUESTED` | An `ActionRequest` was constructed |
+| `CAPABILITY_COMPLETED` | A provider returned; status in payload |
+| `CAPABILITY_DENIED` | Policy returned `Deny` |
+| `CAPABILITY_UNAVAILABLE` | Backing condition absent |
+| `CAPABILITY_DUPLICATE_SUPPRESSED` | An equivalent action was already done; the prior result/receipt is returned and no provider invocation occurs |
+| `CAPABILITY_RECEIPT_RECORDED` | A `SideEffectReceipt` was persisted |
+| `CAPABILITY_RECONCILED` | An `AMBIGUOUS` result was resolved by read-back |
+| `MODEL_SCHEMA_VIOLATION` | Model-authored data included invalid host-resolved fields or attempted to supply authority fields |
+| `TOOL_DUPLICATE_WINDOW_BYPASSED` | A permitted `SYSTEM` resync bypassed duplicate suppression under Bounds Protocol §5.1 |
+
+### 3.4 Approval activity
+
+| Kind | When |
+| --- | --- |
+| `APPROVAL_REQUIRED` | Request raised |
+| `APPROVAL_GRANTED` | Grant created |
+| `APPROVAL_DENIED` | User refused |
+| `APPROVAL_EXPIRED` | Request expired unused |
+| `APPROVAL_CONSUMED` | A use was consumed by a step |
+| `APPROVAL_EXPIRED_UNUSED` | Grant hit expiry with uses remaining |
+
+### 3.5 Policy and bounds
+
+| Kind | When |
+| --- | --- |
+| `POLICY_CHANGED` | Rules or the disabled overlay changed |
+| `BOUND_EXCEEDED` | A host bound was hit; payload includes `bound_name`, limit, and observed value. For repeated-action exhaustion, `bound_name` is `max_identical_action_repeats`. |
+| `BOUNDS_CHANGED` | An administrator raised a bound; includes before/after diff, actor, and reason |
+| `POLICY_VIOLATION_ATTEMPT` | A request tried something the policy forbids |
+| `MODEL_BUDGET_EXHAUSTED` | The model-call budget was exhausted |
+| `MODEL_FALLBACK_EXHAUSTED` | The configured fallback bound was exhausted |
+
+### 3.6 Device activity
+
+| Kind | When |
+| --- | --- |
+| `DEVICE_CONNECTED` | Device session established |
+| `DEVICE_DISCONNECTED` | Session ended, with reason |
+| `DEVICE_PAIRED` | New device bound |
+| `DEVICE_UNPAIRED` | Device removed |
+| `DEVICE_CAPABILITIES_REPORTED` | Device reported its capability set |
+| `DEVICE_REVOKED` | Host revoked the device credential and sessions |
+
+### 3.7 Memory and proactive
+
+| Kind | When |
+| --- | --- |
+| `MEMORY_ITEM_WRITTEN` | A memory item was created, with provenance |
+| `MEMORY_ITEM_UPDATED` | An item was superseded |
+| `MEMORY_ITEM_DELETED` | An item was removed, with reason |
+| `PROPOSAL_CREATED` | The proactive watcher produced a suggestion |
+| `PROPOSAL_DISMISSED` | The user dismissed a proposal |
+
+### 3.8 Event history and sequence integrity
+
+| Kind | When |
+| --- | --- |
+| `EVENT_HISTORY_EXPIRED` | A cursor predates retained history; response identifies the oldest retained sequence and does not claim sequence corruption |
+| `EVENT_SEQUENCE_CORRUPTION` | A missing sequence is detected inside retained committed history; replay is stopped and the host reports an integrity failure |
+
+### 3.9 Scheduler activity
+
+| Kind | When |
+| --- | --- |
+| `SCHEDULE_CREATED` | A schedule was durably created |
+| `SCHEDULE_UPDATED` | A schedule definition or state was durably changed |
+| `SCHEDULE_PAUSED` | A schedule was paused by its owner or host policy |
+| `SCHEDULE_RESUMED` | A paused schedule was resumed |
+| `SCHEDULE_CANCELLED` | A schedule was cancelled |
+| `SCHEDULE_OCCURRENCE_MISSED` | A due occurrence was skipped under its frozen missed-occurrence policy |
+| `SCHEDULE_TASK_CREATED` | A due occurrence was durably deduplicated and created its scheduled task |
+| `SCHEDULE_CATCH_UP_DEFERRED` | A per-wake catch-up ceiling was reached; remaining due occurrences remain queued for a later wake |
+
+### 3.10 Provider sync
+
+| Kind | When |
+| --- | --- |
+| `PROVIDER_SYNC_STARTED` | An incremental sync cycle began |
+| `PROVIDER_SYNC_COMPLETED` | Cycle finished, with counts |
+| `PROVIDER_SYNC_DEGRADED` | Cycle fell back to full resynchronization |
+
+## 4. `reason_code` and `blocked_reason`
+
+Both are stable machine-readable enums, never free text. Free-text detail lives
+in a separate, explicitly optional `detail` field that is never used for control
+flow.
+
+This is the same principle as the capability protocol: **a control-flow
+decision must never be made by parsing prose.**
+
+`reason_code` examples: `PROVIDER_ERROR`, `BOUND_EXCEEDED`, `POLICY_DENIED`,
+`APPROVAL_DENIED`, `MODEL_BUDGET_EXHAUSTED`, `SCHEDULER_CANCELLED`,
+`INVARIANT_VIOLATION`.
+
+`blocked_reason` examples: `DEVICE_OFFLINE`, `CREDENTIAL_REVOKED`,
+`AMBIGUOUS_EFFECT`, `PROVIDER_OUTAGE`, `UNRECOGNISED_STATE`,
+`CAPABILITY_UNAVAILABLE`.
+
+## 5. Ordering and delivery
+
+- `seq` is assigned at commit and is strictly increasing with no gaps.
+  Reordering, deduplication, and gap detection are all derivable from `seq`
+  alone.
+- Commit atomicity: the event and the state change it describes are written in
+  **one transaction**. An event that exists always describes a change that
+  happened; a change that happened always has its event.
+- Delivery to devices is **at-least-once**. Devices deduplicate by
+  `message_id`. Exactly-once delivery is neither claimed nor needed, because
+  every event carries a stable id.
+- Within a task, events are totally ordered. Across tasks, only `seq` order is
+  guaranteed, and that is sufficient.
+
+## 6. The Activity Timeline
+
+The Android Activity Timeline is a projection of the event stream.
+
+Required behaviour:
+
+1. It renders `seq`-ordered events, resumable from the client's last-seen
+   `seq`.
+2. **Unknown kinds are skipped, not fatal.** A client that does not recognise
+   `kind: "PROVIDER_SYNC_DEGRADED"` renders nothing for it and continues. It
+   does not crash and does not break the stream.
+3. `data_class` is enforced before render: a `PRIVATE`-class event payload is
+   redacted per the data-classification protocol before it crosses the device
+   link.
+4. A cursor older than retained history receives response status
+   `HISTORY_EXPIRED` and emits `EVENT_HISTORY_EXPIRED`; both identify the oldest
+   retained sequence. The client displays that history expired, advances its
+   cursor to immediately before the oldest retained sequence, and requests
+   again. This is normal retention, not a claim that activity was not recorded.
+5. A missing sequence inside the retained range is corruption, not expiry. The
+   host emits `EVENT_SEQUENCE_CORRUPTION`, stops that replay without advancing
+   the client's cursor past the gap, and returns an integrity error; the client
+   retains its last verified cursor, displays an integrity warning, and does not
+   silently resume across the missing sequence. Host repair/audit is required
+   before replay can continue.
+6. A cursor at or beyond the current committed high-water mark returns an empty
+   page and leaves the cursor unchanged.
+7. Events are shown with their `actor` and causation, so "why did this happen"
+   is answerable from the timeline alone.
+
+## 7. Audit use
+
+The event log is the audit trail. Three questions must be answerable from it
+alone:
+
+1. **What did Serea do?** — replay the `seq` stream.
+2. **On whose authority?** — walk `causation_id` back to a `USER` actor or a
+   `SCHEDULER` trigger, crossing `APPROVAL_GRANTED` events for anything
+   requiring approval.
+3. **What did it cost and touch?** — sum `model_usage`, and enumerate
+   `CAPABILITY_RECEIPT_RECORDED` events for external effects.
+
+An effect with no receipt event did not verifiably happen. An approval with no
+corresponding `APPROVAL_CONSUMED` event was never exercised.
+
+## 8. Retention
+
+| Event class | Retention |
+| --- | --- |
+| Task lifecycle, capability, approval | Task retention (default 30 days) |
+| Model activity | 30 days |
+| Provider sync | 7 days |
+| Device connect/disconnect | 30 days |
+| `POLICY_CHANGED`, `POLICY_VIOLATION_ATTEMPT`, `BOUNDS_CHANGED` | 1 year |
+| Scheduler lifecycle and occurrence events | Schedule retention; an occurrence's task events follow task retention |
+| Event history and sequence-integrity events | 1 year |
+
+`POLICY_CHANGED` outliving the task it relates to is intentional: policy history
+is an audit artifact, not a task artifact.
+
+## 9. Invariants summary
+
+| # | Invariant |
+| --- | --- |
+| E1 | Events are structured data with stable kinds; prose is never the protocol. |
+| E2 | The event log is append-only; there is no update or delete of individual events. |
+| E3 | An event and its state change commit in one transaction — never one without the other. |
+| E4 | `seq` is gapless and monotonic, assigned at commit. |
+| E5 | Every event has an `actor` and a `causation` chain to a user or a schedule. |
+| E6 | Control flow never depends on parsing `reason_code` prose; codes are enums. |
+| E7 | Unknown event kinds are skipped by clients, never fatal. |
+| E8 | `data_class` is enforced before an event crosses the device link. |
+| E9 | An externally visible effect has a receipt event; absence means unverified. |
+| E10 | `MODEL` as an actor records involvement, never authority. |

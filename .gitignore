@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Serea local runtime state. Never commit.
+*.serea/
+serea-data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+data/
+secrets/
+*.env
+.env
+.env.*
+
+# Credential material must never enter the repository.
+*.key
+*.pem
+keychain-export/
+
+# Android
+android/.gradle/
+android/local.properties
+android/**/build/
+android/.idea/
+*.apk
+*.aab
+*.keystore
+
+# Review scratch
+tmp/

@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://serea.local/schemas/event.schema.json",
+  "title": "serea.event/1 SereaEvent",
+  "description": "One durable, ordered, append-only record of what Serea did or observed. Owning protocol: Event Protocol Section 2. This is a forward-compatible surface: undeclared fields are preserved verbatim in the host's opaque extension set and round-tripped unchanged (Protocol Index Section 4.2 rule 3). Unknown enum variants still fail closed here: Protocol Index Section 4.2 rule 3 requires that everywhere, while the skip-unknown-kinds behaviour in Event Protocol Section 6 rule 2 is a recipient rendering concern rather than a host parsing one. seq is serialized as a decimal string because it will exceed JavaScript's exact integer range (Protocol Index Section 5).",
+  "type": "object",
+  "required": [
+    "envelope_version",
+    "surface",
+    "message_id",
+    "seq",
+    "kind",
+    "occurred_at",
+    "actor",
+    "data_class",
+    "payload"
+  ],
+  "properties": {
+    "envelope_version": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,9}$"
+    },
+    "surface": {
+      "type": "string",
+      "pattern": "^serea\\.[a-z0-9]+(\\.[a-z0-9]+)*/[1-9][0-9]{0,9}$",
+      "maxLength": 64
+    },
+    "message_id": {
+      "type": "string",
+      "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "maxLength": 30,
+      "description": "Stable across retries; recipients deduplicate by it, which is why delivery can be at-least-once without claiming exactly-once."
+    },
+    "seq": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "maxLength": 20,
+      "description": "Gapless and monotonic per host, assigned at commit inside the state change's transaction."
+    },
+    "kind": { "$ref": "#/$defs/eventKind" },
+    "occurred_at": { "$ref": "#/$defs/timestamp" },
+    "correlation_id": {
+      "anyOf": [
+        { "type": "string", "pattern": "^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}$", "maxLength": 30 },
+        { "type": "null" }
+      ]
+    },
+    "causation_id": {
+      "anyOf": [
+        { "type": "string", "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$", "maxLength": 30 },
+        { "type": "null" }
+      ]
+    },
+    "actor": { "$ref": "#/$defs/actor" },
+    "data_class": { "$ref": "#/$defs/dataClass" },
+    "trace": {
+      "anyOf": [
+        {
+          "type": "object",
+          "description": "Forward-compatible like the event that carries it: correlation carries no authority.",
+          "properties": {
+            "task_id": { "type": "string", "pattern": "^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}$", "maxLength": 30 },
+            "step_id": { "type": "string", "pattern": "^stp_[0-7][0-9A-HJKMNP-TV-Z]{25}$", "maxLength": 30 },
+            "attempt": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "description": "The event-kind-specific body. Event Protocol Section 3 defines each kind's payload; the host validates the per-kind shape in the event-bus layer, which is P3."
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "description": "The syntactic form only. ECMA-262 regular expressions have no date arithmetic, so a calendar-impossible but well-formed value such as 2026-02-30T00:00:00Z passes this pattern; the Rust Timestamp value is the authority for calendar validity and refuses it. Every value Serea puts on the wire is deserialised into that type.",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{3})?Z$",
+      "maxLength": 24
+    },
+    "dataClass": {
+      "type": "string",
+      "enum": ["PUBLIC", "PERSONAL", "PRIVATE", "SECRET", "CREDENTIAL"]
+    },
+    "actor": {
+      "type": "object",
+      "description": "Forward-compatible like the event that carries it. An attribution member records involvement and can never confer authority (Event Protocol Section 2.1, E10).",
+      "required": ["kind", "id", "version"],
+      "description": "A MODEL actor records that a model was involved. It never records that a model decided something (Event Protocol Section 2.1, E10).",
+      "properties": {
+        "kind": { "$ref": "#/$defs/actorKind" },
+        "id": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+          "maxLength": 64
+        }
+      }
+    },
+    "actorKind": {
+      "type": "string",
+      "enum": ["HOST", "USER", "MODEL", "PROVIDER", "SCHEDULER", "SYSTEM"]
+    },
+    "eventKind": {
+      "type": "string",
+      "enum": [
+        "TASK_CREATED",
+        "TASK_STARTED",
+        "TASK_STATE_CHANGED",
+        "TASK_COMPLETED",
+        "TASK_FAILED",
+        "TASK_CANCELLED",
+        "TASK_BLOCKED",
+        "TASK_RESUMED",
+        "MODEL_CALLED",
+        "MODEL_COMPLETED",
+        "MODEL_FAILED",
+        "MODEL_OUTPUT_INVALID",
+        "MODEL_REPAIRED",
+        "MODEL_FALLBACK",
+        "CAPABILITY_REQUESTED",
+        "CAPABILITY_COMPLETED",
+        "CAPABILITY_DENIED",
+        "CAPABILITY_UNAVAILABLE",
+        "CAPABILITY_DUPLICATE_SUPPRESSED",
+        "CAPABILITY_RECEIPT_RECORDED",
+        "CAPABILITY_RECONCILED",
+        "MODEL_SCHEMA_VIOLATION",
+        "TOOL_DUPLICATE_WINDOW_BYPASSED",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_GRANTED",
+        "APPROVAL_DENIED",
+        "APPROVAL_EXPIRED",
+        "APPROVAL_CONSUMED",
+        "APPROVAL_EXPIRED_UNUSED",
+        "POLICY_CHANGED",
+        "BOUND_EXCEEDED",
+        "BOUNDS_CHANGED",
+        "POLICY_VIOLATION_ATTEMPT",
+        "MODEL_BUDGET_EXHAUSTED",
+        "MODEL_FALLBACK_EXHAUSTED",
+        "DEVICE_CONNECTED",
+        "DEVICE_DISCONNECTED",
+        "DEVICE_PAIRED",
+        "DEVICE_UNPAIRED",
+        "DEVICE_CAPABILITIES_REPORTED",
+        "DEVICE_REVOKED",
+        "MEMORY_ITEM_WRITTEN",
+        "MEMORY_ITEM_UPDATED",
+        "MEMORY_ITEM_DELETED",
+        "PROPOSAL_CREATED",
+        "PROPOSAL_DISMISSED",
+        "EVENT_HISTORY_EXPIRED",
+        "EVENT_SEQUENCE_CORRUPTION",
+        "SCHEDULE_CREATED",
+        "SCHEDULE_UPDATED",
+        "SCHEDULE_PAUSED",
+        "SCHEDULE_RESUMED",
+        "SCHEDULE_CANCELLED",
+        "SCHEDULE_OCCURRENCE_MISSED",
+        "SCHEDULE_TASK_CREATED",
+        "SCHEDULE_CATCH_UP_DEFERRED",
+        "PROVIDER_SYNC_STARTED",
+        "PROVIDER_SYNC_COMPLETED",
+        "PROVIDER_SYNC_DEGRADED"
+      ]
+    }
+  }
+}

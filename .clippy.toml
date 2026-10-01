@@ -1,0 +1,16 @@
+# Clippy configuration for the Serea workspace.
+#
+# P1 has no runtime, no clock of its own, and no randomness source. Every
+# variability the protocol layer can observe is injected (Model Protocol §10;
+# Protocol Index §2 rule 2: "Identifiers are opaque"; Policy Protocol §6: policy
+# may not depend on wall-clock time or randomness). Banning the wall-clock
+# constructors here makes that a compile error rather than a review comment, so
+# no P1 test can quietly become wall-clock dependent and no identifier can be
+# minted from unseeded randomness.
+
+msrv = "1.85"
+
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "inject a Clock; Model Protocol §10 determinism" },
+    { path = "std::time::Instant::now", reason = "inject a Clock; Model Protocol §10 determinism" },
+]

@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://serea.local/schemas/action-request.schema.json",
+  "title": "serea.action/1 ActionRequest",
+  "description": "A structured request to cause one action. Owning protocol: Capability Protocol Section 4. This is a security-sensitive closed schema, so undeclared properties are rejected before policy evaluation and before provider execution (Protocol Index Section 4.2 rule 3). risk_class, side_effect_class, required_authorization and provider_id are absent by design: they are host-resolved from the CapabilityDescriptor and are not fields of an ActionRequest at all (Capability Protocol Section 4.2), so a model or any other caller cannot supply them here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "task_id",
+    "step_id",
+    "capability_id",
+    "capability_version",
+    "arguments",
+    "arguments_digest",
+    "idempotency_key",
+    "data_class",
+    "requested_by",
+    "deadline_ms"
+  ],
+  "properties": {
+    "request_id": {
+      "$ref": "#/$defs/requestId",
+      "description": "Echoed by the corresponding ActionResult for request/result correlation."
+    },
+    "task_id": { "$ref": "#/$defs/taskId" },
+    "step_id": {
+      "$ref": "#/$defs/stepId",
+      "description": "The durable step this request is one attempt of. A genuine second execution carries a distinct step_id and therefore a distinct idempotency_key (Capability Protocol Section 8.2)."
+    },
+    "capability_id": { "$ref": "#/$defs/capabilityId" },
+    "capability_version": {
+      "$ref": "#/$defs/capabilityVersion",
+      "description": "Host-resolved: the caller pins a version and a provider serves any version it declares support for."
+    },
+    "arguments": {
+      "type": "object",
+      "description": "Validated against the descriptor's closed input_schema before any authority decision (Capability Protocol Section 3.1). No credential-shaped property is expressible here (Data Classification Section 4)."
+    },
+    "arguments_digest": {
+      "$ref": "#/$defs/digest",
+      "description": "Host-resolved sha256 over the canonical JSON of arguments (Capability Protocol Section 4.3)."
+    },
+    "idempotency_key": {
+      "$ref": "#/$defs/idempotencyKey",
+      "description": "Derived from the request, not the attempt, so every attempt of one step reuses it."
+    },
+    "data_class": {
+      "$ref": "#/$defs/dataClass",
+      "description": "Host-resolved: the highest class of anything in arguments."
+    },
+    "requested_by": {
+      "$ref": "#/$defs/requestedBy",
+      "description": "Provenance for audit. It never grants authority: a MODEL-requested write needs exactly the same approval as a USER-requested one."
+    },
+    "deadline_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "Host-resolved, never model-supplied. Zero is permitted because Bounds Protocol Section 2.3 makes a bound of 0 meaningful (the dimension is disabled); it is not an invention of this document."
+    }
+  },
+  "$defs": {
+    "requestId": {
+      "type": "string",
+      "pattern": "^req_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "maxLength": 30
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "maxLength": 30
+    },
+    "stepId": {
+      "type": "string",
+      "pattern": "^stp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "maxLength": 30
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "pattern": "^idk_[0-9a-f]{64}$",
+      "maxLength": 68
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "maxLength": 71
+    },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^(?!goallatch\\.)[a-z][a-z0-9_]{1,31}\\.[a-z][a-z0-9_]{1,31}\\.(list|read|search|open|control|write|create|send|delete|start|status|run|cancel|result)$",
+      "maxLength": 99,
+      "description": "Exactly three segments with a verb from the frozen verb set (Protocol Index Section 3; Capability Protocol Section 2)."
+    },
+    "capabilityVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+      "maxLength": 64
+    },
+    "dataClass": {
+      "type": "string",
+      "enum": ["PUBLIC", "PERSONAL", "PRIVATE", "SECRET", "CREDENTIAL"]
+    },
+    "requestedBy": {
+      "type": "string",
+      "enum": ["MODEL", "USER", "SCHEDULER", "PROACTIVE_WATCHER", "SYSTEM"]
+    }
+  }
+}

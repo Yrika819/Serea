@@ -1,0 +1,130 @@
+name: ci
+
+# P1 has no secret-dependent job and no external-network test. Every step below
+# is reproducible from the repository alone; the only network access is
+# GitHub's own Actions runner plus the ordinary Cargo dependency fetch.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: rust (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [dev]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned stable toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.profile }}-
+
+      # Ordinary dependency setup step. Everything after this runs `--offline`,
+      # so no test can reach a service even by accident.
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
+      - name: Workspace smoke test
+        run: python3 tests/workspace_smoke.py
+
+      # P1 exit criterion: exactly the two P1 packages, asserted rather than
+      # printed. `pipefail` matters here because without it a failing
+      # `cargo metadata` is masked by the printer's exit code.
+      - name: Workspace shape (exact member list)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --format-version 1 > metadata.json
+          python3 - <<'PY'
+          import json, sys
+          names = sorted(p["name"] for p in json.load(open("metadata.json"))["packages"])
+          expected = ["serea-protocol", "serea-testkit"]
+          print("workspace members:", ", ".join(names))
+          if names != expected:
+              print(f"FAIL: expected exactly {expected}", file=sys.stderr)
+              raise SystemExit(1)
+          PY
+          rm -f metadata.json
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check (all targets, offline)
+        run: cargo check --workspace --all-targets --offline
+
+      - name: Tests (all targets, offline)
+        run: cargo test --workspace --all-targets --offline
+
+      - name: Tests with all features (offline)
+        run: cargo test --workspace --all-features --offline
+
+      - name: Clippy (deny warnings, offline)
+        run: cargo clippy --workspace --all-targets --all-features --offline -- -D warnings
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install python
+        run: sudo apt-get update && sudo apt-get install -y python3
+
+      - name: Compile documentation validator
+        run: python3 -m py_compile tools/validate_docs.py
+
+      - name: Validate documentation contracts
+        run: python3 tools/validate_docs.py docs
+
+  hygiene:
+    name: repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Guards the P1 constraint that no credential material and no runtime
+      # state is ever committed (`.gitignore` is the first line of defence; this
+      # is the check that says so in CI).
+      - name: No tracked credential or runtime-state paths
+        run: |
+          tracked=$(git ls-files)
+          echo "$tracked" | grep -E '(^|/)(secrets?|keychain-export|data)/' && {
+            echo "FAIL: credential or runtime-state path is tracked"; exit 1; }
+          echo "$tracked" | grep -E '\.(pem|key|sqlite|env|apk|aab|keystore)$' && {
+            echo "FAIL: credential-bearing or build artifact extension is tracked"; exit 1; }
+          echo "OK: no tracked credential material"
+
+      - name: Whitespace and conflict markers
+        shell: bash
+        run: git diff --check $(git hash-object -t tree /dev/null) HEAD --

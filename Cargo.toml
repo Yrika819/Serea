@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = ["crates/serea-protocol", "crates/serea-testkit"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+# Shared dependency versions. P1 deliberately has no async runtime, no HTTP
+# client, no database binding, no hashing crate, no date library, and no
+# GoalLatch/Codex/OpenAI dependency; see `docs/plans/P1-closure.md` for the
+# per-dependency justification.
+#
+# The protocol error types are hand-written rather than derived: `thiserror`
+# would put a `Display` impl next to the rejected values, and a derive macro
+# would make it easy to add a field that formats untrusted input.
+[workspace.dependencies]
+serea-protocol = { path = "crates/serea-protocol" }
+serea-testkit = { path = "crates/serea-testkit" }
+
+# JSON (de)serialization for every wire surface. `std` has no JSON support and
+# Protocol Index §5 freezes JSON as the wire format, so a serializer is
+# required rather than optional.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# JSON Schema 2020-12 validation. Required by Protocol Index §5 and Capability
+# Protocol §3.1 fail-closed schema validation. `default-features = false`
+# disables the crate's `reqwest`, `resolve-http`, `resolve-file`, `resolve-async`
+# and TLS features, so no Serea code path can resolve a `$ref` over the network
+# or off the filesystem.
+jsonschema = { version = "0.58", default-features = false }
+
+# Keeps the P1 provider ports `dyn`-composable, as Capability Protocol §9 and
+# Crate Map §6.1 require (providers are registered as trait objects by
+# `serea-core`). This is a proc macro only; it introduces no async runtime.
+async-trait = "0.1"

@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://serea.local/schemas/action-result.schema.json",
+  "title": "serea.action/1 ActionResult",
+  "description": "The result of one capability invocation. Owning protocol: Capability Protocol Section 5. Closed, like the request it answers, because an undeclared field on the serae.action/1 surface must be rejected before it can be consumed (Protocol Index Section 4.2 rule 3). receipt is the only accepted proof that an externally visible effect occurred (Capability Protocol Section 5.1, C4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "status", "duration_ms"],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "pattern": "^req_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "maxLength": 30,
+      "description": "Echoes the originating ActionRequest's RequestId."
+    },
+    "status": {
+      "$ref": "#/$defs/status",
+      "description": "UNAVAILABLE is a success-adjacent outcome meaning the capability exists but its backing condition is absent. DUPLICATE_SUPPRESSED means an equivalent action already completed and its receipt was returned; no new effect occurred."
+    },
+    "output": {
+      "type": ["object", "null"],
+      "description": "Validated against the descriptor's closed output_schema. A provider that cannot honour its descriptor fails closed rather than emitting loosely shaped data (C7)."
+    },
+    "output_digest": {
+      "anyOf": [
+        { "$ref": "#/$defs/digest" },
+        { "type": "null" }
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "Structured evidence, present even for actions that produced no effect.",
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "receipt": {
+      "anyOf": [
+        { "$ref": "#/$defs/receipt" },
+        { "type": "null" }
+      ],
+      "description": "Non-null exactly when status is SUCCEEDED and the descriptor's side_effect_class is not NONE."
+    },
+    "error": {
+      "anyOf": [
+        { "$ref": "#/$defs/error" },
+        { "type": "null" }
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    }
+  },
+  "$defs": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "SUCCEEDED",
+        "FAILED",
+        "REJECTED",
+        "CANCELLED",
+        "UNAVAILABLE",
+        "DUPLICATE_SUPPRESSED"
+      ]
+    },
+    "dataClass": {
+      "type": "string",
+      "enum": ["PUBLIC", "PERSONAL", "PRIVATE", "SECRET", "CREDENTIAL"]
+    },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^(?!goallatch\\.)[a-z][a-z0-9_]{1,31}\\.[a-z][a-z0-9_]{1,31}\\.(list|read|search|open|control|write|create|send|delete|start|status|run|cancel|result)$",
+      "maxLength": 99
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "The syntactic form only. ECMA-262 regular expressions have no date arithmetic, so a calendar-impossible but well-formed value such as 2026-02-30T00:00:00Z passes this pattern; the Rust Timestamp value is the authority for calendar validity and refuses it. Every value Serea puts on the wire is deserialised into that type.",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{3})?Z$",
+      "maxLength": 24
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "maxLength": 71
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "pattern": "^idk_[0-9a-f]{64}$",
+      "maxLength": 68
+    },
+    "boundedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "kind",
+        "capability_id",
+        "task_id",
+        "step_id",
+        "attempt",
+        "produced_at",
+        "actor",
+        "data_class",
+        "payload_digest"
+      ],
+      "properties": {
+        "evidence_id": { "type": "string", "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$", "maxLength": 30 },
+        "kind": { "$ref": "#/$defs/evidenceKind" },
+        "capability_id": { "$ref": "#/$defs/capabilityId" },
+        "task_id": { "type": "string", "pattern": "^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}$", "maxLength": 30 },
+        "step_id": { "type": "string", "pattern": "^stp_[0-7][0-9A-HJKMNP-TV-Z]{25}$", "maxLength": 30 },
+        "attempt": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "produced_at": { "$ref": "#/$defs/timestamp" },
+        "actor": { "$ref": "#/$defs/actor" },
+        "data_class": { "$ref": "#/$defs/dataClass" },
+        "payload_digest": { "$ref": "#/$defs/digest" },
+        "payload_reference": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "evidenceKind": {
+      "type": "string",
+      "enum": [
+        "ACTION_ATTEMPTED",
+        "PROVIDER_RECEIPT",
+        "CAPABILITY_OBSERVATION",
+        "GOAL_RESULT",
+        "POLICY_DENIAL",
+        "RECONCILIATION"
+      ]
+    },
+    "actorKind": {
+      "type": "string",
+      "enum": ["HOST", "USER", "MODEL", "PROVIDER", "SCHEDULER", "SYSTEM"]
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "version"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/actorKind" },
+        "id": { "$ref": "#/$defs/boundedText" },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+          "maxLength": 64
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receipt_id",
+        "capability_id",
+        "idempotency_key",
+        "effect_summary",
+        "observed_at",
+        "replay_safe"
+      ],
+      "properties": {
+        "receipt_id": { "type": "string", "pattern": "^rcp_[0-7][0-9A-HJKMNP-TV-Z]{25}$", "maxLength": 30 },
+        "capability_id": { "$ref": "#/$defs/capabilityId" },
+        "idempotency_key": { "$ref": "#/$defs/idempotencyKey" },
+        "provider_reference": {
+          "description": "The external system's own handle for the affected object, needed for reconciliation. Omitted is valid only for side_effect_class LOCAL_STATE.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "effect_summary": { "$ref": "#/$defs/boundedText" },
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "replay_safe": { "type": "boolean" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "code", "message", "retryable", "host_action"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/errorKind" },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "maxLength": 64,
+          "description": "A stable machine-readable code, never prose."
+        },
+        "message": { "$ref": "#/$defs/boundedText" },
+        "retryable": { "type": "boolean" },
+        "host_action": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "maxLength": 64 },
+        "details": { "type": "object", "maxProperties": 64 }
+      }
+    },
+    "errorKind": {
+      "type": "string",
+      "enum": [
+        "VALIDATION",
+        "UNKNOWN_CAPABILITY",
+        "POLICY_DENIED",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_DENIED",
+        "CAPABILITY_UNAVAILABLE",
+        "PROVIDER_ERROR",
+        "PROVIDER_TIMEOUT",
+        "RATE_LIMITED",
+        "AUTH_EXPIRED",
+        "DUPLICATE_SUPPRESSED",
+        "AMBIGUOUS",
+        "INTERNAL"
+      ]
+    }
+  }
+}

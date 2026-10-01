@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://serea.local/schemas/envelope.schema.json",
+  "title": "cross-boundary envelope",
+  "description": "Every cross-boundary message is wrapped in this envelope. Owning protocol: Protocol Index Section 6. The envelope is a wrapper, not a wire surface: it carries the `surface` of the message it carries, and `serea.envelope/1` is not a registered surface. This is a forward-compatible surface: undeclared fields are preserved verbatim in the host's opaque extension set and round-tripped unchanged (Protocol Index Section 4.2 rule 3 and Section 5), so this document declares no additionalProperties: false at the object level.",
+  "type": "object",
+  "required": [
+    "envelope_version",
+    "surface",
+    "message_id",
+    "issued_at",
+    "data_class",
+    "payload"
+  ],
+  "properties": {
+    "envelope_version": {
+      "$ref": "#/$defs/envelopeVersion"
+    },
+    "surface": {
+      "$ref": "#/$defs/wireSurface"
+    },
+    "message_id": {
+      "$ref": "#/$defs/eventId",
+      "description": "This message's own identity. Delivery is at-least-once; recipients deduplicate by this value."
+    },
+    "correlation_id": {
+      "description": "Follows the causal chain of the task. Absent only when the message is not task-scoped.",
+      "anyOf": [
+        { "$ref": "#/$defs/taskId" },
+        { "type": "null" }
+      ]
+    },
+    "causation_id": {
+      "description": "Names the specific message that caused this one. Absent only for user-originated messages.",
+      "anyOf": [
+        { "$ref": "#/$defs/eventId" },
+        { "type": "null" }
+      ]
+    },
+    "issued_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "data_class": {
+      "$ref": "#/$defs/dataClass",
+      "description": "The producer's declared class for payload. A consumer that computes a higher class must treat the payload as the higher class (Data Classification Section 1)."
+    },
+    "trace": {
+      "anyOf": [
+        { "$ref": "#/$defs/trace" },
+        { "type": "null" }
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "description": "The message body. Its shape belongs to the owning surface's schema; the host validates it against that closed schema before any authority decision (Protocol Index Section 4.2 rule 3)."
+    }
+  },
+  "$defs": {
+    "envelopeVersion": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,9}$",
+      "description": "Decimal envelope major with no leading zero."
+    },
+    "wireSurface": {
+      "type": "string",
+      "pattern": "^serea\\.[a-z0-9]+(\\.[a-z0-9]+)*/[1-9][0-9]{0,9}$",
+      "maxLength": 64
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "The syntactic form only. ECMA-262 regular expressions have no date arithmetic, so a calendar-impossible but well-formed value such as 2026-02-30T00:00:00Z passes this pattern; the Rust Timestamp value is the authority for calendar validity and refuses it. Every value Serea puts on the wire is deserialised into that type.",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{3})?Z$",
+      "maxLength": 24
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "maxLength": 30
+    },
+    "stepId": {
+      "type": "string",
+      "pattern": "^stp_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "maxLength": 30
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "maxLength": 30
+    },
+    "dataClass": {
+      "type": "string",
+      "enum": ["PUBLIC", "PERSONAL", "PRIVATE", "SECRET", "CREDENTIAL"]
+    },
+    "trace": {
+      "type": "object",
+      "description": "Correlation context. Forward-compatible like the envelope that contains it: correlation carries no authority, and Protocol Index Section 4.1 makes a new optional member an architecture-minor change.",
+      "properties": {
+        "task_id": { "$ref": "#/$defs/taskId" },
+        "step_id": { "$ref": "#/$defs/stepId" },
+        "attempt": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      }
+    }
+  }
+}

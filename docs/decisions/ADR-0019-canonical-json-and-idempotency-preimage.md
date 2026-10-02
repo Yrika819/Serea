@@ -110,13 +110,59 @@ Sharing one key would let:
    canonicalisation, reusing the existing constant and its rationale: a stack
    overflow aborts the process, which is not a graceful refusal.
 
-**Stated cost of rule 6.** A capability whose `input_schema` legitimately admits a
-fractional number cannot have a stable digest under SCJ-1. P5 must decide per
-capability whether to admit `arbitrary_precision` or to declare the field
-non-canonicalisable. That is a P5 obligation, recorded here rather than inherited
-silently. The alternative — defining a portable shortest-round-trip form for
-`f64` — is rejected because there is no single portable spelling, so two
-conforming implementations could derive different digests for the same value.
+**Stated cost of rule 6, and the real reason for it.** A capability whose
+`input_schema` legitimately admits a fractional number cannot have a stable digest
+under SCJ-1. P5 must decide per capability whether to admit `arbitrary_precision`
+or to declare the field non-canonicalisable. That is a P5 obligation, recorded
+here rather than inherited silently.
+
+An earlier draft of this ADR rejected a shortest-round-trip `f64` rule with the
+reason *"there is no single portable spelling, so two conforming implementations
+could derive different digests for the same value."* **That reason is false, and
+the P2 autonomous audit corrected it.** RFC 8785 §3.2.2.3 requires numbers to be
+serialized per ECMAScript §7.1.12.1 `Number::toString` including the "Note 2"
+enhancement, and names Ryu as a reference implementation. ECMAScript's
+`Number::toString` is fully specified, is the shortest round-tripping form, and is
+exact-integer based, so no target-dependent floating-point behaviour is involved
+and `x86_64` and `aarch64` produce identical bytes. **A single portable spelling
+does exist.**
+
+Rule 6 is therefore kept for two *different* reasons, and only the second is
+load-bearing:
+
+1. **The frozen contract does not yet need a fraction.** No frozen Serea surface
+   carries a floating-point value. `AssistantTask` has no float field; Protocol
+   Index §5 already routes 64-bit quantities to decimal **strings**; and every
+   named counter in Bounds §2.1 is an integer. Adopting ES number serialization
+   now would add a formatting dependency and ratify a numeric range before any P0
+   capability asks for one, and would buy nothing P2 can use.
+2. **Full JCS adoption is unavailable anyway, for an unrelated reason.** RFC 8785
+   §3.2.3 sorts object properties by **UTF-16 code units**, and warns explicitly
+   that "sorting data encoded in UTF-8 or UTF-32 would also work, but the outcome
+   for JSON data like above would differ and thus be incompatible with this
+   specification." Frozen Protocol Index §5 says **"keys sorted lexicographically
+   by UTF-8 code point"**. The two orderings genuinely disagree: in UTF-16 an
+   astral character is a surrogate pair beginning `D800`, which sorts *before*
+   `U+E000–U+FFFF`, whereas in UTF-8 it is a four-byte sequence beginning `F0`,
+   which sorts *after*. Adopting JCS wholesale would contradict frozen text.
+
+So the choice is not "custom versus standard". It is: keep the frozen §5 ordering,
+and defer the number rule until a capability needs it.
+
+**If and when rule 6 changes, the dependency is `ryu-js`, not `ryu` and not
+`std`.** Verified against RFC 8785 Appendix B: Rust's `f64` `Display` mismatches
+five of the twelve reference values — `-0.0` (`-0` vs `0`), `1e30` and `1e-27`
+and `1.7976931348623157e308` and `5e-324` (all printed as full expansions rather
+than exponent forms), and `1424953923781206.25`, where the round-to-even case
+yields `1424953923781206.3` in Rust against `1424953923781206.2` in ECMAScript.
+`ryu` produces a shortest round-trip form that is not the ECMAScript form;
+`ryu-js` implements the ECMAScript `Number::toString` algorithm and is the crate
+that would satisfy RFC 8785.
+
+**Named trigger for revisiting rule 6:** a capability whose `input_schema`
+admits a fractional number. At that point the rule becomes "integers as
+SCJ-1 rule 6, fractions per ECMAScript §7.1.12.1 with `Note 2`", the range must
+be ratified, and `ryu-js` enters P5 — not P2B.
 
 ### IDK-1 — the idempotency preimage
 
@@ -168,7 +214,7 @@ constants in `crates/serea-protocol/tests/canonical_vectors.rs`.
 | 5 | `42` | `42` | `sha256:73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049` |
 | 6 | `-7` | `-7` | `sha256:a770d3270c9dcdedf12ed9fd70444f7c8a95c26cae3cae9bd867499090a2f14b` |
 | 7 | `18446744073709551615` | `18446744073709551615` | `sha256:2cdb26265b4dc65e3b44d694f121fd6de99b9e4b8ae7f08d84bfa9537635ae43` |
-| 8 | `{"k": "q\"b\\s\nt\tu\u0001v/é"}` | `{"k":"q\"b\\s\nt\tu\u0001v\u007f/é"}` | `sha256:e1e4c6bf233f76ae93bbd29dcd61c9d7704064e2d8ab627ba2310118de3d7a16` |
+| 8 | `{"k": "q\"b\\s\nt\tu\u0001v\u007f/é"}` | `{"k":"q\"b\\s\nt\tu\u0001v\u007f/é"}` | `sha256:e1e4c6bf233f76ae93bbd29dcd61c9d7704064e2d8ab627ba2310118de3d7a16` |
 | 9 | `{ "a" : [ 1 , 2 ] , "b" : { } }` | `{"a":[1,2],"b":{}}` | `sha256:8c547cce7ccb1b89359479c0b71a0a4b62acfc54a2b2780fd34aaeb75f9e44b7` |
 | 10 | `{"range":"tomorrow","limit":25,"opts":{"tz":"Asia/Tokyo","flags":["a","b"],"n":null}}` | `{"limit":25,"opts":{"flags":["a","b"],"n":null,"tz":"Asia/Tokyo"},"range":"tomorrow"}` | `sha256:12820828e332666cbc4a22dbaed9e5c192bdfbd7ce8a61ff2eb444a9e8538351` |
 
@@ -176,6 +222,26 @@ Vector 8 pins the escape table: `\u0001` and `\u007f` are escaped to their
 lowercase four-digit forms, `/` and `é` are emitted raw, and `\n`/`\t` use their
 two-character forms. Vector 9 pins whitespace removal. Vector 1 pins member
 ordering. Vector 2 pins nested ordering and that array order is preserved.
+
+**Vector 8's input was corrected by the P2 autonomous audit; the hash was not.**
+The published input omitted the `\u007f` escape, so the claimed canonical bytes
+contained a `U+007F` the input never had — which cannot happen, because
+canonicalization is a function. Recomputed independently:
+
+| | |
+| --- | --- |
+| `sha256` of the **old** input canonicalised | `52f38c8cf283fe4c27906193c127759a3dc55a2c09d3193e52aa4795fc859a3c` |
+| `sha256` of the **old** claimed canonical bytes | `e1e4c6bf233f76ae93bbd29dcd61c9d7704064e2d8ab627ba2310118de3d7a16` |
+| Published | `e1e4c6bf233f76ae93bbd29dcd61c9d7704064e2d8ab627ba2310118de3d7a16` |
+
+The hash matched the canonical bytes, so the **input** was the defective element.
+Two repairs were available: add `\u007f` to the input, or drop it from the
+canonical bytes. The input was corrected, for two reasons. The constant does not
+move. And the vector's own purpose — pinning that `\u007f` escapes to its
+lowercase four-digit form — is only served by an input that contains one; the
+other repair would have left a vector named "pins the escape table" that never
+exercises `U+007F`. This is the audit's own lesson restated: **an asserted
+constant is not a verified constant, and neither is an unexercised vector.**
 
 ### IDK-1, all with `task_id = tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA` and
 `step_id = stp_01JQ8Z9M3R2CVN8H5FWK7PQDSF`
@@ -230,8 +296,20 @@ here is applied by this run.
 Capability Protocol §8.2's `‖` notation is prose that never defined an encoding,
 so making the encoding explicit is a specification-precision change to a
 *structured* derivation — with no cross-version obligation, because P1 computed no
-digest and Serea has minted no key. This ADR records it as an architecture-minor
-clarification.
+digest and Serea has minted no key.
+
+**The architecture-version treatment of this ADR is not decided here, and an
+earlier draft's self-classification as "an architecture-minor clarification" was
+withdrawn by the P2 autonomous audit as wrong in a specific way.** SCJ-1 rule 6 is
+not only a precision change to `‖`. It **narrows** the frozen Protocol Index §5
+sentence "numbers in shortest round-trip form": a document containing a
+fractional number is now non-canonicalisable, where before it was merely
+underdetermined. A narrowing of a frozen rule is not a clarification. The
+coherent plan — recorded once, in [the audit's M6](../plans/P2-autonomous-audit.md)
+and [the decision ledger](../plans/P2-tomorrow-decision-ledger.md) — classifies
+this ADR as **major on `serea.action/1`**, driving
+`serea-arch/0.2.0 → 1.0.0` together with ADR-0018. This ADR defers to that plan
+rather than asserting a different answer.
 
 If the owner instead judges the frozen formula **normative** — that is, if `‖`
 was meant to mean something other than raw concatenation — then §8.2 must be
@@ -257,7 +335,8 @@ evidence that the amendment is required rather than optional.
 | Alternative | Why rejected |
 | --- | --- |
 | "Just sort the keys" | Four of the five clauses of Protocol Index §5 are underdetermined; four different implementations would produce four different digests |
-| Shortest round-trip `f64` form | No portable spelling; two conforming implementations can differ, so the digest is not portable |
+| **Full JCS (RFC 8785) adoption** | **Conflicts with frozen text.** §3.2.3 sorts keys by UTF-16 code units; frozen Protocol Index §5 says UTF-8 code point. The orders differ for astral-plane keys, so full adoption would require amending §5 — and would make Serea digests incompatible with every other JCS implementation, which is a cost with no benefit when Serea has no external verifier |
+| ECMAScript `Number::toString` for fractions, ahead of need | A fully specified and portable spelling exists, so this is not a correctness question — it is that no frozen Serea surface carries a fraction, and adopting it now adds a formatting dependency and ratifies a numeric range for nothing P2 can use. Deferred to P5 behind a named trigger, not rejected |
 | Percent- or C0-escaping every preimage field | Equivalent to length prefixing with more moving parts and no correctness gain |
 | `\|`-separated framing | `arguments` is arbitrary validated JSON and `ProviderReference` is opaque and never parsed, so a separator character can occur in a preimage |
 | Newline framing | Same, plus a literal newline can occur in a JSON string argument |

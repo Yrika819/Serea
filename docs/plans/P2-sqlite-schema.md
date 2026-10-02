@@ -119,9 +119,11 @@ if the resolved SQLite is older is recorded in
 rather than left implicit here.
 
 **This DDL has been executed.** It was built and exercised against SQLite 3.43.2
-during design preparation, across four rounds — **all assertions passing** — before the ADRs
-referencing it were finalised. The migration's first obligation in P2C is to
-reproduce that harness, not to rediscover it.
+during design preparation across four rounds, and then **re-extracted from this
+document and re-executed after every edit made by the P2 autonomous audit** — the
+harness parses §4.0 rather than transcribing it, so the executed schema is this
+document's schema. The migration's first obligation in P2C is to reproduce that
+harness, not to rediscover it.
 
 Four rounds of defects were found this way, and the pattern is the point:
 
@@ -137,6 +139,8 @@ Four rounds of defects were found this way, and the pattern is the point:
 | 3 | `TASK_DELETED` was "removed" in prose but still in the DDL | The disposition was applied to one of the two places it named |
 | 3 | The `cancel` statement in the design doc aborted on a `BLOCKED` task | The schema was fixed; the statement in the *other* document was not |
 | 3 | The lease `token` "removed everywhere" survived in nine places | The fix was applied to two of the five documents that mention it |
+| **5 (audit)** | **§4.6 still published the removed `leases_generation_matches_step` trigger** | Four documents said it was gone. Following §4.6 makes the *first* lease acquisition abort — the round-2 blocker, reintroduced |
+| **5 (audit)** | **8 of ADR-0018 §3's 32 `N`/`0` presence cells were accepted** | §4.4 claimed "a constraint for every row of the presence matrix". Same shape as round 4: the neighbouring cells were probed, these were not |
 
 The consistent blind spot was **negative-only testing**: every "is this refused?"
 case was exercised and almost no "is this accepted?" case was. Round 3 exists
@@ -254,7 +258,7 @@ CREATE TABLE task_steps (
   kind               TEXT    NOT NULL CHECK (kind IN ('CAPABILITY','MODEL_TURN','WAIT_APPROVAL','WAIT_USER','WAIT_SCHEDULE','VERIFY','NOTIFY','DELEGATE')),
   status             TEXT    NOT NULL CHECK (status IN ('PLANNED','LEASED','EXECUTING','WAITING','SUCCEEDED','FAILED','RECONCILED_ABSENT')),
   attempt            INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
-  plan_revision      INTEGER NOT NULL CHECK (plan_revision >= 0),
+  plan_revision      INTEGER NOT NULL DEFAULT 0 CHECK (plan_revision >= 0),
   provider_id        TEXT,
   capability_id      TEXT,
   capability_version TEXT,
@@ -293,12 +297,21 @@ CREATE TABLE task_steps (
       AND lease_owner IS NOT NULL AND lease_expires_at_ms IS NOT NULL)),
   -- lease present exactly while leased or executing
   CHECK ((status IN ('LEASED','EXECUTING')) = (lease_owner IS NOT NULL)),
-  CHECK (status NOT IN ('LEASED','EXECUTING') OR lease_expires_at_ms IS NOT NULL),
+  -- ... and so is its expiry. Enforced as a biconditional rather than left
+  -- one-directional: the pair must not disagree, or a terminal step can carry a
+  -- dangling expiry with no owner, which is the same hole the lease_owner
+  -- biconditional above was added to close.
+  CHECK ((status IN ('LEASED','EXECUTING')) = (lease_expires_at_ms IS NOT NULL)),
   -- started_at required from EXECUTING onward
   CHECK (status NOT IN ('EXECUTING','WAITING','SUCCEEDED','FAILED','RECONCILED_ABSENT')
          OR started_at_ms IS NOT NULL),
   -- completed_at required for every terminal step status
   CHECK (status NOT IN ('SUCCEEDED','FAILED','RECONCILED_ABSENT') OR completed_at_ms IS NOT NULL),
+  -- completed_at and result_digest absent for every non-terminal status. ADR-0018
+  -- §3 marks both `N` here; without these two clauses a step that is still in
+  -- flight could also read as finished.
+  CHECK (status NOT IN ('PLANNED','LEASED','EXECUTING','WAITING') OR completed_at_ms IS NULL),
+  CHECK (status NOT IN ('PLANNED','LEASED','EXECUTING','WAITING') OR result_digest IS NULL),
   CHECK (status <> 'SUCCEEDED' OR result_digest IS NOT NULL),
   -- WAITING only for the wait kinds
   CHECK (status <> 'WAITING' OR kind IN ('WAIT_APPROVAL','WAIT_USER','WAIT_SCHEDULE')),
@@ -430,7 +443,6 @@ CREATE TABLE task_journal (
                                     AND substr(payload_digest,8) NOT GLOB '*[^0-9a-f]*')),
   payload_json     TEXT    CHECK (payload_json IS NULL OR json_valid(payload_json)),
   payload_ref_digest TEXT,
-  event_seq        INTEGER,
   UNIQUE (task_id, journal_seq)
 ) STRICT;
 
@@ -446,7 +458,6 @@ CREATE INDEX tasks_state ON tasks(state);
 CREATE INDEX step_blob_refs_digest ON step_blob_refs(digest);
 CREATE INDEX task_blob_refs_digest ON task_blob_refs(digest);
 CREATE INDEX plan_revisions_digest ON plan_revisions(plan_digest);
-CREATE INDEX task_journal_pending_event ON task_journal(task_id) WHERE event_seq IS NULL;
 ```
 
 ### 4.1 `schema_migrations`
@@ -558,6 +569,49 @@ the step lifecycle unreachable for three of the eight kinds, and made
 `persist_plan` abort on any plan containing a wait step, which is Task Protocol
 §4.3's central requirement. The correct form is one-directional: a step may be
 `WAITING` only if it is a wait step; a wait step may be in any other status.
+
+### Eight matrix cells were not enforced, and now are
+
+[ADR-0018](../decisions/ADR-0018-taskstep-lifecycle-and-field-presence.md)
+claimed that `serea-storage` gets "a constraint for every row of the presence
+matrix, so an inconsistent step is unconstructible by any writer". The P2
+autonomous audit probed **every** cell the matrix marks `N` or `0`, using the kind
+that makes each status reachable, and found **eight** that SQL accepts:
+
+| Matrix cell | Before | Now |
+| --- | --- | --- |
+| `completed_at` on `EXECUTING` | accepted | **refused** |
+| `result_digest` on `EXECUTING` | accepted | **refused** |
+| `completed_at` on `WAITING` | accepted | **refused** |
+| `result_digest` on `WAITING` | accepted | **refused** |
+| `lease_expires_at` on `WAITING` | accepted | **refused** |
+| `lease_expires_at` on `SUCCEEDED` | accepted | **refused** |
+| `lease_expires_at` on `FAILED` | accepted | **refused** |
+| `lease_expires_at` on `RECONCILED_ABSENT` | accepted | **refused** |
+
+The other 24 `N`/`0` cells were already refused, and three control cells (a legal
+`EXECUTING`, a legal `WAITING`, a legal `SUCCEEDED`) were accepted, so the probe
+was not simply refusing everything.
+
+The `lease_expires_at` half is the more serious. The schema already treats
+`lease_owner` as a genuine biconditional, so the *pair* was half-constrained: a
+terminal step could carry a lease expiry with no owner. ADR-0024's commit statement
+clears both columns together, so no designed path produces it — but a future
+writer that clears only `lease_owner` would pass the schema and leave a dangling
+expiry. That is the same hole the biconditional closed for one column, left open
+for the other. The fix is the matching biconditional, and it is two clauses rather
+than one:
+
+```sql
+CHECK ((status IN ('LEASED','EXECUTING')) = (lease_expires_at_ms IS NOT NULL))
+```
+
+**After the edit, all 32 matrix `N`/`0` cells are refused, all 51 legitimately
+constructible `kind × status` cells still construct, and all 37 legal task
+transitions still construct.** This is the fifth instance of the package's own
+named blind spot — asserting a constraint rather than constructing the cell that
+would expose it — and the corrective is the same one the design already prescribes:
+probe every cell, in both directions.
 
 **An earlier draft used biconditionals where only implications were correct**, and
 `PLANNED` became unconstructible: a biconditional `(status = 'LEASED') =
@@ -679,21 +733,46 @@ increments on every acquisition including an expiry reclaim.
 
 `task_steps.lease_generation` and `leases.generation` are two copies of one fact.
 That duplication is deliberate — the step-side copy is what makes the fence
-predicate a single indexed statement with no join — and it is kept consistent by a
-trigger rather than by a test:
+predicate a single indexed statement with no join — and **it is kept consistent
+by derivation, not by a trigger**:
 
 ```sql
-CREATE TRIGGER leases_generation_matches_step
-BEFORE INSERT ON leases
-WHEN NEW.generation <> (SELECT lease_generation FROM task_steps WHERE step_id = NEW.step_id)
-BEGIN SELECT RAISE(ABORT, 'lease generation must match the step'); END;
+-- statement 2 of acquire, in ADR-0024's order
+UPDATE task_steps
+   SET ...,
+       lease_generation = (SELECT generation FROM leases WHERE step_id = :step_id)
+ WHERE ...
 ```
 
-An earlier draft asserted this consistency and attributed it to a test. That
-cannot work: `acquire_lease` is the `leases` upsert **plus** a separate
-`UPDATE task_steps`, so there is a window in which the two disagree and a test would
-be racing it. The trigger is the correct mechanism and is verified — a mismatched
-generation is refused.
+Both writes are inside one `BEGIN IMMEDIATE`, and the step-side copy is *read
+from* the `leases` row rather than guessed, so no observer can see them disagree.
+
+**There is no `leases_generation_matches_step` trigger, and this section
+previously published one.** The P2 autonomous audit removed it and recorded why,
+because the earlier text was not merely redundant — following it breaks lease
+acquisition outright:
+
+| | |
+| --- | --- |
+| Occurrences of the trigger in §4.0's migration | **0** |
+| First acquisition, without it | succeeds — `LEASED`, `attempt = 1`, `generation = 1` |
+| First acquisition, with it | **`REFUSED: lease generation must match the step`** |
+| Expiry reclaim, with it | succeeds, because the trigger is `BEFORE INSERT` and the upsert's `ON CONFLICT DO UPDATE` branch never reaches it |
+
+Three documents already said the trigger was removed — §7's acceptance table,
+[ADR-0024](../decisions/ADR-0024-lease-fencing-and-commit-under-lease.md)'s
+`acquire` section, and the design's §13.1 row B2 — and this one section still
+carried its SQL and the claim *"it is verified — a mismatched generation is
+refused"*. That claim was never true of the shipped schema.
+
+The failure is structural, not a typo. The trigger is `BEFORE INSERT ON leases`,
+and a first acquisition is the upsert's **INSERT** branch carrying
+`generation = 1`, while the step's `lease_generation` is still `0`. So `1 <> 0`
+aborts, and **no lease can ever be acquired**. This is exactly the round-2 defect
+the design records as fixed, reintroduced by an undisposed section. And because
+the trigger only guards the INSERT branch, it would have enforced the invariant in
+one of the two branches and silently skipped the other — which is the fragility
+that motivated its removal in the first place.
 
 ### 4.7 `plan_revisions`
 
@@ -763,20 +842,39 @@ prose and DDL now agree.
 `trace`, and a `STEP_ATTEMPT_STARTED` or `STEP_COMMITTED` row cannot be turned into
 an event without it.
 
-**`payload_json` exists, and the ADR's claim about the column list was corrected.**
-An earlier draft asserted that the journal's columns are "precisely the fields an
-`EventKind`-specific payload needs", so a P3 upgrade could materialise every event
-without inventing data. That is false: `CAPABILITY_COMPLETED`'s payload carries
-`duration_ms` and `output_digest`; `BOUND_EXCEEDED` requires `bound_name`, the limit
-and the observed value; `MODEL_CALLED` requires `model_id`, `purpose` and a token
-estimate. None was in the column list. `payload_json` — validated JSON, carrying
-whatever the transition's event payload will need — is the honest fix, and
-`payload_ref_digest` points at a blob for large payloads. The back-fill property now
-holds because the payload has somewhere to live, not because the columns were
-complete.
+**`payload_json` exists, so the journal is a complete record — not so that events
+can be fabricated from it.** An earlier draft asserted that the journal's columns
+are "precisely the fields an `EventKind`-specific payload needs", so a P3 upgrade
+could materialise every event without inventing data. That is false:
+`CAPABILITY_COMPLETED`'s payload carries `duration_ms` and `output_digest`;
+`BOUND_EXCEEDED` requires `bound_name`, the limit and the observed value;
+`MODEL_CALLED` requires `model_id`, `purpose` and a token estimate. None was in the
+column list. `payload_json` — validated JSON, carrying whatever the transition's
+event payload will need — is the honest fix, and `payload_ref_digest` points at a
+blob for large payloads.
 
-**`event_seq` is nullable and P2 never writes it.** ADR-0021's `E3` debt is
-counted, not paid.
+The P2 autonomous audit then removed the *purpose* the columns were being
+justified by. Since ADR-0021 no longer reconstructs events, "the payload has
+somewhere to live" is not a back-fill property at all. What the columns actually
+buy is that **the pre-P3 history is complete and readable** — which is the real
+requirement, and the one `T5` depends on. A journal that could not answer "what
+happened to this task" would make recovery's idempotence claim unverifiable, and
+that is worth the columns whether or not an event bus ever exists.
+
+**`event_seq` is absent, and P2 never wanted it.** An earlier draft carried a
+nullable `event_seq` for P3 to back-fill, plus a partial index to count the
+backlog. The P2 autonomous audit removed both, because ADR-0021 no longer performs
+that back-fill: a `SereaEvent` reconstructed in a later transaction cannot satisfy
+`E3` for a transition whose transaction is gone, and the historical material is
+already durable here. A column reserved for a write that must never happen is a
+second source of truth for "did this transition get an event", which is the kind of
+disagreement this schema refuses everywhere else.
+
+`pending_event_transitions` therefore needs no column. In a build with no event
+participant — that is, P2 — **every** journal row is pre-event history, so the
+count is the row count. It remains a real number with a real meaning: it is the
+size of the period during which `E3` did not hold, visible from inside the product.
+It is not a queue to drain.
 
 `journal_seq` is gapless **per task**, computed inside the transaction as
 `MAX(journal_seq) + 1` for that `task_id`. It is a different thing from `Seq`: `seq`
@@ -844,6 +942,37 @@ earlier draft of the API carried — is **unreachable**. Escalation is
 unrepresentable by construction, not merely unimplemented. The variant has been
 removed rather than left as a dead arm.
 
+**The guarantee's real boundary, which the P2 autonomous audit added.** The
+anti-laundering property above rests on `PRIMARY KEY (digest, data_class_rank)`
+**and on the composite `FOREIGN KEY` clauses** that carry a reference's class to
+the blob's row. `PRAGMA foreign_keys` is an ordinary per-connection setting that
+**defaults to `OFF`**, and one statement disables it:
+
+```sql
+PRAGMA foreign_keys = OFF;   -- outside a transaction: takes effect
+BEGIN IMMEDIATE;
+INSERT INTO task_blob_refs (task_id, role, digest, data_class_rank)
+VALUES (?, 'PLAN', ?, 0);   -- references a blob stored at class 2: ACCEPTED
+COMMIT;
+```
+
+No pragma trickery and no privilege beyond file write, and a `PUBLIC` reference
+now resolves a `PRIVATE` blob. So the honest statement is the same one ADR-0022
+already makes for `ignore_check_constraints`, applied symmetrically:
+
+> The composite key is a **structural** guarantee — a reader can never widen its
+> own view of a value's class — against any writer that leaves constraint
+> enforcement enabled. It is a **pragma-dependent** guarantee against a local file
+> writer, who disables it with one line. See §7.
+
+This does not weaken the design; it names the boundary the threat model already
+excludes. [Trust Boundaries §2 `TB-7`](../architecture/02-trust-boundaries.md#tb-7-core-to-durable-store)
+puts filesystem permissions at "defence in depth, not the mechanism" and
+[Security Invariants §6](../threat-model/04-security-invariants.md) records
+tamper-evidence against a local file writer as "Not specified". Inventing a
+defence against an attacker the threat model excludes would re-open the question
+ADR-0020 just closed. What was missing was not a control — it was the sentence.
+
 ### 5.4 Deletion
 
 Task Protocol §8 and Data Classification §8.2 step 2, in one transaction:
@@ -895,7 +1024,7 @@ Protocol §8's retention *interval* is honoured by P2 only as a value
 | `step_blob_refs (digest)` | `step_blob_refs` | The correlated `NOT EXISTS` in the §5.4 sweep |
 | `task_blob_refs (digest)` | `task_blob_refs` | Same |
 | `plan_revisions (plan_digest)` | `plan_revisions` | Same, and the `ON DELETE RESTRICT` lookup |
-| `task_journal (task_id) WHERE event_seq IS NULL` | `task_journal` | ADR-0021's `pending_event_transitions` count |
+| `UNIQUE (task_id, journal_seq)` on `task_journal` | `task_journal` | The ordered `journal_for_task` read. ADR-0021's `pending_event_transitions` needs no index: with no `event_seq` column the count is the row count |
 
 Indexes **deliberately absent**, each because no stated query needs it:
 
@@ -906,10 +1035,14 @@ Indexes **deliberately absent**, each because no stated query needs it:
   only receipt query is `receipt_for_step`, served by `UNIQUE (step_id)`. An
   earlier draft justified the key index as serving "reconciliation", but
   reconciliation is explicitly **not** claimed in P2.
-- **No index on `task_journal` beyond the partial one.** `UNIQUE (task_id,
-  journal_seq)` serves the ordered read; the partial index serves the pending-event
-  count, which an earlier draft justified as a "bounded set". `task_journal` grows
-  with a task's lifetime, so the bound was unearned.
+- **No index on `task_journal` beyond its `UNIQUE (task_id, journal_seq)`.** That
+  unique constraint serves the ordered read. An earlier draft also carried a
+  partial index on `WHERE event_seq IS NULL`, described as serving "a bounded
+  set"; the column it indexed no longer exists, and `task_journal` grows with a
+  task's lifetime, so the bound was unearned in any case.
+- **No index for `pending_event_transitions`.** With no `event_seq` column the
+  count is the row count, which is `COUNT(*)` over the table — a metric an operator
+  reads, not a predicate a query runs.
 
 ## 7. Verified behaviour
 
@@ -921,9 +1054,13 @@ unplannable.
 
 | Case | Result |
 | --- | --- |
+| **The migration builds at all** | **10 tables, 7 triggers, 6 explicit indexes** — asserted, not printed, so a phantom object cannot be reintroduced. The seventh was the partial index on `event_seq`, removed with the column |
 | Each of the seven lifecycle statuses is constructible | accepted |
+| **All 8 step kinds × 7 statuses: 56 cells accounted for** | **51 constructible, 5 correctly refused** — the 5 are `WAITING` on a non-wait kind, which is ADR-0018's intent, not a gap |
 | **All 37 legal Task Protocol §4.2 transitions are accepted** | 37/37 |
 | All 84 illegal pairs were exercised | the schema does **not** and must **not** encode the transition table — that is `TaskEngine`'s `legal_task_transition`, pinned by test I1 |
+| **All 32 presence-matrix `N`/`0` cells are refused** | 32/32 — **this was 24/32 before the audit**, and the eight gaps are listed in §4.4 |
+| **Three control cells** (legal `EXECUTING`, legal `WAITING`, legal `SUCCEEDED`) | accepted, so the probe is not refusing everything |
 | `SUCCEEDED` without `result_digest` | refused |
 | `PLANNED` with `attempt = 1`, `lease_generation = 1`, or a lease owner | refused |
 | `LEASED` with `started_at_ms` set | refused |
@@ -946,7 +1083,7 @@ unplannable.
 | `CANCELLED` without `cancelled_at_ms`; a non-`CANCELLED` task carrying one | refused |
 | **`BLOCKED → READY` and `BLOCKED → CANCELLED`, clearing `blocked_reason`** | accepted — the round-2 finding |
 | `READY` carrying a `blocked_reason` | refused |
-| `SECRET` or `CREDENTIAL` on **`tasks`, `blobs`, `side_effect_receipts`, `plan_revisions`, `task_journal`** | refused — all five |
+| `SECRET` or `CREDENTIAL` on **`tasks`, `blobs`, `side_effect_receipts`, `plan_revisions`, `task_journal`** | refused — all five, all 8 probes |
 | `PRIVATE` journal row | accepted |
 | Receipt key or `task_id` disagreeing with its step; receipt on a non-`SUCCEEDED` step | refused |
 | Journal `step_id` belonging to another task | refused |
@@ -955,47 +1092,70 @@ unplannable.
 | **`PLANNED → LEASED` in the documented order** | accepted, `attempt = 1`, `generation = 1` |
 | **Reclaim after a released lease** | accepted, `generation` 1→2, `attempt` 1→2, `started_at_ms` cleared, both copies agreeing |
 | **Worker A at generation 1 after B reclaimed at 2: A's commit** | **0 rows**, step unchanged |
+| **The same fence across two independent connections on one file** | **0 rows** — no process-local mutex participates |
+| **`attempt` after acquire *and* after `begin_attempt`** | **1** — incremented exactly once |
+| **Attempt ceiling with rollback**, `max_attempts_per_step = 0` | step left `PLANNED`, `attempt = 0`, **no `leases` row** |
+| **Attempt ceiling with rollback**, ceiling 2, third acquisition | step reverts to `('LEASED', 2, 2)`; exactly one `leases` row remains |
+| **A crash-only loop against `max_attempts_per_step = 2`** | **2 acquisitions refused, 0 executions** — an expiry reclaim spends an attempt |
 | Referenced / unreferenced blob through the §5.4 sweep | survives / removed |
+| Duplicate migration `version` / `name` | refused / refused |
+| Zero-length file ⇒ fresh; foreign file ⇒ `NotSereaStore` | both detectable (0 tables vs `['unrelated']`, no `schema_migrations`) |
+| Two OS processes, 40 writes between them | all 40 landed, `quick_check` ok |
 
 ### Two rows that are accepted by SQL on purpose
 
 | Case | Why accepted |
 | --- | --- |
 | `BLOCKED` with no `blocked_reason` | The schema check is one-way (`state = 'BLOCKED' OR blocked_reason IS NULL`) because a biconditional strands any `BLOCKED → X` transition. The *engine's* `block` statement always sets the reason; SQL cannot enforce presence on entry and absence on exit simultaneously |
-| A `leases` row whose `generation` disagrees with its step | The trigger was **removed**. The step-side copy is *derived* — `lease_generation = (SELECT generation FROM leases WHERE step_id = ?)` — and both writes happen inside one `BEGIN IMMEDIATE`, so no observer can see them disagree. A trigger here would have to model the upsert's insert-or-update branch, which is exactly the fragility that was removed |
+| A `leases` row whose `generation` disagrees with its step | There is **no trigger** — see §4.6, where the P2 autonomous audit explains at length why publishing one made acquisition impossible. The step-side copy is *derived* — `lease_generation = (SELECT generation FROM leases WHERE step_id = ?)` — and both writes happen inside one `BEGIN IMMEDIATE`, so no observer can see them disagree |
 
-### The one limitation this package does not mitigate
+### The pragma boundary, in full
 
-`PRAGMA ignore_check_constraints = ON` disables **every `CHECK` in this schema**
-for a writer with access to the file. Confirmed by execution: a local writer set
-`tasks.data_class` to `SECRET` through it.
+This schema's structural guarantees are per-connection settings, not properties of
+the file. Two settings matter, and **both** must be named. The P2 autonomous audit
+verified each independently against a migrated database.
 
-That is one line of SQLite, needs no privilege beyond file write access, and
-`[Trust Boundaries §2 `TB-7`](../architecture/02-trust-boundaries.md#tb-7-core-to-durable-store)`
-already states that filesystem permissions are "defence in depth, not the
-mechanism", while
-[Security Invariants §6](../threat-model/04-security-invariants.md) records
-tamper-evidence against a local file writer as "Not specified".
+**`PRAGMA ignore_check_constraints = ON`** disables every `CHECK` here. Confirmed
+by execution: a local writer set `tasks.data_class` to `SECRET` through it.
 
-**What still holds under the pragma**, because triggers and foreign keys are not
+What still holds under that pragma, because triggers and foreign keys are not
 `CHECK`s: `tasks_policy_class_immutable`, `tasks_data_class_monotonic`,
 `side_effect_receipts_key_matches_step`, `side_effect_receipts_task_matches_step`,
 `side_effect_receipts_step_must_succeed`,
 `task_steps_idempotency_key_immutable`, `task_journal_step_task_matches`, and every
-`REFERENCES`. Each was verified to fire with the pragma set. The design's structural
-budget is therefore spent on the controls that survive — the authority-bearing ones
-— rather than spread across constraints that a single pragma erases.
+`REFERENCES`. **Each was verified to fire with the pragma set** — this design's
+claim, and it holds. The structural budget is therefore spent on the controls that
+survive, which are the authority-bearing ones.
 
-ADR-0022's claims are narrowed accordingly, and the boundary is pinned by test O14
-so a later reader inherits the truth rather than the overclaim.
+**`PRAGMA foreign_keys = OFF`** disables foreign-key enforcement, and it is the
+more direct of the two: no trickery, and it defaults to `OFF` in SQLite, so a writer
+need only *not set it*. Confirmed by execution: with it off, a `task_steps` row
+referencing a non-existent task is accepted. This is what makes §5.3's
+cross-class anti-laundering guarantee pragma-dependent rather than structural.
+
+So the design's structural budget is real but bounded, and the boundary is stated
+once rather than implied:
+
+> Every `CHECK`, trigger and `FOREIGN KEY` in this schema holds against any writer
+> that leaves `foreign_keys = ON` and `ignore_check_constraints = OFF`. A local
+> file writer can disable either with one line and needs no privilege beyond write
+> access. [Trust Boundaries §2 `TB-7`](../architecture/02-trust-boundaries.md#tb-7-core-to-durable-store)
+> already states that filesystem permissions are "defence in depth, not the
+> mechanism", and [Security Invariants §6](../threat-model/04-security-invariants.md)
+> records tamper-evidence against a local file writer as "Not specified". No defence
+> against that writer is claimed, and none is invented.
+
+ADR-0022's claims are narrowed accordingly, and the boundary is pinned by tests
+O14/O15 so a later reader inherits the truth rather than the overclaim.
 
 ## 8. Open at implementation time
 
 | # | Question | Resolution |
 | --- | --- | --- |
-| 1 | Is the resolved SQLite >= 3.37.0 | Verified at dependency-add time. If not, `bundled` is forced; the fallback drops `STRICT` and `GENERATED ... STORED` for `CHECK (typeof(col) = …)`, at the cost recorded in the design's §7 |
-| 2 | Is JSON1 present | Verified by `SELECT json_valid('{}')` at open time; the open fails if absent, because `tasks.extensions` depends on it |
+| 1 | Is the resolved SQLite >= 3.37.0 | **Resolved by the P2 autonomous audit.** `rusqlite` 0.40.2 with `bundled` compiles SQLite **3.53.4** (2026-07-24) from source. The `STRICT` / `GENERATED … STORED` fallback below is therefore **verified unnecessary for this candidate** and is retained only as a branch for an older `rusqlite`, which becomes relevant only if the owner declines to raise the workspace MSRV — see [the design §7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives) |
+| 2 | Is JSON1 present | Verified by `SELECT json_valid('{}')` at open time; the open fails if absent, because `tasks.extensions` depends on it. Bundled SQLite 3.53.4 has the JSON functions compiled in by default |
 | 3 | Does `length()` count bytes on a `BLOB` | **Closed.** Verified: `length(X'7B7D')` is 2, so `CHECK (size_bytes = length(content))` accepts a two-byte blob with `size_bytes = 2`. Not open |
+| 4 | Does `PRAGMA foreign_key_check` belong in the open path | **Added by the P2 autonomous audit.** It is the only one of the three integrity pragmas that sees a referential violation; see [the design §7.1](P2-storage-task-engine.md#71-migrations) for the four tiers |
 
 ## 9. Cross-references
 

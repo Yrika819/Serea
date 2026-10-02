@@ -72,14 +72,41 @@ disable constraint checking — a hand-written `INSERT`, a future code path that
 bypasses the Rust check, or a `sqlite3` script. A `PRIVATE` row without a protection
 tag cannot either.
 
-**The qualifier is load-bearing, and an earlier draft of this ADR omitted it.**
+**There are two qualifiers, and this ADR previously named only one.**
 `PRAGMA ignore_check_constraints = ON` disables every `CHECK` in the schema, so a
 local file writer can set `tasks.data_class` to `SECRET` through it. Confirmed by
 execution. What that writer **cannot** do is fire a trigger or violate a foreign
 key, and every authority-bearing control here is one of those:
 `tasks_policy_class_immutable`, `tasks_data_class_monotonic`, the three
 `side_effect_receipts_*` triggers, `task_steps_idempotency_key_immutable` and
-`task_journal_step_task_matches`. All were verified to hold with the pragma set.
+`task_journal_step_task_matches`. All were verified to hold with the pragma set —
+**and that claim is true**, which the P2 autonomous audit established by isolating
+the pragma rather than assuming it.
+
+**The second qualifier is `PRAGMA foreign_keys`, and it is the more direct of the
+two.** It is an ordinary per-connection setting that **defaults to `OFF`** in
+SQLite, and one statement disables it:
+
+```sql
+PRAGMA foreign_keys = OFF;   -- outside a transaction: takes effect
+BEGIN IMMEDIATE;
+INSERT INTO task_steps (… task_id …) VALUES (…, 'tsk_…BNB', …);  -- ACCEPTED
+COMMIT;
+```
+
+No trickery, and no privilege beyond write access. This matters here more than the
+first qualifier, because the composite-key anti-laundering property in
+[P2 SQLite schema §5.3](../plans/P2-sqlite-schema.md#53-classification-and-laundering)
+— a `PUBLIC` reference can never resolve a `PRIVATE` blob, which is `DC3`'s
+enforcement — rests on `FOREIGN KEY` clauses and therefore on that pragma.
+
+So the complete statement of what this ADR claims is:
+
+> The rank cap and the protection-tag biconditional are **structural** guarantees
+> against any writer that leaves `foreign_keys = ON` and
+> `ignore_check_constraints = OFF`. They are **pragma-dependent** against a local
+> file writer, who disables either with one line. Every trigger, and referential
+> integrity itself, holds only while `foreign_keys` is on.
 
 This is the correct place to have spent the structural budget rather than trying to
 defend the `CHECK` layer, because
@@ -88,7 +115,8 @@ already puts filesystem permissions at "defence in depth, not the mechanism" and
 [Security Invariants §6](../threat-model/04-security-invariants.md) records
 tamper-evidence against a local file writer as "Not specified". Inventing a defence
 against an attacker the threat model has already excluded would re-open the question
-ADR-0020 just closed.
+ADR-0020 just closed. What was missing was never a control — it was the second
+sentence.
 
 The class is stored as an integer `rank` with the label as a
 `GENERATED … STORED` column, so the value the `CHECK` validates and the value a
@@ -128,7 +156,7 @@ Stated plainly so tomorrow's closure record cannot overstate it.
 | --- | --- |
 | `PRIVATE` write with no backend returns `AtRestProtectionUnavailable` and writes no row | That a real backend is cryptographically sound |
 | The rank cap rejects a hand-inserted `SECRET` or `CREDENTIAL` row on **all five** classified tables | That a real key is protected at rest |
-| **Not a "can test" item.** A local writer with `PRAGMA ignore_check_constraints = ON` is **not stopped** from writing a `SECRET` rank, and P2 does not attempt to stop it. What it cannot do is fire a trigger or violate a foreign key, and each of those was verified to still hold |
+| **Not a "can test" item.** A local writer with `PRAGMA ignore_check_constraints = ON` is **not stopped** from writing a `SECRET` rank, and neither is one with `PRAGMA foreign_keys = OFF` from breaking referential integrity. P2 does not attempt to stop either. What the first cannot do is fire a trigger or violate a foreign key, and each of those was verified to still hold |
 | The `CHECK` rejects a `PRIVATE` row with `protection = 'NONE'` | Key rotation, key derivation, nonce handling, tag verification |
 | With the test double, a `PRIVATE` row's stored bytes are not the plaintext | Anything about the sealed store for `SECRET`, which does not exist |
 | `SECRET` and `CREDENTIAL` are refused on every write path, including the classified-text path | Anything about macOS Keychain custody |

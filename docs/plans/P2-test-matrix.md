@@ -64,7 +64,7 @@ process** and asserts against durable expectations.
 | N4 | After the fenced step `UPDATE`, before the receipt insert | abort | Step is not `SUCCEEDED`, no receipt row. `T4` holds in the *conservative* direction: nothing advanced |
 | N5 | After every write, before `COMMIT` | abort | Nothing is durable. Every row the transaction wrote is absent |
 | N6 | After `COMMIT`, before the caller observes `Ok` | abort, without printing success | **The row is present**, and a recovery pass reports `ReceiptAlreadyCommitted` rather than re-effecting. This is the window that separates "committed" from "believed committed" |
-| N7 | Mid-`COMMIT` under WAL | abort | `PRAGMA quick_check` is `ok`; the database is openable; either the whole transaction is present or none of it is |
+| N7 | **`COMMIT` in flight** — reclassified by the P2 autonomous audit | `SIGKILL` from a sibling thread while `execute_batch("COMMIT")` runs | **A stress test, not a pin.** Assert only `PRAGMA quick_check` is `ok`, the database is openable, and `foreign_key_check` is empty. Never assert an exact row count: whether the WAL frame reached disk depends on timing |
 | N8 | A fault injected between the fenced write and `rows_affected` inspection | return `Err` **after** the write, before the check | The transaction is rolled back by the drop of `Tx`; no receipt row exists. This is the one window an `Err` *does* model, and it is labelled as such rather than called a crash |
 
 Two extra assertions that make N6 meaningful:
@@ -81,6 +81,31 @@ Two extra assertions that make N6 meaningful:
 The fault hook is a `TxHook` the production build never populates. A test asserts
 the hook list is empty in a release-configuration build, so an inert hook cannot
 become a hidden code path.
+
+### 3.1 N7 reclassified: a true mid-`COMMIT` abort is not injectable here
+
+The P2 autonomous audit established, by working through every injection point the
+planned stack offers, that **a deterministic abort in the middle of `COMMIT` cannot
+be produced through `rusqlite` as planned.** The techniques, and what each reaches:
+
+| Technique | Reaches | Classification |
+| --- | --- | --- |
+| Return `Err` before `execute_batch("COMMIT")` | nothing inside SQLite — identical to an ordinary rollback | **must-test directly**; this is N5 |
+| Return `Err` **after** `COMMIT` returned | the caller never learns the outcome | **must-test directly**; this is N6, and the most valuable window in the table |
+| `TxHook` between the engine writes and `COMMIT` | inside the transaction, pre-commit | **must-test directly**; this is N8 |
+| `SIGKILL` while `COMMIT` is in flight | timing-dependent; not deterministic | **stress test only** — verified to work in practice (0 rows / 1 row, `quick_check` ok) but it cannot be pinned |
+| `SQLITE_TESTCTRL`, a fault-injecting VFS, or a SQLite fault build | inside SQLite | **deferred specialized storage test** — needs a custom build or VFS, unavailable through `rusqlite` as shipped |
+| A second writer forcing `SQLITE_BUSY` mid-commit | nothing; SQLite serialises writers and the second waits out `busy_timeout` | **not a technique** |
+
+So N7 as originally written — "abort mid-`COMMIT`" asserted to leave "either the
+whole transaction or none of it" — is a test that would only ever pass by accident,
+and labelling it a pin would be the exact overclaim §1 rule 5 forbids. It is
+reclassified as a stress test with weak assertions. The deterministic coverage the
+matrix actually wants is N5 (pre-commit) plus N6 (post-commit), which between them
+cover both sides of the only boundary Serea can actually control.
+
+**No test may simulate a crash by returning an `Err` before commit and calling it
+a crash.** That rule is unchanged; N7's reclassification is an application of it.
 
 ## 4. Group A — text validation categories
 
@@ -112,7 +137,11 @@ both:
 | A3 | `category_l_refuses_newline_because_a_plain_summary_is_a_consent_surface` | `PlainSummary` specifically |
 | A4 | `category_p_permits_newline_because_a_provider_diagnostic_has_one` | `ErrorMessage` specifically |
 | A5 | `category_p_refuses_bare_carriage_return` | The CR/LF-normalisation rule |
-| A6 | `category_o_refuses_a_value_that_parses_as_another_identifier_domain` | The impersonation rule |
+| A6 | `category_o_refuses_every_prefixed_and_fixed_shape_frozen_identifier` | The impersonation rule, as **decided by measurement** (rule C): all eleven ULID prefixes, `idk_`+64 hex, `sha256:`+64 hex, a real `CapabilityId` — 16/16 |
+| A6a | `category_o_accepts_every_legal_opaque_token` | 0/14 false positives. `calendar`, `worker`, `worker-1`, `host-a3f9`, `session-42.worker`, `x`, `w`, a long reference, `provider:handle/1234` — the set rule B refused 8 of |
+| A6b | `category_o_near_miss_identifier_shapes_are_accepted` | `tsk_`, a 27-char ULID body, a lowercase ULID body, `sha256:zz`, `calendar.events.reticulate` (unknown verb), `fake-goallatch.goal.run` (not a `ProviderId`, so not a `CapabilityId`) |
+| A6c | `category_o_refuses_goallatch_as_a_capability_but_not_as_an_opaque_token` | The parity subtlety: `goallatch.goal.run` is **not** a valid `CapabilityId`, so the banned set must exclude it. A pattern stricter than `CapabilityId` is still a parity bug |
+| A6d | `generated_category_o_pattern_matches_the_frozen_prefix_and_verb_lists` | Twelve prefixes **and** fourteen verbs come from `ids.rs`. A hand-written copy drifts, and a drifted copy means the schema accepts an `ActorId` Rust refuses |
 | A7 | `no_free_text_field_is_length_capped_in_rust` | The P1 retraction of `MAX_VALUE_LENGTH`, pinned |
 | A8 | `no_schema_imposes_a_free_text_length_ceiling` | The same on the schema side |
 | A9 | `category_o_rejects_prose_with_a_colon_and_a_newline` | The single-line rule, in the token's own shape |
@@ -121,6 +150,22 @@ both:
 `title` returns `Ok`, while `TaskTitle::new("   ")` returns
 `MalformedValue { field: TaskTitle, reason: Empty }`. The test asserts one verdict
 and fails with both sides printed.
+
+**RED for A6, and this is the finding the P2 autonomous audit produced.** The
+pattern ADR-0023 previously published was
+
+    ^(?![ \t\n\r\f\v]*$)(?!.*:(tsk|stp|apr|grt|req|evt|dev|sch|prop|rcp|ses)_)[^\u0000-\u001f\u007f]+$
+
+which requires a **literal colon immediately before** the prefix. No Serea
+identifier has one. Executed under ECMA-262, it fires only on strings of the form
+`a:tsk_`, `x:stp_…`, `sha256:tsk_…` — none of which can occur as an `ActorId`,
+`LeaseOwner` or `ProviderReference`. **Every** real frozen identifier was accepted:
+all eleven ULID prefixes, `idk_`, `sha256:`, and every `CapabilityId`. Seven
+divergences across a fourteen-case corpus, including the case this very corpus
+already named. **A2 and A6 pass on agreement and still miss the defect**, because
+both sides were wrong in the same direction — which is why A6a, A6b and A6c exist
+as separate tests with hand-picked positive and negative cases rather than one
+symmetric corpus.
 
 ## 5. Group B — step presence and step-kind matrices
 
@@ -143,6 +188,11 @@ refuses, and the schema refuses. 7 statuses × 15 fields, plus 8 kinds × 6 fiel
 | B12 | `an_unrecognised_step_status_is_refused_and_yields_unrecognised_state` | Protocol Index §4.2 rule 5 at the step boundary |
 | B13 | `lease_generation_round_trips_and_is_absent_on_an_unleased_step` | The new optional member |
 | B14 | `every_matrix_cell_is_refused_by_the_schema_with_the_same_verdict_as_rust` | The two surfaces agree |
+| B15 | **`every_one_of_the_32_absent_cells_is_refused_by_sql`** | All 32 of ADR-0018 §3's `N`/`0` cells, one probe each. **Was 24/32.** The eight gaps — `completed_at` and `result_digest` on `EXECUTING` and `WAITING`, `lease_expires_at` on `WAITING`, `SUCCEEDED`, `FAILED` and `RECONCILED_ABSENT` — were found by the P2 autonomous audit probing *cells* where earlier rounds had probed *rows* |
+| B16 | **`lease_expiry_is_present_exactly_while_leased_or_executing`** | The matching biconditional for `lease_expires_at`. Without it a terminal step could carry a dangling expiry with **no owner**, because `lease_owner` was already biconditional — the pair was half-constrained |
+| B17 | **all 56 `kind × status` cells are accounted for: 51 constructible, 5 refused** | The 5 are `WAITING` on a non-wait kind, which is ADR-0018's intent. Asserting 56/56 would be asserting the opposite of the contract |
+| B18 | **all 37 legal task transitions are constructible from a real seeded row** | The positive half of the transition table. Earlier rounds asserted only that illegal pairs were refused — the pattern the audit names as this package's repeated blind spot |
+| B19 | **three control cells construct: a legal `EXECUTING`, `WAITING` and `SUCCEEDED`** | So B15 and B16 are not passing by refusing everything |
 
 **RED for B1**, observed on the pre-fix code: constructing a `TaskStep` for a plan
 that has not executed does not fail — it *succeeds*, because the test must supply
@@ -225,6 +275,17 @@ durability nor reopen.
 | F16 | `a_corrupted_file_is_refused_rather_than_recreated` | Corrupt bytes in the header; the store does **not** delete and recreate, which would destroy receipts |
 | F17 | `two_store_instances_on_one_file_both_succeed` | No exclusive lock at open |
 | F18 | `a_transaction_is_serialised_against_a_second_writer` | `BEGIN IMMEDIATE` plus `busy_timeout` |
+| F19 | **`open_in_memory_reports_memory_not_wal_and_asserts_it`** | `TestMemoryProfile`. `open_in_memory` **cannot** satisfy ADR-0005, so it asserts what it actually is — a test cannot "pass" here by skipping the check |
+| F20 | **`synchronous_is_not_asserted_in_the_memory_profile`** | `PRAGMA synchronous = 2` on `:memory:` returns **no row**: there is nothing to fsync. Asserting `FULL` there would be asserting nothing |
+| F21 | **`foreign_keys_are_asserted_in_the_memory_profile_too`** | It defaults to `0` in memory as well as on disk |
+| F22 | **`foreign_key_check_is_run_after_each_migration`** | The tier the audit added. A migration that produced dangling references has failed in a way `quick_check` cannot see |
+| F23 | **`quick_check_and_integrity_check_report_ok_on_an_fk_orphan`** | **The evidence F22 rests on.** Both are page-level checks; against a deliberately orphaned `task_steps` row both return `ok` and only `foreign_key_check` reports it. If this test ever fails, SQLite's semantics changed and the tier policy must be revisited |
+| F24 | **`verify_integrity_runs_both_integrity_check_and_foreign_key_check`** | The admin tier's actual contract, which was previously unspecified |
+| F25 | **`two_integration_test_binaries_get_distinct_temp_paths`** | `TempStore` identity. A counter alone collides across binaries — verified: two binaries each counting from 0 produce the same three names |
+| F26 | **`a_crash_child_reopens_the_parent_database_by_inherited_directory`** | The other half. A pid alone is not unique *within* a process, and `cargo test` runs tests as threads |
+| F27 | **`temp_paths_contain_no_wall_clock_and_no_rng`** | The `.clippy.toml` ban holds while uniqueness is still achieved: `<binary>-<pid>-<atomic-counter>` |
+| F28 | **`the_migrated_object_inventory_is_10_tables_7_triggers_6_indexes`** | Asserted, not printed — so a phantom object cannot be reintroduced. **This is the direct regression for the `leases_generation_matches_step` trigger that §4.6 published and §4.0 never contained** |
+| F29 | **`the_resolved_bundled_sqlite_is_at_least_3_37`** | Verified unnecessary for `rusqlite` 0.40.2 (bundles 3.53.4); retained so an older candidate cannot pass silently |
 
 ## 9. Group G — blobs and classification
 
@@ -281,6 +342,11 @@ process-local mutex cannot participate and the test would pass trivially if one 
 | H15 | `the_generation_and_the_step_column_agree_after_every_acquisition_and_commit` | The deliberate duplication's consistency trigger |
 | H16 | `no_error_rendering_carries_a_lease_identity_beyond_the_step_id_and_generation` | `DC7`. Rewritten: the original asserted a property of the removed `token` column, so it **could not fail**, which in a matrix whose §1 rule 5 forbids unfailable tests is worse than no test |
 | H17 | `a_lease_is_released_when_its_step_is_deleted` | The cascade |
+| H18 | **`attempt_increments_exactly_once_across_acquire_and_begin_attempt`** | Assert `attempt == 1` after *both*. Double-charging makes `max_attempts_per_step = 3` buy one attempt |
+| H19 | **`a_ceiling_of_zero_leaves_the_step_planned_with_no_lease_row`** | The rollback case the design's prose describes |
+| H20 | **`a_refused_acquisition_reverts_to_the_prior_committed_state`** | The rollback case the prose does *not* describe: a third acquisition against a ceiling of 2 leaves `('LEASED', 2, 2)` and exactly one `leases` row |
+| H21 | **`a_crash_only_loop_is_stopped_by_the_attempt_ceiling_with_zero_executions`** | An expiry reclaim spends an attempt, so `max_attempts_per_step` bounds *acquisitions*. Assert the acquisition count, not the execution count |
+| H22 | **`the_fence_holds_across_two_independent_connections_on_one_file`** | The stale-generation commit returns 0 rows across two connections, so a process-local mutex cannot be what makes H10 pass |
 
 **RED for H10**: against an implementation that fences only on
 `lease_owner = ?`, H10 fails — the stale worker's commit succeeds — and H14 also

@@ -39,25 +39,69 @@ Three options:
 
 ## Decision
 
-### `serea-storage` owns the transaction and a commit-hook registry
+### `E3` is enforceable forward only, and that is the whole shape of the seam
+
+One rule governs this ADR, and the P2 autonomous audit established it by
+reasoning that cannot be argued around:
+
+> A `SereaEvent` and a state transition are in one transaction only if they were
+> written in one transaction. For a transition P2 already committed, that
+> transaction is gone. `E3` — *"An event and its state change commit in one
+> transaction — never one without the other"* — is therefore **enforceable from
+> the moment a real event participant exists, and never retroactively.**
+
+So P2 mutates state and records a durable, non-event audit row. P3 adds a real
+event participant. Between those two points `E3` did not hold, and no amount of
+back-filling changes that.
+
+### `serea-storage` owns the transaction and an explicit participant seam
+
+The layering problem is real and worth stating precisely, because it is why a
+seam exists at all: `serea-storage`'s `Tx` methods perform the state writes, while
+the journal is owned by `serea-task-engine`, a layer above. `serea-storage` cannot
+name it. The seam is dependency inversion, not indirection for its own sake.
 
 ```rust
-pub trait CommitHook {
-    /// Write this participant's rows into the caller's open transaction.
-    fn append(&mut self, tx: &mut Tx) -> Result<(), StoreError>;
+/// Immutable description of the transition being committed.
+///
+/// Built once, by the `Tx` method performing the state write, and passed to
+/// every participant. It is a parameter rather than participant state, so no
+/// participant can record a different transition from any other, and a stale
+/// value cannot survive a rolled-back transaction.
+pub struct DurableTransition<'a> { /* occurred_at_ms, actor, causation_id,
+                                      data_class, payload_digest, payload_json */ }
+
+/// Writes this participant's rows into the caller's open transaction.
+pub trait TransactionParticipant {
+    fn participate(&mut self, tx: &mut Tx, t: &DurableTransition<'_>)
+                   -> Result<(), StoreError>;
 }
 ```
 
-`Store::transact` opens `BEGIN IMMEDIATE`, creates one `Tx`, calls each registered
-hook's `append`, then `COMMIT`s. A hook's rows therefore commit or roll back
-exactly with the state change — which is the *mechanism* `E3` requires. What a
-hook writes is the hook's business.
+`Store::transact` opens `BEGIN IMMEDIATE`, creates one `Tx`, and the `Tx` method
+performing the state write calls each participant with the transition it just
+performed. Every participant therefore commits or rolls back exactly with the state
+change — which is the *mechanism* `E3` requires. What a participant writes is its
+own business.
 
-Every P2 mutation path is built as `transact(|tx| { …engine writes…; journal.append(tx)?; Ok(()) })`.
-There is no public `Store` method that writes state on its own, so no P2 caller
-can bypass the journal.
+**Four properties this signature has and the earlier one did not**, each of which
+was a defect in the sketch the audit replaced:
 
-### P2 registers exactly one hook: `TaskJournal`
+| Property | Why |
+| --- | --- |
+| The transition is a **parameter**, not participant state | The earlier `fn append(&mut self, tx)` was told *that* a commit was happening but not *what* was being committed, so the identity had to live in the hook's mutable state — set before the call, and stale if a `transact` body returned early. That is a correctness hazard in an audit record, not a style one |
+| `&self` on `Store::transact` needs **no interior mutability** | Participants are held as `Arc<dyn TransactionParticipant>` assembled at construction. A `Box<dyn CommitHook>` behind a `&self` store could only be called as `&mut self` through a `RefCell` or a `Mutex`, which would have contradicted ADR-0024's "the only mutex in `serea-storage` guards the single SQLite connection" |
+| **Neither participant needs `&mut self` semantically** | `TaskJournal` computes `journal_seq` as `MAX(journal_seq) + 1` — SQL. P3's event participant allocates `seq` from a `store_meta` counter — also SQL, in the same transaction. Neither mutates Rust state, so no lock is needed for the guarantee |
+| **Rollback needs no cleanup** | The transition is owned by the caller, not buffered by the participant, so a rolled-back transaction leaves nothing to discard |
+
+**A generic hook registry is not needed, and is rejected.** P2 registers exactly
+one participant. A registry would add ordering, interior mutability and a
+lifecycle question in exchange for a capability P2 does not use. The narrower
+form — `Tx` calls its participants explicitly, in a fixed order, at the point of
+the state write — gives P3 the identical seam with less hidden behaviour, so that
+is what is specified.
+
+### P2 registers exactly one participant: `TaskJournal`
 
 `serea-task-engine` owns `TaskJournal`, which writes append-only `task_journal`
 rows. `task_journal` is **not** an event log: it has no `EventKind`, no `Actor` in
@@ -78,13 +122,44 @@ did**: `TASK_INSERTED`, `PLAN_PERSISTED`, `TASK_STATE_CHANGED`,
 so a deletion record cannot survive its own transaction. `DeletionOutcome`'s counts
 are the record instead.
 
-### P3 registers a second hook and gets `E3` for free
+### P3 adds a second participant, and `E3` holds from that point forward
 
-`serea-event-bus` implements `CommitHook`. Its `append` writes `serea_events` and
-allocates `seq` from a `store_meta.next_seq` counter, **inside the same `Tx`**.
-Because both hooks run inside one `BEGIN IMMEDIATE`, `E3` becomes true at the
-moment P3 exists, and **not one P2 state-transition function changes**. P3's last
-obligation is back-filling `task_journal.event_seq` for rows where it is `NULL`.
+`serea-event-bus` implements `TransactionParticipant`. Its `participate` writes
+`serea_events` and allocates `seq` from a `store_meta.next_seq` counter, **inside
+the same `Tx`**, from the same `DurableTransition` the journal received. Because
+both participants run inside one `BEGIN IMMEDIATE`, `E3` is satisfied for every
+transition from that moment on, and **not one P2 state-transition function
+changes**.
+
+### No event is reconstructed, and that is the decision the earlier draft missed
+
+The earlier draft made P3's obligation "back-filling `task_journal.event_seq` for
+rows where it is `NULL`". The P2 autonomous audit rejected that on three grounds,
+and the reasoning is recorded because the draft was self-contradictory rather
+than merely wrong:
+
+1. **It is the rejected outbox under another name.** This ADR rejected *"A
+   `pending_event` outbox drained by P3"* because "the state change is already
+   committed without its event, so `E3` stays violated and **the gap is permanent
+   rather than transitional**." `task_journal` with a nullable `event_seq` that P3
+   drains *is* that outbox. One of the two positions was wrong; the rejection
+   reasoning was the sound one, and it applies verbatim to the accepted design.
+2. **It cannot make `E3` true.** A reconstructed event was written in a different
+   transaction, months later, from a different process. For those rows the
+   transaction `E3` describes does not exist and never will.
+3. **The historical material already exists.** `task_journal` is a complete,
+   durable record of every P2 transition, which is the entire reason for its
+   column list and for `payload_json`. Synthesising `serea_events` rows duplicates
+   data that is already stored, and manufactures events that never happened in the
+   transaction `E3` describes — and a reconstructed event is **indistinguishable**
+   from an atomically committed one unless provenance is added to a frozen wire
+   type.
+
+So: **`task_journal.event_seq` is dropped rather than back-filled.** P3's upgrade
+path *reads* `task_journal` for pre-P3 history and does not synthesise events.
+`pending_event_transitions` keeps its meaning — the count of transitions committed
+before an event participant existed — which is exactly the operator visibility the
+count was introduced for, and is honest.
 
 ### Why the journal schema is shaped for that back-fill
 
@@ -123,10 +198,18 @@ prose.
 | `E1`, `E2`, `E5`–`E10` | **NOT claimed** | All belong to `serea-event-bus` or the device link |
 
 To make the deferral **visible rather than silent**, `RecoveryReport` carries
-`pending_event_transitions: u64`, counting `task_journal` rows whose `event_seq IS
-NULL`. A P2 test asserts the count is greater than zero after a task creation. An
-operator can therefore see the `E3` debt from inside the product, and a P3 upgrade
-can measure exactly what it must back-fill.
+`pending_event_transitions: u64`, counting `task_journal` rows that no event
+participant has acknowledged — `event_seq IS NULL` in P2, and whatever P3's
+migration leaves non-`NULL` thereafter. A P2 test asserts the count is greater than
+zero after a task creation. An operator can therefore see the `E3` debt from
+inside the product, and a P3 upgrade can measure exactly how much history predates
+it.
+
+**The honest reading of that number**, since it is the one thing a reader will
+misinterpret: a non-zero count means those transitions committed **without** an
+event, which is precisely the `E3` debt. It is not a queue to drain and not a
+migration backlog to clear. It is a permanent, visible record of a period during
+which `E3` did not hold.
 
 ## What P2 must not create
 
@@ -134,12 +217,13 @@ can measure exactly what it must back-fill.
 - **No `store_meta` table and no `next_seq` counter.** `seq` is P3's per
   [Crate Map §3](../architecture/03-crate-map.md#3-crate-inventory).
 - **No `EventKind` construction, no `Actor` construction, no `Seq` allocation.**
+- **No `task_journal.event_seq` to back-fill.** The column is dropped rather than
+  reserved, because a reserved column that must never be written is a second source
+  of truth for "did this transition get an event", which is exactly the kind of
+  disagreement this design refuses elsewhere.
 
 This is why the P2 schema has no event table and no store-metadata table, and it
-is a deliberate decision rather than an omission. The prompt asks for the "storage
-metadata needed for migrations/recovery"; the answer is that P2 needs none, because
-`schema_migrations` is the single authority and recovery idempotency is structural
-rather than marker-based.
+is a deliberate decision rather than an omission.
 
 ## Proposed amendment
 
@@ -161,20 +245,20 @@ sequencing note, not a relaxation.
 
 | File | Change |
 | --- | --- |
-| `crates/serea-storage/src/tx.rs` | `CommitHook`, the hook registry on `Store`, `transact` invoking them inside the transaction |
+| `crates/serea-storage/src/tx.rs` | `DurableTransition`, `TransactionParticipant`, the participant list on `Store`; `transact` invoking them inside the transaction, each with the transition its caller just performed |
 | `crates/serea-storage/src/store.rs` | Every mutating path becomes `transact`-shaped; no public method writes alone |
-| `crates/serea-task-engine/src/journal.rs` | `TaskJournal` implementing `CommitHook` |
+| `crates/serea-task-engine/src/journal.rs` | `TaskJournal` implementing `TransactionParticipant` |
 | `crates/serea-task-engine/src/recovery.rs` | `RecoveryReport.pending_event_transitions` |
-| `crates/serea-storage/migrations/0001_initial.sql` | `task_journal` with the envelope columns, `payload_json`, `payload_ref_digest`, and `event_seq` nullable. Full DDL in [P2 SQLite schema §4.9](../plans/P2-sqlite-schema.md#49-task_journal) |
+| `crates/serea-storage/migrations/0001_initial.sql` | `task_journal` with the envelope columns, `payload_json` and `payload_ref_digest`, and **no `event_seq`** — the earlier draft reserved it for a back-fill this ADR no longer performs. Full DDL in [P2 SQLite schema §4.9](../plans/P2-sqlite-schema.md#49-task_journal) |
 
 ## Consequences
 
 - P2 produces a complete, replayable audit trail even though it produces no
   events. `T5` and `T4` are provable without P3.
-- `E3` is satisfied structurally rather than by convention: the transaction that
-  carries the state change is the transaction the hook writes into.
+- `E3` holds **forward** from P3's first migration, and is recorded as never having
+  held for P2-era transitions. No event is fabricated to paper over the gap.
 - The cost is one extra durable table and one extra write per transition in P2.
-  That write is what makes P3's back-fill lossless.
+  That write is what makes the pre-P3 history readable rather than reconstructed.
 - A reviewer can check the honesty of P2's closure claim by grepping for exactly
   one thing: `serea_events` must not appear anywhere in the P2 diff.
 
@@ -185,6 +269,7 @@ sequencing note, not a relaxation.
 | Create `serea-event-bus` in P2 | Inverts the phase plan and pre-empts P3's fan-out and retention design. Crate Map §4.1's reason for the crate is that it is *separate* |
 | Write real `SereaEvent` rows from P2 | `EventKind`, `Actor` and `Seq` are all in `serea-protocol`, so this is *possible* — which is exactly why it is rejected. Crate Map §3.1 assigns the append-only log to the event bus, and a P2 that grows its own will be hard to remove once P3 needs it |
 | Two-phase commit across P2 and P3 | SQLite is single-writer and local; a two-phase protocol would buy nothing and add a failure mode |
-| A `pending_event` outbox drained by P3 | Same defect as writing real events in P2: the state change is already committed without its event, so `E3` stays violated and the gap is permanent rather than transitional |
-| No durable trace in P2 | Destroys the audit trail and blocks `T5` |
+| A `pending_event` outbox drained by P3 | The state change is already committed without its event, so `E3` stays violated and the gap is permanent rather than transitional. **This ADR previously adopted exactly this shape as `task_journal.event_seq` and called it a back-fill obligation; the P2 autonomous audit identified the contradiction and it is now rejected on these grounds** |
+| **Back-fill `task_journal.event_seq` and materialise `serea_events`** | Rejected by the P2 autonomous audit on three grounds: it is the outbox above under another name; it cannot make `E3` true for a transition whose transaction is gone; and the historical material already exists in `task_journal`, so synthesising events duplicates durable data and manufactures events indistinguishable from atomically committed ones |
+| A generic commit-hook **registry** with `append(&mut self, tx)` | Rejected by the P2 autonomous audit. The transition identity would have to live in mutable hook state, so a `transact` body returning early could leave the journal describing the previous transition; a `Box<dyn CommitHook>` behind a `&self` store needs interior mutability, contradicting ADR-0024's single-mutex claim; and P2 registers exactly one participant, so a registry buys ordering questions and a lifecycle in exchange for nothing. The explicit `DurableTransition` parameter gives the same P3 seam with none of that |
 | Have P2 own `store_meta.next_seq` | `seq` is `serea-event-bus`'s per Crate Map §3.1, and a per-host gapless counter is precisely the state that must not exist outside the commit transaction |

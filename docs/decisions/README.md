@@ -39,7 +39,7 @@ preparation phase may not change production code.
 | [ADR-0018](ADR-0018-taskstep-lifecycle-and-field-presence.md) | `TaskStep` lifecycle, step-status set, field presence matrix, capability-scoped `idempotency_key` | **Proposed** | [§5.1, §5.1b, §5.2, §5.10](../plans/P2-contract-gap-analysis.md) |
 | [ADR-0019](ADR-0019-canonical-json-and-idempotency-preimage.md) | Canonical JSON SCJ-1 and the domain-separated, framed idempotency preimage IDK-1 | **Proposed** | [§5.3, §5.4](../plans/P2-contract-gap-analysis.md) |
 | [ADR-0020](ADR-0020-bounds-b3-scope-clarification.md) | `B3` scopes to operational bounds; structural constraints are not bounds | **Proposed** | [§5.5, §12](../plans/P2-contract-gap-analysis.md) |
-| [ADR-0021](ADR-0021-p2-p3-event-atomicity-seam.md) | A commit-hook seam so P2 prepares `E3` without implementing the P3 event bus | **Proposed** | [§5.7](../plans/P2-contract-gap-analysis.md) |
+| [ADR-0021](ADR-0021-p2-p3-event-atomicity-seam.md) | An explicit transaction-participant seam carrying an immutable `DurableTransition`, so `E3` becomes enforceable forward-only from P3 without P2 implementing the event bus | **Proposed** | [§5.7](../plans/P2-contract-gap-analysis.md) |
 | [ADR-0022](ADR-0022-durable-private-data-at-rest.md) | Durable `PRIVATE` storage is refused unless an injected at-rest backend exists | **Proposed** | [§5.8](../plans/P2-contract-gap-analysis.md) |
 | [ADR-0023](ADR-0023-text-field-validation-categories.md) | Three text-validation categories; the schema whitespace divergence closed | **Proposed** | [§5.6](../plans/P2-contract-gap-analysis.md) |
 | [ADR-0024](ADR-0024-lease-fencing-and-commit-under-lease.md) | Monotonic lease generation, enforced inside the commit statement | **Proposed** | [§5.10](../plans/P2-contract-gap-analysis.md) |
@@ -56,6 +56,33 @@ continue from `ADR-0018` rather than filling the gap. Reusing a withdrawn number
 would be the renumbering that
 [Trust Boundaries §1](../architecture/02-trust-boundaries.md#1-boundary-index)
 forbids for its own registry, applied here by the same reasoning.
+
+### The P2A version plan, recorded once
+
+The P2 autonomous audit found that these seven ADRs had taken **three different
+positions** on the architecture-version treatment — ADR-0018 deferred, ADR-0019
+self-classified as a "minor clarification", ADR-0023 deferred — and that ADR-0019's
+position was wrong in a specific way: its integer-only number rule **narrows** the
+frozen Protocol Index §5 sentence "numbers in shortest round-trip form", and a
+narrowing is not a clarification.
+
+One plan now applies to all of them, derived from Protocol Index §4.1 and §7:
+
+| Axis | From | To | Driver |
+| --- | --- | --- | --- |
+| Architecture | `serea-arch/0.2.0` | `serea-arch/1.0.0` | ADR-0018 breaks a frozen contract; §7 item 2 requires the bump |
+| Task surface | `serea.task/1` | `serea.task/2` | ADR-0018's relaxation; ADR-0024's `lease_generation` rides along |
+| Action surface | `serea.action/1` | `serea.action/2` | ADR-0019's canonicalization narrowing; ADR-0023's `message` widening |
+| Event surface | `serea.event/1` | unchanged | ADR-0023's `actor.id` change is a validation tightening; ADR-0021 changes no event shape |
+
+ADR-0020, ADR-0021 and ADR-0022 are **editorial / patch**: no wire surface changes.
+
+**Nothing above is applied.** The authoritative documents still read
+`serea-arch/0.2.0` and `serea.task/1`, because applying a version bump requires the
+code change it accompanies, and no code changes in the design-preparation or audit
+phases. The plan is what P2A implements atomically with ADR-0018's code change.
+Full reasoning: [the audit's M6](../plans/P2-autonomous-audit.md); ratification
+status: [the decision ledger](../plans/P2-tomorrow-decision-ledger.md).
 
 ## Phase plans
 

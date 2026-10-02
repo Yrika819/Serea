@@ -574,7 +574,7 @@ round-trip failure at the storage boundary. It is promoted here.
 
 | Category | Fields | Rules |
 | --- | --- | --- |
-| **O — opaque token / reference** | `ActorId`, `LeaseOwner`, `ProviderReference` | Non-empty. No C0 control, no DEL. No leading or trailing whitespace. **Refused if the value parses as any other frozen identifier domain**, so a `ProviderReference` cannot impersonate a `StepId` in an audit row or a `LeaseOwner` cannot be mistaken for a `ProviderId`. Length bounded by the owning schema's `maxLength` |
+| **O — opaque token / reference** | `ActorId`, `LeaseOwner`, `ProviderReference` | Non-empty. No C0 control, no DEL. No leading or trailing whitespace. **Refused if the value parses as a prefixed or fixed-shape frozen identifier domain** — the eleven ULID prefixes, `idk_`+64 hex, `sha256:`+64 hex, or a `CapabilityId` — so a `ProviderReference` cannot impersonate a `StepId` in an audit row or a `LeaseOwner` cannot be mistaken for a `ProviderId`. **`ProviderId`, `ModelId` and `ImplementationId` are deliberately excluded**: measured, refusing them produced 8 false positives out of 14 legitimate opaque tokens including `calendar` and `worker`, because those grammars subsume ordinary words. Length bounded by the owning schema's `maxLength` |
 | **L — single-line label** | `TaskTitle`, `DescriptorTitle`, `EffectSummary`, `PlainSummary` | Non-empty. No C0 control including `\n` and `\t`. No leading or trailing whitespace. Length bounded by the owning schema's `maxLength` |
 | **P — prose** | `ErrorMessage`, `DescriptorDescription` | Non-empty. `\n` and `\t` permitted. Every other C0 control and DEL refused, including `\r`, so CR/LF normalisation cannot smuggle a line break past the renderer. No leading or trailing whitespace. Length bounded by the owning schema's `maxLength` |
 
@@ -632,30 +632,53 @@ Three options, and why two of them are unacceptable:
 | Mutate state with no durable trace at all | **Rejected.** `E3` is violated, and worse, a task's history becomes unreconstructable. It also breaks Task Protocol §6 recovery, which needs to know what was already decided |
 | A transaction primitive in P2 that P3 fills without rewriting P2 | **Accepted.** Described below |
 
-**The seam.** `serea-storage` owns the *transaction* and a **commit-hook
-registry**. A commit hook is a trait object whose `append` runs **inside** the
-caller's `BEGIN IMMEDIATE … COMMIT`, so anything it writes commits or rolls back
-with the state change:
+**The seam.** `serea-storage` owns the *transaction*. A transaction participant is
+a trait object whose `participate` runs **inside** the caller's
+`BEGIN IMMEDIATE … COMMIT`, so anything it writes commits or rolls back with the
+state change:
 
 ```rust
-pub trait CommitHook {
-    fn append(&mut self, tx: &mut Tx) -> Result<(), StoreError>;
+/// Immutable description of the transition being committed. Built once, by the
+/// `Tx` method performing the state write, and passed to every participant, so
+/// no participant can record a different transition from any other.
+pub struct DurableTransition<'a> { /* occurred_at_ms, actor, causation_id,
+                                      data_class, payload_digest, payload_json */ }
+
+pub trait TransactionParticipant {
+    fn participate(&mut self, tx: &mut Tx, t: &DurableTransition<'_>)
+                   -> Result<(), StoreError>;
 }
 ```
 
-P2 registers exactly one hook, `TaskJournal`, owned by `serea-task-engine`, which
-writes append-only rows to `task_journal`. P3 registers a second hook,
+P2 registers exactly one participant, `TaskJournal`, owned by `serea-task-engine`,
+which writes append-only rows to `task_journal`. P3 adds a second,
 `serea-event-bus`, which writes `serea_events` and allocates `seq` from
-`store_meta.next_seq` inside the *same* transaction. Because both run inside one
-`BEGIN IMMEDIATE`, `E3` becomes true at the moment P3 exists, and **not one P2
-state-transition function changes**. The last P3 obligation is back-filling
-`task_journal.event_seq`, which is why `task_journal` carries `actor_kind`,
-`actor_id`, `actor_version`, `causation_id`, `data_class_rank`, `payload_digest`
-`payload_ref_digest` and `payload_json` now. A P2 database upgraded to P3 must be
-able to materialise every missing event without inventing data — and the property
-holds because the payload has **somewhere to live**, not because the envelope
-columns happened to be complete. An earlier draft of this sentence claimed the latter
-and was wrong: `CAPABILITY_COMPLETED` needs `duration_ms` and `output_digest`,
+`store_meta.next_seq` inside the *same* transaction, from the *same*
+`DurableTransition` the journal received. Because both run inside one
+`BEGIN IMMEDIATE`, `E3` holds for every transition from that point on and **not one
+P2 state-transition function changes**.
+
+**Corrected by the P2 autonomous audit, in two places.** The earlier text said
+"`E3` becomes true at the moment P3 exists" and made P3's last obligation
+back-filling `task_journal.event_seq`. Both are wrong:
+
+- `E3` is **not retroactively satisfiable**. A reconstructed event was written in a
+  different transaction, later, from a different process; for P2-era transitions
+  the transaction `E3` describes does not exist. `E3` holds **forward only**.
+- The back-fill is the `pending_event` outbox this same section had already
+  **rejected** on the grounds that "the gap is permanent rather than
+  transitional". Adopting it under another name was a self-contradiction.
+
+So `event_seq` is dropped rather than back-filled, and P3's upgrade path *reads*
+`task_journal` for pre-P3 history without synthesising events. The historical
+material is already durable, which is why `task_journal` carries `actor_kind`,
+`actor_id`, `actor_version`, `causation_id`, `data_class_rank`, `payload_digest`,
+`payload_ref_digest` and `payload_json` — so the history is **complete**, not so
+that events can be fabricated from it.
+
+A separate earlier error, also corrected: an earlier draft claimed the envelope
+columns were "precisely the fields an `EventKind`-specific payload needs".
+`CAPABILITY_COMPLETED` needs `duration_ms` and `output_digest`,
 `BOUND_EXCEEDED` needs `bound_name`, the limit and the observed value, and
 `MODEL_CALLED` needs `model_id`, `purpose` and a token estimate. None was in the
 column list, which is why `payload_json` was added.
@@ -1026,7 +1049,7 @@ through P2I may start before it lands.
 | 4 | Capability Protocol §3.1's `maxItems`/`maxLength` bullets are annotated as structural | None |
 | 5 | Data Classification §5 gains a note that `PRIVATE` durable storage without a configured backend is refused, not degraded | `AtRestProtection` trait, `StoreError::AtRestProtectionUnavailable`, `StoreError::ClassRefused`, and the rank cap on every classified table |
 | 6 | Capability Protocol §3's field-semantics section gains the three text categories | `validate_opaque_token`, `validate_single_line_label`, `validate_prose` replace the single `validate_label`; `action-result.schema.json`'s `freeText` becomes three definitions, and the six inline patterns in `assistant-task.schema.json` plus the one in `event.schema.json` become `$ref`s |
-| 7 | Event Protocol gains a note that `E3`/`E4` become enforceable when `serea-event-bus` supplies a commit hook, with no change to `E3` itself | `CommitHook`, `TaskJournal`, `task_journal`, `RecoveryReport.pending_event_transitions` |
+| 7 | Event Protocol gains a note that `E3`/`E4` become enforceable **forward only** once `serea-event-bus` supplies a transaction participant, with no change to `E3` itself and no reconstruction of pre-P3 history | `DurableTransition`, `TransactionParticipant`, `TaskJournal`, `task_journal`, `RecoveryReport.pending_event_transitions` |
 
 The seven rows above are **seven separate atomic commits**, not one. Each pairs
 one protocol amendment with the code that satisfies it, and splitting them further
@@ -1051,10 +1074,10 @@ mid-code and improvise.
 | 1 | Which real `AtRestProtection` backend, in which crate, and under what key-custody rule | Crate Map §4.2's whole argument is that credential custody is a separate crate; answering this would change the layering graph, which is out of P2's scope. ADR-0022 records the question and the two viable shapes | P2 owner, with an ADR |
 | 2 | Where does the `SECRET` sealed store live | No owning crate is named anywhere, and `serea-credential-store` is scoped to `CREDENTIAL` only | P2/P3 owner, with an ADR |
 | 3 | Does `NOTIFY` become capability-shaped | P2 records the obligation and P2's design treats it as host-internal; the answer depends on P5/P6's `device.*` surface | P5 owner |
-| 4 | Is relaxing five `TaskStep` fields minor or major | §4.1's minor case is a *new* optional field; this is a relaxation. The classification changes which version bump and migration note apply | Architecture owner |
+| 4 | ~~Is relaxing five `TaskStep` fields minor or major~~ — **RESOLVED by the P2 autonomous audit: major.** §4.1's minor case is a *new* optional field; this is a relaxation, and §5 sets the precedent that a weakening of a required field is breaking. The plan is `serea-arch/0.2.0 → 1.0.0`, `serea.task/1 → 2`, `serea.action/1 → 2`. **What the owner now supplies is the migration-note text**, which §7 item 4 requires and which is short because `serea-core` and the Android client are P12 | Architecture owner, ratification only |
 | 5 | The numeric values for every resource bound | No evidence exists. Inventing a number would be the `MAX_VALUE_LENGTH` mistake P1 already retracted | Bounds owner, with its own ADR. See [P2 design §12](../plans/P2-storage-task-engine.md#12-resource-bounds-still-open) |
 | 6 | Whether `insert_at` plan revisions are ever needed | P2 V1 is append-only. The cost is that a mid-plan insertion requires a new task | P2/P4 owner |
-| 7 | The minimum `rusqlite` feature set | No dependency may be resolved in this run, so the exact feature string cannot be verified here. [P2 design §7](../plans/P2-storage-task-engine.md#7-migrations-and-connection-policy) states the *capabilities* required and the fallback if the bundled SQLite is older than 3.37 | P2C, at dependency-add time |
+| 7 | ~~The minimum `rusqlite` feature set~~ — **RESOLVED by the P2 autonomous audit.** `rusqlite` **0.40.2** with `default-features = false, features = ["bundled"]`, bundling SQLite **3.53.4**, so the `STRICT`/`GENERATED` fallback is verified unnecessary. `default-features = false` is **required**: rusqlite's defaults pull `hashlink` and `sqlite-wasm-rs`. `libsqlite3-sys`'s defaults select **system SQLite** via pkg-config/vcpkg, which `bundled` overrides. `bundled-full` rejected. See [P2 design §7.4](../plans/P2-storage-task-engine.md#74-rusqlite-and-the-alternatives) | Closed — but it raises owner decision #1 |
 
 ## 9. Cross-references
 

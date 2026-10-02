@@ -143,7 +143,7 @@ And `Tx` exposes **whole transitions**, never row-level updates:
 | `commit_step_failed` | Fenced step write with the error + task transition + `STEP_FAILED` |
 | `close_step_reconciled_absent` | Fenced step close + task transition + `STEP_RECONCILED_ABSENT` |
 | `delete_task` | Cascade + blob sweep. **No journal row** — `task_journal.task_id` cascades with the task, so a deletion record cannot survive its own transaction. `DeletionOutcome`'s counts are the record |
-| `append_journal` | One journal row, called by the above |
+| `append_journal` | One journal row, called by the above. Invoked as a `TransactionParticipant` with the `DurableTransition` the calling method just performed — see ADR-0021 |
 
 There is no `update_task_state`, no `set_step_status`, no `insert_receipt`. A
 caller cannot compose `T4` wrongly because it cannot compose it at all.
@@ -300,70 +300,190 @@ impl Migrations {
 - **Adopting a foreign file is refused.** Zero-length file ⇒ fresh, migrate. A
   non-empty file with no `schema_migrations` table but with other tables ⇒
   `NotSereaStore`. The store never adopts an unknown file and never deletes one.
-- **Corruption.** `PRAGMA quick_check` at open, because it is cheap and catches
-  page-level damage. A full `PRAGMA integrity_check` is behind an explicit
-  `verify_integrity()` for an admin path, not on every open. ADR-0005's open item
-  about verifying durability settings against the platform is not closed by
-  either, and is not claimed to be.
+- **Corruption.** Four verification tiers, defined because each pragma verifies
+  something different and the P2 autonomous audit established exactly what.
+  `PRAGMA quick_check` and `PRAGMA integrity_check` are **page-level** checks:
+  against a database holding one deliberately orphaned `task_steps` row, **both
+  return `ok`**, and only `PRAGMA foreign_key_check` reports it. So no claim about
+  referential integrity may rest on the first two.
+
+  | Tier | Check | Cost | When |
+  | --- | --- | --- | --- |
+  | Normal open | `quick_check` | cheap | every open |
+  | Post-migration | `quick_check` **+ `foreign_key_check`** | cheap on a fresh schema | after each migration, inside that migration's gate |
+  | Explicit admin | `integrity_check` **+ `foreign_key_check`** | O(database) | `verify_integrity()`, on demand |
+  | Recovery precondition | `foreign_key_check` | cheap | before classifying, so §9.1 row 3b's "spanning tables" case is decidable |
+
+  The post-migration tier is the one that earns its place: a migration that
+  produced dangling references has failed in a way `quick_check` cannot see, and
+  this schema leans on foreign keys for both the cascade delete and the
+  cross-class anti-laundering property.
+- **Referential integrity is pragma-dependent, and that is stated rather than
+  implied.** `PRAGMA foreign_keys` defaults to `OFF` in SQLite; a writer sets it
+  `OFF` with one line and then inserts an orphan. Every `CHECK`, trigger and
+  `FOREIGN KEY` here holds against a writer who leaves `foreign_keys = ON` and
+  `ignore_check_constraints = OFF`, and the threat model already excludes a local
+  file writer from tamper-evidence. See [schema §7](P2-sqlite-schema.md#the-pragma-boundary-in-full).
+  ADR-0005's open item about verifying durability settings against the platform is
+  not closed by any of this, and is not claimed to be.
 
 ### 7.2 Connection policy
 
-| Setting | Value | Why |
+**Two profiles, not one.** The P2 autonomous audit established by execution that
+`Store::open_in_memory` **cannot** satisfy ADR-0005's WAL requirement, so a single
+table asserting WAL at open is unimplementable for one of the two constructors:
+
+| Property | `:memory:` | file-backed |
 | --- | --- | --- |
-| `journal_mode` | `WAL`, asserted at open | ADR-0005. Concurrent readers with a single writer |
-| `foreign_keys` | `ON`, asserted at open | The blob reference integrity and the cascade delete depend on it. Asserted because a silently-off pragma turns every `FOREIGN KEY` in the schema into a comment. It is **not** set inside a migration: `PRAGMA foreign_keys` is a no-op inside a transaction, and every migration runs inside `BEGIN IMMEDIATE` |
-| `synchronous` | `FULL` | Task Protocol §5 rule 1 — a step's success and its receipt are committed before the task advances — is the whole point of this phase, and in WAL mode `NORMAL` can lose the last commits on **power** loss (not process crash). An fsync per commit is milliseconds on an SSD |
-| `busy_timeout` | 5000 ms | Single writer, low contention, and a bounded wait rather than an immediate `SQLITE_BUSY` |
-| `wal_autocheckpoint` | SQLite default | Do not tune what was not measured |
-| `wal_checkpoint` | `TRUNCATE` on clean close | Bounds WAL growth across restarts |
-| `temp_store` | **default**, deliberately not `MEMORY` | A temp table spills to a file that is *not* at-rest protected. ADR-0022's protection covers `blobs.content`, not SQLite's scratch space. Any future change here must re-open that question |
-| `application_id` / `user_version` | **not set** | `schema_migrations` is the single authority |
-| Connection count | **1**, behind a `Mutex` | SQLite is single-writer. The mutex guards the *connection*, never lease semantics and never a transition |
+| `PRAGMA journal_mode` | **`memory`** | `wal` |
+| `PRAGMA synchronous` | `1`; setting it returns **no row** — a no-op | `0`/`1`/`2`/`3` honoured |
+| `PRAGMA foreign_keys` | `0` by default | `0` by default |
+| `PRAGMA wal_checkpoint(TRUNCATE)` | `(0, -1, -1)` — not applicable | `(0, 0, 0)` |
+
+There is nothing to fsync in memory, so `synchronous = FULL` is unenforceable
+there and asserting it would be asserting nothing. The profiles:
+
+| Setting | `ProductionProfile` | `TestMemoryProfile` | Why |
+| --- | --- | --- | --- |
+| `journal_mode` | `WAL`, **asserted** | `memory`, **asserted as `memory`** | ADR-0005. The in-memory profile asserts what it actually is, so a test cannot "pass" by skipping the check |
+| `foreign_keys` | `ON`, **asserted** | `ON`, **asserted** | The blob reference integrity and the cascade delete depend on it. A silently-off pragma turns every `FOREIGN KEY` in the schema into a comment. **Not** set inside a migration: `PRAGMA foreign_keys` is a no-op inside a transaction, and every migration runs inside `BEGIN IMMEDIATE` |
+| `synchronous` | `FULL`, **asserted** | **not asserted**; documented as a no-op | Task Protocol §5 rule 1 — a step's success and its receipt are committed before the task advances — is the point of this phase, and in WAL mode `NORMAL` can lose the last commits on **power** loss (not process crash). An fsync per commit is milliseconds on an SSD |
+| `busy_timeout` | 5000 ms, asserted | asserted | Single writer, low contention, and a bounded wait rather than an immediate `SQLITE_BUSY`. Measured: two writers serialise correctly; a second `BEGIN IMMEDIATE` waits out the timeout and then reports `SQLITE_BUSY` |
+| `wal_autocheckpoint` | SQLite default | SQLite default | Do not tune what was not measured |
+| `wal_checkpoint` | `TRUNCATE` on clean close | **not performed** — returns `(0, -1, -1)` | Bounds WAL growth across restarts |
+| `temp_store` | **default**, deliberately not `MEMORY` | default | A temp table spills to a file that is *not* at-rest protected. ADR-0022's protection covers `blobs.content`, not SQLite's scratch space. Any future change here must re-open that question |
+| `application_id` / `user_version` | **not set** | not set | `schema_migrations` is the single authority |
+| Connection count | **1**, behind a `Mutex` | 1 | SQLite is single-writer. The mutex guards the *connection*, never lease semantics and never a transition |
+
+**Every durability-bound test uses `ProductionProfile` on a file.** Not by
+convention — by rule, stated as a positive list in §7.3, because the alternative
+is a suite that passes only because the in-memory profile bypassed a production
+requirement.
 
 ### 7.3 Test database policy
 
-- **`Store::open_in_memory`** for pure unit and property tests. Note it **cannot be
-  reopened** and has **no** crash durability, so it is never used for a
-  reopen-equality or crash test.
-- **A file-backed store under a RAII `TempStore`** for every reopen, cascade,
-  migration-reopen and crash test. Its path comes from `std::env::temp_dir()`
-  joined with a **counter-derived** unique name — never a wall clock and never an
-  RNG, so `.clippy.toml`'s ban on `SystemTime::now` / `Instant::now` is satisfied
-  and parallel tests cannot collide.
+- **`Store::open_in_memory` / `TestMemoryProfile`** for pure unit and property
+  tests: schema construction, constraint refusals, canonicalization, enum and
+  matrix logic. It **cannot be reopened** and has **no** crash durability, so it is
+  never used for a durability-bound test.
+- **A file-backed store under a RAII `TempStore`** — and the rule is a positive
+  list, so "which tests may use memory" is answerable by reading one sentence:
+
+  | Must be file-backed | Why |
+  | --- | --- |
+  | Reopen and reopen-equality | `open_in_memory` cannot be reopened at all |
+  | Crash and fault injection | Needs a real file, a real WAL and a real `fsync` |
+  | Migration, migration-reopen, `SchemaTooNew`, checksum mismatch | Needs the file and its sidecars |
+  | Cascade delete and the §5.4 blob sweep | Needs durability across statements |
+  | Lease reclaim against expiry | Needs two independent connections |
+  | Any assertion about `journal_mode`, `synchronous`, or the close checkpoint | Those pragmas do not mean what they claim in memory |
+  | Any two-process or two-`Store`-instance test | Needs a shared file |
+
+- **`TempStore` identity.** Constructed from the three things that are jointly
+  unique with no wall clock and no RNG, so `.clippy.toml`'s ban on `SystemTime::now`
+  / `Instant::now` holds and two processes cannot collide:
+
+  ```text
+  <binary-identity>-<pid>-<atomic-counter>
+  ```
+
+  The counter is a process-wide `AtomicU64`. The binary identity is the test's own
+  label, so **two integration-test binaries cannot collide** — a counter alone
+  does not achieve this, and the P2 autonomous audit verified that two binaries each
+  counting from 0 produce the same three names. A pid alone is also insufficient,
+  because `cargo test` runs tests as threads of one process and the crash harness
+  spawns children; hence the counter as a third component. `TempStore::new(label)`
+  builds one; `TempStore::child_inherited(dir)` takes the parent's directory, which
+  is also how a crash child reopens the file it must assert against.
+
 - Every crash test runs in a **child process** re-invoking the test binary with
   `current_exe()`, which is the only way to test durability rather than the
   in-process rollback path.
 
 ### 7.4 `rusqlite`, and the alternatives
 
-**Recommendation: `rusqlite`, with the `bundled` feature, synchronous, one
-connection.**
+**Recommendation: `rusqlite` with `default-features = false, features =
+["bundled"]`, synchronous, one connection.**
 
 Requirements the dependency must satisfy — stated as capabilities rather than
-feature strings, because no dependency may be resolved in this run:
+feature strings, because no dependency is resolved by the design-preparation run:
 
-| Requirement | Needed for |
+| Requirement | Needed for | Satisfied by |
+| --- | --- | --- |
+| SQLite ≥ 3.37.0 | `STRICT` tables; the generated class labels | bundled **3.53.4** |
+| JSON1 present | `json_valid` / `json_type` in `tasks.extensions` and `error_details` | built into SQLite core by default since 3.38 |
+| per-connection pragmas | §7.2 | `Connection::pragma_update`, no feature needed |
+| statement-level `rows_affected` | the explicit zero-row fence check | always available |
+| `INSERT … ON CONFLICT … DO UPDATE … WHERE` | ADR-0024's atomic `acquire_lease` | always available |
+
+**Resolved at audit time, so tomorrow's implementation does not spend reasoning
+effort discovering basic crate facts.** No dependency is added by the design or
+the audit; this is the record P2C reads.
+
+| Item | Value |
 | --- | --- |
-| SQLite ≥ 3.37.0 | `STRICT` tables; the generated class labels |
-| JSON1 present | `json_valid` / `json_type` in `tasks.extensions` and `error_details` |
-| `pragma_update` / per-connection `foreign_keys` | §7.2, which is per-connection state |
-| `INSERT … ON CONFLICT … DO UPDATE … WHERE` | ADR-0024's atomic `acquire_lease` |
-| Statement-level `rows_affected` | The explicit zero-row fence check |
+| Candidate | **`rusqlite` 0.40.2** (2026-08-08) |
+| License | MIT |
+| MSRV declared on `rusqlite` | none — it must be taken from its dependency, below |
+| Transitive crate | **`libsqlite3-sys`**, `edition = "2024"`, **`rust-version = "1.88.0"`** |
+| Bundled SQLite | **3.53.4** (2026-07-24), read from `libsqlite3-sys/sqlite3/sqlite3.h` |
+| Native build | C toolchain via `cc`; a prebuilt bindgen exists for 3.45.3, so `bundled_bindings` needs no local `bindgen` |
+| Apple Silicon, Intel macOS, Linux | identical — `bundled` compiles the same 3.53.4 on all three, so no system SQLite and no ABI question |
+
+**Three defaults must be overridden, and each is a trap:**
+
+1. **`rusqlite`'s own defaults are `["cache", "ffi-sqlite-wasm-rs"]`.** `cache`
+   pulls `hashlink`, and `ffi-sqlite-wasm-rs` pulls **`sqlite-wasm-rs`**. Both are
+   unwanted, so `default-features = false` is **required**, not tidiness.
+2. **`libsqlite3-sys`'s defaults are `["min_sqlite_version_3_45_3"] =
+   `["pkg-config", "vcpkg"]`** — that is, **system SQLite**, which is the exact
+   failure mode this section exists to avoid. `bundled` overrides it.
+3. **`bundled-full` is rejected.** It expands to `chrono`, `jiff`, `serde_json`,
+   `url`, `uuid`, `series`, `vtab`, `window`, `load_extension`, `unlock_notify`,
+   `column_metadata`, `trace`, `hooks`, `backup`, `collation`, `limits` and more.
+   Nothing in §7.2's table needs any of it.
+
+```toml
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+```
 
 **`bundled` versus system SQLite.** `bundled` compiles SQLite from source, so the
 version is whatever the crate pins and every developer and CI machine gets the
 same one. A system `libsqlite3` on macOS can be years behind — and a
 `STRICT`-table migration that works on a laptop and fails on a CI runner is the
 worst possible failure mode. The cost is a `build.rs`, a C toolchain in CI, and
-slower builds. `ubuntu-latest` has a toolchain. The trade is worth it.
+slower builds. `ubuntu-latest` has a toolchain; `macos-latest` has Xcode CLT. The
+trade is worth it, and on this evidence it is also what makes the
+Apple-Silicon portability invariant true by construction rather than by luck.
 
-**Fallback, stated so it is not a surprise.** If the resolved bundled SQLite is
-below 3.37.0, `STRICT` and `GENERATED … STORED` are dropped and each column gains
-`CHECK (typeof(col) = 'text')` or the integer equivalent. The generated class
-columns become ordinary columns with a `CHECK` that rank and label agree, which is
-weaker because the agreement is then checked rather than structurally guaranteed.
-This fallback is a **decision for P2C at dependency-add time**, not a silent
-downgrade.
+**The MSRV conflict, which is an owner decision and must not be discovered
+mid-P2C.** The workspace pins `rust-version = "1.85"` and `.clippy.toml` sets
+`msrv = "1.85"`; `libsqlite3-sys` 0.38.x requires **1.88**. So `rusqlite` 0.40.x
+raises the effective MSRV of the workspace by three minor versions. There are
+exactly two coherent answers: raise the workspace MSRV to 1.88, or evaluate an
+older `rusqlite` whose `libsqlite3-sys` still admits 1.85. This is recorded as
+owner decision #1 in [the ledger](P2-tomorrow-decision-ledger.md) because it is a
+choice, not a finding — but it is a **one-line change decided before P2C**, not a
+compile error discovered inside it.
+
+**The §8 fallback is not needed for this candidate.** Bundled 3.53.4 is far above
+3.37.0, so `STRICT` and `GENERATED … STORED` are both available and the
+`CHECK (typeof(col) = …)` degradation is **verified unnecessary**. It is retained
+only as a branch for an older `rusqlite`, which becomes live only under the second
+answer above.
+
+**SHA-256.** `sha2` **0.11.0**, MSRV **1.85** — exactly the workspace MSRV, so no
+conflict at all. MIT/Apache-2.0, pure Rust, no clock, no network, no platform-
+specific behaviour, standard FIPS 180-4 SHA-256. `0.10.9` is the last `0.10.x` if
+the owner ever needs a different MSRV. Recorded, **not added**, by this run.
+
+**A canonical-number dependency is not required by SCJ-1.** Rule 6 refuses every
+`f64`, so P2B needs no float formatter at all. If P5 later admits fractions, the
+crate is **`ryu-js`** 1.0.3 (MSRV 1.71) — which implements the ECMAScript
+`Number::toString` algorithm that RFC 8785 requires — and **not** `ryu`, whose
+shortest-round-trip output is not the ECMAScript form, and **not** `std`, whose
+`f64` `Display` mismatches five of RFC 8785 Appendix B's twelve reference values.
+See [ADR-0019 SCJ-1 rule 6](../decisions/ADR-0019-canonical-json-and-idempotency-preimage.md).
 
 **Why not `sqlx`.** It requires an async runtime, and P1 established that the
 workspace has none and that a `Clock` port would be "a fourth port with no P1
@@ -377,7 +497,8 @@ whose whole discipline so far has been minimalism.
 **Why not `libsqlite3-sys` directly.** Hand-written FFI, no statement builder, no
 error taxonomy. Every safety-adjacent line would be ours.
 
-**Why not the `rusqlite` async or `bundled-full` variants.** They add a runtime.
+**Why not the `rusqlite` async or `bundled-full` variants.** They add a runtime or
+a large feature surface, neither of which §7.2 needs.
 
 ## 8. Clock and time representation
 
@@ -450,7 +571,7 @@ One exhaustive table, the recovery analogue of the transition table in §10.2. A
 | 1 | `state.is_terminal()` | `TerminalNoop` | None. **No journal row** |
 | 2 | A row violates a `CHECK`, a foreign key`, or `json_valid`, and the damage is attributable to one task | `CorruptOrInvariantViolation`, then `BlockedTask` | Move the task `BLOCKED` with `blocked_reason: UNRECOGNISED_STATE` and continue the pass |
 | 3 | An unrecognised `status` or `state` string | `CorruptOrInvariantViolation`, then `BlockedTask` | As #2 — Protocol Index §4.2 rule 5 |
-| 3b | Corruption not attributable to one task: a corrupt `schema_migrations` row, or a `foreign_key_check` failure spanning tables | `RefusedPass` | **No mutation at all.** The pass returns `Err`, because there is no task to attribute the damage to and blocking every task would be a worse lie |
+| 3b | Corruption not attributable to one task: a corrupt `schema_migrations` row, or a `foreign_key_check` failure spanning tables | `RefusedPass` | **No mutation at all.** The pass returns `Err`, because there is no task to attribute the damage to and blocking every task would be a worse lie. §7.1's recovery tier runs `foreign_key_check` **first**, so this row is decidable before any classification begins — and it is the only integrity pragma that can see a referential violation at all |
 | 4 | A held lease with `expires_at_ms <= now_ms` | `ExpiredLease` | `release_lease` with the stored generation, plus a journal row. Then classify the step under #5 or #6 |
 | 5 | The step was `EXECUTING`, its lease is gone, and a receipt row exists | `ReceiptAlreadyCommitted` | Commit the task transition from durable facts. **No re-effect** (Task Protocol §6, `T4`) |
 | 6 | The step was `EXECUTING`, its lease is gone, and no receipt exists | `NeedsReconciliation` | Journal only. **No re-execution, ever, in P2** |
@@ -477,7 +598,10 @@ unchanged durable state therefore matches nothing and writes nothing.
 No "recovery already ran" marker exists, and none is added: a marker would be a
 second source of truth for a property that is structurally true, and ADR-0021's
 `pending_event_transitions` count gives the operator the visibility a marker was
-wanted for.
+wanted for. With `event_seq` removed from the schema that count is simply the
+journal row count: in P2 every transition predates an event participant, so the
+number is the size of the window during which `E3` did not hold. It is a fact to
+display, not a backlog to drain.
 
 ### 9.3 What recovery establishes, and what it does not claim
 
@@ -629,20 +753,49 @@ That is a correction. An earlier draft incremented at *both* points, so a
 the field exists precisely to "distinguish the crash-recovered attempt from a
 deliberate retry", which double-charging makes indistinguishable.
 
-The ceiling is checked at acquisition, in two statements inside one transaction, so
+The ceiling is checked at acquisition, in three statements inside one transaction, so
 each has exactly one possible cause:
 
-1. The fenced `UPDATE … WHERE lease_generation = :expected`. Zero rows ⇒
+1. The `leases` upsert. Zero rows ⇒ `LeaseHeld`.
+2. The fenced `UPDATE … WHERE lease_generation = :expected`. Zero rows ⇒
    `LeaseFenced` — someone else holds it, or it moved on.
-2. A ceiling check reading `max_attempts_per_step` from `tasks` **in the same
-   transaction**. At the ceiling ⇒ `AttemptCeilingReached`, with the step left
-   `PLANNED` and the lease released, so a deliberate retry is possible.
+3. A ceiling check reading `max_attempts_per_step` from `tasks` **in the same
+   transaction**. Over the ceiling ⇒ `AttemptCeilingReached`, and the transaction
+   **rolls back**.
 
 Reading the bound from durable state at the check is
 [Bounds Protocol §2.1](../protocols/10-bounds-protocol.md#21-where-these-live-in-durable-state)
-and is why the two are separate statements: a single combined `WHERE` would make
-"fenced" and "at the ceiling" indistinguishable, and a caller that cannot tell them
-apart cannot report them.
+and is why the fence and the ceiling are separate statements: a single combined
+`WHERE` would make "fenced" and "at the ceiling" indistinguishable, and a caller
+that cannot tell them apart cannot report them.
+
+**What the rollback leaves behind is not always a `PLANNED` step**, and the
+flattering version was the one written first. Verified by execution:
+
+| Case | After rollback |
+| --- | --- |
+| First acquisition against `max_attempts_per_step = 0` | Step left `PLANNED`, `attempt = 0`, `lease_generation = 0`, and **no `leases` row** — which is what "the step is left `PLANNED` and the lease released" describes |
+| Third acquisition against a ceiling of 2 | Step reverts to its **prior committed** state: `LEASED`, `attempt = 2`, with exactly one `leases` row at `generation = 2`. The refused acquisition leaves no trace |
+
+**An expiry reclaim spends an attempt, so the bound is on acquisitions, not
+executions.** ADR-0024 increments `attempt` on every acquisition including a
+reclaim, and the ceiling is `attempt > max_attempts_per_step`. The two compose into
+a consequence ADR-0024 now states and this audit measured: a worker that acquires
+and then dies before `begin_attempt` has still spent one attempt, so a host that
+crashes *N* times has an effective execution budget of
+`max_attempts_per_step − crashes`. Measured against a ceiling of 2, with every
+acquisition standing in for a crash: **2 acquisitions refused, 0 executions**, and
+the step ends at `('LEASED', 2, 2)`.
+
+This is correct — counting a crash is the only way `attempt` can "distinguish the
+crash-recovered attempt from a deliberate retry", which is Task Protocol §3.1's
+stated purpose. It is recorded because an implementer reading this section would
+otherwise conclude that `max_attempts_per_step = 3` buys three executions.
+
+**The recovery consequence is named.** When the ceiling is reached by crashes
+rather than by failures, the outcome is **not** `FAILED`, because nothing was
+proven to have failed. Such a step is `NeedsReconciliation` with `attempt` at the
+ceiling, and its task moves `BLOCKED` with an invariant-violation reason.
 
 ### 10.5 Plan revision handling
 
@@ -709,9 +862,9 @@ attached. The review's independent verdict is in §13.
 | 1 | Can stale worker A commit after B owns a reclaimed lease? | No. `lease_generation` increments on every acquisition and every commit carries it in its `WHERE`; zero rows is `LeaseFenced`. ADR-0024 |
 | 2 | Can a corrupt row widen authority? | Class ranks are integers with generated labels, so rank and label cannot disagree; `policy_class` has an `UPDATE` trigger; `state`, `kind` and every code-shaped field have `CHECK`s. A corrupt row is *refused*, and recovery's row #2 detects it |
 | 3 | Can a `PRIVATE` blob hit disk unencrypted? | No, by any writer that leaves constraint checking enabled. `CHECK ((data_class_rank = 2) = (protection = 'AT_REST'))` makes the row unconstructible, and the write path refuses before the insert when no backend is configured. ADR-0022, [schema §7](P2-sqlite-schema.md#7-verified-behaviour) |
-| 4 | Can `SECRET` or `CREDENTIAL` enter ordinary SQLite? | No, by any writer that leaves constraint checking enabled: `data_class_rank BETWEEN 0 AND 2` on all seven classified tables makes those rows unconstructible, verified on each. **The boundary, stated once:** `PRAGMA ignore_check_constraints = ON` disables every `CHECK` in the schema for a local file writer, and P2 does not mitigate that. Every trigger and foreign key still holds under it — which is where this design spends its structural budget. ADR-0022, [schema §7](P2-sqlite-schema.md#7-verified-behaviour), tests O14/O15 |
+| 4 | Can `SECRET` or `CREDENTIAL` enter ordinary SQLite? | No, by any writer that leaves constraint checking enabled: `data_class_rank BETWEEN 0 AND 2` on all seven classified tables makes those rows unconstructible, verified on each. **The boundary, stated once:** `PRAGMA ignore_check_constraints = ON` disables every `CHECK` in the schema for a local file writer, and P2 does not mitigate that. Every trigger and foreign key still holds under it — which is where this design spends its structural budget, and **the P2 autonomous audit verified that claim rather than assuming it**. **The second boundary is `PRAGMA foreign_keys = OFF`**, which the earlier revision of this answer did not name: it defaults to `OFF` in SQLite, one line disables it, and a `task_steps` row referencing a non-existent task is then accepted. So the composite-key anti-laundering guarantee in [schema §5.3](P2-sqlite-schema.md#53-classification-and-laundering) is *structural* against a writer who leaves enforcement on and *pragma-dependent* against a local file writer — which `TB-7` already excludes from tamper-evidence. ADR-0022, [schema §7](P2-sqlite-schema.md#the-pragma-boundary-in-full), tests O14/O15 |
 | 5 | Can recovery turn ambiguity into a second effect? | No. P2 recovery never executes. `NeedsReconciliation` records the decision durably for P5. Task Protocol §6.2 |
-| 6 | Can a state transition occur without the `E3` seam? | Every transition writes a `task_journal` row through the same `Tx`. `E3` itself is **not claimed** — ADR-0021 |
+| 6 | Can a state transition occur without the audit seam? | Every transition writes a `task_journal` row through the same `Tx`, as a `TransactionParticipant` receiving the same `DurableTransition` every other participant receives — so no participant can record a different transition from any other. `E3` itself is **not claimed**, and the P2 autonomous audit established it is **not retroactively claimable**: it holds forward from P3's first migration and never held for P2-era transitions. No event is reconstructed. ADR-0021 |
 | 7 | Can a migration failure leave a partial upgrade accepted? | No. The DDL and the `schema_migrations` row share one transaction, and checksums are re-verified at every open. §7.1 |
 | 8 | Can one task mutate another's step by ID confusion? | No. `task_id` is in every task-scoped predicate, is a `FOREIGN KEY`, and is carried on `LeaseGuard` |
 | 9 | Can an old process write after a new one superseded it? | No, for any write that requires a lease. Of the three that do not: `persist_plan` (`AND state = 'PLANNING'`) and `cancel` (`state NOT IN (terminal)`) carry a full expected-state predicate, so a stale writer wins a race it was always allowed to win or affects zero rows. `insert_task` and `delete_task` carry none, and that is sound rather than sloppy: a `TaskId` is never reused ([Protocol Index §2](../protocols/00-protocol-index.md#2-identifier-grammar) rule 3), so a duplicate `INSERT` is a retry of the same creation and a `DELETE` is idempotent. What a stale process **cannot** do is write step or receipt state |
@@ -798,6 +951,23 @@ executed between passes**, which is where the substantive findings came from.
 | **ADR-0021's back-fill claim was false** — the column list lacked every payload field | A13/B, major | `payload_json` added; the claim corrected |
 | **The category-O schema pattern was missing** | A15, major | Pattern supplied, with a generated-prefix fallback stated |
 | **A digest `GLOB` rejected every valid digest** — `sha256:` is not hex | A26, minor | `substr(…, 8) NOT GLOB`; the same form on all four digest columns |
+| **§4.6 still published the removed `leases_generation_matches_step` trigger**, which makes the *first* lease acquisition abort | audit, **blocker** | Trigger and its "verified" claim deleted; §4.6 now explains why publishing one reintroduced the round-2 defect |
+| **8 of ADR-0018 §3's 32 `N`/`0` presence cells were accepted by SQL** | audit, major | Three additive constraints; all 32 cells now refused, all 51 constructible cells still construct |
+| **ADR-0023's category-O pattern was inert** — it required a colon before the prefix, so every frozen identifier was accepted | audit, **blocker** | Rule decided by measurement (C: 16/16 caught, 0/14 false positives); pattern regenerated from the frozen prefix and verb lists |
+| **`open_in_memory` cannot be WAL**, so §7.2's single table was unimplementable | audit, major | Two named profiles; a positive list of which tests must be file-backed |
+| **`foreign_key_check` was in no tier**, and `quick_check`/`integrity_check` both report `ok` on an FK orphan | audit, major | Four verification tiers, `foreign_key_check` added to post-migration and recovery |
+| **The composite-key anti-laundering guarantee is pragma-dependent** and §5.3 did not say so | audit, major | Stated the way ADR-0022 states the `ignore_check_constraints` boundary |
+| **ADR-0021 adopted the `pending_event` outbox it had rejected**, and promised `E3` retroactively | audit, major | `E3` is forward-only; no event reconstruction; `event_seq` dropped |
+| **`CommitHook::append(&mut self, tx)` needs hidden state and cannot be driven from `transact(&self)`** | audit, major | `DurableTransition` parameter + `TransactionParticipant`; registry rejected |
+| **An expiry reclaim spends an attempt**, so crashes exhaust the budget with zero executions | audit, major | Arithmetic stated in ADR-0024 and §10.4; the recovery outcome named |
+| **Three ADRs took three positions on the version treatment**, and ADR-0019's was wrong | audit, major | One plan: `serea-arch/1.0.0`, `serea.task/2`, `serea.action/2` |
+| **ADR-0019 rejected shortest-round-trip floats for a false reason** | audit, major | RFC 8785 mandates ECMAScript `Number::toString`; the real obstacle is UTF-16 vs UTF-8 key ordering |
+| **`rusqlite`'s bundled path requires Rust 1.88**; the workspace pins 1.85; two crate defaults are wrong | audit, minor | Recorded; minimal feature set; the MSRV conflict is owner decision #1 |
+| **A counter-derived `TempStore` name collides across test binaries** | audit, minor | `<binary>-<pid>-<atomic-counter>`, plus an inherited-directory variant for crash children |
+| **ADR-0024's rejected alternatives still argued for the removed `token`** | audit, minor | Both rows removed; the rationale lives where the decision is made |
+| **ADR-0024's commit statement mixed `:named` and `?` placeholders** | audit, minor | All placeholders named; `rusqlite` binds one style per call |
+| **`task_steps.plan_revision` had no `DEFAULT`** while every sibling did | audit, minor | `DEFAULT 0` added |
+| **SCJ-1 vector 8's input omitted the `\u007f` it claimed to pin** | audit, minor | **Input corrected; hash unchanged.** 9 of 10 SCJ-1 and 7 of 7 IDK-1 vectors recomputed and reproduce |
 | **`tasks_policy_class_immutable` aborted on a no-op update** | A28, minor | `WHEN NEW.policy_class_rank IS NOT OLD.policy_class_rank` added |
 
 ### 13.2 The one finding rejected as wrong

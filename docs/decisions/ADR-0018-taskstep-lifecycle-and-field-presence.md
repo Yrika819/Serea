@@ -241,19 +241,51 @@ Two facts make a minor step defensible:
    reachable, and decreases only where nothing external can happen.
 
 The owner must still choose between a minor bump and a major bump with a migration
-note naming every consumer. This ADR does not choose. Open question 4 in the gap
-analysis records it.
+note naming every consumer. **The P2 autonomous audit resolved the choice against
+"minor", so what remains for the owner is the migration-note text, not the
+classification.** Protocol Index §4.1 names "a new optional field" as the minor
+case; this is not a new field — it is five existing required fields becoming
+optional, which weakens validation for any consumer that relied on it. Protocol
+Index §5 sets the precedent for exactly this shape: a rename "is a breaking change
+with an alias field for one major version". The coherent plan —
+`serea-arch/0.2.0 → 1.0.0`, `serea.task/1 → 2`, with ADR-0024's new optional
+`lease_generation` riding along — is recorded once in
+[the audit](../plans/P2-autonomous-audit.md) and
+[the ledger](../plans/P2-tomorrow-decision-ledger.md).
+
+The major is cheap **now** for a reason that will not stay true: the migration note
+required by Protocol Index §7 item 4 has almost nothing to name, because
+`serea-core` and the Android client are P12 and no task document has ever crossed a
+host boundary. That is precisely the argument for taking the major now rather than
+calling it minor — after P12 the note has real consumers and the bump is expensive.
 
 ## Consequences
 
-- `serea-storage` gets a constraint for every row of the presence matrix, so an
-  inconsistent step is unconstructible by any writer, not only by Rust. The DDL was
-  **executed** during design preparation against SQLite 3.43.2 with one insert per
-  cell: 46 checks, all passing. Two matrix rows needed extra work to be genuinely
-  enforced — `lease_generation >= 1` for every non-`PLANNED` step, and
-  `idempotency_key` immutability — and one row, receipt absence on
-  `RECONCILED_ABSENT`, is a cross-table property that no `CHECK` can express and is
-  therefore detected by recovery rather than prevented.
+- `serea-storage` gets a constraint for **every cell** of the presence matrix, so
+  an inconsistent step is unconstructible by any writer, not only by Rust. The DDL
+  was **executed** during design preparation against SQLite 3.43.2 with one insert
+  per cell, and then re-probed cell-by-cell by the P2 autonomous audit after every
+  edit. **That audit found this claim false as first written:** eight of the
+  matrix's thirty-two `N`/`0` cells were accepted — `completed_at` and
+  `result_digest` on `EXECUTING` and on `WAITING`, and `lease_expires_at` on
+  `WAITING`, `SUCCEEDED`, `FAILED` and `RECONCILED_ABSENT`. Three additive
+  constraints close all eight; all thirty-two are now refused, all fifty-one
+  legitimately constructible `kind × status` cells still construct, and all
+  thirty-seven legal task transitions still construct. See
+  [P2 SQLite schema §4.4](../plans/P2-sqlite-schema.md#44-task_steps).
+- The `lease_expires_at` half was the substantive one, and it is why the audit
+  probed per cell rather than per row. The schema already treated `lease_owner` as
+  a genuine biconditional, so the *pair* was half-constrained: a terminal step could
+  carry a lease expiry with **no owner**. ADR-0024's commit statement clears both
+  columns together, so no designed path produces it — but a future writer clearing
+  only `lease_owner` would pass the schema. That is the hole the biconditional
+  closed for one column, left open for the other.
+- Two matrix rows remain **detected rather than prevented**, and saying so is part
+  of the claim rather than a caveat on it. `side_effect_receipt` absent on
+  `RECONCILED_ABSENT` is a cross-table property no `CHECK` can express, and is
+  recovery's invariant scan. `lease_generation` above the stored value is a *floor*,
+  not a ceiling: a corrupt row may carry `99`, and a `SUCCEEDED` step may name a
+  generation for which no `leases` row exists, because the dependency is one-way.
 - Every new `StepStatus` value a future phase adds is a new matrix row and a new
   `CHECK`, which is the intended friction: it forces the author to decide field
   presence rather than inherit a default.

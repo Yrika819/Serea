@@ -63,7 +63,7 @@ blocker.
 
 | Category | Fields | Rules |
 | --- | --- | --- |
-| **O** — opaque token / reference | `ActorId`, `LeaseOwner`, `ProviderReference` | Non-empty. No C0 control, no DEL. No leading or trailing whitespace. **Refused if the value parses as any other frozen identifier domain.** Length bounded by the owning schema's `maxLength` |
+| **O** — opaque token / reference | `ActorId`, `LeaseOwner`, `ProviderReference` | Non-empty. No C0 control, no DEL. No leading or trailing whitespace. **Refused if the value parses as a prefixed or fixed-shape frozen identifier domain** — see §"Which identifier domains" below. Length bounded by the owning schema's `maxLength` |
 | **L** — single-line label | `TaskTitle`, `DescriptorTitle`, `EffectSummary`, `PlainSummary` | Non-empty. No C0 control, including `\n` and `\t`. No leading or trailing whitespace. Length bounded by the owning schema's `maxLength` |
 | **P** — prose | `ErrorMessage`, `DescriptorDescription` | Non-empty. `\n` and `\t` permitted. Every other C0 control and DEL refused, **including `\r`**. No leading or trailing whitespace. Length bounded by the owning schema's `maxLength` |
 
@@ -109,28 +109,107 @@ patterns:
 ```text
 ^(?![ \t\n\r\f\v]*$)[^\r\u0000-\u001f\u007f]+$      category P
 ^(?![ \t\n\r\f\v]*$)[^\u0000-\u001f\u007f]+$        category L
-^(?![ \t\n\r\f\v]*$)(?!.*:(tsk|stp|apr|grt|req|evt|dev|sch|prop|rcp|ses)_)
- [^\u0000-\u001f\u007f]+$                              category O
 ```
 
-The category-O pattern is the awkward one, and the awkwardness is the point: eleven
-identifier prefixes cannot be expressed as one readable negated class. Two
-consequences are recorded rather than glossed over:
+### Which identifier domains category O refuses — and why not all of them
 
-- The pattern is long and must be **generated** from the prefix list rather than
-  hand-written, with a test asserting the two agree. A hand-written copy drifts, and
-  a drifted copy means the schema accepts an `ActorId` the Rust validator refuses.
-- If generating it proves impractical, the honest fallback is to state the
-  impersonation rule as **Rust-only**, and to narrow test A2 to the categories whose
-  rejection *is* expressible in both. That fallback must be an explicit decision,
-  not a quiet drift from "identical on both sides".
+The prose rule is *"refused if the value parses as any other frozen identifier
+domain"*, and the question of which domains that means is **decided by
+execution, not by preference**. Three candidate rules were implemented and run
+against one corpus of sixteen impersonations (all eleven ULID prefixes,
+`idk_`+64 hex, `sha256:`+64 hex, two `CapabilityId`s) and fourteen legitimate
+opaque tokens (`calendar`, `worker`, `worker-1`, `host-a3f9`,
+`session-42.worker`, `x`, `w`, a long reference, `provider:handle/1234`, and five
+near-miss identifier shapes that must be *accepted*):
 
-Every field's rejection must be identical on both sides, and a test enumerates
-every field against a shared corpus of adversarial strings — empty,
-whitespace-only, leading and trailing whitespace, `\n`, `\r`, `\t`, NUL, DEL, a
-`stp_`-prefixed ULID in an O field, a 5000-character string, and a non-ASCII
+| Rule | Impersonations caught | False positives on legal opaque tokens |
+| --- | --- | --- |
+| **A** — the Serea ULID family only | 11 / 16 | 0 / 14 |
+| **B** — every registered identifier domain | 15 / 16 | **8 / 14** |
+| **C** — the prefixed and fixed-shape domains | **16 / 16** | **0 / 14** |
+
+**B is untenable, and the evidence is specific rather than stylistic.**
+`ProviderId` is `[a-z][a-z0-9_]{1,31}` and `ModelId` is
+`^[a-z0-9]+(-[a-z0-9]+)*$`. Both subsume ordinary words. Under B the refused set
+includes `calendar`, `worker`, `worker-1`, `host-a3f9`, `x` and `w` — that is,
+**every plausible `LeaseOwner`** and most plausible `ProviderReference`. A rule
+that refuses its own intended input is not stricter, it is dead.
+
+So the rule is **C**, and the exclusion is stated rather than left implicit:
+
+> Category O refuses a value that parses as a **prefixed or fixed-shape** frozen
+> identifier: the eleven ULID prefixes `tsk_ stp_ apr_ grt_ req_ evt_ dev_ sch_
+> prop_ rcp_ ses_`; `idk_` + 64 lowercase hex; `sha256:` + 64 lowercase hex; or a
+> `CapabilityId`. It does **not** refuse `ProviderId`, `ModelId` or
+> `ImplementationId`, because those grammars subsume ordinary words and the rule
+> would then refuse every legitimate value.
+
+The pattern, and it **is** expressible in ECMA-262, so Rust and JSON Schema can
+produce identical verdicts:
+
+```text
+^(?![ \t\n\r\f\v]*$)
+ (?!(tsk|stp|apr|grt|req|evt|dev|sch|prop|rcp|ses)_[0-9A-HJKMNP-TV-Z]{26}$)
+ (?!(idk|sha256):?[0-9a-f]{64}$)
+ (?!(?!goallatch\b)[a-z][a-z0-9_]{1,31}\.[a-z][a-z0-9_]{1,31}
+      \.(list|read|search|open|control|write|create|send|delete|start|status|run|cancel|result)$)
+ [^\u0000-\u001f\u007f]+$                                                  category O
+```
+
+Three properties of this pattern are load-bearing and each is a trap:
+
+- **Each banned grammar is its own anchored negative lookahead**, `(?!…$)`, not a
+  spliced alternation inside the negated character class. The earlier draft
+  spliced, and the resulting pattern was not merely wrong but *inert*.
+- **The `goallatch` exclusion.** `serea-protocol`'s `CapabilityId` validator
+  refuses the `goallatch` provider namespace, so `goallatch.goal.run` is **not** a
+  `CapabilityId`. A banned set that ignored this would refuse a value Rust
+  accepts. `(?!goallatch\b)` makes the banned set exactly equal to
+  `CapabilityId`'s accept set. A pattern that is merely *stricter* here would
+  still be a parity bug.
+- **The pattern must be generated, never hand-written.** Both the twelve-prefix
+  list and the fourteen-verb list come from `ids.rs`
+  (`ULID`-family prefixes and `CAPABILITY_VERBS`), and a test asserts the
+  generated pattern matches the frozen lists exactly. A hand-written copy drifts,
+  and a drifted copy means the schema accepts an `ActorId` the Rust validator
+  refuses — which is the failure mode this whole rule exists to prevent.
+
+**The defect the audit found, for the record.** The pattern this ADR previously
+published was
+
+```text
+^(?![ \t\n\r\f\v]*$)(?!.*:(tsk|stp|apr|grt|req|evt|dev|sch|prop|rcp|ses)_)
+ [^\u0000-\u001f\u007f]+$
+```
+
+which requires a **literal colon immediately before** the prefix. No Serea
+identifier has one — `tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA` contains no colon at all.
+Executed under ECMA-262, that pattern fires *only* on strings of the form
+`a:tsk_`, `x:stp_…`, `sha256:tsk_…`, none of which can occur as an `ActorId`,
+`LeaseOwner` or `ProviderReference`. Every real frozen identifier was accepted.
+It had seven divergences across a fourteen-case corpus, including the exact case
+this ADR's own adversarial corpus names: *"a `stp_`-prefixed ULID in an O
+field"*. The rule was inert, and this ADR's claim that *"every field's rejection
+must be identical on both sides"* was false in the only direction that matters.
+
+**The fallback this ADR reserved is therefore not needed.** It said that "if
+generating it proves impractical, the honest fallback is to state the
+impersonation rule as Rust-only, and narrow test A2". Generation proved
+practical — twelve prefixes and fourteen verbs are a small table — and the full
+rule is expressible in both surfaces, so **A2 stays whole**. The fallback remains
+recorded as the correct response if the verb set ever grows enough to make the
+generated pattern unwieldy, because a narrowed A2 must be a decision rather than
+a drift.
+
+Every field's rejection is identical on both sides, and a test enumerates every
+field against a shared corpus of adversarial strings — empty, whitespace-only,
+leading and trailing whitespace, `\n`, `\r`, `\t`, NUL, DEL, **each of the eleven
+ULID prefixes in an O field**, `idk_`+hex, `sha256:`+hex, a real `CapabilityId`,
+a `CapabilityId` with an unknown verb, `goallatch.goal.run`, a `ProviderId`-shaped
+and a `ModelId`-shaped ordinary token, a 5000-character string, and a non-ASCII
 string — asserting the same verdict from the Rust validator and the schema. That
-test is the mechanism that prevents this divergence from recurring.
+test is the mechanism that prevents this divergence from recurring, and it is the
+test that would have caught the inert pattern.
 
 ### Prose fields are `PRIVATE` for log and event egress
 
@@ -165,9 +244,9 @@ applied by this run.
 | `crates/serea-protocol/schemas/assistant-task.schema.json` | Six inline patterns replaced by `$ref`s to the definition their field's category needs: `title`, `result_summary` (L); `lease_owner` (O); `effect_summary` (L); `message` (P) |
 | `crates/serea-protocol/schemas/action-result.schema.json` | `freeText` replaced by three definitions; `actor.id` (O), `effect_summary` (L), `message` (P) recategorised |
 | `crates/serea-protocol/schemas/event.schema.json` | The inline pattern at line 93 replaced by a `$ref` to the opaque-token definition |
-| A test asserting the generated category-O pattern matches the frozen prefix list | So the eleven prefixes cannot drift |
-| `crates/serea-protocol/tests/protocol_types.rs` | Per-category accept and reject cases |
-| `crates/serea-protocol/tests/schema_contracts.rs` | The shared adversarial corpus, asserted equal on both sides |
+| A test asserting the generated category-O pattern matches the frozen lists | So the twelve prefixes and the fourteen verbs cannot drift. Both lists come from `ids.rs`; a drifted copy means the schema accepts an `ActorId` the Rust validator refuses |
+| `crates/serea-protocol/tests/protocol_types.rs` | Per-category accept and reject cases, including the twelve prefixes, `idk_`, `sha256:`, a real and a near-miss `CapabilityId`, and the six legitimate opaque tokens |
+| `crates/serea-protocol/tests/schema_contracts.rs` | The shared adversarial corpus, asserted equal on both sides. **This is the test that would have caught the inert pattern** |
 
 The Rust change and the schema change are **one commit**. Neither alone is
 correct: the Rust change alone leaves the schema accepting whitespace-only values,
@@ -184,7 +263,15 @@ Making the Rust `ErrorMessage` validator *accept* newlines is a relaxation, in t
 safe direction, and §5.1 of the gap analysis records that the same reasoning
 already applies to the five `TaskStep` fields in ADR-0018.
 
-The owner chooses the architecture-version treatment; this ADR does not.
+**The owner ratifies the version plan; this ADR does not choose it.** The
+narrowing of the schema and the widening of `ErrorMessage` place this ADR at
+**minor on `serea.action/1`**, recorded once in
+[the audit's M6](../plans/P2-autonomous-audit.md) alongside ADR-0018 and ADR-0019
+rather than decided separately here. Two positions were withdrawn by the P2
+autonomous audit for taking a third, inconsistent view: ADR-0019 had
+self-classified as a minor *clarification* when its integer-only number rule
+narrows frozen Protocol Index §5, and the gap analysis had left the whole
+question open. See [the decision ledger](../plans/P2-tomorrow-decision-ledger.md).
 
 ## Consequences
 
@@ -210,4 +297,5 @@ The owner chooses the architecture-version treatment; this ADR does not.
 | Tighten the schema with `minLength: 2` or similar | A length threshold is not a whitespace rule; `"a "` still passes it |
 | Reject a `ProviderReference` that parses as any identifier | Rejected for `ProviderReference` only if measurement later shows real provider handles colliding with a Serea grammar. Recorded as a named future relaxation rather than assumed unnecessary |
 | Prohibit any `stp_` prefix in an O field | Narrower than the grammar check and would miss a `tsk_`, `rcp_`, or `evt_` value |
+| Refuse `ProviderId`, `ModelId` and `ImplementationId` shapes too | Measured, not assumed: doing so produces **8 false positives out of 14** legitimate opaque tokens, including `calendar` and `worker` — every plausible `LeaseOwner`. Their grammars subsume ordinary words, so the rule would refuse its own input |
 | Add a separate "display string" type | Nine fields do not justify a second parallel family of validated scalars; a category parameter on the existing macro is sufficient |

@@ -13,8 +13,8 @@
 use serde_json::{Value, json};
 use serea_protocol::schema::{self, SchemaError, SchemaName};
 use serea_protocol::types::{
-    AttemptBudget, BlockedReason, ErrorCode, ErrorMessage, HostAction, PlainSummary, ReasonCode,
-    StepStatus, TaskOrigin, Trace,
+    AttemptBudget, BlockedReason, ErrorCode, ErrorMessage, HostAction, ReasonCode, StepStatus,
+    TaskOrigin, Trace,
 };
 
 const TASK_ID: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";
@@ -897,7 +897,7 @@ fn pro_event_3_every_frozen_event_kind_is_accepted_and_an_unregistered_one_is_no
     }
     for bad in [
         "CAPABILITY_ALMOST_COMPLETED",
-        "DELETION_CASCADE_COMPLETED",
+        "DELETION_CASCADE_PARTIAL",
         "capability_completed",
         "TASK_START",
     ] {
@@ -906,6 +906,32 @@ fn pro_event_3_every_frozen_event_kind_is_accepted_and_an_unregistered_one_is_no
         assert!(
             schema::validate(SchemaName::Event, &value).is_err(),
             "{bad} is not in the frozen Event Protocol Section 3 table"
+        );
+    }
+}
+
+#[test]
+fn pro_data_8_2_the_deletion_cascade_event_is_registered_in_the_schema_too() {
+    // Data Classification Section 8.2 step 4 requires the cascade to be
+    // recorded with its counts. ADR-0017 registers the kind in Event Protocol
+    // Section 3.7, so the checked-in schema and the Rust enum must agree.
+    let mut value = frozen_event();
+    value["kind"] = json!("DELETION_CASCADE_COMPLETED");
+    value["payload"] = json!({
+        "task_id": TASK_ID,
+        "memory_items_deleted": 3,
+        "provenance_rows_deleted": 3,
+        "blobs_deleted": 5,
+        "tombstones_written": 3
+    });
+    assert!(schema::is_valid(SchemaName::Event, &value).expect("compiles"));
+    // Fail-closed still holds for a near-miss on the registered name.
+    for bad in ["DELETION_CASCADE", "DELETION_CASCADE_COMPLETE"] {
+        let mut near = frozen_event();
+        near["kind"] = json!(bad);
+        assert!(
+            schema::validate(SchemaName::Event, &near).is_err(),
+            "{bad} is not the registered kind"
         );
     }
 }
@@ -1537,35 +1563,139 @@ fn every_machine_readable_code_shares_one_grammar_with_the_schemas() {
 }
 
 #[test]
-fn the_free_text_ceiling_is_deliberate_and_its_asymmetry_is_measured() {
-    // `MAX_VALUE_LENGTH` is a host acceptance ceiling for fields P0 does not
-    // bound. Model input and output text is deliberately exempt because P0 *does*
-    // bound it, with `max_output_tokens_per_call` (Model Protocol §9; Bounds
-    // Protocol §2), and a second, smaller character limit in the Rust layer would
-    // be narrower than the host's own bound.
-    let oversized = "s".repeat(5_000);
-    assert!(
-        ReasonCode::new(oversized.clone()).is_err(),
-        "codes stay short"
-    );
-    assert!(
-        ErrorMessage::new(oversized.clone()).is_err(),
-        "a diagnostic field P0 does not bound gets the P1 ceiling"
-    );
-    let generous = "s".repeat(4_000);
-    assert!(
-        PlainSummary::new(generous.clone()).is_ok(),
-        "and the ceiling is generous, not a brake on real content"
-    );
-    assert!(PlainSummary::new(oversized.clone()).is_err());
+fn no_schema_imposes_a_free_text_ceiling() {
+    // Bounds Protocol Section 2 declares its table authoritative and `B3` calls
+    // a bound enforced anywhere else a bug. P0 leaves payload-byte, attachment
+    // size, and object-count bounds unresolved, so no checked-in schema may
+    // carry a free-text `maxLength`, and the Rust boundary may not either. The
+    // value below is one character over the retired 4096 ceiling, so the fixture
+    // stays small while still failing on the pre-fix schemas.
+    let long = "s".repeat(4_097);
 
+    let mut result = frozen_result();
+    result["error"] = json!({
+        "kind": "PROVIDER_ERROR",
+        "code": "GMAIL_HISTORY_EXPIRED",
+        "message": long.clone(),
+        "retryable": false,
+        "host_action": "FULL_RESYNC"
+    });
+    assert!(
+        schema::is_valid(SchemaName::ActionResult, &result).expect("compiles"),
+        "a diagnostic message is not length-bounded by the retired ceiling"
+    );
+
+    let mut event = frozen_event();
+    event["actor"] = json!({ "kind": "HOST", "id": long.clone(), "version": "0.1.0" });
+    assert!(
+        schema::is_valid(SchemaName::Event, &event).expect("compiles"),
+        "an actor id is not length-bounded by the retired ceiling"
+    );
+
+    let mut task = frozen_task();
+    task["title"] = json!(long.clone());
+    assert!(
+        schema::is_valid(SchemaName::AssistantTask, &task).expect("compiles"),
+        "a task title is not length-bounded by the retired ceiling"
+    );
+
+    let mut step_task = frozen_task();
+    step_task["steps"] = json!([{
+        "step_id": STEP_ID,
+        "task_id": TASK_ID,
+        "sequence": 3,
+        "kind": "CAPABILITY",
+        "status": "SUCCEEDED",
+        "attempt": 1,
+        "idempotency_key": IDEMPOTENCY_KEY,
+        "provider_id": "calendar",
+        "capability_id": "calendar.events.list",
+        "capability_version": "1.2.0",
+        "input_digest": DIGEST,
+        "result_digest": DIGEST,
+        "result_summary": long.clone(),
+        "side_effect_receipt": {
+            "receipt_id": "rcp_01JQ8ZF4T7KMV2X9NPQ5RD8WCS",
+            "capability_id": "calendar.events.create",
+            "idempotency_key": IDEMPOTENCY_KEY,
+            "provider_reference": long.clone(),
+            "effect_summary": long.clone(),
+            "observed_at": "2026-10-01T09:14:23.902Z",
+            "replay_safe": true
+        },
+        "started_at": "2026-10-01T09:14:22.100Z",
+        "completed_at": "2026-10-01T09:14:22.512Z",
+        "lease_owner": long.clone(),
+        "lease_expires_at": null,
+        "error": {
+            "kind": "PROVIDER_ERROR",
+            "code": "GMAIL_HISTORY_EXPIRED",
+            "message": long.clone(),
+            "retryable": false,
+            "host_action": "FULL_RESYNC"
+        }
+    }]);
+    assert!(
+        schema::is_valid(SchemaName::AssistantTask, &step_task).expect("compiles"),
+        "a step's summary, lease owner, message, and receipt text are not length-bounded"
+    );
+
+    // What survives: a machine-readable code keeps its own short ceiling, which
+    // Capability Protocol Section 3.1 requires every schema string to carry.
+    let mut coded = frozen_result();
+    coded["error"] = json!({
+        "kind": "PROVIDER_ERROR",
+        "code": "A".repeat(65),
+        "message": "synthetic",
+        "retryable": false,
+        "host_action": "NONE"
+    });
+    assert!(
+        schema::validate(SchemaName::ActionResult, &coded).is_err(),
+        "a code is still a code, not free text"
+    );
+
+    // And the independent frozen rules still hold on free text: empty and
+    // control-character-bearing values are refused.
+    //
+    // A whitespace-only value is deliberately absent from this list. The Rust
+    // validator refuses one (`validate_label` trims), but the schema's
+    // `pattern` only excludes control characters, so the schema has always
+    // accepted `"   "`. That divergence predates this corrective pass and is
+    // out of its scope; it is recorded as a known limitation rather than
+    // silently closed here, and tightening the schema would be a contract
+    // change requiring its own change-control decision.
+    for bad in ["", "bad\nvalue", "bad\u{7f}value"] {
+        let mut empty = frozen_result();
+        empty["error"] = json!({
+            "kind": "PROVIDER_ERROR",
+            "code": "GMAIL_HISTORY_EXPIRED",
+            "message": bad,
+            "retryable": false,
+            "host_action": "NONE"
+        });
+        assert!(
+            schema::validate(SchemaName::ActionResult, &empty).is_err(),
+            "{bad:?} must still be refused"
+        );
+    }
+}
+
+#[test]
+fn model_text_carries_no_rust_layer_ceiling() {
+    // Model input and output text is bounded by P0 itself, with
+    // `max_output_tokens_per_call` (Model Protocol Section 9; Bounds Protocol
+    // Section 2). The Rust layer must not add a second, narrower character
+    // limit, and after the free-text ceiling is removed there is no asymmetry
+    // left to document.
+    let long = "s".repeat(4_097);
     let message = serea_protocol::ModelMessage {
         role: serea_protocol::MessageRole::new("user").expect("valid"),
-        content: oversized.clone(),
+        content: long.clone(),
     };
     assert!(
         message.content.len() > 4_096,
-        "model text is exempt from the P1 ceiling on purpose"
+        "and over the retired ceiling"
     );
     let request = serea_protocol::ModelRequest {
         request_id: serea_protocol::RequestId::new("req_01JQ8ZA4H6NFG8K2M6RTV9XCWB")
@@ -1574,7 +1704,7 @@ fn the_free_text_ceiling_is_deliberate_and_its_asymmetry_is_measured() {
         task_id: None,
         purpose: serea_protocol::ModelPurpose::Chat,
         messages: vec![message],
-        system: Some(oversized),
+        system: Some(long),
         response_format: serea_protocol::ResponseFormat::Text,
         tools: Vec::new(),
         max_output_tokens: 2_048,
@@ -1585,6 +1715,18 @@ fn the_free_text_ceiling_is_deliberate_and_its_asymmetry_is_measured() {
     assert!(
         serde_json::to_value(&request).is_ok(),
         "a long prompt is representable"
+    );
+    assert!(
+        ErrorMessage::new("s".repeat(4_097)).is_ok(),
+        "and a long diagnostic message is now accepted the same way"
+    );
+    // The code ceiling survives. The value must be a *well-formed* code that is
+    // merely too long: a lowercase value would be refused by the code grammar
+    // regardless of length, which would make this assertion unable to detect a
+    // removed ceiling.
+    assert!(
+        ReasonCode::new("A".repeat(4_097)).is_err(),
+        "while a well-formed code that is merely too long still is not"
     );
 }
 

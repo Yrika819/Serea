@@ -1,6 +1,6 @@
 # Trust Boundaries
 
-Architecture version: `serea-arch/0.1.0` · Status: **P0 baseline** · Frozen on 2026-10-01
+Architecture version: `serea-arch/0.2.0` · Status: **P0 baseline** · Frozen on 2026-10-01
 
 This document is the **architecture** view of trust boundaries: where the
 structural seams are, what crosses each one, and which mechanism authenticates

@@ -157,8 +157,29 @@ repurposing one is major.
 | `MEMORY_ITEM_WRITTEN` | A memory item was created, with provenance |
 | `MEMORY_ITEM_UPDATED` | An item was superseded |
 | `MEMORY_ITEM_DELETED` | An item was removed, with reason |
+| `DELETION_CASCADE_COMPLETED` | One right-to-delete cascade transaction committed, with the deletion counts and tombstones it wrote ([Data Classification §8.2](09-data-classification-protocol.md#82-deletion-cascades) step 4) |
 | `PROPOSAL_CREATED` | The proactive watcher produced a suggestion |
 | `PROPOSAL_DISMISSED` | The user dismissed a proposal |
+
+`DELETION_CASCADE_COMPLETED` is the **completion record of one cascade
+transaction**, and its meaning is deliberately narrow:
+
+- It is emitted once per cascade, after the transaction that deleted the items,
+  the provenance rows, and the content-addressed blobs, and wrote the
+  tombstones. The payload carries the counts, so a partial failure is visible
+  rather than silent.
+- It is **not** a per-item deletion event. `MEMORY_ITEM_DELETED` records that
+  one item was removed and why; `DELETION_CASCADE_COMPLETED` records that a
+  whole cascade committed. Neither replaces the other, and this kind does not
+  report task deletion or retention, which are governed by
+  [Task Protocol §8](02-task-protocol.md#8-task-retention-and-privacy).
+- It proves only what its transaction did. It carries no authority, and the
+  presence of one says nothing about an effect outside that transaction
+  (`E9`: an externally visible effect still needs its own receipt event).
+
+It was registered by [ADR-0017](../decisions/ADR-0017-deletion-cascade-completed-event-kind.md),
+which records why Data Classification §8.2 remains authoritative for the
+requirement and why adding an event kind is an architecture-minor change.
 
 ### 3.8 Event history and sequence integrity
 
@@ -293,3 +314,14 @@ is an audit artifact, not a task artifact.
 | E8 | `data_class` is enforced before an event crosses the device link. |
 | E9 | An externally visible effect has a receipt event; absence means unverified. |
 | E10 | `MODEL` as an actor records involvement, never authority. |
+---
+
+## 10. Changelog
+
+Entries required by [Protocol Index §7](00-protocol-index.md#7-change-control)
+for every change to this protocol. A change to the `EventKind` set also moves the
+architecture version per [§4.1](00-protocol-index.md#41-semantics).
+
+| Architecture version | Change | Kind | Authority |
+| --- | --- | --- | --- |
+| `serea-arch/0.2.0` | Added `DELETION_CASCADE_COMPLETED` to §3.7. It is the completion record of one right-to-delete cascade transaction, carrying the deletion counts, as required by [Data Classification §8.2](09-data-classification-protocol.md#82-deletion-cascades) step 4. No existing kind was renamed, repurposed, or removed; the wire surface remains `serea.event/1`; unknown kinds still fail closed on a host parse and are still skipped by clients (§4.2 rules 3 and 4, §6 rule 2, `E7`). | Minor — a backward-compatible addition | [ADR-0017](../decisions/ADR-0017-deletion-cascade-completed-event-kind.md) |

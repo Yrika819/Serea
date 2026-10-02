@@ -90,7 +90,7 @@
       "description": "A MODEL actor records that a model was involved. It never records that a model decided something (Event Protocol Section 2.1, E10).",
       "properties": {
         "kind": { "$ref": "#/$defs/actorKind" },
-        "id": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+        "id": { "type": "string", "minLength": 1, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
         "version": {
           "type": "string",
           "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
@@ -149,6 +149,7 @@
         "MEMORY_ITEM_WRITTEN",
         "MEMORY_ITEM_UPDATED",
         "MEMORY_ITEM_DELETED",
+        "DELETION_CASCADE_COMPLETED",
         "PROPOSAL_CREATED",
         "PROPOSAL_DISMISSED",
         "EVENT_HISTORY_EXPIRED",

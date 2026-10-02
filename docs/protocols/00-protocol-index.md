@@ -1,6 +1,6 @@
 # Serea Protocol Index
 
-Status: **FROZEN for P0** · Architecture version `serea-arch/0.1.0` · Frozen on 2026-10-01
+Status: **FROZEN for P0** · Architecture version `serea-arch/0.2.0` · Frozen on 2026-10-01
 
 This document is the naming and versioning authority for every other Serea
 contract. When a type, field, or enum appears in more than one place in the

@@ -644,7 +644,7 @@ Three version axes apply, and this protocol does not collapse them
 
 | Axis | Value | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/0.1.0` | The whole contract set, including this document. |
+| Architecture version | `serea-arch/0.2.0` | The whole contract set, including this document. |
 | Capability version | `1.0.0` on all five `host.goal.*` descriptors | Each capability's input/output contract. |
 | Wire surface | `serea.goallatch/1` | The adapter-internal hop from `HostGoalProvider` to its backing GoalLatch transport. |
 

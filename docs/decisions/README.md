@@ -1,8 +1,8 @@
 # Serea Decision Index
 
-Architecture version: `serea-arch/0.1.0` · Decision set: P0 baseline
+Architecture version: `serea-arch/0.2.0` · Decision set: P0 baseline, plus the P1 corrective addition noted below
 
-This index records the rationale behind the frozen P0 contracts. Protocol documents remain normative: these ADRs explain why the boundaries and choices exist and do not redefine their schemas, fields, variants, or behavior. The architecture version remains `serea-arch/0.1.0`.
+This index records the rationale behind the frozen P0 contracts. Protocol documents remain normative: these ADRs explain why the boundaries and choices exist and do not redefine their schemas, fields, variants, or behavior. The architecture version is `serea-arch/0.2.0`; the `0.1.0` baseline is preserved below, because ADR-0017 is the only change accepted since the P0 freeze and it moves the version by one minor step.
 
 ## Accepted decisions
 
@@ -21,6 +21,7 @@ This index records the rationale behind the frozen P0 contracts. Protocol docume
 | [ADR-0011](ADR-0011-fake-goallatch-until-integration-gate.md) | Fake GoalLatch only until the explicit integration gate | Accepted |
 | [ADR-0012](ADR-0012-capability-provider-protocol-boundary.md) | Capability/provider protocol is the sole effect boundary | Accepted |
 | [ADR-0016](ADR-0016-proactive-watcher-is-read-only.md) | Proactive watcher is read-only | Accepted |
+| [ADR-0017](ADR-0017-deletion-cascade-completed-event-kind.md) | `DELETION_CASCADE_COMPLETED` is a registered `EventKind` | Accepted |
 
 ## P1 implementation plan
 
@@ -34,4 +35,4 @@ The decisions are grounded in the available P0 architecture, protocols, and thre
 - [Protocol index](../protocols/00-protocol-index.md) and its linked protocols
 - [Threat-model index](../threat-model/README.md), [assets and trust boundaries](../threat-model/01-assets-and-trust-boundaries.md), and [adversaries and attack surface](../threat-model/02-adversaries-and-attack-surface.md)
 
-`03-abuse-cases-and-mitigations.md` and `04-security-invariants.md` were absent during the initial inventory, then appeared during this work and were read before finalizing. The complete available threat-model package confirms the fake-only GoalLatch boundary, read-only watcher, protocol change-control discipline, and the distinction between frozen design and implementation evidence. No source-document dependency remains unresolved at final review; the available frozen protocols remain normative. Keep `serea-arch/0.1.0` unchanged absent a separately accepted architecture change.
+`03-abuse-cases-and-mitigations.md` and `04-security-invariants.md` were absent during the initial inventory, then appeared during this work and were read before finalizing. The complete available threat-model package confirms the fake-only GoalLatch boundary, read-only watcher, protocol change-control discipline, and the distinction between frozen design and implementation evidence. No source-document dependency remains unresolved at final review; the available frozen protocols remain normative. Keep `serea-arch/0.2.0` unchanged absent a separately accepted architecture change. The condition has been met exactly once: ADR-0017 registers `DELETION_CASCADE_COMPLETED` as an `EventKind`, which [Protocol Index §4.1](../protocols/00-protocol-index.md#41-semantics) classifies as a minor, backward-compatible addition.

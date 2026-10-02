@@ -1,10 +1,10 @@
 # Crate Map
 
-Architecture version: `serea-arch/0.1.0` · Status: **P0 baseline** · Frozen on 2026-10-01
+Architecture version: `serea-arch/0.2.0` · Status: **P0 baseline** · Frozen on 2026-10-01
 
 This document fixes how the Serea Core Rust workspace is divided, which crate
 may depend on which, and which planned crates this architecture declines to
-create at `serea-arch/0.1.0`. The tree it describes is **planned**: no
+create at `serea-arch/0.2.0`. The tree it describes is **planned**: no
 `Cargo.toml` exists yet.
 
 ---
@@ -275,7 +275,7 @@ drag the keychain's build constraints with it.
 ### 4.4 Planned crates this architecture would **defer**
 
 These are in the planned tree and are deliberately **not** created at
-`serea-arch/0.1.0`. Each is deferred because creating it now would encode a
+`serea-arch/0.2.0`. Each is deferred because creating it now would encode a
 contract that has not earned its shape.
 
 | Crate | Deferred to | Reason |
@@ -285,7 +285,7 @@ contract that has not earned its shape.
 | `serea-scheduler`'s watcher half | P11 | The scheduler crate itself is needed for admission and wake sources. The *proactive watcher* and `Proposal` generation inside it follow the real policy engine so the read-only automation invariant can be tested end to end. |
 | A dedicated `serea-schema` or `serea-codegen` crate | Not planned | Schema codegen is a build-time concern of `serea-protocol`; a crate for it would have no runtime consumer. |
 
-Everything else in the planned tree is created at `serea-arch/0.1.0`.
+Everything else in the planned tree is created at `serea-arch/0.2.0`.
 
 ---
 
@@ -353,7 +353,7 @@ workspace lint fails the build if any non-dev dependency edge targets it.
 | 4 | A provider's descriptors are self-consistent by construction: `id`'s first segment equals `provider_id`, or registration panics at startup, not warns | [Capability Protocol §3.1](../protocols/01-capability-protocol.md#31-field-semantics) |
 | 5 | A provider that cannot honour a descriptor degrades itself and stops advertising, rather than relaxing its output | [Capability Protocol §9](../protocols/01-capability-protocol.md#9-provider-interface), invariant C7 |
 
-### 6.2 What "swappable" concretely buys at `serea-arch/0.1.0`
+### 6.2 What "swappable" concretely buys at `serea-arch/0.2.0`
 
 | Swap | Change required | Change **not** required |
 | --- | --- | --- |

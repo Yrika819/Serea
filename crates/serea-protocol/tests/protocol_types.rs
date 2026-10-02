@@ -23,13 +23,14 @@ use serea_protocol::types::{
     ActionError, ActionErrorKind, ActionRequest, ActionResult, ActionStatus, Actor, ActorId,
     ActorKind, AssistantTask, Authorization, BlockedReason, CapabilityDescriptor,
     CapabilityDescriptorDraft, CostClass, CredentialHandle, DataClass, DescriptorDescription,
-    DescriptorTitle, Envelope, EnvelopeVersion, ErrorCode, EvidenceKind, FailureReason,
-    FinishReason, HostAction, IdempotencySupport, JsonSchemaMode, JsonSchemaRef, MessageRole,
-    ModelCapabilities, ModelDescriptor, ModelError, ModelErrorCode, ModelMessage, ModelPurpose,
-    ModelRequest, ModelResponse, ModelUsage, ProviderHealth, ProviderReference, ReasonCode,
-    ReplaySafety, RequestedBy, ResponseFormat, RiskClass, RootRequirement, SemVer, Seq, SereaEvent,
-    SideEffectClass, StepKind, StepStatus, TaskKind, TaskOriginKind, TaskState, TaskStep,
-    Timestamp, TokenCount, Trace, WireSurface,
+    DescriptorTitle, EffectSummary, Envelope, EnvelopeVersion, ErrorCode, ErrorMessage,
+    EvidenceKind, FailureReason, FinishReason, HostAction, IdempotencySupport, JsonSchemaMode,
+    JsonSchemaRef, LeaseOwner, MessageRole, ModelCapabilities, ModelDescriptor, ModelError,
+    ModelErrorCode, ModelMessage, ModelPurpose, ModelRequest, ModelResponse, ModelUsage,
+    PlainSummary, ProviderHealth, ProviderReference, ReasonCode, ReplaySafety, RequestedBy,
+    ResponseFormat, RiskClass, RootRequirement, SemVer, Seq, SereaEvent, SideEffectClass, StepKind,
+    StepStatus, TaskKind, TaskOriginKind, TaskState, TaskStep, TaskTitle, Timestamp, TokenCount,
+    Trace, WireSurface,
 };
 
 const TASK_ID: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";
@@ -303,6 +304,103 @@ mod machine_readable_codes {
             assert!(ActorId::new(value).is_err(), "{value:?} must be rejected");
         }
         assert!(ProviderReference::new("provider-ref-0001").is_ok());
+    }
+
+    #[test]
+    fn labels_refuse_an_empty_or_whitespace_only_value() {
+        // Non-emptiness is independently frozen and is the one length-adjacent
+        // rule that survives the removal of the unratified free-text ceiling.
+        for value in ["", " ", "\t", "\n", "   \t  "] {
+            let cases: [(ValueField, Result<(), ProtocolError>); 9] = [
+                (ValueField::ActorId, ActorId::new(value).map(|_| ())),
+                (ValueField::TaskTitle, TaskTitle::new(value).map(|_| ())),
+                (
+                    ValueField::DescriptorTitle,
+                    DescriptorTitle::new(value).map(|_| ()),
+                ),
+                (
+                    ValueField::DescriptorDescription,
+                    DescriptorDescription::new(value).map(|_| ()),
+                ),
+                (
+                    ValueField::ErrorMessage,
+                    ErrorMessage::new(value).map(|_| ()),
+                ),
+                (
+                    ValueField::PlainSummary,
+                    PlainSummary::new(value).map(|_| ()),
+                ),
+                (
+                    ValueField::EffectSummary,
+                    EffectSummary::new(value).map(|_| ()),
+                ),
+                (
+                    ValueField::ProviderReference,
+                    ProviderReference::new(value).map(|_| ()),
+                ),
+                (ValueField::LeaseOwner, LeaseOwner::new(value).map(|_| ())),
+            ];
+            for (field, result) in cases {
+                assert_eq!(
+                    result,
+                    Err(ProtocolError::MalformedValue {
+                        field,
+                        reason: ValueRejection::Empty
+                    }),
+                    "{field:?} must refuse {value:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn free_text_is_not_capped_at_the_old_ceiling() {
+        // Regression for the P1-invented `MAX_VALUE_LENGTH = 4096` acceptance
+        // ceiling. Bounds Protocol Section 2 declares its table authoritative
+        // and `B3` makes a bound enforced anywhere else a bug; P0 leaves
+        // payload-byte and object-count bounds unresolved. So no free-text field
+        // may carry a host acceptance ceiling, and this value is deliberately
+        // only just over the retired limit so the fixture stays small.
+        let long = "s".repeat(4_097);
+        assert_eq!(long.len(), 4_097, "one character over the retired ceiling");
+        let cases: [Result<String, ProtocolError>; 9] = [
+            ActorId::new(long.clone()).map(|v| v.as_str().to_owned()),
+            TaskTitle::new(long.clone()).map(|v| v.as_str().to_owned()),
+            DescriptorTitle::new(long.clone()).map(|v| v.as_str().to_owned()),
+            DescriptorDescription::new(long.clone()).map(|v| v.as_str().to_owned()),
+            ErrorMessage::new(long.clone()).map(|v| v.as_str().to_owned()),
+            PlainSummary::new(long.clone()).map(|v| v.as_str().to_owned()),
+            EffectSummary::new(long.clone()).map(|v| v.as_str().to_owned()),
+            ProviderReference::new(long.clone()).map(|v| v.as_str().to_owned()),
+            LeaseOwner::new(long.clone()).map(|v| v.as_str().to_owned()),
+        ];
+        for result in cases {
+            assert_eq!(
+                result,
+                Ok(long.clone()),
+                "otherwise-valid free text above the retired ceiling is accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_machine_readable_code_still_carries_its_own_ceiling() {
+        // The removal above is scoped to free text. A code is a code: the
+        // frozen documents give it no closed set but require it to stay a short
+        // machine-readable token (Event Protocol Section 4; Capability Protocol
+        // Section 3.1, "Every string has maxLength"), so the 64-character code
+        // ceiling is retained and is not a free-text bound.
+        assert!(
+            ReasonCode::new("A".repeat(64)).is_ok(),
+            "a 64-character code is inside the code ceiling"
+        );
+        assert_eq!(
+            ReasonCode::new("A".repeat(65)),
+            Err(ProtocolError::MalformedValue {
+                field: ValueField::ReasonCode,
+                reason: ValueRejection::TooLong
+            })
+        );
     }
 
     #[test]
@@ -612,7 +710,7 @@ mod frozen_enum_sets {
     }
 
     #[test]
-    fn pro_event_3_event_kind_is_exactly_the_fifty_nine_frozen_values() {
+    fn pro_event_3_event_kind_is_exactly_the_sixty_frozen_values() {
         let frozen = [
             // §3.1 Task lifecycle
             "TASK_CREATED",
@@ -665,6 +763,7 @@ mod frozen_enum_sets {
             "MEMORY_ITEM_WRITTEN",
             "MEMORY_ITEM_UPDATED",
             "MEMORY_ITEM_DELETED",
+            "DELETION_CASCADE_COMPLETED",
             "PROPOSAL_CREATED",
             "PROPOSAL_DISMISSED",
             // §3.8 Event history and sequence integrity
@@ -684,7 +783,7 @@ mod frozen_enum_sets {
             "PROVIDER_SYNC_COMPLETED",
             "PROVIDER_SYNC_DEGRADED",
         ];
-        assert_eq!(frozen.len(), 59);
+        assert_eq!(frozen.len(), 60);
         assert_eq!(EventKind::WIRE_NAMES, frozen);
     }
 
@@ -1310,16 +1409,44 @@ mod event_round_trip {
         // Protocol Index Section 4.2 rule 3: unknown enum variants fail closed
         // everywhere. Skipping an unknown kind is a recipient rendering
         // behaviour (Event Protocol Section 6 rule 2), not a host parse.
-        let mut value = frozen_example();
-        value["kind"] = json!("CAPABILITY_ALMOST_COMPLETED");
-        assert!(serde_json::from_value::<SereaEvent>(value).is_err());
+        for bad in [
+            "CAPABILITY_ALMOST_COMPLETED",
+            "DELETION_CASCADE_PARTIAL",
+            "MEMORY_ITEM_DELETE_REQUESTED",
+            "capability_completed",
+        ] {
+            let mut value = frozen_example();
+            value["kind"] = json!(bad);
+            assert!(
+                serde_json::from_value::<SereaEvent>(value).is_err(),
+                "{bad} is not in the frozen Event Protocol Section 3 table"
+            );
+        }
+    }
 
+    #[test]
+    fn the_deletion_cascade_event_is_a_registered_kind() {
+        // Data Classification Section 8.2 step 4 requires the host to record
+        // `DELETION_CASCADE_COMPLETED` with the cascade counts, so a partial
+        // failure is visible rather than silent. The name is registered in the
+        // frozen Event Protocol Section 3.7 table (ADR-0017, architecture
+        // `serea-arch/0.2.0`).
         let mut value = frozen_example();
         value["kind"] = json!("DELETION_CASCADE_COMPLETED");
-        assert!(
-            serde_json::from_value::<SereaEvent>(value).is_err(),
-            "a name used in Data Classification Section 8.2 but absent from the frozen \
-             Event Protocol Section 3 table must not be admitted"
+        value["payload"] = json!({
+            "task_id": TASK_ID,
+            "memory_items_deleted": 3,
+            "provenance_rows_deleted": 3,
+            "blobs_deleted": 5,
+            "tombstones_written": 3
+        });
+        let event: SereaEvent =
+            serde_json::from_value(value.clone()).expect("a registered kind parses");
+        assert_eq!(event.kind.wire_name(), "DELETION_CASCADE_COMPLETED");
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            value,
+            "and round-trips byte-identically"
         );
     }
 

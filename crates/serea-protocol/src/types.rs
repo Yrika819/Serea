@@ -35,26 +35,6 @@ use crate::ids::{
     RequestId, StepId, TaskId,
 };
 
-/// The one hard acceptance ceiling this module enforces on free text.
-///
-/// The frozen documents require `maxLength` on capability schema strings but
-/// bound no protocol *message* string, and the P0 closure records payload-byte
-/// bounds as an open gap. Rather than accept unbounded text, P1 applies one
-/// deliberately generous ceiling at the Rust boundary. It is a **host acceptance
-/// limit, not a protocol bound**: Bounds Protocol §2 declares its table
-/// authoritative and a bound enforced elsewhere a bug (`B3`), so this ceiling
-/// must be ratified into that table by ADR, or removed, in the phase that owns
-/// bound configuration (`serea-core`, P2). `docs/plans/P1-closure.md` records it
-/// as an open item.
-///
-/// The ceiling applies to the *code-like* and *diagnostic* fields, which have no
-/// frozen length. It deliberately does **not** apply to model input and output
-/// text (`ModelMessage.content`, `ModelResponse.content`), because P0 does bound
-/// those — `max_output_tokens_per_call`, default 2048 tokens
-/// (Model Protocol §9; Bounds Protocol §2) — and inventing a second, smaller
-/// character limit in the Rust layer would be a narrower bound than the one the
-/// host enforces at the call site. The asymmetry is asserted by a test.
-const MAX_VALUE_LENGTH: usize = 4096;
 /// The ceiling for machine-readable codes, kept tight so a code stays a code.
 const MAX_CODE_LENGTH: usize = 64;
 /// The ceiling for a capability's schema reference.
@@ -71,11 +51,16 @@ fn has_control_characters(value: &str) -> bool {
 }
 
 fn reject_empty_or_long(field: ValueField, value: &str, limit: usize) -> Result<(), ProtocolError> {
-    if value.is_empty() || value.trim().is_empty() {
-        return Err(malformed(field, ValueRejection::Empty));
-    }
+    reject_empty(field, value)?;
     if value.len() > limit {
         return Err(malformed(field, ValueRejection::TooLong));
+    }
+    Ok(())
+}
+
+fn reject_empty(field: ValueField, value: &str) -> Result<(), ProtocolError> {
+    if value.is_empty() || value.trim().is_empty() {
+        return Err(malformed(field, ValueRejection::Empty));
     }
     Ok(())
 }
@@ -163,9 +148,25 @@ fn validate_code(field: ValueField, value: String) -> Result<String, ProtocolErr
     }
 }
 
-/// Validates a printable single-line label of at most `limit` characters.
-fn validate_label(field: ValueField, value: String, limit: usize) -> Result<String, ProtocolError> {
-    reject_empty_or_long(field, &value, limit)?;
+/// Validates a printable single-line label.
+///
+/// Non-empty and free of control characters are the two frozen requirements, and
+/// they are the only two. This validator enforces **no** length ceiling:
+///
+/// * The frozen documents bound no protocol-message free-text field. Bounds
+///   Protocol §2 declares its table the authoritative set of host-enforced
+///   bounds, and `B3` makes a bound enforced anywhere else a bug.
+/// * P0 deliberately leaves payload-byte, attachment-size, and object-count
+///   bounds unresolved, so there is no ratified ceiling this validator could
+///   enforce without ratifying a competing bound of its own.
+/// * `MAX_VALUE_LENGTH = 4096` did exactly that and was removed by owner
+///   decision. `docs/plans/P1-closure.md` records the removal, and a test pins
+///   that no free-text field is length-capped.
+///
+/// Resource bounds on free text belong to a dedicated bounds decision that
+/// ratifies them into Bounds Protocol §2; this module must not anticipate one.
+fn validate_label(field: ValueField, value: String) -> Result<String, ProtocolError> {
+    reject_empty(field, &value)?;
     if has_control_characters(&value) {
         return Err(malformed(field, ValueRejection::Malformed));
     }
@@ -248,14 +249,14 @@ declare_value!(
     /// names `id` but gives it no grammar.
     ActorId,
     ActorId,
-    |value| validate_label(ValueField::ActorId, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::ActorId, value)
 );
 declare_value!(
     /// A step `lease_owner`. Task Protocol §3.1 requires the field but names no
     /// value space.
     LeaseOwner,
     LeaseOwner,
-    |value| validate_label(ValueField::LeaseOwner, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::LeaseOwner, value)
 );
 declare_value!(
     /// A `SideEffectReceipt.provider_reference`: the external system's own
@@ -263,32 +264,32 @@ declare_value!(
     /// is given and never parses it (GoalLatch Adapter §2 item 6, §6.4).
     ProviderReference,
     ProviderReference,
-    |value| validate_label(ValueField::ProviderReference, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::ProviderReference, value)
 );
 declare_value!(
     /// A diagnostic `ActionError.message`. Diagnostic only: no control flow may
     /// depend on it (Event Protocol §4).
     ErrorMessage,
     ErrorMessage,
-    |value| validate_label(ValueField::ErrorMessage, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::ErrorMessage, value)
 );
 declare_value!(
     /// An `AssistantTask.title`.
     TaskTitle,
     TaskTitle,
-    |value| validate_label(ValueField::TaskTitle, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::TaskTitle, value)
 );
 declare_value!(
     /// A `CapabilityDescriptor.title`.
     DescriptorTitle,
     DescriptorTitle,
-    |value| validate_label(ValueField::DescriptorTitle, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::DescriptorTitle, value)
 );
 declare_value!(
     /// A `CapabilityDescriptor.description`.
     DescriptorDescription,
     DescriptorDescription,
-    |value| validate_label(ValueField::DescriptorDescription, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::DescriptorDescription, value)
 );
 declare_value!(
     /// An `ApprovalRequest.plain_summary`: host-written from validated
@@ -296,13 +297,13 @@ declare_value!(
     /// (Approval Protocol §2.1).
     PlainSummary,
     PlainSummary,
-    |value| validate_label(ValueField::PlainSummary, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::PlainSummary, value)
 );
 declare_value!(
     /// A `SideEffectReceipt.effect_summary`.
     EffectSummary,
     EffectSummary,
-    |value| validate_label(ValueField::EffectSummary, value, MAX_VALUE_LENGTH)
+    |value| validate_label(ValueField::EffectSummary, value)
 );
 
 /// An RFC 3339 timestamp in UTC, exactly as every frozen example writes it:
@@ -1476,6 +1477,12 @@ declare_enum!(
         MemoryItemUpdated => "MEMORY_ITEM_UPDATED",
         /// A memory item was removed with a reason.
         MemoryItemDeleted => "MEMORY_ITEM_DELETED",
+        /// The right-to-delete cascade transaction committed; the payload
+        /// carries the counts and evidence that make a partial failure visible
+        /// (Data Classification §8.2 step 4, ADR-0017). It is the completion
+        /// record of one cascade transaction, not a per-item deletion event, and
+        /// it proves nothing about any effect outside that transaction.
+        DeletionCascadeCompleted => "DELETION_CASCADE_COMPLETED",
         /// The proactive watcher produced a suggestion.
         ProposalCreated => "PROPOSAL_CREATED",
         /// The user dismissed a proposal.
@@ -1689,9 +1696,13 @@ pub struct JsonSchemaRef(String);
 impl JsonSchemaRef {
     /// Wraps and validates a schema reference.
     ///
-    /// The accepted character set is a URL/reference subset. A schema
-    /// reference is host-authored, never caller-supplied, so the bound is a
-    /// host acceptance ceiling rather than a frozen protocol bound.
+    /// The accepted character set is a URL/reference subset. The frozen
+    /// documents require every schema string to carry a `maxLength`
+    /// (Capability Protocol §3.1), so a length bound is required here; the
+    /// specific value is a host choice, not a frozen number. Unlike free text,
+    /// this field has a frozen grounding for *having* a bound, so it is not the
+    /// unratified competing bound that `MAX_VALUE_LENGTH` was. A schema
+    /// reference is host-authored and never caller-supplied.
     pub fn new(value: impl Into<String>) -> Result<Self, ProtocolError> {
         let value = value.into();
         let reject = || malformed(ValueField::SchemaReference, ValueRejection::Malformed);

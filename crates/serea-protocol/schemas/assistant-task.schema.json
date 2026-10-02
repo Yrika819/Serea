@@ -36,7 +36,6 @@
     "title": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 4096,
       "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
     },
     "state": {
@@ -150,7 +149,6 @@
         {
           "type": "string",
           "minLength": 1,
-          "maxLength": 4096,
           "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
         },
         {
@@ -352,7 +350,6 @@
             {
               "type": "string",
               "minLength": 1,
-              "maxLength": 4096,
               "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
             },
             {
@@ -423,13 +420,11 @@
         "provider_reference": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 4096,
           "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
         },
         "effect_summary": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 4096,
           "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
         },
         "observed_at": {
@@ -462,7 +457,6 @@
         "message": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 4096,
           "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
         },
         "retryable": {

@@ -1,6 +1,6 @@
 # Serea Architecture
 
-Architecture version: `serea-arch/0.1.0` · Status: **P0 baseline** · Frozen on 2026-10-01
+Architecture version: `serea-arch/0.2.0` · Status: **P0 baseline** · Frozen on 2026-10-01
 
 This directory is the architecture package for Serea Core. It describes how the
 frozen protocols in [`docs/protocols/`](../protocols/00-protocol-index.md) are
@@ -56,9 +56,9 @@ Neither is allowed to quietly widen the other.
 
 **Three version axes, never collapsed** ([Protocol Index §4](../protocols/00-protocol-index.md#4-versioning)):
 
-| Axis | Value at `serea-arch/0.1.0` | Governs |
+| Axis | Value at `serea-arch/0.2.0` | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/0.1.0` | The whole contract set, including this package |
+| Architecture version | `serea-arch/0.2.0` | The whole contract set, including this package |
 | Capability version | Per-descriptor SemVer, e.g. `calendar.events.list` at `1.2.0` | One capability's input/output contract |
 | Wire protocol version | `serea.action/1`, `serea.task/1`, `serea.model/1`, `serea.policy/1`, `serea.approval/1`, `serea.event/1`, `serea.device/1`, `serea.goallatch/1`, `serea.data/1`, `serea.bounds/1` | One transport or serialization surface |
 

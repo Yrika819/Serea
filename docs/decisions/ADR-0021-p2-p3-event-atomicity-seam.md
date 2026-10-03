@@ -1,13 +1,14 @@
 # ADR-0021: The P2/P3 Event-Atomicity Seam
 
-- Status: **Proposed** — pending implementation and owner ratification
+- Status: **Proposed** — runtime acceptance requires the deferred P2C/P2F/P2G gates; P3 event guarantees require their own green gate
 - Architecture version: `serea-arch/0.2.0` at the time of writing
 - Decision date: not yet ratified
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.7
 
-> This ADR changes no frozen protocol text and no code. The amendments below are
-> **drafted, not applied**.
+> P2A records documentation direction only, including the event-protocol sequencing
+> annotation; no participant, journal or event runtime is implemented here. The
+> runtime gate below remains deferred and this ADR remains Proposed.
 
 ## Context
 
@@ -35,7 +36,7 @@ Three options:
 | --- | --- |
 | Create `serea-event-bus` in P2 | **Rejected.** It inverts the phase plan, pre-empts P3's design of the fan-out queue and retention classes, and widens P2's declared slice from `serea-storage` + `serea-task-engine` to three crates. Crate Map §4.1's entire justification is that event append is *separate* work |
 | Mutate state with no durable trace | **Rejected.** Violates `E3`, destroys the audit trail Event Protocol §7 depends on, and breaks Task Protocol §6 recovery, which needs to know what was already decided |
-| A commit primitive in P2 that P3 fills without rewriting P2 | **Accepted** |
+| A commit primitive in P2 that P3 fills without rewriting P2 | **Selected proposal; deferred runtime gate** |
 
 ## Decision
 
@@ -73,16 +74,18 @@ pub struct DurableTransition<'a> { /* occurred_at_ms, actor, causation_id,
 
 /// Writes this participant's rows into the caller's open transaction.
 pub trait TransactionParticipant {
-    fn participate(&mut self, tx: &mut Tx, t: &DurableTransition<'_>)
+    fn record(&self, tx: &Transaction<'_>, t: &DurableTransition<'_>)
                    -> Result<(), StoreError>;
 }
 ```
 
-`Store::transact` opens `BEGIN IMMEDIATE`, creates one `Tx`, and the `Tx` method
-performing the state write calls each participant with the transition it just
-performed. Every participant therefore commits or rolls back exactly with the state
-change — which is the *mechanism* `E3` requires. What a participant writes is its
-own business.
+`Store::transact` opens `BEGIN IMMEDIATE`; its successful body returns the result
+and immutable transition(s) describing writes actually performed. Propagate
+`body(&tx)?` before invoking any participant. Then call `record(&self, &tx, &t)` in
+fixed order on the same transaction, then commit. A failed body, failed participant
+or failed commit rolls back the whole set; a successful no-op returns no transitions
+and records nothing. Never accept a prebuilt transition detached from the successful
+write. This seam is deferred runtime design, not P2A implementation.
 
 **Four properties this signature has and the earlier one did not**, each of which
 was a defect in the sketch the audit replaced:
@@ -97,9 +100,9 @@ was a defect in the sketch the audit replaced:
 **A generic hook registry is not needed, and is rejected.** P2 registers exactly
 one participant. A registry would add ordering, interior mutability and a
 lifecycle question in exchange for a capability P2 does not use. The narrower
-form — `Tx` calls its participants explicitly, in a fixed order, at the point of
-the state write — gives P3 the identical seam with less hidden behaviour, so that
-is what is specified.
+form — `Store::transact` calls its participants explicitly, in a fixed order,
+after its successful body returns immutable transitions and before commit — gives
+P3 the identical seam with less hidden behaviour, so that is what is specified.
 
 ### P2 registers exactly one participant: `TaskJournal`
 
@@ -124,7 +127,7 @@ are the record instead.
 
 ### P3 adds a second participant, and `E3` holds from that point forward
 
-`serea-event-bus` implements `TransactionParticipant`. Its `participate` writes
+`serea-event-bus` implements `TransactionParticipant`. Its `record` writes
 `serea_events` and allocates `seq` from a `store_meta.next_seq` counter, **inside
 the same `Tx`**, from the same `DurableTransition` the journal received. Because
 both participants run inside one `BEGIN IMMEDIATE`, `E3` is satisfied for every
@@ -143,7 +146,8 @@ than merely wrong:
    committed without its event, so `E3` stays violated and **the gap is permanent
    rather than transitional**." `task_journal` with a nullable `event_seq` that P3
    drains *is* that outbox. One of the two positions was wrong; the rejection
-   reasoning was the sound one, and it applies verbatim to the accepted design.
+   reasoning was the sound one, and it applies verbatim to the then-selected
+      proposal; it is not ADR acceptance.
 2. **It cannot make `E3` true.** A reconstructed event was written in a different
    transaction, months later, from a different process. For those rows the
    transaction `E3` describes does not exist and never will.
@@ -161,10 +165,10 @@ path *reads* `task_journal` for pre-P3 history and does not synthesise events.
 before an event participant existed — which is exactly the operator visibility the
 count was introduced for, and is honest.
 
-### Why the journal schema is shaped for that back-fill
+### Why the journal schema preserves historical audit data
 
-A P2 database upgraded to P3 must be able to materialise every missing event
-without inventing data. So `task_journal` carries, from P2:
+P3 reads pre-P3 history without materializing missing events. For auditable
+history, `task_journal` carries, from P2:
 
 `actor_kind`, `actor_id`, `actor_version`, `causation_id`, `data_class_rank`,
 `payload_digest`, `payload_ref_digest`, `occurred_at_ms`, `reason_code`,
@@ -177,10 +181,9 @@ and an earlier draft of this ADR claimed they were, which was false:
 `MODEL_CALLED` requires `model_id`, `purpose` and a token estimate. None was in the
 column list, so the "no fabrication at upgrade time" property did not hold.
 
-The fix is `task_journal.payload_json`, validated JSON carrying whatever the
-transition's future event payload will need, plus `payload_ref_digest` pointing at
-a blob for large payloads. The back-fill property then holds because the payload has
-somewhere to live, not because the columns happened to be complete.
+`task_journal.payload_json` holds validated historical transition data, with
+`payload_ref_digest` referencing large content. These fields preserve audit history;
+they neither promise complete future event payloads nor authorize event backfill.
 
 ## What P2 can honestly claim at closure
 
@@ -198,9 +201,9 @@ prose.
 | `E1`, `E2`, `E5`–`E10` | **NOT claimed** | All belong to `serea-event-bus` or the device link |
 
 To make the deferral **visible rather than silent**, `RecoveryReport` carries
-`pending_event_transitions: u64`, counting `task_journal` rows that no event
-participant has acknowledged — `event_seq IS NULL` in P2, and whatever P3's
-migration leaves non-`NULL` thereafter. A P2 test asserts the count is greater than
+`pending_event_transitions: u64`, counting all P2 `task_journal` rows. There is no
+`event_seq` column, acknowledgement or queue to drain. P3 preserves this historical
+count separately from newly atomic transitions; it does not backfill it. A P2 test asserts the count is greater than
 zero after a task creation. An operator can therefore see the `E3` debt from
 inside the product, and a P3 upgrade can measure exactly how much history predates
 it.
@@ -227,8 +230,10 @@ is a deliberate decision rather than an omission.
 
 ## Proposed amendment
 
-Applied to `docs/protocols/06-event-protocol.md` only in the same commit that
-implements it. Nothing here is applied by this run.
+The sequencing annotation in `docs/protocols/06-event-protocol.md` records the
+proposed direction in P2A, not implemented event atomicity. Runtime source,
+migration and tests must pass P2C/P2F/P2G together before this ADR is accepted;
+P3 must separately prove forward-only E3/E4 when its real participant lands.
 
 A single note added under `E3` and `E4`, and a changelog section:
 
@@ -241,7 +246,7 @@ A single note added under `E3` and `E4`, and a changelog section:
 `E3` and `E4` themselves are **unchanged**. This ADR adds an implementation
 sequencing note, not a relaxation.
 
-## Code change, same commit
+## Deferred runtime implementation gate (P2C/P2F/P2G, not P2A)
 
 | File | Change |
 | --- | --- |

@@ -73,6 +73,11 @@
     }
   },
   "$defs": {
+    "opaqueToken": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000])(?![\\s\\S]*[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000](?![\\s\\S]))(?!(?:tsk_|stp_|apr_|grt_|req_|evt_|dev_|sch_|prop_|rcp_|ses_)[0-7][0-9A-HJKMNP-TV-Z]{25}(?![\\s\\S]))(?!idk_[0-9a-f]{64}(?![\\s\\S]))(?!sha256:[0-9a-f]{64}(?![\\s\\S]))(?!(?!(?:goallatch)\\.)[a-z][a-z0-9_]{1,31}\\.[a-z][a-z0-9_]{1,31}\\.(?:list|read|search|open|control|write|create|send|delete|start|status|run|cancel|result)(?![\\s\\S]))[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+(?![\\s\\S])"
+    },
     "timestamp": {
       "type": "string",
       "description": "The syntactic form only. ECMA-262 regular expressions have no date arithmetic, so a calendar-impossible but well-formed value such as 2026-02-30T00:00:00Z passes this pattern; the Rust Timestamp value is the authority for calendar validity and refuses it. Every value Serea puts on the wire is deserialised into that type.",
@@ -90,7 +95,7 @@
       "description": "A MODEL actor records that a model was involved. It never records that a model decided something (Event Protocol Section 2.1, E10).",
       "properties": {
         "kind": { "$ref": "#/$defs/actorKind" },
-        "id": { "type": "string", "minLength": 1, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+        "id": { "$ref": "#/$defs/opaqueToken" },
         "version": {
           "type": "string",
           "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",

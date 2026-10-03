@@ -1,11 +1,13 @@
 # Crate Map
 
-Architecture version: `serea-arch/0.2.0` · Status: **P0 baseline** · Frozen on 2026-10-01
+Architecture version: `serea-arch/1.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
 
 This document fixes how the Serea Core Rust workspace is divided, which crate
 may depend on which, and which planned crates this architecture declines to
-create at `serea-arch/0.2.0`. The tree it describes is **planned**: no
-`Cargo.toml` exists yet.
+create. The full tree is **planned runtime architecture**, not a claim that all
+crates exist. At P2A only `serea-protocol` and `serea-testkit` exist; the historical
+P0 creation/defer statements below describe the planned decomposition, not the
+current Cargo workspace inventory.
 
 ---
 

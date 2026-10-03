@@ -66,12 +66,14 @@
 // reasoning that makes it unreachable.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod canonical;
 pub mod errors;
 pub mod ids;
 pub mod provider;
 pub mod schema;
 pub mod types;
 
+pub use canonical::{CanonicalJsonError, canonicalize, derive_idempotency_key, digest_of};
 pub use errors::{
     ContractRule, IdentifierDomain, IdentifierRejection, ProtocolError, SerializationRejection,
     ValueField, ValueRejection,
@@ -96,6 +98,7 @@ pub use types::{
     ModelDescriptor, ModelError, ModelErrorCode, ModelMessage, ModelPurpose, ModelRequest,
     ModelResponse, ModelUsage, PlainSummary, ProviderHealth, ProviderReference, ReasonCode,
     ReplaySafety, RequestedBy, ResponseFormat, RiskClass, RootRequirement, SemVer, Seq, SereaEvent,
-    SideEffectClass, SideEffectReceipt, StepKind, StepStatus, TaskKind, TaskOrigin, TaskOriginKind,
-    TaskState, TaskStep, TaskTitle, Timestamp, TokenCount, Trace, WireSurface,
+    SideEffectClass, SideEffectReceipt, StepKind, StepPresence, StepStatus, TaskKind, TaskOrigin,
+    TaskOriginKind, TaskState, TaskStep, TaskStepDraft, TaskTitle, TextCategory, Timestamp,
+    TokenCount, Trace, WireSurface, text_pattern,
 };

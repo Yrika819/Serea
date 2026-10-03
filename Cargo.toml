@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/serea-protocol", "crates/serea-testkit"]
+exclude = ["vendor/jsonschema-value", "vendor/serde_json"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,16 +25,24 @@ serea-testkit = { path = "crates/serea-testkit" }
 # Protocol Index §5 freezes JSON as the wire format, so a serializer is
 # required rather than optional.
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = "=1.0.151"
+
+# P2A SCJ-1 content digests and domain-separated IDK-1 derivation (ADR-0019).
+# No optional alloc/oid features, database, clock, or async runtime.
+sha2 = { version = "0.11.0", default-features = false }
 
 # JSON Schema 2020-12 validation. Required by Protocol Index §5 and Capability
 # Protocol §3.1 fail-closed schema validation. `default-features = false`
 # disables the crate's `reqwest`, `resolve-http`, `resolve-file`, `resolve-async`
 # and TLS features, so no Serea code path can resolve a `$ref` over the network
 # or off the filesystem.
-jsonschema = { version = "0.58", default-features = false }
+jsonschema = { version = "=0.58.3", default-features = false }
 
 # Keeps the P1 provider ports `dyn`-composable, as Capability Protocol §9 and
 # Crate Map §6.1 require (providers are registered as trait objects by
 # `serea-core`). This is a proc macro only; it introduces no async runtime.
 async-trait = "0.1"
+
+[patch.crates-io]
+jsonschema-value = { path = "vendor/jsonschema-value" }
+serde_json = { path = "vendor/serde_json" }

@@ -11,13 +11,20 @@
 
 ## How to read this
 
-A row is `READY` only if it points at **executable evidence** or a **frozen
-contract**. If a row says `READY` and you cannot name which, it is not `READY` and
-the row is wrong.
+`READY` means specified for implementation, grounded in a frozen contract,
+owner direction or scoped executable evidence; it does **not** mean production
+validation passed. Historical measurements below retain their original scope.
+Current owner ratification after three corrected documentation re-reviews GREEN
+accepts ADR-0018/19/20/23 within their stated scopes. P2A slices are implemented;
+current final workspace/MSRV validation, test counts, bounded regression review
+and integration status are coordinator-owned in the
+[closure record](P2A-review-and-closure.md), not inferred from earlier runs. ADR-0018
+runtime is deferred and ADR-0021/22/24 remain **Proposed** runtime; 0024 wire
+generation only is implemented. The historical audit is not current closure.
 
 | Status | Meaning |
 | --- | --- |
-| **READY** | Evidence-determined. Implement it as written; do not re-open it |
+| **READY** | Specified for implementation; evidence scope and deferred gates still apply |
 | **READY_WITH_LIMITATION** | Evidence-determined, and the limit is named here and in the design |
 | **NEEDS_RATIFICATION** | The analysis is done; a human must sign. Ratifying is not deciding |
 | **NEEDS_REDESIGN** | Not resolvable at this level; see the audit |
@@ -30,51 +37,47 @@ piece of prose.
 
 ---
 
-## 1. Before P2A — the protocol corrections
+## 1. P2A — ratified current contract and scoped implementation
 
-| # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
-| --- | --- | --- | --- | --- | --- |
-| 1.1 | Architecture version `0.2.0 → 1.0.0`; `serea.task/1 → 2`; `serea.action/1 → 2`; `serea.event/1` unchanged | **NEEDS_RATIFICATION** | Protocol Index §4.1, §5, §7. ADR-0018 relaxes five required fields, which is neither "a new optional field" nor backward-compatible; §5 sets the precedent that weakening a required field is breaking. Full analysis: [audit M6](P2-autonomous-audit.md) | Architecture owner — ratify | **No.** §4.1 decides it. The owner signs; the owner does not choose |
-| 1.2 | **Two** migration notes are required, not one: `serea.task/2` **and** `serea.action/2` | **NEEDS_RATIFICATION** | Protocol Index §7 item 4 requires "a migration note naming every consumer that must change" for a **Major**, and **both** surfaces take a major. The earlier version of this row described the task as "mainly `serea.task/2`", which understated it: ADR-0019 narrows frozen Protocol Index §5 and ADR-0023 widens `message`, so `serea.action/1 → 2` is equally major. Both drafts now exist — [launch package §4](P2-6.1-sol-launch.md#4-migration-note-drafts) — and both are short **only** because `serea-core` and the Android client are P12 and no task or action document has crossed a host boundary. That is true now and stops being true at P12, which is the argument for taking the major now | Architecture owner — ratify, P2A | **No.** Reading and signing drafted prose, not deciding a classification |
-| 1.3 | ADR-0018's five `TaskStep` fields become `Option`, behind a `StepPresence` constructor and a `serde(try_from = Draft)` route | **READY** | Frozen Task Protocol §4.3 requires a plan persisted before execution; §3.1 requires `attempt` to distinguish a crash from a retry. The current shape cannot represent the state | P2A | No |
-| 1.4 | ADR-0024's `lease_generation: Option<u32>` on the wire | **READY** | Protocol Index §4.1's minor case verbatim: a new optional field | P2A | No |
-| 1.5 | ADR-0023's three text categories, one validator each | **READY** | Nine fields, two of whose demands are individually wrong. `PlainSummary` is an approval prompt, so a newline is consent spoofing; `ErrorMessage` is a diagnostic, so a newline costs nothing | P2A | No |
-| 1.6 | **ADR-0023's category-O rule is C, not B** | **READY** | Measured: A catches 11/16 impersonations with 0/14 false positives; **B catches 15/16 with 8/14 false positives** — refusing `calendar`, `worker`, `worker-1`, `host-a3f9`, `x`, `w`, i.e. every plausible `LeaseOwner`; **C catches 16/16 with 0/14**. `ProviderId` `[a-z][a-z0-9_]{1,31}` and `ModelId` `^[a-z0-9]+(-[a-z0-9]+)*$` subsume ordinary words | P2A | No — but **do not re-derive it.** The excluded domains are stated in ADR-0023 |
-| 1.7 | **The category-O pattern is expressible in JSON Schema**, so Rust/schema parity is real | **READY** | Verified under ECMA-262. The published pattern previously required a colon before the prefix and fired on **nothing that can occur** — 7/14 divergences, including the case ADR-0023's own corpus names | P2A | No |
-| 1.8 | The generated pattern must subtract the `goallatch` namespace | **READY** | `serea-protocol`'s `CapabilityId` refuses `goallatch` as a provider, so `goallatch.goal.run` is **not** a `CapabilityId`. A pattern merely *stricter* than `CapabilityId` is still a parity bug | P2A | No |
-| 1.9 | ADR-0019's `‖` becomes IDK-1 with the byte layout published | **READY** | All 7 IDK-1 vectors recomputed and reproduce; §13.2's layout verified exactly at 21/1/53/53/49/39/66 = **282** bytes. The naive `‖` collides on legal input (`p.r.list`/`0.0.0`/`-12` versus `p.r.list`/`0.0.0-1`/`2`) | P2A | No |
-| 1.10 | **SCJ-1 vector 8's input was wrong; the hash was right** | **READY** | `sha256(canonicalize(old input))` = `52f38c8c…`; `sha256(old claimed canonical bytes)` = the published `e1e4c6bf…`. Canonicalization cannot introduce a character. The input is corrected, the constant does not move, and the vector regains the `U+007F` coverage it exists to provide | P2A | No |
-| 1.11 | ADR-0020: `B3` scoped to operational bounds | **READY** | No code change. P1 retracted `MAX_VALUE_LENGTH` as an unratified competing bound; `maxLength: 71` on `digest` has a different basis — Capability Protocol §3.1 *requires* schema strings to carry one | P2A | No |
-| 1.12 | ADR-0021: `E3` holds **forward only**; no event reconstruction | **READY** | `E3` cannot be satisfied for a transition whose transaction is gone. Back-filling is the `pending_event` outbox ADR-0021 itself rejected as "permanent rather than transitional". The history is already durable in `task_journal` | P2A | No |
-| 1.13 | The participant seam is `DurableTransition` + `TransactionParticipant`, not a hook registry | **READY** | `fn append(&mut self, tx)` carries the transition identity in mutable state, so a `transact` body returning early leaves the journal describing the previous transition; and a `Box<dyn CommitHook>` behind `transact(&self)` needs interior mutability, contradicting ADR-0024's single-mutex claim. Neither participant needs `&mut self` — both counters are SQL | P2A | No |
+Owner direction on 2026-10-03 ratifies current arch1/task2/action2/event1/envelope1
+and MSRV 1.85. **IMPLEMENTED_SCOPED** retains the implementation disposition label;
+it does not independently claim final validation or integration closure.
+Deferred SQL/runtime rows remain READY only. [Closure record](P2A-review-and-closure.md)
+retains unchanged G01–G19, historical counts and independent subagent GREEN
+re-reviews under the coordinator, alongside coordinator tool-run validation and
+frozen implementation review/remediation statuses. Final-tree counts and review
+results must be evidenced there after the exact numeric follow-up.
 
-**P2A is fully specified.** Nothing on it is blocked. The only inputs needed are
-1.1's ratification and 1.2's prose.
+| # | Decision | Status | Phase / acceptance evidence |
+| --- | --- | --- | --- |
+| 1.1 | arch1/task2/action2/event1; envelope1; per-surface mixed-major registry | **RATIFIED / IMPLEMENTED_SCOPED** | Frozen current contract; all 11 published wire surfaces, including scheduler/1, implemented in registry/dispatch; no scheduler runtime. Coordinator records current final workspace/MSRV validation, test counts, review and integration evidence in the closure record |
+| 1.2 | Two migration notes naming all consumers, including manifests, canonical tests, event schema and testkit ports | **RATIFIED** | Launch §4 current inventory; four changed schemas; schema.rs version documentation only, embedding/validation unchanged; envelope schema and ID tests unchanged, inline tests/no fixture file; one P2A integration only |
+| 1.3 | Four TaskStep Option conversions; input_digest required; provider/capability/version already Option; seven unconditional fields | **IMPLEMENTED_SCOPED** | Accepted ADR-0018 wire/lifecycle architecture; TaskStepDraft → private validated TaskStep/StepPresence, no public mutation, reserved extension keys refused; no storage runtime |
+| 1.4 | Missing/null both None; serializer omits None; SQL0 maps to wireNone; positive u32 generation, overflow refused | **IMPLEMENTED_SCOPED** wire / **READY** SQL | Wire field remains Option<u32>; RawValue token analysis accepts exact integer-valued 1.0/1e0 without f64 rounding and refuses near-integer fractions/overflow, unlike SCJ-1 spelling rules; direct schema validation uses arbitrary-precision plus the narrow patch in launch §3; SQL conversions P2C/P2E deferred |
+| 1.5 | Unknown well-formed wire status parses; known-status presence and unconditional kind invariants, non-capability receipts absent on ALL statuses including unknown | **IMPLEMENTED_SCOPED** | Rust restriction and schema mismatch corrected in coordinator integration; wire P2A, unknown execution blocking P2F deferred |
+| 1.6 | Exact O/L/P rules, C1 refusals retained, Unicode White_Space pinned identically Rust/schema | **IMPLEMENTED_SCOPED** | Accepted ADR-0023 complete validation; types.rs validators, every provider_reference and event.schema covered |
+| 1.7 | ULID [0-7] then25; exact idk_/sha256:; exact goallatch subtraction | **IMPLEMENTED_SCOPED** | Generated ECMA-262 patterns and independent expected cases; no event1 O widening |
+| 1.8 | B3 structural/operational distinction; no resource bounds added | **ACCEPTED** | ADR-0020 semantic clarification; minor in isolation, not patch |
+| 1.9 | All SCJ-1/digest/duplicate parser/IDK-1 + sha2 0.11 no defaults | **IMPLEMENTED_SCOPED** | Accepted ADR-0019 full primitive decision; canonical module/root API, names AND values framed, no action2 without primitives |
+| 1.10 | Historical p.r.list A/B retained privately, typed API rejects invalid ID; typed pp.rr.list generic scalar + legal objects tested | **IMPLEMENTED_SCOPED** | Any SCJ-1 root in generic derivation, ActionRequest remains object-root; no legal-ActionRequest collision or approval-transfer claim |
+| 1.11 | Canonical text parser rejects duplicates before Value; raw provenance is caller boundary obligation | **IMPLEMENTED_SCOPED_WITH_LIMITATION** | Cannot reconstruct discarded duplicate keys or prove original raw text at type level |
+| 1.12 | Integer-only SCJ-1 limited domain; model temperature f64 wire unchanged | **IMPLEMENTED_SCOPED_WITH_LIMITATION** | Future runtime refuses noncanonical model digest documents; future fraction decision, no truncation |
+| 1.13 | Accepted 0018/19/20/23 after corrected docs GREEN; runtime 0021/22/24 remain Proposed | **RATIFIED** | 0018 architectural/wire acceptance, runtime deferred; 0024 wire member implemented, not full fencing or full workspace/MSRV closure |
 
----
+## 2. Before P2B — Clock only
 
-## 2. Before P2B — canonicalization and the clock
-
-| # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
-| --- | --- | --- | --- | --- | --- |
-| 2.1 | SHA-256 crate: **`sha2` 0.11.0**, `default-features = false` | **READY** | MSRV **1.85** — exactly the workspace MSRV, so no conflict. MIT OR Apache-2.0, pure Rust, no clock, no network, standard FIPS 180-4. Re-verified from the crate manifest and crates.io during the closure run; `default-features = false` suffices because P2 computes a digest and uses neither `alloc` nor `oid`. See row 3.15 for the two implementation traps (`finalize()` returns `Array`, which has no `LowerHex`; runtime CPU-feature backends yield identical digests). `0.10.9` is the fallback | P2B | No |
-| 2.2 | SCJ-1 rule 6 stays **integer-only** | **READY** | No frozen Serea surface carries a fraction; Protocol Index §5 already routes 64-bit quantities to decimal strings. Integer-only is cross-architecture deterministic with **zero** further work | P2B | No |
-| 2.3 | The reason is *not* "no portable spelling" | **READY** | RFC 8785 §3.2.2.3 mandates ECMAScript §7.1.12.1 `Number::toString` with "Note 2" and names Ryu as a reference. A portable spelling **does** exist. ADR-0019's stated reason was false and is corrected | P2B | No |
-| 2.4 | Full JCS adoption is unavailable, for an unrelated reason | **READY** | RFC 8785 §3.2.3 sorts keys by **UTF-16 code units** and warns UTF-8 sorting "would differ and thus be incompatible". Frozen Protocol Index §5 says **UTF-8 code point**. The orders genuinely disagree for astral-plane keys | P2B | No |
-| 2.5 | If fractions are ever admitted, the crate is **`ryu-js`**, not `ryu` and not `std` | **READY** | Rust's `f64` `Display` mismatches **5 of 12** RFC 8785 Appendix B values, including the round-to-even case (`1424953923781206.3` vs `…206.2`). `ryu` is shortest-round-trip but not the ECMAScript form | P5 trigger | No |
-| 2.6 | The named trigger for revisiting rule 6 | **READY** | *A capability whose `input_schema` admits a fractional number.* At that point the rule, the range and the dependency land in **P5**, not P2B | P5 | No |
-| 2.7 | `canonicalize(&str) -> Vec<u8>` is the only entry point; no `put_blob_value` | **READY** | A `serde_json::Value` has already lost duplicate object keys and cannot be checked for them. Closing the differential at the type level | P2B | No |
-| 2.8 | Duplicate object keys are refused | **READY** | `serde_json` silently keeps the last occurrence, so a document another implementation reads as the *first* would digest as the last — on a value that decides whether an external effect is suppressed | P2B | No |
-| 2.9 | `Clock` in `serea-protocol`, returning `TimestampMs` | **READY** | Crate Map §3 freezes `Clock` as a `serea-protocol` item; P2 is its first consumer, so this fills a declared slot and needs no ADR. `2^48-1` ms is year 10889, so one type covers the whole wire range | P2B | No |
-| 2.10 | `TestClock`'s authoritative state becomes one `now_ms: u64` | **READY** | Today it is **seven** fields, so `now_ms()` would have to invert calendar arithmetic that can drift from `Timestamp::new`'s validation. One authority removes the inversion | P2B | No |
+Clock/time conversions and single TestClock now_ms authority remain P2B. No
+canonical primitive or sha2 dependency can be deferred to this phase. Model f64
+support does not imply canonical float support; a future decision must specify
+fraction range/encoding before digested storage admits it.
 
 ---
 
-## 3. Before P2C — the only genuine owner decision in P2
+## 3. Before P2C — historical dependency evidence and current direction
 
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
-| 3.1 | **The workspace MSRV stays at 1.85. No rise is required.** | **READY** | The previous row here claimed `libsqlite3-sys` 0.38.x "declares `rust-version = "1.88.0"` and `edition = "2024"`" and made an MSRV rise the one genuine owner decision in P2. **Both halves are false.** `libsqlite3-sys-0.38.2/Cargo.toml` has **no `rust-version` field** and is **`edition = "2021"`**; `rusqlite-0.40.2` likewise declares no MSRV. Decisive: **`cargo +1.85.0 check` and `cargo +1.85.0 run` both succeed** on `rusqlite 0.40.2` with `default-features = false, features = ["bundled"]`, compiling the SQLite amalgamation and returning `sqlite_version() = 3.53.2`. Both crates publish the policy *"Latest stable Rust version at the time of release. It might compile with older versions."* — for a 2026-08-08 release that is 1.97.1, which is a floor on their CI, not on this workspace. `Cargo.toml` and `.clippy.toml` are **unchanged** | **No owner decision remains.** Ratify the finding, do not re-open the choice | **No** |
+| 3.1 | **The workspace MSRV stays at 1.85. No rise is required.** | **READY** | The previous row here claimed `libsqlite3-sys` 0.38.x "declares `rust-version = "1.88.0"` and `edition = "2024"`" and made an MSRV rise the one genuine owner decision in P2. **Both halves are false.** `libsqlite3-sys-0.38.2/Cargo.toml` has **no `rust-version` field** and is **`edition = "2021"`**; `rusqlite-0.40.2` likewise declares no MSRV. Decisive: **`cargo +1.85.0 check` and `cargo +1.85.0 run` both succeed** on `rusqlite 0.40.2` with `default-features = false, features = ["bundled"]`, compiling the SQLite amalgamation and returning `sqlite_version() = 3.53.2`. Both crates publish the policy *"Latest stable Rust version at the time of release. It might compile with older versions."* — for a 2026-08-08 release that is 1.97.1, which is a floor on their CI, not on this workspace. `Cargo.toml` and `.clippy.toml` are **unchanged** | **RATIFIED by owner direction.** MSRV remains 1.85; historical probe evidence retained | **No** |
 | 3.2 | `rusqlite` **0.40.2**, `default-features = false, features = ["bundled"]` | **READY** | Bundles SQLite **3.53.2** (`SQLITE_SOURCE_ID` `2026-06-03 19:12:13 d6e03d8c…`, read from `sqlite3.h`, `sqlite3.c`, and a live `SELECT sqlite_version()`). The earlier `3.53.4` / `2026-07-24` was a transcription error. 20 packages compiled on `aarch64-apple-darwin`; minimal and sufficient | P2C | No |
 | 3.3 | `default-features = false` is **required**, not tidiness | **READY** | `rusqlite`'s defaults are `["cache", "ffi-sqlite-wasm-rs"]`, pulling `hashlink`+`hashbrown`+`foldhash` and `sqlite-wasm-rs`. Measured: 11 packages compiled with defaults, 20 without (the chosen set is larger only because it adds `cc` to compile SQLite — which is the point) | P2C | No |
 | 3.4 | `libsqlite3-sys`'s defaults select **system SQLite**; `bundled` overrides the *discovery path* | **READY, with a correction** | Its default feature is **`min_sqlite_version_3_34_1`**, expanding to `["pkg-config", "vcpkg"]` — the earlier row's `min_sqlite_version_3_45_3` was **wrong**. Precision that matters: `rusqlite` declares `libsqlite3-sys` **without** `default-features = false`, so those two build deps are still *compiled*; what `bundled` overrides is that `build.rs` never *consults* them. Verified: `otool -L` on the built binary lists **no `libsqlite3`** and the bundled source-id string is present — statically linked | P2C | No |
@@ -88,7 +91,19 @@ piece of prose.
 | 3.12 | **`TempStore` identity is `<binary>-<pid>-<atomic-counter>`** | **READY** | Measured: a counter alone collides across binaries (two binaries each counting from 0 produce the same three names); a pid alone is not unique within a process, and `cargo test` runs tests as threads while the crash harness spawns children. No clock, no RNG — the `.clippy.toml` ban holds | P2C | No |
 | 3.13 | The migrated object inventory is **10 tables, 7 triggers, 6 indexes** | **READY** | Extracted from the document and built. Asserting it is what makes a phantom object impossible — the direct regression for the `leases_generation_matches_step` trigger §4.6 published and §4.0 never contained | P2C | No |
 | 3.14 | **`bundled` beats system SQLite on a concrete corruption bug, not only on reproducibility** | **READY** | SQLite's WAL documentation records the **WAL-reset bug** as present in all versions "from 3.7.0 … through 3.51.2 (2026-01-09)", fixed in **3.51.3 (2026-03-13)** and later; published backports are `3.44.6` and `3.50.7`. It can corrupt a WAL-mode database when two connections write and checkpoint concurrently — Serea's shape, given the second connection used for lease and recovery tests. Bundled **3.53.2** is past the fix; this host's system SQLite is **3.43.2**, which is not, and no backport covers it | P2C | No |
-| 3.15 | `sha2` **0.11.0**, `default-features = false` | **READY** | `rust-version = "1.85"` — **exactly** the workspace MSRV, and unlike the SQLite crates this one is actually pinned. MIT OR Apache-2.0. `default-features = false` suffices: P2 computes a SHA-256 digest, so neither `alloc` nor `oid` is needed. Two implementation traps recorded in [design §7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives): `finalize()` returns `Array<u8, …>` which **does not implement `LowerHex`** (measured compile error — a break from 0.10), and `cpufeatures` selects an `aarch64-sha2`/`x86-sha` hardware backend at runtime that yields byte-identical digests | P2B | No |
+| 3.15 | `sha2` **0.11.0**, `default-features = false` | **IMPLEMENTED_SCOPED** in P2A | `rust-version = "1.85"` — **exactly** the workspace MSRV, and unlike the SQLite crates this one is actually pinned. MIT OR Apache-2.0. `default-features = false` suffices: P2 computes a SHA-256 digest, so neither `alloc` nor `oid` is needed. Two implementation traps recorded in [design §7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives): `finalize()` returns `Array<u8, …>` which **does not implement `LowerHex`** (measured compile error — a break from 0.10), and `cpufeatures` selects an `aarch64-sha2`/`x86-sha` hardware backend at runtime that yields byte-identical digests | P2A | No |
+
+Current P2A precision wiring is separate from the historical SQLite probes above:
+`serde_json/raw_value`, `jsonschema/arbitrary-precision`, exact `jsonschema =0.58.3`
+and the narrow `vendor/jsonschema-value` patch are implemented in the coordinator's
+tree. [Launch §3](P2-6.1-sol-launch.md#3-dependency-lines-current-p2a-integration-and-p2c-candidate)
+records exact integer-classification/checked-overflow scope and limits; this is
+not unrestricted exact schema arithmetic. SQLite remains a P2C candidate, with
+no storage/runtime introduced by P2A. N3 also requires the exact
+`serde_json =1.0.151` pin and companion `vendor/serde_json` transport patch:
+private synthetic keys use a Serde newtype, while literal JSON keys remain ordinary
+object members through raw parsing, Value replay and flatten buffers. This preserves
+opaque JSON without disabling precision or reserving wire keys.
 
 ---
 
@@ -96,7 +111,7 @@ piece of prose.
 
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
-| 4.1 | `put_blob` takes `&[u8]`; there is no `put_blob_value` | **READY** | Closes the parser-differential hole at the type level | P2D | No |
+| 4.1 | `put_blob` takes `&[u8]`; there is no `put_blob_value` | **READY** | Requires original text at the raw-input boundary; a bytes API alone cannot prove provenance | P2D | No |
 | 4.2 | `PRIMARY KEY (digest, data_class_rank)` is sufficient for P2 | **READY** | Measured: the same digest at two classes stores two rows; the same digest at one class twice is refused. Cross-class laundering via a `PUBLIC` reference resolving a `PRIVATE` blob is prevented **while `foreign_keys` is on** | P2D | No |
 | 4.3 | `StoreError::ClassEscalationRequired` is removed, not left as a dead arm | **READY** | Unreachable by construction once the composite key pins a reference's class to the blob's | P2D | No |
 | 4.4 | `SECRET`/`CREDENTIAL` are unconstructible on **all five** classified tables | **READY** | Measured, all 8 probes: `tasks`, `blobs`, `side_effect_receipts`, `plan_revisions`, `task_journal`. The earlier draft's claim was true of the blob store and false of everything else | P2D | No |
@@ -119,7 +134,7 @@ piece of prose.
 | --- | --- | --- | --- | --- | --- |
 | 5.1 | The 121-pair transition table is one exhaustive `matches!` | **READY** | `COMPLETED`/`FAILED`/`CANCELLED` have no arm, so `T8` is a property of absence. **All 37 legal pairs constructible; all 84 illegal pairs are accepted by SQL and refused by the engine** — the schema deliberately does not encode the table | P2F | No |
 | 5.2 | `Tx` exposes whole transitions, never row-level updates | **READY** | There is no `update_task_state`, no `set_step_status`, no `insert_receipt`, so `T4` cannot be composed wrongly | P2F | No |
-| 5.3 | **All 32 presence-matrix `N`/`0` cells are refused by SQL** | **READY** | Was 24/32. The eight gaps — `completed_at`/`result_digest` on `EXECUTING` and `WAITING`, `lease_expires_at` on `WAITING`/`SUCCEEDED`/`FAILED`/`RECONCILED_ABSENT` — closed by three additive constraints. All 51 constructible cells and all 37 transitions still construct | P2F | No |
+| 5.3 | **Historical 32 presence-matrix `N`/`0` probes refused by SQL; not complete error-shape coverage** | **READY** | Was 24/32. Single-column/partial-error cases require the additional gate in §10. The eight gaps — `completed_at`/`result_digest` on `EXECUTING` and `WAITING`, `lease_expires_at` on `WAITING`/`SUCCEEDED`/`FAILED`/`RECONCILED_ABSENT` — closed by three additive constraints. All 51 constructible cells and all 37 transitions still construct | P2F | No |
 | 5.4 | `lease_expires_at` gets a **biconditional**, not an implication | **READY** | `lease_owner` was already biconditional, so the pair was half-constrained: a terminal step could carry an expiry with no owner. ADR-0024 clears both together, so no designed path produces it — but a future writer clearing only `lease_owner` would pass | P2F | No |
 | 5.5 | All 56 `kind × status` cells: **51 constructible, 5 correctly refused** | **READY** | The 5 are `WAITING` on a non-wait kind. Asserting 56/56 would assert the opposite of ADR-0018 | P2F | No |
 | 5.6 | `receipt ⇒ SUCCEEDED` is a trigger; `RECONCILED_ABSENT ⇒ no receipt` is recovery's scan | **READY_WITH_LIMITATION** | A cross-table property no `CHECK` can express. Stated as detected-not-prevented | P2G | No |
@@ -145,7 +160,7 @@ piece of prose.
 
 | # | Item | Status | Why deferring is safe |
 | --- | --- | --- | --- |
-| 7.1 | A real `AtRestProtection` backend | **SAFE_DEFER** | ADR-0022 refuses `PRIVATE` with no backend, writes nothing, and says so. The trait plus a test-only double prove the wiring. P2 has no legitimate `PRIVATE` durable value to protect |
+| 7.1 | A real `AtRestProtection` backend | **SAFE_DEFER** | ADR-0022 refuses `PRIVATE` with no backend, writes nothing, and says so. The trait plus a test-only double prove the wiring. P2 can receive PRIVATE values and must refuse them without a backend |
 | 7.2 | The `SECRET` sealed store | **SAFE_DEFER** | No crate owns it anywhere in the architecture. P2 refuses `SECRET` at the storage layer, which is the correct posture, not a gap |
 | 7.3 | `NOTIFY`'s eventual capability shape | **SAFE_DEFER** | ADR-0018 §4 makes it host-internal and names the ADR that would change it. The obligation is recorded |
 | 7.4 | Resource-bound numeric values | **SAFE_DEFER** | P0's gap, still open. Inventing a number with no measurement behind it is the `MAX_VALUE_LENGTH` mistake P1 already retracted. §12 keeps this visible and does **not** claim closure |
@@ -153,7 +168,7 @@ piece of prose.
 | 7.6 | `max_concurrent_steps_per_task` | **SAFE_DEFER** | Correctly **not** enforced. It is an engine convention with no `CHECK`, trigger or partial index, so it is not structural and is not claimed |
 | 7.7 | The remaining §2 bounds | **SAFE_DEFER** | Counters and configuration belong to `serea-core`. P2 exposes the durable facts each bound's owner needs |
 | 7.8 | Retention (the 30-day trigger) | **SAFE_DEFER** | P12's, because the notification surface and the bound configuration are both `serea-core`'s. P2 provides `delete_task`; P2 enforces no retention bound, and that is a non-claim |
-| 7.9 | A canonical-number dependency | **SAFE_DEFER** | SCJ-1 refuses every `f64`, so P2B needs no float formatter. `ryu-js` arrives with P5's trigger |
+| 7.9 | A canonical-number dependency | **SAFE_DEFER** | SCJ-1 refuses every `f64`, so P2A needs no float formatter. Fraction encoding/range needs a future decision |
 | 7.10 | Empirical Apple Silicon verification | **SAFE_DEFER** to CI | The design contains nothing architecture-dependent — established by exhaustive source audit — but this host is `x86_64`. The confirmation is the cross-architecture fixture job, and that job is the deliverable |
 
 ---
@@ -177,9 +192,11 @@ accident. Each is a **non-claim**, not a pending item.
 
 ---
 
-## 9. What tomorrow's 6.1 Sol High actually decides
+## 9. Historical handoff decisions (superseded by owner direction)
 
-**This list was three items and is now two.** Item 2 below used to be an MSRV
+**Historical handoff text below; not current open decisions.** Owner request
+ratifies version/migration direction and MSRV 1.85; current production obligations
+are in §1 and the frozen gate. The earlier list was three items and became two. Item 2 below used to be an MSRV
 decision. It was not one: the premise was a misreading of `libsqlite3-sys`'s
 manifest, and `cargo +1.85.0` builds and runs the chosen configuration. See row 3.1
 and [design §7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives).
@@ -227,3 +244,19 @@ and [§7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives).
 The two BLOCKERs the earlier audit found — the inert category-O pattern and the
 phantom lease trigger — remain fixed in the documents, and each has a named test that
 fails without the fix: **A6/A6a/A6b/A6c** and **F28 + H1**.
+
+## 10. Deferred design corrections, not P2A runtime claims
+
+- SQL error=N means every error column including details absent outside FAILED;
+  FAILED requires five mandatory fields and permits absent details. Single-column
+  and partial-tuple regressions must supplement historical 32-cell evidence.
+- TransactionParticipant uses shared record(&self); successful body returns immutable
+  transition(s), body error propagates before participants, then same-transaction
+  participants and commit. No detached prebuilt identity, no event_seq/backfill;
+  P2 pending count is journal row count, not a queue.
+- Outcome fence EXISTS authoritative lease matching owner/generation/unreleased.
+  Release permanently revokes that generation. Expired but unreclaimed/unreleased
+  may commit known outcome; renewal/begin require unexpired lease. begin_attempt
+  borrows nonclone guard. Tests and runtime remain P2E/P2F.
+- Prior READY/69-of-69/32-cell experiment evidence is historical and does not
+  establish these added regressions or production implementation.

@@ -644,11 +644,11 @@ Three version axes apply, and this protocol does not collapse them
 
 | Axis | Value | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/0.2.0` | The whole contract set, including this document. |
+| Architecture version | `serea-arch/1.0.0` | The current frozen contract set, including this document. |
 | Capability version | `1.0.0` on all five `host.goal.*` descriptors | Each capability's input/output contract. |
 | Wire surface | `serea.goallatch/1` | The adapter-internal hop from `HostGoalProvider` to its backing GoalLatch transport. |
 
-The `serea.action/1` surface is **unchanged** by GoalLatch integration. A
+The current `serea.action/2` surface is **unchanged** by GoalLatch integration. A
 delegated goal is an ordinary capability call wrapped in an ordinary envelope;
 nothing about it is special on the wire. `serea.goallatch/1` exists only between
 an adapter and GoalLatch, only the adapter speaks it, and no Serea component

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://serea.local/schemas/action-request.schema.json",
-  "title": "serea.action/1 ActionRequest",
+  "title": "serea.action/2 ActionRequest",
   "description": "A structured request to cause one action. Owning protocol: Capability Protocol Section 4. This is a security-sensitive closed schema, so undeclared properties are rejected before policy evaluation and before provider execution (Protocol Index Section 4.2 rule 3). risk_class, side_effect_class, required_authorization and provider_id are absent by design: they are host-resolved from the CapabilityDescriptor and are not fields of an ActionRequest at all (Capability Protocol Section 4.2), so a model or any other caller cannot supply them here.",
   "type": "object",
   "additionalProperties": false,

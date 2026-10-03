@@ -9,6 +9,20 @@
 - **Companions:** [contract gap analysis](P2-contract-gap-analysis.md),
   [SQLite schema](P2-sqlite-schema.md), [test matrix](P2-test-matrix.md)
 
+## Current P2A reconciliation (2026-10-03)
+
+[Frozen findings and disposition](P2A-review-and-closure.md) supersede historical
+review conclusions below. P2A protocol/canonical slices are implemented,
+including field-local exact generation decoding without f64 rounding and the
+narrow precision dependency patch described in [launch §3](P2-6.1-sol-launch.md#3-dependency-lines-current-p2a-integration-and-p2c-candidate).
+Three independent subagent docs re-reviews under the coordinator were GREEN;
+contingent owner design ratification accepts 0018/19/20/23 in their stated
+architectural/wire/primitive/validation scopes (0018 runtime deferred);
+0021/22/24 runtime remains Proposed, with 0024 wire generation only implemented.
+The coordinator records current final workspace/MSRV validation, test counts,
+bounded regression review and integration status in the closure record. P2B is
+Clock/time only and is not delivered here; P2A introduces no SQLite or runtime.
+
 ## 1. Scope, and the crates in it
 
 P2 creates exactly two runtime crates and no others:
@@ -87,7 +101,7 @@ impl Store {
 }
 
 pub struct Tx<'c> { … }
-pub struct LeaseGuard { … }          // ADR-0024; not Clone, taken by value
+pub struct LeaseGuard { … }          // not Clone; begin borrows, outcome/release consume
 pub struct BlobRef { digest: Digest, class: DataClass }   // Copy, Debug-safe
 pub struct Migrations { … }
 pub trait AtRestProtection { … }     // ADR-0022
@@ -194,6 +208,17 @@ Two rules, both inherited from `errors.rs`:
 2. **`StoreError` carries no lease identity beyond the step's own id and generation
    counter**, neither of which is replayable on its own.
 
+### 3.5 Lease boundary clarification (deferred P2E/P2F)
+
+Every begin/renew/outcome write checks the authoritative leases row matching owner,
+generation and unreleased state; outcome writes use EXISTS, not only the step copy.
+Release permanently revokes that generation. Chosen expiry policy permits a known
+outcome commit after expiry only if unreclaimed/unreleased; renewal and new begin
+require unexpired lease. Reclaim fences the prior outcome. begin_attempt borrows
+&LeaseGuard so the same nonclone guard can subsequently commit. SQL 0 maps to
+wire None; positive generation is checked u32; overflow refuses and rolls back.
+See ADR-0024 for the exact outcome EXISTS predicate and named placeholders.
+
 ## 4. Transaction boundaries
 
 One row per required operation, each a single `transact`. "Atomic set" is the
@@ -218,100 +243,49 @@ in-flight step's lease is released separately, by the worker or by recovery.
 
 ### 4.1 The durable-transition participant seam — paper compile
 
-No Rust is written by this run. This is a **paper compile**: pseudo-signatures
-sufficient to prove the shape type-checks against the properties ADR-0021 and
-ADR-0024 require, and to expose anything that would not.
-
-**What it replaces.** The earlier draft's `CommitHook`:
-
-```rust
-// REJECTED — see below
-fn append(&mut self, tx: &Transaction<'_>) -> Result<()>;
-```
-
-Three defects, all structural:
-
-1. The transition identity is **not a parameter**. It would have to live in the
-   hook's own mutable state, so `tx.append(&mut journal)` describes *some*
-   transition the hook last remembered, not the one this transaction performed.
-2. `&mut self` forces the `Store`'s `transact(&self)` to reach the hook through
-   interior mutability — a `Mutex` or a `RefCell` — which contradicts ADR-0024's
-   single-mutex claim and puts a lock inside the commit path.
-3. An early `return Err(…)` from the `transact` body drops the hook without
-   calling it, leaving the hook's remembered transition describing a write that
-   was rolled back. The journal would then be **one transition behind reality**,
-   silently.
-
-**The replacement.**
+Deferred runtime design (ADR-0021 remains Proposed). Shared receivers avoid
+participant-local mutable counters; successful body constructs and returns immutable
+transition identity from the writes it actually performed. A caller-supplied identity
+before the write is not sufficient proof that the body performed that transition.
 
 ```rust
-// Immutable identity of the transition being committed. Constructed once, at the
-// point the engine decides the transition, and passed by shared reference into
-// every participant. Not stored anywhere mutable.
-pub struct DurableTransition {
-    pub task_id:    TaskId,
-    pub step_id:    Option<StepId>,
-    pub kind:       TransitionKind,     // TASK_STATE_CHANGED | STEP_COMMITTED | …
-    pub from_state: Option<TaskState>,
-    pub to_state:   Option<TaskState>,
-    pub attempt:    Option<u32>,
-    pub reason:     TransitionReason,   // which frozen rule authorises it
-    pub occurred_at_ms: TimestampMs,    // from the injected Clock, never ambient
-}
-
-// One participant, one transaction, one transition. `&self`, not `&mut self`:
-// a participant that needs to sequence a counter does it in SQL, not in memory.
 pub trait TransactionParticipant {
-    fn record(
-        &self,
-        tx: &Transaction<'_>,
-        transition: &DurableTransition,
-    ) -> Result<(), StoreError>;
+    fn record(&self, tx: &Transaction<'_>, transition: &DurableTransition)
+        -> Result<(), StoreError>;
 }
 
-// The seam itself. The transition is a parameter, so it cannot be stale.
-pub fn transact<P: TransactionParticipant>(
+pub fn transact<T, P: TransactionParticipant>(
     store: &Store,
     p: &P,
-    t: &DurableTransition,
-    body: impl FnOnce(&Transaction<'_>) -> Result<(), StoreError>,
-) -> Result<(), StoreError> {
+    body: impl FnOnce(&Transaction<'_>)
+        -> Result<(T, Vec<DurableTransition>), StoreError>,
+) -> Result<T, StoreError> {
     let tx = store.begin_immediate()?;
-    let r = body(&tx);            // any early return propagates; nothing is recorded
-    tx.run_participants(p, t)?;   // SAME transition the body just performed
-    match r {
-        Ok(())  => tx.commit(),
-        Err(e)  => { tx.rollback(); Err(e) }
+    let (result, transitions) = body(&tx)?;
+    for transition in &transitions {
+        p.record(&tx, transition)?;
     }
+    tx.commit()?;
+    Ok(result)
 }
 ```
 
-**Each property, and the line that proves it.**
+This is a pseudo-signature, not compiled Rust evidence. The guard rolls back on
+any error before commit; `body(&tx)?` precedes participants. Successful no-ops return
+an empty transition list and write no journal. Every participant receives the same
+immutable identity and same SQL transaction; P3 composition adds its participant in
+fixed order, before commit, not via a generic runtime hook registry. Transition
+fields include task/step, kind, states, attempt, reason, injected time and classified
+historical payload/actor/causation metadata. Participant record paths cannot mutate
+lifecycle state, buffer identity or open independent transactions.
 
-| Required property | Proven by | Why the rejected shape could not |
-| --- | --- | --- |
-| Immutable transition identity passed **explicitly** | `transition: &DurableTransition` is a parameter of `record`; the struct has no interior mutability and no `Deref` to anything mutable | `CommitHook::append` had no identity parameter at all |
-| Participant receives the **same** transition as the state writer | one `t: &DurableTransition` is threaded to `body` and to `run_participants`; there is no second copy to diverge | the hook's remembered transition could differ from the write |
-| Participant has the **same `Tx`** | `record(&self, tx: &Transaction<'_>, …)` receives the `tx` `body` mutated | a hook that opened its own connection would break atomicity outright |
-| No participant keeps pending transition in mutable object state | `&self`, and `DurableTransition` is borrowed not owned | `&mut self` + a stored field is exactly the stale-state defect |
-| Early return cannot leave stale transition state | `body`'s `Result` is bound **before** `run_participants`, and any `Err` rolls back without recording | an early `return` dropped the hook mid-sequence |
-| `TaskJournal` can implement it | one `INSERT INTO task_journal` per `journal_kind`, plus `journal_seq = (SELECT COALESCE(MAX(journal_seq),0)+1 …)` — all SQL, no in-memory counter | needs no interior mutability either |
-| A future `EventBus` can implement it | same signature; P3 adds a second `p2` and constructs it with the *same* `t` | this is the whole P3 mechanism, so it must fit the shape now |
-| No runtime plugin registry required | `transact` takes one `&P`; composition is explicit at the call site | a `Vec<Box<dyn TransactionParticipant>>` would need registration, ordering and interior mutability for no gain |
-
-**Why explicit participants and not a registry.** A registry would need to answer
-"in what order?", "may a participant refuse the commit?", and "who owns the
-participant?" — and P2 has exactly one participant and a known one for P3. Explicit
-composition makes the participant set visible in the type at every call site, gives
-the borrow checker the lifetime relationship for free, and keeps ordering a
-syntactic fact. **If a third participant ever appears whose order is not
-syntactic, revisit this; do not pre-build for it.** The `run_participants` helper is
-where a second participant is added, and nothing else changes.
-
-**Two properties this does *not* claim.** `E3` is not claimed — `TaskJournal` is not
-an event participant, and adding one is P3. And a participant **cannot** observe
-post-commit state, because it runs inside the transaction; anything that needs
-post-commit visibility is a different mechanism with a different name.
+Historical rejected `append(&mut self, tx)` lacked identity and needed hidden
+mutable state. The earlier replacement also invoked participants before propagating
+body failure and supplied a detached prebuilt identity; the frozen gate corrects
+both. Body failure, participant failure, no-op and commit failure need separate
+rollback/record-count tests. No event_seq/backfill; P2 pending count is journal row
+count, a history metric rather than a queue. E3/E4 are not claimed in P2 and become
+forward-only obligations from P3, never retroactive.
 
 ## 5. Bounds P2 enforces, and the ones it does not
 
@@ -321,7 +295,7 @@ crate that owns the call" enforces the bound at the call site.
 
 | §2 bound | P2 | Why |
 | --- | --- | --- |
-| `max_attempts_per_step` | **Enforced** | Materialised on the task as `max_attempts_per_step` per Bounds §2.1, and P2 owns the step attempt. Read from durable state in the `begin_attempt` predicate |
+| `max_attempts_per_step` | **Enforced** | Materialised on the task as `max_attempts_per_step` per Bounds §2.1, and P2 owns the step attempt. Read from durable state in the acquisition transaction |
 | `max_concurrent_steps_per_task` | **Not enforced** | An earlier draft called this "**Structurally**" on the strength of the engine refusing to lease a second step of a task. That is an application-side convention with no `CHECK`, no trigger and no partial unique index, so it is not structural and it is not claimed. One effecting step at a time (Task Protocol §5 rule 2) is a P2 **engine convention**, with the bound itself owned by `serea-core` |
 | `max_concurrent_tasks`, `max_task_wall_clock_ms`, `max_retained_tasks`, `max_replan_revisions_per_task` | **Not enforced** | Counters and configuration belong to `serea-core`. P2 exposes `plan_revision`, `recovery_duration_ms`, and `plan_revision_count()` so the owner of each bound can check it from durable state |
 | `max_model_calls_per_task`, `max_tool_calls_per_task` | **Not enforced, columns present** | They are part of the frozen `attempt_budget` shape and must round-trip. The `*_used` counters are P4's and P2 has nothing to increment them with, so P2 does **not** add those columns |
@@ -736,7 +710,7 @@ FIPS 180-4. `0.10.9` is the last `0.10.x` fallback.
 sha2 = { version = "0.11.0", default-features = false }
 ```
 
-Three implementation facts about `sha2` 0.11 that P2B must not rediscover:
+Three implementation facts about `sha2` 0.11 that P2A must not rediscover:
 
 1. **`Digest::finalize()` returns `Array<u8, …>`, which does not implement
    `LowerHex`.** `format!("{:x}", h.finalize())` does not compile. Measured: the
@@ -758,7 +732,7 @@ Three implementation facts about `sha2` 0.11 that P2B must not rediscover:
 Recorded, **not added**, by this run.
 
 **A canonical-number dependency is not required by SCJ-1.** Rule 6 refuses every
-`f64`, so P2B needs no float formatter at all. If P5 later admits fractions, the
+`f64`, so P2A needs no float formatter at all. If P5 later admits fractions, the
 crate is **`ryu-js`** 1.0.3 (MSRV 1.71) — which implements the ECMAScript
 `Number::toString` algorithm that RFC 8785 requires — and **not** `ryu`, whose
 shortest-round-trip output is not the ECMAScript form, and **not** `std`, whose
@@ -1220,7 +1194,7 @@ impl TaskEngine {
     pub fn persist_plan(&mut self, task_id: TaskId, plan: Plan) -> Result<PlanRevision, EngineError>;
     pub fn acquire(&mut self, task_id: TaskId, step_id: StepId,
                    owner: LeaseOwner, ttl_ms: u64) -> Result<LeaseGuard, EngineError>;
-    pub fn begin_attempt(&mut self, guard: LeaseGuard) -> Result<StepRecord, EngineError>;
+    pub fn begin_attempt(&mut self, guard: &LeaseGuard) -> Result<StepRecord, EngineError>;
     pub fn commit_step(&mut self, guard: LeaseGuard,
                        outcome: StepOutcome) -> Result<StepRecord, EngineError>;
     pub fn close_reconciled_absent(&mut self, guard: LeaseGuard,
@@ -1319,8 +1293,10 @@ deliberate retry", which double-charging makes indistinguishable.
 The ceiling is checked at acquisition, in three statements inside one transaction, so
 each has exactly one possible cause:
 
-1. The `leases` upsert. Zero rows ⇒ `LeaseHeld`.
-2. The fenced `UPDATE … WHERE lease_generation = :expected`. Zero rows ⇒
+1. The bounded-u32 `leases` upsert. Zero rows ⇒ `LeaseHeld`; an eligible
+   acquisition at u32::MAX fails its CHECK, yields a typed overflow refusal and
+   rolls back without changing either generation copy.
+2. The acquire step-copy `UPDATE … WHERE lease_generation = :expected`. Zero rows ⇒
    `LeaseFenced` — someone else holds it, or it moved on.
 3. A ceiling check reading `max_attempts_per_step` from `tasks` **in the same
    transaction**. Over the ceiling ⇒ `AttemptCeilingReached`, and the transaction
@@ -1407,7 +1383,9 @@ Cancellation touches no step row (`T9`) and does not implicitly undo anything.
 - Every task-scoped statement carries `task_id` in its `WHERE` clause, and
   `task_steps.task_id` is a `FOREIGN KEY`. A `StepId` from another task cannot be
   mutated by accident, and `LeaseGuard` carries `task_id` as well, so the fence
-  predicate is `(step_id, task_id, generation, owner)`.
+  predicate binds `(step_id, task_id, generation, owner)` on the step **and EXISTS**
+  the authoritative matching unreleased lease row. Release permanently revokes
+  that generation; expired but unreclaimed/unreleased may commit a known result.
 - `UNIQUE (task_id, idempotency_key)` means a second capability step in one task
   with the same key is refused. With ADR-0019's framing this is correct behaviour
   rather than a coincidence.
@@ -1470,7 +1448,15 @@ and stay where they are, under ADR-0020:
 | `digest` `maxLength: 71`, `task_id` `maxLength: 30` | Identifier grammar | Structural. Unchanged |
 | `blobs.size_bytes = length(content)` | This schema | A **consistency** invariant, not a bound. It rejects a torn length without inventing a ceiling |
 
-## 13. Review outcome and dispositions
+## 13. Historical review outcome and dispositions
+
+These are dated finding dispositions, not ADR acceptance or current green-gate
+results. All seven P2 ADRs were Proposed at those historical reviews; current
+scoped acceptance is recorded at the top of this document. The historical 32-cell and 69-check
+probes did not exhaust partial errors, release revocation or u32 overflow; current
+requirements and supplemental docs probes are in
+[the gate](P2A-review-and-closure.md). Historical regex/corpus conclusions are
+superseded as described in the audit's top corrigendum.
 
 Three read-only passes, findings frozen before any document changed. **The DDL was
 executed between passes**, which is where the substantive findings came from.
@@ -1597,9 +1583,9 @@ The two blockers were both the §13.3 blind spot a third time:
 **The pattern is now named in one place and enforced in the harness:** a
 biconditional is only justified where both directions are *independently* required by
 the protocol. `status = 'WAITING'` requires a wait kind; a wait kind does **not**
-require `WAITING`. Three biconditionals in this schema are genuine two-way rules
-(lease presence, the step-kind matrix, the `FAILED` error set); every other
-constraint is one-directional. Group P's P15 pins the pair that was wrong.
+require `WAITING`. Historical review identified lease presence and per-field kind checks as two-way.
+Its FAILED-error conjunction was incomplete: the current DDL additionally requires
+all error columns, including details, null outside FAILED. Group P's P15 pins the pair that was wrong.
 
 ### 13.3 The process finding, which is the most useful thing either pass produced
 
@@ -1643,7 +1629,7 @@ Three proposals were rejected on the merits, and none is a defect:
 | Bound `RecoveryReport.decisions` with a cap | `max_concurrent_tasks` bounds it operationally. A second bound here would be an unratified one under `B3` |
 | Recover with an explicit "blob-store garbage collector runs nightly" comment | Orphan prevention is structural — P2 writes blob and reference in one transaction — so a sweeper is a repair tool, not a scheduled job. No claim is made either way |
 
-### 13.5 Positive-constructibility verification record
+### 13.5 Historical positive-constructibility verification record
 
 The earlier audit found that **testing only refusals is not enough**: a schema can
 refuse everything and pass. So the positive direction is asserted as its own
@@ -1652,7 +1638,9 @@ matrix, and re-verified by execution during the final closure run.
 **Method.** The migration DDL was extracted **verbatim** from
 [schema §4.0](P2-sqlite-schema.md#40-the-whole-migration) and built against real
 SQLite 3.53.2 — not retyped, and not asserted from the document. The only thing
-written by hand was the *data* each positive case needs. **69 of 69 checks passed.**
+written by hand was the *data* each positive case needs. **69 of 69 historical checks passed.** This positive corpus did not test
+single-column/partial errors, authoritative release revocation or u32 overflow;
+it is not complete evidence for the corrected current gate.
 
 | Group | What was constructed | Result |
 | --- | --- | --- |
@@ -1688,22 +1676,20 @@ behaviour, this asserts constructibility.
 
 ## 14. Implementation phasing
 
-Nine subphases. The dependency order is `protocol → primitives → storage →
-classification → leases → engine → recovery → faults → review`, because each stage
-is testable before the next one exists. Two slices are moved from the prompt's
-suggestion and the reason is given.
+Nine subphases. P2A protocol corrections and canonical primitives are one atomic
+gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 
 | Subphase | Delivers | Depends on |
 | --- | --- | --- |
-| **P2A** | The seven protocol corrections and their atomic code changes | — |
-| **P2B** | Canonical JSON, digests, idempotency, `Clock` | P2A |
-| **P2C** | Migrations, `Store`, `Tx`, connection policy | P2B |
-| **P2D** | Blobs, classification, `delete_task` | P2C |
-| **P2E** | Leases and fencing | P2C |
-| **P2F** | `TaskEngine`, transition table, plan, cancellation | P2D, P2E |
-| **P2G** | Recovery and restart | P2F |
-| **P2H** | Fault injection and crash windows | P2C |
-| **P2I** | Independent review and closure | all |
+| **P2A** | Four Option conversions, presence/kind/text validation, SCJ-1/digest/IDK-1, sha2 0.11 no defaults, manifests/registry/schemas/tests/docs/migrations | — |
+| **P2B** | Clock, timestamp/epoch conversion, TestClock authority | P2A |
+| **P2C** | Migrations, Store/Tx, connection policy, transaction seam | P2B |
+| **P2D** | Blobs/classification/delete_task | P2C |
+| **P2E** | Authoritative lease fencing/revocation | P2C |
+| **P2F** | TaskEngine, lifecycle/plan/cancellation | P2D, P2E |
+| **P2G** | Recovery/journal | P2F |
+| **P2H** | Fault injection | P2C |
+| **P2I** | Independent runtime review/closure | all |
 
 **Two deviations from the prompt's suggested order, and why.**
 
@@ -1721,23 +1707,22 @@ suggestion and the reason is given.
 
 | | |
 | --- | --- |
-| **Files** | `crates/serea-protocol/src/types.rs`, `errors.rs`; `crates/serea-protocol/schemas/{assistant-task,action-result,event}.schema.json`; `docs/protocols/{00,01,02,06,09,10}-*.md`; `docs/decisions/README.md` |
-| **Tests first** | Every matrix cell of ADR-0018 §3 and §4, in both the Rust and the schema direction; every category case of ADR-0023, on a shared adversarial corpus; the whitespace-only divergence |
-| **Surface** | `StepPresence`, the two matrices, `validate_opaque_token` / `validate_single_line_label` / `validate_prose` |
-| **Exit criteria** | 121-pair task transition table pinned to a literal transcription of Task Protocol §4.2 — no, that is P2F; here: every `TaskStep` matrix cell, every step-kind cell, every text-category cell, both surfaces agreeing |
-| **Forbidden** | Any digest computation, any storage, any new dependency |
-| **Blocked on** | Owner ratification of the seven ADRs, and the open question 4 (minor or major) in the gap analysis |
+| **Files** | Complete [frozen gate inventory](P2A-review-and-closure.md#3-atomic-p2a-production-inventory), including protocol Cargo manifest, raw_value/arbitrary-precision features, exact jsonschema 0.58.3 pin/narrow vendor patch, manifest/registry, event schema, all provider_reference occurrences and canonical tests |
+| **Tests first** | A/B/C/D groups: accepting and refusing matrix/category cases; unknown wire status; None missing/null/omission; exact generation u32 bounds without f64 rounding, direct schema validation and vendor numeric helper regressions; SCJ-1 vectors, duplicates before Value, named framing, legal-ID scalar and legal object tests |
+| **Surface** | TaskStepDraft → private checked TaskStep/StepPresence, four Option conversions, seven required fields; reserved extension keys refused, non-capability receipts absent on all statuses including unknown; O/L/P in types.rs; canonicalize/digest_of/derive_idempotency_key via canonical module/root exports; mixed-major registry with envelope 1 |
+| **Exit criteria** | Source/schema/manifest/docs/version parity and full canonical primitives green together; coordinator records actual evidence in the closure record |
+| **Forbidden** | Storage/engine/event runtime, SQL production migrations, Clock, new resource bounds |
+| **Governance** | Current frozen arch1/task2/action2/event1/envelope1/MSRV1.85; corrected docs reviews GREEN, 0018/19/20/23 Accepted within scope, 0018 runtime deferred; 0021/22/24 Proposed runtime (0024 wire generation implemented); current final workspace/MSRV command results, test counts, review and integration status are coordinator-owned in the closure record |
 
-### 15.2 P2B — canonical JSON, digest, idempotency, `Clock`
+### 15.2 P2B — Clock and time only
 
 | | |
 | --- | --- |
-| **Files** | `Cargo.toml` (one `sha2` dependency); `crates/serea-protocol/src/canonical.rs`, `clock.rs`, `lib.rs`; `crates/serea-testkit/src/clock.rs` |
-| **Tests first** | The ten SCJ-1 vectors and the seven IDK-1 vectors as literals; the **A**/**B** collision pair; idempotence; member-ordering invariance; injectivity over a generated corpus; the naive-collision canary |
-| **Surface** | `canonicalize`, `digest_of`, `derive_idempotency_key`, `CanonicalJsonError`, `Clock`, `Timestamp::from_epoch_millis` / `to_epoch_millis`, `TestClock`'s epoch-millisecond authority |
-| **Exit criteria** | Every vector passes; the collision pair derives different keys; `canonicalize(parse(canonicalize(x))) == canonicalize(x)` for the whole corpus; no wall-clock call anywhere (`.clippy.toml` unchanged) |
-| **Forbidden** | Storage. Any storage code cannot be written against a digest function that might still change |
-| **Note** | This is where the workspace's first hashing dependency lands. It is named, not added, by this run |
+| **Files** | serea-protocol clock/time ports and serea-testkit clock |
+| **Tests first** | E-group: epoch conversion, range, deterministic clock, no ambient clock |
+| **Surface** | Clock, Timestamp epoch conversions and single TestClock now_ms authority |
+| **Exit criteria** | Deterministic conversion/range tests pass |
+| **Forbidden** | Storage; SCJ-1/digest/IDK cannot be deferred here because action/2 closes in P2A |
 
 ### 15.3 P2C — migrations and `Store`
 
@@ -1864,10 +1849,11 @@ failures stay meaningful**.
 | --- | --- | --- |
 | 1 | Write the **Rust** matrix test for one `PLANNED` cell | **RED**, failing on the type shape |
 | 2 | Write the **schema** test for the same cell | **RED**, failing on the missing `if`/`then` |
-| 3 | `StepPresence` + the five `Option` fields + `serde(try_from = Draft)` | step 1 GREEN |
+| 3 | `StepPresence` + the four `Option` conversions + `serde(try_from = Draft)` | step 1 GREEN |
 | 4 | The schema's per-kind `required` / `if`–`then` clauses, incl. the category-O pattern and the `goallatch` subtraction | step 2 GREEN |
 | 5 | The `lease_generation` optional field (ADR-0024), both surfaces | both GREEN |
 | 6 | ADR-0023's three text categories + validators, both surfaces | both GREEN |
+| 6a | Full SCJ-1/digest/IDK-1 + sha2 0.11 no defaults + canonical tests | primitives GREEN |
 | 7 | **Parity check**: every cell in the Rust `StepPresence` matrix has a schema counterpart and vice versa | the parity test passes |
 | 8 | `serea-arch/0.2.0 → 1.0.0`; `serea.task/1 → 2`; `serea.action/1 → 2` | — |
 | 9 | Changelog entry in each affected protocol document | Protocol Index §7 items 2 and 3 |

@@ -47,11 +47,11 @@ pub enum SchemaName {
     /// The cross-boundary envelope — Protocol Index §6. Not a wire surface: the
     /// envelope carries the `surface` of the message it carries.
     Envelope,
-    /// `serea.action/1` request — Capability Protocol §4. Closed.
+    /// `serea.action/2` request — Capability Protocol §4. Closed.
     ActionRequest,
-    /// `serea.action/1` result — Capability Protocol §5. Closed.
+    /// `serea.action/2` result — Capability Protocol §5. Closed.
     ActionResult,
-    /// `serea.task/1` task — Task Protocol §2. Forward-compatible.
+    /// `serea.task/2` task — Task Protocol §2. Forward-compatible.
     AssistantTask,
     /// `serea.event/1` event — Event Protocol §2. Forward-compatible.
     Event,

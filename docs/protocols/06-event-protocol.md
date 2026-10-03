@@ -74,6 +74,12 @@ says "I have up to `seq` 10427" and receives exactly what it missed.
 An `actor` of kind `MODEL` records that a model was involved. It never records
 that a model *decided* something.
 
+P2A implements Accepted ADR-0023 category O to actor.id on unchanged event/1,
+including exact identifier subtraction and pinned boundary whitespace. This is a
+validation tightening only: C1 remains refused, and U+2028/U+2029 are prohibited;
+no event/1 opaque-token domain widening is authorized. Event schema and every
+other ActorId occurrence must share the Rust verdicts.
+
 ## 3. Event kinds
 
 Frozen at P0. Adding a kind is an architecture-minor change; renaming or
@@ -325,3 +331,14 @@ architecture version per [§4.1](00-protocol-index.md#41-semantics).
 | Architecture version | Change | Kind | Authority |
 | --- | --- | --- | --- |
 | `serea-arch/0.2.0` | Added `DELETION_CASCADE_COMPLETED` to §3.7. It is the completion record of one right-to-delete cascade transaction, carrying the deletion counts, as required by [Data Classification §8.2](09-data-classification-protocol.md#82-deletion-cascades) step 4. No existing kind was renamed, repurposed, or removed; the wire surface remains `serea.event/1`; unknown kinds still fail closed on a host parse and are still skipped by clients (§4.2 rules 3 and 4, §6 rule 2, `E7`). | Minor — a backward-compatible addition | [ADR-0017](../decisions/ADR-0017-deletion-cascade-completed-event-kind.md) |
+
+## 9. P2A validation changelog and deferred runtime seam
+
+- 2026-10-03: event/1 actor.id category O tightening ratified and implemented.
+  The coordinator records current final workspace/MSRV validation, test counts,
+  review and integration status in the [closure record](../plans/P2A-review-and-closure.md).
+  Event major and envelope version stay 1, no event runtime delivered.
+- ADR-0021 remains Proposed for runtime: P2 non-event journal/history does not
+  establish E3/E4. Future event participant runs in the successful state transaction;
+  E3 is forward-only from P3, never historical event_seq backfill. P2 pending
+  transition count is journal row count, not a queue. No event runtime lands P2A.

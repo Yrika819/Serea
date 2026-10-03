@@ -105,6 +105,19 @@ value is how a bound quietly stops bounding.
 
 ---
 
+### 2.4 What a bound is not
+
+B3 governs operational bounds: host-set limits on work, with defaults, scope and
+exhaustion behavior. Structural predicates on value shape (identifier grammar,
+length/count, object closure, integer range, nesting) refuse malformed values
+before scheduling; they need no B3 table row. A structural constraint cannot be
+used as an undeclared operational bound. Never truncate/clamp/coerce input to fit.
+Anything counting work belongs in the authoritative table.
+
+Accepted ADR-0020 is a semantic architecture-minor clarification, not editorial
+patch. No resource-bound values are introduced; payload/blob/attachment bytes,
+object counts and decompression limits remain an open separate decision.
+
 ## 3. Who may set a bound
 
 > Bounds are host configuration and durable policy. Nothing else. Not the model,
@@ -527,3 +540,7 @@ unexplained failure is indistinguishable from a bug.
 | B16 | Bounds limit quantity; policy limits authority. A generous bound authorizes nothing, and a strict policy does not excuse an unbounded loop. |
 | B17 | Every exhausted task bound produces an event, a structured error or reason, and a durable task outcome — or it did not happen. |
 | B18 | Scheduler catch-up is capped per wake; remaining due occurrences stay durable and are processed by later bounded wakes. |
+## 10. P2A clarification changelog
+
+- 2026-10-03: B3 operational/structural scope ratified by owner instruction,
+  Accepted ADR-0020; no bound added, removed, re-defaulted or implemented here.

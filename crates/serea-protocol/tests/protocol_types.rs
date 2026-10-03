@@ -29,8 +29,8 @@ use serea_protocol::types::{
     ModelErrorCode, ModelMessage, ModelPurpose, ModelRequest, ModelResponse, ModelUsage,
     PlainSummary, ProviderHealth, ProviderReference, ReasonCode, ReplaySafety, RequestedBy,
     ResponseFormat, RiskClass, RootRequirement, SemVer, Seq, SereaEvent, SideEffectClass, StepKind,
-    StepStatus, TaskKind, TaskOriginKind, TaskState, TaskStep, TaskTitle, Timestamp, TokenCount,
-    Trace, WireSurface,
+    StepStatus, TaskKind, TaskOriginKind, TaskState, TaskStep, TaskStepDraft, TaskTitle, Timestamp,
+    TokenCount, Trace, WireSurface,
 };
 
 const TASK_ID: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";
@@ -148,8 +148,8 @@ mod wire_surface {
     #[test]
     fn accepts_the_frozen_surface_names() {
         for value in [
-            "serea.action/1",
-            "serea.task/1",
+            "serea.action/2",
+            "serea.task/2",
             "serea.model/1",
             "serea.policy/1",
             "serea.approval/1",
@@ -158,14 +158,20 @@ mod wire_surface {
             "serea.goallatch/1",
             "serea.data/1",
             "serea.bounds/1",
+            "serea.scheduler/1",
         ] {
             assert_eq!(
                 WireSurface::new(value).expect("frozen surface").as_str(),
                 value
             );
         }
-        assert_eq!(WireSurface::ACTION, "serea.action/1");
+        assert_eq!(WireSurface::ACTION, "serea.action/2");
         assert_eq!(WireSurface::EVENT, "serea.event/1");
+        assert!(
+            WireSurface::new("serea.scheduler/1")
+                .unwrap()
+                .is_supported()
+        );
     }
 
     #[test]
@@ -1290,27 +1296,29 @@ mod assistant_task_round_trip {
     /// future field, so an architecture-minor addition must round-trip rather
     /// than break a reader.
     fn step() -> TaskStep {
-        TaskStep {
+        TaskStep::new(TaskStepDraft {
             step_id: step_id(),
             task_id: task_id(),
             sequence: 3,
             kind: StepKind::Capability,
             status: StepStatus::new("SUCCEEDED").expect("valid"),
             attempt: 1,
-            idempotency_key: idempotency_key(),
+            idempotency_key: Some(idempotency_key()),
             provider_id: Some(ProviderId::new("calendar").expect("valid")),
             capability_id: Some(CapabilityId::new("calendar.events.list").expect("valid")),
             capability_version: Some(SemVer::new("1.2.0").expect("valid")),
             input_digest: digest(),
-            result_digest: digest(),
+            result_digest: Some(digest()),
             side_effect_receipt: None,
-            started_at: timestamp("2026-10-01T09:14:22.100Z"),
-            completed_at: timestamp("2026-10-01T09:14:22.512Z"),
+            started_at: Some(timestamp("2026-10-01T09:14:22.100Z")),
+            completed_at: Some(timestamp("2026-10-01T09:14:22.512Z")),
             lease_owner: None,
             lease_expires_at: None,
+            lease_generation: Some(1),
             error: None,
             extensions: Default::default(),
-        }
+        })
+        .expect("valid succeeded step")
     }
 
     #[test]
@@ -1471,7 +1479,7 @@ mod envelope_round_trip {
     fn frozen_example() -> Value {
         json!({
             "envelope_version": "1",
-            "surface": "serea.action/1",
+            "surface": "serea.action/2",
             "message_id": EVENT_ID,
             "correlation_id": TASK_ID,
             "causation_id": "evt_01JQ8Z9M4SBDT6K8H2WNRQVPXF",
@@ -1487,7 +1495,7 @@ mod envelope_round_trip {
         let value = frozen_example();
         let envelope: Envelope<Value> = serde_json::from_value(value.clone()).expect("parses");
         assert_eq!(serde_json::to_value(&envelope).expect("serialises"), value);
-        assert_eq!(envelope.surface.as_str(), "serea.action/1");
+        assert_eq!(envelope.surface.as_str(), "serea.action/2");
         assert_eq!(envelope.data_class, DataClass::Personal);
     }
 
@@ -1791,13 +1799,13 @@ mod envelope_version_support {
                 "major {major} is not implemented here"
             );
             assert_eq!(
-                envelope(major, "serea.action/1").require_supported_major(),
+                envelope(major, WireSurface::ACTION).require_supported_major(),
                 Err(ProtocolError::ContractViolation {
                     rule: ContractRule::UnsupportedEnvelopeMajor,
                 })
             );
         }
-        for major in ["2", "7", "4294967295"] {
+        for major in ["1", "3", "7", "4294967295"] {
             assert_eq!(
                 envelope("1", &format!("serea.action/{major}")).require_supported_surface(),
                 Err(ProtocolError::ContractViolation {
@@ -1807,10 +1815,10 @@ mod envelope_version_support {
             );
         }
 
-        let supported = envelope("1", "serea.action/1");
+        let supported = envelope("1", WireSurface::ACTION);
         assert_eq!(supported.require_supported_major(), Ok(()));
         assert_eq!(supported.require_supported_surface(), Ok(()));
-        assert_eq!(supported.surface.major(), Some(1));
+        assert_eq!(supported.surface.major(), Some(2));
         assert_eq!(supported.surface.name(), "serea.action");
     }
 
@@ -1819,7 +1827,7 @@ mod envelope_version_support {
         // Fail closed rather than silently reporting a major of zero.
         let surface = WireSurface::new("serea.action/99999999999999").expect("digits are in range");
         assert_eq!(surface.major(), None);
-        let mut envelope = envelope("1", "serea.action/1");
+        let mut envelope = envelope("1", WireSurface::ACTION);
         envelope.surface = surface;
         assert_eq!(
             envelope.require_supported_surface(),

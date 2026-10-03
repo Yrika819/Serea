@@ -1,6 +1,6 @@
 # Task Protocol
 
-Protocol ID: `PROTO-TASK` · Surface: `serea.task/1` · Status: **FROZEN for P0**
+Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current contract**
 
 The `AssistantTask` is Serea's unit of durable work. It is **not** GoalLatch's
 `Goal`. The two are different concepts with different lifecycles, different
@@ -89,6 +89,7 @@ hard restart.
   "kind": "CAPABILITY",
   "status": "SUCCEEDED",
   "attempt": 1,
+  "lease_generation": 1,
   "idempotency_key": "idk_9f2c…",
   "provider_id": "calendar",
   "capability_id": "calendar.events.list",
@@ -106,6 +107,52 @@ hard restart.
 
 `kind` ∈ `CAPABILITY`, `MODEL_TURN`, `WAIT_APPROVAL`, `WAIT_USER`,
 `WAIT_SCHEDULE`, `VERIFY`, `NOTIFY`, `DELEGATE`.
+
+The exact field-presence and kind matrices are part of this contract in
+[ADR-0018 §3/§4](../decisions/ADR-0018-taskstep-lifecycle-and-field-presence.md#3-the-presence-matrix).
+Seven fields are unconditionally required: step_id, task_id, sequence, kind,
+status, attempt, input_digest. Four conversions to Option are idempotency_key,
+result_digest, started_at, completed_at; provider/capability/version already Option.
+Missing and null both mean None; serialization omits None. A required matrix cell
+is non-null; an absent cell accepts missing/null and refuses a supplied value.
+
+Wire status remains an open uppercase code. Known statuses PLANNED, LEASED,
+EXECUTING, WAITING, SUCCEEDED, FAILED, RECONCILED_ABSENT receive lifecycle presence
+validation; unknown well-formed status parses and round-trips with supplied-value
+validation. Kind invariants always apply: provider/capability/version/key required
+for CAPABILITY/DELEGATE/VERIFY, absent for the other five kinds.
+`side_effect_receipt` must also be absent for all five non-capability kinds on
+**every status, including unknown codes**: those steps cannot carry external
+action semantics. The optional SUCCEEDED receipt matrix cell is capability-shaped
+only. Rust and schema must both refuse supplied receipts for each such kind across
+all known statuses and an unknown status; missing/null is absent and serializes
+by omission. Future engine
+execution blocks unknown status with UNRECOGNISED_STATE; no engine exists in P2A.
+
+Optional lease_generation is None on never-leased PLANNED, positive u32 after
+acquisition (including terminal outcomes). The Rust field remains `Option<u32>`;
+wire decoding uses field-local RawValue tokens to check positive-u32 membership
+exactly, without f64 rounding. Mathematically integral JSON numeric spellings
+such as `1.0`/`1e0` accept; wire zero, true fractions (including near-integers)
+and overflow refuse. Value inputs preserve numeric text through
+`serde_json/arbitrary_precision`; direct schema validation uses
+`jsonschema/arbitrary-precision` with an exact 0.58.3 pin and the narrow
+`vendor/jsonschema-value` integer-classification/checked-conversion patch.
+[Launch §3](../plans/P2-6.1-sol-launch.md#3-dependency-lines-current-p2a-integration-and-p2c-candidate)
+states its limited guarantee, not unrestricted exact schema arithmetic.
+SCJ-1 canonical hashing separately refuses decimal/exponent spellings; wire
+acceptance does not widen that domain. SQL0 maps to wireNone; SQL positive maps
+to checked Some(u32), with SQL mapping/runtime still deferred. Full fencing remains
+Proposed ADR-0024 runtime design, not a guarantee implemented by this wire member.
+
+Rust construction uses `TaskStepDraft` → `TaskStep::new`/`TryFrom`, validated by
+`StepPresence`. Checked state is private; fields are read-only through `Deref`,
+with no public mutation bypass. Changes require a draft and revalidation. Unknown
+extensions are preserved, but keys equal to reserved step members are refused,
+even if the corresponding optional member is absent. The companion pinned
+`vendor/serde_json` transport patch distinguishes internal synthetic numeric/raw
+keys from literal object keys through Serde buffering, preserving opaque extension
+values on raw and owned/borrowed Value paths; it reserves no new wire names.
 
 ### 3.1 Field obligations
 
@@ -292,3 +339,22 @@ host configuration:
 | T8 | Terminal states have no outgoing transitions. |
 | T9 | Cancellation never implicitly undoes an external effect. |
 | T10 | Task deletion cascades to derived data; retained memory items retain provenance. |
+## 10. P2A migration and phase boundary
+
+[Launch migration note](../plans/P2-6.1-sol-launch.md#41-sereatask1-sereatask2)
+names every current consumer; no deployed database exists to rewrite. P2A owns
+wire validation only. Append-only runtime plan revisions, leases, receipt/journal
+atomicity, recovery and unknown-status execution are later-phase obligations.
+They must not be reported implemented or tested from these docs-only changes.
+
+## 11. Changelog
+
+- 2026-10-03: frozen current task/2 field presence per Accepted ADR-0018:
+  four Option conversions, seven unconditional fields, checked private state,
+  reserved-extension-key refusal, optional lease_generation and non-capability
+  receipt absence on all statuses including unknown. Missing/null/omission and
+  open status preserved. P2A wire/schema slices implement exact generation
+  decoding without f64 rounding, with precision dependency scope as above. The
+  coordinator records current final workspace/MSRV validation, test counts,
+  review and integration status in the [closure record](../plans/P2A-review-and-closure.md).
+  Full fencing remains Proposed.

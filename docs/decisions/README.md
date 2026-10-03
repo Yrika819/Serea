@@ -1,9 +1,14 @@
 # Serea Decision Index
 
-Architecture version: `serea-arch/0.2.0` · Decision set: P0 baseline, the P1
-corrective addition noted below, and the P2 design-preparation proposals
-
-This index records the rationale behind the frozen P0 contracts. Protocol documents remain normative: these ADRs explain why the boundaries and choices exist and do not redefine their schemas, fields, variants, or behavior. The architecture version is `serea-arch/0.2.0`; the `0.1.0` baseline is preserved below, because ADR-0017 is the only change accepted since the P0 freeze and it moves the version by one minor step.
+Current frozen architecture: `serea-arch/1.0.0`; P0/P1 baseline
+`serea-arch/0.2.0` remains historical. Owner ratification after three corrected
+documentation re-reviews GREEN accepts ADR-0018/19/20/23 within the scopes below.
+P2A slices are implemented. The coordinator owns final workspace/MSRV validation,
+bounded regression review and integration closure; current command results and
+test counts belong in the closure record. ADR-0021/22/24 runtime stays Proposed.
+Protocol text, source, affected schemas, manifest, versions, changelogs and both
+migration notes belong to one P2A integration, not a preliminary docs commit;
+[frozen gate](../plans/P2A-review-and-closure.md) records evidence and exclusions.
 
 ## Accepted decisions
 
@@ -24,29 +29,22 @@ This index records the rationale behind the frozen P0 contracts. Protocol docume
 | [ADR-0016](ADR-0016-proactive-watcher-is-read-only.md) | Proactive watcher is read-only | Accepted |
 | [ADR-0017](ADR-0017-deletion-cascade-completed-event-kind.md) | `DELETION_CASCADE_COMPLETED` is a registered `EventKind` | Accepted |
 
-## Proposed decisions — P2 design preparation
+## P2 decision disposition
 
-Recorded on `p2/design-preparation` from the P1 closure commit
-`c3737039e3e38dbba554dc0b9075025f87948358`. **None is accepted, and none changes
-any frozen protocol text or any code.** Each carries a drafted-but-unapplied
-amendment and the code change that must land atomically with it, because
-[Protocol Index §7](../protocols/00-protocol-index.md#7-change-control) requires an
-ADR, an architecture-version bump, and a changelog entry together, and the design
-preparation phase may not change production code.
+Owner instruction on 2026-10-03 ratifies the following after the corrected docs
+gate GREEN and coordinator implementation/scoped tests. Architectural acceptance and
+implemented wire validation do not establish deferred runtime or full workspace/
+MSRV verification. A green wire-member gate does not accept full runtime fencing.
 
-| ADR | Decision | Status | Gap |
-| --- | --- | --- | --- |
-| [ADR-0018](ADR-0018-taskstep-lifecycle-and-field-presence.md) | `TaskStep` lifecycle, step-status set, field presence matrix, capability-scoped `idempotency_key` | **Proposed** | [§5.1, §5.1b, §5.2, §5.10](../plans/P2-contract-gap-analysis.md) |
-| [ADR-0019](ADR-0019-canonical-json-and-idempotency-preimage.md) | Canonical JSON SCJ-1 and the domain-separated, framed idempotency preimage IDK-1 | **Proposed** | [§5.3, §5.4](../plans/P2-contract-gap-analysis.md) |
-| [ADR-0020](ADR-0020-bounds-b3-scope-clarification.md) | `B3` scopes to operational bounds; structural constraints are not bounds | **Proposed** | [§5.5, §12](../plans/P2-contract-gap-analysis.md) |
-| [ADR-0021](ADR-0021-p2-p3-event-atomicity-seam.md) | An explicit transaction-participant seam carrying an immutable `DurableTransition`, so `E3` becomes enforceable forward-only from P3 without P2 implementing the event bus | **Proposed** | [§5.7](../plans/P2-contract-gap-analysis.md) |
-| [ADR-0022](ADR-0022-durable-private-data-at-rest.md) | Durable `PRIVATE` storage is refused unless an injected at-rest backend exists | **Proposed** | [§5.8](../plans/P2-contract-gap-analysis.md) |
-| [ADR-0023](ADR-0023-text-field-validation-categories.md) | Three text-validation categories; the schema whitespace divergence closed | **Proposed** | [§5.6](../plans/P2-contract-gap-analysis.md) |
-| [ADR-0024](ADR-0024-lease-fencing-and-commit-under-lease.md) | Monotonic lease generation, enforced inside the commit statement | **Proposed** | [§5.10](../plans/P2-contract-gap-analysis.md) |
-
-ADR-0018's architecture-version treatment is an open owner decision: converting
-five required `TaskStep` fields to optional is a relaxation, which is not the same
-as Protocol Index §4.1's "new optional field" minor case.
+| ADR | Decision | Status / implementation phase |
+| --- | --- | --- |
+| [ADR-0018](ADR-0018-taskstep-lifecycle-and-field-presence.md) | Four Option conversions, seven unconditional fields, open wire status and lifecycle presence | **Accepted**, wire/lifecycle architectural decision; P2A checked wire implemented, engine/plan runtime P2F deferred |
+| [ADR-0019](ADR-0019-canonical-json-and-idempotency-preimage.md) | Full SCJ-1/digest/IDK-1 primitives, sha2 0.11 no defaults | **Accepted**, full SCJ-1/digest/duplicate-aware parsing/IDK-1 implemented in P2A |
+| [ADR-0020](ADR-0020-bounds-b3-scope-clarification.md) | B3 operational versus structural semantic clarification | **Accepted**, semantic B3 clarification; architecture-minor in isolation, no resource bounds |
+| [ADR-0021](ADR-0021-p2-p3-event-atomicity-seam.md) | Shared-receiver immutable-successful-transition seam; E3 forward only, no backfill | **Proposed**, runtime P2C/P2F/P2G and P3 |
+| [ADR-0022](ADR-0022-durable-private-data-at-rest.md) | Fail-closed PRIVATE at-rest dispatch | **Proposed**, runtime P2D |
+| [ADR-0023](ADR-0023-text-field-validation-categories.md) | Complete O/L/P validation, pinned whitespace, exact identifier subtraction | **Accepted**, complete O/L/P validation implemented in P2A |
+| [ADR-0024](ADR-0024-lease-fencing-and-commit-under-lease.md) | Authoritative unreleased lease fencing and revocation | **Proposed**, runtime P2E/P2F deferred; lease_generation wire member/validation only implemented in P2A |
 
 ### Numbering note
 
@@ -75,13 +73,19 @@ One plan now applies to all of them, derived from Protocol Index §4.1 and §7:
 | Action surface | `serea.action/1` | `serea.action/2` | ADR-0019's canonicalization narrowing; ADR-0023's `message` widening |
 | Event surface | `serea.event/1` | unchanged | ADR-0023's `actor.id` change is a validation tightening; ADR-0021 changes no event shape |
 
-ADR-0020, ADR-0021 and ADR-0022 are **editorial / patch**: no wire surface changes.
+ADR-0020 is an **architecture-minor semantic clarification**, not patch; no
+resource bounds are introduced. ADR-0021/22 runtime work stays Proposed and
+outside P2A; no event or data wire major is raised.
 
-**Nothing above is applied.** The authoritative documents still read
-`serea-arch/0.2.0` and `serea.task/1`, because applying a version bump requires the
-code change it accompanies, and no code changes in the design-preparation or audit
-phases. The plan is what P2A implements atomically with ADR-0018's code change.
-Full reasoning: [the audit's M6](../plans/P2-autonomous-audit.md); ratification
+**Current contracts and implementation use architecture/1, task/2, action/2.**
+The design-preparation/audit phases did not change production; the coordinator
+has implemented P2A slices, including the exact numeric follow-up. Final
+workspace/MSRV validation, smoke, bounded regression review,
+Python/docs/metadata/diff checks and atomic integration status are tracked in the
+[closure record](../plans/P2A-review-and-closure.md); this index makes no separate
+final-count or closure claim. Historical ADR headers and dated P0/P1 evidence
+retain their versions.
+Full reasoning: [the audit's M6](../plans/P2-autonomous-audit.md); phase-specific
 status: [the decision ledger](../plans/P2-tomorrow-decision-ledger.md).
 
 ## Phase plans
@@ -92,7 +96,8 @@ status: [the decision ledger](../plans/P2-tomorrow-decision-ledger.md).
   implement the SQLite store or task engine; those are deferred to P2 and later.
 - [P2 — Storage and Task Engine Design](../plans/P2-storage-task-engine.md) is the
   design package for the SQLite store, the durable `AssistantTask` lifecycle, and
-  restart recovery. It is preparation only; no P2 code exists.
+  restart recovery. Runtime remains design-only; P2A protocol/canonical slices
+  are implemented, not storage/engine/event runtime.
 
 ## Frozen sources and dependency note
 
@@ -102,4 +107,4 @@ The decisions are grounded in the available P0 architecture, protocols, and thre
 - [Protocol index](../protocols/00-protocol-index.md) and its linked protocols
 - [Threat-model index](../threat-model/README.md), [assets and trust boundaries](../threat-model/01-assets-and-trust-boundaries.md), and [adversaries and attack surface](../threat-model/02-adversaries-and-attack-surface.md)
 
-`03-abuse-cases-and-mitigations.md` and `04-security-invariants.md` were absent during the initial inventory, then appeared during this work and were read before finalizing. The complete available threat-model package confirms the fake-only GoalLatch boundary, read-only watcher, protocol change-control discipline, and the distinction between frozen design and implementation evidence. No source-document dependency remains unresolved at final review; the available frozen protocols remain normative. Keep `serea-arch/0.2.0` unchanged absent a separately accepted architecture change. The condition has been met exactly once: ADR-0017 registers `DELETION_CASCADE_COMPLETED` as an `EventKind`, which [Protocol Index §4.1](../protocols/00-protocol-index.md#41-semantics) classifies as a minor, backward-compatible addition.
+`03-abuse-cases-and-mitigations.md` and `04-security-invariants.md` were absent during the initial inventory, then appeared during this work and were read before finalizing. The complete available threat-model package confirms the fake-only GoalLatch boundary, read-only watcher, protocol change-control discipline, and the distinction between frozen design and implementation evidence. No source-document dependency remains unresolved at final review; the available frozen protocols remain normative. ADR-0017's historical minor change registered `DELETION_CASCADE_COMPLETED`; the separately ratified P2A architecture-major now establishes `serea-arch/1.0.0` as the current contract set. These version changes do not claim deferred runtime implementation or completed whole-workspace/MSRV validation.

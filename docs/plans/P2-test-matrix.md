@@ -7,6 +7,24 @@
   seen **before** any implementation change, so that a manufactured RED — a syntax
   error, a missing module — cannot pass for evidence.
 
+## Current P2A integration annotation (2026-10-03)
+
+The plan-only header describes historical design preparation, not the current
+P2A implementation. The coordinator owns actual final workspace/MSRV validation,
+counts, bounded regression review and integration evidence in the
+[closure record](P2A-review-and-closure.md); this matrix asserts no final count
+or PASS. The numeric follow-up uses field-local `serde_json/raw_value` generation
+decoding without f64 rounding, `jsonschema/arbitrary-precision`, an exact 0.58.3
+pin and the narrow `vendor/jsonschema-value` integer-classification/checked-overflow
+patch. [Launch §3](P2-6.1-sol-launch.md#3-dependency-lines-current-p2a-integration-and-p2c-candidate)
+records its limited guarantee and debug/release, stable/Rust 1.85 regression
+obligations, including direct schema validation and vendor helpers. It does not
+establish unrestricted exact schema arithmetic or introduce SQLite/runtime.
+The companion pinned `vendor/serde_json` transport patch preserves literal marker
+objects and genuine precise numbers through raw/Value/flatten paths; ten tests
+in `json_value_preservation.rs` cover that independent N3 regression.
+Historical audit/probe measurements retain their original scope.
+
 ## 1. Ground rules
 
 Inherited from P1's closure and re-applied:
@@ -30,8 +48,8 @@ Inherited from P1's closure and re-applied:
 | --- | --- | --- |
 | A. Text validation categories | P2A | ADR-0023 |
 | B. Step presence and step-kind matrices | P2A | ADR-0018 §3, §4 |
-| C. Canonical JSON and digest vectors | P2B | ADR-0019 §1 |
-| D. Idempotency preimage vectors and the collision | P2B | ADR-0019 §2–§3 |
+| C. Canonical JSON and digest vectors | P2A | ADR-0019 §1 |
+| D. Idempotency preimage vectors and the collision | P2A | ADR-0019 §2–§3 |
 | E. Clock and time | P2B | §8 of the design |
 | F. Migrations and connection policy | P2C | §7 of the design |
 | G. Blobs and classification | P2D | ADR-0022, schema §5 |
@@ -141,7 +159,7 @@ both:
 | A6a | `category_o_accepts_every_legal_opaque_token` | 0/14 false positives. `calendar`, `worker`, `worker-1`, `host-a3f9`, `session-42.worker`, `x`, `w`, a long reference, `provider:handle/1234` — the set rule B refused 8 of |
 | A6b | `category_o_near_miss_identifier_shapes_are_accepted` | `tsk_`, a 27-char ULID body, a lowercase ULID body, `sha256:zz`, `calendar.events.reticulate` (unknown verb), `fake-goallatch.goal.run` (not a `ProviderId`, so not a `CapabilityId`) |
 | A6c | `category_o_refuses_goallatch_as_a_capability_but_not_as_an_opaque_token` | The parity subtlety: `goallatch.goal.run` is **not** a valid `CapabilityId`, so the banned set must exclude it. A pattern stricter than `CapabilityId` is still a parity bug |
-| A6d | `generated_category_o_pattern_matches_the_frozen_prefix_and_verb_lists` | Twelve prefixes **and** fourteen verbs come from `ids.rs`. A hand-written copy drifts, and a drifted copy means the schema accepts an `ActorId` Rust refuses |
+| A6d | `generated_category_o_pattern_matches_the_frozen_prefix_and_verb_lists` | Eleven ULID prefixes plus the idk_ domain **and** fourteen verbs come from `ids.rs`. A hand-written copy drifts, and a drifted copy means the schema accepts an `ActorId` Rust refuses |
 | A7 | `no_free_text_field_is_length_capped_in_rust` | The P1 retraction of `MAX_VALUE_LENGTH`, pinned |
 | A8 | `no_schema_imposes_a_free_text_length_ceiling` | The same on the schema side |
 | A9 | `category_o_rejects_prose_with_a_colon_and_a_newline` | The single-line rule, in the token's own shape |
@@ -185,7 +203,7 @@ refuses, and the schema refuses. 7 statuses × 15 fields, plus 8 kinds × 6 fiel
 | B9 | `a_verify_step_does_have_an_idempotency_key` | `VERIFY` is capability-shaped |
 | B10 | `a_delegate_step_does_have_an_idempotency_key` | `DELEGATE` is capability-shaped |
 | B11 | `no_step_kind_derives_a_key_from_a_reserved_pseudo_capability` | Guards the rejected alternative in §5.2 |
-| B12 | `an_unrecognised_step_status_is_refused_and_yields_unrecognised_state` | Protocol Index §4.2 rule 5 at the step boundary |
+| B12 | `an_unknown_wire_step_status_parses_with_kind_invariants` | Known-status presence only; engine refusal/blocking deferred P2F |
 | B13 | `lease_generation_round_trips_and_is_absent_on_an_unleased_step` | The new optional member |
 | B14 | `every_matrix_cell_is_refused_by_the_schema_with_the_same_verdict_as_rust` | The two surfaces agree |
 | B15 | **`every_one_of_the_32_absent_cells_is_refused_by_sql`** | All 32 of ADR-0018 §3's `N`/`0` cells, one probe each. **Was 24/32.** The eight gaps — `completed_at` and `result_digest` on `EXECUTING` and `WAITING`, `lease_expires_at` on `WAITING`, `SUCCEEDED`, `FAILED` and `RECONCILED_ABSENT` — were found by the P2 autonomous audit probing *cells* where earlier rounds had probed *rows* |
@@ -219,13 +237,13 @@ merely that a validator is strict.
 | C19 | `scj1_refuses_nesting_past_the_instance_depth_bound` | 65 levels |
 | C20 | `scj1_emits_no_trailing_newline_and_no_byte_order_mark` | Byte-level |
 | C21 | `scj1_canonical_error_renders_no_payload_bytes` | `DC7` |
-| D1–D7 | `idk1_vector_N` for each of the seven pinned vectors | ADR-0019 §IDK-1 |
-| D8 | **`the_naive_collision_pair_derives_two_different_keys`** | Tuples **A** and **B**. This is the regression test for the whole ADR |
-| D9 | `idk1_is_injective_over_the_frozen_grammar_corpus` | 113 400 triples: no two distinct tuples share a preimage |
+| D1–D7 | Five typed object vectors plus two historical A/B vectors only in low-level private raw-string framing tests | ADR-0019; typed public derivation rejects p.r.list, not valid SCJ-1 scalar roots |
+| D8 | `legal_id_generic_scalar_naive_collision_is_separated_by_named_framing` | pp.rr.list, scalar -12/2; generic framing, not legal ActionRequests |
+| D9 | `idk1_is_injective_over_the_frozen_grammar_corpus` | Rebuild with legal 2–32 char ID segments; distinguish typed generic derivation and object-root ActionRequest domains; preimage injectivity, not hash injectivity |
 | D10 | `naive_concatenation_would_collide_on_the_pinned_pair` | Asserts the collision is *real*, so the test cannot be made vacuous by changing the encoding |
 | D11 | `idk1_preimage_is_domain_separated_from_a_content_digest` | `sha256(scj1(x))` and `derive_idempotency_key` over the same document must differ |
 | D12 | `idk1_rejects_a_non_capability_step_tuple` | The §5.2 boundary at the function level |
-| D13 | `a_naive_collision_canary_watches_the_frozen_grammars` | If a future grammar change makes the naive form collide, this fails loudly |
+| D13 | `typed_derivation_accepts_all_scj1_roots_and_refuses_invalid_ids` | Valid pp.rr.list with scalar/object/array/string/bool/null roots; p.r.list rejection; ActionRequest separately refuses non-object arguments. Historical scalar pair is not legal-action collision evidence |
 
 **RED for C1**, observed before any canonicalization exists: there is no
 `canonicalize` function, so the test cannot compile. To avoid a manufactured RED,
@@ -339,7 +357,7 @@ process-local mutex cannot participate and the test would pass trivially if one 
 | H13 | `a_stale_generation_commit_leaves_the_task_state_untouched` | Same |
 | H14 | `two_acquisitions_by_the_same_owner_string_are_distinguished_by_the_generation` | The `token` column was **removed**; `generation` alone is the discriminator |
 | H14b | `the_step_generation_is_derived_from_the_leases_row_not_guessed` | The acquire statement reads `lease_generation` from `leases` in the same transaction, so the two copies cannot diverge observably. The trigger that used to enforce this was removed: it fired only on the upsert's insert branch |
-| H15 | `the_generation_and_the_step_column_agree_after_every_acquisition_and_commit` | The deliberate duplication's consistency trigger |
+| H15 | `the_generation_and_the_step_column_agree_after_every_acquisition_and_commit` | Derived-copy agreement; no generation consistency trigger |
 | H16 | `no_error_rendering_carries_a_lease_identity_beyond_the_step_id_and_generation` | `DC7`. Rewritten: the original asserted a property of the removed `token` column, so it **could not fail**, which in a matrix whose §1 rule 5 forbids unfailable tests is worse than no test |
 | H17 | `a_lease_is_released_when_its_step_is_deleted` | The cascade |
 | H18 | **`attempt_increments_exactly_once_across_acquire_and_begin_attempt`** | Assert `attempt == 1` after *both*. Double-charging makes `max_attempts_per_step = 3` buy one attempt |
@@ -478,8 +496,8 @@ even where a more specific group seems to cover it.
 
 | Subphase | Tests written first | Observed RED | Then |
 | --- | --- | --- | --- |
-| P2A | A1–A9, B1–B14 | A1 on the whitespace divergence; B1 on the unconstructible unstarted step | Implement; A and B green |
-| P2B | C1–C21, D1–D13, E1–E7 | C2, C15, C16 against a naive local helper; D8 against naive concatenation | Implement; C, D, E green |
+| P2A | A/B/C/D groups and added boundary cases below | Shape/schema planned-step RED; whitespace and canonical/framing failures | All four groups green atomically |
+| P2B | E1–E7 | Timestamp/time conversion and deterministic clock failures | E green; canonical groups already closed P2A |
 | P2C | F1–F18 | F1 against no store; F7 against DDL outside the migration transaction | Implement; F green |
 | P2D | G1–G20 | G11, G13 against a permissive helper; G15 against an unchecked table | Implement; G green |
 | P2E | H1–H17 | H6, H10, H14 against owner-only fencing | Implement; H green |
@@ -509,6 +527,18 @@ P2I.
 | `max_concurrent_steps_per_task` | The engine's one-effecting-step-at-a-time rule is a convention with no `CHECK` or trigger behind it, so it is not structural and is not claimed | `serea-core` (the bound), P5 (the router that serialises effecting calls) |
 | Read-back reconciliation of an ambiguous effect | P2 has no capability | P5 |
 | Approval re-render against a device roster | P2 has no device link | P6/P12 |
+
+## 18.1 Reconciled gate regressions
+
+| Group / phase | Additional mandatory cases |
+| --- | --- |
+| A / P2A | Every Unicode White_Space code point at both edges/all-whitespace; U+0085; all C1 refusals; LF/TAB/2028/2029 interior in P but not L/O; CR refused. Exact idk_/sha256:, out-of-range ULID first character, goallatch versus goallatch_foo/goallatch1; all nested provider_reference occurrences and event actor. Independently expected accepts/refusals, not parity alone. |
+| B / P2A | Four conversions only; seven unconditional fields. TaskStepDraft → private validated TaskStep/StepPresence, no public mutation bypass; unknown extensions retained but every reserved step key refused even when absent. Missing/null -> None, serializer omission; known-status matrix plus unknown status with kind invariants. **All five non-capability kinds refuse a receipt on ALL statuses, including unknown:** exercise each known status and an unknown code in Rust construction/deserialization and schema; missing/null receipts remain absent and serialize by omission. The SUCCEEDED optional receipt cell is capability-shaped only, not external action semantics on host-only kinds. Wire generation zero/overflow refused; optional positive u32 retained terminally. |
+| C/D / P2A | Duplicate names (nested and escaped equivalents) refused before Value; lost duplicates cannot be recovered. f64 model temperature remains wire-valid but SCJ-1 refuses it. Names and values each framed; 282-byte vector1. Historical p.r.list A/B low-level private raw framing only; typed invalid-ID rejection; valid-ID typed derivation accepts every SCJ-1 root, including pinned pp.rr.list scalars and legal objects; ActionRequest rejects nonobjects. |
+| B/SQL / P2C/P2F | Each of six error columns singly populated outside FAILED refused; all partial mandatory-error subsets refused on FAILED; details optional on FAILED. SQL generation0 <-> wireNone, positive u32, overflow rollback. Historical 32-cell probes alone are insufficient. |
+| H / P2E/P2F | Released guard cannot commit without reacquisition even when step copy is unchanged; authoritative lease absent/wrong owner/generation refuses; same-owner reclaim fences old guard; expired-unreclaimed known outcome commit succeeds but begin/renew fails; u32::MAX acquisition refuses. begin_attempt borrows guard, outcome consumes it. |
+| Transaction / P2C/P2F | Body Err never calls participants; participant failure rolls back writes; no-op records nothing; successful body returns immutable actual transition(s), journal shares transaction; no event_seq/backfill and P2 pending count is journal row count. |
+| Registry / P2A | Per-surface task/action2 with event/model/etc1, envelope1; unsupported major refused per surface. Protocol manifest/source/schema/docs agree. |
 
 ## 19. Verification command set
 

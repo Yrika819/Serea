@@ -1,6 +1,16 @@
 # Serea Protocol Index
 
-Status: **FROZEN for P0** · Architecture version `serea-arch/0.2.0` · Frozen on 2026-10-01
+Status: **FROZEN current contract set** · Architecture version `serea-arch/1.0.0` · Ratified on 2026-10-03
+
+P0/P1 implementation baseline was `serea-arch/0.2.0`; the current frozen registry
+is architecture/1, task/2, action/2, event/1 and envelope version 1. Three corrected
+independent subagent documentation gate reviews under the coordinator are GREEN;
+owner direction ratified the design contingent on GREEN. P2A slices are
+implemented. The coordinator records current final workspace/MSRV validation,
+test counts, bounded regression review and integration status in the
+[P2A closure record](../plans/P2A-review-and-closure.md); this index makes no
+separate final-count or closure claim.
+Architectural acceptance does not claim storage/engine/event runtime delivery.
 
 This document is the naming and versioning authority for every other Serea
 contract. When a type, field, or enum appears in more than one place in the
@@ -117,12 +127,29 @@ Three independent version axes. They are never collapsed into one number.
    semantic processing and preserved in an opaque extension set for exact
    round-trip auditing. On security-sensitive closed schemas (including
    capability/action inputs), unknown fields are rejected before policy or
-   provider execution. Unknown *enum variants* fail closed everywhere.
+   provider execution. Unknown *closed enum variants* fail closed. Open codes such as StepStatus
+   retain unknown well-formed values; engine execution still fails closed.
 4. A new event kind is a minor change and older clients skip unknown kinds
    rather than failing the stream.
 5. A new task state is a minor change. A state transition the host does not
    recognise is a `BLOCKED` task with reason `UNRECOGNISED_STATE`, never a
    crash and never a silent skip.
+
+### 4.2a Per-surface major registry at P2A
+
+| Surface | Supported major |
+| --- | --- |
+| `serea.action` | 2 |
+| `serea.task` | 2 |
+| `serea.model`, `serea.policy`, `serea.approval`, `serea.event` | 1 |
+| `serea.device`, `serea.goallatch`, `serea.data`, `serea.bounds`, `serea.scheduler` | 1 |
+
+Dispatch/version validation consults this registry per surface, not one global
+major value. Envelope version remains 1; `serea.envelope` is not a surface.
+Unknown/unsupported surface majors are refused without silent downgrade. This
+current registry agrees with the implemented per-surface source/manifest dispatch;
+current final workspace/MSRV verification and integration status is recorded by
+the coordinator in the [closure record](../plans/P2A-review-and-closure.md).
 
 ### 4.3 Frozen for P0
 
@@ -150,10 +177,17 @@ requires an ADR:
   an opaque extension set and round-tripped unchanged, but are not interpreted.
   Security-sensitive inner payloads are separately validated against their
   closed schema and reject unknown fields before any authority decision.
-- Canonical JSON for digesting: keys sorted lexicographically by UTF-8 code
-  point, no insignificant whitespace, no trailing newline, UTF-8, numbers in
-  shortest round-trip form. All `Digest` values in Serea are computed over
-  canonical JSON and are named accordingly.
+- Canonical digest input is **SCJ-1**, defined in
+  [ADR-0019](../decisions/ADR-0019-canonical-json-and-idempotency-preimage.md):
+  UTF-8-byte key ordering, fixed escaping, no insignificant whitespace/BOM/trailing
+  newline, integers only in -2^63 through 2^64-1. Reject exponent/float/-0 and
+  duplicates before constructing Value. Scalar roots are valid generic digest
+  inputs; ActionRequest arguments remain object-root. A raw-text caller must
+  preserve duplicates until validation; no API can reconstruct discarded ones.
+- SCJ-1 is a limited canonical domain, not a change to model/1: ModelRequest
+  temperature remains f64. Future runtime canonical digest paths refuse model
+  documents outside SCJ-1; not every blob/model input is automatically covered.
+  Fractional support requires a future decision, never truncation.
 
 ## 6. Envelope
 
@@ -164,7 +198,7 @@ audit concerns are uniform.
 ```json
 {
   "envelope_version": "1",
-  "surface": "serea.action/1",
+  "surface": "serea.action/2",
   "message_id": "evt_01JQ8ZB7H2XKM9P4QW7NRT5YCD",
   "correlation_id": "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA",
   "causation_id": "evt_01JQ8Z9M4SBDT6K8H2WNRQVPXF",
@@ -204,3 +238,11 @@ rejected at review.
   [Trust Boundaries](../architecture/02-trust-boundaries.md)
 - Assets, adversaries, and mitigations: [Threat Model Index](../threat-model/README.md)
 - Where each decision is recorded: [Decision Index](../decisions/README.md)
+## 9. Changelog
+
+- 2026-10-03: ratified frozen current architecture/1, task/2 and action/2;
+  event/1 and envelope version 1 unchanged. ADR-0018/19/20/23 Accepted in their
+  stated architectural/wire/primitive/validation scopes; P2A slices implemented.
+  Current validation, test counts, bounded regression review and integration
+  status is coordinator-owned in the [closure record](../plans/P2A-review-and-closure.md).
+  ADR-0021/22/24 runtime stays Proposed; 0024 wire generation only is implemented.

@@ -75,6 +75,13 @@ The task engine sees only the types below.
 `purpose` drives routing and accounting. It is host-assigned from the task's
 phase and the step's role, never chosen by the model.
 
+`temperature` remains an f64 sampling parameter on model/1. P2A SCJ-1's
+integer-only domain does not change this model wire contract. A model document
+with fractional temperature is not canonicalisable by SCJ-1; future runtime
+digest/storage paths must refuse it until a separate fractional canonicalization
+range/encoding decision. Never truncate sampling parameters to manufacture a
+digest, and do not claim all MODEL_TURN inputs/blobs are automatically covered.
+
 ### 3.1 `response_format`
 
 | Type | Behaviour |

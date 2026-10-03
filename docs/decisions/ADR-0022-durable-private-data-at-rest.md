@@ -1,13 +1,14 @@
 # ADR-0022: Durable `PRIVATE` Data at Rest
 
-- Status: **Proposed** — pending implementation and owner ratification
+- Status: **Proposed** — acceptance requires the deferred green P2D dispatch/migration/test gate
 - Architecture version: `serea-arch/0.2.0` at the time of writing
 - Decision date: not yet ratified
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.8
 
-> This ADR changes no frozen protocol text and no code. The amendments below are
-> **drafted, not applied**.
+> P2A records the proposed fail-closed direction only. At-rest dispatch, schema
+> migration and tests are deferred to P2D; no backend or runtime enforcement is
+> implemented or accepted by this docs run.
 
 ## Context
 
@@ -191,8 +192,11 @@ earlier draft claimed the schema enforced these columns too. It did not.
 
 ## Proposed amendment
 
-Applied to `docs/protocols/09-data-classification-protocol.md` only in the same
-commit that implements it. Nothing here is applied by this run.
+The following data-classification annotation remains proposed for the P2D
+implementation gate, not a P2A delivery requirement. Dispatch source, migration,
+refusal/rollback tests and this annotation must land together and pass green
+before acceptance. A real encryption backend and key custody remain separate
+open decisions; a test double cannot close them.
 
 A sentence added under §5's matrix, plus a changelog section:
 
@@ -204,11 +208,11 @@ A sentence added under §5's matrix, plus a changelog section:
 
 The row's own wording is **unchanged**.
 
-## Code change, same commit
+## Deferred runtime implementation gate (P2D, not P2A)
 
 | File | Change |
 | --- | --- |
-| `crates/serea-storage/src/classify.rs` | `AtRestProtection` trait, `StoreError::AtRestProtectionUnavailable`, `StoreError::ClassRefused`, `StoreError::ClassEscalationRequired` |
+| `crates/serea-storage/src/classify.rs` | `AtRestProtection` trait, `StoreError::AtRestProtectionUnavailable`, `StoreError::ClassRefused` |
 | `crates/serea-storage/src/blob.rs` | `put_blob` classification dispatch; no `put_blob_value`, per ADR-0019 |
 | `crates/serea-storage/migrations/0001_initial.sql` | The two `CHECK`s on `blobs`; `data_class_rank` plus a generated label |
 | `crates/serea-testkit/src/at_rest.rs` | `TestAtRestProtection`, labelled as not encryption |

@@ -1,13 +1,20 @@
 # ADR-0024: Lease Fencing and Commit-Under-Lease
 
-- Status: **Proposed** — pending implementation and owner ratification
+- Status: **Proposed** — full runtime fencing deferred; only lease_generation wire member/validation implemented in P2A
 - Architecture version: `serea-arch/0.2.0` at the time of writing
 - Decision date: not yet ratified
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.10
 
-> This ADR changes no frozen protocol text and no code. The amendments below are
-> **drafted, not applied**.
+> P2A implements only the wire `lease_generation` member and validation;
+> this does not implement lease acquisition, revocation or outcome fencing.
+> Field-local `serde_json/raw_value` decoding checks positive-u32 membership
+> exactly without f64 rounding, retaining integral decimal/exponent spellings.
+> Precision-enabled schema validation uses the narrow patched dependency described
+> in [launch §3](../plans/P2-6.1-sol-launch.md#3-dependency-lines-current-p2a-integration-and-p2c-candidate).
+> Full lease/fence runtime is deferred to green P2E/P2F source/migration/tests;
+> this ADR remains Proposed. The coordinator records current validation, review,
+> test counts and integration status in the [closure record](../plans/P2A-review-and-closure.md).
 
 ## Context
 
@@ -46,7 +53,7 @@ architecture.
 CREATE TABLE leases (
   step_id        TEXT    PRIMARY KEY REFERENCES task_steps(step_id) ON DELETE CASCADE,
   owner          TEXT    NOT NULL,
-  generation     INTEGER NOT NULL CHECK (generation >= 1),
+  generation     INTEGER NOT NULL CHECK (generation BETWEEN 1 AND 4294967295),
   acquired_at_ms INTEGER NOT NULL,
   expires_at_ms  INTEGER NOT NULL,
   released_at_ms INTEGER
@@ -72,14 +79,16 @@ pub struct LeaseGuard {
     task_id: TaskId,
     step_id: StepId,
     owner: LeaseOwner,
-    generation: u64,
+    generation: u32,
 }
 ```
 
 `Copy` would let a caller hold two guards and use the stale one after acquiring a
 fresh lease, which is precisely the bug, so `LeaseGuard` is **not** `Clone` and
-the commit methods take it **by value**. It is produced only by
-`acquire_lease`, so a caller cannot forge a fence it never acquired.
+the outcome commit/release methods take it **by value**. `begin_attempt` borrows
+`&LeaseGuard` (as does renewal), retaining the same nonclone guard for the outcome.
+It is produced only by `acquire_lease`; its fields are private. Nonclone shape does
+not replace authoritative SQL fencing.
 
 ### The five semantics
 
@@ -102,8 +111,11 @@ WHERE leases.released_at_ms IS NOT NULL
    OR leases.expires_at_ms <= :now_ms
 ```
 
-Zero affected rows is `StoreError::LeaseHeld`. There is **no read-then-write
-window**: the check and the write are one statement.
+Zero affected rows is `StoreError::LeaseHeld`. An otherwise eligible acquisition
+at generation `4294967295` fails the bounded-u32 CHECK; return a typed overflow
+refusal and roll back the entire acquisition, never wrap, clamp or misreport it
+as LeaseHeld. There is **no read-then-write window**: the check and the write are
+one statement.
 
 ```sql
 -- 2. the step copy is DERIVED from the leases row, never guessed
@@ -141,8 +153,10 @@ Three consequences worth stating, each of which was a defect first:
   insert-or-update branch, and it fired only on the insert branch, so it enforced
   the invariant in one of the two cases and silently skipped the other.
 
-`PLANNED` keeps `attempt = 0` and `lease_generation = 0`, which is what makes it
-mean "never leased". A step that has begun an attempt is never `PLANNED` again.
+In SQL, `PLANNED` keeps `attempt = 0` and `lease_generation = 0`; wire generation
+is None (missing/null accepted and serialization omitted), never wire 0. Positive
+SQL generation must fit u32; acquisition at u32::MAX refuses and rolls back, never
+wraps or truncates. This is what makes PLANNED mean "never leased". A step that has begun an attempt is never `PLANNED` again.
 
 **renew.** Extends only a lease this guard still owns that has not yet expired:
 
@@ -162,9 +176,19 @@ worker must release and re-acquire, taking a new generation.
 ```sql
 UPDATE leases SET released_at_ms = :now_ms
 WHERE step_id = ? AND owner = ? AND generation = ?
+  AND released_at_ms IS NULL
 ```
 
-Zero rows is `LeaseFenced`.
+Zero rows is `LeaseFenced`. Release is permanent revocation of this generation:
+all later begin/renew/outcome writes must fail, even if the step still carries its
+old owner/generation. Reacquisition obtains a strictly newer generation.
+
+**Expiry policy.** Expiry permits reclaim, not proof that work never occurred.
+An expired but unreclaimed and unreleased lease may commit a known result under
+its current fence. It may not renew or begin a new attempt (begin requires
+`expires_at_ms > :now_ms`). Reclaim changes authoritative generation and refuses
+the old outcome. Commit deliberately does not require unexpired TTL; this policy
+must be identical in implementation and tests. No racy application precheck.
 
 **commit-under-lease.** Every outcome write carries the fence in its `WHERE`
 clause:
@@ -175,12 +199,17 @@ UPDATE task_steps
        lease_owner = NULL, lease_expires_at_ms = NULL
  WHERE step_id = :step_id AND task_id = :task_id AND status = 'EXECUTING'
    AND lease_generation = :generation AND lease_owner = :owner
+   AND EXISTS (SELECT 1 FROM leases AS l
+               WHERE l.step_id = task_steps.step_id
+                 AND l.generation = :generation AND l.owner = :owner
+                 AND l.released_at_ms IS NULL)
 ```
 
 Every placeholder is **named**. An earlier revision of this statement mixed
 `:digest`, `:now_ms`, `:generation` and `:owner` with four positional `?`, which
-`rusqlite` cannot bind in one call. The predicate is unchanged; only the
-placeholders were normalised, and they are named rather than positional
+`rusqlite` cannot bind in one call. Historically only the
+placeholders were normalized; the P2A reconciliation additionally strengthens the
+predicate with the authoritative unreleased-lease EXISTS check, and they are named rather than positional
 deliberately so the next reader does not "simplify" the statement back.
 
 Three corrections went into this statement, and each was a real defect caught by
@@ -199,11 +228,12 @@ running it against the schema rather than reasoning about it:
    `:status` parameter would let a caller write a terminal status without clearing
    the lease.
 
-Zero affected rows is `StoreError::LeaseFenced`. This is the property the ADR exists
-for: worker A at generation 3 writes while B holds generation 4, the predicate cannot
-match, and the write is refused **atomically by the database**, not by a prior read
-that could race. Verified: the current-generation commit affects one row, the stale
-one affects **zero**, and the step remains `EXECUTING`.
+Zero affected rows is `StoreError::LeaseFenced`. Worker A at generation 3 cannot
+write while B holds generation 4 or after generation 3 is released: the predicate
+cannot match, **atomically in the database**, not by a racy prior read. Historical
+probes covered stale-generation refusal, not the added authoritative-release
+predicate. The docs probe checks that predicate separately; P2E/P2F runtime
+integration and rollback/receipt/journal tests remain required.
 
 **expired reclaim.** Covered by `acquire`'s `expires_at_ms <= :now_ms` branch,
 with `generation + 1`. Reclaiming is therefore always a strictly newer
@@ -269,7 +299,8 @@ noticed. The engine therefore:
 1. runs the fenced `UPDATE task_steps` and returns `LeaseFenced` on zero rows;
 2. inserts the blob and the receipt row;
 3. updates `tasks` with its own expected-state predicate;
-4. appends the journal row;
+4. returns immutable successful transition(s) to shared-receiver participants,
+   which append the journal in this same transaction (ADR-0021);
 5. commits.
 
 ### No process-local mutex participates
@@ -293,8 +324,17 @@ survive a second process, which is the whole scenario.
 
 ## Proposed amendment
 
-Applied to `docs/protocols/02-task-protocol.md` only in the same commit that
-implements it. Nothing here is applied by this run.
+P2A implements only the optional wire member and its validation. Lease-table,
+fencing, release/expiry and commit-under-lease enforcement land in P2E/P2F with
+runtime tests, not in P2A; this full ADR remains Proposed.
+
+The implemented Rust wire field remains `Option<u32>`. Its decoder accepts
+JSON integer-valued numeric spellings such as `1`, `1.0` and `1e0` within the
+positive u32 domain; missing/null yield None, while zero, fractions and overflow
+refuse. This schema-integer wire domain is separate from SCJ-1, which refuses
+decimal/exponent spellings even if integer-valued. Checked `TaskStep` uses manual
+draft deserialization with sanitized errors before `StepPresence::new`, not a
+`serde(try_from = ...)` deserialization attribute.
 
 1. §3.1's table gains a `lease_generation` row: *"A monotonically increasing
    per-step counter, incremented on every lease acquisition including an expiry
@@ -309,16 +349,17 @@ implements it. Nothing here is applied by this run.
 `Task Protocol` §3.1's existing `lease_owner` / `lease_expires_at` rows are
 unchanged.
 
-## Code change, same commit
+## Phase-specific implementation gates
 
-| File | Change |
-| --- | --- |
-| `crates/serea-storage/migrations/0001_initial.sql` | The `leases` table, plus `lease_generation` and its `CHECK` on `task_steps` |
-| `crates/serea-storage/src/lease.rs` | `LeaseGuard`, the five methods, the exact statements above |
-| `crates/serea-storage/src/tx.rs` | `acquire_lease`/`renew_lease`/`release_lease` and the fenced `commit_step_*` statements |
-| `crates/serea-storage/src/error.rs` | `LeaseHeld`, `LeaseFenced`, `LeaseExpired` |
-| `crates/serea-testkit/src/clock.rs` | `TestClock` gains `Clock` and an epoch-millisecond authority (ADR-0018's sibling decision, §8 of the P2 design) |
-| `crates/serea-protocol/src/types.rs` | `TaskStep.lease_generation: Option<u32>` |
+| Phase gate | File | Change |
+| --- | --- | --- |
+| P2A wire only | `crates/serea-protocol/src/types.rs`, task schema and wire tests | `TaskStep.lease_generation: Option<u32>`, None omission, positive-u32 validation; not full ADR acceptance |
+| P2B | `crates/serea-testkit/src/clock.rs` | `TestClock` gains `Clock` and an epoch-millisecond authority (§8 of the P2 design) |
+| P2C/P2E | `crates/serea-storage/migrations/0001_initial.sql` | Bounded-u32 `leases` and `task_steps.lease_generation` CHECKs and checked SQL/wire mapping |
+| P2E/P2F | `crates/serea-storage/src/lease.rs` | Private nonclone `LeaseGuard` with u32 generation, borrowed begin/renew, consuming outcome/release |
+| P2E/P2F | `crates/serea-storage/src/tx.rs` | Acquire/renew/release and every outcome's authoritative unreleased-lease EXISTS predicate |
+| P2E/P2F | `crates/serea-storage/src/error.rs` | LeaseHeld/Fenced/Expired and typed generation-overflow refusal |
+| P2E/P2F green acceptance | Storage/engine tests | Cross-connection/process fences, release/reclaim/expiry policy, overflow rollback, no receipt/journal on fenced outcomes; docs probes alone do not close this gate |
 
 ## Consequences
 

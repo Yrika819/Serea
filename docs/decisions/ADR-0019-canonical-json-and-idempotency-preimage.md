@@ -1,14 +1,19 @@
 # ADR-0019: Canonical JSON (SCJ-1) and the Idempotency Preimage (IDK-1)
 
-- Status: **Proposed** — pending implementation and owner ratification
-- Architecture version: `serea-arch/0.2.0` at the time of writing
-- Decision date: not yet ratified
+- Status: **Accepted** — full SCJ-1/digest/duplicate-aware parsing and IDK-1 implemented in P2A
+- Architecture version: `serea-arch/1.0.0` (current frozen contract set)
+- Decision date: 2026-10-03 — owner direction
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.3,
   §5.4
 
-> This ADR changes no frozen protocol text and no code. The amendments below are
-> **drafted, not applied**.
+> Accepted on owner ratification after three corrected documentation gate reviews
+> GREEN. SCJ-1, digest, duplicate-aware parsing and named IDK-1 with sha2 0.11
+> without defaults belong to the same atomic action/2 P2A delivery, not P2B.
+> Actual final validation, test counts, independent review and integration evidence
+> are recorded in the [closure record](../plans/P2A-review-and-closure.md).
+> Precision/raw transport is patched to preserve ordinary literal JSON objects;
+> canonical numeric lexical admission remains independently guarded.
 
 ## Context
 
@@ -36,18 +41,20 @@ rule is underdetermined. The second is worse and is not hypothetical.
 
 ## The defect that decides this ADR
 
-Treating `‖` as raw concatenation produces a **collision on input that is legal
-under every frozen grammar**:
+Historical raw-string framing experiment (not legal ActionRequests): treating
+`‖` as raw concatenation gives this mathematical collision:
 
 | Tuple | `capability_id` | `capability_version` | `arguments` | Naive preimage |
 | --- | --- | --- | --- | --- |
 | **A** | `p.r.list` | `0.0.0` | `-12` | `p.r.list0.0.0-12` |
 | **B** | `p.r.list` | `0.0.0-1` | `2` | `p.r.list0.0.0-12` |
 
-Every component is legal: `p.r.list` is three segments with `list` drawn from the
-frozen verb set; `0.0.0` and `0.0.0-1` are both valid SemVer (`1` is a valid
-numeric pre-release identifier); `-12` and `2` are both valid canonical JSON
-integers.
+`p.r.list` is **invalid**: provider/resource require two-character minimum
+segments. The versions and scalar roots are legal for generic SCJ-1/framing, but
+ActionRequest requires object-root arguments. Typed public derivation validates its identifier arguments and accepts any SCJ-1
+root, independently of ActionRequest's object-only rule. It rejects `p.r.list`; these vectors belong only in low-level private raw-string framing tests. Repeating the
+experiment with `pp.rr.list` gives a legal capability ID but still generic scalar
+inputs, not ActionRequests. This is not a demonstrated collision of legal actions.
 
 A generated-corpus search over the frozen grammars — 14 verbs from Capability
 Protocol §2, 405 SemVer forms built from a 3 × 3 × 3 grid of numeric identifiers
@@ -61,34 +68,33 @@ an accident of three independently-maintained grammars, not a stated invariant,
 and nothing in the repository tests for it — which is why test D13 is a canary that
 fails loudly if a future grammar change makes the naive form collide.
 
-The two tuples are *different actions*: different pinned descriptor versions,
-different arguments, and different `arguments_digest`
-(`sha256:7ed00270e394c3e190d18a977f5d0e1ed889bdc03a637e8fe35f00946841b0bf` versus
-`sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35`).
-Sharing one key would let:
-
-- `C6` and `B11` suppress a *different* action as a duplicate;
-- a crash replay of B be recognised as A;
-- an Approval Protocol grant bound to A's exact `arguments_digest` authorise B,
-  because the value identifying the action is the same;
-- two steps in one task collide on `UNIQUE (task_id, idempotency_key)`, turning a
-  *wrong* key derivation into a spurious "duplicate key" failure.
+The raw tuples differ in version and scalar digest, but are not executable
+actions. Framing avoids boundary ambiguity without relying on input grammars.
+The earlier approval-transfer claim was false: Approval Protocol §4.1 checks
+argument digest, capability and version independently. Equal keys do not authorize
+B. Nor does this fixed-StepId pair prove a two-step SQL uniqueness collision;
+distinct StepIds participate in the preimage.
 
 ## Decision
 
 ### SCJ-1 — canonical JSON
 
-1. **The entry point is text, never a `Value`.** `canonicalize(&str) -> Vec<u8>`
-   is the only entry point. A `serde_json::Value` has already lost duplicate
-   object keys and cannot be checked for them, so P2 never digests one:
-   `put_blob` takes `&[u8]` and canonicalises, and there is deliberately **no**
-   `put_blob_value`. This closes the parser-differential hole at the type level
-   rather than by convention.
+1. **The entry point is text, not a `Value`.** `canonicalize(&str)` returns a
+   fallible canonical byte result. Reject duplicates before constructing a Value.
+   Already discarded duplicate keys cannot be reconstructed: callers must preserve
+   original text at the raw-input boundary. A string API cannot prove absolute
+   raw provenance (a caller can serialize an already-lossy Value). Future `put_blob`
+   takes bytes, not `put_blob_value`; this does not eliminate that caller obligation.
 2. **Duplicate object keys are rejected** with a typed error, detected by a
    `serde_json` visitor that tracks seen keys. `serde_json` silently keeps the
    last occurrence, so without this rule a document that another implementation
    reads as the *first* occurrence would digest as the last — on a value that
-   decides whether an external effect is suppressed.
+   decides whether an external effect is suppressed. Diagnostic precedence is
+   intentionally preflight-first: a forbidden numeric spelling anywhere reached
+   by lexical preflight can return `NonInteger` (or `InvalidJson` for malformed
+   numeric syntax) before the visitor reports a duplicate or another syntax error.
+   Multiply-invalid documents always refuse without canonical bytes, digest or key;
+   `DuplicateKey` is not promised as the first error for every such document.
 3. **Member ordering** is by the UTF-8 byte sequence of the key. For UTF-8 this
    equals ordering by Unicode scalar value, so "by UTF-8 code point" is satisfied
    exactly, with no locale or collation involved.
@@ -100,10 +106,16 @@ Sharing one key would let:
    refused at the parse boundary, so a lone surrogate cannot occur.
 6. **Numbers are integers only**, in `-2^63 ..= 2^64-1`, written as a decimal
    integer with no exponent, no leading `+`, no leading zero and no `-0`. Any
-   `f64` is a hard error. Because `serde_json` parses an integer above `u64::MAX`
-   as `f64`, this turns P1's silent collapse into a detectable condition:
-   `u64::MAX` canonicalises, `u64::MAX + 1` is refused. Two distinct large
-   integers and a float can neither reach nor collide in a digest.
+   decimal/exponent spelling is a hard error, even if integer-valued. The
+   implemented `canonicalize` runs lexical raw-numeric preflight before the
+   duplicate-aware serde visitor: spelling, negative zero and range are checked
+   before normalization or synthetic number-map dispatch can occur. Admission
+   stays stable under consumer-unified `serde_json/arbitrary_precision`, not
+   merely the workspace's default feature set. `u64::MAX` canonicalises;
+   `u64::MAX + 1` is refused rather than silently collapsing to `f64` or an object.
+   Two distinct out-of-domain integers and a float cannot reach a digest.
+   Task wire generation's positive-u32 decoder separately accepts `1.0`/`1e0`;
+   that schema-integer parity does not widen SCJ-1's canonical-number domain.
 7. **Array order is preserved.** Order is semantic in JSON arrays.
 8. **The root may be any value**, including an integer or a string.
 9. **Nesting deeper than `MAX_INSTANCE_DEPTH = 64` is refused** before
@@ -112,8 +124,8 @@ Sharing one key would let:
 
 **Stated cost of rule 6, and the real reason for it.** A capability whose
 `input_schema` legitimately admits a fractional number cannot have a stable digest
-under SCJ-1. P5 must decide per capability whether to admit `arbitrary_precision`
-or to declare the field non-canonicalisable. That is a P5 obligation, recorded
+under SCJ-1. A future decision must define fractional encoding/range or keep the input
+non-canonicalisable; `arbitrary_precision` alone is not a canonical-number rule. That is a P5 obligation, recorded
 here rather than inherited silently.
 
 An earlier draft of this ADR rejected a shortest-round-trip `f64` rule with the
@@ -130,12 +142,12 @@ does exist.**
 Rule 6 is therefore kept for two *different* reasons, and only the second is
 load-bearing:
 
-1. **The frozen contract does not yet need a fraction.** No frozen Serea surface
-   carries a floating-point value. `AssistantTask` has no float field; Protocol
-   Index §5 already routes 64-bit quantities to decimal **strings**; and every
-   named counter in Bounds §2.1 is an integer. Adopting ES number serialization
-   now would add a formatting dependency and ratify a numeric range before any P0
-   capability asks for one, and would buy nothing P2 can use.
+1. **SCJ-1 deliberately has a limited integer-only domain.** ModelRequest already
+   carries `temperature: f64` (wire example 0.2). SCJ-1 does not change model wire
+   validation and does not automatically cover every blob or MODEL_TURN input.
+   Future runtime digest/storage paths must reject noncanonical model documents.
+   Fractional support requires a future canonical-number/range decision; never
+   truncate or coerce temperature to manufacture a digest.
 2. **Full JCS adoption is unavailable anyway, for an unrelated reason.** RFC 8785
    §3.2.3 sorts object properties by **UTF-16 code units**, and warns explicitly
    that "sorting data encoded in UTF-8 or UTF-32 would also work, but the outcome
@@ -162,7 +174,7 @@ that would satisfy RFC 8785.
 **Named trigger for revisiting rule 6:** a capability whose `input_schema`
 admits a fractional number. At that point the rule becomes "integers as
 SCJ-1 rule 6, fractions per ECMAScript §7.1.12.1 with `Note 2`", the range must
-be ratified, and `ryu-js` enters P5 — not P2B.
+be ratified, and `ryu-js` enters P5 — not P2A.
 
 ### IDK-1 — the idempotency preimage
 
@@ -195,12 +207,12 @@ different field set impossible to confuse with this one.
 
 A content digest hashes one document, so its preimage is the document and there
 is nothing to frame. Only a *structured* derivation over several named fields
-needs a domain tag and an injective encoding. Every frozen sentence about a
-content digest therefore stays exactly as written.
+needs a domain tag and an injective encoding. The SHA-256 document-preimage definition is unchanged; admissible numeric domain
+is explicitly narrowed and requires the ratified major treatment.
 
 ## Fixed test vectors
 
-Computed from this specification, not illustrative. P2B pins them as literal
+Computed from this specification, not illustrative. P2A pins them as literal
 constants in `crates/serea-protocol/tests/canonical_vectors.rs`.
 
 ### SCJ-1
@@ -259,17 +271,38 @@ constant is not a verified constant, and neither is an unexercised vector.**
 Vectors 1 and 2 are equal and pin the member-ordering invariance.
 Vectors 1, 3, 4 and 5 are pairwise distinct and pin that each of
 `capability_id`, `capability_version` and `task_id` actually participates.
-Vectors **A** and **B** are the collision pair from the Context section: under the
-naive `‖` reading their concatenated suffix is the same 16 bytes —
-`p.r.list0.0.0-12` — and therefore the same key; under IDK-1 they differ. That pair
-is the regression test for this ADR. Both derived values were independently
-recomputed with `sha256` during design preparation and match.
+Vectors **A** and **B** retain historical hashes solely as mathematical raw-string
+framing vectors. Their common naive suffix `p.r.list0.0.0-12` is **15 bytes**, not
+16. Typed public derivation rejects the invalid ID. Independently pin the legal-ID
+`pp.rr.list` scalar framing regression below, plus typed public derivation of both valid-ID scalars and legal object arguments. Hash agreement is not input-domain validity.
+
+### Legal-ID regression vectors (independently derived in reconciliation)
+
+With the same task/step IDs above, use `pp.rr.list`:
+
+| Domain | Version | SCJ-1 bytes | IDK-1 SHA-256 key |
+| --- | --- | --- | --- |
+| Generic scalar framing | `0.0.0` | `-12` | `idk_1796e5d503926eb7f41f6dd59234e4b8f6de7526650c8911f9d0e68c4f87abd1` |
+| Generic scalar framing | `0.0.0-1` | `2` | `idk_c2df4132f97df1dddabce31306238753086962b0e3aea7366dfdb7fe3fdec06a` |
+| Legal ActionRequest object arguments | `0.0.0` | `{"n":-12}` | `idk_1a0326cb75273a11e56017804e9c1e187f60b3ab65eff3c87e8777bd6009f9f4` |
+| Legal ActionRequest object arguments | `0.0.0-1` | `{"n":2}` | `idk_8d00b0d917a9e90716a255d02af048fdd6589960b6dd336e188f99630b68ff35` |
+
+The scalar naive suffix is `pp.rr.list0.0.0-12` (17 bytes), identical for both
+scalar rows. Named-framing preimages are 244 bytes each and differ; object rows
+are 250 bytes each and have different naive suffixes as well. These are independent
+Python SHA-256/struct reconstructions, not evidence of Rust tests passing.
+
+The historical 113400/39424 corpus search used invalid short segments and scalar
+roots. Its counts remain historical evidence only, not a legal-action completeness
+claim. P2A reconstructs the corpus with legal IDs, distinguishes private raw
+framing, typed generic derivation and object-root ActionRequest domains, and tests
+injectivity of encoded preimages rather than claiming SHA-256 mathematically
+injective.
 
 ## Proposed amendment
 
-Applied to `docs/protocols/00-protocol-index.md` and
-`01-capability-protocol.md` only in the same commit that implements it. Nothing
-here is applied by this run.
+Protocol amendment, source, schemas, manifest, versions, tests and migration
+notes belong to the same P2A integration gate. This run edits documentation only.
 
 1. Protocol Index §5 gains a subsection defining SCJ-1 by reference to this ADR,
    with the entry-point-is-text rule and the integer-only number rule stated
@@ -281,15 +314,37 @@ here is applied by this run.
    external effect and derive no key."* — which cross-references ADR-0018 §4.
 4. A changelog section is created in each of the two protocol documents.
 
-## Code change, same commit
+## P2A code change, same atomic delivery
 
 | File | Change |
 | --- | --- |
-| `Cargo.toml` | One new workspace dependency providing `sha256`. Named, not added, by this run |
+| `Cargo.toml`, `Cargo.lock`, `crates/serea-protocol/Cargo.toml`, `vendor/` | sha2 0.11 without defaults; exact JSON/schema numeric admission and literal-object-preserving patches described in launch §3, no storage/runtime |
 | `crates/serea-protocol/src/canonical.rs` | `CanonicalJsonError`, `canonicalize`, `digest_of`, `derive_idempotency_key`, the duplicate-key visitor |
-| `crates/serea-protocol/src/lib.rs` | `pub mod canonical;` plus re-exports |
-| `crates/serea-protocol/tests/canonical_vectors.rs` | The ten SCJ-1 vectors and the seven IDK-1 vectors as literals |
+| `crates/serea-protocol/src/lib.rs` | Implemented `pub mod canonical;` and root re-exports of `CanonicalJsonError`, `canonicalize`, `digest_of`, `derive_idempotency_key` |
+| `crates/serea-protocol/tests/canonical_vectors.rs` | Ten SCJ-1 vectors, five historical typed-object IDK-1 vectors, two historical A/B vectors only via private raw framing, and four valid-ID scalar/object vectors via typed public derivation |
 | `crates/serea-protocol/tests/canonical_properties.rs` | Idempotence, member-ordering invariance, injectivity over a generated corpus, and a naive-collision canary over the frozen grammars |
+
+### Implemented public API
+
+The public module is `serea_protocol::canonical`; `lib.rs` also re-exports:
+
+```rust
+canonicalize(text: &str) -> Result<Vec<u8>, CanonicalJsonError>
+digest_of(text: &str) -> Result<Digest, CanonicalJsonError>
+derive_idempotency_key(
+    task: &TaskId,
+    step: &StepId,
+    capability: &CapabilityId,
+    version: &SemVer,
+    arguments: &str,
+) -> Result<IdempotencyKey, CanonicalJsonError>
+```
+
+Typed generic derivation accepts any SCJ-1 root, including scalars; it does not
+change `ActionRequest.arguments`' object-only contract. Invalid `p.r.list` cannot
+enter the typed API; the old A/B vectors remain private raw-framing regressions.
+The API accepts original JSON text, not `Value`; preserving original text before
+any lossy parse remains the caller's obligation.
 
 ## Change control and compatibility
 
@@ -298,9 +353,9 @@ so making the encoding explicit is a specification-precision change to a
 *structured* derivation — with no cross-version obligation, because P1 computed no
 digest and Serea has minted no key.
 
-**The architecture-version treatment of this ADR is not decided here, and an
-earlier draft's self-classification as "an architecture-minor clarification" was
-withdrawn by the P2 autonomous audit as wrong in a specific way.** SCJ-1 rule 6 is
+**The accepted architecture/action-major treatment supersedes the earlier draft's
+self-classification as "an architecture-minor clarification", withdrawn by the
+P2 autonomous audit as wrong in a specific way.** SCJ-1 rule 6 is
 not only a precision change to `‖`. It **narrows** the frozen Protocol Index §5
 sentence "numbers in shortest round-trip form": a document containing a
 fractional number is now non-canonicalisable, where before it was merely
@@ -318,9 +373,8 @@ evidence that the amendment is required rather than optional.
 
 ## Consequences
 
-- Every `Digest` in Serea becomes computable, which unblocks argument content
-  addressing, `input_digest`, `result_digest`, future evidence payload digests,
-  and duplicate suppression.
+- Digests become computable for the explicit SCJ-1 domain. Noncanonical model
+  documents and fractional capability arguments are not automatically covered.
 - The canonicalizer becomes the single choke point for untrusted JSON in the
   digest path, which is where `TB-11` retrieved content is supposed to be
   validated.
@@ -336,7 +390,7 @@ evidence that the amendment is required rather than optional.
 | --- | --- |
 | "Just sort the keys" | Four of the five clauses of Protocol Index §5 are underdetermined; four different implementations would produce four different digests |
 | **Full JCS (RFC 8785) adoption** | **Conflicts with frozen text.** §3.2.3 sorts keys by UTF-16 code units; frozen Protocol Index §5 says UTF-8 code point. The orders differ for astral-plane keys, so full adoption would require amending §5 — and would make Serea digests incompatible with every other JCS implementation, which is a cost with no benefit when Serea has no external verifier |
-| ECMAScript `Number::toString` for fractions, ahead of need | A fully specified and portable spelling exists, so this is not a correctness question — it is that no frozen Serea surface carries a fraction, and adopting it now adds a formatting dependency and ratifies a numeric range for nothing P2 can use. Deferred to P5 behind a named trigger, not rejected |
+| ECMAScript `Number::toString` for fractions, ahead of need | A fully specified and portable spelling exists, so this is not a correctness question — it is that SCJ-1 deliberately excludes fractions although model temperature is f64, and adopting it now adds a formatting dependency and ratifies a numeric range for nothing P2 can use. Deferred to P5 behind a named trigger, not rejected |
 | Percent- or C0-escaping every preimage field | Equivalent to length prefixing with more moving parts and no correctness gain |
 | `\|`-separated framing | `arguments` is arbitrary validated JSON and `ProviderReference` is opaque and never parsed, so a separator character can occur in a preimage |
 | Newline framing | Same, plus a literal newline can occur in a JSON string argument |

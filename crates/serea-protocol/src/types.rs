@@ -148,26 +148,73 @@ fn validate_code(field: ValueField, value: String) -> Result<String, ProtocolErr
     }
 }
 
-/// Validates a printable single-line label.
-///
-/// Non-empty and free of control characters are the two frozen requirements, and
-/// they are the only two. This validator enforces **no** length ceiling:
-///
-/// * The frozen documents bound no protocol-message free-text field. Bounds
-///   Protocol §2 declares its table the authoritative set of host-enforced
-///   bounds, and `B3` makes a bound enforced anywhere else a bug.
-/// * P0 deliberately leaves payload-byte, attachment-size, and object-count
-///   bounds unresolved, so there is no ratified ceiling this validator could
-///   enforce without ratifying a competing bound of its own.
-/// * `MAX_VALUE_LENGTH = 4096` did exactly that and was removed by owner
-///   decision. `docs/plans/P1-closure.md` records the removal, and a test pins
-///   that no free-text field is length-capped.
-///
-/// Resource bounds on free text belong to a dedicated bounds decision that
-/// ratifies them into Bounds Protocol §2; this module must not anticipate one.
-fn validate_label(field: ValueField, value: String) -> Result<String, ProtocolError> {
-    reject_empty(field, &value)?;
-    if has_control_characters(&value) {
+/// The three text categories frozen by ADR-0023, without a length ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextCategory {
+    /// O: opaque references; exact prefixed/fixed-shape identifier impersonations refused.
+    Opaque,
+    /// L: single-line labels; control characters and line separators refused.
+    Label,
+    /// P: prose; interior TAB, LF and Unicode line separators permitted.
+    Prose,
+}
+
+fn is_text_whitespace(character: char) -> bool {
+    matches!(character, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{0085}' | '\u{00a0}'
+        | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}'
+        | '\u{202f}' | '\u{205f}' | '\u{3000}')
+}
+
+impl TextCategory {
+    /// Checks the pinned whitespace, control and identifier rules, without normalization.
+    pub fn accepts(self, value: &str) -> bool {
+        if value.is_empty()
+            || value.starts_with(is_text_whitespace)
+            || value.ends_with(is_text_whitespace)
+        {
+            return false;
+        }
+        let forbidden = value.chars().any(|c| match self {
+            Self::Opaque | Self::Label => matches!(c, '\u{0000}'..='\u{001f}' | '\u{007f}'..='\u{009f}' | '\u{2028}' | '\u{2029}'),
+            Self::Prose => matches!(c, '\u{0000}'..='\u{0008}' | '\u{000b}'..='\u{001f}' | '\u{007f}'..='\u{009f}'),
+        });
+        !forbidden
+            && (self != Self::Opaque || !crate::ids::is_opaque_identifier_impersonation(value))
+    }
+
+    /// A complete JSON Schema string fragment with the generated ECMA-262 pattern.
+    pub fn schema_fragment(self) -> Value {
+        serde_json::json!({"type": "string", "pattern": text_pattern(self)})
+    }
+}
+
+/// Generates the complete strict-EOF ECMA-262 pattern defined by ADR-0023.
+/// Identifier exclusions are generated from `ids.rs`, never a copied prefix/verb list.
+pub fn text_pattern(category: TextCategory) -> String {
+    let whitespace =
+        r"[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]";
+    let end = r"(?![\s\S])";
+    let mut pattern = format!(r"^(?!{whitespace})(?![\s\S]*{whitespace}{end})");
+    if category == TextCategory::Opaque {
+        pattern.push_str(&crate::ids::opaque_identifier_exclusion_pattern());
+    }
+    pattern.push_str(match category {
+        TextCategory::Opaque | TextCategory::Label => r"[^\u0000-\u001f\u007f-\u009f\u2028\u2029]+",
+        TextCategory::Prose => r"[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]+",
+    });
+    pattern.push_str(end);
+    pattern
+}
+
+fn validate_text(
+    field: ValueField,
+    category: TextCategory,
+    value: String,
+) -> Result<String, ProtocolError> {
+    if value.is_empty() || value.chars().all(is_text_whitespace) {
+        return Err(malformed(field, ValueRejection::Empty));
+    }
+    if !category.accepts(&value) {
         return Err(malformed(field, ValueRejection::Malformed));
     }
     Ok(value)
@@ -249,14 +296,14 @@ declare_value!(
     /// names `id` but gives it no grammar.
     ActorId,
     ActorId,
-    |value| validate_label(ValueField::ActorId, value)
+    |value| validate_text(ValueField::ActorId, TextCategory::Opaque, value)
 );
 declare_value!(
     /// A step `lease_owner`. Task Protocol §3.1 requires the field but names no
     /// value space.
     LeaseOwner,
     LeaseOwner,
-    |value| validate_label(ValueField::LeaseOwner, value)
+    |value| validate_text(ValueField::LeaseOwner, TextCategory::Opaque, value)
 );
 declare_value!(
     /// A `SideEffectReceipt.provider_reference`: the external system's own
@@ -264,32 +311,32 @@ declare_value!(
     /// is given and never parses it (GoalLatch Adapter §2 item 6, §6.4).
     ProviderReference,
     ProviderReference,
-    |value| validate_label(ValueField::ProviderReference, value)
+    |value| validate_text(ValueField::ProviderReference, TextCategory::Opaque, value)
 );
 declare_value!(
     /// A diagnostic `ActionError.message`. Diagnostic only: no control flow may
     /// depend on it (Event Protocol §4).
     ErrorMessage,
     ErrorMessage,
-    |value| validate_label(ValueField::ErrorMessage, value)
+    |value| validate_text(ValueField::ErrorMessage, TextCategory::Prose, value)
 );
 declare_value!(
     /// An `AssistantTask.title`.
     TaskTitle,
     TaskTitle,
-    |value| validate_label(ValueField::TaskTitle, value)
+    |value| validate_text(ValueField::TaskTitle, TextCategory::Label, value)
 );
 declare_value!(
     /// A `CapabilityDescriptor.title`.
     DescriptorTitle,
     DescriptorTitle,
-    |value| validate_label(ValueField::DescriptorTitle, value)
+    |value| validate_text(ValueField::DescriptorTitle, TextCategory::Label, value)
 );
 declare_value!(
     /// A `CapabilityDescriptor.description`.
     DescriptorDescription,
     DescriptorDescription,
-    |value| validate_label(ValueField::DescriptorDescription, value)
+    |value| validate_text(ValueField::DescriptorDescription, TextCategory::Prose, value)
 );
 declare_value!(
     /// An `ApprovalRequest.plain_summary`: host-written from validated
@@ -297,13 +344,13 @@ declare_value!(
     /// (Approval Protocol §2.1).
     PlainSummary,
     PlainSummary,
-    |value| validate_label(ValueField::PlainSummary, value)
+    |value| validate_text(ValueField::PlainSummary, TextCategory::Label, value)
 );
 declare_value!(
     /// A `SideEffectReceipt.effect_summary`.
     EffectSummary,
     EffectSummary,
-    |value| validate_label(ValueField::EffectSummary, value)
+    |value| validate_text(ValueField::EffectSummary, TextCategory::Label, value)
 );
 
 /// An RFC 3339 timestamp in UTC, exactly as every frozen example writes it:
@@ -439,10 +486,10 @@ fn is_leap_year(year: u32) -> bool {
 pub struct WireSurface(String);
 
 impl WireSurface {
-    /// The `serea.action/1` surface (Capability Protocol).
-    pub const ACTION: &'static str = "serea.action/1";
-    /// The `serea.task/1` surface (Task Protocol).
-    pub const TASK: &'static str = "serea.task/1";
+    /// The `serea.action/2` surface (Capability Protocol).
+    pub const ACTION: &'static str = "serea.action/2";
+    /// The `serea.task/2` surface (Task Protocol).
+    pub const TASK: &'static str = "serea.task/2";
     /// The `serea.model/1` surface (Model Protocol).
     pub const MODEL: &'static str = "serea.model/1";
     /// The `serea.event/1` surface (Event Protocol).
@@ -459,9 +506,11 @@ impl WireSurface {
     pub const DATA: &'static str = "serea.data/1";
     /// The `serea.bounds/1` surface (Bounds Protocol).
     pub const BOUNDS: &'static str = "serea.bounds/1";
+    /// The `serea.scheduler/1` wire surface, not a scheduling runtime capability.
+    pub const SCHEDULER: &'static str = "serea.scheduler/1";
 
-    /// Every frozen surface name registered at `serea-arch/0.1.0`.
-    pub const ALL: [&'static str; 10] = [
+    /// Every supported surface/version pair registered at `serea-arch/1.0.0`.
+    pub const ALL: [&'static str; 11] = [
         Self::ACTION,
         Self::TASK,
         Self::MODEL,
@@ -472,7 +521,14 @@ impl WireSurface {
         Self::GOALLATCH,
         Self::DATA,
         Self::BOUNDS,
+        Self::SCHEDULER,
     ];
+
+    /// Whether this exact surface/version pair is in this build's registry.
+    /// Unknown names and unsupported majors fail closed, including old task/action majors.
+    pub fn is_supported(&self) -> bool {
+        Self::ALL.contains(&self.as_str())
+    }
 
     /// Parses and validates a surface name.
     pub fn new(value: impl Into<String>) -> Result<Self, ProtocolError> {
@@ -644,9 +700,7 @@ impl SemVer {
             return Err(reject());
         }
         for metadata in [pre_release, build] {
-            if let Some(metadata) = metadata
-                && !is_dot_separated_identifier(metadata)
-            {
+            if metadata.is_some_and(|metadata| !is_dot_separated_identifier(metadata)) {
                 return Err(reject());
             }
         }
@@ -1606,18 +1660,29 @@ impl<T> Envelope<T> {
         }
     }
 
-    /// Rejects a payload whose declared major is not the one P1 implements.
-    ///
-    /// Convenience for a consumer that has already parsed the envelope
-    /// somewhere other than [`Envelope::require_supported_major`].
+    /// Rejects a payload outside the per-surface supported-version registry.
+    /// The envelope major is checked independently by `require_supported_major`.
     pub fn require_supported_surface(&self) -> Result<(), ProtocolError> {
-        if self.surface.major() == Some(EnvelopeVersion::SUPPORTED_MAJOR) {
+        if self.surface.is_supported() {
             Ok(())
         } else {
             Err(ProtocolError::ContractViolation {
                 rule: ContractRule::UnsupportedWireSurfaceMajor,
             })
         }
+    }
+
+    /// Checks both version axes and the consumer's expected surface/version pair.
+    /// Pass a registered `WireSurface` constant; a supported but misrouted surface is refused.
+    pub fn require_expected_surface(&self, expected: &str) -> Result<(), ProtocolError> {
+        self.require_supported_major()?;
+        self.require_supported_surface()?;
+        if self.surface.as_str() != expected {
+            return Err(ProtocolError::ContractViolation {
+                rule: ContractRule::UnexpectedWireSurface,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -2269,8 +2334,16 @@ pub struct AssistantTask {
 /// exhaustive field list, but it does not require a closed schema, and Protocol
 /// Index §4.1 makes a new optional field an architecture-*minor* change. Closing
 /// it here would make every such minor change a breaking one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(into = "TaskStepDraft")]
 pub struct TaskStep {
+    presence: StepPresence,
+}
+
+/// Unchecked task-step fields, validated by `TaskStep::new` or `TryFrom` (ADR-0018).
+/// Mutating a draft never mutates an already validated step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskStepDraft {
     /// The step's identity.
     pub step_id: StepId,
     /// The task.
@@ -2285,42 +2358,289 @@ pub struct TaskStep {
     pub attempt: u32,
     /// The key derived from the request, so a post-crash re-issue is
     /// recognised as the same action.
-    pub idempotency_key: IdempotencyKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<IdempotencyKey>,
     /// The provider namespace, when the step invokes one.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<ProviderId>,
     /// The capability, when the step invokes one.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_id: Option<CapabilityId>,
     /// The pinned capability version.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_version: Option<SemVer>,
     /// `sha256` over the canonical JSON of the step input, for duplicate
     /// detection without retaining full arguments.
     pub input_digest: Digest,
     /// `sha256` over the canonical JSON of the result, to detect corruption or
     /// partial writes on recovery.
-    pub result_digest: Digest,
-    /// The proof of external effect. Non-null exactly when an effect occurred.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_digest: Option<Digest>,
+    /// The proof of external effect, permitted only on succeeded capability-shaped steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side_effect_receipt: Option<SideEffectReceipt>,
     /// When the attempt started.
-    pub started_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Timestamp>,
     /// When the attempt completed.
-    pub completed_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<Timestamp>,
     /// The worker holding the lease.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_owner: Option<LeaseOwner>,
     /// When the lease expires.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_expires_at: Option<Timestamp>,
+    /// Positive fencing generation, retained after a lease ends; wire zero is refused.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_lease_generation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lease_generation: Option<u32>,
     /// The last failure, preserved so a terminal task explains itself.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ActionError>,
     /// Fields this version does not know, preserved unchanged so a step
     /// round-trips as exactly as the task that contains it does.
     #[serde(flatten)]
     pub extensions: Extensions,
+}
+
+fn deserialize_lease_generation<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let invalid = || {
+        serde::de::Error::custom(malformed(
+            ValueField::LeaseGeneration,
+            ValueRejection::OutOfRange,
+        ))
+    };
+    // RawValue preserves the numeric token and distinguishes literal objects from
+    // serde_json's private number-marker maps. Value inputs retain their numeric
+    // text through the dependency's arbitrary_precision feature.
+    let Some(raw) = Option::<Box<serde_json::value::RawValue>>::deserialize(deserializer)
+        .map_err(|_| invalid())?
+    else {
+        return Ok(None);
+    };
+    exact_lease_generation(raw.get())
+        .map(Some)
+        .ok_or_else(invalid)
+}
+
+// The input is a validated JSON value from RawValue, not an arbitrary string.
+fn exact_lease_generation(raw: &str) -> Option<u32> {
+    let raw = raw.trim();
+    if !raw.as_bytes().first()?.is_ascii_digit() {
+        return None;
+    }
+    let (mantissa, exponent) = match raw.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => (mantissa, exponent.parse::<i128>().ok()?),
+        None => (raw, 0),
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = whole.bytes().chain(fraction.bytes());
+    let length = whole.len().checked_add(fraction.len())?;
+    let leading = digits.clone().take_while(|byte| *byte == b'0').count();
+    if leading == length {
+        return None;
+    }
+    let trailing = digits
+        .clone()
+        .rev()
+        .take_while(|byte| *byte == b'0')
+        .count();
+
+    // Removing trailing zeros leaves an integer exactly when the remaining
+    // decimal shift is nonnegative. Never expand an exponent or round a fraction.
+    let shift = exponent
+        .checked_sub(i128::try_from(fraction.len()).ok()?)?
+        .checked_add(i128::try_from(trailing).ok()?)?;
+    let shift = u32::try_from(shift).ok()?;
+    let coefficient = digits
+        .skip(leading)
+        .take(length - leading - trailing)
+        .try_fold(0_u32, |value, byte| {
+            value.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
+        })?;
+    coefficient.checked_mul(10_u32.checked_pow(shift)?)
+}
+
+impl<'de> Deserialize<'de> for TaskStep {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Serde's draft errors can include rejected values and nested raw keys.
+        // Sanitize before the checked presence boundary; never format that error.
+        let draft = TaskStepDraft::deserialize(deserializer)
+            .map_err(|_| serde::de::Error::custom("invalid task step draft"))?;
+        StepPresence::new(draft)
+            .map(Self::from)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Checked step-kind and known-status field presence (ADR-0018 §2–§4).
+/// Unknown well-formed statuses retain kind invariants and supplied-value checks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StepPresence {
+    draft: TaskStepDraft,
+}
+
+#[derive(Clone, Copy)]
+enum PresenceCell {
+    Absent,
+    Required,
+    Optional,
+}
+
+impl PresenceCell {
+    fn accepts(self, present: bool) -> bool {
+        match self {
+            Self::Absent => !present,
+            Self::Required => present,
+            Self::Optional => true,
+        }
+    }
+}
+
+const STEP_MEMBERS: [&str; 19] = [
+    "step_id",
+    "task_id",
+    "sequence",
+    "kind",
+    "status",
+    "attempt",
+    "input_digest",
+    "idempotency_key",
+    "provider_id",
+    "capability_id",
+    "capability_version",
+    "result_digest",
+    "side_effect_receipt",
+    "started_at",
+    "completed_at",
+    "lease_owner",
+    "lease_expires_at",
+    "lease_generation",
+    "error",
+];
+
+impl StepPresence {
+    /// Validates all shape-level invariants without runtime, descriptor or storage state.
+    pub fn new(draft: TaskStepDraft) -> Result<Self, ProtocolError> {
+        let violation = |rule| ProtocolError::ContractViolation { rule };
+        if draft
+            .extensions
+            .keys()
+            .any(|key| STEP_MEMBERS.contains(&key.as_str()))
+        {
+            return Err(violation(ContractRule::StepReservedExtensionKey));
+        }
+        if draft.lease_generation == Some(0) {
+            return Err(malformed(
+                ValueField::LeaseGeneration,
+                ValueRejection::OutOfRange,
+            ));
+        }
+        let capability_shaped = matches!(
+            draft.kind,
+            StepKind::Capability | StepKind::Delegate | StepKind::Verify
+        );
+        let tuple = [
+            draft.provider_id.is_some(),
+            draft.capability_id.is_some(),
+            draft.capability_version.is_some(),
+            draft.idempotency_key.is_some(),
+        ];
+        if tuple.iter().any(|present| *present != capability_shaped)
+            || (!capability_shaped && draft.side_effect_receipt.is_some())
+        {
+            return Err(violation(ContractRule::StepKindFieldPresence));
+        }
+        if draft.status.as_str() == "WAITING"
+            && !matches!(
+                draft.kind,
+                StepKind::WaitApproval | StepKind::WaitUser | StepKind::WaitSchedule
+            )
+        {
+            return Err(violation(ContractRule::StepWaitingKind));
+        }
+        use PresenceCell::{Absent as N, Optional as O, Required as R};
+        // result, started, completed, lease owner/expiry, generation, receipt, error.
+        let (planned, cells) = match draft.status.as_str() {
+            "PLANNED" => (true, [N, N, N, N, N, N, N]),
+            "LEASED" => (false, [N, N, N, R, R, N, N]),
+            "EXECUTING" => (false, [N, R, N, R, R, N, N]),
+            "WAITING" => (false, [N, R, N, N, R, N, N]),
+            "SUCCEEDED" => (false, [R, R, R, N, R, O, N]),
+            "FAILED" => (false, [O, R, R, N, R, N, R]),
+            "RECONCILED_ABSENT" => (false, [O, R, R, N, R, N, N]),
+            _ => return Ok(Self { draft }),
+        };
+        let supplied = [
+            draft.result_digest.is_some(),
+            draft.started_at.is_some(),
+            draft.completed_at.is_some(),
+            draft.lease_owner.is_some(),
+            draft.lease_generation.is_some(),
+            draft.side_effect_receipt.is_some(),
+            draft.error.is_some(),
+        ];
+        if (draft.attempt == 0) != planned
+            || cells
+                .iter()
+                .zip(supplied)
+                .any(|(cell, present)| !cell.accepts(present))
+            || !cells[3].accepts(draft.lease_expires_at.is_some())
+        {
+            return Err(violation(ContractRule::StepStatusFieldPresence));
+        }
+        Ok(Self { draft })
+    }
+}
+
+impl TryFrom<TaskStepDraft> for StepPresence {
+    type Error = ProtocolError;
+    fn try_from(draft: TaskStepDraft) -> Result<Self, Self::Error> {
+        Self::new(draft)
+    }
+}
+
+impl TaskStep {
+    /// Constructs a step through the same presence checks used by deserialization.
+    pub fn new(draft: TaskStepDraft) -> Result<Self, ProtocolError> {
+        StepPresence::new(draft).map(Self::from)
+    }
+}
+
+impl TryFrom<TaskStepDraft> for TaskStep {
+    type Error = ProtocolError;
+    fn try_from(draft: TaskStepDraft) -> Result<Self, Self::Error> {
+        Self::new(draft)
+    }
+}
+
+impl From<StepPresence> for TaskStep {
+    fn from(presence: StepPresence) -> Self {
+        Self { presence }
+    }
+}
+
+impl From<TaskStep> for TaskStepDraft {
+    fn from(step: TaskStep) -> Self {
+        step.presence.draft
+    }
+}
+
+impl std::ops::Deref for TaskStep {
+    type Target = TaskStepDraft;
+    fn deref(&self) -> &Self::Target {
+        &self.presence.draft
+    }
 }
 
 // ---------------------------------------------------------------------------

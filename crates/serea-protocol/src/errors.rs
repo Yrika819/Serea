@@ -229,6 +229,8 @@ pub enum ValueField {
     SequenceNumber,
     /// A counted model-usage quantity, carried as a decimal string.
     TokenCount,
+    /// A positive wire lease fencing generation (ADR-0018 §3).
+    LeaseGeneration,
 }
 
 impl fmt::Display for ValueField {
@@ -259,6 +261,7 @@ impl fmt::Display for ValueField {
             ValueField::TokenRole => "message role",
             ValueField::SequenceNumber => "sequence number",
             ValueField::TokenCount => "token count",
+            ValueField::LeaseGeneration => "lease generation",
         })
     }
 }
@@ -297,6 +300,16 @@ pub enum ContractRule {
     /// A wire surface declares a major this build does not implement.
     /// Protocol Index §4.2 rule 1.
     UnsupportedWireSurfaceMajor,
+    /// A supported envelope was delivered to a consumer for another surface.
+    UnexpectedWireSurface,
+    /// The capability tuple or receipt contradicts the step kind (ADR-0018 §4).
+    StepKindFieldPresence,
+    /// A known step status contradicts its field-presence matrix (ADR-0018 §3).
+    StepStatusFieldPresence,
+    /// WAITING is permitted only on the three wait kinds (ADR-0018 §2).
+    StepWaitingKind,
+    /// An extension duplicates a known TaskStep member, bypassing checked presence.
+    StepReservedExtensionKey,
 }
 
 impl fmt::Display for ContractRule {
@@ -314,6 +327,11 @@ impl fmt::Display for ContractRule {
             ContractRule::UnsupportedWireSurfaceMajor => {
                 "the wire surface major is not implemented by this build"
             }
+            ContractRule::UnexpectedWireSurface => "the wire surface does not match the consumer",
+            ContractRule::StepKindFieldPresence => "step fields contradict the step kind",
+            ContractRule::StepStatusFieldPresence => "step fields contradict the known status",
+            ContractRule::StepWaitingKind => "WAITING requires a wait step kind",
+            ContractRule::StepReservedExtensionKey => "step extension duplicates a known member",
         })
     }
 }

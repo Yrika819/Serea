@@ -1,13 +1,15 @@
 # ADR-0020: Bounds `B3` Scope — Operational Bounds versus Structural Constraints
 
-- Status: **Proposed** — pending implementation and owner ratification
-- Architecture version: `serea-arch/0.2.0` at the time of writing
-- Decision date: not yet ratified
+- Status: **Accepted** — semantic B3 operational/structural clarification
+- Architecture version: `serea-arch/1.0.0` (current frozen contract set)
+- Decision date: 2026-10-03 — owner direction
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.5, §12
 
-> This ADR changes no frozen protocol text and no code. The amendments below are
-> **drafted, not applied**.
+> Accepted on owner ratification after three corrected documentation gate reviews
+> GREEN. Contract annotations belong to P2A; this is semantic architecture-minor
+> in isolation, not editorial patch. No operational/resource-bound values or code
+> limits are added; this acceptance is not full workspace/MSRV verification.
 
 ## Context
 
@@ -91,9 +93,9 @@ and has no exhaustion behaviour, so it belongs in the schema and not in §2.
 
 ## Proposed amendment
 
-Applied to `docs/protocols/10-bounds-protocol.md` and
-`01-capability-protocol.md` only in the same commit that implements it. Nothing
-here is applied by this run.
+P2A applies the clarification to Bounds and Capability protocols with changelog
+entries. This is architecture-minor in isolation, not editorial/patch; it rides
+in the ratified architecture-major P2A package. No storage implementation is required.
 
 ### 1. A new subsection in Bounds Protocol, after §2.3
 
@@ -146,8 +148,8 @@ Protocol Index §7 item 3 requires every affected contract to be named.
 | Bounds Protocol §2, `B3` | Scoped, not weakened. New §2.4 |
 | Capability Protocol §3.1 | One parenthetical; the bullet list itself is unchanged |
 | `crates/serea-protocol/src/types.rs`, `validate_label` doc comment | **Unchanged.** It already cites `B3` for *not* adding a length ceiling, which this ADR confirms is correct |
-| `crates/serea-protocol/src/schema.rs`, `MAX_INSTANCE_DEPTH` | **Unchanged.** Named as structural so the literal-`B3` reading is retired |
-| The five checked-in schemas | **Unchanged** |
+| `crates/serea-protocol/src/schema.rs`, `MAX_INSTANCE_DEPTH` | Depth constant and behavior unchanged by this ADR; named as structural so the literal-`B3` reading is retired. In the complete P2A inventory, schema.rs has version documentation only; embedding/validation unchanged |
+| The five checked-in schemas | **Unchanged by this ADR.** Complete P2A changes four schemas for other decisions; envelope remains unchanged |
 | Every §2 bound | **Unchanged.** No bound is added, removed, or re-defaulted by this ADR |
 
 No code change accompanies this ADR. The test obligation is a negative one: a

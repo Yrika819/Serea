@@ -1,6 +1,6 @@
 # Serea Architecture
 
-Architecture version: `serea-arch/0.2.0` · Status: **P0 baseline** · Frozen on 2026-10-01
+Architecture version: `serea-arch/1.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
 
 This directory is the architecture package for Serea Core. It describes how the
 frozen protocols in [`docs/protocols/`](../protocols/00-protocol-index.md) are
@@ -56,11 +56,27 @@ Neither is allowed to quietly widen the other.
 
 **Three version axes, never collapsed** ([Protocol Index §4](../protocols/00-protocol-index.md#4-versioning)):
 
-| Axis | Value at `serea-arch/0.2.0` | Governs |
+| Axis | Current value at `serea-arch/1.0.0` | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/0.2.0` | The whole contract set, including this package |
+| Architecture version | `serea-arch/1.0.0` | The whole contract set, including this package |
 | Capability version | Per-descriptor SemVer, e.g. `calendar.events.list` at `1.2.0` | One capability's input/output contract |
-| Wire protocol version | `serea.action/1`, `serea.task/1`, `serea.model/1`, `serea.policy/1`, `serea.approval/1`, `serea.event/1`, `serea.device/1`, `serea.goallatch/1`, `serea.data/1`, `serea.bounds/1` | One transport or serialization surface |
+| Wire protocol version | `serea.action/2`, `serea.task/2`; `serea.model/1`, `serea.policy/1`, `serea.approval/1`, `serea.event/1`, `serea.device/1`, `serea.goallatch/1`, `serea.data/1`, `serea.bounds/1`, `serea.scheduler/1` | One transport or serialization surface; envelope version stays 1 |
+
+### 3.1 Ratified current P2A contract
+
+The table records the current frozen registry, not a pending target. P0/P1 used
+`serea-arch/0.2.0`; that dated baseline remains historical evidence. Owner
+ratification on 2026-10-03 accepts ADR-0018 (wire/lifecycle architecture, runtime
+deferred), ADR-0019 (implemented SCJ-1/digest/IDK-1), ADR-0020 (semantic B3
+clarification) and ADR-0023 (complete implemented validation), after three corrected
+documentation reviews GREEN. ADR-0021/22/24 runtime remains Proposed; only 0024's
+wire generation member/validation is implemented. The coordinator owns final
+workspace/MSRV 1.85 validation, bounded regression review and integration closure;
+current command results and test counts are recorded in the closure record, not
+inferred from earlier runs.
+No store/engine/event runtime or Clock/P2B is delivered. Source, schemas, manifest,
+versions, tests and these docs belong to one P2A integration, with no preliminary
+docs-only commit. See [frozen gate](../plans/P2A-review-and-closure.md).
 
 ## 4. Identifier discipline in this package
 
@@ -114,7 +130,8 @@ shape.
 
 ## 6. Phase-plan pointer
 
-This package is the **P0 baseline**. It is written against the phase plan under
+This package is the **current architecture contract**, evolved from the P0
+baseline; its runtime assembly remains phased. It is written against the phase plan under
 `docs/plans/`, and the plan is the only thing that may change the order in which
 these components ship. The architecture-relevant sequencing, restated here so a
 reader of this package alone can orient:

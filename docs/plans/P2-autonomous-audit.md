@@ -1,5 +1,48 @@
 # P2 Autonomous Pre-Implementation Audit
 
+> **Corrigendum — 2026-10-03, P2A docs reconciliation.** The audit below is
+> preserved as the original dated observation/disposition record, not rewritten
+> as current guidance or fresh green evidence. Current authority is
+> [P2A review and closure gate](P2A-review-and-closure.md), ADR-0018–0024 and their
+> current owning contracts. In particular:
+>
+> - M6's five conversions are **four**: `idempotency_key`, `result_digest`,
+>   `started_at`, `completed_at`. `input_digest` remains required;
+>   provider/capability/version already are Option. There are **seven**
+>   unconditional fields: `step_id`, `task_id`, `sequence`, `kind`, `status`,
+>   `attempt`, `input_digest`.
+> - M6's patch classification of B3/ADR-0020 is superseded by an
+>   **architecture-minor semantic clarification**, not an editorial patch.
+>   No numeric resource bounds or closure of that gap are introduced.
+> - M7's “no frozen surface requires a fraction” premise is false:
+>   `ModelRequest.temperature` is f64 (example 0.2). SCJ-1 deliberately excludes
+>   fractions; model wire is unchanged. Future digest paths must refuse
+>   noncanonical model documents, never truncate; fractional support needs a
+>   future encoding/range decision.
+> - B1's replacement pattern and 16/16, 0/14 results cover the original corpus
+>   only. That pattern overbans idk/sha256 near misses and out-of-range ULIDs,
+>   subtracts goallatch inexactly, and lacks pinned Unicode whitespace/C1 rules.
+>   ADR-0023's exact eleven-prefix grammar, strict end assertion and pinned
+>   White_Space list supersede it. Historical pattern success is not full parity.
+> - The raw `p.r.list` A/B vectors and 113400/39424 corpus counts use invalid
+>   short segments and scalar roots. Preserve their hashes only for private,
+>   low-level raw-string framing tests. Typed public derivation refuses the ID;
+>   valid `pp.rr.list` derivation may accept any SCJ-1 root, while ActionRequest
+>   arguments remain objects. No legal-action collision or approval transfer was
+>   proved. Framing is injective; SHA-256 is not mathematically injective.
+> - Historical 32-cell, 69/69 and 34-vector evidence keeps its original scope;
+>   it does not establish single-column/partial-error absence, authoritative
+>   release revocation, u32 overflow refusal, or production closure. New probes
+>   and their narrower evidence are recorded in the gate document.
+> - Every P2 ADR was **Proposed** before the corrected docs gate GREEN and owner
+>   ratification. Current ADR-0018/19/20/23 are Accepted within their stated
+>   scopes; “Accepted” findings below still mean historical finding disposition,
+>   not ADR acceptance. P2A implements all canonical primitives; Clock alone is
+>   P2B. ADR-0021/22/24 runtime acceptance waits for their explicitly deferred
+>   gates, not one all-runtime P2A delivery. Current final validation, test counts,
+>   review and integration status is coordinator-owned in the closure record;
+>   no historical measurement below is promoted to final-tree evidence.
+
 - **Branch:** `p2/autonomous-preimplementation-audit`
 - **Base commit:** `ec4659c007a914e5d90bb3067d3858a4e299b797` (`p2/design-preparation`)
 - **Audit commit:** `732b3ad92801dcb15d5b45548cbb23f325abafe0` — this document's

@@ -136,6 +136,28 @@ macro_rules! declare_id {
     };
 }
 
+fn is_ulid_body(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    bytes.len() == ULID_BODY_LENGTH
+        && bytes[0] <= ULID_MAX_LEADING
+        && bytes.iter().all(|b| CROCKFORD_ALPHABET.contains(b))
+}
+
+fn is_lowercase_hex(body: &str) -> bool {
+    body.len() == HEX_LENGTH
+        && body
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn is_capability_identifier(value: &str) -> bool {
+    let segments: Vec<&str> = value.split('.').collect();
+    segments.len() == CAPABILITY_SEGMENT_COUNT
+        && segments.iter().all(|s| is_namespace_segment(s))
+        && !PROHIBITED_NAMESPACES.contains(&segments[0])
+        && CAPABILITY_VERBS.contains(&segments[2])
+}
+
 macro_rules! ulid_validator {
     ($domain:ident, $prefix:literal) => {
         |value: String| -> Result<String, ProtocolError> {
@@ -165,11 +187,7 @@ macro_rules! hex_validator {
             let Some(body) = value.strip_prefix($prefix) else {
                 return Err(malformed(domain, IdentifierRejection::WrongPrefix));
             };
-            let is_hex = body.len() == HEX_LENGTH
-                && body
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-            if is_hex {
+            if is_lowercase_hex(body) {
                 Ok(value)
             } else {
                 Err(malformed(domain, IdentifierRejection::NotLowercaseHex))
@@ -368,6 +386,87 @@ declare_id!(
     "",
     kebab_validator!(ImplementationId)
 );
+
+/// The frozen ULID-family prefixes, sourced from the identifier types (ADR-0023).
+pub const ULID_PREFIXES: [&str; 11] = [
+    TaskId::PREFIX,
+    StepId::PREFIX,
+    ApprovalId::PREFIX,
+    GrantId::PREFIX,
+    RequestId::PREFIX,
+    EventId::PREFIX,
+    DeviceId::PREFIX,
+    ScheduleId::PREFIX,
+    ProposalId::PREFIX,
+    ReceiptId::PREFIX,
+    SessionId::PREFIX,
+];
+
+pub(crate) fn is_opaque_identifier_impersonation(value: &str) -> bool {
+    ULID_PREFIXES
+        .iter()
+        .any(|prefix| value.strip_prefix(prefix).is_some_and(is_ulid_body))
+        || value
+            .strip_prefix(IdempotencyKey::PREFIX)
+            .is_some_and(is_lowercase_hex)
+        || value
+            .strip_prefix(Digest::PREFIX)
+            .is_some_and(is_lowercase_hex)
+        || is_capability_identifier(value)
+}
+
+// Compress the actual alphabet into a regex class rather than maintain a second grammar.
+fn alphabet_pattern(alphabet: &[u8]) -> String {
+    let mut pattern = String::new();
+    let mut index = 0;
+    while index < alphabet.len() {
+        let start = index;
+        while index + 1 < alphabet.len() && alphabet[index + 1] == alphabet[index] + 1 {
+            index += 1;
+        }
+        pattern.push(char::from(alphabet[start]));
+        if index - start >= 2 {
+            pattern.push('-');
+            pattern.push(char::from(alphabet[index]));
+        } else if index > start {
+            pattern.push(char::from(alphabet[index]));
+        }
+        index += 1;
+    }
+    pattern
+}
+
+/// Generates strict-EOF ECMA-262 exclusions for category O from the ID grammars.
+/// Ordinary provider/model/implementation tokens are deliberately not excluded.
+pub fn opaque_identifier_exclusion_pattern() -> String {
+    let end = r"(?![\s\S])";
+    let alphabet = alphabet_pattern(CROCKFORD_ALPHABET);
+    let segment = format!(
+        "[a-z][a-z0-9_]{{{},{}}}",
+        SEGMENT_MIN_LENGTH - 1,
+        SEGMENT_MAX_LENGTH - 1
+    );
+    let prohibited = PROHIBITED_NAMESPACES.join("|");
+    format!(
+        r"(?!(?:{})[0-{}][{}]{{{}}}{})(?!{}[0-9a-f]{{{}}}{})(?!{}[0-9a-f]{{{}}}{})(?!(?!(?:{})\.){}\.{}\.(?:{}){})",
+        ULID_PREFIXES.join("|"),
+        char::from(ULID_MAX_LEADING),
+        alphabet,
+        ULID_BODY_LENGTH - 1,
+        end,
+        IdempotencyKey::PREFIX,
+        HEX_LENGTH,
+        end,
+        Digest::PREFIX,
+        HEX_LENGTH,
+        end,
+        prohibited,
+        segment,
+        segment,
+        CAPABILITY_VERBS.join("|"),
+        end,
+    )
+}
 
 impl Digest {
     /// The hash algorithm named by the wire form. `sha256` is the only frozen

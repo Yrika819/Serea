@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://serea.local/schemas/action-result.schema.json",
-  "title": "serea.action/1 ActionResult",
-  "description": "The result of one capability invocation. Owning protocol: Capability Protocol Section 5. Closed, like the request it answers, because an undeclared field on the serae.action/1 surface must be rejected before it can be consumed (Protocol Index Section 4.2 rule 3). receipt is the only accepted proof that an externally visible effect occurred (Capability Protocol Section 5.1, C4).",
+  "title": "serea.action/2 ActionResult",
+  "description": "The result of one capability invocation. Owning protocol: Capability Protocol Section 5. Closed, like the request it answers, because an undeclared field on the serea.action/2 surface must be rejected before it can be consumed (Protocol Index Section 4.2 rule 3). receipt is the only accepted proof that an externally visible effect occurred (Capability Protocol Section 5.1, C4).",
   "type": "object",
   "additionalProperties": false,
   "required": ["request_id", "status", "duration_ms"],
@@ -53,6 +53,21 @@
     }
   },
   "$defs": {
+    "opaqueToken": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000])(?![\\s\\S]*[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000](?![\\s\\S]))(?!(?:tsk_|stp_|apr_|grt_|req_|evt_|dev_|sch_|prop_|rcp_|ses_)[0-7][0-9A-HJKMNP-TV-Z]{25}(?![\\s\\S]))(?!idk_[0-9a-f]{64}(?![\\s\\S]))(?!sha256:[0-9a-f]{64}(?![\\s\\S]))(?!(?!(?:goallatch)\\.)[a-z][a-z0-9_]{1,31}\\.[a-z][a-z0-9_]{1,31}\\.(?:list|read|search|open|control|write|create|send|delete|start|status|run|cancel|result)(?![\\s\\S]))[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+(?![\\s\\S])"
+    },
+    "singleLineLabel": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000])(?![\\s\\S]*[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000](?![\\s\\S]))[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+(?![\\s\\S])"
+    },
+    "prose": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000])(?![\\s\\S]*[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000](?![\\s\\S]))[^\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]+(?![\\s\\S])"
+    },
     "status": {
       "type": "string",
       "enum": [
@@ -88,11 +103,6 @@
       "type": "string",
       "pattern": "^idk_[0-9a-f]{64}$",
       "maxLength": 68
-    },
-    "freeText": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
     },
     "evidence": {
       "type": "object",
@@ -144,7 +154,7 @@
       "required": ["kind", "id", "version"],
       "properties": {
         "kind": { "$ref": "#/$defs/actorKind" },
-        "id": { "$ref": "#/$defs/freeText" },
+        "id": { "$ref": "#/$defs/opaqueToken" },
         "version": {
           "type": "string",
           "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
@@ -169,11 +179,9 @@
         "idempotency_key": { "$ref": "#/$defs/idempotencyKey" },
         "provider_reference": {
           "description": "The external system's own handle for the affected object, needed for reconciliation. Omitted is valid only for side_effect_class LOCAL_STATE.",
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          "$ref": "#/$defs/opaqueToken"
         },
-        "effect_summary": { "$ref": "#/$defs/freeText" },
+        "effect_summary": { "$ref": "#/$defs/singleLineLabel" },
         "observed_at": { "$ref": "#/$defs/timestamp" },
         "replay_safe": { "type": "boolean" }
       }
@@ -190,7 +198,7 @@
           "maxLength": 64,
           "description": "A stable machine-readable code, never prose."
         },
-        "message": { "$ref": "#/$defs/freeText" },
+        "message": { "$ref": "#/$defs/prose" },
         "retryable": { "type": "boolean" },
         "host_action": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "maxLength": 64 },
         "details": { "type": "object", "maxProperties": 64 }

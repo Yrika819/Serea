@@ -273,7 +273,7 @@ CREATE TABLE task_steps (
   completed_at_ms    INTEGER,
   lease_owner        TEXT,
   lease_expires_at_ms INTEGER,
-  lease_generation   INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
+  lease_generation   INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation BETWEEN 0 AND 4294967295),
   error_kind         TEXT,
   error_code         TEXT,
   error_message      TEXT,
@@ -315,10 +315,14 @@ CREATE TABLE task_steps (
   CHECK (status <> 'SUCCEEDED' OR result_digest IS NOT NULL),
   -- WAITING only for the wait kinds
   CHECK (status <> 'WAITING' OR kind IN ('WAIT_APPROVAL','WAIT_USER','WAIT_SCHEDULE')),
-  -- FAILED carries the whole frozen ActionError
-  CHECK ((status = 'FAILED') = (error_kind IS NOT NULL AND error_code IS NOT NULL
+  -- FAILED requires all mandatory error members; details remains optional.
+  CHECK (status <> 'FAILED' OR (error_kind IS NOT NULL AND error_code IS NOT NULL
       AND error_message IS NOT NULL AND error_host_action IS NOT NULL
       AND error_retryable IS NOT NULL)),
+  -- Outside FAILED, every member is absent, including optional details.
+  CHECK (status = 'FAILED' OR (error_kind IS NULL AND error_code IS NULL
+      AND error_message IS NULL AND error_host_action IS NULL
+      AND error_retryable IS NULL AND error_details IS NULL)),
   -- ADR-0018 4: step-kind matrix
   -- ADR-0018 4, one clause per field. A single biconditional over all four
   -- admits a PARTIALLY populated tuple: kind=NOTIFY with capability_id set and
@@ -371,7 +375,7 @@ BEGIN SELECT RAISE(ABORT, 'a receipt may only be recorded for a SUCCEEDED step')
 CREATE TABLE leases (
   step_id        TEXT    PRIMARY KEY REFERENCES task_steps(step_id) ON DELETE CASCADE,
   owner          TEXT    NOT NULL,
-  generation     INTEGER NOT NULL CHECK (generation >= 1),
+  generation     INTEGER NOT NULL CHECK (generation BETWEEN 1 AND 4294967295),
   acquired_at_ms INTEGER NOT NULL,
   expires_at_ms  INTEGER NOT NULL,
   released_at_ms INTEGER,
@@ -551,15 +555,15 @@ as such. `tests/` pins that no second write path exists.
 
 ### 4.4 `task_steps`
 
-The presence and step-kind matrices of ADR-0018 §3 and §4, as one-directional
-implications plus four biconditionals. The distinction is not stylistic:
+The presence and step-kind matrices of ADR-0018 §3 and §4, as status
+implications plus per-field biconditionals. The distinction is not stylistic:
 
 | Shape | Why it is used |
 | --- | --- |
 | `status <> 'X' OR (…all-null…)` | Says what `X` requires. Compose several of these and you get the whole matrix without an accidental biconditional |
 | `(status IN ('LEASED','EXECUTING')) = (lease_owner IS NOT NULL)` | Genuinely two-way: a lease exists exactly while leased or executing |
 | `((kind IN ('CAPABILITY','DELEGATE','VERIFY')) = (<one field> IS NOT NULL))`, **one clause per field** | Genuinely two-way. Written as a *single* biconditional over all four fields it admits a partially populated tuple: `NOTIFY` with `capability_id` set and the other three null evaluates `0 = 0` and is accepted. Four clauses are strictly stronger than the one it replaces |
-| `((status = 'FAILED') = (the five error fields non-null))` | Genuinely two-way |
+| `status <> 'FAILED' OR (five mandatory error fields non-null)` plus `status = 'FAILED' OR (all six error fields null)` | FAILED requires five mandatory members and allows optional details; every member is absent otherwise. A single tuple biconditional admits partial errors outside FAILED |
 
 The one biconditional that had to be **removed** is the `WAITING` one. Written as
 `(status = 'WAITING') = (kind IN ('WAIT_APPROVAL','WAIT_USER','WAIT_SCHEDULE'))`
@@ -606,9 +610,12 @@ than one:
 CHECK ((status IN ('LEASED','EXECUTING')) = (lease_expires_at_ms IS NOT NULL))
 ```
 
-**After the edit, all 32 matrix `N`/`0` cells are refused, all 51 legitimately
-constructible `kind × status` cells still construct, and all 37 legal task
-transitions still construct.** This is the fifth instance of the package's own
+**Historical probe result: all 32 selected matrix `N`/`0` cases were refused,
+all 51 legitimately constructible `kind × status` cells and all 37 legal task
+transitions constructed.** This did not exhaust error shapes: current DDL
+additionally requires all six error columns NULL outside FAILED, including details,
+and five mandatory members on FAILED with optional details. Single-column and
+partial-tuple probes supplement, not retroactively enlarge, the historical run. This is the fifth instance of the package's own
 named blind spot — asserting a constraint rather than constructing the cell that
 would expose it — and the corrective is the same one the design already prescribes:
 probe every cell, in both directions.
@@ -635,14 +642,16 @@ Two constraints have no counterpart in ADR-0018 and are stated here:
   `lease_owner IS NOT NULL`, so a `SUCCEEDED` step with `lease_generation = 0` was
   accepted. Verified: `0` is now refused.
 
-  **What the constraint does not do, stated precisely.** It sets a *floor*, not a
-  ceiling: a corrupt row may carry `lease_generation = 99`, and a `SUCCEEDED` step
-  may name a generation for which no `leases` row exists. A foreign key cannot close
-  this, because the dependency is one-way — `leases` references `task_steps`, not the
-  reverse. Both are *detected* rather than prevented, by the acquire path (a
-  generation with no `leases` row fails the subquery and the step update affects zero
-  rows) and by recovery's invariant scan. That is the honest boundary; an earlier
-  draft of this section claimed `99` was fixed, which it is not.
+  **What the constraints do not do, stated precisely.** The column CHECK also
+  imposes the u32 ceiling `4294967295`; PLANNED uses SQL 0 / wire None, and
+  all later generations are positive u32, retained after release. Eligible
+  acquisition at the maximum fails and rolls back, never wraps or clamps.
+  Boundedness does not prove provenance: a corrupt row can carry generation 99
+  or a terminal generation with no matching `leases` row. There is no reverse
+  foreign key. Recovery must detect this; every outcome predicate must also
+  EXISTS an authoritative lease matching step/owner/generation and unreleased
+  state. Missing authority makes that outcome affect zero rows. Neither the
+  step copy nor the u32 bound alone proves ownership.
 
 **What is still not enforceable in `CHECK`, and is therefore detected rather than
 prevented:** `side_effect_receipt` on a `RECONCILED_ABSENT` step. Receipt presence
@@ -716,7 +725,7 @@ deferred.
 CREATE TABLE leases (
   step_id        TEXT    PRIMARY KEY REFERENCES task_steps(step_id) ON DELETE CASCADE,
   owner          TEXT    NOT NULL,
-  generation     INTEGER NOT NULL CHECK (generation >= 1),
+  generation     INTEGER NOT NULL CHECK (generation BETWEEN 1 AND 4294967295),
   acquired_at_ms INTEGER NOT NULL,
   expires_at_ms  INTEGER NOT NULL,
   released_at_ms INTEGER
@@ -733,7 +742,8 @@ increments on every acquisition including an expiry reclaim.
 
 `task_steps.lease_generation` and `leases.generation` are two copies of one fact.
 That duplication is deliberate — the step-side copy is what makes the fence
-predicate a single indexed statement with no join — and **it is kept consistent
+predicate address the step directly — outcomes additionally EXISTS the indexed,
+authoritative unreleased lease row — and **it is kept consistent
 by derivation, not by a trigger**:
 
 ```sql
@@ -1045,6 +1055,12 @@ Indexes **deliberately absent**, each because no stated query needs it:
   reads, not a predicate a query runs.
 
 ## 7. Verified behaviour
+
+The following table preserves **historical** probe results, not a claim of
+production coverage or of complete current presence/fence validation. Original
+32-cell/69-check runs did not exercise partial errors, release-before-outcome or
+u32 overflow. Current additions are checked by the docs probe linked from
+[the gate](P2A-review-and-closure.md); runtime tests remain deferred.
 
 **Round 4** follows the third review pass and adds the positive cases it asked for
 — including *each wait kind at `PLANNED`*, which rounds 1–3 all missed because every

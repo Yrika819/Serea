@@ -1,6 +1,6 @@
 # Capability Protocol
 
-Protocol ID: `PROTO-CAP` · Surface: `serea.action/1` · Status: **FROZEN for P0**
+Protocol ID: `PROTO-CAP` · Surface: `serea.action/2` · Status: **FROZEN current contract**
 
 This protocol defines how Serea describes a thing it can do, asks a provider
 to do it, and proves afterwards that it did. It is the boundary between
@@ -116,6 +116,19 @@ Additional closed-world constraints beyond JSON Schema:
 - No schema may permit a `CREDENTIAL`-classified field. Credential shapes are
   unreachable from model-authored input by construction — see
   [Data Classification Protocol §4](09-data-classification-protocol.md#4-credential-exclusion).
+
+Schema length/count/object constraints above are **structural validation**, not
+operational work counters under B3 (Accepted ADR-0020). No resource-bound numeric
+values are added by this clarification; refuse invalid values, never truncate them.
+
+Text fields use the exact categories and pinned Unicode White_Space set in
+[ADR-0023](../decisions/ADR-0023-text-field-validation-categories.md): O for
+ActorId/LeaseOwner/ProviderReference, L for TaskTitle/DescriptorTitle/EffectSummary/
+PlainSummary, P for ErrorMessage/DescriptorDescription. O/L preserve all C1 refusals
+and reject U+2028/U+2029; P permits interior LF/TAB/U+2028/U+2029 but rejects CR,
+other C0, DEL and C1. Every category rejects boundary whitespace and empty input.
+Every provider_reference schema occurrence, including nested receipts, is in scope.
+Exact O impersonation rejection matches frozen identifier parsing, not near misses.
 
 **`side_effect_class`** — what changes in the world, independent of risk:
 
@@ -366,11 +379,22 @@ stable schema.
 
 ### 8.2 Idempotency key derivation
 
-```
-idempotency_key = idk_ + hex(sha256(
-    task_id ‖ step_id ‖ capability_id ‖ capability_version ‖ canonical_json(arguments)
-))
-```
+The key uses the domain-separated **IDK-1** encoding in
+[ADR-0019](../decisions/ADR-0019-canonical-json-and-idempotency-preimage.md#idk-1-the-idempotency-preimage):
+21-byte domain tag `serea.idempotency.v1\0`, u8 field count 5, then u64-big-endian
+length-prefixed field **name AND value** in order task_id, step_id, capability_id,
+capability_version, arguments_canonical. Arguments are canonical SCJ-1 bytes; hash
+with SHA-256 and render idk_ plus 64 lowercase hex. Framing is injective; no claim
+of mathematical SHA-256 injectivity. Typed public derivation validates IDs and
+accepts any SCJ-1 root with valid identifiers (including pp.rr.list scalar roots).
+Invalid p.r.list historical vectors belong only in low-level private raw-string
+framing tests; public derivation refuses that ID. ActionRequest separately
+requires object-root arguments.
+
+Key is required only for CAPABILITY, DELEGATE and VERIFY steps; other kinds derive
+no key. Approval checks argument digest/capability/pinned version independently;
+key equality does not transfer approval. Full SCJ-1/digest/IDK-1/sha2 0.11 without
+defaults land with action/2 atomically in P2A, not P2B.
 
 The key is derived from the *request*, not from the attempt. Every attempt of
 the same step produces the same key. This is what makes duplicate detection
@@ -467,3 +491,14 @@ plans.
 | C8 | Credentials reach providers only as opaque `CredentialHandle`s. |
 | C9 | Root absence yields a structured `CAPABILITY_UNAVAILABLE`, never a crash or degraded startup. |
 | C10 | Capability removal disables new requests without stranding in-flight steps. |
+## 11. P2A migration note and changelog
+
+- 2026-10-03: frozen current action/2 with implemented SCJ-1 limited integer
+  domain, named IDK-1 framing and complete text-category validation (Accepted
+  ADR-0019/23). Accepted B3 semantic clarification is architecture-minor in
+  isolation (ADR-0020), not patch. The coordinator records current final
+  workspace/MSRV validation, test counts, review and integration status in the
+  [closure record](../plans/P2A-review-and-closure.md). No runtime delivered.
+- Both consumer migration notes are in the
+  [launch package](../plans/P2-6.1-sol-launch.md#4-migration-note-drafts).
+  Model temperature remains f64 on model/1; no automatic canonical model coverage.

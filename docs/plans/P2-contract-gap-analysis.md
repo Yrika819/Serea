@@ -4,11 +4,22 @@
 - **Branch:** `p2/design-preparation`
 - **Base commit:** `c3737039e3e38dbba554dc0b9075025f87948358`
   (`p1/workspace-protocol-skeleton`, P1 closed)
-- **Architecture version in force:** `serea-arch/0.2.0`
+- **Historical P1 baseline:** `serea-arch/0.2.0`; current frozen P2A contract `serea-arch/1.0.0`
 - **Scope:** design preparation only. No production Rust, no SQLite code, no
   `serea-storage` or `serea-task-engine` source, no dependency change. This
   document records what P2 must decide before it can be written, and it decides
   it.
+
+**Current disposition (2026-10-03):** P2A protocol/canonical slices are
+implemented, including exact generation decoding without f64 rounding and the
+narrow precision dependency patch described in [launch §3](P2-6.1-sol-launch.md#3-dependency-lines-current-p2a-integration-and-p2c-candidate).
+Three independent subagent corrected docs reviews under the coordinator were
+GREEN; contingent owner design ratification accepts ADR-0018/19/20/23 within
+their stated scopes. The coordinator records actual final workspace/MSRV
+validation, test counts, review and integration status in the closure record;
+runtime remains deferred. Dated baseline gap
+observations below are preserved, not rewritten as present-day failures.
+See [frozen gate](P2A-review-and-closure.md).
 
 ## 1. How to read this document
 
@@ -17,7 +28,7 @@ about *when* the finding must be dealt with, not about how hard it is.
 
 | Class | Meaning | Consequence for P2 |
 | --- | --- | --- |
-| `MUST_FIX_BEFORE_P2_IMPLEMENTATION` | P2 cannot be written correctly until this is resolved, because the code would otherwise have to fabricate a value or break a frozen promise. | The protocol change and the code change must land **atomically** in one commit. Recorded as a PROPOSED ADR. |
+| `MUST_FIX_BEFORE_P2_IMPLEMENTATION` | P2 cannot be written correctly until this is resolved, because the code would otherwise have to fabricate a value or break a frozen promise. | The protocol change and code change must land **atomically within their owning phase gate**. ADR-0018/19/20/23 now Accepted within their stated P2A scopes; ADR-0018 runtime deferred, ADR-0021/22/24 runtime Proposed. P2A annotations do not promise runtime implementation or full workspace/MSRV closure. |
 | `P2_DESIGN_DECISION` | A choice P2 owns. No frozen contract forbids any answer; P2 must simply pick one and write it down. | Decided here. No ADR needed unless it changes a frozen protocol. |
 | `SAFE_TO_DEFER` | Real, but P2 can be correct without it. | Recorded with the phase that owns it. |
 | `PRE_EXISTING_LIMITATION` | Already known and already recorded; re-stating so it is not mistaken for a P2 regression. | No action. |
@@ -43,7 +54,7 @@ Two rules govern the whole document:
 | 5.1b | Step `status` is an open code with no closed lifecycle for an engine | `P2_DESIGN_DECISION` | [ADR-0018](../decisions/ADR-0018-taskstep-lifecycle-and-field-presence.md) |
 | 5.2 | `idempotency_key` is required on every step kind | `MUST_FIX_BEFORE_P2_IMPLEMENTATION` | [ADR-0018](../decisions/ADR-0018-taskstep-lifecycle-and-field-presence.md) |
 | 5.3 | Canonical JSON is specified but not implemented; large integers collapse | `MUST_FIX_BEFORE_P2_IMPLEMENTATION` | [ADR-0019](../decisions/ADR-0019-canonical-json-and-idempotency-preimage.md) |
-| 5.4 | The `‖` idempotency preimage **collides on legal input today** | `MUST_FIX_BEFORE_P2_IMPLEMENTATION` | [ADR-0019](../decisions/ADR-0019-canonical-json-and-idempotency-preimage.md) |
+| 5.4 | The `‖` idempotency preimage has raw-string boundary ambiguity (not a proven legal-action collision) | `MUST_FIX_BEFORE_P2_IMPLEMENTATION` | [ADR-0019](../decisions/ADR-0019-canonical-json-and-idempotency-preimage.md) |
 | 5.5 | `B3` reads as forbidding structural schema constraints | `MUST_FIX_BEFORE_P2_IMPLEMENTATION` (clarification only) | [ADR-0020](../decisions/ADR-0020-bounds-b3-scope-clarification.md) |
 | 5.6 | One `validate_label` serves three incompatible text categories | `MUST_FIX_BEFORE_P2_IMPLEMENTATION` | [ADR-0023](../decisions/ADR-0023-text-field-validation-categories.md) |
 | 5.6b | Schema accepts whitespace-only free text that Rust refuses | `MUST_FIX_BEFORE_P2_IMPLEMENTATION` | [ADR-0023](../decisions/ADR-0023-text-field-validation-categories.md) |
@@ -127,12 +138,12 @@ discoveries.
 persisted *before* execution, and §3.1 requires `attempt` to distinguish a
 crash-recovered attempt from a deliberate retry. A step that exists in a
 persisted plan but has not run has no `started_at`, no `completed_at`, no
-`result`, and — for every kind but `CAPABILITY` — no `idempotency_key`. The
+`result`, and — for the five non-capability-shaped kinds — no `idempotency_key`. The
 current shape has no representation for it except fabricating timestamps and
 digests, which would corrupt `result_digest`'s stated purpose ("Detects result
 corruption or partial writes on recovery") and make `started_at` a lie.
 
-**Resolution: one flat wire object, five fields become nullable, and presence
+**Resolution: one flat wire object, four fields become optional, and presence
 becomes a checked invariant.** Task Protocol §3 gives an exhaustive field list
 but explicitly does not require a closed schema, and
 [Protocol Index §4.2 rule 3](../protocols/00-protocol-index.md#42-compatibility-rules)
@@ -201,26 +212,18 @@ while its sibling `WAIT_APPROVAL` step is `WAITING`.
 Full matrix, with the exact SQL `CHECK` expressions, is in
 [ADR-0018](../decisions/ADR-0018-taskstep-lifecycle-and-field-presence.md).
 
-**Resolution (c): the compatibility question, stated honestly.** Converting five
-fields from required to optional is not literally the "new optional field" case
-that Protocol Index §4.1 names as minor, because it *weakens* validation for a
-consumer. Two mitigations make the classification defensible, and the owner must
-still ratify it:
-
-- `serea.task/1` has exactly one producer and one consumer in V1 — the host
-  itself. No cross-host consumer of a task document exists, so no deployed
-  consumer can start accepting something it previously rejected.
-- The relaxation is not uniform. For the three step kinds that can reach an
-  external effect, the schema *gains* `if`/`then` clauses that make
-  `capability_id`, `capability_version`, `provider_id` and `idempotency_key`
-  conditionally **required**. Fail-closedness increases where it matters and
-  decreases only where nothing external happens.
-
-Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION`. Disposition: PROPOSED
-[ADR-0018](../decisions/ADR-0018-taskstep-lifecycle-and-field-presence.md), which
-carries the exact amendment, the exact code change list, and the compatibility
-note. Architecture-version treatment is flagged there as an owner decision
-between a minor step and a major one; this run does not decide it.
+**P2A wire disposition.** Convert only idempotency_key/result_digest/started_at/
+completed_at to Option; input_digest remains required, provider/capability/version
+already Option. Seven unconditional fields, missing/null accepts None, serializer
+omits None. SQL generation 0 maps to None and positive u32 maps to Some, with
+overflow refused. Known-status presence validation applies only to known statuses;
+kind invariants apply always, so unknown well-formed status still parses. Runtime
+unknown execution blocking remains P2F. Major/version/migration direction is
+ratified by owner instruction, not an open minor/major choice. ADR-0018 is Accepted
+as wire/lifecycle architecture with implemented checked wire validation, not runtime
+enforcement. TaskStepDraft → private validated TaskStep/StepPresence has no public
+mutation bypass; reserved extension keys are refused. Non-capability receipts
+are absent on ALL statuses including unknown; corrected Rust/schema parity is P2A.
 
 ## 5.1b Step `status` needs a closed lifecycle, and a plan revision needs an ordering rule
 
@@ -249,8 +252,8 @@ The wire change is the MUST_FIX, and it is carried by 5.1.
 `capability_id`, `capability_version` and `canonical_json(arguments)`.
 `StepKind` also contains `MODEL_TURN`, `WAIT_APPROVAL`, `WAIT_USER`,
 `WAIT_SCHEDULE`, `VERIFY`, `NOTIFY` and `DELEGATE`. Three of the five
-formula inputs do not exist for most of those kinds, yet both the Rust type and
-the schema make all of them unconditionally present or required.
+formula inputs do not exist for most of those kinds, yet idempotency_key is unconditionally required. Provider/capability/version
+already are Option; their kind-dependent invariant still needs validation.
 
 **Resolution: a step-kind × required-field matrix, and `idempotency_key` becomes
 capability-scoped.**
@@ -291,8 +294,7 @@ class lives in a descriptor, and P2 has no registry. P2 enforces the ceiling
 *mechanism* (`policy_class` is immutable, and the ceiling column is
 CHECK-constrained) and records the obligation; P5 supplies the comparison.
 
-Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION`. Disposition: PROPOSED
-ADR-0018 §3.
+Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION`. Disposition: Proposed ADR-0018 architectural/wire decision; runtime deferred.
 
 ## 5.3 Canonical JSON is specified but not implemented
 
@@ -305,11 +307,11 @@ so "two distinct integers above `u64::MAX` collapse to one `Value`".
 **Why "sort the keys" is not a specification.** Four of the five clauses are
 underdetermined and each one produces a different digest:
 
-- *Shortest round-trip form* is implementation-defined at the edges. An `f64`
-  has no single portable shortest decimal spelling; two conforming
-  implementations can differ, so the digest is not portable. Worse, a
-  `f64`-derived digest of a value that is *mathematically* an integer is a
-  classic duplicate-suppression hole.
+- *Shortest round-trip form* needs a specified algorithm and domain. A portable
+  ECMAScript spelling exists; the earlier claim that no such spelling exists was
+  false. SCJ-1 deliberately limits its domain to integers. ModelRequest.temperature
+  is f64 and remains valid on model/1; future digest paths reject fractional model
+  documents until a new fractional canonicalization decision, never truncate them.
 - *Escape policy* is unspecified. `"\u0041"` and `"A"` are the same string but
   different bytes; so are a raw U+2028 and its escaped form.
 - *Number domain* is unspecified. Does `1.0` canonicalise to `1`, to `1.0`, or is
@@ -326,8 +328,8 @@ underdetermined and each one produces a different digest:
    the only entry point. P2 never digests a pre-built `serde_json::Value`, because
    a `Value` has already lost duplicate keys and cannot be checked for them.
    `put_blob` therefore takes `&[u8]` and canonicalises; there is deliberately no
-   `put_blob_value`. This closes the differential at the type level instead of by
-   convention.
+   `put_blob_value`. Original raw text must reach this parser before Value discards duplicates.
+   The string API cannot prove provenance or reconstruct already-lost duplicates.
 2. **Duplicate object keys are rejected** with a typed error, detected by a
    `serde_json` visitor that tracks seen keys. This is the single most important
    rule in SCJ-1.
@@ -381,53 +383,30 @@ including whitespace normalisation, member reordering, the escape table, array
 order preservation, and `u64::MAX`. They are real values, computed from the
 specification, not illustrative placeholders.
 
-Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION`. Disposition: PROPOSED
-ADR-0019 §1. Note that P2 introduces `sha256` to the workspace, so `sha2` (or an
-equivalent) is a **new dependency**; it is named here and added in P2B, not
-today.
+Classification at design time: `MUST_FIX_BEFORE_P2_IMPLEMENTATION`. Current
+disposition: Accepted ADR-0019 full primitive decision, implemented in P2A with
+sha2 0.11 without defaults. Current final workspace/MSRV validation, review and
+integration status is recorded by the coordinator in the
+[closure record](P2A-review-and-closure.md), not inferred from earlier counts.
+No canonical work moves to P2B.
 
-## 5.4 The idempotency preimage collides on legal input today
+## 5.4 Idempotency framing ambiguity and the input-domain correction
 
-**This is not a theoretical ambiguity. Two different actions derive the same
-key under the frozen notation.**
+Historical A/B hashes using `p.r.list` are mathematical raw-string framing vectors
+only: the ID is invalid (provider/resource require 2–32 characters), and scalar
+arguments are not ActionRequest object roots. SCJ-1 generically permits scalars.
+`pp.rr.list` with `0.0.0`/`-12` versus `0.0.0-1`/`2` gives a generic scalar naive
+collision, not a demonstrated collision between legal ActionRequests. Independently
+pin that pair and legal object inputs per ADR-0019. Typed public derivation accepts any SCJ-1 root with valid typed identifiers;
+ActionRequest separately requires object-root arguments. Historical raw vectors
+belong only in low-level private framing tests. Public derivation rejects
+`p.r.list`. Historical corpus counts remain evidence of that raw-string experiment,
+not coverage of frozen legal action grammars.
 
-Capability Protocol §8.2 writes the preimage with a `‖` that the documents never
-define. Treating it as raw concatenation:
-
-| Tuple | `capability_id` | `capability_version` | `arguments` | Naive preimage |
-| --- | --- | --- | --- | --- |
-| **A** | `p.r.list` | `0.0.0` | `-12` | `p.r.list0.0.0-12` |
-| **B** | `p.r.list` | `0.0.0-1` | `2` | `p.r.list0.0.0-12` |
-
-Every component of both tuples is legal under the frozen grammars:
-
-- `p.r.list` is three segments matching `[a-z][a-z0-9_]{1,31}` with `list` drawn
-  from the frozen verb set (Capability Protocol §2).
-- `0.0.0` is a valid SemVer, and so is `0.0.0-1` — `1` is a valid numeric
-  pre-release identifier.
-- `-12` and `2` are both legal canonical JSON integers under SCJ-1 rule 6.
-
-An exhaustive search over the frozen grammars (14 verbs × 405 SemVer forms × 20
-argument forms = 113 400 triples) finds this family and no other: the collision
-is always between a **SemVer pre-release identifier** and a **negative argument
-integer**. Searching for a collision across the `capability_id` /
-`capability_version` boundary finds none in 39 424 triples, because every
-identifier segment must start with `[a-z]` and every SemVer numeric identifier
-must start with a digit.
-
-The consequences are not cosmetic. These two tuples are *different actions*:
-different pinned descriptor versions, different arguments, different
-`arguments_digest` (`sha256:7ed00270e394c3e190d18a977f5d0e1ed889bdc03a637e8fe35f00946841b0bf`
-versus `sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35`).
-Under one key they would:
-
-- let `C6` and `B11` suppress a *different* action as a duplicate;
-- let a crash replay of B be recognised as A;
-- let an `APPROVAL`-protocol grant bound to A's exact `arguments_digest`
-  authorise B, because the key that identifies the action is the same;
-- let two steps in one task carry the same key, which P2's
-  `UNIQUE (task_id, idempotency_key)` must then reject — a *correct* index
-  turning a *wrong* key derivation into a spurious "duplicate key" failure.
+No grant transfers from A to B: approval independently checks digest, capability
+and pinned version. Distinct StepIds also participate, so the fixed-StepId scalar
+pair does not prove a two-step uniqueness collision. IDK-1 supplies unambiguous
+encoding rather than relying on accidental grammar separation.
 
 **Resolution: IDK-1, a domain-separated, length-prefixed framing.**
 
@@ -469,17 +448,12 @@ ground that ambiguity must be *formally impossible*, and a separator is not:
 - Percent- or C0-escaping every field is equivalent to length prefixing with more
   moving parts and no correctness gain.
 
-**Change control.** Capability Protocol §8.2's `‖` notation is prose that never
-defined an encoding. Making the encoding explicit is a specification-precision
-change to a *structured* derivation, on a value Serea has never minted, with no
-cross-version key obligation. ADR-0019 records it as an architecture-minor
-clarification and states that a different classification is the owner's call. It
-is **not** recorded as a silent change: if the owner judges the frozen formula
-normative rather than illustrative, §8.2 must be amended in the same commit that
-implements IDK-1.
-
-Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION`. Disposition: PROPOSED
-ADR-0019 §2–§3.
+**Change control.** Full canonical/digest/IDK primitives and sha2 0.11 without
+defaults belong to one P2A gate with action/2; Clock remains P2B. The owner ratified
+current architecture/1, task/2, action/2, event/1, envelope1 and MSRV 1.85.
+ADR-0019 is Accepted in full as an implemented primitive decision. The coordinator
+records current validation, test counts, bounded regression review and atomic
+integration status in the [closure record](P2A-review-and-closure.md).
 
 ## 5.5 Bounds `B3` versus structural schema constraints
 
@@ -523,7 +497,9 @@ reviewer to rediscover.
 gains an explicit classification); the `serea-protocol` `validate_label`
 documentation, which already cites `B3` for *not* adding a length ceiling and is
 therefore already correct; the checked-in schemas, which are unchanged by this
-ADR; and `serea-protocol/src/schema.rs`, unchanged.
+ADR; and `serea-protocol/src/schema.rs`, whose depth constant and executable
+behavior are unchanged by this ADR. In the complete current P2A inventory,
+`schema.rs` has version documentation only; embedding/validation unchanged.
 
 **Why an ADR and not a plan note.** `B3` is in the Protocol Index §4.3 frozen
 list's neighbourhood and is quoted by production code comments. Retiring a
@@ -572,11 +548,13 @@ round-trip failure at the storage boundary. It is promoted here.
 
 **Resolution: three categories, one validator each.**
 
-| Category | Fields | Rules |
-| --- | --- | --- |
-| **O — opaque token / reference** | `ActorId`, `LeaseOwner`, `ProviderReference` | Non-empty. No C0 control, no DEL. No leading or trailing whitespace. **Refused if the value parses as a prefixed or fixed-shape frozen identifier domain** — the eleven ULID prefixes, `idk_`+64 hex, `sha256:`+64 hex, or a `CapabilityId` — so a `ProviderReference` cannot impersonate a `StepId` in an audit row or a `LeaseOwner` cannot be mistaken for a `ProviderId`. **`ProviderId`, `ModelId` and `ImplementationId` are deliberately excluded**: measured, refusing them produced 8 false positives out of 14 legitimate opaque tokens including `calendar` and `worker`, because those grammars subsume ordinary words. Length bounded by the owning schema's `maxLength` |
-| **L — single-line label** | `TaskTitle`, `DescriptorTitle`, `EffectSummary`, `PlainSummary` | Non-empty. No C0 control including `\n` and `\t`. No leading or trailing whitespace. Length bounded by the owning schema's `maxLength` |
-| **P — prose** | `ErrorMessage`, `DescriptorDescription` | Non-empty. `\n` and `\t` permitted. Every other C0 control and DEL refused, including `\r`, so CR/LF normalisation cannot smuggle a line break past the renderer. No leading or trailing whitespace. Length bounded by the owning schema's `maxLength` |
+The complete current rules and generated fragments are normative in
+[ADR-0023](../decisions/ADR-0023-text-field-validation-categories.md): O/L refuse
+C0, DEL, C1, U+2028/U+2029; P allows interior LF/TAB/U+2028/U+2029 but rejects
+CR, other C0, DEL and C1. All reject leading/trailing pinned Unicode White_Space.
+The identical Rust/schema list includes U+0085; do not use JavaScript `\s`.
+Exact identifier subtraction uses idk_, sha256:, ULID [0-7] then25 and exact
+provider goallatch only. No event/1 O widening; no new free-text length bounds.
 
 Notes on the choices, because each is a judgement:
 
@@ -599,20 +577,13 @@ Notes on the choices, because each is a judgement:
   may not be *logged* or placed in an event payload without redaction. This is a
   caller obligation recorded in the plan, not a new type.
 
-**Schema side.** The single `freeText` definition becomes three definitions, and
-each free-text field cites its category. The whitespace-only divergence is fixed
-with a negative lookahead, which ECMA-262 supports and which this repository
-already uses in three capability-identifier patterns:
-
-```text
-^(?![ \t\n\r\f\v]*$)[^\u0000-\u001f\u007f]+$          category L
-^(?![ \t\n\r\f\v]*$)[^\r\u0000-\u001f\u007f]+$        category P (no \r)
-```
-
-Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION` for both halves. Disposition:
-PROPOSED [ADR-0023](../decisions/ADR-0023-text-field-validation-categories.md).
-The Rust validator change is atomic with the schema change; neither alone is
-correct.
+**Schema inventory.** All affected inline and referenced fields are recategorized,
+including event actor.id and each nested receipt provider_reference in both task
+and action-result schemas. The validators belong to types.rs, not schema.rs.
+Patterns and accepting/refusing corpus agree within the historical scoped GREEN
+evidence. ADR-0023 is Accepted as the full implemented validation decision;
+current whole-workspace/MSRV and review/integration evidence is coordinator-owned
+in the [closure record](P2A-review-and-closure.md).
 
 ## 5.7 P2 versus P3 event atomicity
 
@@ -630,10 +601,10 @@ Three options, and why two of them are unacceptable:
 | --- | --- |
 | Create `serea-event-bus` in P2 | **Rejected.** It inverts the phase plan, pre-empts P3's design of the fan-out queue and retention classes, and puts an L1 crate into a slice whose declared scope is L1 `serea-storage` plus L3 `serea-task-engine`. The prompt's own instruction not to "prematurely implement P3's event bus" is also the architecture's instruction |
 | Mutate state with no durable trace at all | **Rejected.** `E3` is violated, and worse, a task's history becomes unreconstructable. It also breaks Task Protocol §6 recovery, which needs to know what was already decided |
-| A transaction primitive in P2 that P3 fills without rewriting P2 | **Accepted.** Described below |
+| A transaction primitive in P2 that P3 fills without rewriting P2 | **Selected proposal; deferred runtime gate.** Described below |
 
 **The seam.** `serea-storage` owns the *transaction*. A transaction participant is
-a trait object whose `participate` runs **inside** the caller's
+a shared-receiver participant whose `record` runs **inside** the caller's
 `BEGIN IMMEDIATE … COMMIT`, so anything it writes commits or rolls back with the
 state change:
 
@@ -645,7 +616,7 @@ pub struct DurableTransition<'a> { /* occurred_at_ms, actor, causation_id,
                                       data_class, payload_digest, payload_json */ }
 
 pub trait TransactionParticipant {
-    fn participate(&mut self, tx: &mut Tx, t: &DurableTransition<'_>)
+    fn record(&self, tx: &Transaction, t: &DurableTransition<'_>)
                    -> Result<(), StoreError>;
 }
 ```
@@ -696,8 +667,8 @@ fudged:
 | `E4` `seq` gapless and assigned at commit | **NOT claimed.** No `seq` exists in P2 |
 
 To make the deferral *visible* rather than silent, `RecoveryReport` carries
-`pending_event_transitions: u64`, counting journal rows whose `event_seq IS
-NULL`, and a P2 test asserts that number is greater than zero after a task
+`pending_event_transitions: u64`, counting all P2 journal rows (no event_seq
+column or backfill), and a P2 test asserts that number is greater than zero after a task
 creation. An operator can see the `E3` debt from inside the product.
 
 **One more consequence, stated because it is easy to miss.** P2 must not create
@@ -872,7 +843,10 @@ inventing one.
 - `leases(step_id PRIMARY KEY, owner, generation, acquired_at_ms, expires_at_ms,
   released_at_ms)`.
 - `generation` starts at 1 and increments on **every** acquisition, including an
-  expiry reclaim. It never resets and never decreases.
+  expiry reclaim. It never resets and never decreases. SQL leases and private LeaseGuard use
+    positive u32 generations; the step uses SQL 0 only before its first lease, mapped
+    to wire None. Both SQL copies are bounded by 4294967295; overflow refuses and
+    rolls back, never wraps or clamps.
 - **No `token` column.** An earlier draft of this resolution specified one, and
   ADR-0024 removed it as overengineering: `generation` alone already discriminates
   two acquisitions by the same owner after a reclaim, and a second value that must be
@@ -889,9 +863,12 @@ inventing one.
   `PLANNED`-only predicate made retries, expiry reclaim, and Task Protocol §6.3
   structurally unreachable, because a step whose lease was released is still
   `LEASED`/`EXECUTING`.
-- **Every** outcome write carries the fence predicate
-  `WHERE step_id = ? AND task_id = ? AND generation = ? AND owner = ?`
-  and treats zero affected rows as `LeaseFenced`.
+- **Every** outcome write matches the step's `step_id`, `task_id`,
+  `lease_generation` and `lease_owner`, **and EXISTS** an authoritative `leases`
+  row matching step, generation, owner and `released_at_ms IS NULL`. Zero affected
+  rows is `LeaseFenced`; release revokes the generation permanently. An expired
+  but unreclaimed/unreleased lease may commit a known result, but cannot renew or
+  begin a new attempt. `begin_attempt` borrows the nonclone `&LeaseGuard`.
 - The fenced write is the **first** statement in the transaction. SQLite does not
   roll back on a zero-row `UPDATE`, so the `rows_affected == 0` check must be
   explicit and must happen before any receipt or journal row is written.
@@ -1035,34 +1012,21 @@ before it can be written.
 
 ---
 
-## 7. What P2 must change atomically, in one commit
+## 7. Phase-specific atomic changes
 
-The prompt requires the package to state exactly which protocol and code changes
-must land together. Tomorrow's P2A is precisely this list, and nothing in P2B
-through P2I may start before it lands.
+One atomic **P2A** integration gate pairs task/action contract corrections with
+four Option conversions, StepPresence/kind validation, all text categories,
+SCJ-1/digest/duplicate parsing/IDK-1, sha2 0.11 without defaults, four changed
+schemas (task, action-request, action-result, event; envelope unchanged),
+protocol manifest/per-surface registry, canonical tests, versions/changelogs and
+both consumer migration notes. Clock alone is P2B. No seven separate P2A commits
+and no action/2 without implemented primitives.
 
-| # | Protocol side | Code side, same commit |
-| --- | --- | --- |
-| 1 | Task Protocol §3.1 gains a step-lifecycle table and the field-presence matrix; §3 gains `lease_generation` as an optional member | `TaskStep`'s five fields become `Option`; the lifecycle and step-kind matrices are added as checked constructors; `assistant-task.schema.json` `$defs/step.required` is reduced and `if`/`then` clauses added |
-| 2 | Capability Protocol §8.2's `‖` notation is replaced by a reference to IDK-1 and its exact byte layout | `canonicalize`, `digest_of`, `derive_idempotency_key` land with the ten pinned SCJ-1 vectors and the collision-regression vector |
-| 3 | Bounds Protocol gains a "what a bound is not" clause; `B3` is scoped | **No code change at all.** A documentation-only clarification, with a negative test asserting no behaviour changed |
-| 4 | Capability Protocol §3.1's `maxItems`/`maxLength` bullets are annotated as structural | None |
-| 5 | Data Classification §5 gains a note that `PRIVATE` durable storage without a configured backend is refused, not degraded | `AtRestProtection` trait, `StoreError::AtRestProtectionUnavailable`, `StoreError::ClassRefused`, and the rank cap on every classified table |
-| 6 | Capability Protocol §3's field-semantics section gains the three text categories | `validate_opaque_token`, `validate_single_line_label`, `validate_prose` replace the single `validate_label`; `action-result.schema.json`'s `freeText` becomes three definitions, and the six inline patterns in `assistant-task.schema.json` plus the one in `event.schema.json` become `$ref`s |
-| 7 | Event Protocol gains a note that `E3`/`E4` become enforceable **forward only** once `serea-event-bus` supplies a transaction participant, with no change to `E3` itself and no reconstruction of pre-P3 history | `DurableTransition`, `TransactionParticipant`, `TaskJournal`, `task_journal`, `RecoveryReport.pending_event_transitions` |
-
-The seven rows above are **seven separate atomic commits**, not one. Each pairs
-one protocol amendment with the code that satisfies it, and splitting them further
-would let one land without its partner. Grouping them differently — protocol text
-first, code second — would leave the repository claiming a contract the code does
-not yet implement, which is the specific failure
-[Protocol Index §7](../protocols/00-protocol-index.md#7-change-control) exists to
-prevent.
-
-Architecture-version treatment is an owner decision recorded in each ADR rather
-than assumed here. This run applies none of it.
-
----
+ADR-0018/19/20/23 are Accepted within their stated P2A scopes after corrected
+docs GREEN and owner ratification; 0018 runtime plan/lifecycle enforcement is deferred. ADR-0021/22/24 remain Proposed for runtime P2C–P2G:
+participant/journal, at-rest dispatch and full fencing do not land in P2A. Only
+0024's wire generation member/validation is P2A. B3 is semantic minor, not patch,
+and introduces no resource bounds. See [frozen gate](P2A-review-and-closure.md).
 
 ## 8. Open questions this design does not answer
 
@@ -1074,7 +1038,7 @@ mid-code and improvise.
 | 1 | Which real `AtRestProtection` backend, in which crate, and under what key-custody rule | Crate Map §4.2's whole argument is that credential custody is a separate crate; answering this would change the layering graph, which is out of P2's scope. ADR-0022 records the question and the two viable shapes | P2 owner, with an ADR |
 | 2 | Where does the `SECRET` sealed store live | No owning crate is named anywhere, and `serea-credential-store` is scoped to `CREDENTIAL` only | P2/P3 owner, with an ADR |
 | 3 | Does `NOTIFY` become capability-shaped | P2 records the obligation and P2's design treats it as host-internal; the answer depends on P5/P6's `device.*` surface | P5 owner |
-| 4 | ~~Is relaxing five `TaskStep` fields minor or major~~ — **RESOLVED by the P2 autonomous audit: major.** §4.1's minor case is a *new* optional field; this is a relaxation, and §5 sets the precedent that a weakening of a required field is breaking. The plan is `serea-arch/0.2.0 → 1.0.0`, `serea.task/1 → 2`, `serea.action/1 → 2`. **What the owner now supplies is the migration-note text**, which §7 item 4 requires and which is short because `serea-core` and the Android client are P12 | Architecture owner, ratification only |
+| 4 | ~~Is relaxing four `TaskStep` conversions minor or major~~ — **RESOLVED by the P2 autonomous audit: major.** §4.1's minor case is a *new* optional field; this is a relaxation, and §5 sets the precedent that a weakening of a required field is breaking. The plan is `serea-arch/0.2.0 → 1.0.0`, `serea.task/1 → 2`, `serea.action/1 → 2`. Owner direction records that target; both migration-note drafts are in launch §4. Current validation/review/integration evidence is coordinator-owned in the [closure record](P2A-review-and-closure.md), not inferred from historical measurements | Architecture owner / P2A integration gate |
 | 5 | The numeric values for every resource bound | No evidence exists. Inventing a number would be the `MAX_VALUE_LENGTH` mistake P1 already retracted | Bounds owner, with its own ADR. See [P2 design §12](../plans/P2-storage-task-engine.md#12-resource-bounds-still-open) |
 | 6 | Whether `insert_at` plan revisions are ever needed | P2 V1 is append-only. The cost is that a mid-plan insertion requires a new task | P2/P4 owner |
 | 7 | ~~The minimum `rusqlite` feature set~~ — **RESOLVED by the P2 autonomous audit.** `rusqlite` **0.40.2** with `default-features = false, features = ["bundled"]`, bundling SQLite **3.53.2**, so the `STRICT`/`GENERATED` fallback is verified unnecessary. `default-features = false` is **required**: rusqlite's defaults pull `hashlink` and `sqlite-wasm-rs`. `libsqlite3-sys`'s defaults (measured: `min_sqlite_version_3_34_1` → pkg-config/vcpkg) select **system SQLite**; `bundled` overrides the discovery path, though `pkg-config`/`vcpkg` are still compiled because `rusqlite` does not pass `default-features = false` to it. `bundled-full` rejected (81 packages compiled vs 20). **Correction from the final closure run:** the earlier claim that this row "raises owner decision #1" (an MSRV rise) was based on a misreading of `libsqlite3-sys`'s manifest — it declares no `rust-version` and is `edition = "2021"`, and `cargo +1.85.0` builds and runs this exact configuration. **No owner decision arises.** See [P2 design §7.4](../plans/P2-storage-task-engine.md#74-rusqlite-and-the-alternatives) | Closed — no owner decision |

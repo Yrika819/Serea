@@ -1,0 +1,24 @@
+[package]
+name = "serea-jsonschema-value-regressions"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+[workspace]
+resolver = "2"
+
+[features]
+default = ["arbitrary-precision"]
+arbitrary-precision = ["jsonschema-value/arbitrary-precision"]
+
+[dependencies]
+jsonschema-value = { path = ".." }
+serde_json = "=1.0.151"
+
+[patch.crates-io]
+serde_json = { path = "../../serde_json" }
+
+[[test]]
+name = "serea_numeric"
+path = "../tests/serea_numeric.rs"

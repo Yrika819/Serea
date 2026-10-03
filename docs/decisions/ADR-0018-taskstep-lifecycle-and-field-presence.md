@@ -1,22 +1,24 @@
 # ADR-0018: TaskStep Lifecycle, Step-Status Set, and Field Presence
 
-- Status: **Proposed** — pending implementation and owner ratification
-- Architecture version: `serea-arch/0.2.0` at the time of writing
-- Decision date: not yet ratified
+- Status: **Accepted** — wire/lifecycle architectural decision; P2A wire validation implemented, runtime deferred
+- Architecture version: `serea-arch/1.0.0` (current frozen contract set)
+- Decision date: 2026-10-03 — owner direction in the P2A reconciliation request
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.1,
   §5.1b, §5.2, §5.10
 
-> This ADR changes no frozen protocol text and no code. The amendments below are
-> **drafted, not applied**. `docs/protocols/02-task-protocol.md` is untouched by
-> this run, because
-> [Protocol Index §7](../protocols/00-protocol-index.md#7-change-control) requires
-> an ADR, an architecture-version bump, and a changelog entry to land together,
-> and this run may not change code.
+> Accepted on owner ratification after three corrected documentation gate reviews
+> GREEN. P2A implementation includes checked wire construction/deserialization
+> and schema parity. Generation decoding preserves raw numeric tokens and checks
+> positive-u32 membership exactly, without f64 rounding. The coordinator records
+> final workspace/MSRV validation, review and integration status in the closure
+> record; earlier test counts are not final-tree evidence. Storage constraints, plan mutation and
+> unknown-status execution blocking remain later-phase obligations, not accepted
+> runtime implementation. See [frozen gate](../plans/P2A-review-and-closure.md).
 
 ## Context
 
-`TaskStep` in `crates/serea-protocol/src/types.rs` declares `idempotency_key`,
+At the P1 baseline, `TaskStep` in `crates/serea-protocol/src/types.rs` declared `idempotency_key`,
 `input_digest`, `result_digest`, `started_at` and `completed_at` as non-optional,
 and `assistant-task.schema.json` lists the same five in `$defs/step.required`.
 
@@ -30,11 +32,11 @@ in a persisted plan but has not run therefore has:
 - no result, hence no `result_digest` — and fabricating one would destroy the
   field's stated purpose, "Detects result corruption or partial writes on
   recovery";
-- and, for seven of the eight `StepKind` values, no `capability_id`,
-  `capability_version`, or `idempotency_key` to derive.
+- and, for the five non-capability-shaped kinds, no `provider_id`,
+  `capability_id`, `capability_version`, or `idempotency_key` to derive.
 
-The current shape cannot represent the state the frozen protocol mandates. The
-only way to construct a conforming "unstarted" step today is to write a
+That baseline shape could not represent the state the frozen protocol mandates. The
+only way to construct a conforming "unstarted" step then was to write a
 fabricated timestamp and a fabricated digest, which is a lie in a durable audit
 record and is precisely the class of defect the P1 review passes rejected.
 
@@ -45,13 +47,32 @@ the repository.
 
 ## Decision
 
-### 1. One flat wire object, five fields become nullable
+### 1. One flat wire object, four fields become optional
 
-`TaskStep` keeps its single-object shape. `input_digest`, `result_digest`,
-`started_at`, `completed_at` and `idempotency_key` become `Option`, and presence
-becomes a checked invariant of a single `StepPresence` value that every
-construction and deserialisation path routes through — the same pattern
-`CapabilityDescriptor` already uses via `serde(try_from = Draft)`.
+`TaskStep` keeps its single-object shape. Only `idempotency_key`, `result_digest`,
+`started_at` and `completed_at` become `Option`. `input_digest` remains required;
+`provider_id`, `capability_id` and `capability_version` are already `Option`. Presence
+becomes a checked invariant of a single `StepPresence` value that every checked
+construction and deserialisation path routes through. Unlike
+`CapabilityDescriptor`'s `serde(try_from = Draft)` attribute, `TaskStep` implements
+`Deserialize` manually: decode `TaskStepDraft`, replace any draft decode error
+with `invalid task step draft` without formatting rejected input, then call
+`StepPresence::new`. The error boundary precedes presence validation; unchecked
+draft deserialization is not independently claimed to sanitize errors.
+
+The implemented public construction boundary is `TaskStepDraft` → `TaskStep`:
+`TaskStep::new(draft)` / `TaskStep::try_from(draft)` route through
+`StepPresence::new(draft)`; checked presence may also be converted into `TaskStep`.
+Both validated wrappers keep their state private. Read-only dereferencing exposes
+the draft fields, but there is no public mutation or `DerefMut` bypass. To change
+a step, convert it to a draft and revalidate. Unknown extension members round-trip;
+an extension key equal to any reserved step member is refused, including when
+that optional member is absent, so flattening cannot smuggle in unchecked fields.
+The generation field remains `Option<u32>`; its wire decoder admits JSON
+integer-valued numeric spellings such as `1`, `1.0` and `1e0` in the positive u32
+domain, matching schema integer admission. Missing/null yield None; zero,
+fractions and overflow refuse. This is distinct from SCJ-1 canonical admission,
+which refuses decimal/exponent spellings even when integer-valued.
 
 **Why not split into `TaskStep` plus `StepExecution`.** Evaluated and rejected:
 
@@ -102,10 +123,11 @@ An earlier draft incremented `attempt` at acquisition *and* again at
 `begin_attempt`, so `max_attempts_per_step = 3` bought a single attempt — which is
 precisely the distinction Task Protocol §3.1 says the field exists to make.
 
-A `StepStatus` outside the seven is never persisted and never executed: the task
-moves `BLOCKED` with `blocked_reason: UNRECOGNISED_STATE`, reusing a code Event
-Protocol §4 already names. That is Protocol Index §4.2 rule 5 applied at the step
-boundary.
+P2A parses and round-trips unknown well-formed wire `StepStatus` codes. Known
+statuses receive the presence matrix checks; step-kind invariants and validation
+of every supplied value apply even for unknown statuses. The later engine must
+never execute or persist an unknown status in its closed lifecycle: it blocks the
+task with `UNRECOGNISED_STATE`. P2A does not implement that execution behavior.
 
 **No `SUPERSEDED` status is added.** A revision that drops an unstarted step
 deletes the row instead, because the previous plan's full content is retained as
@@ -115,7 +137,13 @@ status set stays at seven with no loss of auditability.
 
 ### 3. The presence matrix
 
-`R` = required, `N` = must be `null`, `-` = free but validated.
+`R` = required and non-null, `N` = absent (`None`), `-` = optional but validated.
+On the wire, missing and explicit `null` both represent `None`; serialization
+omits `None`. SQL `NULL` represents absence except for generation: SQL `0` maps
+to wire `None`, positive generation maps to `Some(u32)`. Never emit wire `0`.
+Refuse generation overflow above `u32::MAX`; never wrap, clamp or truncate.
+The seven unconditional fields are `step_id`, `task_id`, `sequence`, `kind`,
+`status`, `attempt`, `input_digest`.
 
 | Field | `PLANNED` | `LEASED` | `EXECUTING` | `WAITING` | `SUCCEEDED` | `FAILED` | `RECONCILED_ABSENT` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -131,9 +159,19 @@ status set stays at seven with no loss of auditability.
 | `completed_at` | N | N | N | N | **R** | R | R |
 | `lease_owner` | N | R | R | N | N | N | N |
 | `lease_expires_at` | N | R | R | N | N | N | N |
-| `lease_generation` | `0` | ≥1 | ≥1 | ≥1 | ≥1 | ≥1 | ≥1 |
+| `lease_generation` (wire) | N | ≥1 | ≥1 | ≥1 | ≥1 | ≥1 | ≥1 |
 | `side_effect_receipt` | N | N | N | N | - | N | N |
 | `error` | N | N | N | N | N | R | N |
+
+**Matrix intersection:** `side_effect_receipt` is **N for every non-capability
+kind** (`MODEL_TURN`, `WAIT_APPROVAL`, `WAIT_USER`, `WAIT_SCHEDULE`, `NOTIFY`) on
+**all statuses, including unknown codes**. The optional `SUCCEEDED` cell applies
+only to `CAPABILITY`/`DELEGATE`/`VERIFY`. Non-capability steps cannot carry external
+action semantics; this kind invariant is enforced before known-status validation
+in Rust and independently in the task schema. Test obligation: for each of the
+five kinds, refuse a supplied receipt on every known status and an unknown status
+in both construction/deserialization and schema validation; missing/null receipts
+remain absent and serialize by omission.
 
 Two rows deserve their reasoning stated.
 
@@ -146,10 +184,10 @@ Two rows deserve their reasoning stated.
   the structured output. This is how the row is satisfied **without a single
   fabricated digest**. For `FAILED` and `RECONCILED_ABSENT` it is free: a failed
   attempt may or may not have persisted a partial result.
-- **`side_effect_receipt` is free on `SUCCEEDED`** and required when the step
+- **`side_effect_receipt` is free on capability-shaped `SUCCEEDED`** and required when the step
   declared an effecting `side_effect_class`. P2 cannot evaluate that condition —
   the class lives in a descriptor and there is no Capability Registry in P2 — so
-  P2 enforces only the half it can: `receipt ⇒ SUCCEEDED`, and
+  P2 wire validation enforces the known-status half it can: `receipt ⇒ SUCCEEDED`, and
   `RECONCILED_ABSENT ⇒ no receipt`.
 
 ### 4. Step-kind × required-field matrix
@@ -190,16 +228,15 @@ renumbers only a wholly-`PLANNED` suffix. The cost is stated rather than hidden:
 in P2 V1, inserting a step into the middle of a plan requires cancelling and
 creating a new task.
 
-## Proposed amendment to Task Protocol
+## Ratified wire amendment and deferred runtime amendment to Task Protocol
 
-Applied to `docs/protocols/02-task-protocol.md` only in the same commit that
-implements it. Nothing here is applied by this run.
+The wire clauses below belong to the atomic P2A delivery; append-only runtime
+plan revision behavior is a proposed design obligation for the green P2F gate,
+not P2A code or an accepted runtime implementation.
 
-1. §3 gains a sentence after the `kind` enumeration: *"`status` takes exactly the
-   seven values `PLANNED`, `LEASED`, `EXECUTING`, `WAITING`, `SUCCEEDED`,
-   `FAILED`, `RECONCILED_ABSENT`. `SUCCEEDED`, `FAILED` and `RECONCILED_ABSENT`
-   are terminal for the step. A `status` outside this set is never executed; the
-   task moves to `BLOCKED` with `blocked_reason: UNRECOGNISED_STATE`."*
+1. §3 defines the seven known lifecycle codes and their presence matrix without
+   closing the wire code domain. Unknown codes parse; kind invariants always
+   apply. Runtime blocking of unknown execution is deferred to the engine.
 2. §3 gains an optional member: *"`lease_generation` — a monotonically
    increasing per-step counter, incremented on every lease acquisition including
    an expiry reclaim. A commit carrying a stale generation is refused. Absent on
@@ -211,14 +248,14 @@ implements it. Nothing here is applied by this run.
 5. A §11 changelog section, created, because Protocol Index §7 item 3 requires an
    entry in the affected protocol's changelog.
 
-## Code change, same commit
+## Phase-specific implementation gate
 
 | File | Change |
 | --- | --- |
-| `crates/serea-protocol/src/types.rs` | The five fields become `Option`; `StepPresence` and the two matrices are added as a validating constructor plus a `serde(try_from = Draft)`-style route; `lease_generation: Option<u32>` is added |
-| `crates/serea-storage/migrations/0001_initial.sql` | One constraint per matrix row, executed and verified |
-| `crates/serea-protocol/schemas/assistant-task.schema.json` | `$defs/step.required` reduced to the eight always-present fields; `if`/`then` clauses added for the step-kind and status matrices |
-| `crates/serea-protocol/tests/protocol_types.rs` | Every matrix cell, in both the Rust and the schema direction |
+| `crates/serea-protocol/src/types.rs` | The four fields become `Option`; `StepPresence` and both matrices validate construction and deserialization; `lease_generation: Option<u32>` is added; missing/null accepted and `None` omitted |
+| Later P2C/P2E storage migration (not P2A) | Constraints and checked SQL-generation/wire conversion; runtime fencing remains ADR-0024 Proposed |
+| `crates/serea-protocol/schemas/assistant-task.schema.json` | `$defs/step.required` reduced to the seven always-present fields; `if`/`then` clauses added for the step-kind and status matrices |
+| `crates/serea-protocol/tests/{protocol_types,p2a_types,p2a_shape,p2a_parity}.rs` | Updated inline steps, checked construction, all kind/status cells, unknown-code and absence/receipt/reserved-extension boundaries |
 | `crates/serea-protocol/tests/schema_contracts.rs` | The conditional requirements, and a negative case per kind |
 | `docs/protocols/02-task-protocol.md` | The five amendments above |
 
@@ -226,10 +263,10 @@ implements it. Nothing here is applied by this run.
 
 **This is a relaxation, and saying otherwise would be dishonest.**
 [Protocol Index §4.1](../protocols/00-protocol-index.md#41-semantics) names "a new
-optional field" as a minor change; this is five existing required fields becoming
+optional field" as a minor change; this is four existing required fields becoming
 optional, which weakens validation for a consumer that relied on it.
 
-Two facts make a minor step defensible:
+Historical considerations raised in the earlier minor-bump discussion:
 
 1. `serea.task/1` has exactly one producer and one consumer in V1 — the host
    itself. No deployed consumer can begin accepting something it previously
@@ -240,11 +277,11 @@ Two facts make a minor step defensible:
    required. Fail-closedness increases exactly where an external effect is
    reachable, and decreases only where nothing external can happen.
 
-The owner must still choose between a minor bump and a major bump with a migration
-note naming every consumer. **The P2 autonomous audit resolved the choice against
+The owner has ratified the major bump and migration-note direction in the P2A
+reconciliation request; no minor/major choice remains. **The P2 autonomous audit resolved the choice against
 "minor", so what remains for the owner is the migration-note text, not the
 classification.** Protocol Index §4.1 names "a new optional field" as the minor
-case; this is not a new field — it is five existing required fields becoming
+case; this is not a new field — it is four existing required fields becoming
 optional, which weakens validation for any consumer that relied on it. Protocol
 Index §5 sets the precedent for exactly this shape: a rename "is a breaking change
 with an alias field for one major version". The coherent plan —
@@ -261,17 +298,18 @@ calling it minor — after P12 the note has real consumers and the bump is expen
 
 ## Consequences
 
-- `serea-storage` gets a constraint for **every cell** of the presence matrix, so
-  an inconsistent step is unconstructible by any writer, not only by Rust. The DDL
-  was **executed** during design preparation against SQLite 3.43.2 with one insert
-  per cell, and then re-probed cell-by-cell by the P2 autonomous audit after every
-  edit. **That audit found this claim false as first written:** eight of the
+- The deferred storage gate must enforce the presence matrix for all error
+  shapes, not only one representative tuple per cell. Historical DDL probes against
+  SQLite 3.43.2 exercised 32 selected `N`/`0` cases, not every partial-error shape. **That audit found this claim false as first written:** eight of the
   matrix's thirty-two `N`/`0` cells were accepted — `completed_at` and
   `result_digest` on `EXECUTING` and on `WAITING`, and `lease_expires_at` on
   `WAITING`, `SUCCEEDED`, `FAILED` and `RECONCILED_ABSENT`. Three additive
-  constraints close all eight; all thirty-two are now refused, all fifty-one
-  legitimately constructible `kind × status` cells still construct, and all
-  thirty-seven legal task transitions still construct. See
+  constraints closed all eight in that historical corpus; all thirty-two selected
+  cases were refused, all fifty-one legitimately constructible `kind × status`
+  cells and all thirty-seven legal task transitions constructed. This does not
+  establish single-column/partial-error absence: current DDL additionally requires
+  all six error columns NULL outside FAILED and five mandatory members on FAILED,
+  with optional details; dedicated probes and later runtime tests are required. See
   [P2 SQLite schema §4.4](../plans/P2-sqlite-schema.md#44-task_steps).
 - The `lease_expires_at` half was the substantive one, and it is why the audit
   probed per cell rather than per row. The schema already treated `lease_owner` as
@@ -289,7 +327,7 @@ calling it minor — after P12 the note has real consumers and the bump is expen
 - Every new `StepStatus` value a future phase adds is a new matrix row and a new
   `CHECK`, which is the intended friction: it forces the author to decide field
   presence rather than inherit a default.
-- `P2` gains no new wire member beyond `lease_generation`. The other five were
+- `P2` gains no new wire member beyond `lease_generation`. The other four were
   already members; only their requiredness changes.
 - Frozen sets `StepKind` (8) and `TaskState` (11) are untouched, so the P1
   enum-pinning tests need no change.

@@ -1,17 +1,21 @@
 # ADR-0023: Text Field Validation Categories
 
-- Status: **Proposed** — pending implementation and owner ratification
-- Architecture version: `serea-arch/0.2.0` at the time of writing
-- Decision date: not yet ratified
+- Status: **Accepted** — complete O/L/P validation implemented in P2A
+- Architecture version: `serea-arch/1.0.0` (current frozen contract set)
+- Decision date: 2026-10-03 — owner direction
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.6
 
-> This ADR changes no frozen protocol text and no code. The amendments below are
-> **drafted, not applied**.
+> Accepted on owner ratification after three corrected documentation gate reviews
+> GREEN. P2A implements Rust validators (`types.rs`), affected schema occurrences
+> and parity tests, including every receipt `provider_reference` and event actor.
+> The coordinator owns final workspace/MSRV validation, bounded regression review
+> and integration closure; current results and counts belong in the
+> [closure record](../plans/P2A-review-and-closure.md), not an earlier-run summary.
 
 ## Context
 
-`validate_label` in `crates/serea-protocol/src/types.rs` rejects empty,
+At the P1 baseline, `validate_label` in `crates/serea-protocol/src/types.rs` rejected empty,
 whitespace-only, and any string containing a `char::is_control()` character. One
 validator serves nine fields with materially different semantics:
 
@@ -63,9 +67,9 @@ blocker.
 
 | Category | Fields | Rules |
 | --- | --- | --- |
-| **O** — opaque token / reference | `ActorId`, `LeaseOwner`, `ProviderReference` | Non-empty. No C0 control, no DEL. No leading or trailing whitespace. **Refused if the value parses as a prefixed or fixed-shape frozen identifier domain** — see §"Which identifier domains" below. Length bounded by the owning schema's `maxLength` |
-| **L** — single-line label | `TaskTitle`, `DescriptorTitle`, `EffectSummary`, `PlainSummary` | Non-empty. No C0 control, including `\n` and `\t`. No leading or trailing whitespace. Length bounded by the owning schema's `maxLength` |
-| **P** — prose | `ErrorMessage`, `DescriptorDescription` | Non-empty. `\n` and `\t` permitted. Every other C0 control and DEL refused, **including `\r`**. No leading or trailing whitespace. Length bounded by the owning schema's `maxLength` |
+| **O** — opaque token / reference | `ActorId`, `LeaseOwner`, `ProviderReference` | Non-empty, no leading/trailing pinned whitespace. Refuse C0, DEL, C1 and U+2028/U+2029; refuse exact prefixed/fixed-shape domains below. |
+| **L** — single-line label | `TaskTitle`, `DescriptorTitle`, `EffectSummary`, `PlainSummary` | Non-empty, no leading/trailing pinned whitespace. Refuse C0 (including LF/TAB), DEL, C1 and U+2028/U+2029. |
+| **P** — prose | `ErrorMessage`, `DescriptorDescription` | Non-empty, no leading/trailing pinned whitespace. Permit interior LF/TAB/U+2028/U+2029. Refuse CR, other C0, DEL and C1. |
 
 Three judgements worth their reasoning:
 
@@ -88,7 +92,7 @@ Three judgements worth their reasoning:
 
 ### Schema side — verified against the actual documents
 
-The three checked-in schemas do **not** share one definition to be split, and an
+The affected checked-in schemas do **not** share one definition to be split, and an
 earlier draft of this ADR described them as if they did. The real shape:
 
 | File | How free text is written today | Fields affected |
@@ -96,20 +100,51 @@ earlier draft of this ADR described them as if they did. The real shape:
 | `action-result.schema.json` | A `$defs/freeText` **definition**, `$ref`'d three times | `actor.id` (line 147, category **O**), `effect_summary` (176, **L**), `message` (193, **P**) |
 | `assistant-task.schema.json` | **No** definition. The pattern is written inline at lines 39, 152, 353, 423, 428, 460 | `title` (**L**), `result_summary` (**L**), `lease_owner` (**O**), `effect_summary` (**L**), `message` (**P**) |
 | `event.schema.json` | **No** definition. Inline pattern at line 93 | `actor.id` (**O**) |
+| `action-result.schema.json`, `assistant-task.schema.json` | Nested receipt `provider_reference`, separate from freeText | **O**; inventory and parity-test each occurrence, including repeated receipt definitions |
 
 So the work is: replace the single `freeText` definition in
 `action-result.schema.json` with three, **keeping `actor.id` in scope** — omitting
 it leaves that field on the old pattern and test A2 fails — and give the inline
 occurrences in the other two files a `$ref` to the definition each one needs.
 
-The whitespace-only divergence is fixed with a negative lookahead, which ECMA-262
+The whitespace and category rules are specified using negative lookaheads, which ECMA-262
 supports and which this repository already uses in three capability-identifier
 patterns:
 
+Pin Unicode **White_Space** identically in Rust and schema: U+0009–000D,
+U+0020, U+0085, U+00A0, U+1680, U+2000–200A, U+2028, U+2029, U+202F,
+U+205F, U+3000. Do not use JavaScript `\s` (includes FEFF but omits U+0085),
+locale rules, or an unpinned Unicode library predicate. U+FEFF and U+200B are not
+members of this set. C1 remains refused independently of whitespace membership.
+This conservative policy does **not widen event/1 category O**: no C1 character
+previously rejected by Rust is newly admitted, and line separators are refused.
+
+For generation, `W` below is a fragment, not a literal pattern character:
+
 ```text
-^(?![ \t\n\r\f\v]*$)[^\r\u0000-\u001f\u007f]+$      category P
-^(?![ \t\n\r\f\v]*$)[^\u0000-\u001f\u007f]+$        category L
+W = [\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]
+B = ^(?!W)(?![\s\S]*W(?![\s\S]))
+E = (?![\s\S])
+L = B[^\u0000-\u001f\u007f-\u009f\u2028\u2029]+E
+P = B[^\u0000-\u0008\u000b-\u001f\u007f-\u009f]+E
 ```
+
+Substitute W into B and expand B/E when generating checked-in patterns. E is a
+strict end-of-input assertion, avoiding `$`'s before-final-newline behavior.
+P's character class deliberately leaves U+0009/U+000A allowed. These fragments
+are specified for generation and must be exercised as expanded ECMA-262 patterns.
+
+**Why the expansion implements the rule.** At start-of-input, B's first
+lookahead refuses a first character in W; its second refuses exactly a last
+character in W because `[\s\S]*` spans all characters and E asserts strict EOF.
+The nonempty `+` class separately enforces the category's forbidden code points;
+P excludes U+0000–0008 and U+000B–001F, leaving only TAB/LF from C0. Each O
+negative lookahead refuses one complete grammar ending at E, not a prefix or
+substring. ULID's first digit is bounded to 0–7, idk_/sha256: use distinct exact
+separators, and the inner goallatch lookahead subtracts only that exact provider.
+[The docs probe](../plans/p2a-doc-probes.py) expands these published fragments
+and compares them with independent expected code-point/identifier predicates.
+It does not replace the required production parity gate.
 
 ### Which identifier domains category O refuses — and why not all of them
 
@@ -147,27 +182,34 @@ So the rule is **C**, and the exclusion is stated rather than left implicit:
 The pattern, and it **is** expressible in ECMA-262, so Rust and JSON Schema can
 produce identical verdicts:
 
+Using B/E above, concatenate these fragments without presentation whitespace:
+
 ```text
-^(?![ \t\n\r\f\v]*$)
- (?!(tsk|stp|apr|grt|req|evt|dev|sch|prop|rcp|ses)_[0-9A-HJKMNP-TV-Z]{26}$)
- (?!(idk|sha256):?[0-9a-f]{64}$)
- (?!(?!goallatch\b)[a-z][a-z0-9_]{1,31}\.[a-z][a-z0-9_]{1,31}
-      \.(list|read|search|open|control|write|create|send|delete|start|status|run|cancel|result)$)
- [^\u0000-\u001f\u007f]+$                                                  category O
+B
+ (?!(tsk|stp|apr|grt|req|evt|dev|sch|prop|rcp|ses)_[0-7][0-9A-HJKMNP-TV-Z]{25}E)
+ (?!idk_[0-9a-f]{64}E)
+ (?!sha256:[0-9a-f]{64}E)
+ (?!(?!goallatch\.)[a-z][a-z0-9_]{1,31}\.[a-z][a-z0-9_]{1,31}
+      \.(list|read|search|open|control|write|create|send|delete|start|status|run|cancel|result)E)
+ [^\u0000-\u001f\u007f-\u009f\u2028\u2029]+E
 ```
+
+`idk:`/`idk` and `sha256_`/`sha256` are near misses, not identifiers. A 26-character
+ULID body starting above 7 is out of range and not an identifier. Subtract only
+exact provider `goallatch`, not `goallatch_foo` or `goallatch1`.
 
 Three properties of this pattern are load-bearing and each is a trap:
 
-- **Each banned grammar is its own anchored negative lookahead**, `(?!…$)`, not a
+- **Each banned grammar is its own anchored negative lookahead**, `(?!…E)`, not a
   spliced alternation inside the negated character class. The earlier draft
   spliced, and the resulting pattern was not merely wrong but *inert*.
 - **The `goallatch` exclusion.** `serea-protocol`'s `CapabilityId` validator
   refuses the `goallatch` provider namespace, so `goallatch.goal.run` is **not** a
   `CapabilityId`. A banned set that ignored this would refuse a value Rust
-  accepts. `(?!goallatch\b)` makes the banned set exactly equal to
+  accepts. `(?!goallatch\.)` makes the banned set exactly equal to
   `CapabilityId`'s accept set. A pattern that is merely *stricter* here would
   still be a parity bug.
-- **The pattern must be generated, never hand-written.** Both the twelve-prefix
+- **The production pattern must be generated, never hand-written.** Both the eleven-prefix
   list and the fourteen-verb list come from `ids.rs`
   (`ULID`-family prefixes and `CAPABILITY_VERBS`), and a test asserts the
   generated pattern matches the frozen lists exactly. A hand-written copy drifts,
@@ -195,21 +237,22 @@ must be identical on both sides"* was false in the only direction that matters.
 **The fallback this ADR reserved is therefore not needed.** It said that "if
 generating it proves impractical, the honest fallback is to state the
 impersonation rule as Rust-only, and narrow test A2". Generation proved
-practical — twelve prefixes and fourteen verbs are a small table — and the full
+practical — eleven prefixes and fourteen verbs are a small table — and the full
 rule is expressible in both surfaces, so **A2 stays whole**. The fallback remains
 recorded as the correct response if the verb set ever grows enough to make the
 generated pattern unwieldy, because a narrowed A2 must be a decision rather than
 a drift.
 
-Every field's rejection is identical on both sides, and a test enumerates every
+P2A must prove identical rejection on both sides; a required test enumerates every
 field against a shared corpus of adversarial strings — empty, whitespace-only,
 leading and trailing whitespace, `\n`, `\r`, `\t`, NUL, DEL, **each of the eleven
 ULID prefixes in an O field**, `idk_`+hex, `sha256:`+hex, a real `CapabilityId`,
 a `CapabilityId` with an unknown verb, `goallatch.goal.run`, a `ProviderId`-shaped
 and a `ModelId`-shaped ordinary token, a 5000-character string, and a non-ASCII
 string — asserting the same verdict from the Rust validator and the schema. That
-test is the mechanism that prevents this divergence from recurring, and it is the
-test that would have caught the inert pattern.
+required test is the mechanism to prevent recurrence; it would have caught the
+inert pattern. Historical corpus success and the docs-only regex probe do not
+prove production Rust/schema parity.
 
 ### Prose fields are `PRIVATE` for log and event egress
 
@@ -226,9 +269,10 @@ recorded in the P2 design, not a new type, and no new field is added.
 
 ## Proposed amendment
 
-Applied to `docs/protocols/01-capability-protocol.md` and
-`02-task-protocol.md` only in the same commit that implements it. Nothing here is
-applied by this run.
+All validation amendments, source validators, schema occurrences, generated
+patterns and tests belong to the coordinator's atomic P2A integration; current
+validation/review/closure evidence is recorded in the
+[closure record](../plans/P2A-review-and-closure.md).
 
 1. Capability Protocol §3.1 gains a paragraph defining the three text categories
    and assigning every free-text field to one, with the impersonation rule stated
@@ -236,7 +280,7 @@ applied by this run.
 2. Task Protocol §3.1's table gains the category for `lease_owner`.
 3. A changelog section in each.
 
-## Code change, same commit
+## P2A code change, same atomic delivery
 
 | File | Change |
 | --- | --- |
@@ -244,8 +288,8 @@ applied by this run.
 | `crates/serea-protocol/schemas/assistant-task.schema.json` | Six inline patterns replaced by `$ref`s to the definition their field's category needs: `title`, `result_summary` (L); `lease_owner` (O); `effect_summary` (L); `message` (P) |
 | `crates/serea-protocol/schemas/action-result.schema.json` | `freeText` replaced by three definitions; `actor.id` (O), `effect_summary` (L), `message` (P) recategorised |
 | `crates/serea-protocol/schemas/event.schema.json` | The inline pattern at line 93 replaced by a `$ref` to the opaque-token definition |
-| A test asserting the generated category-O pattern matches the frozen lists | So the twelve prefixes and the fourteen verbs cannot drift. Both lists come from `ids.rs`; a drifted copy means the schema accepts an `ActorId` the Rust validator refuses |
-| `crates/serea-protocol/tests/protocol_types.rs` | Per-category accept and reject cases, including the twelve prefixes, `idk_`, `sha256:`, a real and a near-miss `CapabilityId`, and the six legitimate opaque tokens |
+| A test asserting the generated category-O pattern matches the frozen lists | So the eleven prefixes and the fourteen verbs cannot drift. Both lists come from `ids.rs`; a drifted copy means the schema accepts an `ActorId` the Rust validator refuses |
+| `crates/serea-protocol/tests/protocol_types.rs` | Per-category accept and reject cases, including the eleven prefixes, `idk_`, `sha256:`, a real and a near-miss `CapabilityId`, and the six legitimate opaque tokens |
 | `crates/serea-protocol/tests/schema_contracts.rs` | The shared adversarial corpus, asserted equal on both sides. **This is the test that would have caught the inert pattern** |
 
 The Rust change and the schema change are **one commit**. Neither alone is
@@ -261,9 +305,9 @@ a forward-compatible surface only if no producer depends on the looser behaviour
 host itself, and a whitespace-only `title` or actor id has no legitimate producer.
 Making the Rust `ErrorMessage` validator *accept* newlines is a relaxation, in the
 safe direction, and §5.1 of the gap analysis records that the same reasoning
-already applies to the five `TaskStep` fields in ADR-0018.
+already applies to the four `TaskStep` conversions in ADR-0018.
 
-**The owner ratifies the version plan; this ADR does not choose it.** The
+**The owner has ratified the P2A version plan in the reconciliation request.** The
 narrowing of the schema and the widening of `ErrorMessage` place this ADR at
 **minor on `serea.action/1`**, recorded once in
 [the audit's M6](../plans/P2-autonomous-audit.md) alongside ADR-0018 and ADR-0019
@@ -277,8 +321,8 @@ question open. See [the decision ledger](../plans/P2-tomorrow-decision-ledger.md
 
 - Nine fields stop sharing one validator, so a future author picks a category
   instead of inheriting a default.
-- The divergence that P1 recorded and deliberately left is closed, and the
-  closing test is the mechanism that stops it reopening.
+- The P2A implementation must close the divergence recorded by P1 and prove
+  the rule with accepting and rejecting parity cases; docs alone do not close it.
 - No length bound is introduced, so ADR-0020's "no resource bounds tonight"
   position holds.
 - `ErrorMessage` and `DescriptorDescription` may carry real multi-line text

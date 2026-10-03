@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://serea.local/schemas/assistant-task.schema.json",
-  "title": "serea.task/1 AssistantTask",
+  "title": "serea.task/2 AssistantTask",
   "description": "Serea's unit of durable work. Owning protocol: Task Protocol Section 2. This is a forward-compatible surface: undeclared fields are preserved verbatim in the host's opaque extension set and round-tripped unchanged (Protocol Index Section 4.2 rule 3). It is NOT GoalLatch's Goal; a delegated host goal is an AssistantTask of kind DELEGATED_HOST_GOAL reached through the host.goal.* capability family (Task Protocol Section 2; GoalLatch Adapter Section 5). policy_class is the host-assigned maximum risk class for the whole task and is immutable for that task; no step, approval or plan may raise it (Task Protocol Section 2.1, T6).",
   "type": "object",
   "required": [
@@ -34,9 +34,7 @@
       ]
     },
     "title": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+      "$ref": "#/$defs/singleLineLabel"
     },
     "state": {
       "$ref": "#/$defs/taskState",
@@ -147,9 +145,7 @@
     "result_summary": {
       "anyOf": [
         {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          "$ref": "#/$defs/singleLineLabel"
         },
         {
           "type": "null"
@@ -192,6 +188,21 @@
     }
   },
   "$defs": {
+    "opaqueToken": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000])(?![\\s\\S]*[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000](?![\\s\\S]))(?!(?:tsk_|stp_|apr_|grt_|req_|evt_|dev_|sch_|prop_|rcp_|ses_)[0-7][0-9A-HJKMNP-TV-Z]{25}(?![\\s\\S]))(?!idk_[0-9a-f]{64}(?![\\s\\S]))(?!sha256:[0-9a-f]{64}(?![\\s\\S]))(?!(?!(?:goallatch)\\.)[a-z][a-z0-9_]{1,31}\\.[a-z][a-z0-9_]{1,31}\\.(?:list|read|search|open|control|write|create|send|delete|start|status|run|cancel|result)(?![\\s\\S]))[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+(?![\\s\\S])"
+    },
+    "singleLineLabel": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000])(?![\\s\\S]*[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000](?![\\s\\S]))[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+(?![\\s\\S])"
+    },
+    "prose": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000])(?![\\s\\S]*[\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000](?![\\s\\S]))[^\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]+(?![\\s\\S])"
+    },
     "timestamp": {
       "type": "string",
       "description": "The syntactic form only. ECMA-262 regular expressions have no date arithmetic, so a calendar-impossible but well-formed value such as 2026-02-30T00:00:00Z passes this pattern; the Rust Timestamp value is the authority for calendar validity and refuses it. Every value Serea puts on the wire is deserialised into that type.",
@@ -272,6 +283,75 @@
     },
     "step": {
       "type": "object",
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["CAPABILITY", "DELEGATE", "VERIFY"] } }, "required": ["kind"] },
+          "then": {
+            "required": ["provider_id", "capability_id", "capability_version", "idempotency_key"],
+            "properties": {
+              "provider_id": { "type": "string" }, "capability_id": { "type": "string" },
+              "capability_version": { "type": "string" }, "idempotency_key": { "type": "string" }
+            }
+          },
+          "else": { "properties": {
+            "provider_id": { "type": "null" }, "capability_id": { "type": "null" },
+            "capability_version": { "type": "null" }, "idempotency_key": { "type": "null" },
+            "side_effect_receipt": { "type": "null" }
+          } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "PLANNED" } }, "required": ["status"] },
+          "then": { "properties": { "attempt": { "const": 0 }, "lease_generation": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["LEASED", "EXECUTING", "WAITING", "SUCCEEDED", "FAILED", "RECONCILED_ABSENT"] } }, "required": ["status"] },
+          "then": { "required": ["lease_generation"], "properties": { "attempt": { "minimum": 1 }, "lease_generation": { "type": "integer", "minimum": 1 } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "WAITING" } }, "required": ["status"] },
+          "then": { "properties": { "kind": { "enum": ["WAIT_APPROVAL", "WAIT_USER", "WAIT_SCHEDULE"] } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["PLANNED", "LEASED", "EXECUTING", "WAITING"] } }, "required": ["status"] },
+          "then": { "properties": { "result_digest": { "type": "null" }, "completed_at": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "SUCCEEDED" } }, "required": ["status"] },
+          "then": { "required": ["result_digest"], "properties": { "result_digest": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["PLANNED", "LEASED"] } }, "required": ["status"] },
+          "then": { "properties": { "started_at": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["EXECUTING", "WAITING", "SUCCEEDED", "FAILED", "RECONCILED_ABSENT"] } }, "required": ["status"] },
+          "then": { "required": ["started_at"], "properties": { "started_at": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["SUCCEEDED", "FAILED", "RECONCILED_ABSENT"] } }, "required": ["status"] },
+          "then": { "required": ["completed_at"], "properties": { "completed_at": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["LEASED", "EXECUTING"] } }, "required": ["status"] },
+          "then": { "required": ["lease_owner", "lease_expires_at"], "properties": { "lease_owner": { "type": "string" }, "lease_expires_at": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["PLANNED", "WAITING", "SUCCEEDED", "FAILED", "RECONCILED_ABSENT"] } }, "required": ["status"] },
+          "then": { "properties": { "lease_owner": { "type": "null" }, "lease_expires_at": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "FAILED" } }, "required": ["status"] },
+          "then": { "required": ["error"], "properties": { "error": { "type": "object" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["PLANNED", "LEASED", "EXECUTING", "WAITING", "SUCCEEDED", "RECONCILED_ABSENT"] } }, "required": ["status"] },
+          "then": { "properties": { "error": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["PLANNED", "LEASED", "EXECUTING", "WAITING", "FAILED", "RECONCILED_ABSENT"] } }, "required": ["status"] },
+          "then": { "properties": { "side_effect_receipt": { "type": "null" } } }
+        }
+      ],
       "description": "One step of the task. Forward-compatible: Task Protocol Section 3 gives an exhaustive field list, but it does not require a closed schema, and Protocol Index Section 4.1 makes a new optional field an architecture-minor change.",
       "required": [
         "step_id",
@@ -280,11 +360,7 @@
         "kind",
         "status",
         "attempt",
-        "idempotency_key",
-        "input_digest",
-        "result_digest",
-        "started_at",
-        "completed_at"
+        "input_digest"
       ],
       "properties": {
         "step_id": {
@@ -309,7 +385,7 @@
           "type": "string",
           "pattern": "^[A-Z][A-Z0-9_]*$",
           "maxLength": 64,
-          "description": "The frozen documents name SUCCEEDED and RECONCILED_ABSENT and freeze no closed set."
+          "description": "Open wire code: known statuses enforce ADR-0018 presence clauses; unknown well-formed codes retain kind invariants and validation of supplied values."
         },
         "attempt": {
           "type": "integer",
@@ -317,40 +393,44 @@
           "maximum": 4294967295
         },
         "idempotency_key": {
-          "$ref": "#/$defs/idempotencyKey"
+          "anyOf": [{ "$ref": "#/$defs/idempotencyKey" }, { "type": "null" }]
         },
         "provider_id": {
-          "type": "string",
+          "type": ["string", "null"],
           "pattern": "^[a-z][a-z0-9_]{1,31}$",
           "maxLength": 32
         },
         "capability_id": {
-          "$ref": "#/$defs/capabilityId"
+          "anyOf": [{ "$ref": "#/$defs/capabilityId" }, { "type": "null" }]
         },
         "capability_version": {
-          "$ref": "#/$defs/capabilityVersion"
+          "anyOf": [{ "$ref": "#/$defs/capabilityVersion" }, { "type": "null" }]
         },
         "input_digest": {
           "$ref": "#/$defs/digest"
         },
         "result_digest": {
-          "$ref": "#/$defs/digest"
+          "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
         },
         "side_effect_receipt": {
           "$ref": "#/$defs/receiptOrNull"
         },
         "started_at": {
-          "$ref": "#/$defs/timestamp"
+          "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
         },
         "completed_at": {
-          "$ref": "#/$defs/timestamp"
+          "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+        },
+        "lease_generation": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 4294967295,
+          "description": "Positive wire u32 retained after leasing; missing/null before the first lease. Wire zero is never valid."
         },
         "lease_owner": {
           "anyOf": [
             {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+              "$ref": "#/$defs/opaqueToken"
             },
             {
               "type": "null"
@@ -373,7 +453,7 @@
       }
     },
     "receiptOrNull": {
-      "description": "The proof of external effect. Closed, and the same shape the serae.action/1 surface validates, so a provider cannot park an arbitrary object - including a credential-shaped one - in a step record.",
+      "description": "The proof of external effect. Closed, and the same shape the serea.action/2 surface validates, so a provider cannot park an arbitrary object - including a credential-shaped one - in a step record.",
       "anyOf": [
         {
           "$ref": "#/$defs/receipt"
@@ -418,14 +498,10 @@
           "$ref": "#/$defs/idempotencyKey"
         },
         "provider_reference": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          "$ref": "#/$defs/opaqueToken"
         },
         "effect_summary": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          "$ref": "#/$defs/singleLineLabel"
         },
         "observed_at": {
           "$ref": "#/$defs/timestamp"
@@ -455,9 +531,7 @@
           "maxLength": 64
         },
         "message": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          "$ref": "#/$defs/prose"
         },
         "retryable": {
           "type": "boolean"

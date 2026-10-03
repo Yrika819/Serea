@@ -532,7 +532,7 @@ fn pro_data_3_1_no_protocol_type_carries_credential_bytes() {
 fn pro_index_6_the_frozen_envelope_satisfies_the_schema() {
     let value = json!({
         "envelope_version": "1",
-        "surface": "serea.action/1",
+        "surface": "serea.action/2",
         "message_id": EVENT_ID,
         "correlation_id": TASK_ID,
         "causation_id": "evt_01JQ8Z9M4SBDT6K8H2WNRQVPXF",
@@ -548,7 +548,7 @@ fn pro_index_6_the_frozen_envelope_satisfies_the_schema() {
 fn pro_index_4_2_an_unknown_field_on_a_wire_surface_is_accepted_not_rejected() {
     let mut extended = json!({
         "envelope_version": "1",
-        "surface": "serea.action/1",
+        "surface": "serea.action/2",
         "message_id": EVENT_ID,
         "issued_at": "2026-10-01T09:14:22.418Z",
         "data_class": "PERSONAL",
@@ -568,8 +568,8 @@ fn pro_index_4_2_an_unknown_field_on_a_wire_surface_is_accepted_not_rejected() {
 #[test]
 fn pro_index_6_every_envelope_surface_name_is_accepted() {
     for surface in [
-        "serea.action/1",
-        "serea.task/1",
+        "serea.action/2",
+        "serea.task/2",
         "serea.model/1",
         "serea.policy/1",
         "serea.approval/1",
@@ -609,7 +609,7 @@ fn pro_index_6_a_syntactically_malformed_timestamp_is_refused() {
     ] {
         let value = json!({
             "envelope_version": "1",
-            "surface": "serea.action/1",
+            "surface": "serea.action/2",
             "message_id": EVENT_ID,
             "issued_at": bad,
             "data_class": "PUBLIC",
@@ -632,7 +632,7 @@ fn pro_index_6_the_rust_value_is_the_authority_for_calendar_validity() {
     let calendar_impossible = "2026-02-30T00:00:00Z";
     let value = json!({
         "envelope_version": "1",
-        "surface": "serea.action/1",
+        "surface": "serea.action/2",
         "message_id": EVENT_ID,
         "issued_at": calendar_impossible,
         "data_class": "PUBLIC",
@@ -657,7 +657,7 @@ fn pro_index_4_2_a_payload_that_is_not_an_object_is_refused() {
     for payload in [json!("text"), json!([]), json!(1), json!(null)] {
         let value = json!({
             "envelope_version": "1",
-            "surface": "serea.action/1",
+            "surface": "serea.action/2",
             "message_id": EVENT_ID,
             "issued_at": "2026-10-01T09:14:22.418Z",
             "data_class": "PUBLIC",
@@ -788,6 +788,7 @@ fn pro_task_3_a_step_round_trips_and_stays_forward_compatible() {
         "kind": "CAPABILITY",
         "status": "SUCCEEDED",
         "attempt": 1,
+        "lease_generation": 1,
         "idempotency_key": IDEMPOTENCY_KEY,
         "provider_id": "calendar",
         "capability_id": "calendar.events.list",
@@ -812,7 +813,7 @@ fn pro_task_3_a_step_round_trips_and_stays_forward_compatible() {
     value["steps"] = json!([minor_step]);
     assert!(schema::is_valid(SchemaName::AssistantTask, &value).expect("compiles"));
 
-    // The declared members are still typed and still required.
+    // The invocation tuple remains conditionally required for CAPABILITY.
     let mut incomplete_step = step;
     incomplete_step
         .as_object_mut()
@@ -973,14 +974,14 @@ fn collect_refs(node: &Value, document: SchemaName, out: &mut Vec<String>) {
     match node {
         Value::Object(map) => {
             for (key, child) in map {
-                if key == "$ref"
-                    && let Some(reference) = child.as_str()
-                {
-                    assert!(
-                        reference.starts_with("#/$defs/"),
-                        "{document} $ref must be local to the document: {reference}"
-                    );
-                    out.push(reference.to_owned());
+                if key == "$ref" {
+                    if let Some(reference) = child.as_str() {
+                        assert!(
+                            reference.starts_with("#/$defs/"),
+                            "{document} $ref must be local to the document: {reference}"
+                        );
+                        out.push(reference.to_owned());
+                    }
                 }
                 collect_refs(child, document, out);
             }
@@ -1009,11 +1010,13 @@ fn the_jsonschema_dependency_cannot_resolve_a_reference_off_process() {
         .expect("the workspace must declare jsonschema");
     assert_eq!(
         declaration.trim(),
-        "jsonschema = { version = \"0.58\", default-features = false }",
+        "jsonschema = { version = \"=0.58.3\", default-features = false }",
         "the validator must be pinned with every resolver feature off"
     );
+    let protocol_manifest = include_str!("../Cargo.toml");
     let manifest_lines: Vec<&str> = workspace
         .lines()
+        .chain(protocol_manifest.lines())
         .map(str::trim)
         .filter(|line| !line.starts_with('#'))
         .collect();
@@ -1087,7 +1090,10 @@ fn pro_goallatch_3_2_no_schema_admits_the_adapter_namespace() {
         "kind": "CAPABILITY",
         "status": "SUCCEEDED",
         "attempt": 1,
+        "lease_generation": 1,
         "idempotency_key": IDEMPOTENCY_KEY,
+        "provider_id": "host",
+        "capability_version": "1.0.0",
         "capability_id": "goallatch.goal.run",
         "input_digest": DIGEST,
         "result_digest": DIGEST,
@@ -1409,7 +1415,7 @@ fn every_schema_enum_gate_refuses_a_value_outside_its_own_list() {
         match document {
             SchemaName::Envelope => json!({
                 "envelope_version": "1",
-                "surface": "serea.action/1",
+                "surface": "serea.action/2",
                 "message_id": EVENT_ID,
                 "issued_at": "2026-10-01T09:14:22.418Z",
                 "data_class": "PERSONAL",
@@ -1461,7 +1467,7 @@ fn every_forward_compatible_nested_object_is_open_on_both_sides() {
     // ... and the same members are accepted on the wire.
     let envelope = json!({
         "envelope_version": "1",
-        "surface": "serea.action/1",
+        "surface": "serea.action/2",
         "message_id": EVENT_ID,
         "issued_at": "2026-10-01T09:14:22.418Z",
         "data_class": "PERSONAL",
@@ -1512,7 +1518,7 @@ fn every_forward_compatible_nested_object_is_open_on_both_sides() {
     // assertions are inert: closing a nested object fails this test.
     let closed = json!({
         "envelope_version": "1",
-        "surface": "serea.action/1",
+        "surface": "serea.action/2",
         "message_id": EVENT_ID,
         "issued_at": "2026-10-01T09:14:22.418Z",
         "data_class": "PERSONAL",
@@ -1613,7 +1619,7 @@ fn no_schema_imposes_a_free_text_ceiling() {
         "capability_version": "1.2.0",
         "input_digest": DIGEST,
         "result_digest": DIGEST,
-        "result_summary": long.clone(),
+        "lease_generation": 1,
         "side_effect_receipt": {
             "receipt_id": "rcp_01JQ8ZF4T7KMV2X9NPQ5RD8WCS",
             "capability_id": "calendar.events.create",
@@ -1625,20 +1631,33 @@ fn no_schema_imposes_a_free_text_ceiling() {
         },
         "started_at": "2026-10-01T09:14:22.100Z",
         "completed_at": "2026-10-01T09:14:22.512Z",
-        "lease_owner": long.clone(),
+        "lease_owner": null,
         "lease_expires_at": null,
-        "error": {
-            "kind": "PROVIDER_ERROR",
-            "code": "GMAIL_HISTORY_EXPIRED",
-            "message": long.clone(),
-            "retryable": false,
-            "host_action": "FULL_RESYNC"
-        }
+        "error": null
     }]);
+    step_task["result_summary"] = json!(long.clone());
     assert!(
         schema::is_valid(SchemaName::AssistantTask, &step_task).expect("compiles"),
-        "a step's summary, lease owner, message, and receipt text are not length-bounded"
+        "task summary and succeeded-step receipt text are not length-bounded"
     );
+
+    let mut executing = step_task.clone();
+    executing["steps"][0]["status"] = json!("EXECUTING");
+    executing["steps"][0]["result_digest"] = Value::Null;
+    executing["steps"][0]["completed_at"] = Value::Null;
+    executing["steps"][0]["side_effect_receipt"] = Value::Null;
+    executing["steps"][0]["lease_owner"] = json!(long.clone());
+    executing["steps"][0]["lease_expires_at"] = json!("2026-10-01T09:15:22.100Z");
+    assert!(schema::is_valid(SchemaName::AssistantTask, &executing).expect("compiles"));
+
+    let mut failed = step_task.clone();
+    failed["steps"][0]["status"] = json!("FAILED");
+    failed["steps"][0]["side_effect_receipt"] = Value::Null;
+    failed["steps"][0]["error"] = json!({
+        "kind": "PROVIDER_ERROR", "code": "GMAIL_HISTORY_EXPIRED", "message": long.clone(),
+        "retryable": false, "host_action": "FULL_RESYNC"
+    });
+    assert!(schema::is_valid(SchemaName::AssistantTask, &failed).expect("compiles"));
 
     // What survives: a machine-readable code keeps its own short ceiling, which
     // Capability Protocol Section 3.1 requires every schema string to carry.
@@ -1655,17 +1674,17 @@ fn no_schema_imposes_a_free_text_ceiling() {
         "a code is still a code, not free text"
     );
 
-    // And the independent frozen rules still hold on free text: empty and
-    // control-character-bearing values are refused.
-    //
-    // A whitespace-only value is deliberately absent from this list. The Rust
-    // validator refuses one (`validate_label` trims), but the schema's
-    // `pattern` only excludes control characters, so the schema has always
-    // accepted `"   "`. That divergence predates this corrective pass and is
-    // out of its scope; it is recorded as a known limitation rather than
-    // silently closed here, and tightening the schema would be a contract
-    // change requiring its own change-control decision.
-    for bad in ["", "bad\nvalue", "bad\u{7f}value"] {
+    // ADR-0023 prose permits interior LF/TAB, but not empty, boundary
+    // whitespace, CR, DEL or C1. The former whitespace divergence is closed.
+    for bad in [
+        "",
+        "   ",
+        " bad",
+        "bad ",
+        "bad\rvalue",
+        "bad\u{7f}value",
+        "bad\u{85}value",
+    ] {
         let mut empty = frozen_result();
         empty["error"] = json!({
             "kind": "PROVIDER_ERROR",
@@ -1742,8 +1761,12 @@ fn a_step_receipt_and_error_are_validated_not_accepted_as_any_object() {
             "task_id": TASK_ID,
             "sequence": 0,
             "kind": "CAPABILITY",
-            "status": "SUCCEEDED",
+            "status": if error.is_null() { "SUCCEEDED" } else { "FAILED" },
             "attempt": 1,
+            "lease_generation": 1,
+            "provider_id": "calendar",
+            "capability_id": "calendar.events.list",
+            "capability_version": "1.2.0",
             "idempotency_key": IDEMPOTENCY_KEY,
             "input_digest": DIGEST,
             "result_digest": DIGEST,

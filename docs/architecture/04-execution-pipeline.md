@@ -1,6 +1,6 @@
 # Execution Pipeline
 
-Architecture version: `serea-arch/0.2.0` · Status: **P0 baseline** · Frozen on 2026-10-01
+Architecture version: `serea-arch/1.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
 
 This document traces one user request from utterance to durable outcome, stage
 by stage, with two worked examples: a read-only task that needs no approval, and

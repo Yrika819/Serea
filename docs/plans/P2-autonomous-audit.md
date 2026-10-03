@@ -2,6 +2,8 @@
 
 - **Branch:** `p2/autonomous-preimplementation-audit`
 - **Base commit:** `ec4659c007a914e5d90bb3067d3858a4e299b797` (`p2/design-preparation`)
+- **Audit commit:** `732b3ad92801dcb15d5b45548cbb23f325abafe0` — this document's
+  own commit, on `p2/autonomous-preimplementation-audit`
 - **Audit date:** 2026-10-03
 - **Scope:** design hardening only. No production Rust, no runtime crate, no
   migration file used by production, no `Cargo.toml`/`Cargo.lock` change, no CI
@@ -310,19 +312,32 @@ refusal set against a migrated database.
 **Affected:** `P2-storage-task-engine.md` §7.2 (connection policy table),
 §7.3 (test database policy), and therefore the P2C exit criteria.
 
-**Evidence.**
+**Evidence.** The **conclusion** of this finding stands and is unaffected: two
+named profiles are required, and `Store::open_in_memory` cannot satisfy ADR-0005.
+**Three of the five measured cells below were wrong and are corrected here** by the
+final closure run; the normative table is
+[design §7.2](P2-storage-task-engine.md#72-connection-policy).
 
 | Property | `:memory:` | file-backed |
 | --- | --- | --- |
 | `PRAGMA journal_mode` | **`memory`** | `wal` |
-| `PRAGMA synchronous` | `1` (NORMAL); `PRAGMA synchronous = 2` returns **no row** — a no-op | `0/1/2/3` honoured |
-| `PRAGMA foreign_keys` | `0` by default | `0` by default |
-| `PRAGMA wal_checkpoint(TRUNCATE)` | `(0, -1, -1)` — not applicable | `(0, 0, 0)` |
+| `PRAGMA journal_mode = WAL` (set) | returns `memory` — **silently ignored, not an error** | returns `wal` |
+| `PRAGMA synchronous` (**read**) | returns a row, value **`2`** — *was recorded as `1`* | `0/1/2/3` honoured |
+| `PRAGMA synchronous = FULL` (**set**) | returns **no row** | returns **no row** — *so this is ordinary assignment-pragma behaviour, not an in-memory quirk* |
+| `PRAGMA foreign_keys` | **`1` under `bundled`** — *was recorded as `0` by default*; `libsqlite3-sys` compiles `-DSQLITE_DEFAULT_FOREIGN_KEYS=1`, while upstream SQLite's own default is `OFF` | same |
+| `PRAGMA wal_checkpoint(TRUNCATE)` | **one row, `0`** — *was recorded as `(0, -1, -1)`* | one row, `0` — *was recorded as `(0, 0, 0)`* |
 
 So §7.2's *"journal_mode: `WAL`, asserted at open"* cannot be asserted by
 `Store::open_in_memory`, and *"synchronous: `FULL`"* is unenforceable there because
 there is nothing to fsync. ADR-0005 is **frozen and accepted**; a constructor that
 cannot satisfy it must not share its assertion list with the constructor that can.
+
+Two corrections sharpen the conclusion rather than weaken it. `journal_mode = WAL`
+on `:memory:` **does not error** — it returns `memory` — so a store that set the
+pragma and read nothing back would believe it had entered WAL mode. And reading
+`synchronous` on `:memory:` returns a truthful `2`, so asserting the *value* would
+also pass while meaning nothing. **The in-memory profile must therefore assert
+`journal_mode == "memory"` explicitly**, which is what §7.2 now specifies.
 
 The dangerous consequence is not the in-memory store — it is the test. A P2C test
 that asserts "WAL at open" through `open_in_memory` has two failure modes, and
@@ -848,27 +863,36 @@ this audit as exactly that.
 
 **Affected:** `P2-storage-task-engine.md` §7.4; open question 7.
 
-Resolved from crates.io and the crate sources at audit time. **No dependency is
-added by this run.**
+> **The finding's headline was wrong, and the final closure run corrected it.** The
+> premise — that `libsqlite3-sys` 0.38.x declares `rust-version = "1.88.0"` and is
+> `edition = "2024"`, making an MSRV rise an owner decision — is **false**. That
+> crate declares no `rust-version` at all and is `edition = "2021"`, and the chosen
+> configuration compiles *and runs* on Rust **1.85.0**. There is no MSRV decision.
+> Two default-feature facts in this section were also wrong and are fixed below.
+> The normative text is [design §7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives).
+
+Resolved from crates.io and the crate sources at audit time, then **re-verified from
+crate source and by execution during the final closure run. No dependency is added
+by this run.**
 
 | Item | Value | Consequence |
 | --- | --- | --- |
 | Candidate | `rusqlite` **0.40.2** (2026-08-08) | — |
 | License | MIT | acceptable |
-| Declared MSRV | none on `rusqlite` itself | must be taken from its dependency |
-| **`libsqlite3-sys` MSRV** | **`rust-version = "1.88.0"`, `edition = "2024"`** | **the workspace pins `rust-version = "1.85"` and `.clippy.toml` `msrv = "1.85"`. `bundled` raises the effective MSRV to 1.88.** This is the fact an implementer would otherwise discover at `cargo check` |
-| Bundled SQLite | **3.53.4** (2026-07-24), from `libsqlite3-sys/sqlite3/sqlite3.h` | far above the 3.37.0 minimum, so the §8 `STRICT`/`GENERATED` fallback is **not** needed for this candidate |
+| Declared MSRV | none on `rusqlite` itself | no declared number to inherit |
+| **`libsqlite3-sys` MSRV** | **no `rust-version` field; `edition = "2021"`** | **corrected. Neither crate declares an MSRV; both publish the policy *"Latest stable Rust version at the time of release. It might compile with older versions."* `cargo +1.85.0 check` and `cargo +1.85.0 run` both succeed on the chosen configuration, compiling the amalgamation and reporting SQLite 3.53.2. The workspace keeps `1.85`; `Cargo.toml` and `.clippy.toml` are unchanged** |
+| Bundled SQLite | **3.53.2** (`SQLITE_SOURCE_ID` `2026-06-03 19:12:13 d6e03d8c…`), from `libsqlite3-sys/sqlite3/sqlite3.h` and confirmed by `SELECT sqlite_version()` on a live connection | far above the 3.37.0 minimum, so the §8 `STRICT`/`GENERATED` fallback is **not** needed for this candidate |
 | `rusqlite` default features | `["cache", "ffi-sqlite-wasm-rs"]` | `cache` pulls `hashlink`; `ffi-sqlite-wasm-rs` pulls **`sqlite-wasm-rs`**. Both unwanted — `default-features = false` is required, not optional |
-| `libsqlite3-sys` default features | `["min_sqlite_version_3_45_3"] = ["pkg-config", "vcpkg"]` | defaults to **system SQLite**, exactly the failure mode §7.4 says to avoid. Overridden by `bundled` |
-| Native build | C toolchain via `cc`; prebuilt bindgen for 3.45.3 | CI needs a C compiler — `ubuntu-latest` has one; `macos-latest` has Xcode CLT |
-| `bundled-full` | pulls `chrono`, `jiff`, `serde_json`, `url`, `uuid`, `series`, `vtab`, `window`, `load_extension`, `unlock_notify`, `column_metadata`, `trace`, `hooks`, … | **rejected.** Nothing in §7.2's table needs any of it |
-| Apple Silicon / Intel macOS / Linux | `bundled` compiles from source, so all three get the identical 3.53.4 | satisfies the portability invariant by construction, and is the reason `bundled` beats system SQLite here |
-| JSON1 | built into SQLite core by default since 3.38 | `json_valid` available; still verified at open per schema §8 |
+| `libsqlite3-sys` default features | **`["min_sqlite_version_3_34_1"] = ["pkg-config", "vcpkg"]`** — corrected; the `3_45_3` name in the original row was wrong | defaults to **system SQLite**, exactly the failure mode §7.4 says to avoid. Note `rusqlite` declares `libsqlite3-sys` without `default-features = false`, so `pkg-config`/`vcpkg` are still *compiled*; `bundled` overrides the *discovery* path. Verified by `otool -L`: no `libsqlite3` in the binary's link list |
+| Native build | C toolchain via `cc`; `bundled` → `modern_sqlite` → `bundled_bindings`, so `build.rs` copies `sqlite3/bindgen_bundled_version.rs` and needs no local `bindgen`/`libclang` | CI needs a C compiler — `ubuntu-latest` has one; `macos-latest` has Xcode CLT |
+| `bundled-full` | 81 packages compiled on `aarch64-apple-darwin` against 20 for the chosen set; pulls `chrono`, `jiff`, `time`, `serde_json`, `url` (+`icu_*`/`idna`), `uuid`, `csv`, `series`, `vtab`, `window`, `load_extension`, `unlock_notify`, `column_metadata`, `trace`, `hooks`, … | **rejected.** Nothing in §7.2's table needs any of it |
+| Apple Silicon / Intel macOS / Linux | `bundled` compiles from source, so all three get the identical 3.53.2 | satisfies the portability invariant by construction, and is the reason `bundled` beats system SQLite here |
+| JSON1 | built into SQLite core by default since 3.38 | `json_valid` and `json_extract` both verified against the bundled build; still verified at open per schema §8 |
 
 **Recommended feature set — minimal:**
 
 ```toml
-rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 ```
 
 `bundled` expands to `libsqlite3-sys?/bundled` + `modern_sqlite`
@@ -877,13 +901,19 @@ bindings generated for it. `Connection::pragma_update`, `rows_affected`,
 `execute_batch` and prepared-statement binding are all available without further
 features, so §7.2's entire table is covered.
 
-**Two consequences the design must absorb.** First, `tests/workspace_smoke.py` and
-`.clippy.toml` currently pin `1.85`; if the owner keeps that MSRV, `rusqlite`
-0.40.x is not usable and an older `rusqlite` must be evaluated — that is an owner
-decision, recorded as such, not something to discover mid-P2C. Second, the §8
-fallback path ("if the resolved bundled SQLite is below 3.37.0") is **not** needed
-for 0.40.2 and should be recorded as verified-unnecessary for this candidate
-rather than left as a live branch.
+**Consequences the design must absorb.** First, and contrary to what this section
+originally recorded, **there is no MSRV consequence**: the workspace's `1.85` pin
+in both `Cargo.toml` and `.clippy.toml` is compatible with this candidate, so no
+owner decision exists and no one-line change is pending. Second, the §8 fallback
+path ("if the resolved bundled SQLite is below 3.37.0") is **not** needed for
+0.40.2 and should be recorded as verified-unnecessary for this candidate rather
+than left as a live branch. Third, and newly established by the closure run,
+`bundled` compiles with `-DSQLITE_DEFAULT_FOREIGN_KEYS=1` and
+`-DSQLITE_ENABLE_LOAD_EXTENSION=1`: the first makes `PRAGMA foreign_keys` default to
+`ON` (upstream's own default is `OFF`), so the store asserts the pragma rather than
+inheriting it; the second means the *C* extension-loading capability is compiled in
+whether or not the `rusqlite` feature is enabled, so no Rust feature is enabled for
+it and no claim that it is "not compiled in" may be made.
 
 `bundled` also means a C toolchain in CI, which the design already accepted; §15's
 "tests depend on shell commands" is unaffected because `cargo` invokes `cc`
@@ -1078,7 +1108,7 @@ intuitive:**
 | SQLite types | `INTEGER` / `TEXT` / `BLOB` in a `STRICT` table; architecture-independent storage classes | schema §4.0 |
 | Leases and fences | integer generation compared in SQL; no in-process comparison | ADR-0024 |
 | Classification ranks | integers with generated labels | schema §3 |
-| `rusqlite` | `bundled` compiles SQLite 3.53.4 from source, so every platform gets the identical version | N4 |
+| `rusqlite` | `bundled` compiles SQLite 3.53.2 from source, so every platform gets the identical version | N4 |
 | Whole crate | no `cfg(target_arch)`, no `repr(C)`, no `transmute`, no persisted `usize`/`isize`, no native-endian encoding, no hardcoded toolchain paths | verified by exhaustive grep |
 
 **Portability blockers: none found in the design or the current source.** Two
@@ -1122,18 +1152,45 @@ CI gains two runners — `macos-13` (Intel x86_64) and `macos-14`/`macos-15`
 **The migration procedure must not translate database contents.** SQLite's file
 format is architecture-independent, so the fixture is copied, not converted. What
 *is* machine-specific is the set of sidecar files, and the handling must be
-stated:
+stated.
 
-> Copy `serea.sqlite` **and** its `-wal` **and** its `-shm` together, or copy
-> neither. A `-wal` without its `-shm` (or an `-shm` from another machine) is
-> discarded by SQLite on open, which is safe — committed data lives in the `-wal`
-> frames and is recovered — but a `-wal` copied *without* its `-shm` while a writer
-> was live can leave a torn tail. The supported procedure is therefore: **stop
-> Serea, copy all three, start Serea**; or, equivalently, checkpoint
-> (`PRAGMA wal_checkpoint(TRUNCATE)`) on close so only `serea.sqlite` needs
-> copying. The design already does the TRUNCATE checkpoint on clean close, which
-> makes the single-file copy the normal case and the three-file copy the
-> crash-recovery case.
+> **Superseded by the final closure run — the rule below was wrong.** It said to
+> copy `serea.sqlite` **and** its `-wal` **and** its `-shm` together, claimed a
+> `-wal` without its `-shm` "is discarded by SQLite on open", and treated a
+> `-shm`-less WAL as able to "leave a torn tail". Upstream's own documentation
+> contradicts all three, and the corrected rule is now normative in
+> [design §7.5](P2-storage-task-engine.md#75-moving-a-serea-database-to-another-machine).
+
+The corrected rule, stated once here so this record is not read as authority:
+
+| File | Status | Carry it? |
+| --- | --- | --- |
+| `serea.sqlite` | durable migration asset; big-endian, cross-platform | **yes, always** |
+| `serea.sqlite-wal` | durable migration asset **when committed frames are not yet checkpointed**; big-endian, cross-platform | **yes, if it exists** |
+| `serea.sqlite-shm` | **transient, rebuildable artifact** — the wal-index, which upstream states "stores multi-byte values in the **native byte order of the host computer**" and "can use an architecture-specific format" | **no, never** |
+
+The three findings behind the correction, all verified during the closure run
+against SQLite's own documentation and by execution:
+
+1. **A `-shm`-less `-wal` is safe, and is in fact the correct abnormal-case artifact
+   set.** Deleting the `-shm` from a WAL database that held committed frames and
+   reopening it rebuilds the wal-index from the `-wal`, recovers every committed
+   row, and returns `quick_check = ok`. The earlier claim that the wal-index is
+   "discarded" had it backwards.
+2. **After a clean close there is nothing else to copy.** Both `-wal` and `-shm` are
+   deleted by the last connection, so the single-file copy is not merely the common
+   case, it is the only case after a clean stop.
+3. **`-shm` must not be carried across `x86_64 → arm64`.** Not because a copy is
+   known to corrupt anything — measured, a mismatched `-shm` caused no observable
+   damage — but because upstream explicitly permits the wal-index to be
+   architecture-specific, and "permitted" is not "guaranteed".
+
+So: **stop Serea → confirm no other connection → checkpoint (`wal_checkpoint(TRUNCATE)`,
+checking the `busy` column) → close all connections → copy `serea.sqlite` alone →
+open on the destination → run the migration, integrity and recovery checks.** The
+abnormal case, where committed frames remain in the `-wal` because Serea did not
+stop cleanly, copies `serea.sqlite` **plus `serea.sqlite-wal`** and still not the
+`-shm`.
 
 Two macOS-specific facts are recorded so they are not discovered late: filesystem
 paths are UTF-8 on both architectures, so no path-encoding assumption differs; and
@@ -1159,7 +1216,7 @@ evidence determines it.
 | 1 | Architecture-version and wire-surface bumps for P2A | **A — resolved by evidence, needs ratification only** | §4.1 decides it; the plan is in **M6**. The owner ratifies; the owner does not choose |
 | 2 | Category-O rule (A/B/C) | **A — resolved by evidence** | **B1**. B is untenable (8/14 false positives); C is 16/16 and 0/14 |
 | 3 | Canonical-number contract | **A — resolved by evidence** | **M7**. Integer-only is correct for P2; the real obstacle to JCS is UTF-16 vs UTF-8 key ordering, not number spelling |
-| 4 | `rusqlite` feature set | **D**, with one **A** consequence | **N4**. The feature string is evidence-determined. The **consequence** — `libsqlite3-sys` requires Rust 1.88 while the workspace pins 1.85 — is an owner decision: raise the MSRV, or evaluate an older `rusqlite` |
+| 4 | `rusqlite` feature set | **D**, and the recorded **A** consequence is **withdrawn** | **N4**. The feature string is evidence-determined. The consequence originally recorded here — that `libsqlite3-sys` requires Rust 1.88 while the workspace pins 1.85 — is **false**; the chain builds and runs on 1.85.0, so there is no owner decision |
 | 5 | SHA-256 candidate | **D** | `sha2` **0.11.0**, MSRV **1.85** — exactly the workspace MSRV, so no conflict. MIT/Apache-2.0, pure Rust, `no_std`-capable, no network or clock, standard SHA-256 |
 | 6 | Real `AtRestProtection` backend | **C** | ADR-0022 refuses `PRIVATE` with no backend and says so; the trait plus a test double prove the wiring. Consistent and explicitly documented |
 | 7 | `SECRET` sealed store | **C** | No owning crate is named anywhere; P2 refuses `SECRET` at the storage layer and that is the correct posture |
@@ -1175,7 +1232,7 @@ evidence determines it.
 | 17 | Attempt/reclaim budget interaction | **A — resolved by evidence** | **M5**. Arithmetic stated; recovery outcome named |
 | 18 | Presence-matrix enforcement gap | **A — resolved by evidence** | **B3**. Three additive constraints close all 8 cells |
 | 19 | The §4.6 phantom trigger | **A — resolved by evidence** | **B2**. Removing it is the whole fix |
-| 20 | Whether P2 raises the workspace MSRV to 1.88 | **A — genuine owner decision** | The only remaining item that is a choice rather than a finding. It is a one-line workspace change either way, and it should be decided before P2C, not during it |
+| 20 | Whether P2 raises the workspace MSRV | **RESOLVED — no rise. Not a decision.** Recorded here originally as the single remaining item that was a choice rather than a finding. It was not: the premise was a misreading of `libsqlite3-sys`'s manifest. `cargo +1.85.0` builds and runs the chosen configuration, so the workspace stays at `1.85` and `Cargo.toml`/`.clippy.toml` are unchanged |
 
 ---
 

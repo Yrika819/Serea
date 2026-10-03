@@ -1,7 +1,9 @@
 # P2 Tomorrow Decision Ledger
 
 - **Branch:** `p2/autonomous-preimplementation-audit`
-- **Base commit:** `ec4659c007a914e5d90bb3067d3858a4e299b797`
+- **Base commit:** `ec4659c007a914e5d90bb3067d3858a4e299b797` (`p2/design-preparation`)
+  — the base this ledger was written against, **not** the audit commit
+- **Audit commit:** `732b3ad92801dcb15d5b45548cbb23f325abafe0`
 - **Purpose:** so that tomorrow's 6.1 Sol High implementation begins with a small
   number of genuine reasoning decisions rather than a hundred implicit ones.
 - **Companion:** [P2 autonomous audit](P2-autonomous-audit.md), which carries the
@@ -33,7 +35,7 @@ piece of prose.
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
 | 1.1 | Architecture version `0.2.0 → 1.0.0`; `serea.task/1 → 2`; `serea.action/1 → 2`; `serea.event/1` unchanged | **NEEDS_RATIFICATION** | Protocol Index §4.1, §5, §7. ADR-0018 relaxes five required fields, which is neither "a new optional field" nor backward-compatible; §5 sets the precedent that weakening a required field is breaking. Full analysis: [audit M6](P2-autonomous-audit.md) | Architecture owner — ratify | **No.** §4.1 decides it. The owner signs; the owner does not choose |
-| 1.2 | The migration note §7 item 4 requires for the major | **NEEDS_RATIFICATION** | Its content is short *because* `serea-core` and the Android client are P12 and no task document has crossed a host boundary. That is true now and stops being true at P12 | Architecture owner — draft, P2A | **Yes**, lightly: it is prose about consumers, and P2A is where the consumer list is written |
+| 1.2 | **Two** migration notes are required, not one: `serea.task/2` **and** `serea.action/2` | **NEEDS_RATIFICATION** | Protocol Index §7 item 4 requires "a migration note naming every consumer that must change" for a **Major**, and **both** surfaces take a major. The earlier version of this row described the task as "mainly `serea.task/2`", which understated it: ADR-0019 narrows frozen Protocol Index §5 and ADR-0023 widens `message`, so `serea.action/1 → 2` is equally major. Both drafts now exist — [launch package §4](P2-6.1-sol-launch.md#4-migration-note-drafts) — and both are short **only** because `serea-core` and the Android client are P12 and no task or action document has crossed a host boundary. That is true now and stops being true at P12, which is the argument for taking the major now | Architecture owner — ratify, P2A | **No.** Reading and signing drafted prose, not deciding a classification |
 | 1.3 | ADR-0018's five `TaskStep` fields become `Option`, behind a `StepPresence` constructor and a `serde(try_from = Draft)` route | **READY** | Frozen Task Protocol §4.3 requires a plan persisted before execution; §3.1 requires `attempt` to distinguish a crash from a retry. The current shape cannot represent the state | P2A | No |
 | 1.4 | ADR-0024's `lease_generation: Option<u32>` on the wire | **READY** | Protocol Index §4.1's minor case verbatim: a new optional field | P2A | No |
 | 1.5 | ADR-0023's three text categories, one validator each | **READY** | Nine fields, two of whose demands are individually wrong. `PlainSummary` is an approval prompt, so a newline is consent spoofing; `ErrorMessage` is a diagnostic, so a newline costs nothing | P2A | No |
@@ -55,7 +57,7 @@ piece of prose.
 
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
-| 2.1 | SHA-256 crate: **`sha2` 0.11.0** | **READY** | MSRV **1.85** — exactly the workspace MSRV, so no conflict. MIT/Apache-2.0, pure Rust, no clock, no network, standard FIPS 180-4. `0.10.9` is the fallback if the MSRV ever moves | P2B | No |
+| 2.1 | SHA-256 crate: **`sha2` 0.11.0**, `default-features = false` | **READY** | MSRV **1.85** — exactly the workspace MSRV, so no conflict. MIT OR Apache-2.0, pure Rust, no clock, no network, standard FIPS 180-4. Re-verified from the crate manifest and crates.io during the closure run; `default-features = false` suffices because P2 computes a digest and uses neither `alloc` nor `oid`. See row 3.15 for the two implementation traps (`finalize()` returns `Array`, which has no `LowerHex`; runtime CPU-feature backends yield identical digests). `0.10.9` is the fallback | P2B | No |
 | 2.2 | SCJ-1 rule 6 stays **integer-only** | **READY** | No frozen Serea surface carries a fraction; Protocol Index §5 already routes 64-bit quantities to decimal strings. Integer-only is cross-architecture deterministic with **zero** further work | P2B | No |
 | 2.3 | The reason is *not* "no portable spelling" | **READY** | RFC 8785 §3.2.2.3 mandates ECMAScript §7.1.12.1 `Number::toString` with "Note 2" and names Ryu as a reference. A portable spelling **does** exist. ADR-0019's stated reason was false and is corrected | P2B | No |
 | 2.4 | Full JCS adoption is unavailable, for an unrelated reason | **READY** | RFC 8785 §3.2.3 sorts keys by **UTF-16 code units** and warns UTF-8 sorting "would differ and thus be incompatible". Frozen Protocol Index §5 says **UTF-8 code point**. The orders genuinely disagree for astral-plane keys | P2B | No |
@@ -72,19 +74,21 @@ piece of prose.
 
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
-| 3.1 | **Does the workspace MSRV rise from 1.85 to 1.88?** | **NEEDS_RATIFICATION** | `libsqlite3-sys` 0.38.x declares `rust-version = "1.88.0"` and `edition = "2024"`; `rusqlite` 0.40.x's `bundled` path requires it. The workspace pins `1.85` in `Cargo.toml` and `.clippy.toml`. **This is the one item the audit could not resolve by evidence, because it is a choice rather than a finding.** Either raise the MSRV, or evaluate an older `rusqlite` whose `libsqlite3-sys` admits 1.85 | Architecture owner, **before P2C** | No — but it must be decided *before* P2C, not during it |
-| 3.2 | `rusqlite` **0.40.2**, `default-features = false, features = ["bundled"]` | **READY** | Bundles SQLite **3.53.4** (2026-07-24), so the `STRICT` / `GENERATED … STORED` fallback is **verified unnecessary**. Minimal and sufficient | P2C | No |
-| 3.3 | `default-features = false` is **required**, not tidiness | **READY** | `rusqlite`'s defaults are `["cache", "ffi-sqlite-wasm-rs"]`, pulling `hashlink` and **`sqlite-wasm-rs`** | P2C | No |
-| 3.4 | `libsqlite3-sys`'s defaults select **system SQLite**; `bundled` overrides them | **READY** | Its default is `["min_sqlite_version_3_45_3"] = ["pkg-config", "vcpkg"]` — the exact failure mode the design exists to avoid | P2C | No |
-| 3.5 | `bundled-full` rejected | **READY** | Expands to `chrono`, `jiff`, `serde_json`, `url`, `uuid`, `series`, `vtab`, `window`, `load_extension`, `unlock_notify` and more. Nothing in §7.2's table needs any of it | P2C | No |
-| 3.6 | **Two connection profiles, not one** | **READY** | `:memory:` reports `journal_mode = memory`, not `wal`; `PRAGMA synchronous = 2` there returns **no row**; `wal_checkpoint(TRUNCATE)` returns `(0, -1, -1)`. `open_in_memory` **cannot** satisfy frozen ADR-0005 | P2C | No |
-| 3.7 | The in-memory profile asserts `memory`, and does **not** assert `synchronous` | **READY** | Asserting `FULL` where nothing can be fsynced asserts nothing. A test that skips the assertion is the failure mode this closes | P2C | No |
-| 3.8 | **Four integrity tiers, with `foreign_key_check` added** | **READY** | Measured: on a database with an FK-orphaned `task_steps` row, `quick_check` → `ok`, `integrity_check` → `ok`, `foreign_key_check` → reports it. The first two are **page-level** checks and cannot support any claim about referential integrity | P2C | No |
+| 3.1 | **The workspace MSRV stays at 1.85. No rise is required.** | **READY** | The previous row here claimed `libsqlite3-sys` 0.38.x "declares `rust-version = "1.88.0"` and `edition = "2024"`" and made an MSRV rise the one genuine owner decision in P2. **Both halves are false.** `libsqlite3-sys-0.38.2/Cargo.toml` has **no `rust-version` field** and is **`edition = "2021"`**; `rusqlite-0.40.2` likewise declares no MSRV. Decisive: **`cargo +1.85.0 check` and `cargo +1.85.0 run` both succeed** on `rusqlite 0.40.2` with `default-features = false, features = ["bundled"]`, compiling the SQLite amalgamation and returning `sqlite_version() = 3.53.2`. Both crates publish the policy *"Latest stable Rust version at the time of release. It might compile with older versions."* — for a 2026-08-08 release that is 1.97.1, which is a floor on their CI, not on this workspace. `Cargo.toml` and `.clippy.toml` are **unchanged** | **No owner decision remains.** Ratify the finding, do not re-open the choice | **No** |
+| 3.2 | `rusqlite` **0.40.2**, `default-features = false, features = ["bundled"]` | **READY** | Bundles SQLite **3.53.2** (`SQLITE_SOURCE_ID` `2026-06-03 19:12:13 d6e03d8c…`, read from `sqlite3.h`, `sqlite3.c`, and a live `SELECT sqlite_version()`). The earlier `3.53.4` / `2026-07-24` was a transcription error. 20 packages compiled on `aarch64-apple-darwin`; minimal and sufficient | P2C | No |
+| 3.3 | `default-features = false` is **required**, not tidiness | **READY** | `rusqlite`'s defaults are `["cache", "ffi-sqlite-wasm-rs"]`, pulling `hashlink`+`hashbrown`+`foldhash` and `sqlite-wasm-rs`. Measured: 11 packages compiled with defaults, 20 without (the chosen set is larger only because it adds `cc` to compile SQLite — which is the point) | P2C | No |
+| 3.4 | `libsqlite3-sys`'s defaults select **system SQLite**; `bundled` overrides the *discovery path* | **READY, with a correction** | Its default feature is **`min_sqlite_version_3_34_1`**, expanding to `["pkg-config", "vcpkg"]` — the earlier row's `min_sqlite_version_3_45_3` was **wrong**. Precision that matters: `rusqlite` declares `libsqlite3-sys` **without** `default-features = false`, so those two build deps are still *compiled*; what `bundled` overrides is that `build.rs` never *consults* them. Verified: `otool -L` on the built binary lists **no `libsqlite3`** and the bundled source-id string is present — statically linked | P2C | No |
+| 3.5 | `bundled-full` rejected | **READY** | **81** packages compiled on `aarch64-apple-darwin` against 20 for the chosen set: `chrono`, `jiff`, `time`, `serde_json`, `url` (+ the whole `icu_*`/`idna` tree), `uuid`, `csv`, `series`, `vtab`, `window`, `load_extension`, `unlock_notify`, `column_metadata`, `trace`, `hooks`, `backup`, `collation`, `limits`. Nothing in §7.2's table needs any of it | P2C | No |
+| 3.6 | **Two connection profiles, not one** | **READY, with corrected measurements** | `:memory:` reports `journal_mode = memory`, and `PRAGMA journal_mode=WAL` there returns `memory` — **silently ignored, not an error**, which is why the profile asserts by read-back. Two earlier cells were wrong: reading `PRAGMA synchronous` on `:memory:` returns a row with value **`2`**, not `1`; and `wal_checkpoint(TRUNCATE)` there returns **one row `0`**, not `(0, -1, -1)`. Also: *setting* `synchronous` returns no row on the **file-backed** profile too, so that is ordinary assignment-pragma behaviour, not an in-memory quirk. `open_in_memory` still cannot satisfy frozen ADR-0005 — for the stronger reason that it has no WAL, no sidecars, cannot be reopened, and loses the schema on close (`no such table`) | P2C | No |
+| 3.7 | The in-memory profile asserts `memory`, and does **not** assert `synchronous` | **READY** | Asserting `FULL` where nothing can be fsynced asserts nothing. A test that skips the assertion is the failure mode this closes. The profile is **never** described as durable, persistent or WAL-backed anywhere in the package | P2C | No |
+| 3.8 | **Four integrity tiers, with `foreign_key_check` added** | **READY** | Measured: on a database with an FK-orphaned row, `quick_check` → `ok`, `integrity_check` → `ok`, `foreign_key_check` → reports `("q", rowid 1, "p", fkid 0)`. The first two are **page-level** checks and cannot support any claim about referential integrity. Additionally: both page-level pragmas return **multiple rows** on damage, so the check is "no row differs from `ok`", never "the first row equals `ok`"; and `SELECT count(*)` returned the correct `500` on a database with two overwritten pages, so **a successful read is not an integrity signal** | P2C | No |
 | 3.9 | `foreign_key_check` belongs in the **post-migration** tier | **READY** | A migration that produced dangling references has failed in a way `quick_check` cannot see, and this schema leans on foreign keys for both the cascade delete and the anti-laundering property | P2C | No |
-| 3.10 | `PRAGMA foreign_keys = OFF` is a **named** boundary, alongside `ignore_check_constraints` | **READY** | It defaults to `OFF`; one line disables it; a `task_steps` row referencing a non-existent task is then accepted. §5.3's composite-key guarantee is *structural* against a compliant writer and *pragma-dependent* against a local file writer — which `TB-7` already excludes from tamper-evidence | P2C | No |
+| 3.10 | `PRAGMA foreign_keys` is set **explicitly**, and its bundled default is `ON`, not `OFF` | **READY, with a correction** | The earlier row said it "defaults to `OFF`". Under `bundled` it defaults to **`ON`**, because `libsqlite3-sys` compiles with `-DSQLITE_DEFAULT_FOREIGN_KEYS=1`; upstream SQLite's own default is `OFF`. The store still sets and asserts it, so the guarantee is *observed* rather than inherited from a build flag. The **claim** is unchanged: one line turns it off and then an orphan is accepted, so every `CHECK`/trigger/`FOREIGN KEY` holds only against a writer who leaves it `ON` — and the threat model already excludes a local file writer. Measured: `PRAGMA foreign_keys` is a no-op **inside** a transaction and the setting is **discarded**, not deferred, which is why it is set at open and never inside a migration | P2C | No |
 | 3.11 | `temp_store` stays default, not `MEMORY` | **READY** | A temp table spills to a file that is not at-rest protected, and ADR-0022's protection covers `blobs.content`, not SQLite's scratch space | P2C | No |
 | 3.12 | **`TempStore` identity is `<binary>-<pid>-<atomic-counter>`** | **READY** | Measured: a counter alone collides across binaries (two binaries each counting from 0 produce the same three names); a pid alone is not unique within a process, and `cargo test` runs tests as threads while the crash harness spawns children. No clock, no RNG — the `.clippy.toml` ban holds | P2C | No |
 | 3.13 | The migrated object inventory is **10 tables, 7 triggers, 6 indexes** | **READY** | Extracted from the document and built. Asserting it is what makes a phantom object impossible — the direct regression for the `leases_generation_matches_step` trigger §4.6 published and §4.0 never contained | P2C | No |
+| 3.14 | **`bundled` beats system SQLite on a concrete corruption bug, not only on reproducibility** | **READY** | SQLite's WAL documentation records the **WAL-reset bug** as present in all versions "from 3.7.0 … through 3.51.2 (2026-01-09)", fixed in **3.51.3 (2026-03-13)** and later; published backports are `3.44.6` and `3.50.7`. It can corrupt a WAL-mode database when two connections write and checkpoint concurrently — Serea's shape, given the second connection used for lease and recovery tests. Bundled **3.53.2** is past the fix; this host's system SQLite is **3.43.2**, which is not, and no backport covers it | P2C | No |
+| 3.15 | `sha2` **0.11.0**, `default-features = false` | **READY** | `rust-version = "1.85"` — **exactly** the workspace MSRV, and unlike the SQLite crates this one is actually pinned. MIT OR Apache-2.0. `default-features = false` suffices: P2 computes a SHA-256 digest, so neither `alloc` nor `oid` is needed. Two implementation traps recorded in [design §7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives): `finalize()` returns `Array<u8, …>` which **does not implement `LowerHex`** (measured compile error — a break from 0.10), and `cpufeatures` selects an `aarch64-sha2`/`x86-sha` hardware backend at runtime that yields byte-identical digests | P2B | No |
 
 ---
 
@@ -175,19 +179,51 @@ accident. Each is a **non-claim**, not a pending item.
 
 ## 9. What tomorrow's 6.1 Sol High actually decides
 
-After everything above, the genuine reasoning load is:
+**This list was three items and is now two.** Item 2 below used to be an MSRV
+decision. It was not one: the premise was a misreading of `libsqlite3-sys`'s
+manifest, and `cargo +1.85.0` builds and runs the chosen configuration. See row 3.1
+and [design §7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives).
 
-1. **1.2** — draft the migration note for `serea.task/2`. Prose about consumers.
-2. **3.1** — raise the MSRV to 1.88, or evaluate an older `rusqlite`. One line,
-   but it must be a decision rather than a compile error.
-3. **Implementation ordering within P2A.** The ADRs list their code changes; the
+1. **1.1** — ratify the version plan (`serea-arch/0.2.0 → 1.0.0`,
+   `serea.task/1 → 2`, `serea.action/1 → 2`, `serea.event/1` unchanged). §4.1
+   decides the classification; the owner signs it.
+2. **1.2** — ratify the migration notes for **both** `serea.task/2` **and**
+   `serea.action/2`. Drafts for both now exist in
+   [the launch package](P2-6.1-sol-launch.md#4-migration-note-drafts), so this is
+   reading and signing prose rather than writing it. Note the correction: the
+   earlier version of this ledger described the major migration-note task as
+   "mainly `serea.task/2`", which understated it — `serea.action/2` is equally
+   major and needs its own note.
+3. **3.1** — ratify the MSRV **finding**: the workspace stays at `1.85`, and
+   `Cargo.toml` and `.clippy.toml` need no change at all. There is no
+   `NEEDS_RATIFICATION` row left in this ledger, because there is no longer a
+   choice to make — the evidence closed it.
+4. **Implementation ordering within P2A.** The ADRs list their code changes; the
    only ordering question is whether the Rust `StepPresence` matrices or the JSON
-   Schema `if`/`then` clauses land first, and they must land in **one commit**,
-   so this is sequencing rather than design.
+   Schema `if`/`then` clauses land first, and they must land in **one commit**, so
+   this is sequencing rather than design. The recommended sequence is in
+   [the launch package](P2-6.1-sol-launch.md#9-p2a-recommended-implementation-order).
 
 Everything else in this ledger is a `READY` row pointing at executable evidence or
-a frozen contract. Nothing is `NEEDS_REDESIGN`. Nothing is `BLOCKED`.
+a frozen contract. Nothing is `NEEDS_REDESIGN`. Nothing is `BLOCKED`. **No
+unexplained open placeholder remains.**
 
-The two BLOCKERs this audit found — the inert category-O pattern and the phantom
-lease trigger — are both fixed in the documents, and each has a named test that
+### 9.1 Corrections made by the final closure run
+
+Recorded here so that a reader who trusts an earlier row knows which rows moved, and
+why. Full evidence in [design §7](P2-storage-task-engine.md#7-migrations-and-connection-policy)
+and [§7.4](P2-storage-task-engine.md#74-rusqlite-and-the-alternatives).
+
+| # | Earlier claim | Verified reality |
+| --- | --- | --- |
+| 5.1 | `libsqlite3-sys` requires Rust 1.88 / `edition = "2024"`, so the MSRV must rise | **No `rust-version` field; `edition = "2021"`; builds and runs on 1.85.0.** No rise |
+| 5.2 | Bundled SQLite is `3.53.4` (2026-07-24) | **`3.53.2`**, `SQLITE_SOURCE_ID` `2026-06-03 19:12:13` — read from source and confirmed at runtime |
+| 5.3 | `libsqlite3-sys` default is `min_sqlite_version_3_45_3` | **`min_sqlite_version_3_34_1`**. `bundled` overrides the discovery path, not the compilation of `pkg-config`/`vcpkg` |
+| 5.4 | `PRAGMA foreign_keys` defaults to `OFF` | **`ON` under `bundled`** (`-DSQLITE_DEFAULT_FOREIGN_KEYS=1`). The integrity claim is unchanged; the store asserts the pragma rather than inheriting it |
+| 5.5 | `:memory:` returns `synchronous = 1`, and `wal_checkpoint(TRUNCATE)` returns `(0, -1, -1)` | **Reading** `synchronous` returns a row valued `2`; `wal_checkpoint(TRUNCATE)` returns **one row `0`**. Separately, *setting* `synchronous` returns no row on the **file-backed** profile too, so that is ordinary pragma behaviour, not an in-memory quirk |
+| 5.6 | Copy `serea.sqlite` + `-wal` + `-shm` as a three-file unit | **`-shm` is a transient, rebuildable artifact** in native byte order; the normal path copies the main file alone after a clean stop, and the abnormal path copies main + `-wal` and still never `-shm` |
+| 5.7 | The major migration-note task is "mainly `serea.task/2`" | **`serea.action/2` is equally major** and needs its own note. Both drafts now exist |
+
+The two BLOCKERs the earlier audit found — the inert category-O pattern and the
+phantom lease trigger — remain fixed in the documents, and each has a named test that
 fails without the fix: **A6/A6a/A6b/A6c** and **F28 + H1**.

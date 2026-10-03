@@ -216,6 +216,103 @@ Cancellation deliberately touches **no step rows**. Task Protocol §9 `T9`: alre
 succeeded steps keep their receipts and Serea never undoes an external effect. An
 in-flight step's lease is released separately, by the worker or by recovery.
 
+### 4.1 The durable-transition participant seam — paper compile
+
+No Rust is written by this run. This is a **paper compile**: pseudo-signatures
+sufficient to prove the shape type-checks against the properties ADR-0021 and
+ADR-0024 require, and to expose anything that would not.
+
+**What it replaces.** The earlier draft's `CommitHook`:
+
+```rust
+// REJECTED — see below
+fn append(&mut self, tx: &Transaction<'_>) -> Result<()>;
+```
+
+Three defects, all structural:
+
+1. The transition identity is **not a parameter**. It would have to live in the
+   hook's own mutable state, so `tx.append(&mut journal)` describes *some*
+   transition the hook last remembered, not the one this transaction performed.
+2. `&mut self` forces the `Store`'s `transact(&self)` to reach the hook through
+   interior mutability — a `Mutex` or a `RefCell` — which contradicts ADR-0024's
+   single-mutex claim and puts a lock inside the commit path.
+3. An early `return Err(…)` from the `transact` body drops the hook without
+   calling it, leaving the hook's remembered transition describing a write that
+   was rolled back. The journal would then be **one transition behind reality**,
+   silently.
+
+**The replacement.**
+
+```rust
+// Immutable identity of the transition being committed. Constructed once, at the
+// point the engine decides the transition, and passed by shared reference into
+// every participant. Not stored anywhere mutable.
+pub struct DurableTransition {
+    pub task_id:    TaskId,
+    pub step_id:    Option<StepId>,
+    pub kind:       TransitionKind,     // TASK_STATE_CHANGED | STEP_COMMITTED | …
+    pub from_state: Option<TaskState>,
+    pub to_state:   Option<TaskState>,
+    pub attempt:    Option<u32>,
+    pub reason:     TransitionReason,   // which frozen rule authorises it
+    pub occurred_at_ms: TimestampMs,    // from the injected Clock, never ambient
+}
+
+// One participant, one transaction, one transition. `&self`, not `&mut self`:
+// a participant that needs to sequence a counter does it in SQL, not in memory.
+pub trait TransactionParticipant {
+    fn record(
+        &self,
+        tx: &Transaction<'_>,
+        transition: &DurableTransition,
+    ) -> Result<(), StoreError>;
+}
+
+// The seam itself. The transition is a parameter, so it cannot be stale.
+pub fn transact<P: TransactionParticipant>(
+    store: &Store,
+    p: &P,
+    t: &DurableTransition,
+    body: impl FnOnce(&Transaction<'_>) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    let tx = store.begin_immediate()?;
+    let r = body(&tx);            // any early return propagates; nothing is recorded
+    tx.run_participants(p, t)?;   // SAME transition the body just performed
+    match r {
+        Ok(())  => tx.commit(),
+        Err(e)  => { tx.rollback(); Err(e) }
+    }
+}
+```
+
+**Each property, and the line that proves it.**
+
+| Required property | Proven by | Why the rejected shape could not |
+| --- | --- | --- |
+| Immutable transition identity passed **explicitly** | `transition: &DurableTransition` is a parameter of `record`; the struct has no interior mutability and no `Deref` to anything mutable | `CommitHook::append` had no identity parameter at all |
+| Participant receives the **same** transition as the state writer | one `t: &DurableTransition` is threaded to `body` and to `run_participants`; there is no second copy to diverge | the hook's remembered transition could differ from the write |
+| Participant has the **same `Tx`** | `record(&self, tx: &Transaction<'_>, …)` receives the `tx` `body` mutated | a hook that opened its own connection would break atomicity outright |
+| No participant keeps pending transition in mutable object state | `&self`, and `DurableTransition` is borrowed not owned | `&mut self` + a stored field is exactly the stale-state defect |
+| Early return cannot leave stale transition state | `body`'s `Result` is bound **before** `run_participants`, and any `Err` rolls back without recording | an early `return` dropped the hook mid-sequence |
+| `TaskJournal` can implement it | one `INSERT INTO task_journal` per `journal_kind`, plus `journal_seq = (SELECT COALESCE(MAX(journal_seq),0)+1 …)` — all SQL, no in-memory counter | needs no interior mutability either |
+| A future `EventBus` can implement it | same signature; P3 adds a second `p2` and constructs it with the *same* `t` | this is the whole P3 mechanism, so it must fit the shape now |
+| No runtime plugin registry required | `transact` takes one `&P`; composition is explicit at the call site | a `Vec<Box<dyn TransactionParticipant>>` would need registration, ordering and interior mutability for no gain |
+
+**Why explicit participants and not a registry.** A registry would need to answer
+"in what order?", "may a participant refuse the commit?", and "who owns the
+participant?" — and P2 has exactly one participant and a known one for P3. Explicit
+composition makes the participant set visible in the type at every call site, gives
+the borrow checker the lifetime relationship for free, and keeps ordering a
+syntactic fact. **If a third participant ever appears whose order is not
+syntactic, revisit this; do not pre-build for it.** The `run_participants` helper is
+where a second participant is added, and nothing else changes.
+
+**Two properties this does *not* claim.** `E3` is not claimed — `TaskJournal` is not
+an event participant, and adding one is P3. And a participant **cannot** observe
+post-commit state, because it runs inside the transaction; anything that needs
+post-commit visibility is a different mechanism with a different name.
+
 ## 5. Bounds P2 enforces, and the ones it does not
 
 [Crate Map §3.1](../architecture/03-crate-map.md#31-ownership-of-each-protocol-contract)
@@ -318,12 +415,55 @@ impl Migrations {
   produced dangling references has failed in a way `quick_check` cannot see, and
   this schema leans on foreign keys for both the cascade delete and the
   cross-class anti-laundering property.
+
+  **Wording frozen, because these are the exact claims.** Each tier is stated as
+  the set of properties it establishes and nothing wider. Re-verified by execution
+  during the final closure run:
+
+  | Tier | Establishes | Does **not** establish |
+  | --- | --- | --- |
+  | Normal open | Page-level structural integrity: b-tree ordering, page linkage, cell and record well-formedness, freelist consistency | Referential integrity. On an FK-orphaned database `quick_check` returns `ok` |
+  | Post-migration | The above, **plus** that no row references a missing parent, checked by `foreign_key_check` | That the migration produced the *intended* rows, only that it produced a referentially whole schema |
+  | Admin full verify | Everything `integrity_check` reports — the same page-level class as `quick_check`, exhaustively and with index-versus-table cross-checks — **plus** `foreign_key_check` | Application invariants. Neither pragma knows what a `TaskStep` is |
+  | Recovery precondition | That referential damage is absent, so §9.1's classification is decidable | That the database is otherwise sound; recovery's own classification reads the rows |
+
+  Three consequences the implementation must honour:
+
+  1. **`quick_check` and `integrity_check` must never be described as detecting
+     foreign key violations.** They do not. `PRAGMA foreign_key_check` is the only
+     one of the three that does, and it is named explicitly in three tiers above.
+  2. **Both page-level pragmas return *multiple rows* on damage**, not one error
+     string, so the check is "no row differs from `ok`" and never "the first row
+     equals `ok`". `PRAGMA integrity_check(N)` bounds the error count and is used to
+     keep a diagnostic bounded.
+  3. **A successful read is not an integrity signal.** Measured on a database with
+     two deliberately overwritten pages: `SELECT count(*)` returned the correct
+     `500` while `quick_check` reported `*** in database main ***`. Reads that touch
+     only intact pages succeed on a corrupt file.
+
 - **Referential integrity is pragma-dependent, and that is stated rather than
-  implied.** `PRAGMA foreign_keys` defaults to `OFF` in SQLite; a writer sets it
-  `OFF` with one line and then inserts an orphan. Every `CHECK`, trigger and
-  `FOREIGN KEY` here holds against a writer who leaves `foreign_keys = ON` and
-  `ignore_check_constraints = OFF`, and the threat model already excludes a local
-  file writer from tamper-evidence. See [schema §7](P2-sqlite-schema.md#the-pragma-boundary-in-full).
+  implied.** `PRAGMA foreign_keys` **defaults to `ON` under `bundled`** — not
+  `OFF` — because `libsqlite3-sys` compiles the amalgamation with
+  `-DSQLITE_DEFAULT_FOREIGN_KEYS=1`. Upstream SQLite's own default is `OFF`. Two
+  consequences, and the second is the reason the store still sets it explicitly:
+
+  1. **Do not rely on the default.** It differs between a `bundled` build and a
+     system-SQLite build, and P2 refuses the system build, but the store asserts
+     `foreign_keys = ON` at open regardless so that the assertion is *observed*
+     rather than inherited from a build flag.
+  2. **The claim is unchanged either way.** A writer sets `foreign_keys = OFF` with
+     one line and then inserts an orphan. Every `CHECK`, trigger and `FOREIGN KEY`
+     here holds against a writer who leaves `foreign_keys = ON` and
+     `ignore_check_constraints = OFF`, and the threat model already excludes a local
+     file writer from tamper-evidence. What the `OFF` default buys is a *foot-gun*,
+     not a guarantee, and `bundled` removes the foot-gun without adding a guarantee.
+     See [schema §7](P2-sqlite-schema.md#the-pragma-boundary-in-full).
+
+  `PRAGMA foreign_keys` is a **no-op inside a transaction**, and the setting is
+  **discarded** rather than deferred: measured, setting it `ON` inside an open
+  transaction and then committing leaves it `OFF`. That is why §7.2 sets it at open
+  and not inside a migration.
+
   ADR-0005's open item about verifying durability settings against the platform is
   not closed by any of this, and is not claimed to be.
 
@@ -336,21 +476,39 @@ table asserting WAL at open is unimplementable for one of the two constructors:
 | Property | `:memory:` | file-backed |
 | --- | --- | --- |
 | `PRAGMA journal_mode` | **`memory`** | `wal` |
-| `PRAGMA synchronous` | `1`; setting it returns **no row** — a no-op | `0`/`1`/`2`/`3` honoured |
-| `PRAGMA foreign_keys` | `0` by default | `0` by default |
-| `PRAGMA wal_checkpoint(TRUNCATE)` | `(0, -1, -1)` — not applicable | `(0, 0, 0)` |
+| `PRAGMA synchronous` (**read**) | returns a row, value `2` | `0`/`1`/`2`/`3` honoured |
+| `PRAGMA synchronous = FULL` (**set**) | returns **no row** | returns **no row** — see below |
+| `PRAGMA foreign_keys` | `1` — `bundled` default, see §7.1 | `1` — `bundled` default, see §7.1 |
+| `PRAGMA journal_mode = WAL` | returns `memory`; the request is **silently ignored** | returns `wal` |
+| `PRAGMA wal_checkpoint(TRUNCATE)` | one row, value `0` | one row, value `0` |
+| `PRAGMA database_list` | one row: `(0, "main", "")` | one row: `(0, "main", "<path>")` |
 
-There is nothing to fsync in memory, so `synchronous = FULL` is unenforceable
-there and asserting it would be asserting nothing. The profiles:
+Three of those cells were mis-recorded by the earlier draft and are corrected here.
+All are measured against `rusqlite` 0.40.2 + `bundled` (SQLite 3.53.2):
+
+- **Reading `synchronous` on `:memory:` returns `2`, not `1`.** The value is
+  `SQLITE_DEFAULT_SYNCHRONOUS=2` from the bundled `compile_options`, reported
+  truthfully, and it means nothing because there is no file to fsync.
+- **`PRAGMA wal_checkpoint(TRUNCATE)` on `:memory:` returns a single row `0`, not
+  `(0, -1, -1)`.** There is no WAL, so the checkpoint succeeds vacuously. The
+  correct statement is "not applicable", not a specific triple — a caller that
+  destructures three columns would have been reading past the end of the result.
+- **"Setting `synchronous` returns no row" is not an in-memory quirk.** Measured on
+  the **file-backed** profile too: `PRAGMA synchronous = FULL` returns no row there
+  as well. This is how SQLite's assignment pragmas behave generally, not a symptom
+  of memory backing. The genuinely in-memory-specific fact is that the setting is
+  **unenforceable**, because `journal_mode = memory` means nothing can be fsynced.
+
+So the durability gap is real but it is narrower than "the pragma misbehaves":
 
 | Setting | `ProductionProfile` | `TestMemoryProfile` | Why |
 | --- | --- | --- | --- |
-| `journal_mode` | `WAL`, **asserted** | `memory`, **asserted as `memory`** | ADR-0005. The in-memory profile asserts what it actually is, so a test cannot "pass" by skipping the check |
+| `journal_mode` | `WAL`, **asserted** | `memory`, **asserted as `memory`** | ADR-0005. The in-memory profile asserts what it actually is, so a test cannot "pass" by skipping the check. Requesting `WAL` in memory returns `memory` rather than erroring, which is precisely why the assertion has to be a read-back |
 | `foreign_keys` | `ON`, **asserted** | `ON`, **asserted** | The blob reference integrity and the cascade delete depend on it. A silently-off pragma turns every `FOREIGN KEY` in the schema into a comment. **Not** set inside a migration: `PRAGMA foreign_keys` is a no-op inside a transaction, and every migration runs inside `BEGIN IMMEDIATE` |
-| `synchronous` | `FULL`, **asserted** | **not asserted**; documented as a no-op | Task Protocol §5 rule 1 — a step's success and its receipt are committed before the task advances — is the point of this phase, and in WAL mode `NORMAL` can lose the last commits on **power** loss (not process crash). An fsync per commit is milliseconds on an SSD |
-| `busy_timeout` | 5000 ms, asserted | asserted | Single writer, low contention, and a bounded wait rather than an immediate `SQLITE_BUSY`. Measured: two writers serialise correctly; a second `BEGIN IMMEDIATE` waits out the timeout and then reports `SQLITE_BUSY` |
-| `wal_autocheckpoint` | SQLite default | SQLite default | Do not tune what was not measured |
-| `wal_checkpoint` | `TRUNCATE` on clean close | **not performed** — returns `(0, -1, -1)` | Bounds WAL growth across restarts |
+| `synchronous` | `FULL`, **asserted** | **not asserted**; documented as unenforceable | Task Protocol §5 rule 1 — a step's success and its receipt are committed before the task advances — is the point of this phase, and in WAL mode `NORMAL` can lose the last commits on **power** loss (not process crash). An fsync per commit is milliseconds on an SSD |
+| `busy_timeout` | 5000 ms, asserted | asserted | Single writer, low contention, and a bounded wait rather than an immediate `SQLITE_BUSY`. Measured: two writers serialise correctly; a second `BEGIN IMMEDIATE` waits out the timeout and then reports `SQLITE_BUSY`. **The 5000 ms default is `rusqlite`'s, not SQLite's** — SQLite's own default is `0`, meaning immediate `SQLITE_BUSY`. Asserting it is asserting a deliberate choice rather than inheriting one |
+| `wal_autocheckpoint` | SQLite default (`1000` pages) | SQLite default | Do not tune what was not measured |
+| `wal_checkpoint` | `TRUNCATE` on clean close | **not performed** — vacuous | Bounds WAL growth across restarts. Measured: with a concurrent reader holding a snapshot, `TRUNCATE` returns `busy = 1` having checkpointed 3 of 4 frames, so `busy` must be checked rather than discarded; `PASSIVE` returns `busy = 0` and does what it can |
 | `temp_store` | **default**, deliberately not `MEMORY` | default | A temp table spills to a file that is *not* at-rest protected. ADR-0022's protection covers `blobs.content`, not SQLite's scratch space. Any future change here must re-open that question |
 | `application_id` / `user_version` | **not set** | not set | `schema_migrations` is the single authority |
 | Connection count | **1**, behind a `Mutex` | 1 | SQLite is single-writer. The mutex guards the *connection*, never lease semantics and never a transition |
@@ -359,6 +517,13 @@ there and asserting it would be asserting nothing. The profiles:
 convention — by rule, stated as a positive list in §7.3, because the alternative
 is a suite that passes only because the in-memory profile bypassed a production
 requirement.
+
+**The in-memory profile is never described as satisfying ADR-0005.** It cannot: its
+`journal_mode` is `memory`, not `wal`, it has no `-wal` and no `-shm`, it cannot be
+reopened, and closing it discards the schema entirely — measured, reopening an
+`:memory:` database after close fails with `no such table`. Any documentation,
+doc-comment or test name that calls the in-memory profile durable, persistent or
+WAL-backed is wrong and is a review finding.
 
 ### 7.3 Test database policy
 
@@ -410,72 +575,187 @@ feature strings, because no dependency is resolved by the design-preparation run
 
 | Requirement | Needed for | Satisfied by |
 | --- | --- | --- |
-| SQLite ≥ 3.37.0 | `STRICT` tables; the generated class labels | bundled **3.53.4** |
-| JSON1 present | `json_valid` / `json_type` in `tasks.extensions` and `error_details` | built into SQLite core by default since 3.38 |
+| SQLite ≥ 3.37.0 | `STRICT` tables; the generated class labels | bundled **3.53.2** |
+| JSON1 present | `json_valid` / `json_type` in `tasks.extensions` and `error_details` | built into SQLite core by default since 3.38; `json_valid` and `json_extract` both verified against the bundled build |
 | per-connection pragmas | §7.2 | `Connection::pragma_update`, no feature needed |
 | statement-level `rows_affected` | the explicit zero-row fence check | always available |
 | `INSERT … ON CONFLICT … DO UPDATE … WHERE` | ADR-0024's atomic `acquire_lease` | always available |
+| `STRICT` + `GENERATED … STORED` | the schema, unencoded | both verified constructible on the bundled build, so the §8 fallback is dead |
 
 **Resolved at audit time, so tomorrow's implementation does not spend reasoning
 effort discovering basic crate facts.** No dependency is added by the design or
-the audit; this is the record P2C reads.
+the audit; this is the record P2C reads. **Every value below was re-verified from
+crate source and the crates.io API during the final closure run, not copied from the
+previous audit.**
 
-| Item | Value |
-| --- | --- |
-| Candidate | **`rusqlite` 0.40.2** (2026-08-08) |
-| License | MIT |
-| MSRV declared on `rusqlite` | none — it must be taken from its dependency, below |
-| Transitive crate | **`libsqlite3-sys`**, `edition = "2024"`, **`rust-version = "1.88.0"`** |
-| Bundled SQLite | **3.53.4** (2026-07-24), read from `libsqlite3-sys/sqlite3/sqlite3.h` |
-| Native build | C toolchain via `cc`; a prebuilt bindgen exists for 3.45.3, so `bundled_bindings` needs no local `bindgen` |
-| Apple Silicon, Intel macOS, Linux | identical — `bundled` compiles the same 3.53.4 on all three, so no system SQLite and no ABI question |
+| Item | Value | How verified |
+| --- | --- | --- |
+| Candidate | **`rusqlite` 0.40.2**, published 2026-08-08 | crates.io API |
+| License | **MIT** | crate `Cargo.toml` |
+| MSRV declared on `rusqlite` | **none** — no `rust-version` field at all | crate `Cargo.toml` |
+| Transitive crate | **`libsqlite3-sys` 0.38.2**, `edition = "2021"`, **no `rust-version` field**, license **MIT** | crate `Cargo.toml` |
+| Bundled SQLite | **3.53.2**, `SQLITE_SOURCE_ID` `2026-06-03 19:12:13 d6e03d8c…` | `libsqlite3-sys/sqlite3/sqlite3.h` line 149 and `sqlite3.c` line 470, **and** `SELECT sqlite_version()` / `sqlite_source_id()` on a live connection |
+| Native build | C toolchain via `cc`; `bundled` implies `modern_sqlite` implies `bundled_bindings`, so `build.rs` copies `sqlite3/bindgen_bundled_version.rs` and **no local `bindgen`/`libclang` is required** | `rusqlite` + `libsqlite3-sys` `Cargo.toml` feature graph and `build.rs` |
+| System SQLite | **not linked.** `otool -L` on the built binary lists no `libsqlite3`, and the bundled source id string is present in the binary — the amalgamation is statically linked | link inspection |
+| Apple Silicon, Intel macOS, Linux | identical — `bundled` compiles the same 3.53.2 from the same source on all three, so no system SQLite and no ABI question | by construction |
 
-**Three defaults must be overridden, and each is a trap:**
+**Three defaults must be overridden, and each is a trap. Two of the three earlier
+statements about them were factually wrong and are corrected here.**
 
 1. **`rusqlite`'s own defaults are `["cache", "ffi-sqlite-wasm-rs"]`.** `cache`
-   pulls `hashlink`, and `ffi-sqlite-wasm-rs` pulls **`sqlite-wasm-rs`**. Both are
-   unwanted, so `default-features = false` is **required**, not tidiness.
-2. **`libsqlite3-sys`'s defaults are `["min_sqlite_version_3_45_3"] =
-   `["pkg-config", "vcpkg"]`** — that is, **system SQLite**, which is the exact
-   failure mode this section exists to avoid. `bundled` overrides it.
-3. **`bundled-full` is rejected.** It expands to `chrono`, `jiff`, `serde_json`,
-   `url`, `uuid`, `series`, `vtab`, `window`, `load_extension`, `unlock_notify`,
-   `column_metadata`, `trace`, `hooks`, `backup`, `collation`, `limits` and more.
-   Nothing in §7.2's table needs any of it.
+   pulls `hashlink` (+ `hashbrown`, `foldhash`), and `ffi-sqlite-wasm-rs` pulls
+   **`sqlite-wasm-rs`** (+ `rsqlite-vfs`, `wasm-bindgen`, `js-sys` on wasm targets).
+   Both are unwanted, so `default-features = false` is **required**, not tidiness.
+   Measured cost on `aarch64-apple-darwin`: **11** packages compiled, versus **20**
+   for the chosen configuration.
+2. **`libsqlite3-sys`'s default feature is `["min_sqlite_version_3_34_1"]`, which
+   expands to `["pkg-config", "vcpkg"]`** — that is, **system SQLite**, the exact
+   failure mode this section exists to avoid. The earlier draft named the feature as
+   `min_sqlite_version_3_45_3`; that is **wrong**, the feature is
+   `min_sqlite_version_3_34_1`.
+
+   One precision that matters, because "overridden" is doing too much work in the
+   earlier phrasing: `rusqlite` declares its non-wasm `libsqlite3-sys` dependency
+   **without** `default-features = false`, so `libsqlite3-sys`'s own defaults **are
+   still enabled** even under `default-features = false` on `rusqlite`.
+   `pkg-config` and `vcpkg` are therefore still *compiled* as build dependencies.
+   What `bundled` overrides is the **discovery path**, not the compilation:
+   `build.rs` takes the bundled branch, never consults `pkg-config`, and the
+   resulting binary statically links the amalgamation. Verified, not assumed — see
+   the `otool -L` row above.
+3. **`bundled-full` is rejected.** Measured at **81** packages compiled on
+   `aarch64-apple-darwin`, against 20 for the chosen configuration. It expands to
+   `chrono`, `jiff`, `time`, `serde_json`, `url` (and transitively the whole `icu_*`
+   / `idna` tree), `uuid`, `csv`, `series`, `vtab`, `window`, `load_extension`,
+   `unlock_notify`, `column_metadata`, `trace`, `hooks`, `backup`, `collation` and
+   `limits`. Nothing in §7.2's table needs any of it.
 
 ```toml
-rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 ```
 
-**`bundled` versus system SQLite.** `bundled` compiles SQLite from source, so the
-version is whatever the crate pins and every developer and CI machine gets the
-same one. A system `libsqlite3` on macOS can be years behind — and a
-`STRICT`-table migration that works on a laptop and fails on a CI runner is the
-worst possible failure mode. The cost is a `build.rs`, a C toolchain in CI, and
-slower builds. `ubuntu-latest` has a toolchain; `macos-latest` has Xcode CLT. The
-trade is worth it, and on this evidence it is also what makes the
-Apple-Silicon portability invariant true by construction rather than by luck.
+**`bundled` versus system SQLite — and a concrete reason it is not merely
+preferable here.** The general argument is unchanged and sound: `bundled` makes
+every developer and CI machine compile the same version, and a `STRICT`-table
+migration that works on a laptop and fails on a CI runner is the worst possible
+failure mode. On this host the argument is sharper than that. The system SQLite
+available here is **3.43.2**, and SQLite's own WAL documentation records the
+**WAL-reset bug** as present in "all versions of SQLite from 3.7.0 (2010-07-21)
+through 3.51.2 (2026-01-09)", fixed in **3.51.3 (2026-03-13)** and later. That bug
+can corrupt a WAL-mode database when two connections write and checkpoint
+concurrently — precisely Serea's shape, with a second connection used for lease
+tests and for recovery. The bundled **3.53.2** is past the fix; the system
+**3.43.2** is not, and the published backports (`3.44.6`, `3.50.7`) do not cover
+it. Choosing system SQLite here would select a version with a known
+data-corruption bug in exactly the concurrency pattern this design uses. The cost of
+`bundled` is a `build.rs`, a C toolchain in CI, and slower builds; `ubuntu-latest`
+has a toolchain and `macos-latest` has Xcode CLT.
 
-**The MSRV conflict, which is an owner decision and must not be discovered
-mid-P2C.** The workspace pins `rust-version = "1.85"` and `.clippy.toml` sets
-`msrv = "1.85"`; `libsqlite3-sys` 0.38.x requires **1.88**. So `rusqlite` 0.40.x
-raises the effective MSRV of the workspace by three minor versions. There are
-exactly two coherent answers: raise the workspace MSRV to 1.88, or evaluate an
-older `rusqlite` whose `libsqlite3-sys` still admits 1.85. This is recorded as
-owner decision #1 in [the ledger](P2-tomorrow-decision-ledger.md) because it is a
-choice, not a finding — but it is a **one-line change decided before P2C**, not a
-compile error discovered inside it.
+**`bundled` also silently changes one pragma default, which is why §7.1 sets
+`foreign_keys` explicitly.** The bundled amalgamation is compiled with
+`-DSQLITE_DEFAULT_FOREIGN_KEYS=1` (plus `ENABLE_API_ARMOR`, `ENABLE_COLUMN_METADATA`,
+`ENABLE_DBSTAT_VTAB`, `ENABLE_FTS3`, `ENABLE_FTS5`, `ENABLE_JSON1`,
+`ENABLE_LOAD_EXTENSION`, `ENABLE_RTREE`, `ENABLE_STAT4`, `THREADSAFE=1`). One of
+those is load-bearing for §7.1's wording and another is a trap:
 
-**The §8 fallback is not needed for this candidate.** Bundled 3.53.4 is far above
+- `SQLITE_DEFAULT_FOREIGN_KEYS=1` makes `PRAGMA foreign_keys` default to `ON`,
+  unlike upstream SQLite's `OFF`.
+- `ENABLE_LOAD_EXTENSION=1` means the **C** capability to `sqlite3_load_extension`
+  is compiled in **whether or not** the `rusqlite` `load_extension` feature is
+  enabled. Per §7.4's last rule, Serea enables no Rust feature for it and exposes
+  no API for it. A future claim that "extension loading is not compiled in" would be
+  false; the accurate claim is that no Rust binding for it is linked.
+
+**MSRV: there is no conflict, and no rise is required.** The earlier draft recorded
+that `libsqlite3-sys` 0.38.x "declares `rust-version = "1.88.0"` and `edition =
+"2024"`" and made raising the workspace MSRV the single genuine owner decision in
+P2. **Both halves of that premise are false**, and the conclusion falls with them:
+
+| Claim in the earlier draft | Verified reality | Source |
+| --- | --- | --- |
+| `libsqlite3-sys` 0.38.x sets `rust-version = "1.88.0"` | **It has no `rust-version` field at all** | `libsqlite3-sys-0.38.2/Cargo.toml` |
+| `libsqlite3-sys` 0.38.x is `edition = "2024"` | **`edition = "2021"`** | same |
+| `rusqlite` 0.40.2's `bundled` path raises the effective MSRV above 1.85 | **`cargo +1.85.0 check` and `cargo +1.85.0 run` both succeed** against `rusqlite 0.40.2` with `default-features = false, features = ["bundled"]`, compiling the SQLite amalgamation and returning `sqlite_version() = 3.53.2` from the resulting binary** | direct execution with the 1.85.0 toolchain |
+
+Both crates publish the same MSRV policy instead of a number: *"Latest stable Rust
+version at the time of release. It might compile with older versions."* For
+`rusqlite` 0.40.2, published 2026-08-08, the then-current stable was **1.97.1**
+(1.98.0 shipped 2026-08-20), so **1.97** is the version those crates were *tested
+against* — a floor on their *own* CI, not on this workspace. It is not a
+requirement, and it is **not** what the workspace needs, because the whole chain
+builds on **1.85.0** today.
+
+**Decision: keep `rust-version = "1.85"` and `.clippy.toml` `msrv = "1.85"`. Unchanged.
+No `Cargo.toml` edit is needed, proposed or recorded for P2C.**
+
+This is not "manufacturing a need to keep 1.85" — it is the option that costs
+nothing. The alternative, raising the MSRV to the stack's tested-against version,
+would buy nothing measurable: the same SQLite 3.53.2, the same STRICT support, the
+same generated columns, the same Apple Silicon and Intel macOS and Linux behaviour,
+the same 20-package dependency surface, and the same `cc`/`pkg-config`/`vcpkg` build
+dependencies. It would cost a higher minimum toolchain for every contributor and CI
+runner for no capability gained, on the strength of a version number that appears in
+no `Cargo.toml` in the chain. Both of the stated working preferences — prefer the
+current maintained SQLite stack, avoid an MSRV rise justified only by a developer
+machine being on 1.98 — are satisfied **simultaneously**, because they were never in
+conflict.
+
+The full comparison the owner asked for, both alternatives measured:
+
+| Measure | **Chosen: `rusqlite` 0.40.2 + `bundled`, MSRV 1.85** | Alternative A: raise MSRV to 1.97, same crates | Alternative B: keep 1.85, *older* `rusqlite` |
+| --- | --- | --- | --- |
+| SQLite version | **3.53.2** | 3.53.2 — identical | older; would have to be re-verified |
+| `STRICT` support | yes (needs ≥ 3.37.0) | yes | version-dependent |
+| Generated columns | yes (`GENERATED … STORED`) | yes | version-dependent |
+| WAL-reset bug (fixed 3.51.3) | **not affected** | not affected | **likely affected** — a pre-3.51.3 `rusqlite` selects a vulnerable SQLite, which is the whole reason to stay current |
+| Maintenance age | current release | current release | stale, and stale *unsafely* |
+| Apple Silicon | `bundled`, no system SQLite | identical | system or older bundled |
+| Intel macOS | identical | identical | identical |
+| Linux CI | `cc` available | identical | identical |
+| Build dependencies | `cc`, `pkg-config`, `vcpkg` | identical | identical |
+| Transitive surface | **20** packages compiled | **20** — identical | ≥ 20 |
+| Feature differences | none | none | none |
+| Known implementation cost | **zero** | one-line `Cargo.toml` + `.clippy.toml` edit, and a raised floor for everyone | re-verifying every fact in this table against a different crate, and shipping a SQLite with a known corruption bug |
+| Verdict | **adopt** | **rejected** — buys nothing | **rejected** — costs correctness |
+
+**The §8 fallback is not needed for this candidate.** Bundled 3.53.2 is far above
 3.37.0, so `STRICT` and `GENERATED … STORED` are both available and the
 `CHECK (typeof(col) = …)` degradation is **verified unnecessary**. It is retained
-only as a branch for an older `rusqlite`, which becomes live only under the second
-answer above.
+only as a branch for a future `rusqlite` whose bundled SQLite might predate 3.37.0,
+which is a hypothetical several years out at the current release cadence.
 
-**SHA-256.** `sha2` **0.11.0**, MSRV **1.85** — exactly the workspace MSRV, so no
-conflict at all. MIT/Apache-2.0, pure Rust, no clock, no network, no platform-
-specific behaviour, standard FIPS 180-4 SHA-256. `0.10.9` is the last `0.10.x` if
-the owner ever needs a different MSRV. Recorded, **not added**, by this run.
+**SHA-256.** `sha2` **0.11.0**, published 2026-03-25. `rust-version = "1.85"`,
+`edition = "2024"` — so its MSRV is **exactly** the workspace MSRV, with no
+conflict. License **MIT OR Apache-2.0**. Default features `["alloc", "oid"]`;
+`default-features = false` is sufficient, because Serea computes a SHA-256 digest
+and neither `alloc` (nothing here allocates) nor `oid` (no ASN.1 object identifiers
+are used) is needed for it. Pure Rust, no clock, no network, no randomness, standard
+FIPS 180-4. `0.10.9` is the last `0.10.x` fallback.
+
+```toml
+sha2 = { version = "0.11.0", default-features = false }
+```
+
+Three implementation facts about `sha2` 0.11 that P2B must not rediscover:
+
+1. **`Digest::finalize()` returns `Array<u8, …>`, which does not implement
+   `LowerHex`.** `format!("{:x}", h.finalize())` does not compile. Measured: the
+   compiler reports `the trait LowerHex is not implemented for Array<u8, …>`.
+   `0.10`'s `Output<Sha256>` did implement it, so this is an API break across the
+   version bump that will silently cost an afternoon. Hex-encode explicitly —
+   `out.as_slice().iter().map(|b| format!("{:02x}", b)).collect::<String>()` — and
+   pin the result in the SCJ-1 vectors.
+2. **Architecture behaviour is transparent, which is the point.** `sha2` 0.11 takes
+   an optional `cpufeatures` dependency on `aarch64`/`x86`/`x86_64` and selects an
+   `aarch64-sha2` or `x86-sha` hardware backend at runtime. The accelerated backends
+   compute the same SHA-256, so the digest is byte-identical across architectures;
+   the acceleration is an implementation detail with no wire effect. This is a
+   *stronger* portability statement than "no platform-specific behaviour", and it
+   belongs in the portability invariant.
+3. **The crate's `rust-version = "1.85"` is a declared fact**, unlike the SQLite
+   crates, so this is the one MSRV in the P2 dependency set that is actually pinned.
+
+Recorded, **not added**, by this run.
 
 **A canonical-number dependency is not required by SCJ-1.** Rule 6 refuses every
 `f64`, so P2B needs no float formatter at all. If P5 later admits fractions, the
@@ -499,6 +779,244 @@ error taxonomy. Every safety-adjacent line would be ours.
 
 **Why not the `rusqlite` async or `bundled-full` variants.** They add a runtime or
 a large feature surface, neither of which §7.2 needs.
+
+### 7.5 Moving a Serea database to another machine
+
+**The earlier draft's rule was wrong and is replaced.** It said: *"Copy
+`serea.sqlite` **and** its `-wal` **and** its `-shm` together, or copy neither. A
+`-wal` without its `-shm` (or an `-shm` from another machine) is discarded by SQLite
+on open…"*, and made the three-file copy the supported procedure. Two of its claims
+are contradicted by upstream SQLite's own documentation and by execution.
+
+**What upstream actually says, and it is unambiguous.** The WAL file format is
+documented as *"precisely defined and is cross-platform"*, and the WAL is *"part of
+the persistent state of the database and should be kept with the database if the
+database is copied or moved."* The wal-index is categorised differently, in the
+file-format document:
+
+> "Because the wal-index is **transient**, it can use an **architecture-specific
+> format; it does not have to be cross-platform**. Hence, unlike the database and
+> WAL file formats which store all values as **big endian**, the wal-index stores
+> multi-byte values in the **native byte order of the host computer**."
+
+That is the distinction the earlier draft missed. It is also confirmed on disk here:
+the main file's header bytes 18/19 are `2`/`2` (WAL mode recorded in the database
+header) and the `-wal` header reads `0x377f0682`, format `3007000`, page size
+`4096` — all **big-endian**. The `-shm` file's first word reads `3007000` as a
+**little-endian** `u32` on this `x86_64` host and as a meaningless `417475840`
+read as big-endian, which is exactly the "native byte order" the file-format
+document describes.
+
+**And `-shm` is not merely rebuildable in principle — it is deleted.** SQLite's WAL
+documentation: *"When the last connection to a database closes, that connection
+does one last checkpoint and then deletes the WAL and its associated shared-memory
+file."* Measured, on a file-backed store after a clean close: **both `-wal` and
+`-shm` are absent.** The wal-index is never synced either, so there is nothing in
+it worth carrying.
+
+The stronger proof is behavioural. Experiment: commit rows into a WAL database,
+simulate process death without closing (so `-wal` and `-shm` both survive), then
+**delete the `-shm`** and reopen. SQLite rebuilds the wal-index from the `-wal`
+alone, recovers every committed row (`value = "committed-in-wal"`), and
+`quick_check` returns `ok`. The `-shm` is reconstructible from durable state, which
+is the definition of an artifact rather than an asset.
+
+#### Classification — the words are frozen
+
+| File | Status | Format | Carry it when moving machines? |
+| --- | --- | --- | --- |
+| `serea.sqlite` | **durable migration asset** | big-endian, cross-platform | **Yes — always** |
+| `serea.sqlite-wal` | **durable migration asset, conditionally** | big-endian, cross-platform | **Yes, if it exists** — it holds committed transactions not yet checkpointed into the main file |
+| `serea.sqlite-shm` | **transient, rebuildable artifact** | **native byte order, architecture-specific by upstream's own statement** | **No.** Never copy it |
+
+#### The normal supported path
+
+This is the procedure, and it is the one to put in user-facing documentation:
+
+1. **Stop Serea.** Not "close the window" — stop the process, so the last
+   connection closes cleanly.
+2. **Confirm no other reader or writer holds the file.** A second connection from
+   another Serea instance, a stray `sqlite3` shell, or a backup agent all count.
+3. **Checkpoint the WAL.** `PRAGMA wal_checkpoint(TRUNCATE)`. Check the `busy`
+   column: measured, `TRUNCATE` returns `busy = 1` and completes only partially
+   while another connection holds a read snapshot, so a `busy = 1` here means *stop
+   and find the other connection*, not "carry on".
+4. **Close all SQLite connections.** This deletes `-wal` and `-shm` as a side
+   effect, which is the desired outcome and the reason the single-file case is the
+   normal one.
+5. **Copy `serea.sqlite` alone.**
+6. **Open it on the destination**, which applies the normal open checks (§7.1's
+   normal-open tier).
+7. **Run the migration, integrity and recovery checks** on the destination before
+   treating the data as live.
+
+Steps 1–4 are what "stop Serea" means operationally, and steps 5–7 are what P2's
+open path already does. **No architecture-specific handling appears anywhere in
+this procedure**, which is the whole point.
+
+#### The abnormal case: committed frames remain in the `-wal`
+
+If Serea did not stop cleanly — a crash, a `SIGKILL`, a dead power supply — the
+`-wal` may hold committed transactions that are not yet in the main file, and
+**copying only `serea.sqlite` would silently lose them.** Upstream is explicit:
+*"If a database file is separated from its WAL file, then transactions that were
+previously committed to the database might be lost, or the database file might
+become corrupted."*
+
+So in the abnormal case:
+
+1. Confirm no process holds the file on the source. Never copy a `-wal` from a
+   **live** writer: the copy is not atomic with respect to SQLite's appends, and a
+   torn tail is exactly the "database file might become corrupted" outcome.
+2. Copy `serea.sqlite` **and** `serea.sqlite-wal`. **Do not copy `-shm`.**
+3. Open on the destination. SQLite rebuilds the wal-index from the `-wal`, recovers
+   the committed frames, and the normal-open tier then verifies the result.
+4. Run the recovery classification (§9) before trusting the state, because an
+   unclean stop is precisely the condition recovery exists for.
+
+`-wal` **without** `-shm` is therefore the *correct* abnormal-case artifact set, and
+it is safe precisely because the wal-index is reconstructible. The earlier draft had
+this backwards.
+
+#### Two consequences that must not be softened
+
+- **Never instruct a user to copy `-shm` across `x86_64` → `arm64`.** Upstream does
+  not guarantee it is safe; it explicitly permits the format to be
+  architecture-specific. The fact that both Intel and Apple Silicon are
+  little-endian, so a byte-swap is not the failure mode, does not upgrade "permitted
+  to be architecture-specific" into "guaranteed portable", and the wal-index also
+  carries native-width values and a native hash-table layout that are not merely a
+  byte-order question.
+- **Do not claim a stale `-shm` is "discarded by SQLite on open" as a safety
+  property.** Measured, copying one database's `-shm` onto a different database
+  caused no observable damage — SQLite validates the wal-index header and rebuilds
+  when it does not match. That is a *reassurance about the observed case*, not a
+  guarantee, and it is a second reason not to depend on carrying the file.
+
+#### Read-only media, which the migration procedure runs into
+
+Upstream records that before SQLite 3.22.0 a WAL-mode database could not be opened
+read-only at all, and since then only under three conditions: the `-shm` and `-wal`
+already exist and are readable; the containing directory is writable; or the
+connection uses `immutable=1`. Measured on this build: a WAL-mode database opened
+read-only with a read-only directory and **no** sidecars fails every read with
+`attempt to write a readonly database` (`SQLITE_READONLY_DBMOVED`, extended code
+1544); with `-wal` and `-shm` both present it opens and read-only reads **see the
+committed WAL rows**. If P2 ever supports a read-only store, it must either ship the
+sidecars, require directory write permission, or open `immutable=1` — and it must say
+which.
+
+### 7.6 The portability invariant, and the fixture that proves it
+
+**The invariant, stated once so it can be ratified rather than re-derived.**
+
+> Serea core and durable state MUST support migration between
+> `x86_64-apple-darwin` and `aarch64-apple-darwin` without architecture redesign.
+
+The previous audit reached "no current portability blocker" from a source audit on
+an `x86_64` host. A negative found by reading is weaker than a positive that is
+written down, so the conclusion is converted into a requirement. **This text is
+placed here, in the P2 implementation plan, and not added to the frozen architecture
+documents**, because this run is documentation-only and the frozen texts are under
+change control. Ratifying it is one of tomorrow's items.
+
+**What the implementation must not persist.** Each is a way a Rust or SQLite value
+becomes architecture-dependent once written to disk:
+
+| Must not persist | Why it breaks a move |
+| --- | --- |
+| `usize` / `isize` | Width is target-dependent: 4 bytes on a 32-bit target, 8 on 64-bit. Both Apple Silicon and Intel macOS are 64-bit, so this bites on a future target rather than on this move — which is exactly why it is forbidden now rather than discovered later |
+| Native-endian integers | Byte order differs by target. The durable format is **big-endian** for the main file and the WAL, per SQLite's file-format documentation |
+| Raw Rust structs (`#[repr(C)]` or not) | Layout is unspecified and may gain padding, reorder, or change between compiler versions |
+| Pointer values | Meaningless in another process, on another machine, after any restart |
+| Platform ABI structs | Layout is platform-defined, not Serea-defined |
+| Architecture-dependent float serialization | The durable representation is a decimal string or a scaled integer, never a binary `f64` |
+| Architecture-specific SQLite sidecar state **as durable application state** | The wal-index is native byte order (§7.5). It is a transient artifact and is never application state |
+
+The last row is the one that is easy to get wrong by accident: the `-shm` is not
+Serea's, and the moment anything reads it as if it were, portability is gone.
+
+**What the implementation must not hard-code.** `/usr/local` (Intel Homebrew),
+`/opt/homebrew` (Apple Silicon Homebrew), and any architecture-qualified executable
+path. A path that differs between the two Macs is a hard failure at exactly the
+moment the user moves their database. **Platform-specific behaviour stays behind
+platform adapters**, per Crate Map's existing rule; the core is written once.
+
+**Two supporting facts that make the invariant cheap here.** `bundled` compiles the
+same SQLite 3.53.2 from the same source on all three targets, so no system SQLite
+and no ABI question arises — and `otool -L` on the binary shows no `libsqlite3` at
+all. And `sha2` 0.11 selects an `aarch64-sha2` or `x86-sha` hardware backend at
+runtime via `cpufeatures`; the accelerated backends compute the same SHA-256, so a
+digest computed on an Intel Mac equals one computed on Apple Silicon **byte for
+byte**. That is a stronger statement than "no platform-specific behaviour", and it
+is why `digest` and `idempotency_key` need no cross-architecture caveat.
+
+#### The cross-architecture fixture
+
+**Not implemented by this run.** The deliverable is the design, so the CI job is
+written once and the job is the deliverable rather than an assumption.
+
+**Producer** — run once, on any one platform, committed as a small binary artifact:
+
+1. Create a deterministic P2 fixture on a file-backed `ProductionProfile` store.
+2. Insert deterministic data across every table the portability claim touches:
+   `tasks` in several states; `task_steps` across **all 51 constructible**
+   `kind × status` cells; a `blobs` row with `PRIVATE` and `PUBLIC` ranks so the
+   generated `data_class` column is exercised; `leases` rows at two generations so
+   `lease_generation` is non-trivial; `plan_revisions`; both blob-ref tables; and
+   `task_journal` rows in order.
+3. Every timestamp, id and digest is a **literal constant**, never derived from a
+   clock or an RNG, so the fixture is byte-reproducible.
+4. `PRAGMA wal_checkpoint(TRUNCATE)`, then **close every connection**.
+5. Copy **only the main database file** — §7.5's normal path. Assert that `-wal`
+   and `-shm` do not exist at artifact-creation time; if they do, the producer is
+   wrong and the fixture is not the ordinary case.
+
+**Consumers** — three jobs, `ubuntu-latest`, `macos-13` (Intel) and an Apple
+Silicon runner. Each opens the artifact **read-write under `ProductionProfile`**
+and asserts:
+
+| # | Assertion | Pins |
+| --- | --- | --- |
+| 1 | `PRAGMA schema_version`; `SELECT MAX(version) FROM schema_migrations`; the applied checksum string | schema migration/version |
+| 2 | `sqlite_master` inventory is **10 tables / 7 triggers / 6 explicit indexes**, and each table's `sql` text matches | no object is architecture-dependent |
+| 3 | `PRAGMA quick_check` has no row differing from `ok`; `PRAGMA foreign_key_check` returns zero rows | integrity on a foreign machine (§7.1's tiers) |
+| 4 | Every stored digest re-computes from its own canonical bytes | digest stability |
+| 5 | Every `idempotency_key` re-derives from IDK-1 and matches | IDK-1 is architecture-independent |
+| 6 | Every `TaskStep` survives the full Rust round trip and compares **semantically**, field by field | `TaskStep` round trip |
+| 7 | `lease_generation` values are exactly those written, at both generations | lease fencing state |
+| 8 | The recovery classification for a seeded matrix is identical | recovery classification |
+| 9 | `task_journal` rows read back in `journal_seq` order with identical content | journal ordering |
+| 10 | `SELECT sqlite_version()` is `3.53.2` on **all three** | `bundled` really is uniform |
+
+**Semantic equality, not byte equality.** Assertion 10 above is the one place a
+literal is right, because there the point *is* that it is identical. Everywhere
+else the comparison is semantic: row sets compared as ordered tuples of typed
+values, not as file bytes. A byte comparison would be wrong — SQLite is free to
+choose page layout, and the `sqlite_sequence`/freelist details are not part of
+the contract. Asserting byte equality across platforms would produce a test that
+fails for reasons that are not defects.
+
+**The second fixture, kept separate.** A second, smaller artifact covers the
+abnormal WAL-recovery case and is **not** the architecture-migration fixture,
+because it tests a different thing:
+
+1. Producer inserts and commits rows, then is killed without closing, so committed
+   frames remain in the `-wal`.
+2. The artifact is main database **plus `-wal`**, and **never** `-shm` (§7.5).
+3. Each consumer asserts the committed frames are recovered on open, the row set
+   equals the producer's, `quick_check` is `ok`, and the classification matches.
+
+Keeping it separate matters: a fixture that carried a `-wal` would be testing WAL
+recovery, and one that did not would be testing migration. Mixing them means a
+failure does not say which property broke.
+
+**Why this is deferred to CI and not claimed here.** The host is `x86_64`. The
+fixture's producer has not been run, and the Apple Silicon consumer cannot be run
+from this machine at all. The claim this section makes is narrow and honest: the
+design contains nothing architecture-dependent, the *procedure* for moving a
+database is architecture-neutral (§7.5), and the **job that would prove it is
+specified**. Ledger 7.10 keeps this as `SAFE_DEFER` to CI for the same reason.
 
 ## 8. Clock and time representation
 
@@ -644,6 +1162,51 @@ pub enum RecoveryDecision {
     RefusedPass         { reason: ReasonCode },
 }
 ```
+
+### 9.4 Migration and crash edge cases — classified
+
+Each case below is classified into exactly one bucket, and the bucket names **who
+owns the guarantee**. The buckets are not interchangeable: "SQLite guarantees it" is
+a weaker claim than "P2 tests it", and a test that asserts a SQLite guarantee is
+testing SQLite.
+
+| Bucket | Meaning |
+| --- | --- |
+| **DIRECTLY TESTED** | P2 has a named test in the matrix that asserts this |
+| **TYPED FAILURE** | Enforced by the code returning a named `StoreError`; no test needed to prove enforcement, but one exists to prove the mapping |
+| **SQLITE GUARANTEE** | Provided by SQLite; P2 relies on it and does not re-test it. Recorded so the reliance is visible |
+| **STRESS-ONLY** | Real but timing-dependent; a stress test with weak assertions, never an exact row count |
+| **EXPLICIT DEFER** | Named phase; safe because the omission cannot produce a wrong claim |
+
+| # | Case | Class | Basis |
+| --- | --- | --- | --- |
+| 1 | **Crash during the migration transaction** | **SQLITE GUARANTEE**, verified | SQLite's DDL is transactional. Measured: `BEGIN; CREATE TABLE c1(…); INSERT INTO schema_migrations …; ROLLBACK;` leaves **no** table and **no** row. §7.1's "the version marker and the DDL share a transaction" depends on this and it is true |
+| 2 | **`PRAGMA user_version` participates in the migration transaction** | **SQLITE GUARANTEE**, verified | Measured: `user_version=1; BEGIN; PRAGMA user_version=9; ROLLBACK;` leaves `user_version = 1`. The pragma is **rolled back**, not deferred — so it is a safe second marker inside the same transaction |
+| 3 | **Migration row committed but schema incomplete** | **IMPOSSIBLE by construction** | Case 1 and case 2 together: the DDL, the `schema_migrations` row and the version marker are one transaction. There is no interleaving in which one lands and another does not, because SQLite gives the whole `BEGIN IMMEDIATE … COMMIT` atomicity. Recorded as a proof, not a test |
+| 4 | **Crash after `COMMIT`, before the caller observes `Ok`** | **DIRECTLY TESTED** | N6, via `SIGKILL` in a child process. Measured by the earlier audit: 0 rows before commit, 1 row after, `quick_check` ok, and SQLite recovers the stale `-wal` on the next open. This is the genuinely dangerous window and the reason recovery exists |
+| 5 | **Checksum changed after a migration was applied** | **TYPED FAILURE** | `MigrationChecksumMismatch`; the store does not open. Note the limit honestly: the `checksum` column is **mutable by any writer**, so SQLite provides no protection here — the check is Serea's own comparison at open, and it detects a *different binary*, not a tampered file |
+| 6 | **Duplicate migration ID** | **SQLITE GUARANTEE** + **TYPED FAILURE** | `version INTEGER PRIMARY KEY` gives a `UNIQUE constraint failed: schema_migrations.version`. Measured. The store additionally never renumbers or reuses a version, so the constraint is defence rather than the primary mechanism |
+| 7 | **Migration downgrade / open-newer refusal** | **TYPED FAILURE** | `MAX(version) > Migrations::LATEST` ⇒ `SchemaTooNew`. No auto-downgrade, no best-effort open. Measured: `user_version = 99` is readable and produces the refusal signal |
+| 8 | **Migration SQL that fails mid-statement** | **SQLITE GUARANTEE** | Case 1. A failed statement aborts the transaction; `execute_batch` surfaces the error and the store does not open |
+| 9 | **Read-only database file** | **EXPLICIT DEFER**, with a measured constraint | Measured: a WAL-mode database with **no** sidecars, opened read-only with a read-only directory, fails every read with `attempt to write a readonly database` (`SQLITE_READONLY_DBMOVED`, 1544). With `-wal` and `-shm` both present it opens and **sees the committed WAL rows**. Upstream's three conditions are: sidecars present, directory writable, or `immutable=1`. **P2 does not claim read-only store support.** If it is ever wanted, the design must name which of the three it relies on |
+| 10 | **Read-only directory** | **EXPLICIT DEFER** | Same measurement as case 9. The directory must be writable for SQLite to create `-shm`/`-wal`; that is a deployment requirement, not a code path |
+| 11 | **Disk full** | **EXPLICIT DEFER** at the failure-semantics level | The correct behaviour is that SQLite returns `SQLITE_FULL`, the transaction rolls back, and nothing partial commits — which follows from case 1. What P2 does **not** specify is retry, backoff, or a user-facing message; those belong to whichever phase owns resource bounds. No claim either way |
+| 12 | **`wal_checkpoint` returning `SQLITE_BUSY`** | **DIRECTLY TESTED** | Measured: `TRUNCATE` with a concurrent reader returns `busy = 1` having checkpointed 3 of 4 frames; `PASSIVE` returns `busy = 0` and does what it can. So `busy` must be **read and checked**, not discarded, and `TRUNCATE` must not be assumed to complete. §7.2's close path depends on this |
+| 13 | **`Store::close` while another connection exists** | **SQLITE GUARANTEE** + **DIRECTLY TESTED** | Upstream: the last connection takes a brief exclusive lock while it cleans up the WAL and shared-memory files, so a concurrent opener may get `SQLITE_BUSY`; and a connection recovering after a crash holds an exclusive lock, so a third may get `SQLITE_BUSY`. `busy_timeout = 5000` absorbs the ordinary case. Measured: two independent connections on one file both succeed and all writes land |
+| 14 | **Two OS processes writing one file** | **DIRECTLY TESTED** (N-group) | Measured by the earlier audit: 40 of 40 writes landed, `quick_check` ok, `busy_timeout` serialising correctly. SQLite permits exactly one writer at a time and the pragma is the mechanism |
+| 15 | **Deterministic mid-`COMMIT` abort** | **IMPOSSEIBLE through `rusqlite`** — already recorded | Ledger 6.1. Every injection point was worked through; it needs a custom SQLite build or a fault VFS. Not deferred, **not attempted** |
+| 16 | **A stale `-shm` from another machine** | **SQLITE behaviour, not relied upon** | Measured: a mismatched `-shm` caused no observable damage. But §7.5's rule stands — never carry it, because upstream permits the wal-index to be architecture-specific. Not tested, because the rule is "do not copy it", which needs no test |
+| 17 | **Recovery runs on a store whose `foreign_key_check` fails** | **DIRECTLY TESTED** | `RefusedPass`. §9.1 row 3b is undecidable without it, and it is the only pragma that sees a referential violation (§7.1) |
+
+**Two rows are honest non-claims rather than gaps.** Case 11 (disk full) has a
+correct *data-integrity* behaviour by case 1 and an unspecified *operational*
+behaviour; §12's resource-bound row already records that bounds are not P2's.
+Case 5's checksum check detects a mismatched binary, **not** a tampered file — a
+local file writer can alter the checksum, and the threat model already excludes
+that writer from tamper-evidence.
+
+**Nothing in this table changed the design.** It is recorded so that no case is
+first discovered during P2C or P2H.
 
 ## 10. `serea-task-engine`
 
@@ -962,7 +1525,7 @@ executed between passes**, which is where the substantive findings came from.
 | **An expiry reclaim spends an attempt**, so crashes exhaust the budget with zero executions | audit, major | Arithmetic stated in ADR-0024 and §10.4; the recovery outcome named |
 | **Three ADRs took three positions on the version treatment**, and ADR-0019's was wrong | audit, major | One plan: `serea-arch/1.0.0`, `serea.task/2`, `serea.action/2` |
 | **ADR-0019 rejected shortest-round-trip floats for a false reason** | audit, major | RFC 8785 mandates ECMAScript `Number::toString`; the real obstacle is UTF-16 vs UTF-8 key ordering |
-| **`rusqlite`'s bundled path requires Rust 1.88**; the workspace pins 1.85; two crate defaults are wrong | audit, minor | Recorded; minimal feature set; the MSRV conflict is owner decision #1 |
+| **`rusqlite`'s bundled path requires Rust 1.88**; the workspace pins 1.85; two crate defaults are wrong | audit, minor | **The premise was wrong and is corrected by the final closure run.** No `libsqlite3-sys` MSRV exists and `cargo +1.85.0` builds and runs the chosen configuration. Minimal feature set kept; **there is no MSRV decision** — see §7.4 |
 | **A counter-derived `TempStore` name collides across test binaries** | audit, minor | `<binary>-<pid>-<atomic-counter>`, plus an inherited-directory variant for crash children |
 | **ADR-0024's rejected alternatives still argued for the removed `token`** | audit, minor | Both rows removed; the rationale lives where the decision is made |
 | **ADR-0024's commit statement mixed `:named` and `?` placeholders** | audit, minor | All placeholders named; `rusqlite` binds one style per call |
@@ -1079,6 +1642,49 @@ Three proposals were rejected on the merits, and none is a defect:
 | Create `serea-event-bus` in P2 to satisfy `E3` | Crate Map §4.1's reason for that crate is that it is *separate*. The honest deferral is recorded instead |
 | Bound `RecoveryReport.decisions` with a cap | `max_concurrent_tasks` bounds it operationally. A second bound here would be an unratified one under `B3` |
 | Recover with an explicit "blob-store garbage collector runs nightly" comment | Orphan prevention is structural — P2 writes blob and reference in one transaction — so a sweeper is a repair tool, not a scheduled job. No claim is made either way |
+
+### 13.5 Positive-constructibility verification record
+
+The earlier audit found that **testing only refusals is not enough**: a schema can
+refuse everything and pass. So the positive direction is asserted as its own
+matrix, and re-verified by execution during the final closure run.
+
+**Method.** The migration DDL was extracted **verbatim** from
+[schema §4.0](P2-sqlite-schema.md#40-the-whole-migration) and built against real
+SQLite 3.53.2 — not retyped, and not asserted from the document. The only thing
+written by hand was the *data* each positive case needs. **69 of 69 checks passed.**
+
+| Group | What was constructed | Result |
+| --- | --- | --- |
+| Inventory | `sqlite_master` after migration | **10 tables, 7 triggers, 6 explicit indexes** — exactly as asserted |
+| Task transitions | All **37** legal `TaskState` pairs from §10.2's frozen table | **37/37 construct.** The 4 leaving `BLOCKED` construct only when `blocked_reason` is cleared in the same statement |
+| Step cells | All 8 `kind` × 7 `status` combinations | **51 constructible, 5 correctly refused** (`WAITING` on each of the 5 non-wait kinds), 0 wrongly accepted, 0 intended cells refused |
+| Leases | acquire; renew inside expiry; stale-generation refusal; expiry reclaim (`generation` 1→2, `attempt` 1→2); release; `attempt` against `max_attempts_per_step` | **all construct**, and the two *refusal* behaviours hold: a stale generation touches 0 rows, and the refused commit inserts no receipt |
+| Migrations | fresh; `0001_initial` applied; `user_version` transactional; rollback leaves no row; duplicate ID refused; malformed checksum refused; newer-schema signal; `NotSereaStore` detectable | **all construct**, all three refusals hold |
+| Recovery | `ExpiredLease`; `ReconciledAbsent`; `LeaseFenced` (and no receipt written); `ResumeNormally`; ordered journal | **every designed output reachable** |
+| Open profiles | file-backed store under `synchronous=FULL` **and** `synchronous=NORMAL` | `journal_mode=wal`, `foreign_keys=1`, `quick_check=ok`, **0 `foreign_key_check` violations**, `busy_timeout=5000`, `wal_autocheckpoint=1000`; reopen preserves WAL mode and all 10 tables |
+
+**Three design facts this confirmed by execution, none of which was obvious from
+reading the DDL.** They are the reason the matrix is worth running:
+
+1. **A `WAITING` step carries no lease columns at all.** The biconditional
+   `(status IN ('LEASED','EXECUTING')) = (lease_owner IS NOT NULL)` ties the lease
+   to the executing pair, so a step waiting on a user or an approval holds no
+   lease. Reading only ADR-0018's presence matrix does not make this plain.
+2. **The step-commit statement must clear `lease_owner` and `lease_expires_at_ms`
+   together.** Setting `status='SUCCEEDED'` while leaving either behind is refused
+   by the biconditional — which is exactly ledger 5.4's claim, now verified rather
+   than asserted.
+3. **Leaving `BLOCKED`, `FAILED` or `CANCELLED` requires clearing the previous
+   state's reason columns in the same `UPDATE`.** §4's `cancel task` row already
+   says this for `blocked_reason`; the measurement shows it is true for all three
+   columns, and that a row-level `UPDATE tasks SET state=…` that forgets them
+   aborts instead of silently leaving inconsistent state.
+
+**What this does not establish.** It verifies the *schema* admits and refuses the
+right things. It does not verify the Rust API, which does not exist, and it does not
+substitute for the named tests in [the test matrix](P2-test-matrix.md) — those assert
+behaviour, this asserts constructibility.
 
 ## 14. Implementation phasing
 
@@ -1215,6 +1821,62 @@ P2B through P2I are unreachable until P2A lands, because every one of them
 canonicalises, digests, or persists something whose presence and classification
 rules P2A fixes. Starting at P2C because it "feels like the real P2" would mean
 building a durable store on a wire contract that cannot represent a planned step.
+
+### 15.0 Ordering *inside* the single atomic P2A commit
+
+P2A is one commit carrying the whole contract change: the Rust types, the JSON
+Schema, the tests, the version numbers, the changelog entries and both migration
+notes. It cannot be split, because a `serea.task/2` schema with `serea.task/1`
+Rust types — or a Rust type that deserialises a document its own schema rejects — is
+a state no other phase should ever observe, and the intermediate commits would not
+build.
+
+So the question is not *whether* to interleave but **how to interleave so the RED
+failures stay meaningful**.
+
+| Order | Sequence | Verdict |
+| --- | --- | --- |
+| **A** | Rust `StepPresence` → schema → docs/version | **Rejected.** The Rust types compile and their tests pass while the published schema still says `started_at` is required. For the whole of that window the *authoritative* wire artifact is wrong and nothing fails. Worse, `serde(try_from = Draft)` makes the Rust side permissive, so a `PLANNED` step round-trips in Rust and is rejected by the frozen schema — a green build over a broken contract |
+| **B** | schema → Rust → docs/version | **Rejected, and worse than A.** The schema lands first and immediately starts rejecting documents the Rust type still emits. The RED failure is now a *runtime* schema-validation failure in P1's existing tests rather than a compile error, so the signal is real but the diagnosis is misleading — it looks like a data bug, not a type-contract change |
+| **C** | tests for **both** surfaces first → Rust + schema together → protocol/version/changelog/migration notes | **Adopted** |
+
+**Why C is the only safe order.**
+
+1. **Both REDs are written before either GREEN.** One test against the Rust
+   `StepPresence` matrix, and one against the JSON Schema's `if`/`then` clauses,
+   over the *same* cell list. Both fail, and both fail for the right reason —
+   `started_at` is not `Option` in Rust, and the schema has no conditional
+   requirement. Two independent REDs for one contract change is the only way to
+   know the change is genuinely two-sided.
+2. **Then Rust and schema land in the same commit, driven by those tests.** Because
+   both were RED first, both are now GREEN for a reason that was observed failing.
+   Neither surface is ever briefly green while the other is wrong — they become
+   correct in the same commit, so the window does not exist.
+3. **Then the protocol text, version numbers, changelog entries and both migration
+   notes.** These are last because they are *descriptions* of the change rather
+   than the change. Writing them first would document an interface that does not
+   exist yet, and the earlier audit's own lesson applies: a constant that is
+   asserted is not a constant that is verified.
+
+**The exact suggested sequence, as commits-worth-of-work inside the one commit:**
+
+| Step | Action | Gate before moving on |
+| --- | --- | --- |
+| 1 | Write the **Rust** matrix test for one `PLANNED` cell | **RED**, failing on the type shape |
+| 2 | Write the **schema** test for the same cell | **RED**, failing on the missing `if`/`then` |
+| 3 | `StepPresence` + the five `Option` fields + `serde(try_from = Draft)` | step 1 GREEN |
+| 4 | The schema's per-kind `required` / `if`–`then` clauses, incl. the category-O pattern and the `goallatch` subtraction | step 2 GREEN |
+| 5 | The `lease_generation` optional field (ADR-0024), both surfaces | both GREEN |
+| 6 | ADR-0023's three text categories + validators, both surfaces | both GREEN |
+| 7 | **Parity check**: every cell in the Rust `StepPresence` matrix has a schema counterpart and vice versa | the parity test passes |
+| 8 | `serea-arch/0.2.0 → 1.0.0`; `serea.task/1 → 2`; `serea.action/1 → 2` | — |
+| 9 | Changelog entry in each affected protocol document | Protocol Index §7 items 2 and 3 |
+| 10 | Both migration notes (`serea.task/2`, `serea.action/2`) | Protocol Index §7 item 4 |
+| 11 | Whole workspace green; **one** commit | §14's P2A exit criteria |
+
+Step 7 is the one that is easy to skip and the one that matters most, because it is
+the only step that would catch one surface being updated and the other missed. It
+is the test that makes the "atomic" requirement enforceable rather than aspirational.
 
 ## 16. Cross-references
 

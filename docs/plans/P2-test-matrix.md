@@ -285,7 +285,7 @@ durability nor reopen.
 | F26 | **`a_crash_child_reopens_the_parent_database_by_inherited_directory`** | The other half. A pid alone is not unique *within* a process, and `cargo test` runs tests as threads |
 | F27 | **`temp_paths_contain_no_wall_clock_and_no_rng`** | The `.clippy.toml` ban holds while uniqueness is still achieved: `<binary>-<pid>-<atomic-counter>` |
 | F28 | **`the_migrated_object_inventory_is_10_tables_7_triggers_6_indexes`** | Asserted, not printed — so a phantom object cannot be reintroduced. **This is the direct regression for the `leases_generation_matches_step` trigger that §4.6 published and §4.0 never contained** |
-| F29 | **`the_resolved_bundled_sqlite_is_at_least_3_37`** | Verified unnecessary for `rusqlite` 0.40.2 (bundles 3.53.4); retained so an older candidate cannot pass silently |
+| F29 | **`the_resolved_bundled_sqlite_is_at_least_3_37`** | Verified unnecessary for `rusqlite` 0.40.2 (bundles 3.53.2); retained so an older candidate cannot pass silently |
 
 ## 9. Group G — blobs and classification
 

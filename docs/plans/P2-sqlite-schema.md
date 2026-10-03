@@ -2,8 +2,9 @@
 
 - **Branch:** `p2/design-preparation`
 - **Base commit:** `c3737039e3e38dbba554dc0b9075025f87948358`
-- **Status:** design only. This document proposes DDL. No migration is written,
-  no SQLite file is created, and no dependency is added by this run.
+- **Status:** historical design preparation, reconciled after the frozen P2C
+  gate. Production `0001_initial.sql` is now the sole DDL authority (§4.0).
+  This disjoint schema/docs slice adds no Rust runtime or dependency.
 - **Authority:** [ADR-0005](../decisions/ADR-0005-sqlite-wal-and-migrations.md) for
   SQLite + WAL + ordered migrations; [P2 contract gap
   analysis](P2-contract-gap-analysis.md) for the contract gaps this schema has to
@@ -118,12 +119,12 @@ if the resolved SQLite is older is recorded in
 [P2 design §7](P2-storage-task-engine.md#7-migrations-and-connection-policy)
 rather than left implicit here.
 
-**This DDL has been executed.** It was built and exercised against SQLite 3.43.2
-during design preparation across four rounds, and then **re-extracted from this
-document and re-executed after every edit made by the P2 autonomous audit** — the
-harness parses §4.0 rather than transcribing it, so the executed schema is this
-document's schema. The migration's first obligation in P2C is to reproduce that
-harness, not to rediscover it.
+**Historical DDL execution:** the then-current Markdown DDL was built and
+exercised against SQLite 3.43.2 during design preparation across four rounds,
+and re-extracted after the P2 autonomous audit's edits. Those runs remain
+historical evidence, not validation of the new production migration. The current
+`p2a-doc-probes.py` harness reads the production file referenced by §4.0; fresh
+run output is recorded separately below, without enlarging the old counts.
 
 Four rounds of defects were found this way, and the pattern is the point:
 
@@ -150,332 +151,36 @@ every constraint. See §7.
 
 ### 4.0 The whole migration
 
-```sql
+The sole executable schema authority is
+[`crates/serea-storage/migrations/0001_initial.sql`](../../crates/serea-storage/migrations/0001_initial.sql).
+P2C embeds that file verbatim; the probe harness reads the same production file,
+not a Markdown SQL copy. All snippets below are **non-authoritative explanatory
+fragments**, not standalone migrations. Consult the production file for the full
+constraints, triggers and indexes; never assemble a migration from these snippets.
 
--- Foreign-key enforcement is set per connection by Store::open, not here:
--- PRAGMA foreign_keys is a no-op inside a transaction, and every migration runs
--- inside BEGIN IMMEDIATE. See P2-storage-task-engine.md 7.2.
-
-CREATE TABLE schema_migrations (
-  version       INTEGER PRIMARY KEY CHECK (version >= 1),
-  name          TEXT    NOT NULL UNIQUE,
-  checksum      TEXT    NOT NULL CHECK (length(checksum) = 71
-                                       AND substr(checksum, 1, 7) = 'sha256:'),
-  applied_at_ms INTEGER NOT NULL
-) STRICT;
-
-CREATE TABLE blobs (
-  digest          TEXT    NOT NULL CHECK (length(digest) = 71
-                                          AND substr(digest, 1, 7) = 'sha256:'
-                                          AND substr(digest, 8) NOT GLOB '*[^0-9a-f]*'),
-  data_class_rank INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 2),
-  protection      TEXT    NOT NULL CHECK (protection IN ('NONE', 'AT_REST')),
-  size_bytes      INTEGER NOT NULL CHECK (size_bytes >= 0),
-  content         BLOB    NOT NULL,
-  data_class      TEXT GENERATED ALWAYS AS (
-                      CASE data_class_rank
-                        WHEN 0 THEN 'PUBLIC' WHEN 1 THEN 'PERSONAL'
-                        ELSE 'PRIVATE' END) STORED,
-  PRIMARY KEY (digest, data_class_rank),
-  CHECK (size_bytes = length(content)),
-  CHECK ((data_class_rank = 2) = (protection = 'AT_REST'))
-) STRICT;
-
-CREATE TABLE tasks (
-  task_id              TEXT    PRIMARY KEY CHECK (length(task_id) = 30
-                                                   AND substr(task_id, 1, 4) = 'tsk_'
-                                                   AND substr(task_id, 5, 1) <= '7'),
-  kind                 TEXT    NOT NULL CHECK (kind IN ('USER_REQUEST','SCHEDULED','PROACTIVE','DELEGATED_HOST_GOAL','MAINTENANCE')),
-  title                TEXT    NOT NULL,
-  state                TEXT    NOT NULL CHECK (state IN ('RECEIVED','PLANNING','READY','EXECUTING','WAITING_APPROVAL','WAITING_USER','VERIFYING','COMPLETED','FAILED','BLOCKED','CANCELLED')),
-  origin_kind          TEXT    NOT NULL,
-  origin_device_id     TEXT,
-  origin_message_id    TEXT,
-  origin_extensions    TEXT    NOT NULL DEFAULT '{}'
-                               CHECK (json_valid(origin_extensions)
-                                      AND json_type(origin_extensions) = 'object'),
-  data_class_rank      INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 2),
-  policy_class_rank    INTEGER NOT NULL CHECK (policy_class_rank BETWEEN 0 AND 7),
-  created_at_ms        INTEGER NOT NULL,
-  updated_at_ms        INTEGER NOT NULL,
-  deadline_at_ms       INTEGER,
-  blocked_reason       TEXT,
-  result_summary       TEXT,
-  cancelled_at_ms      INTEGER,
-  cancelled_by         TEXT,
-  failure_reason       TEXT,
-  max_model_calls      INTEGER NOT NULL CHECK (max_model_calls >= 0),
-  max_tool_calls       INTEGER NOT NULL CHECK (max_tool_calls >= 0),
-  max_attempts_per_step INTEGER NOT NULL CHECK (max_attempts_per_step >= 0),
-  budget_extensions    TEXT    NOT NULL DEFAULT '{}'
-                               CHECK (json_valid(budget_extensions)
-                                      AND json_type(budget_extensions) = 'object'),
-  plan_revision        INTEGER NOT NULL DEFAULT 0 CHECK (plan_revision >= 0),
-  extensions           TEXT    NOT NULL DEFAULT '{}'
-                               CHECK (json_valid(extensions)
-                                      AND json_type(extensions) = 'object'),
-  data_class           TEXT GENERATED ALWAYS AS (
-                         CASE data_class_rank
-                           WHEN 0 THEN 'PUBLIC' WHEN 1 THEN 'PERSONAL'
-                           WHEN 2 THEN 'PRIVATE' ELSE 'SECRET' END) STORED,
-  policy_class         TEXT GENERATED ALWAYS AS (
-                         CASE policy_class_rank
-                           WHEN 0 THEN 'OBSERVE' WHEN 1 THEN 'LOCAL_STATE'
-                           WHEN 2 THEN 'REVERSIBLE_WRITE' WHEN 3 THEN 'EXTERNAL_WRITE'
-                           WHEN 4 THEN 'COMMUNICATION' WHEN 5 THEN 'ELEVATED_DEVICE'
-                           WHEN 6 THEN 'DESTRUCTIVE' ELSE 'CREDENTIAL' END) STORED,
-  CHECK (updated_at_ms >= created_at_ms),
-  CHECK (deadline_at_ms IS NULL OR deadline_at_ms >= created_at_ms),
-  CHECK (state = 'BLOCKED' OR blocked_reason IS NULL),
-  CHECK ((state = 'CANCELLED') = (cancelled_at_ms IS NOT NULL AND cancelled_by IS NOT NULL)),
-  CHECK (state = 'CANCELLED' OR (cancelled_at_ms IS NULL AND cancelled_by IS NULL)),
-  CHECK (state <> 'FAILED' OR failure_reason IS NOT NULL),
-  CHECK (state = 'FAILED' OR failure_reason IS NULL),
-  CHECK (origin_kind NOT GLOB '*[^A-Z0-9_]*' AND substr(origin_kind,1,1) BETWEEN 'A' AND 'Z'),
-  CHECK (origin_device_id IS NULL OR (length(origin_device_id)=30 AND substr(origin_device_id,1,4)='dev_')),
-  CHECK (origin_message_id IS NULL OR (length(origin_message_id)=30 AND substr(origin_message_id,1,4)='evt_')),
-  CHECK (blocked_reason IS NULL OR (blocked_reason NOT GLOB '*[^A-Z0-9_]*' AND substr(blocked_reason,1,1) BETWEEN 'A' AND 'Z')),
-  CHECK (failure_reason IS NULL OR (failure_reason NOT GLOB '*[^A-Z0-9_]*' AND substr(failure_reason,1,1) BETWEEN 'A' AND 'Z')),
-  CHECK (cancelled_by IS NULL OR (cancelled_by NOT GLOB '*[^A-Z0-9_]*' AND substr(cancelled_by,1,1) BETWEEN 'A' AND 'Z'))
-) STRICT;
-
-CREATE TRIGGER tasks_policy_class_immutable
-BEFORE UPDATE OF policy_class_rank ON tasks
-WHEN NEW.policy_class_rank IS NOT OLD.policy_class_rank
-BEGIN SELECT RAISE(ABORT, 'policy_class is immutable for a task'); END;
-
-CREATE TRIGGER tasks_data_class_monotonic
-BEFORE UPDATE OF data_class_rank ON tasks
-WHEN NEW.data_class_rank < OLD.data_class_rank
-BEGIN SELECT RAISE(ABORT, 'data_class may not be lowered'); END;
-
-CREATE TABLE task_steps (
-  step_id            TEXT    PRIMARY KEY CHECK (length(step_id) = 30
-                                                 AND substr(step_id, 1, 4) = 'stp_'
-                                                 AND substr(step_id, 5, 1) <= '7'),
-  task_id            TEXT    NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  sequence           INTEGER NOT NULL CHECK (sequence >= 0),
-  kind               TEXT    NOT NULL CHECK (kind IN ('CAPABILITY','MODEL_TURN','WAIT_APPROVAL','WAIT_USER','WAIT_SCHEDULE','VERIFY','NOTIFY','DELEGATE')),
-  status             TEXT    NOT NULL CHECK (status IN ('PLANNED','LEASED','EXECUTING','WAITING','SUCCEEDED','FAILED','RECONCILED_ABSENT')),
-  attempt            INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
-  plan_revision      INTEGER NOT NULL DEFAULT 0 CHECK (plan_revision >= 0),
-  provider_id        TEXT,
-  capability_id      TEXT,
-  capability_version TEXT,
-  idempotency_key    TEXT,
-  input_digest       TEXT    NOT NULL CHECK (length(input_digest) = 71
-                                            AND substr(input_digest,1,7) = 'sha256:'
-                                            AND substr(input_digest,8) NOT GLOB '*[^0-9a-f]*'),
-  result_digest      TEXT    CHECK (result_digest IS NULL OR (length(result_digest) = 71
-                                            AND substr(result_digest,1,7) = 'sha256:'
-                                            AND substr(result_digest,8) NOT GLOB '*[^0-9a-f]*')),
-  started_at_ms      INTEGER,
-  completed_at_ms    INTEGER,
-  lease_owner        TEXT,
-  lease_expires_at_ms INTEGER,
-  lease_generation   INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation BETWEEN 0 AND 4294967295),
-  error_kind         TEXT,
-  error_code         TEXT,
-  error_message      TEXT,
-  error_retryable    INTEGER CHECK (error_retryable IS NULL OR error_retryable IN (0,1)),
-  error_host_action  TEXT,
-  error_details      TEXT    CHECK (error_details IS NULL
-                                     OR (json_valid(error_details)
-                                         AND json_type(error_details) = 'object')),
-  UNIQUE (task_id, sequence),
-  UNIQUE (task_id, idempotency_key),
-  -- ADR-0018 3: PLANNED
-  CHECK (status <> 'PLANNED' OR (attempt = 0
-      AND result_digest IS NULL AND started_at_ms IS NULL AND completed_at_ms IS NULL
-      AND lease_owner IS NULL AND lease_expires_at_ms IS NULL AND lease_generation = 0)),
-  CHECK (status = 'PLANNED' OR attempt >= 1),
-  CHECK (status = 'PLANNED' OR lease_generation >= 1),
-  CHECK (attempt <= 4294967295),
-  -- ADR-0018 3: LEASED  (attempt begun, attempt not yet started)
-  CHECK (status <> 'LEASED' OR (attempt >= 1 AND started_at_ms IS NULL
-      AND completed_at_ms IS NULL AND result_digest IS NULL
-      AND lease_owner IS NOT NULL AND lease_expires_at_ms IS NOT NULL)),
-  -- lease present exactly while leased or executing
-  CHECK ((status IN ('LEASED','EXECUTING')) = (lease_owner IS NOT NULL)),
-  -- ... and so is its expiry. Enforced as a biconditional rather than left
-  -- one-directional: the pair must not disagree, or a terminal step can carry a
-  -- dangling expiry with no owner, which is the same hole the lease_owner
-  -- biconditional above was added to close.
-  CHECK ((status IN ('LEASED','EXECUTING')) = (lease_expires_at_ms IS NOT NULL)),
-  -- started_at required from EXECUTING onward
-  CHECK (status NOT IN ('EXECUTING','WAITING','SUCCEEDED','FAILED','RECONCILED_ABSENT')
-         OR started_at_ms IS NOT NULL),
-  -- completed_at required for every terminal step status
-  CHECK (status NOT IN ('SUCCEEDED','FAILED','RECONCILED_ABSENT') OR completed_at_ms IS NOT NULL),
-  -- completed_at and result_digest absent for every non-terminal status. ADR-0018
-  -- §3 marks both `N` here; without these two clauses a step that is still in
-  -- flight could also read as finished.
-  CHECK (status NOT IN ('PLANNED','LEASED','EXECUTING','WAITING') OR completed_at_ms IS NULL),
-  CHECK (status NOT IN ('PLANNED','LEASED','EXECUTING','WAITING') OR result_digest IS NULL),
-  CHECK (status <> 'SUCCEEDED' OR result_digest IS NOT NULL),
-  -- WAITING only for the wait kinds
-  CHECK (status <> 'WAITING' OR kind IN ('WAIT_APPROVAL','WAIT_USER','WAIT_SCHEDULE')),
-  -- FAILED requires all mandatory error members; details remains optional.
-  CHECK (status <> 'FAILED' OR (error_kind IS NOT NULL AND error_code IS NOT NULL
-      AND error_message IS NOT NULL AND error_host_action IS NOT NULL
-      AND error_retryable IS NOT NULL)),
-  -- Outside FAILED, every member is absent, including optional details.
-  CHECK (status = 'FAILED' OR (error_kind IS NULL AND error_code IS NULL
-      AND error_message IS NULL AND error_host_action IS NULL
-      AND error_retryable IS NULL AND error_details IS NULL)),
-  -- ADR-0018 4: step-kind matrix
-  -- ADR-0018 4, one clause per field. A single biconditional over all four
-  -- admits a PARTIALLY populated tuple: kind=NOTIFY with capability_id set and
-  -- the other three null evaluates 0 = 0 and is accepted.
-  CHECK ((kind IN ('CAPABILITY','DELEGATE','VERIFY')) = (capability_id IS NOT NULL)),
-  CHECK ((kind IN ('CAPABILITY','DELEGATE','VERIFY')) = (capability_version IS NOT NULL)),
-  CHECK ((kind IN ('CAPABILITY','DELEGATE','VERIFY')) = (provider_id IS NOT NULL)),
-  CHECK ((kind IN ('CAPABILITY','DELEGATE','VERIFY')) = (idempotency_key IS NOT NULL)),
-  CHECK (capability_id IS NULL OR (length(capability_id) <= 99
-                                   AND capability_id NOT GLOB 'goallatch.*')),
-  CHECK (idempotency_key IS NULL OR (length(idempotency_key) = 68
-                                     AND substr(idempotency_key,1,4) = 'idk_'
-                                     AND substr(idempotency_key,5) NOT GLOB '*[^0-9a-f]*')),
-  CHECK (error_code IS NULL OR (error_code NOT GLOB '*[^A-Z0-9_]*' AND substr(error_code,1,1) BETWEEN 'A' AND 'Z')),
-  CHECK (error_host_action IS NULL OR (error_host_action NOT GLOB '*[^A-Z0-9_]*' AND substr(error_host_action,1,1) BETWEEN 'A' AND 'Z'))
-) STRICT;
-
-CREATE TABLE side_effect_receipts (
-  receipt_id         TEXT    PRIMARY KEY CHECK (length(receipt_id) = 30
-                                                 AND substr(receipt_id,1,4) = 'rcp_'),
-  task_id            TEXT    NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  step_id            TEXT    NOT NULL REFERENCES task_steps(step_id) ON DELETE CASCADE,
-  capability_id      TEXT    NOT NULL,
-  idempotency_key    TEXT    NOT NULL CHECK (length(idempotency_key) = 68
-                                             AND substr(idempotency_key,1,4) = 'idk_'
-                                             AND substr(idempotency_key,5) NOT GLOB '*[^0-9a-f]*'),
-  provider_reference TEXT,
-  effect_summary     TEXT    NOT NULL,
-  observed_at_ms     INTEGER NOT NULL,
-  replay_safe        INTEGER NOT NULL CHECK (replay_safe IN (0,1)),
-  data_class_rank    INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 2),
-  UNIQUE (step_id)
-) STRICT;
-
-CREATE TRIGGER side_effect_receipts_key_matches_step
-BEFORE INSERT ON side_effect_receipts
-WHEN (SELECT idempotency_key FROM task_steps WHERE step_id = NEW.step_id) IS NOT NEW.idempotency_key
-BEGIN SELECT RAISE(ABORT, 'receipt idempotency_key must equal its step key'); END;
-
-CREATE TRIGGER side_effect_receipts_task_matches_step
-BEFORE INSERT ON side_effect_receipts
-WHEN (SELECT task_id FROM task_steps WHERE step_id = NEW.step_id) IS NOT NEW.task_id
-BEGIN SELECT RAISE(ABORT, 'receipt task_id must equal its step task_id'); END;
-
-CREATE TRIGGER side_effect_receipts_step_must_succeed
-BEFORE INSERT ON side_effect_receipts
-WHEN (SELECT status FROM task_steps WHERE step_id = NEW.step_id) <> 'SUCCEEDED'
-BEGIN SELECT RAISE(ABORT, 'a receipt may only be recorded for a SUCCEEDED step'); END;
-
-CREATE TABLE leases (
-  step_id        TEXT    PRIMARY KEY REFERENCES task_steps(step_id) ON DELETE CASCADE,
-  owner          TEXT    NOT NULL,
-  generation     INTEGER NOT NULL CHECK (generation BETWEEN 1 AND 4294967295),
-  acquired_at_ms INTEGER NOT NULL,
-  expires_at_ms  INTEGER NOT NULL,
-  released_at_ms INTEGER,
-  CHECK (expires_at_ms > acquired_at_ms),
-  CHECK (released_at_ms IS NULL OR released_at_ms >= acquired_at_ms)
-) STRICT;
-
-CREATE TRIGGER task_steps_idempotency_key_immutable
-BEFORE UPDATE OF idempotency_key ON task_steps
-WHEN NEW.idempotency_key IS NOT OLD.idempotency_key
-BEGIN SELECT RAISE(ABORT, 'idempotency_key is derived at plan time and never changes'); END;
-
-
-CREATE TABLE plan_revisions (
-  task_id       TEXT    NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  plan_revision INTEGER NOT NULL CHECK (plan_revision >= 0),
-  created_at_ms INTEGER NOT NULL,
-  plan_digest   TEXT    NOT NULL,
-  data_class_rank INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 2),
-  step_count    INTEGER NOT NULL CHECK (step_count >= 0),
-  PRIMARY KEY (task_id, plan_revision),
-  FOREIGN KEY (plan_digest, data_class_rank)
-    REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT
-) STRICT;
-
-CREATE TABLE task_blob_refs (
-  task_id        TEXT    NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  role           TEXT    NOT NULL CHECK (role IN ('PLAN','PLAN_REVISION')),
-  digest         TEXT    NOT NULL,
-  data_class_rank INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 2),
-  PRIMARY KEY (task_id, role, digest),
-  FOREIGN KEY (digest, data_class_rank)
-    REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT
-) STRICT;
-
-CREATE TABLE step_blob_refs (
-  step_id        TEXT    NOT NULL REFERENCES task_steps(step_id) ON DELETE CASCADE,
-  role           TEXT    NOT NULL CHECK (role IN ('ARGUMENTS','INSTRUCTION','RESULT')),
-  digest         TEXT    NOT NULL,
-  data_class_rank INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 2),
-  PRIMARY KEY (step_id, role, digest),
-  FOREIGN KEY (digest, data_class_rank)
-    REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT
-) STRICT;
-
-CREATE TABLE task_journal (
-  journal_id       TEXT    PRIMARY KEY,
-  task_id          TEXT    NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  step_id          TEXT,
-  journal_seq      INTEGER NOT NULL CHECK (journal_seq >= 1),
-  journal_kind     TEXT    NOT NULL CHECK (journal_kind IN (
-                     'TASK_INSERTED','PLAN_PERSISTED','TASK_STATE_CHANGED',
-                     'STEP_LEASE_ACQUIRED','STEP_LEASE_RELEASED','STEP_ATTEMPT_STARTED',
-                     'STEP_COMMITTED','STEP_FAILED','STEP_RECONCILED_ABSENT',
-                     'RECEIPT_RECORDED','RECOVERY_DECISION','TASK_CANCEL_REQUESTED',
-                     'TASK_TERMINAL')),
-  state_from       TEXT,
-  state_to         TEXT,
-  attempt          INTEGER,
-  reason_code      TEXT,
-  actor_kind       TEXT    NOT NULL,
-  actor_id         TEXT    NOT NULL,
-  actor_version    TEXT    NOT NULL,
-  causation_id     TEXT,
-  data_class_rank  INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 2),
-  occurred_at_ms   INTEGER NOT NULL,
-  payload_digest   TEXT    CHECK (payload_digest IS NULL OR (length(payload_digest) = 71
-                                    AND substr(payload_digest,1,7) = 'sha256:'
-                                    AND substr(payload_digest,8) NOT GLOB '*[^0-9a-f]*')),
-  payload_json     TEXT    CHECK (payload_json IS NULL OR json_valid(payload_json)),
-  payload_ref_digest TEXT,
-  UNIQUE (task_id, journal_seq)
-) STRICT;
-
-CREATE TRIGGER task_journal_step_task_matches
-BEFORE INSERT ON task_journal
-WHEN NEW.step_id IS NOT NULL
- AND (SELECT task_id FROM task_steps WHERE step_id = NEW.step_id) IS NOT NEW.task_id
-BEGIN SELECT RAISE(ABORT, 'journal step_id must belong to the journal task'); END;
-
-CREATE INDEX task_steps_status_lease ON task_steps(status, lease_expires_at_ms);
-CREATE INDEX task_steps_task_status ON task_steps(task_id, status);
-CREATE INDEX tasks_state ON tasks(state);
-CREATE INDEX step_blob_refs_digest ON step_blob_refs(digest);
-CREATE INDEX task_blob_refs_digest ON task_blob_refs(digest);
-CREATE INDEX plan_revisions_digest ON plan_revisions(plan_digest);
-```
+Every one of the **14 durable instants** has an inclusive `EpochMillis` CHECK:
+`BETWEEN -62167219200000 AND 253402300799999`. Nullable instants remain nullable;
+existing presence and ordering checks still apply. Counters, generation, sizes
+and durations do not get instant bounds. `schema_migrations.checksum` also checks
+its exact `sha256:` prefix, length 71 and lowercase hexadecimal suffix, rejecting
+embedded NUL (SQLite text length/GLOB can otherwise stop there). This is a narrow
+structural defense, not tamper-evidence.
 
 ### 4.1 `schema_migrations`
 
 The **single** authority for the schema version. P2 does not mirror it into
-`PRAGMA user_version`, because two sources for one fact is a disagreement waiting
-to happen and reading `MAX(version)` is one indexed query.
+`PRAGMA user_version`, because two sources for one fact invite disagreement.
+Open validates the **full ordered catalog prefix** (contiguous versions starting
+at 1, exact embedded name/checksum at each version), not only `MAX(version)`.
+Checksum means SHA-256 of the exact embedded UTF-8 migration bytes, including
+comments, whitespace and final newline; this is not SCJ-1 canonical JSON.
 
 ### 4.2 `blobs`
 
 | Constraint | Job |
 | --- | --- |
 | `data_class_rank BETWEEN 0 AND 2` | A `SECRET` or `CREDENTIAL` row is **unconstructible**, so `DC5` holds at the storage layer and not merely in Rust |
-| `(data_class_rank = 2) = (protection = 'AT_REST')` | A `PRIVATE` value cannot sit in the file unprotected, so ADR-0022's condition cannot be bypassed by a direct `INSERT` |
+| `(data_class_rank = 2) = (protection = 'AT_REST')` | Enforces the `PRIVATE`/`AT_REST` **marker pairing only**. A direct `INSERT` can label unchanged plaintext `AT_REST`; this CHECK does not prove encryption or backend use. Protection enforcement belongs to P2D, not P2C |
 | `size_bytes = length(content)` | A **consistency** check, not a bound. Under ADR-0020 a consistency invariant is not a resource limit, and this one rejects a torn-length row without inventing a size ceiling |
 | `PRIMARY KEY (digest, data_class_rank)` | Deduplication *within* a class, and no cross-class laundering — see §5.3 |
 
@@ -547,11 +252,12 @@ a code to be a stable machine-readable value.
 `tasks.result_summary`, `task_steps.error_message` and
 `side_effect_receipts.effect_summary` are `TEXT` columns holding content that a
 caller may classify `PRIVATE`. The schema cannot record a per-column class, so
-these columns are enforced by the **classified-write dispatch** — a single
+these columns require the **planned P2D classified-write dispatch** — a single
 `Tx::put_classified_text` chokepoint — and *not* by a `CHECK`. ADR-0022's
 "put the rule where it cannot be forgotten" applies to the blob store; for text
 columns the guarantee is "one chokepoint function", which is weaker and is claimed
-as such. `tests/` pins that no second write path exists.
+as such. P2D tests must pin that no second write path exists; this slice does not
+implement that path or prove encryption merely from the `AT_REST` marker.
 
 ### 4.4 `task_steps`
 
@@ -822,7 +528,8 @@ migration, which is a `CHECK` widening and not a table rewrite.
 
 ### 4.9 `task_journal`
 
-ADR-0021 owns this table's semantics; the DDL is here so this document is complete.
+ADR-0021's proposed design owns this table's later-phase semantics; its complete
+DDL lives only in the production migration. This slice adds no journal writer.
 
 ```sql
 CREATE TABLE task_journal (…)
@@ -955,8 +662,10 @@ removed rather than left as a dead arm.
 **The guarantee's real boundary, which the P2 autonomous audit added.** The
 anti-laundering property above rests on `PRIMARY KEY (digest, data_class_rank)`
 **and on the composite `FOREIGN KEY` clauses** that carry a reference's class to
-the blob's row. `PRAGMA foreign_keys` is an ordinary per-connection setting that
-**defaults to `OFF`**, and one statement disables it:
+the blob's row. `PRAGMA foreign_keys` is an ordinary per-connection setting:
+**upstream SQLite defaults to `OFF`; the selected bundled build defaults to `ON`**
+(`SQLITE_DEFAULT_FOREIGN_KEYS=1`). Store must still set and assert `ON` explicitly;
+neither default protects against a local writer, and one statement disables it:
 
 ```sql
 PRAGMA foreign_keys = OFF;   -- outside a transaction: takes effect
@@ -1062,6 +771,65 @@ production coverage or of complete current presence/fence validation. Original
 u32 overflow. Current additions are checked by the docs probe linked from
 [the gate](P2A-review-and-closure.md); runtime tests remain deferred.
 
+### Current production-migration probe (2026-10-04)
+
+Executed from the workspace root **after the frozen P2C gate**, using the final
+production SQL bytes (Python 3.9.6's SQLite **3.43.2**, Node **v24.21.0**).
+This is not a bundled rusqlite/Store test or a P2C runtime completion claim.
+The existing tracked harness was rerun against production; its positive corpus
+includes all 51 legal step cells. Added task-pair construction covers all 37
+legal pairs, not engine enforcement. The old 69/69 run remains historical and
+is **not** being claimed as rerun or enlarged.
+
+Command: `PYTHONDONTWRITEBYTECODE=1 python3 docs/plans/p2a-doc-probes.py`
+
+```text
+ECMA-262 v24.21.0: 10119638 assertions; all Unicode scalars in three positions/categories, pinned whitespace and exact identifier/near-miss corpus PASS
+Production migration: 10 tables, 7 triggers, 6 explicit indexes PASS; SHA-256 d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea
+EpochMillis: 126 exact production-column boundary/NULL probes across all 14 instants PASS (other table invariants tested separately)
+Migration checksum grammar: 9 positive/negative probes PASS
+SQLite semantics: integer→TEXT accepted; BLOB→TEXT/nonnumeric TEXT→INTEGER refused; memory checkpoint (0, -1, -1) PASS
+SQLite 3.43.2: 531 probes against production migration; kind/status (51 legal cells), all error subsets, bounded explanatory u32 parity, outcome/release/expiry and overflow PASS
+Positive task constructibility: 37/37 documented legal transitions PASS against production migration (not engine runtime validation)
+SCJ-1/IDK-1: 21 published vectors reconstructed PASS; vector-1 282 bytes; raw A/B private framing only, valid-ID scalar/object lengths pinned
+```
+
+Additional checks executed **at that historical probe snapshot** (not current
+smoke-parser or integrated-workspace evidence):
+
+- Extraction parity against original HEAD §4.0: exact bytes after removing only
+  the 14 instant bounds and narrow checksum hex/NUL defense. Full corrected
+  objects and counter/duration constraints unchanged.
+- Both then-current Python sources compiled on Python 3.9 without bytecode output.
+  Final F6 smoke remediation preserves Python 3.9 compatibility with a stdlib-only
+  focused TOML parser. It consumes the entire supported input and fails closed on
+  unsupported syntax; 37 parser/layering regression cases pass on Python 3.9.6.
+- Workspace smoke synthetic in-memory fixtures: **12** positive/negative cases
+  PASS, covering exact membership, duplicate/extra/missing member, path/package
+  aliases, workspace inheritance and target/build/dev tables. No fixture files
+  written.
+- `python3 tools/validate_docs.py docs`: **57 Markdown files**, identifiers/JSON/
+  placeholders/cross-references valid. `git diff --check`: no findings.
+
+**Historical integration problems at that disjoint probe snapshot, not current
+workspace status or hidden GREENs:** the then-current
+`python3 tests/workspace_smoke.py` exited 1 with:
+
+```text
+FAIL: expected exactly P2C members ['crates/serea-protocol', 'crates/serea-storage', 'crates/serea-testkit'], got ['crates/serea-protocol', 'crates/serea-testkit']; no engine until P2F
+FAIL: required member has no manifest: crates/serea-storage/Cargo.toml
+
+2 workspace invariant failure(s)
+```
+
+`cargo metadata --offline --no-deps --format-version 1` succeeds but lists only
+protocol/testkit, so the new CI exact-three assertion exits 1 too. Cargo/Rust
+wiring is deliberately outside this disjoint slice; do not weaken the guards to
+make this partial tree GREEN. No Rust runtime/MSRV suite or GitHub CI execution
+is claimed here. No closure/ADR change, P2D runtime or commit was made.
+
+### Historical acceptance table
+
 **Round 4** follows the third review pass and adds the positive cases it asked for
 — including *each wait kind at `PLANNED`*, which rounds 1–3 all missed because every
 one of them tested `WAITING` on a non-wait kind and none tested a non-`WAITING`
@@ -1115,7 +883,7 @@ unplannable.
 | **A crash-only loop against `max_attempts_per_step = 2`** | **2 acquisitions refused, 0 executions** — an expiry reclaim spends an attempt |
 | Referenced / unreferenced blob through the §5.4 sweep | survives / removed |
 | Duplicate migration `version` / `name` | refused / refused |
-| Zero-length file ⇒ fresh; foreign file ⇒ `NotSereaStore` | both detectable (0 tables vs `['unrelated']`, no `schema_migrations`) |
+| Zero-length file ⇒ fresh; foreign file ⇒ `NotSereaStore` | Historical probe distinguished 0 tables vs `['unrelated']`. Current gate uses **file length**, not table count: any nonempty SQLite file without the catalog is foreign, including zero user tables |
 | Two OS processes, 40 writes between them | all 40 landed, `quick_check` ok |
 
 ### Two rows that are accepted by SQL on purpose
@@ -1144,16 +912,19 @@ claim, and it holds. The structural budget is therefore spent on the controls th
 survive, which are the authority-bearing ones.
 
 **`PRAGMA foreign_keys = OFF`** disables foreign-key enforcement, and it is the
-more direct of the two: no trickery, and it defaults to `OFF` in SQLite, so a writer
-need only *not set it*. Confirmed by execution: with it off, a `task_steps` row
+more direct of the two: one explicit setting turns it off. Upstream SQLite's
+default is `OFF`, but the selected bundled build defaults to **ON**; Store must
+still set and assert ON explicitly. Confirmed by historical execution: with it off,
+a `task_steps` row
 referencing a non-existent task is accepted. This is what makes §5.3's
 cross-class anti-laundering guarantee pragma-dependent rather than structural.
 
 So the design's structural budget is real but bounded, and the boundary is stated
 once rather than implied:
 
-> Every `CHECK`, trigger and `FOREIGN KEY` in this schema holds against any writer
-> that leaves `foreign_keys = ON` and `ignore_check_constraints = OFF`. A local
+> `CHECK`s require `ignore_check_constraints = OFF`; foreign keys require
+> `foreign_keys = ON`. Ordinary triggers are independent of both settings.
+> A local
 > file writer can disable either with one line and needs no privilege beyond write
 > access. [Trust Boundaries §2 `TB-7`](../architecture/02-trust-boundaries.md#tb-7-core-to-durable-store)
 > already states that filesystem permissions are "defence in depth, not the
@@ -1161,8 +932,8 @@ once rather than implied:
 > records tamper-evidence against a local file writer as "Not specified". No defence
 > against that writer is claimed, and none is invented.
 
-ADR-0022's claims are narrowed accordingly, and the boundary is pinned by tests
-O14/O15 so a later reader inherits the truth rather than the overclaim.
+ADR-0022 remains **Proposed**, as do ADR-0021/0024. O14/O15 are later runtime
+test obligations for this boundary; schema construction is not runtime acceptance.
 
 ## 8. Open at implementation time
 

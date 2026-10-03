@@ -2,7 +2,7 @@ name: ci
 
 # P1 has no secret-dependent job and no external-network test. Every step below
 # is reproducible from the repository alone; the only network access is
-# GitHub's own Actions runner plus the ordinary Cargo dependency fetch.
+# GitHub's own Actions runner plus ordinary toolchain/dependency setup.
 on:
   push:
     branches: ["**"]
@@ -51,11 +51,15 @@ jobs:
       - name: Fetch dependencies
         run: cargo fetch --locked
 
+
+      - name: Workspace smoke regression tests
+        run: python3 -m unittest discover -s tests -p workspace_smoke_tests.py
+
       - name: Workspace smoke test
         run: python3 tests/workspace_smoke.py
 
-      # P1 exit criterion: exactly the two P1 packages, asserted rather than
-      # printed. `pipefail` matters here because without it a failing
+      # P2C exit criterion: exactly protocol/storage/testkit, no engine until P2F,
+      # asserted rather than printed. `pipefail` matters because a failing
       # `cargo metadata` is masked by the printer's exit code.
       - name: Workspace shape (exact member list)
         shell: bash
@@ -65,7 +69,7 @@ jobs:
           python3 - <<'PY'
           import json, sys
           names = sorted(p["name"] for p in json.load(open("metadata.json"))["packages"])
-          expected = ["serea-protocol", "serea-testkit"]
+          expected = ["serea-protocol", "serea-storage", "serea-testkit"]
           print("workspace members:", ", ".join(names))
           if names != expected:
               print(f"FAIL: expected exactly {expected}", file=sys.stderr)

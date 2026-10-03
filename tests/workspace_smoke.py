@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
-"""Workspace shape smoke test for the Serea Rust workspace.
+"""P2C workspace shape: exactly protocol/storage/testkit, engine only in P2F.
 
-Standalone: Python standard library only. It never invokes Cargo, never reads
-credentials, and never touches the network, so it is deterministic on a clean
-checkout.
-
-Checks the mechanically-checkable half of the layering rule in
-`docs/architecture/03-crate-map.md` §1 and §5.3:
-
-1. the root workspace declares `crates/serea-protocol` as a member;
-2. that member's `Cargo.toml` exists;
-3. `serea-protocol` has no internal (path/workspace) dependency of any kind;
-4. nothing in the workspace names `serea-testkit` outside a `[dev-dependencies]`
-   table, so no runtime crate can reach a test double.
-
-Exits non-zero with a diagnostic on the first failed check.
+Python 3.9-compatible standard library only; no Cargo invocation or network.
+Checks ordinary, build, dev and target-specific dependencies, including aliases,
+dotted keys, subtables, workspace inheritance and path package identities.
+Storage's only internal runtime dependency is protocol; testkit is dev-only.
+The focused TOML subset supports ordinary tables, dotted/quoted keys, single-line
+strings, booleans, decimal integers, arrays and inline tables. Unsupported syntax
+(e.g. multiline strings, arrays of tables, floats/dates) fails inspection; no
+unparsed section is skipped. This is not a replacement for Cargo validation.
 """
 from __future__ import annotations
 
@@ -23,116 +17,348 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ROOT_MANIFEST = ROOT / "Cargo.toml"
-PROTOCOL_MEMBER = "crates/serea-protocol"
+EXPECTED_MEMBERS = [
+    "crates/serea-protocol",
+    "crates/serea-storage",
+    "crates/serea-testkit",
+]
+PROTOCOL = "serea-protocol"
+STORAGE = "serea-storage"
 TESTKIT = "serea-testkit"
-
-failures: list[str] = []
-
-
-def fail(message: str) -> None:
-    failures.append(message)
+DEPENDENCY_KINDS = ("dependencies", "build-dependencies", "dev-dependencies")
 
 
-def workspace_members(text: str) -> list[str]:
-    """Return the quoted entries of `[workspace] members`."""
-    section = re.search(r"^\[workspace\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
-    if section is None:
-        return []
-    entries = re.search(r"^members\s*=\s*\[(.*?)\]", section.group(1), re.M | re.S)
-    if entries is None:
-        return []
-    return re.findall(r'"([^"]+)"', entries.group(1))
+def table(value: object, label: str) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a TOML table")
+    return value
 
 
-# Any dependency table, including a target-specific or build one. Missing a
-# table form here is how a guard gets silently evaded.
-DEPENDENCY_TABLE = re.compile(
-    r"^\[(?:target\.(?P<target>[^]]+?)\.)?(?P<kind>dev-|build-)?dependencies\]\s*$"
-    r"(?P<body>.*?)(?=^\[|\Z)",
-    re.M | re.S,
-)
+class _Table(dict):
+    def __init__(self, kind="implicit"):
+        super().__init__()
+        self.kind = kind
+        self.sealed = False
 
 
-def dependency_tables(text: str) -> list[tuple[str, bool]]:
-    """Return every dependency table as `(package name, is_dev)`."""
-    # Three spellings name a workspace package, and all three must be caught:
-    #   serea-protocol = { path = ... }        (plain key)
-    #   serea-testkit.workspace = true         (dotted key)
-    #   tk = { package = "serea-testkit", ... } (renamed key)
-    entry = re.compile(
-        r"^\s*(?:(?P<key>[A-Za-z0-9_-]+)(?:\.workspace|\.path|\.version)?\s*=)"
-        r"|(?:package\s*=\s*\"(?P<package>[^\"]+)\")",
-        re.M,
-    )
-    tables = []
-    for match in DEPENDENCY_TABLE.finditer(text):
-        is_dev = (match.group("kind") or "") == "dev-"
-        for name in entry.finditer(match.group("body")):
-            named = name.group("package") or name.group("key") or ""
-            if named.startswith("serea-"):
-                tables.append((named, is_dev))
-    return tables
+class ManifestParser:
+    """Consume the entire supported TOML subset, or reject it with a line number."""
+
+    def __init__(self, text: str):
+        self.text = text.replace("\r\n", "\n")
+        self.pos = 0
+
+    def fail(self, message):
+        line = self.text.count("\n", 0, self.pos) + 1
+        raise ValueError(f"line {line}: {message}")
+
+    def take(self, token):
+        if self.text.startswith(token, self.pos):
+            self.pos += len(token)
+            return True
+        return False
+
+    def expect(self, token):
+        if not self.take(token):
+            self.fail(f"expected {token!r}; unsupported or malformed TOML")
+
+    def space(self, multiline=False):
+        while self.pos < len(self.text):
+            char = self.text[self.pos]
+            if char in (" \t\n" if multiline else " \t"):
+                self.pos += 1
+            elif multiline and char == "#":
+                self.comment()
+            else:
+                break
+
+    def comment(self):
+        end = self.text.find("\n", self.pos)
+        self.pos = len(self.text) if end == -1 else end
+
+    def string(self):
+        quote = self.text[self.pos]
+        if self.text.startswith(quote * 3, self.pos):
+            self.fail("unsupported multiline string")
+        self.pos += 1
+        chars = []
+        escapes = {"b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r", '"': '"', "\\": "\\"}
+        while self.pos < len(self.text):
+            char = self.text[self.pos]
+            self.pos += 1
+            if char == quote:
+                return "".join(chars)
+            if (ord(char) < 32 and char != "\t") or ord(char) == 127:
+                self.fail("unsupported control character or newline in string")
+            if char == "\\" and quote == '"':
+                if self.pos == len(self.text):
+                    self.fail("unterminated string escape")
+                escape = self.text[self.pos]
+                self.pos += 1
+                if escape in escapes:
+                    char = escapes[escape]
+                elif escape in ("u", "U"):
+                    width = 4 if escape == "u" else 8
+                    digits = self.text[self.pos:self.pos + width]
+                    if len(digits) != width or not re.fullmatch(r"[0-9a-fA-F]+", digits):
+                        self.fail("invalid Unicode escape")
+                    codepoint = int(digits, 16)
+                    if codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
+                        self.fail("invalid Unicode scalar")
+                    char = chr(codepoint)
+                    self.pos += width
+                else:
+                    self.fail("unsupported string escape")
+            chars.append(char)
+        self.fail("unterminated string")
+
+    def key(self):
+        parts = []
+        while True:
+            self.space()
+            if self.pos < len(self.text) and self.text[self.pos] in "\"'":
+                parts.append(self.string())
+            else:
+                match = re.match(r"[A-Za-z0-9_-]+", self.text[self.pos:])
+                if match is None:
+                    self.fail("unsupported or malformed key")
+                parts.append(match[0])
+                self.pos += len(match[0])
+            self.space()
+            if not self.take("."):
+                return parts
+
+    def descend(self, root, keys, kind):
+        current = root
+        for key in keys:
+            if current.sealed:
+                self.fail("cannot extend a closed inline table")
+            if key not in current:
+                current[key] = _Table(kind)
+            current = current[key]
+            if not isinstance(current, _Table):
+                self.fail("table conflicts with an existing value")
+        return current
+
+    def assign(self, root, keys, value):
+        parent = self.descend(root, keys[:-1], "dotted")
+        if parent.sealed or keys[-1] in parent:
+            self.fail("duplicate key or extension of a closed inline table")
+        parent[keys[-1]] = value
+
+    def seal(self, value):
+        if isinstance(value, _Table):
+            value.sealed = True
+            for child in value.values():
+                self.seal(child)
+
+    def value(self):
+        self.space()
+        if self.pos == len(self.text):
+            self.fail("missing value")
+        if self.text[self.pos] in "\"'":
+            return self.string()
+        if self.take("["):
+            result = []
+            self.space(multiline=True)
+            if self.take("]"):
+                return result
+            while True:
+                result.append(self.value())
+                self.space(multiline=True)
+                if self.take("]"):
+                    return result
+                self.expect(",")
+                self.space(multiline=True)
+                if self.take("]"):
+                    return result
+        if self.take("{"):
+            result = _Table("inline")
+            self.space()
+            if not self.take("}"):
+                while True:
+                    keys = self.key()
+                    self.expect("=")
+                    self.assign(result, keys, self.value())
+                    self.space()
+                    if self.take("}"):
+                        break
+                    self.expect(",")
+            self.seal(result)
+            return result
+        match = re.match(r"[^\s,\]}#]+", self.text[self.pos:])
+        if match is None:
+            self.fail("unsupported or malformed value")
+        token = match[0]
+        self.pos += len(token)
+        if token in ("true", "false"):
+            return token == "true"
+        if re.fullmatch(r"[+-]?(?:0|[1-9](?:_?[0-9])*)", token):
+            return int(token.replace("_", ""))
+        self.fail(f"unsupported value syntax {token!r}")
+
+    def parse(self):
+        root = _Table()
+        current = root
+        while True:
+            self.space(multiline=True)
+            if self.pos == len(self.text):
+                return root
+            if self.take("["):
+                if self.text.startswith("[", self.pos):
+                    self.fail("unsupported array-of-tables header")
+                keys = self.key()
+                self.expect("]")
+                current = self.descend(root, keys, "implicit")
+                if current.sealed or current.kind != "implicit":
+                    self.fail("duplicate or conflicting table header")
+                current.kind = "header"
+            else:
+                keys = self.key()
+                self.expect("=")
+                self.assign(current, keys, self.value())
+            self.space()
+            if self.text.startswith("#", self.pos):
+                self.comment()
+            if self.pos != len(self.text):
+                self.expect("\n")
+
+
+def parse_manifest(text: str) -> dict:
+    try:
+        return ManifestParser(text).parse()
+    except RecursionError as error:
+        raise ValueError("unsupported TOML nesting depth") from error
+
+
+def load_manifest(path: Path) -> dict:
+    try:
+        return parse_manifest(path.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
+
+
+def package_name(manifest: dict, path: Path) -> str:
+    name = table(manifest.get("package"), f"{path}: package").get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"{path}: package.name must be a nonempty string")
+    return name
+
+
+def dependency_spec(value: object, label: str) -> dict:
+    if isinstance(value, str):
+        return {"version": value}
+    spec = table(value, label)
+    strings = {"version", "package", "path", "git", "branch", "tag", "rev", "registry"}
+    booleans = {"workspace", "optional", "default-features"}
+    for field, setting in spec.items():
+        if field in strings:
+            valid = isinstance(setting, str)
+        elif field in booleans:
+            valid = isinstance(setting, bool)
+        elif field == "features":
+            valid = isinstance(setting, list) and all(isinstance(item, str) for item in setting)
+        else:
+            raise ValueError(f"{label}: unsupported dependency field {field}")
+        if not valid:
+            raise ValueError(f"{label}: unsupported value for dependency field {field}")
+    return spec
+
+
+def dependency_tables(manifest: dict, shared: dict, manifest_path: Path):
+    """Yield (resolved package name, internal, dev-only) for every dependency."""
+    scopes = [manifest]
+    targets = table(manifest.get("target", {}), f"{manifest_path}: target")
+    for key, value in targets.items():
+        scope = table(value, f"{manifest_path}: target.{key}")
+        if any(field not in DEPENDENCY_KINDS for field in scope):
+            raise ValueError(f"{manifest_path}: unsupported target dependency scope {key}")
+        scopes.append(scope)
+    for scope in scopes:
+        if any(field in scope for field in ("build_dependencies", "dev_dependencies")):
+            raise ValueError(f"{manifest_path}: unsupported legacy dependency table spelling")
+        for kind in DEPENDENCY_KINDS:
+            dependencies = table(scope.get(kind, {}), f"{manifest_path}: {kind}")
+            for key, value in dependencies.items():
+                spec = dependency_spec(value, f"{manifest_path}: dependency {key}")
+                inherited = spec.get("workspace", False)
+                if not isinstance(inherited, bool):
+                    raise ValueError(f"{manifest_path}: {key}.workspace must be a boolean")
+                if inherited:
+                    if key not in shared:
+                        raise ValueError(f"{manifest_path}: missing workspace dependency {key}")
+                    if any(field in spec for field in ("path", "package", "version")):
+                        raise ValueError(f"{manifest_path}: {key} overrides inherited package/path/version")
+                    spec = {**dependency_spec(shared[key], f"workspace dependency {key}"), **spec}
+                name = spec.get("package", key)
+                if not isinstance(name, str) or not name:
+                    raise ValueError(f"{manifest_path}: {key}.package must be a nonempty string")
+                internal = name.startswith("serea-")
+                if "path" in spec:
+                    path = spec["path"]
+                    if not isinstance(path, str):
+                        raise ValueError(f"{manifest_path}: {key}.path must be a string")
+                    base = ROOT if inherited else manifest_path.parent
+                    dependency_path = (base / path).resolve()
+                    crates = (ROOT / "crates").resolve()
+                    internal |= dependency_path == crates or crates in dependency_path.parents
+                    dependency_manifest = dependency_path / "Cargo.toml"
+                    target_name = package_name(load_manifest(dependency_manifest), dependency_manifest)
+                    if "package" in spec and name != target_name:
+                        raise ValueError(f"{manifest_path}: {key}.package disagrees with path package {target_name}")
+                    name = target_name
+                    internal |= name.startswith("serea-")
+                yield name, internal, kind == "dev-dependencies"
 
 
 def main() -> int:
-    if not ROOT_MANIFEST.exists():
-        fail(f"root workspace manifest missing: {ROOT_MANIFEST.relative_to(ROOT)}")
-        return report()
-
-    root_text = ROOT_MANIFEST.read_text(encoding="utf-8")
-    members = workspace_members(root_text)
-
-    if PROTOCOL_MEMBER not in members:
-        fail(
-            f"workspace members {members} do not include {PROTOCOL_MEMBER!r}; "
-            "PROTO-* types have no owner crate"
-        )
-
-    protocol_manifest = ROOT / PROTOCOL_MEMBER / "Cargo.toml"
-    if not protocol_manifest.is_file():
-        fail(f"declared member has no manifest: {protocol_manifest.relative_to(ROOT)}")
-        return report()
-
-    protocol_text = protocol_manifest.read_text(encoding="utf-8")
-    internal = [name for name, _ in dependency_tables(protocol_text)]
-    if internal:
-        fail(
-            f"{PROTOCOL_MEMBER} declares internal dependencies on {sorted(internal)}; "
-            "the contract layer depends on nothing internal"
-        )
-
-    # Crate Map 5.3: the test double is unreachable from any runtime crate.
-    # Checked across every crate directory, so a `providers/` crate is covered,
-    # and across every dependency table form, so a target-specific or build
-    # table is covered.
-    for manifest in sorted(ROOT.glob("crates/*/Cargo.toml")) + sorted(
-        ROOT.glob("crates/*/*/Cargo.toml")
-    ):
-        if manifest.parent.name == TESTKIT:
-            continue
-        text = manifest.read_text(encoding="utf-8")
-        offenders = [
-            f"{name} ({'dev' if is_dev else 'non-dev'})"
-            for name, is_dev in dependency_tables(text)
-            if name == TESTKIT and not is_dev
-        ]
-        if offenders:
-            fail(
-                f"{manifest.parent.name} names {TESTKIT} as {offenders}; a test double "
-                "must be reachable only from [dev-dependencies]"
+    failures = []
+    root_manifest = ROOT / "Cargo.toml"
+    if not root_manifest.is_file():
+        return report(["root workspace manifest missing: Cargo.toml"])
+    try:
+        root = load_manifest(root_manifest)
+        workspace = table(root.get("workspace"), "workspace")
+        members = workspace.get("members", [])
+        if not isinstance(members, list) or any(not isinstance(member, str) for member in members):
+            raise ValueError("workspace.members must be an array of strings")
+        if sorted(members) != EXPECTED_MEMBERS:
+            failures.append(
+                f"expected exactly P2C members {EXPECTED_MEMBERS}, got {members}; no engine until P2F"
             )
+        for member in EXPECTED_MEMBERS:
+            path = ROOT / member / "Cargo.toml"
+            if not path.is_file():
+                failures.append(f"required member has no manifest: {member}/Cargo.toml")
+                continue
+            if package_name(load_manifest(path), path) != path.parent.name:
+                failures.append(f"required member has wrong package name: {member}/Cargo.toml")
 
-    return report()
+        shared = table(workspace.get("dependencies", {}), "workspace.dependencies")
+        for manifest_path in sorted((ROOT / "crates").rglob("Cargo.toml")):
+            manifest = load_manifest(manifest_path)
+            owner = package_name(manifest, manifest_path)
+            for name, internal, is_dev in dependency_tables(manifest, shared, manifest_path):
+                if owner == PROTOCOL and internal:
+                    failures.append(f"{PROTOCOL} depends on internal {name}; protocol is a leaf")
+                if owner == STORAGE and internal and not is_dev and name != PROTOCOL:
+                    failures.append(
+                        f"{STORAGE} has internal non-dev dependency {name}; only protocol is allowed"
+                    )
+                if name == TESTKIT and not is_dev:
+                    failures.append(f"{owner} names {TESTKIT} outside [dev-dependencies]")
+    except (OSError, UnicodeError, ValueError) as error:
+        failures.append(f"manifest inspection failed: {error}")
+    return report(failures)
 
 
-def report() -> int:
+def report(failures: list[str]) -> int:
     if failures:
         for message in failures:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: workspace shape satisfies the crate-map layering rule")
+    print("OK: exact P2C protocol/storage/testkit workspace; storage runtime protocol-only; testkit dev-only")
     return 0
 
 

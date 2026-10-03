@@ -25,7 +25,10 @@ Clock/time only and is not delivered here; P2A introduces no SQLite or runtime.
 
 ## 1. Scope, and the crates in it
 
-P2 creates exactly two runtime crates and no others:
+Across all P2 phases, P2 creates exactly two runtime crates and no others.
+**P2C has exactly three workspace members: protocol/storage/testkit.** Storage's
+only internal runtime dependency is protocol; testkit is dev-only. The engine
+crate is created in **P2F**, never as a P2C placeholder:
 
 ```text
 serea-protocol        (exists)
@@ -88,24 +91,34 @@ than discovered during it.
 ```rust
 pub struct Store { … }
 impl Store {
-    pub fn open(path: &Path, clock: &dyn Clock,
-               protection: Option<&dyn AtRestProtection>) -> Result<Self, StoreError>;
-    pub fn open_in_memory(clock: &dyn Clock,
-                          protection: Option<&dyn AtRestProtection>) -> Result<Self, StoreError>;
+    pub fn open(path: &Path, clock: &dyn Clock) -> Result<Self, StoreError>;
+    pub fn open_in_memory(clock: &dyn Clock) -> Result<Self, StoreError>;
     pub fn schema_version(&self) -> Result<u32, StoreError>;
     pub fn verify_integrity(&self) -> Result<(), StoreError>;
-    pub fn view<T>(&self, f: impl FnOnce(&dyn TaskQueries) -> Result<T, StoreError>)
-                  -> Result<T, StoreError>;
+    pub fn checkpoint_for_close(&self) -> Result<CheckpointOutcome, StoreError>;
     pub fn transact<T>(&self, f: impl FnOnce(&mut Tx) -> Result<T, StoreError>)
                       -> Result<T, StoreError>;
 }
 
-pub struct Tx<'c> { … }
-pub struct LeaseGuard { … }          // not Clone; begin borrows, outcome/release consume
-pub struct BlobRef { digest: Digest, class: DataClass }   // Copy, Debug-safe
+pub struct Tx<'c> { … }             // opaque; no raw connection/SQL access for callers
 pub struct Migrations { … }
-pub trait AtRestProtection { … }     // ADR-0022
+pub enum CheckpointOutcome { Complete, NotApplicable }
 ```
+
+This is the **planned P2C surface**, not a runtime completion claim. Read the
+injected Clock once at open **before mutation**, map failure to `StoreError::Clock`,
+and retain only the validated `EpochMillis` for migration stamps. `Store` retains
+no Clock borrow or trait object and has no Clock lifetime parameter.
+`checkpoint_for_close(&self)` is retryable: file-backed TRUNCATE completion yields
+`Complete`; memory yields `NotApplicable`; SQLite lock contention or a nonzero
+checkpoint busy column yields typed `StoreError::Busy`. It does not consume Store
+or prevent caller writes, so callers must quiesce themselves. `Drop` destroys the
+connection best-effort and is not a reportable checkpoint gate.
+
+`LeaseGuard` belongs to P2E; `BlobRef`, `AtRestProtection` and the protection
+constructor seam belong to P2D only. No P2C protection parameter or PRIVATE
+runtime support is claimed. ADR-0021/0022/0024 remain **Proposed**: foundation
+DDL does not implement participants, journal writes, classification or fencing.
 
 ### 3.1 The dropped name: `BlobStore`
 
@@ -124,9 +137,9 @@ type that identifies a blob — is kept, because it appears in the public API fo
 callers that hold one across transactions.
 
 `LeaseOwner` is a `serea-protocol` type, so `serea-storage` names no new
-identifier. `Clock` and `AtRestProtection` are traits `serea-storage` *consumes*;
-`Clock` is declared in `serea-protocol` per Crate Map §3.1, `AtRestProtection` is
-declared in `serea-storage` because no other crate needs it.
+identifier. `Clock` is declared in `serea-protocol` per Crate Map §3.1 and is
+consumed at open in P2C without retention. The future `AtRestProtection` trait
+and its storage constructor seam are P2D work, not a P2C declaration.
 
 ### 3.2 The property that makes unsafe sequences impossible
 
@@ -138,12 +151,13 @@ later_update_task()
 later_append_receipt()
 ```
 
-P2 has **no** such methods. `Store` has exactly two operation kinds:
+P2 has **no** such methods. P2C's opaque `Tx` is reachable only through
+`transact`, which owns `BEGIN IMMEDIATE … COMMIT`; it exposes no raw connection
+or arbitrary SQL to callers. P2C adds only lifecycle/admin methods besides it.
+Read-only `view` is deferred to P2F with its consumer query design.
 
-- `view` — read-only, cannot write;
-- `transact` — the only write path, and it owns `BEGIN IMMEDIATE … COMMIT`.
-
-And `Tx` exposes **whole transitions**, never row-level updates:
+The following **later-phase** `Tx` operations expose whole transitions, never
+row-level updates; none is implemented by the P2C transaction foundation:
 
 | `Tx` method | What one call does |
 | --- | --- |
@@ -164,26 +178,11 @@ caller cannot compose `T4` wrongly because it cannot compose it at all.
 
 ### 3.3 Reads
 
-Read queries live on a `TaskQueries` trait implemented by both `Store` and `Tx`,
-so a caller inside a transaction sees the same API as a caller outside it without
-duplicating every query:
-
-```rust
-pub trait TaskQueries {
-    fn task(&self, task_id: TaskId) -> Result<Option<TaskRow>, StoreError>;
-    fn task_with_steps(&self, task_id: TaskId) -> Result<Option<TaskWithSteps>, StoreError>;
-    /// `StepPhase` is `serea-task-engine`'s **closed** seven-value lifecycle, not
-    /// the open `StepStatus` wire code. A signature taking the open code could
-    /// express a value `task_steps.status`'s `CHECK` refuses, which is exactly the
-    /// boundary ADR-0018 wants to keep. See schema §4.4.
-    fn steps_in_phase(&self, phases: &[StepPhase]) -> Result<Vec<StepRow>, StoreError>;
-    fn expired_leases(&self, now_ms: EpochMillis) -> Result<Vec<LeaseRow>, StoreError>;
-    fn receipt_for_step(&self, step_id: StepId) -> Result<Option<ReceiptRow>, StoreError>;
-    fn journal_for_task(&self, task_id: TaskId) -> Result<Vec<JournalRow>, StoreError>;
-    fn pending_event_transitions(&self) -> Result<u64, StoreError>;   // ADR-0021
-    fn plan_revision(&self, task_id: TaskId, revision: u32) -> Result<Option<PlanRevisionRow>, StoreError>;
-}
-```
+`TaskQueries`, `Store::view`, row types and lifecycle filtering are **deferred to
+P2F consumer design**. The earlier signature required the upper-layer engine's
+`StepPhase` from storage and inverted the dependency direction. P2C declares no
+storage-owned lifecycle enum or string-filter substitute. P2F must settle query
+ownership without a storage → engine edge before introducing these APIs.
 
 ### 3.4 `StoreError`
 
@@ -191,22 +190,31 @@ Hand-written, no `thiserror`, matching the P1 decision in `Cargo.toml`: a derive
 macro puts a `Display` impl next to the rejected values and makes it easy to add a
 field that formats untrusted input.
 
-`Open`, `Sqlite`, `NotSereaStore`, `SchemaTooNew`, `MigrationChecksumMismatch`,
-`IntegrityCheckFailed`, `Busy`, `ConstraintViolation`, `CanonicalJson`,
+**Current P2C set:** `Open`, `Sqlite`, `NotSereaStore`, `SchemaTooNew`,
+`MigrationChecksumMismatch`, `MigrationCatalogInvalid`, `IntegrityCheckFailed`,
+`Busy`, `ConstraintViolation`, `ConnectionPolicy`, `UnsupportedSqlite`,
+`LockPoisoned`, `Clock(ProtocolError)`. All storage categories are payload-free;
+only `Clock` carries a protocol category. `Display` and `Debug` render category
+names only, and the error source chain exposes no underlying diagnostics.
+
+**Future P2D–P2G categories, not current P2C variants:** `CanonicalJson`,
 `DigestMismatch`, `BlobMissing`, `BlobCorrupt`, `ClassRefused { class }`,
-`AtRestProtectionUnavailable { class }`,
-`LeaseHeld`, `LeaseFenced`, `LeaseExpired`, `AttemptCeilingReached`,
-`IllegalTaskTransition`, `IllegalStepTransition`, `DuplicateIdempotencyKey`,
-`PolicyClassImmutable`, `Protocol(ProtocolError)`, `Clock(ProtocolError)`.
+`AtRestProtectionUnavailable { class }`, `LeaseHeld`, `LeaseFenced`,
+`LeaseExpired`, `AttemptCeilingReached`, `IllegalTaskTransition`,
+`IllegalStepTransition`, `DuplicateIdempotencyKey`, `PolicyClassImmutable`,
+`Protocol(ProtocolError)`. Later consumer design must settle these categories
+without widening the current error disclosure boundary.
 
-Two rules, both inherited from `errors.rs`:
+Two rules:
 
-1. **No rejected value appears in any `Display` or `Debug`.** The `Sqlite` variant
-   carries the underlying error but renders a machine-readable cause only, because
-   SQLite's own message can quote a bound value, and a bound value on this path can
-   be `PRIVATE` prose.
-2. **`StoreError` carries no lease identity beyond the step's own id and generation
-   counter**, neither of which is replayable on its own.
+1. **No rejected value appears in any `Display`, `Debug` or source chain.** P2C
+   maps SQLite busy/locked and constraint failures to typed categories and other
+   SQLite failures to `Sqlite`; the original SQLite error and its message are
+   **discarded**, not retained as a hidden payload. SQLite messages can quote
+   bound values, including `PRIVATE` prose.
+2. **P2C errors carry no lease identity.** Future lease errors must not carry
+   replayable identity; the planned boundary permits at most the step's own id
+   and generation counter, neither replayable on its own.
 
 ### 3.5 Lease boundary clarification (deferred P2E/P2F)
 
@@ -243,7 +251,9 @@ in-flight step's lease is released separately, by the worker or by recovery.
 
 ### 4.1 The durable-transition participant seam — paper compile
 
-Deferred runtime design (ADR-0021 remains Proposed). Shared receivers avoid
+Deferred **P2F/P2G** runtime design (ADR-0021 remains Proposed), not the P2C
+opaque-Tx API in §3. This paper signature does not authorize exposing a raw SQL
+transaction to P2C callers. Shared receivers avoid
 participant-local mutable counters; successful body constructs and returns immutable
 transition identity from the writes it actually performed. A caller-supplied identity
 before the write is not sufficient proof that the body performed that transition.
@@ -363,14 +373,36 @@ impl Migrations {
   does. This is the answer to "can a migration failure leave a partially upgraded DB
   accepted as valid": no, because the version marker and the DDL share a
   transaction.
-- **Checksums.** Each applied migration's SQL is re-hashed at open and compared.
-  A mismatch is `MigrationChecksumMismatch` and the store does not open. This
-  catches a binary whose migration text differs from the one that was applied.
-- **Newer schema refused.** `MAX(version) > Migrations::LATEST` is
-  `SchemaTooNew`. There is no auto-downgrade and no "best effort" open.
-- **Adopting a foreign file is refused.** Zero-length file ⇒ fresh, migrate. A
-  non-empty file with no `schema_migrations` table but with other tables ⇒
-  `NotSereaStore`. The store never adopts an unknown file and never deletes one.
+- **Production authority.** Embed `migrations/0001_initial.sql` with `include_str!`;
+  [schema §4.0](P2-sqlite-schema.md#40-the-whole-migration) links to it, not a second
+  whole-schema executable copy. `sha2` SHA-256 hashes the **exact UTF-8 bytes**,
+  including comments, whitespace and final newline. Construct protocol `Digest`
+  through its checked API. SQL is not SCJ-1 JSON.
+- **Ordered catalog prefix — accepted F2 repair contract.** Use **one ordered
+  `SELECT version,name,checksum,applied_at_ms FROM schema_migrations ORDER BY version`**
+  result snapshot for each catalog inspection, not a separate newer-version query
+  followed by a prefix query. Collect the rows and inspect all typed integer
+  versions first: any visible version beyond the embedded latest yields
+  `SchemaTooNew`, even when another row has a malformed field or prefix mismatch.
+  Only then require a contiguous prefix starting at 1 with exact embedded
+  version/name/checksum and valid migration stamps; gaps, wrong names and malformed
+  rows refuse open. `MAX(version)` alone cannot establish identity. Checksum
+  disagreement is `MigrationChecksumMismatch`; no downgrade or best-effort open.
+  Checksums detect binary/source mismatch, not local-file tampering. This is
+  accepted repair sequencing, not a claim that the runtime repair/test is complete.
+- **Adopting a foreign file is refused.** Only absent or **zero-length** files are
+  fresh. Any nonempty file without `schema_migrations` is `NotSereaStore`, even a
+  valid SQLite file containing **zero user tables**. Never delete/recreate a refused
+  or corrupt file and never infer freshness from an empty schema.
+- **Inspect before WAL.** For nonempty files, use a **read-only** connection to
+  inspect authority, the single ordered catalog snapshot above (newer priority,
+  then full prefix/name/checksum) and all `quick_check` rows before opening writable
+  or setting WAL. Revalidate on the writable handle before full connection policy;
+  accepted existing stores configure WAL/FULL **before pending upgrades**, then
+  revalidate the catalog under `BEGIN IMMEDIATE` before each migration.
+  Foreign/newer/corrupt preflight refusals must not switch journal mode. Read-only
+  WAL inspection can create transient SQLite sidecars; no sidecar-noncreation
+  guarantee is claimed. Fresh bootstrap follows the revised §7.2 order below.
 - **Corruption.** Four verification tiers, defined because each pragma verifies
   something different and the P2 autonomous audit established exactly what.
   `PRAGMA quick_check` and `PRAGMA integrity_check` are **page-level** checks:
@@ -426,9 +458,9 @@ impl Migrations {
      `foreign_keys = ON` at open regardless so that the assertion is *observed*
      rather than inherited from a build flag.
   2. **The claim is unchanged either way.** A writer sets `foreign_keys = OFF` with
-     one line and then inserts an orphan. Every `CHECK`, trigger and `FOREIGN KEY`
-     here holds against a writer who leaves `foreign_keys = ON` and
-     `ignore_check_constraints = OFF`, and the threat model already excludes a local
+     one line and then inserts an orphan. Foreign keys require `foreign_keys = ON`;
+     `CHECK`s require `ignore_check_constraints = OFF`; ordinary triggers are
+     independent of both settings. The threat model already excludes a local
      file writer from tamper-evidence. What the `OFF` default buys is a *foot-gun*,
      not a guarantee, and `bundled` removes the foot-gun without adding a guarantee.
      See [schema §7](P2-sqlite-schema.md#the-pragma-boundary-in-full).
@@ -454,19 +486,23 @@ table asserting WAL at open is unimplementable for one of the two constructors:
 | `PRAGMA synchronous = FULL` (**set**) | returns **no row** | returns **no row** — see below |
 | `PRAGMA foreign_keys` | `1` — `bundled` default, see §7.1 | `1` — `bundled` default, see §7.1 |
 | `PRAGMA journal_mode = WAL` | returns `memory`; the request is **silently ignored** | returns `wal` |
-| `PRAGMA wal_checkpoint(TRUNCATE)` | one row, value `0` | one row, value `0` |
+| `PRAGMA wal_checkpoint(TRUNCATE)` | one **three-column** row `(0, -1, -1)` | one **three-column** row `(busy, log_frames, checkpointed_frames)`; completed TRUNCATE is `(0, 0, 0)` |
 | `PRAGMA database_list` | one row: `(0, "main", "")` | one row: `(0, "main", "<path>")` |
 
-Three of those cells were mis-recorded by the earlier draft and are corrected here.
-All are measured against `rusqlite` 0.40.2 + `bundled` (SQLite 3.53.2):
+Historical measurements below used `rusqlite` 0.40.2 + `bundled` (SQLite 3.53.2).
+The old checkpoint measurement read only column zero, not the entire row; its
+single-value conclusion was incorrect. The P2C gate corrects the row shape:
 
 - **Reading `synchronous` on `:memory:` returns `2`, not `1`.** The value is
   `SQLITE_DEFAULT_SYNCHRONOUS=2` from the bundled `compile_options`, reported
   truthfully, and it means nothing because there is no file to fsync.
-- **`PRAGMA wal_checkpoint(TRUNCATE)` on `:memory:` returns a single row `0`, not
-  `(0, -1, -1)`.** There is no WAL, so the checkpoint succeeds vacuously. The
-  correct statement is "not applicable", not a specific triple — a caller that
-  destructures three columns would have been reading past the end of the result.
+- **`PRAGMA wal_checkpoint(TRUNCATE)` always returns three columns**: busy,
+  log-frame count and checkpointed-frame count. Memory's row is **`(0, -1, -1)`**;
+  reading only its first column explains the historical erroneous `0` report.
+  Store's memory close API returns `NotApplicable` without performing it.
+  File-backed code reads all three columns and maps a nonzero busy flag (or
+  SQLite busy error) to typed `StoreError::Busy`; it must not discard partial
+  progress or report `Complete` on a busy TRUNCATE.
 - **"Setting `synchronous` returns no row" is not an in-memory quirk.** Measured on
   the **file-backed** profile too: `PRAGMA synchronous = FULL` returns no row there
   as well. This is how SQLite's assignment pragmas behave generally, not a symptom
@@ -482,10 +518,38 @@ So the durability gap is real but it is narrower than "the pragma misbehaves":
 | `synchronous` | `FULL`, **asserted** | **not asserted**; documented as unenforceable | Task Protocol §5 rule 1 — a step's success and its receipt are committed before the task advances — is the point of this phase, and in WAL mode `NORMAL` can lose the last commits on **power** loss (not process crash). An fsync per commit is milliseconds on an SSD |
 | `busy_timeout` | 5000 ms, asserted | asserted | Single writer, low contention, and a bounded wait rather than an immediate `SQLITE_BUSY`. Measured: two writers serialise correctly; a second `BEGIN IMMEDIATE` waits out the timeout and then reports `SQLITE_BUSY`. **The 5000 ms default is `rusqlite`'s, not SQLite's** — SQLite's own default is `0`, meaning immediate `SQLITE_BUSY`. Asserting it is asserting a deliberate choice rather than inheriting one |
 | `wal_autocheckpoint` | SQLite default (`1000` pages) | SQLite default | Do not tune what was not measured |
-| `wal_checkpoint` | `TRUNCATE` on clean close | **not performed** — vacuous | Bounds WAL growth across restarts. Measured: with a concurrent reader holding a snapshot, `TRUNCATE` returns `busy = 1` having checkpointed 3 of 4 frames, so `busy` must be checked rather than discarded; `PASSIVE` returns `busy = 0` and does what it can |
+| `wal_checkpoint` | retryable `checkpoint_for_close(&self)` performs `TRUNCATE`; typed Busy or Complete | `NotApplicable`, **not performed** | Bounds WAL growth across restarts. Measured: with a concurrent reader holding a snapshot, `TRUNCATE` returns `busy = 1` having checkpointed 3 of 4 frames, so `busy` must be checked rather than discarded; `PASSIVE` returns `busy = 0` and does what it can |
 | `temp_store` | **default**, deliberately not `MEMORY` | default | A temp table spills to a file that is *not* at-rest protected. ADR-0022's protection covers `blobs.content`, not SQLite's scratch space. Any future change here must re-open that question |
 | `application_id` / `user_version` | **not set** | not set | `schema_migrations` is the single authority |
 | Connection count | **1**, behind a `Mutex` | 1 | SQLite is single-writer. The mutex guards the *connection*, never lease semantics and never a transition |
+
+**Accepted F1 repair sequencing (not runtime completion).** Read the injected
+Clock before mutation and retain only the validated migration stamp. File opens
+then follow two paths; no new public API is needed:
+
+1. **Absent/zero-length fresh:** open writable, perform common configuration
+   outside a transaction — SQLite version/JSON capabilities, explicit/asserted
+   `foreign_keys = ON`, `synchronous = FULL`, and 5000 ms timeout — while retaining
+   the initial **DELETE/FULL** journal profile, without enabling persistent WAL.
+   Enter `BEGIN IMMEDIATE`, recheck authority/catalog under the writer reservation
+   (another initializer may already have committed), and atomically apply the
+   initial migration, its identity row, `quick_check` and `foreign_key_check` gates.
+   Commit that bootstrap **before** applying/asserting the WAL/FULL production
+   profile. If another initializer already committed, validate its prefix and do
+   not apply the initial migration twice.
+2. **Nonempty:** read-only identity/catalog snapshot and page preflight → writable
+   revalidation → common configuration plus full **WAL/FULL** policy → pending
+   migrations, each with catalog revalidation inside `BEGIN IMMEDIATE` and the
+   post-migration gates. Accepted existing stores do not switch back to DELETE.
+
+Every **returned** file Store is WAL/FULL. Fresh setup must not publish an
+in-progress nonempty **unmarked WAL** file between configuration and migration;
+concurrent legitimate initialization must succeed or yield retryable contention,
+not a false foreign-file refusal. The initial SQLite transaction is an ordinary
+atomic bootstrap, **not a new tamper defence** or protection against a hostile
+local writer. Runtime concurrency/ordering regressions are required later; this
+prose does not establish their PASS or claim power-loss/platform validation.
+The memory profile retains its existing nondurable policy.
 
 **Every durability-bound test uses `ProductionProfile` on a file.** Not by
 convention — by rule, stated as a positive list in §7.3, because the alternative
@@ -532,8 +596,11 @@ WAL-backed is wrong and is a review finding.
   counting from 0 produce the same three names. A pid alone is also insufficient,
   because `cargo test` runs tests as threads of one process and the crash harness
   spawns children; hence the counter as a third component. `TempStore::new(label)`
-  builds one; `TempStore::child_inherited(dir)` takes the parent's directory, which
-  is also how a crash child reopens the file it must assert against.
+  builds one. **Cross-binary F25 and crash-child F26 are P2H obligations**, not
+  required P2C gates. The planned `TempStore::child_inherited(dir)` takes the
+  parent's directory so a crash child reopens the file it must assert against;
+  P2C may prepare this infrastructure early but is not required to (owner
+  direction 21). Local P2C file tests still require deterministic temp identity.
 
 - Every crash test runs in a **child process** re-invoking the test binary with
   `current_exe()`, which is the only way to test durability rather than the
@@ -570,8 +637,8 @@ previous audit.**
 | Transitive crate | **`libsqlite3-sys` 0.38.2**, `edition = "2021"`, **no `rust-version` field**, license **MIT** | crate `Cargo.toml` |
 | Bundled SQLite | **3.53.2**, `SQLITE_SOURCE_ID` `2026-06-03 19:12:13 d6e03d8c…` | `libsqlite3-sys/sqlite3/sqlite3.h` line 149 and `sqlite3.c` line 470, **and** `SELECT sqlite_version()` / `sqlite_source_id()` on a live connection |
 | Native build | C toolchain via `cc`; `bundled` implies `modern_sqlite` implies `bundled_bindings`, so `build.rs` copies `sqlite3/bindgen_bundled_version.rs` and **no local `bindgen`/`libclang` is required** | `rusqlite` + `libsqlite3-sys` `Cargo.toml` feature graph and `build.rs` |
-| System SQLite | **not linked.** `otool -L` on the built binary lists no `libsqlite3`, and the bundled source id string is present in the binary — the amalgamation is statically linked | link inspection |
-| Apple Silicon, Intel macOS, Linux | identical — `bundled` compiles the same 3.53.2 from the same source on all three, so no system SQLite and no ABI question | by construction |
+| System SQLite | **not linked in the historical probe environment.** `otool -L` on the built binary lists no `libsqlite3`, and the bundled source id string is present in the binary — the amalgamation is statically linked | link inspection |
+| Apple Silicon, Intel macOS, Linux | intended same bundled source on all three, provided build-environment overrides are absent | build policy; historical link probe is not cross-host execution |
 
 **Three defaults must be overridden, and each is a trap. Two of the three earlier
 statements about them were factually wrong and are corrected here.**
@@ -607,6 +674,16 @@ statements about them were factually wrong and are corrected here.**
 ```toml
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 ```
+
+**Build-environment caveat.** `bundled` is the intended policy, not an
+unconditional guarantee. In the locked `libsqlite3-sys` build,
+`LIBSQLITE3_SYS_USE_PKG_CONFIG=1` selects the **linked branch** ahead of bundled;
+conflicting enabled features can also change branch selection.
+`SQLITE3_LIB_DIR` is a library search path consulted **only after the linked
+branch is selected**, not a selector that defeats bundled by itself. Other build
+settings can alter compilation. Verify resolved SQLite/source/compile options
+and actual linkage in the environment. Historical link/MSRV results do not
+establish a hostile or overridden build is bundled.
 
 **`bundled` versus system SQLite — and a concrete reason it is not merely
 preferable here.** The general argument is unchanged and sound: `bundled` makes
@@ -660,7 +737,8 @@ requirement, and it is **not** what the workspace needs, because the whole chain
 builds on **1.85.0** today.
 
 **Decision: keep `rust-version = "1.85"` and `.clippy.toml` `msrv = "1.85"`. Unchanged.
-No `Cargo.toml` edit is needed, proposed or recorded for P2C.**
+No **MSRV** Cargo edit is needed; P2C still needs its separate storage/dependency
+workspace wiring.**
 
 This is not "manufacturing a need to keep 1.85" — it is the option that costs
 nothing. The alternative, raising the MSRV to the stack's tested-against version,
@@ -807,17 +885,18 @@ is the definition of an artifact rather than an asset.
 
 This is the procedure, and it is the one to put in user-facing documentation:
 
-1. **Stop Serea.** Not "close the window" — stop the process, so the last
-   connection closes cleanly.
+1. **Quiesce callers while keeping the Store alive.** Stop new work, finish active
+   transactions and release read snapshots; do not drop the connection before
+   the reportable checkpoint.
 2. **Confirm no other reader or writer holds the file.** A second connection from
    another Serea instance, a stray `sqlite3` shell, or a backup agent all count.
-3. **Checkpoint the WAL.** `PRAGMA wal_checkpoint(TRUNCATE)`. Check the `busy`
-   column: measured, `TRUNCATE` returns `busy = 1` and completes only partially
-   while another connection holds a read snapshot, so a `busy = 1` here means *stop
-   and find the other connection*, not "carry on".
-4. **Close all SQLite connections.** This deletes `-wal` and `-shm` as a side
-   effect, which is the desired outcome and the reason the single-file case is the
-   normal one.
+3. **Retry `checkpoint_for_close(&self)` until `Complete`.** It parses the full
+   three-column `PRAGMA wal_checkpoint(TRUNCATE)` result. Typed Busy means release
+   the conflicting reader/writer and retry while Store is still alive; never copy
+   on Busy. Keep callers quiesced so no writes follow the checkpoint.
+4. **Drop all SQLite connections**, then confirm no uncheckpointed WAL remains.
+   Normal last-close cleanup removes `-wal`/`-shm`; Drop alone cannot report a
+   successful TRUNCATE and must not be used as the checkpoint gate.
 5. **Copy `serea.sqlite` alone.**
 6. **Open it on the destination**, which applies the normal open checks (§7.1's
    normal-open tier).
@@ -825,7 +904,8 @@ This is the procedure, and it is the one to put in user-facing documentation:
    treating the data as live.
 
 Steps 1–4 are what "stop Serea" means operationally, and steps 5–7 are what P2's
-open path already does. **No architecture-specific handling appears anywhere in
+later migration/admin/recovery phases provide, not all automatic Store-open work.
+**No architecture-specific handling appears anywhere in
 this procedure**, which is the whole point.
 
 #### The abnormal case: committed frames remain in the `-wal`
@@ -941,7 +1021,8 @@ written once and the job is the deliverable rather than an assumption.
    `task_journal` rows in order.
 3. Every timestamp, id and digest is a **literal constant**, never derived from a
    clock or an RNG, so the fixture is byte-reproducible.
-4. `PRAGMA wal_checkpoint(TRUNCATE)`, then **close every connection**.
+4. Quiesce callers; retry `checkpoint_for_close` until Complete (parse all three
+   TRUNCATE columns), then **drop every connection**; never copy on Busy.
 5. Copy **only the main database file** — §7.5's normal path. Assert that `-wal`
    and `-shm` do not exist at artifact-creation time; if they do, the producer is
    wrong and the fixture is not the ordinary case.
@@ -952,7 +1033,7 @@ and asserts:
 
 | # | Assertion | Pins |
 | --- | --- | --- |
-| 1 | `PRAGMA schema_version`; `SELECT MAX(version) FROM schema_migrations`; the applied checksum string | schema migration/version |
+| 1 | `PRAGMA schema_version`; full ordered `schema_migrations` version/name/checksum prefix matching embedded catalog | schema migration/version |
 | 2 | `sqlite_master` inventory is **10 tables / 7 triggers / 6 explicit indexes**, and each table's `sql` text matches | no object is architecture-dependent |
 | 3 | `PRAGMA quick_check` has no row differing from `ok`; `PRAGMA foreign_key_check` returns zero rows | integrity on a foreign machine (§7.1's tiers) |
 | 4 | Every stored digest re-computes from its own canonical bytes | digest stability |
@@ -1079,7 +1160,9 @@ require new storage or task-engine crates; their source checks belong to later
 phases, including O3.
 
 **P2C, not P2B:** storage consumes an injected `&dyn Clock`. Its open-time clock
-read must propagate a returned `ProtocolError` as a typed open failure. Successful
+read must propagate a returned `ProtocolError` as a typed open failure. Read once before mutation, retain only the validated instant for migration stamps,
+and never retain the Clock in Store. All 14 SQL instant columns enforce inclusive
+EpochMillis MIN/MAX; counters and durations do not. Successful
 readings are already range-checked by `EpochMillis` construction; the old
 out-of-48-bit-range reading at `Store::open` is not a P2B test or a constructible
 successful Clock value. No Store implementation or open test enters P2B.
@@ -1192,12 +1275,12 @@ testing SQLite.
 | # | Case | Class | Basis |
 | --- | --- | --- | --- |
 | 1 | **Crash during the migration transaction** | **SQLITE GUARANTEE**, verified | SQLite's DDL is transactional. Measured: `BEGIN; CREATE TABLE c1(…); INSERT INTO schema_migrations …; ROLLBACK;` leaves **no** table and **no** row. §7.1's "the version marker and the DDL share a transaction" depends on this and it is true |
-| 2 | **`PRAGMA user_version` participates in the migration transaction** | **SQLITE GUARANTEE**, verified | Measured: `user_version=1; BEGIN; PRAGMA user_version=9; ROLLBACK;` leaves `user_version = 1`. The pragma is **rolled back**, not deferred — so it is a safe second marker inside the same transaction |
-| 3 | **Migration row committed but schema incomplete** | **IMPOSSIBLE by construction** | Case 1 and case 2 together: the DDL, the `schema_migrations` row and the version marker are one transaction. There is no interleaving in which one lands and another does not, because SQLite gives the whole `BEGIN IMMEDIATE … COMMIT` atomicity. Recorded as a proof, not a test |
+| 2 | **`PRAGMA user_version` participates in a transaction** | **Historical SQLite probe**, not a Store marker | Measured: `user_version=1; BEGIN; PRAGMA user_version=9; ROLLBACK;` leaves `user_version = 1`. Store deliberately does **not** set user_version; schema_migrations alone is authoritative |
+| 3 | **Migration row committed but schema incomplete** | **Atomic migration requirement** | DDL and schema_migrations row share BEGIN IMMEDIATE … COMMIT. Failure rolls both back; acceptance still requires full ordered-catalog validation and integrity gates, not just a marker. No user_version mirror |
 | 4 | **Crash after `COMMIT`, before the caller observes `Ok`** | **DIRECTLY TESTED** | N6, via `SIGKILL` in a child process. Measured by the earlier audit: 0 rows before commit, 1 row after, `quick_check` ok, and SQLite recovers the stale `-wal` on the next open. This is the genuinely dangerous window and the reason recovery exists |
 | 5 | **Checksum changed after a migration was applied** | **TYPED FAILURE** | `MigrationChecksumMismatch`; the store does not open. Note the limit honestly: the `checksum` column is **mutable by any writer**, so SQLite provides no protection here — the check is Serea's own comparison at open, and it detects a *different binary*, not a tampered file |
 | 6 | **Duplicate migration ID** | **SQLITE GUARANTEE** + **TYPED FAILURE** | `version INTEGER PRIMARY KEY` gives a `UNIQUE constraint failed: schema_migrations.version`. Measured. The store additionally never renumbers or reuses a version, so the constraint is defence rather than the primary mechanism |
-| 7 | **Migration downgrade / open-newer refusal** | **TYPED FAILURE** | `MAX(version) > Migrations::LATEST` ⇒ `SchemaTooNew`. No auto-downgrade, no best-effort open. Measured: `user_version = 99` is readable and produces the refusal signal |
+| 7 | **Migration downgrade / open-newer refusal** | **TYPED FAILURE requirement** | Validate full ordered catalog prefix; any newer catalog version ⇒ SchemaTooNew. No downgrade/best effort. Historical user_version=99 readability is not evidence of Store refusal; Store ignores that pragma |
 | 8 | **Migration SQL that fails mid-statement** | **SQLITE GUARANTEE** | Case 1. A failed statement aborts the transaction; `execute_batch` surfaces the error and the store does not open |
 | 9 | **Read-only database file** | **EXPLICIT DEFER**, with a measured constraint | Measured: a WAL-mode database with **no** sidecars, opened read-only with a read-only directory, fails every read with `attempt to write a readonly database` (`SQLITE_READONLY_DBMOVED`, 1544). With `-wal` and `-shm` both present it opens and **sees the committed WAL rows**. Upstream's three conditions are: sidecars present, directory writable, or `immutable=1`. **P2 does not claim read-only store support.** If it is ever wanted, the design must name which of the three it relies on |
 | 10 | **Read-only directory** | **EXPLICIT DEFER** | Same measurement as case 9. The directory must be writable for SQLite to create `-shm`/`-wal`; that is a deployment requirement, not a code path |
@@ -1439,8 +1522,8 @@ attached. The review's independent verdict is in §13.
 | --- | --- | --- |
 | 1 | Can stale worker A commit after B owns a reclaimed lease? | No. `lease_generation` increments on every acquisition and every commit carries it in its `WHERE`; zero rows is `LeaseFenced`. ADR-0024 |
 | 2 | Can a corrupt row widen authority? | Class ranks are integers with generated labels, so rank and label cannot disagree; `policy_class` has an `UPDATE` trigger; `state`, `kind` and every code-shaped field have `CHECK`s. A corrupt row is *refused*, and recovery's row #2 detects it |
-| 3 | Can a `PRIVATE` blob hit disk unencrypted? | No, by any writer that leaves constraint checking enabled. `CHECK ((data_class_rank = 2) = (protection = 'AT_REST'))` makes the row unconstructible, and the write path refuses before the insert when no backend is configured. ADR-0022, [schema §7](P2-sqlite-schema.md#7-verified-behaviour) |
-| 4 | Can `SECRET` or `CREDENTIAL` enter ordinary SQLite? | No, by any writer that leaves constraint checking enabled: `data_class_rank BETWEEN 0 AND 2` on all seven classified tables makes those rows unconstructible, verified on each. **The boundary, stated once:** `PRAGMA ignore_check_constraints = ON` disables every `CHECK` in the schema for a local file writer, and P2 does not mitigate that. Every trigger and foreign key still holds under it — which is where this design spends its structural budget, and **the P2 autonomous audit verified that claim rather than assuming it**. **The second boundary is `PRAGMA foreign_keys = OFF`**, which the earlier revision of this answer did not name: it defaults to `OFF` in SQLite, one line disables it, and a `task_steps` row referencing a non-existent task is then accepted. So the composite-key anti-laundering guarantee in [schema §5.3](P2-sqlite-schema.md#53-classification-and-laundering) is *structural* against a writer who leaves enforcement on and *pragma-dependent* against a local file writer — which `TB-7` already excludes from tamper-evidence. ADR-0022, [schema §7](P2-sqlite-schema.md#the-pragma-boundary-in-full), tests O14/O15 |
+| 3 | Can a `PRIVATE` blob hit disk unencrypted? | P2D's planned write dispatch must refuse without a backend. The CHECK requires the `AT_REST` **marker**, not cryptographic protection; a raw writer can lie about that marker. P2C adds no protection runtime. ADR-0022, [schema §7](P2-sqlite-schema.md#7-verified-behaviour) |
+| 4 | Can `SECRET` or `CREDENTIAL` enter ordinary SQLite? | No, by any writer that leaves constraint checking enabled: `data_class_rank BETWEEN 0 AND 2` on all seven classified tables makes those rows unconstructible, verified on each. **The boundary, stated once:** `PRAGMA ignore_check_constraints = ON` disables every `CHECK` in the schema for a local file writer, and P2 does not mitigate that. Every trigger and foreign key still holds under it — which is where this design spends its structural budget, and **the P2 autonomous audit verified that claim rather than assuming it**. **The second boundary is `PRAGMA foreign_keys = OFF`**, which the earlier revision of this answer did not name: upstream defaults to OFF but the selected bundled build defaults to ON; explicit setting/assertion remains mandatory. One line disables it, and a `task_steps` row referencing a non-existent task is then accepted. So the composite-key anti-laundering guarantee in [schema §5.3](P2-sqlite-schema.md#53-classification-and-laundering) is *structural* against a writer who leaves enforcement on and *pragma-dependent* against a local file writer — which `TB-7` already excludes from tamper-evidence. ADR-0022, [schema §7](P2-sqlite-schema.md#the-pragma-boundary-in-full), tests O14/O15 |
 | 5 | Can recovery turn ambiguity into a second effect? | No. P2 recovery never executes. `NeedsReconciliation` records the decision durably for P5. Task Protocol §6.2 |
 | 6 | Can a state transition occur without the audit seam? | Every transition writes a `task_journal` row through the same `Tx`, as a `TransactionParticipant` receiving the same `DurableTransition` every other participant receives — so no participant can record a different transition from any other. `E3` itself is **not claimed**, and the P2 autonomous audit established it is **not retroactively claimable**: it holds forward from P3's first migration and never held for P2-era transitions. No event is reconstructed. ADR-0021 |
 | 7 | Can a migration failure leave a partial upgrade accepted? | No. The DDL and the `schema_migrations` row share one transaction, and checksums are re-verified at every open. §7.1 |
@@ -1515,7 +1598,7 @@ executed between passes**, which is where the substantive findings came from.
 | **`SECRET`/`CREDENTIAL` accepted on `tasks`** | A6, blocker | Rank capped at 0–2 on **every** classified table |
 | **"A P2 deployment holds no `PRIVATE` durable data" rested on a false premise** — `AssistantTask.data_class` is host-assigned | A7, major | Restated on the dispatch, not on "nothing can produce `PRIVATE`"; classified `TEXT` columns recorded as the disclosed weaker guarantee |
 | **`FAILED` required `error_details`**, which the frozen schema makes optional | A8, blocker | Constraint removed; a wire-valid error without `details` is accepted |
-| **P2 makes four workspace members, not three** | A9, blocker | Corrected in the design and test matrix |
+| **Full P2 eventually makes four workspace members** | Historical A9; phase correction D1 | P2C has exactly three (protocol/storage/testkit); only P2F adds engine as fourth. Earlier four-member P2C exit was incorrect |
 | **`CANCELLED` was unconstructible** | B1, blocker | Second `CHECK` replaced with `state = 'CANCELLED' OR (both null)` |
 | **No lease could be acquired, in either order** | B2, blocker | `leases` upsert then a *derived* step update; the consistency trigger removed |
 | **`SECRET`/`CREDENTIAL` reachable through `task_journal`** | B3, blocker | Capped at 0–2, like every other classified table |
@@ -1685,7 +1768,7 @@ it is not complete evidence for the corrected current gate.
 | Task transitions | All **37** legal `TaskState` pairs from §10.2's frozen table | **37/37 construct.** The 4 leaving `BLOCKED` construct only when `blocked_reason` is cleared in the same statement |
 | Step cells | All 8 `kind` × 7 `status` combinations | **51 constructible, 5 correctly refused** (`WAITING` on each of the 5 non-wait kinds), 0 wrongly accepted, 0 intended cells refused |
 | Leases | acquire; renew inside expiry; stale-generation refusal; expiry reclaim (`generation` 1→2, `attempt` 1→2); release; `attempt` against `max_attempts_per_step` | **all construct**, and the two *refusal* behaviours hold: a stale generation touches 0 rows, and the refused commit inserts no receipt |
-| Migrations | fresh; `0001_initial` applied; `user_version` transactional; rollback leaves no row; duplicate ID refused; malformed checksum refused; newer-schema signal; `NotSereaStore` detectable | **all construct**, all three refusals hold |
+| Migrations | Historical harness: fresh; `0001_initial` applied; `user_version` transactional; rollback leaves no row; duplicate ID refused; malformed checksum refused; newer-schema signal; `NotSereaStore` detectable | Historical constructibility only. Production does **not** use user_version, and full ordered-prefix/read-only refusal checks need current P2C runtime tests |
 | Recovery | `ExpiredLease`; `ReconciledAbsent`; `LeaseFenced` (and no receipt written); `ResumeNormally`; ordered journal | **every designed output reachable** |
 | Open profiles | file-backed store under `synchronous=FULL` **and** `synchronous=NORMAL` | `journal_mode=wal`, `foreign_keys=1`, `quick_check=ok`, **0 `foreign_key_check` violations**, `busy_timeout=5000`, `wal_autocheckpoint=1000`; reopen preserves WAL mode and all 10 tables |
 
@@ -1720,10 +1803,10 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 | --- | --- | --- |
 | **P2A** | Four Option conversions, presence/kind/text validation, SCJ-1/digest/IDK-1, sha2 0.11 no defaults, manifests/registry/schemas/tests/docs/migrations | — |
 | **P2B** | Signed EpochMillis, synchronous Clock, instant-preserving timestamp conversion, removal of Timestamp ordering, TestClock authority | P2A |
-| **P2C** | Migrations, Store/Tx, connection policy, transaction seam | P2B |
+| **P2C** | Production migrations, opaque Store/Tx transaction foundation, connection policy and retryable close checkpoint; exactly three members | P2B |
 | **P2D** | Blobs/classification/delete_task | P2C |
 | **P2E** | Authoritative lease fencing/revocation | P2C |
-| **P2F** | TaskEngine, lifecycle/plan/cancellation | P2D, P2E |
+| **P2F** | TaskEngine, lifecycle/plan/cancellation, consumer query/view design; engine fourth member | P2D, P2E |
 | **P2G** | Recovery/journal | P2F |
 | **P2H** | Fault injection | P2C |
 | **P2I** | Independent runtime review/closure | all |
@@ -1734,11 +1817,12 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
   single table and a single atomic statement, and its tests need only `Store`. Making
   it a dependency of the engine means the engine cannot be tested at all until the
   fence is complete, which would hide engine bugs behind fence bugs.
-- **Fault injection (P2H) starts at P2C, not after recovery.** Crash windows are a
-  property of `transact` and `commit`, so the injection harness and the first crash
-  test are written with `Store`. Deferring all of it to P2H would mean discovering
-  a durability bug while writing recovery tests, when the mistake is least
-  diagnosable.
+- **Historical early-harness recommendation, now optional.** The earlier plan
+  said fault injection starts at P2C and required a harness/first crash test with
+  Store. Owner direction 21 makes P2C child infrastructure **optional**, not a
+  foundation exit gate. Crash windows remain properties of `transact`/`commit`,
+  but cross-binary/crash-child F25/F26 and the crash harness are explicitly P2H.
+  Preparing them earlier does not establish their later durability assertions.
 
 ### 15.1 P2A — protocol corrections and primitives
 
@@ -1766,11 +1850,11 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 
 | | |
 | --- | --- |
-| **Files** | `crates/serea-storage/Cargo.toml`; `crates/serea-storage/src/{lib,store,migrate,tx,error,queries}.rs`; `crates/serea-storage/migrations/0001_initial.sql`; root `Cargo.toml` (`members`); `tests/workspace_smoke.py` |
-| **Tests first** | Fresh migration; re-open no-op; newer-schema refusal; `NotSereaStore`; checksum mismatch; `WAL`, `foreign_keys`, `synchronous`, `busy_timeout` asserted at open; JSON1 presence |
-| **Surface** | `Store::open` / `open_in_memory` / `schema_version` / `verify_integrity` / `view` / `transact`, `Migrations`, `StoreError`, `TaskQueries` |
-| **Exit criteria** | All the above pass against a **file-backed** store; `PRAGMA foreign_keys` returns 1; a rollback inside `transact` leaves no row; `workspace_smoke.py` still passes, and `cargo metadata` lists **exactly four** members — `serea-protocol`, `serea-storage`, `serea-task-engine`, `serea-testkit` |
-| **Forbidden** | Blob logic, lease logic, and any engine type |
+| **Files** | `crates/serea-storage/Cargo.toml`; `crates/serea-storage/src/{lib,store,migrate,tx,error}.rs`; `crates/serea-storage/migrations/0001_initial.sql`; root Cargo wiring; `tests/workspace_smoke.py`; `.github/workflows/ci.yml`. Query/view files deferred to P2F |
+| **Tests first** | Group F: fresh/reopen; foreign nonempty (including zero user tables), corrupt and newer refusals before WAL; ordered catalog prefix/name/checksum/gaps; migration rollback; all 14 instant bounds; explicit connection policy; Clock error before mutation/no retained borrow; retryable three-column TRUNCATE/typed Busy; memory NotApplicable; integrity tiers |
+| **Surface** | `Store::open(path, &dyn Clock)` / `open_in_memory(&dyn Clock)` / `schema_version` / `verify_integrity` / `transact` with opaque `Tx` / `checkpoint_for_close(&self) -> Result<CheckpointOutcome, StoreError>` (`Complete`/`NotApplicable`, typed Busy); `Migrations`, `StoreError` |
+| **Exit criteria** | Applicable Group F **F1–F35 minus F25/F26 (P2H)** passes against file-backed stores (explicit memory cases use memory); phase O4/O7; rollback leaves no row; child infrastructure optional under owner direction 21. Smoke (Python 3.9-compatible stdlib-only focused TOML parser, unsupported syntax fails closed) and CI assert **exactly three** members: `serea-protocol`, `serea-storage`, `serea-testkit`. Storage's only internal runtime dependency is protocol; testkit is dev-only; no engine until P2F |
+| **Forbidden** | Blob/classification/lease/journal/participant runtime; AtRestProtection trait/constructor seam (P2D); TaskQueries/view/StepPhase or a new storage-owned enum (P2F); any engine type or placeholder. ADR-0021/0022/0024 stay Proposed |
 | **Open question** | [Schema §8](P2-sqlite-schema.md#8-open-at-implementation-time): the SQLite version and JSON1 verification, at add time. The DDL itself is already executed and verified — see [schema §7](P2-sqlite-schema.md#7-verified-behaviour) |
 
 ### 15.4 P2D — blobs and classification
@@ -1797,7 +1881,7 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 
 | | |
 | --- | --- |
-| **Files** | `crates/serea-task-engine/Cargo.toml`; `src/{lib,engine,transition,plan,outcome,error}.rs` |
+| **Files** | `crates/serea-task-engine/Cargo.toml`; `src/{lib,engine,transition,plan,outcome,error}.rs`; P2F consumer-led TaskQueries/view/StepPhase design and storage query wiring; workspace/smoke/CI membership grows to four here, not in P2C |
 | **Tests first** | All 121 legal and illegal transitions; terminal states never transition; `policy_class` immutability by trigger; plan persistence before execution; unstarted/in-flight/terminal step representation; `UNIQUE (task_id, sequence)`; step parent binding; attempt ceiling; cancellation and its no-op; receipt-before-advance; the ADR-0018 presence matrix against the database |
 | **Surface** | `TaskEngine`, `TaskRecord`, `StepRecord`, `Plan`, `PlanRevision`, `StepOutcome`, `CancellationOutcome`, `DeletionOutcome`, `task_transition_reason` |
 | **Exit criteria** | Every test above; `Store` has no mutating method outside `transact`, asserted by a compile-level check that the test suite exercises no other route |
@@ -1818,7 +1902,7 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 | | |
 | --- | --- |
 | **Files** | `crates/serea-storage/tests/crash.rs`, `tests/support/child.rs`; `crates/serea-testkit/src/faults.rs` |
-| **Tests first** | Every crash window in [the test matrix §3](P2-test-matrix.md#3-crash-and-fault-injection) |
+| **Tests first** | Every crash window in [the test matrix §3](P2-test-matrix.md#3-crash-and-fault-injection), plus deferred F25 cross-binary temp identity and F26 crash-child inherited-directory reopen |
 | **Surface** | A `TxHook` injection point used **only** by tests; child-process helpers |
 | **Exit criteria** | Each window reopened in a fresh process and asserted against durable expectations; in particular "crash after commit before the caller observes success" shows the row present **and** recovery reporting `ReceiptAlreadyCommitted` rather than re-effecting |
 | **Forbidden** | Adding an injection point to a production code path that is not a no-op when unused. A fault hook that is present but inert in release builds is a hazard |

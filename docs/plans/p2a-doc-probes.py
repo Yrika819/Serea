@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Docs-only specification probes; no production imports or persistent database.
+"""Specification probes plus production migration construction; no persistent DB.
 
 Run from the workspace root: python3 docs/plans/p2a-doc-probes.py
-This checks documented patterns/DDL/vectors, not Rust/schema/runtime parity.
+Reads the authoritative production SQL, documented patterns and vectors. This
+is not a Rust Store/runtime, bundling, durability or later-phase acceptance test.
 """
 import hashlib
 import itertools
@@ -14,6 +15,7 @@ import struct
 import subprocess
 
 DOCS = Path(__file__).resolve().parents[1]
+ROOT = DOCS.parent
 
 def document(path):
     return (DOCS / path).read_text()
@@ -87,10 +89,79 @@ console.log('ECMA-262 '+process.version+': '+checks+' assertions; all Unicode sc
 subprocess.run(["node", "-e", node, json.dumps(patterns)], check=True)
 
 schema = document("plans/P2-sqlite-schema.md")
-ddl = next(b for b in blocks(schema, "sql") if "CREATE TABLE schema_migrations" in b and "CREATE TABLE task_steps" in b)
+migration = ROOT / "crates/serea-storage/migrations/0001_initial.sql"
+ddl = migration.read_bytes().decode("utf-8")
+assert ddl.endswith("\n")
+assert not any("CREATE TABLE schema_migrations" in b for b in blocks(schema, "sql")), "Markdown must not duplicate migration authority"
 con = sqlite3.connect(":memory:", isolation_level=None)
 con.execute("PRAGMA foreign_keys = ON")
 con.executescript(ddl)
+inventory = dict(con.execute("SELECT type, count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' GROUP BY type"))
+assert inventory == {"table": 10, "trigger": 7, "index": 6}, inventory
+assert not any(name in ddl for name in ("leases_generation_matches_step", "event_seq", "TASK_DELETED"))
+assert "token" not in [row[1] for row in con.execute("PRAGMA table_info(leases)")]
+print("Production migration: 10 tables, 7 triggers, 6 explicit indexes PASS; SHA-256 " + hashlib.sha256(ddl.encode("utf-8")).hexdigest())
+
+# Isolate each exact production column declaration to test its domain without
+# unrelated presence/order constraints (acquired_at=MAX cannot have a later expiry).
+MIN_MS, MAX_MS = -62167219200000, 253402300799999
+expected_instants = {
+    "schema_migrations": {"applied_at_ms"},
+    "tasks": {"created_at_ms", "updated_at_ms", "deadline_at_ms", "cancelled_at_ms"},
+    "task_steps": {"started_at_ms", "completed_at_ms", "lease_expires_at_ms"},
+    "side_effect_receipts": {"observed_at_ms"},
+    "leases": {"acquired_at_ms", "expires_at_ms", "released_at_ms"},
+    "plan_revisions": {"created_at_ms"},
+    "task_journal": {"occurred_at_ms"},
+}
+instant_checks = 0
+seen = {}
+for table, body in re.findall(r"CREATE TABLE (\w+) \((.*?)\n\) STRICT;", ddl, re.S):
+    for match in re.finditer(r"^  (\w+_ms)\s+(INTEGER[^\n]*?)(?:,)?$", body, re.M):
+        column, declaration = match.groups()
+        assert f"CHECK ({column} BETWEEN {MIN_MS} AND {MAX_MS})" in declaration
+        seen.setdefault(table, set()).add(column)
+        con.execute("CREATE TABLE instant_probe (" + column + " " + declaration.rstrip(",") + ") STRICT")
+        for value in (MIN_MS, MAX_MS, -1, 0, MIN_MS - 1, MAX_MS + 1, -(1 << 63), (1 << 63) - 1, None):
+            try:
+                con.execute("INSERT INTO instant_probe VALUES (?)", (value,))
+                accepted = True
+            except sqlite3.IntegrityError:
+                accepted = False
+            expected = "NOT NULL" not in declaration if value is None else MIN_MS <= value <= MAX_MS
+            assert accepted == expected, (table, column, value, accepted)
+            con.execute("DELETE FROM instant_probe")
+            instant_checks += 1
+        con.execute("DROP TABLE instant_probe")
+assert seen == expected_instants, seen
+assert ddl.count(f"BETWEEN {MIN_MS} AND {MAX_MS}") == 14
+print(f"EpochMillis: {instant_checks} exact production-column boundary/NULL probes across all 14 instants PASS (other table invariants tested separately)")
+
+checksum_checks = 0
+for checksum in ("sha256:" + "a" * 64, "sha256:" + "0" * 64, "sha256:" + "A" * 64, "sha256:" + "g" * 64, "sha256:" + "a" * 63, "sha256:" + "a" * 65, "sha257:" + "a" * 64, "sha256:" + "a" * 63 + "\x00", "sha256:" + "a" * 64 + "\x00hidden"):
+    try:
+        con.execute("INSERT INTO schema_migrations VALUES (1, '0001_initial', ?, 0)", (checksum,))
+        accepted = True
+    except sqlite3.IntegrityError:
+        accepted = False
+    assert accepted == bool(re.fullmatch(r"sha256:[0-9a-f]{64}", checksum))
+    con.execute("DELETE FROM schema_migrations")
+    checksum_checks += 1
+print(f"Migration checksum grammar: {checksum_checks} positive/negative probes PASS")
+
+# STRICT applies affinity first; integer-to-TEXT is a legal lossless conversion.
+con.execute("CREATE TABLE affinity_probe (text_value TEXT, integer_value INTEGER) STRICT")
+con.execute("INSERT INTO affinity_probe VALUES (123, 0)")
+assert con.execute("SELECT text_value, typeof(text_value) FROM affinity_probe").fetchone() == ("123", "text")
+for sql in ("INSERT INTO affinity_probe VALUES (X'01', 0)", "INSERT INTO affinity_probe VALUES ('ok', 'not-an-integer')"):
+    try:
+        con.execute(sql)
+        raise AssertionError("STRICT accepted wrong type")
+    except sqlite3.IntegrityError:
+        pass
+con.execute("DROP TABLE affinity_probe")
+assert con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone() == (0, -1, -1)
+print("SQLite semantics: integer→TEXT accepted; BLOB→TEXT/nonnumeric TEXT→INTEGER refused; memory checkpoint (0, -1, -1) PASS")
 TASK = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA"
 STEP = "stp_01JQ8Z9M3R2CVN8H5FWK7PQDSF"
 DIGEST = "sha256:" + "a" * 64
@@ -139,9 +210,10 @@ for status in statuses:
         probe(row, mask & 31 == 31 if status=="FAILED" else mask==0)
 for generation in [-1,0,1,4294967295,4294967296]:
     probe(dict(step("EXECUTING"),lease_generation=generation),1<=generation<=4294967295)
-# Exercise both repeated lease DDL blocks independently, as well as the ADR block.
+# Non-authoritative explanatory lease snippets get bounded u32-generation parity
+# only. They are not migrations; the full schema above comes only from production.
 adr = document("decisions/ADR-0024-lease-fencing-and-commit-under-lease.md")
-lease_blocks = [b[b.index("CREATE TABLE leases"):b.index(") STRICT;",b.index("CREATE TABLE leases"))+10] for b in blocks(schema,"sql")+blocks(adr,"sql") if "CREATE TABLE leases" in b]
+lease_blocks = [b[b.index("CREATE TABLE leases"):b.index(") STRICT;",b.index("CREATE TABLE leases"))+10] for b in [ddl]+blocks(schema,"sql")+blocks(adr,"sql") if "CREATE TABLE leases" in b]
 for block in lease_blocks:
     db = sqlite3.connect(":memory:")
     db.executescript("CREATE TABLE task_steps(step_id TEXT PRIMARY KEY);"+block)
@@ -182,8 +254,30 @@ try:
 except sqlite3.IntegrityError: pass
 assert before==(con.execute("SELECT * FROM leases").fetchall(),con.execute("SELECT * FROM task_steps").fetchall())
 con.execute("ROLLBACK TO overflow"); con.execute("RELEASE overflow"); checks+=1
+print("SQLite "+sqlite3.sqlite_version+": "+str(checks)+" probes against production migration; kind/status (51 legal cells), all error subsets, bounded explanatory u32 parity, outcome/release/expiry and overflow PASS")
+
+# Construct all documented legal task pairs, without claiming SQL enforces the
+# engine transition graph or that the historical 69-check harness was rerun.
+design = document("plans/P2-storage-task-engine.md")
+transition_block = next(b for b in blocks(design, "rust") if "fn legal_task_transition" in b)
+pairs = re.findall(r"\(([A-Z][a-zA-Z]+), ([A-Z][a-zA-Z]+)\)", transition_block)
+assert len(pairs) == 37
+wire = lambda state: re.sub(r"([a-z])([A-Z])", r"\1_\2", state).upper()
+def task_state(state):
+    cancelled = state == "CANCELLED"
+    con.execute("UPDATE tasks SET state=?, blocked_reason=?, failure_reason=?, cancelled_at_ms=?, cancelled_by=? WHERE task_id=?",
+                (state, "PROBE" if state == "BLOCKED" else None, "PROBE" if state == "FAILED" else None, 0 if cancelled else None, "USER" if cancelled else None, TASK))
+for source, destination in pairs:
+    con.execute("SAVEPOINT task_pair")
+    try:
+        task_state(wire(source))
+        task_state(wire(destination))
+        assert con.execute("SELECT state FROM tasks WHERE task_id=?", (TASK,)).fetchone() == (wire(destination),)
+    finally:
+        con.execute("ROLLBACK TO task_pair")
+        con.execute("RELEASE task_pair")
+print("Positive task constructibility: 37/37 documented legal transitions PASS against production migration (not engine runtime validation)")
 con.close()
-print("SQLite "+sqlite3.sqlite_version+": "+str(checks)+" probes; kind/status, all error subsets, repeated u32 DDL, authoritative outcome/release/expiry and overflow PASS")
 
 # Reconstruct literal published vectors independently; framing names AND values.
 canonical = document("decisions/ADR-0019-canonical-json-and-idempotency-preimage.md")

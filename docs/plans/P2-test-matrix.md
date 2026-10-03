@@ -51,7 +51,7 @@ Inherited from P1's closure and re-applied:
 | C. Canonical JSON and digest vectors | P2A | ADR-0019 §1 |
 | D. Idempotency preimage vectors and the collision | P2A | ADR-0019 §2–§3 |
 | E. Clock and time | P2B | §8 of the design |
-| F. Migrations and connection policy | P2C | §7 of the design |
+| F. Migrations and connection policy | P2C, except F25/F26 in P2H | §7 of the design |
 | G. Blobs and classification | P2D | ADR-0022, schema §5 |
 | H. Leases and fencing | P2E | ADR-0024 |
 | I. Task lifecycle and transitions | P2F | §10 of the design |
@@ -282,24 +282,30 @@ calendar/parser belongs to this group.
 
 ## 8. Group F — migrations and connection policy
 
-All against a **file-backed** store, because in-memory SQLite has neither crash
-durability nor reopen.
+Use a **file-backed** store for durability/reopen/connection-policy checks;
+explicit memory-profile cases use memory and make no durability claim. These
+are P2C requirements after the [frozen gate](P2C-review-and-closure.md), not PASS
+evidence. Production `0001_initial.sql` is the sole schema authority.
+**Applicable P2C set: F1–F35 minus F25/F26**, plus phase O4/O7. F25/F26 require
+cross-binary/crash-child infrastructure and are explicitly **P2H**. Under owner
+direction 21, P2C may add child infrastructure early but need not; “F green” means
+the applicable set, not all 35 rows. No historical table below establishes PASS.
 
 | # | Test | Pins |
 | --- | --- | --- |
-| F1 | `a_fresh_database_is_created_and_reaches_the_latest_version` | First migration |
+| F1 | `a_fresh_database_is_created_and_reaches_the_latest_version` | Accepted repair: absent/zero → common FK/FULL/timeout/capabilities in DELETE/FULL → initial migration + identity atomically under BEGIN IMMEDIATE → WAL/FULL. Every returned file Store is WAL/FULL; no in-progress nonempty unmarked WAL window. Add concurrent-init success/retryable Busy regression later, not a new tamper-defence claim |
 | F2 | `reopening_after_migration_is_a_no_op` | Second `open` applies nothing |
-| F3 | `a_newer_schema_is_refused_rather_than_downgraded` | `SchemaTooNew`; the version is left untouched |
-| F4 | `a_non_serea_file_is_refused_rather_than_adopted` | `NotSereaStore`; the file's bytes are unchanged afterwards |
+| F3 | `a_newer_schema_is_refused_rather_than_downgraded` | `SchemaTooNew`; the version is left untouched. One ordered SELECT snapshot; any typed newer version anywhere in that snapshot wins over malformed-field/prefix errors, including concurrent upgrades |
+| F4 | `a_non_serea_file_is_refused_rather_than_adopted` | `NotSereaStore`; any nonempty file without a catalog, including valid SQLite with **zero user tables**; read-only inspection before WAL, main bytes/journal mode unchanged. Transient SQLite WAL sidecars are not guaranteed absent |
 | F5 | `a_zero_length_file_is_treated_as_fresh` | The fresh-database edge |
-| F6 | `a_migration_checksum_mismatch_refuses_the_open` | `MigrationChecksumMismatch` |
+| F6 | `a_migration_checksum_mismatch_refuses_the_open` | `MigrationChecksumMismatch`; exact UTF-8 bytes including whitespace/comments/final newline, not canonical JSON; no tamper-evidence claim |
 | F7 | `a_failed_migration_leaves_no_partial_schema_and_no_version_row` | The DDL and the version row share a transaction |
 | F8 | `wal_is_enabled_and_asserted_at_open` | `PRAGMA journal_mode` |
 | F9 | `foreign_keys_are_enabled_and_asserted_at_open` | `PRAGMA foreign_keys` returns 1 |
 | F10 | `a_foreign_key_violation_is_refused` | The pragma actually works |
 | F11 | `synchronous_is_full` | The durability policy |
 | F12 | `json1_is_present` | `SELECT json_valid('{}')` succeeds; the open fails if not |
-| F13 | `strict_tables_reject_a_wrong_column_type` | A raw `INSERT` with an integer into a `TEXT` column |
+| F13 | `strict_tables_reject_a_wrong_column_type` | Lossless integer → TEXT is **accepted**, not refused. Test that control explicitly; use BLOB → TEXT or nonnumeric TEXT → INTEGER for a genuine datatype rejection |
 | F14 | `a_rollback_inside_transact_leaves_no_row` | The ordinary in-process rollback path |
 | F15 | `integrity_check_reports_a_healthy_database` | `verify_integrity` |
 | F16 | `a_corrupted_file_is_refused_rather_than_recreated` | Corrupt bytes in the header; the store does **not** delete and recreate, which would destroy receipts |
@@ -307,15 +313,21 @@ durability nor reopen.
 | F18 | `a_transaction_is_serialised_against_a_second_writer` | `BEGIN IMMEDIATE` plus `busy_timeout` |
 | F19 | **`open_in_memory_reports_memory_not_wal_and_asserts_it`** | `TestMemoryProfile`. `open_in_memory` **cannot** satisfy ADR-0005, so it asserts what it actually is — a test cannot "pass" here by skipping the check |
 | F20 | **`synchronous_is_not_asserted_in_the_memory_profile`** | `PRAGMA synchronous = 2` on `:memory:` returns **no row**: there is nothing to fsync. Asserting `FULL` there would be asserting nothing |
-| F21 | **`foreign_keys_are_asserted_in_the_memory_profile_too`** | It defaults to `0` in memory as well as on disk |
+| F21 | **`foreign_keys_are_asserted_in_the_memory_profile_too`** | Bundled default is **ON** on both profiles, not OFF; set/assert ON explicitly anyway, never inside a transaction |
 | F22 | **`foreign_key_check_is_run_after_each_migration`** | The tier the audit added. A migration that produced dangling references has failed in a way `quick_check` cannot see |
 | F23 | **`quick_check_and_integrity_check_report_ok_on_an_fk_orphan`** | **The evidence F22 rests on.** Both are page-level checks; against a deliberately orphaned `task_steps` row both return `ok` and only `foreign_key_check` reports it. If this test ever fails, SQLite's semantics changed and the tier policy must be revisited |
 | F24 | **`verify_integrity_runs_both_integrity_check_and_foreign_key_check`** | The admin tier's actual contract, which was previously unspecified |
-| F25 | **`two_integration_test_binaries_get_distinct_temp_paths`** | `TempStore` identity. A counter alone collides across binaries — verified: two binaries each counting from 0 produce the same three names |
-| F26 | **`a_crash_child_reopens_the_parent_database_by_inherited_directory`** | The other half. A pid alone is not unique *within* a process, and `cargo test` runs tests as threads |
+| F25 | **`two_integration_test_binaries_get_distinct_temp_paths`** | **P2H, deferred from P2C.** `TempStore` cross-binary identity. A counter alone collides across binaries — historical probe: two binaries each counting from 0 produce the same three names |
+| F26 | **`a_crash_child_reopens_the_parent_database_by_inherited_directory`** | **P2H, deferred from P2C.** Crash-child inherited-directory reopen. A pid alone is not unique *within* a process, and `cargo test` runs tests as threads |
 | F27 | **`temp_paths_contain_no_wall_clock_and_no_rng`** | The `.clippy.toml` ban holds while uniqueness is still achieved: `<binary>-<pid>-<atomic-counter>` |
 | F28 | **`the_migrated_object_inventory_is_10_tables_7_triggers_6_indexes`** | Asserted, not printed — so a phantom object cannot be reintroduced. **This is the direct regression for the `leases_generation_matches_step` trigger that §4.6 published and §4.0 never contained** |
-| F29 | **`the_resolved_bundled_sqlite_is_at_least_3_37`** | Verified unnecessary for `rusqlite` 0.40.2 (bundles 3.53.2); retained so an older candidate cannot pass silently |
+| F29 | **`the_resolved_bundled_sqlite_is_at_least_3_37`** | Historical candidate probe used 3.53.2; verify actual resolved source/version/compile options/linking. LIBSQLITE3_SYS_USE_PKG_CONFIG=1 selects linked mode; SQLITE3_LIB_DIR is only a linked-branch search path, not a selector |
+| F30 | `the_catalog_is_a_full_ordered_embedded_prefix` | One ordered SELECT result snapshot, typed newer priority across every row before prefix/field checks; gaps, wrong name, malformed checksum/version refused, never only MAX. Nonempty read-only preflight → RW revalidation → WAL/FULL → pending upgrades with catalog revalidation under IMMEDIATE; fresh bootstrap order is F1 |
+| F31 | `all_fourteen_sql_instants_enforce_epoch_millis_bounds` | Exact inclusive MIN -62167219200000 / MAX 253402300799999; endpoints accepted where other invariants permit, adjacent/i64 extremes refused; nullable fields retain NULL; counters/durations unchanged |
+| F32 | `open_reads_clock_before_mutation_and_does_not_retain_it` | Typed Clock error writes nothing; only validated migration stamp retained, no Store clock borrow/lifetime |
+| F33 | `checkpoint_for_close_is_retryable_and_reports_typed_busy` | Three columns `(busy, log_frames, checkpointed_frames)` read; live-reader Busy is not success; release reader and retry same Store to Complete, then drop/copy. Drop alone is not reportable checkpoint |
+| F34 | `memory_close_checkpoint_is_not_applicable` | API returns NotApplicable; SQLite raw pragma shape is `(0, -1, -1)`, not scalar 0 |
+| F35 | `p2c_api_has_no_query_enum_or_protection_seam` | Opaque Tx only; TaskQueries/view/StepPhase deferred to P2F, no storage-owned lifecycle enum; AtRestProtection trait/constructor seam deferred to P2D |
 
 ## 9. Group G — blobs and classification
 
@@ -336,7 +348,7 @@ durability nor reopen.
 | G13 | `secret_is_refused_on_every_write_path` | `ClassRefused` |
 | G14 | `credential_is_refused_on_every_write_path` | `ClassRefused` |
 | G15 | `a_hand_written_insert_of_a_secret_row_is_refused_by_the_check` | The SQL enforcement, not just the Rust path |
-| G16 | `a_hand_written_insert_of_a_private_row_without_protection_is_refused` | The second `CHECK` |
+| G16 | `a_hand_written_insert_of_a_private_row_without_protection_is_refused` | The second `CHECK` refuses a missing/wrong `AT_REST` **marker** only; a correctly labelled plaintext control is accepted by SQL. This is not proof of encryption or backend use; P2D dispatch/backend tests are separate |
 | G17 | `deleting_a_task_cascades_to_every_dependent_row_in_one_transaction` | Task Protocol §8 |
 | G18 | `an_unreferenced_blob_survives_a_task_delete_because_another_task_references_it` | Shared blobs |
 | G19 | `a_still_referenced_blob_cannot_be_deleted_directly` | `ON DELETE RESTRICT` |
@@ -491,10 +503,10 @@ even where a more specific group seems to cover it.
 | O1 | `no_network_symbol_is_reachable_from_either_crate` | A source-level assertion. The P1 pattern |
 | O2 | `no_subprocess_is_spawned_outside_the_crash_harness` | `TB-6`: P0 has no subprocesses |
 | O3 | `no_wall_clock_call_exists` | `.clippy.toml`, plus a source assertion |
-| O4 | `the_testkit_is_unreachable_from_either_runtime_crate` | `tests/workspace_smoke.py`, which globs `crates/*` and so covers the new members without a list to keep in sync |
+| O4 | `the_testkit_is_unreachable_from_either_runtime_crate` | Smoke checks every dependency table (including aliases, target/build tables); storage's only internal runtime dependency is protocol, testkit dev-only |
 | O5 | `no_frozen_enum_set_grew` | `DataClass` 5, `RiskClass` 8, `TaskState` 11, `StepKind` 8, `ActionErrorKind` 13, `EventKind` 60 |
 | O6 | `no_store_method_writes_state_outside_transact` | A source assertion over `serea-storage`'s `impl Store`. **This is the test that makes §3.2 of the design mechanical rather than aspirational** |
-| O7 | `the_workspace_contains_exactly_four_members` | CI's existing exact-member-list check, extended: `serea-protocol`, `serea-storage`, `serea-task-engine`, `serea-testkit`. P2 adds **two** crates, so "three" was wrong |
+| O7 | `the_workspace_contains_exactly_the_phase_members` | **P2C: exactly three**, protocol/storage/testkit, asserted by smoke and CI; no placeholder engine. P2F adds engine as the fourth and updates both guards in that phase |
 | O8 | `no_dependency_outside_the_named_set_was_added` | The P1 pattern, extended for `sha2` and `rusqlite` |
 | O9 | `no_event_kind_is_constructed_in_p2` | ADR-0021's grep, as a test |
 | O10 | `no_serea_events_table_exists_in_migration_0001` | Same, on the schema |
@@ -510,12 +522,12 @@ even where a more specific group seems to cover it.
 | --- | --- | --- | --- |
 | P2A | A/B/C/D groups and added boundary cases below | Shape/schema planned-step RED; whitespace and canonical/framing failures | All four groups green atomically |
 | P2B | Corrected E1–E7 plus API/ULID regressions | Signed bounds, instant-versus-spelling conversion, explicit string/epoch ordering and checked atomic TestClock failures | Record actual E/API/ULID and applicable workspace/MSRV results; no Store or new storage/engine crates; canonical groups already belong to P2A |
-| P2C | F1–F18 | F1 against no store; F7 against DDL outside the migration transaction | Implement; F green |
+| P2C | Applicable F1–F35 **minus F25/F26**; phase O4/O7 | F1 against no store; F7 against DDL outside migration; fresh bootstrap/concurrent-init and one-snapshot newer-priority repairs; prefix/read-only/clock/instant/checkpoint boundaries | Implement foundation only; applicable F green, exactly three members; child infrastructure optional (owner direction 21) |
 | P2D | G1–G20 | G11, G13 against a permissive helper; G15 against an unchecked table | Implement; G green |
 | P2E | H1–H17 | H6, H10, H14 against owner-only fencing | Implement; H green |
 | P2F | I1–I15, J1–J15, K1–K8, L1–L10 | I1 on the omitted transition; J12 on the missing `task_id` predicate | Implement; I, J, K, L green |
 | P2G | M1–M22 | M12 on the second-pass rewrite | Implement; M green |
-| P2H | N1–N8 | N4 and N6 on a `transact` with no injection point | Implement; N green |
+| P2H | N1–N8 **plus F25/F26** | N4 and N6 on a `transact` with no injection point; cross-binary temp identity and crash-child inherited-directory reopen | Implement; N and deferred F25/F26 green |
 | P2I | O1–O15 | O6 and O10 on a `Store` with a bare `update_task_state` | Remove; all green |
 
 **Ordering rule.** Group O is written in P2I but its *intent* is checked
@@ -549,7 +561,8 @@ P2I.
 | C/D / P2A | Duplicate names (nested and escaped equivalents) refused before Value; lost duplicates cannot be recovered. f64 model temperature remains wire-valid but SCJ-1 refuses it. Names and values each framed; 282-byte vector1. Historical p.r.list A/B low-level private raw framing only; typed invalid-ID rejection; valid-ID typed derivation accepts every SCJ-1 root, including pinned pp.rr.list scalars and legal objects; ActionRequest rejects nonobjects. |
 | B/SQL / P2C/P2F | Each of six error columns singly populated outside FAILED refused; all partial mandatory-error subsets refused on FAILED; details optional on FAILED. SQL generation0 <-> wireNone, positive u32, overflow rollback. Historical 32-cell probes alone are insufficient. |
 | H / P2E/P2F | Released guard cannot commit without reacquisition even when step copy is unchanged; authoritative lease absent/wrong owner/generation refuses; same-owner reclaim fences old guard; expired-unreclaimed known outcome commit succeeds but begin/renew fails; u32::MAX acquisition refuses. begin_attempt borrows guard, outcome consumes it. |
-| Transaction / P2C/P2F | Body Err never calls participants; participant failure rolls back writes; no-op records nothing; successful body returns immutable actual transition(s), journal shares transaction; no event_seq/backfill and P2 pending count is journal row count. |
+| Transaction / P2C | Opaque Tx body Err rolls back; no public raw SQL/connection escape. No participant/journal runtime or ADR acceptance. |
+| Transaction / P2F/P2G | Body Err never calls participants; participant failure rolls back writes; no-op records nothing; successful body returns immutable actual transition(s), journal shares transaction; no event_seq/backfill and P2 pending count is journal row count. |
 | Registry / P2A | Per-surface task/action2 with event/model/etc1, envelope1; unsupported major refused per surface. Protocol manifest/source/schema/docs agree. |
 
 ## 19. Verification command set
@@ -557,8 +570,9 @@ P2I.
 The same shape P1 used, to be run at the end of each subphase:
 
 ```text
-python3 tests/workspace_smoke.py
-cargo metadata --no-deps --format-version 1        # assert phase-appropriate members; P2B adds no crates
+python3 tests/workspace_smoke.py                  # Python 3.9-compatible stdlib-only parser; unsupported syntax fails closed
+python3 -m unittest discover -s tests -p workspace_smoke_tests.py
+cargo metadata --no-deps --format-version 1        # P2C: protocol/storage/testkit; engine only P2F
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --offline
 cargo test --workspace --all-targets --offline

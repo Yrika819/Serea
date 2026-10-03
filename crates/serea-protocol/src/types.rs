@@ -358,8 +358,26 @@ declare_value!(
 ///
 /// P1 accepts only the UTC `Z` form because every value in the frozen documents
 /// uses it and no rule requires an offset. The value is stored as its exact
-/// wire form so a round trip is byte-identical.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// wire form so serialization of an existing value is byte-identical. Equality
+/// and hashing remain spelling-based: `…SSZ` differs from `…SS.000Z` even though
+/// both denote the same instant. Epoch conversion preserves that instant and
+/// reconstruction emits canonical `.mmmZ`, not the original spelling.
+///
+/// This type is deliberately not orderable: wire byte ordering is not time
+/// ordering across the two spellings. Compare [`crate::EpochMillis`] instead.
+///
+/// ```compile_fail
+/// use serea_protocol::Timestamp;
+/// fn requires_ord<T: Ord>() {}
+/// requires_ord::<Timestamp>();
+/// ```
+///
+/// ```compile_fail
+/// use serea_protocol::Timestamp;
+/// fn requires_partial_ord<T: PartialOrd>() {}
+/// requires_partial_ord::<Timestamp>();
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Timestamp(String);
 
@@ -374,6 +392,23 @@ impl Timestamp {
     /// The exact wire form.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Converts to signed Unix epoch milliseconds without changing this value's
+    /// exact stored wire spelling. Total for every validated Timestamp,
+    /// including all legal dates before 1970 and year 0000.
+    pub fn to_epoch_millis(&self) -> crate::EpochMillis {
+        crate::clock::to_epoch_millis(self)
+    }
+
+    /// Reconstructs the instant with the canonical `YYYY-MM-DDTHH:MM:SS.mmmZ`
+    /// spelling, always including three fractional digits. The original
+    /// seconds-versus-milliseconds spelling is not retained in an epoch value.
+    /// Total because EpochMillis is bounded to the Timestamp wire domain.
+    pub fn from_epoch_millis(epoch: crate::EpochMillis) -> Self {
+        Self::new(crate::clock::canonical_wire(epoch)).unwrap_or_else(|error| {
+            unreachable!("validated EpochMillis produces a legal wire timestamp: {error:?}")
+        })
     }
 }
 

@@ -367,10 +367,16 @@ fn the_test_clock_refuses_a_scripted_epoch_it_cannot_parse() {
         "2026-10-01",
         "not a timestamp",
         "",
-        "2026-10-01T09:14:22Z",
     ] {
         assert!(TestClock::at(bad).is_err(), "{bad:?} must be refused");
     }
+    assert_eq!(
+        TestClock::at("2026-10-01T09:14:22Z")
+            .expect("legal seconds form")
+            .now()
+            .as_str(),
+        "2026-10-01T09:14:22.000Z"
+    );
 }
 
 #[test]
@@ -421,6 +427,7 @@ fn an_unrepresentable_delta_is_an_error_rather_than_an_overflow() {
     for delta in [
         Duration::MAX,
         Duration::from_millis(u64::MAX),
+        Duration::from_millis(i64::MAX as u64),
         Duration::from_secs(1 << 63),
     ] {
         assert!(

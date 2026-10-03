@@ -177,7 +177,7 @@ pub trait TaskQueries {
     /// express a value `task_steps.status`'s `CHECK` refuses, which is exactly the
     /// boundary ADR-0018 wants to keep. See schema §4.4.
     fn steps_in_phase(&self, phases: &[StepPhase]) -> Result<Vec<StepRow>, StoreError>;
-    fn expired_leases(&self, now_ms: u64) -> Result<Vec<LeaseRow>, StoreError>;
+    fn expired_leases(&self, now_ms: EpochMillis) -> Result<Vec<LeaseRow>, StoreError>;
     fn receipt_for_step(&self, step_id: StepId) -> Result<Option<ReceiptRow>, StoreError>;
     fn journal_for_task(&self, task_id: TaskId) -> Result<Vec<JournalRow>, StoreError>;
     fn pending_event_transitions(&self) -> Result<u64, StoreError>;   // ADR-0021
@@ -998,14 +998,39 @@ Durable time is `INTEGER` epoch **milliseconds**, column-named `*_at_ms`.
 Authoritative comparisons — lease expiry, the task deadline, any elapsed-time
 arithmetic — are integer comparisons, never `TEXT`.
 
-The wire `Timestamp` is produced only at the storage boundary, in both directions,
-by functions in `serea-protocol` next to the type that owns the grammar. The
-existing `TimestampMs` is a validated 48-bit millisecond value, and `2^48-1`
-milliseconds is year 10889, so one type covers the entire wire range.
+**Frozen accepted P2B design.** `serea-protocol` introduces a distinct
+`EpochMillis` newtype with a **private `i64` field**, a checked constructor,
+`get()`, and numeric `Ord`. Its inclusive bounds are
+`MIN = -62_167_219_200_000` (`0000-01-01T00:00:00.000Z`) and
+`MAX = 253_402_300_799_999` (`9999-12-31T23:59:59.999Z`). Negative epochs are
+necessary for the pre-1970 wire domain. The existing `TimestampMs` remains the
+**unsigned 48-bit ULID timestamp** with its invariant and identifier-minting API
+unchanged; it is neither the durable-time nor the Clock return type. Its upper
+bound reaching year 10889 does not make it cover the negative half of the wire
+domain.
 
-`Timestamp` derives `Ord`, and a lexicographic comparison is **wrong** across the
-two permitted wire forms: `…T09:14:22Z` sorts *after* `…T09:14:22.100Z` because
-`Z` (0x5A) beats `.` (0x2E). P2 never compares wire forms.
+The `Timestamp` wire grammar is **unchanged**: exactly `YYYY-MM-DDTHH:MM:SSZ`
+or `YYYY-MM-DDTHH:MM:SS.mmmZ`, including legal year `0000` and the existing
+calendar validation. An existing `Timestamp` object retains the exact validated
+wire spelling; serialization, `Eq` and `Hash` remain spelling-based. Conversion
+to `EpochMillis` preserves the instant, not the spelling. Conversion from
+`EpochMillis` always produces canonical `.mmmZ`, including `.000Z` for whole
+seconds. Thus epoch → Timestamp → epoch is exact, but seconds-form Timestamp →
+epoch → Timestamp is **not original-spelling recovery**.
+
+P2B removes `Timestamp`'s `PartialOrd`/`Ord`; there are no repository consumers
+to migrate. Ordering evidence compares explicit strings, not `Timestamp`
+objects: `…T09:14:22Z` sorts *after* `…T09:14:22.100Z` because `Z` (0x5A)
+beats `.` (0x2E), while their `EpochMillis` values order chronologically. Seconds
+and `.000Z` spellings retain spelling-based `Eq`/`Hash` but convert to the same instant.
+Authoritative ordering uses numeric `EpochMillis`, never wire text. Conversion
+and validation live beside `Timestamp` in `serea-protocol`; later storage
+boundaries consume them rather than owning a second calendar/parser.
+
+All P2B **BLOCKER/MAJOR design findings are accepted and resolved by this
+corrected design before production implementation**. This is design resolution,
+not evidence that P2B code, tests or closure are complete. No ADR or protocol
+version change is required or made.
 
 ### 8.1 `Clock` enters `serea-protocol` in P2
 
@@ -1015,37 +1040,49 @@ be a fourth port with no P1 consumer". **P2 is the first consumer**, so this fil
 a declared slot and needs no ADR.
 
 ```rust
-pub trait Clock {
-    /// The current instant as validated epoch milliseconds.
-    fn now_ms(&self) -> Result<TimestampMs, ProtocolError>;
+pub trait Clock: Send + Sync {
+    /// The current instant as validated signed epoch milliseconds.
+    fn now_ms(&self) -> Result<EpochMillis, ProtocolError>;
 }
 ```
 
-Returning the validated `TimestampMs` rather than a bare `u64` reuses an existing
-type invariant instead of creating a parallel one, and bounds every clock reading
-to the same 48-bit range the identifier minting already uses.
+The port is synchronous, object-safe and injection-only: callers use `&dyn Clock`
+(or an owned trait object where needed), with no async runtime or ambient/system
+clock implementation. A successful reading is already within `EpochMillis`'s
+signed wire-domain bounds by construction; a clock can still return
+`ProtocolError`.
 
-`serea-testkit::TestClock` implements it. That requires **one structural change**
-to `TestClock`: its authoritative state becomes a single `now_ms: u64`, and the
-six calendar fields are derived on demand for `format()`. Today the authoritative
-state is **seven** fields — six calendar integers plus an `elapsed_ms` counter —
-so a `now_ms()` accessor would have to invert calendar arithmetic that could drift
-from `Timestamp::new`'s validation. One authority removes the inversion, and
-`elapsed_ms` becomes `now_ms - start_ms`.
+`serea-testkit::TestClock` is to implement this port with `start_ms: EpochMillis`
+and `now_ms: EpochMillis`. `now_ms` is the sole current-time authority;
+`start_ms` is the fixed baseline, and elapsed milliseconds are derived from
+`now_ms.get() - start_ms.get()`, not stored as an independent counter. Calendar
+fields and `format()` derive from the protocol conversion, which emits `.mmmZ`.
+`TestClock::at` accepts both seconds and millisecond wire forms through
+`Timestamp` validation/conversion, including year `0000` and negative epochs;
+no private testkit calendar arithmetic or parser is retained.
 
 `TestClock::at` and `advance` keep returning typed errors rather than panicking,
-as P1 established.
+as P1 established. `advance` checks the duration's millisecond magnitude before
+any narrowing conversion, checks addition and the `EpochMillis` bounds, and
+updates state only after all checks succeed. `Duration::MAX`, arithmetic overflow
+and a value beyond `MAX` return an error **without changing current time or
+elapsed time**. Zero advance and an advance exactly to `MAX` remain valid.
 
 ### 8.2 No ambient clock
 
-`.clippy.toml` bans `SystemTime::now` and `Instant::now` workspace-wide, so a
-production wall clock in `serea-storage` is a clippy error under
-`cargo clippy --all-targets` rather than a review comment. That ban does **not**
-fire in a doctest, a `build.rs`, or a plain `cargo test` run, which is why tests E7
-and O3 add a source-level assertion rather than relying on the lint alone.
-`serea-storage` takes `&dyn Clock` at construction and reads it nowhere else.
-`Store::open` validates that the supplied clock's `now_ms` is in range once, so a
-misconfigured clock is refused at open rather than at first commit.
+`.clippy.toml` bans `SystemTime::now` and `Instant::now` workspace-wide under
+`cargo clippy --all-targets`. A plain `cargo test` run does not enforce that lint,
+and examples/build scripts must not be assumed covered, so E7 supplements it
+with source-level assertions over the **current P2B protocol/testkit sources and
+tests**, including embedded examples and any build scripts present. E7 does not
+require new storage or task-engine crates; their source checks belong to later
+phases, including O3.
+
+**P2C, not P2B:** storage consumes an injected `&dyn Clock`. Its open-time clock
+read must propagate a returned `ProtocolError` as a typed open failure. Successful
+readings are already range-checked by `EpochMillis` construction; the old
+out-of-48-bit-range reading at `Store::open` is not a P2B test or a constructible
+successful Clock value. No Store implementation or open test enters P2B.
 
 ## 9. Recovery
 
@@ -1682,7 +1719,7 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 | Subphase | Delivers | Depends on |
 | --- | --- | --- |
 | **P2A** | Four Option conversions, presence/kind/text validation, SCJ-1/digest/IDK-1, sha2 0.11 no defaults, manifests/registry/schemas/tests/docs/migrations | — |
-| **P2B** | Clock, timestamp/epoch conversion, TestClock authority | P2A |
+| **P2B** | Signed EpochMillis, synchronous Clock, instant-preserving timestamp conversion, removal of Timestamp ordering, TestClock authority | P2A |
 | **P2C** | Migrations, Store/Tx, connection policy, transaction seam | P2B |
 | **P2D** | Blobs/classification/delete_task | P2C |
 | **P2E** | Authoritative lease fencing/revocation | P2C |
@@ -1718,11 +1755,12 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 
 | | |
 | --- | --- |
-| **Files** | serea-protocol clock/time ports and serea-testkit clock |
-| **Tests first** | E-group: epoch conversion, range, deterministic clock, no ambient clock |
-| **Surface** | Clock, Timestamp epoch conversions and single TestClock now_ms authority |
-| **Exit criteria** | Deterministic conversion/range tests pass |
-| **Forbidden** | Storage; SCJ-1/digest/IDK cannot be deferred here because action/2 closes in P2A |
+| **Files** | Current `serea-protocol` time/Clock code, Timestamp implementation/root exports and protocol tests; `serea-testkit` clock and tests; no new storage/engine crates |
+| **Tests first** | E1–E7: deterministic `Send + Sync`/object-safe injected Clock; exact signed MIN/MAX and adjacent construction refusals; year0000/pre-1970/epoch/leap/calendar boundaries; both unchanged wire forms; instant round-trip with canonical `.mmmZ` output, not spelling recovery; spelling-based Eq/Hash and explicit string-versus-epoch ordering evidence; no Timestamp PartialOrd/Ord or public EpochMillis construction bypass; unchanged unsigned48 TimestampMs/ULID regressions; TestClock seconds input, baseline-derived elapsed time, zero/exact-MAX advance and atomic errors including Duration::MAX; no ambient clock in current P2B sources |
+| **Surface** | Private-field `EpochMillis(i64)`, checked constructor/get/numeric Ord, MIN=-62_167_219_200_000 and MAX=253_402_300_799_999; `Clock: Send + Sync` with synchronous object-safe `fn now_ms(&self) -> Result<EpochMillis, ProtocolError>`; Timestamp conversions preserve instants and emit `.mmmZ`, retain input spelling/Eq/Hash, remove PartialOrd/Ord (no repo consumers); TestClock `start_ms`/`now_ms: EpochMillis`, protocol validation/conversion only, checked atomic advance |
+| **Exit criteria** | Actual E1–E7 and related API/ULID regressions plus applicable workspace/MSRV validation must be recorded on the implementation tree; this docs correction records no PASS or P2B completion |
+| **Design disposition** | All BLOCKER/MAJOR P2B design findings accepted and resolved by §8's corrected frozen design before production; implementation/validation remain pending |
+| **Forbidden / deferred** | Storage implementation and Store-open tests (P2C), new storage/engine crates, async/system clocks, private testkit parser/calendar, wire grammar/schema/version or ADR changes; SCJ-1/digest/IDK cannot be deferred here because action/2 closes in P2A |
 
 ### 15.3 P2C — migrations and `Store`
 

@@ -64,12 +64,31 @@ results must be evidenced there after the exact numeric follow-up.
 | 1.12 | Integer-only SCJ-1 limited domain; model temperature f64 wire unchanged | **IMPLEMENTED_SCOPED_WITH_LIMITATION** | Future runtime refuses noncanonical model digest documents; future fraction decision, no truncation |
 | 1.13 | Accepted 0018/19/20/23 after corrected docs GREEN; runtime 0021/22/24 remain Proposed | **RATIFIED** | 0018 architectural/wire acceptance, runtime deferred; 0024 wire member implemented, not full fencing or full workspace/MSRV closure |
 
-## 2. Before P2B — Clock only
+## 2. Before P2B — Clock and time only
 
-Clock/time conversions and single TestClock now_ms authority remain P2B. No
-canonical primitive or sha2 dependency can be deferred to this phase. Model f64
+**Frozen accepted design.** All P2B BLOCKER/MAJOR design findings are accepted
+and resolved by the corrected design before production. The rows below are
+**READY design**, not implemented/validated status; no P2B completion or test
+PASS is claimed. Full scope/tests are in
+[design §8](P2-storage-task-engine.md#8-clock-and-time-representation),
+[§15.2](P2-storage-task-engine.md#152-p2b-clock-and-time-only) and
+[Group E](P2-test-matrix.md#7-group-e-clock-and-time).
+
+| # | Accepted decision | Status / required evidence |
+| --- | --- | --- |
+| 2.1 | Distinct `EpochMillis` with private `i64` field, checked constructor/get/numeric Ord; inclusive MIN=-62_167_219_200_000 (0000-01-01), MAX=253_402_300_799_999 (year9999 final ms) | **READY**; endpoints/adjacent and i64-extreme construction refusals, year0000/pre-1970/-1/0/2038/leap boundaries; no unchecked public construction bypass |
+| 2.2 | Timestamp grammar unchanged: seconds or `.mmmZ`, year0000 legal; existing objects retain exact wire spelling and spelling-based serialization/Eq/Hash. To epoch preserves instant; from epoch always canonical `.mmmZ`, never original-spelling recovery | **READY**; E2 pins equal epochs but distinct seconds/`.000Z` spellings, instant round-trip and canonical output |
+| 2.3 | Remove Timestamp PartialOrd/Ord, no repo consumers; order instants with numeric EpochMillis | **READY**; E2/E3 use explicit string ordering evidence, never Timestamp comparison operators, and independently check equal/chronological epoch ordering |
+| 2.4 | Existing TimestampMs is still unsigned48 ULID time, invariant/API unchanged, not Clock/durable time; its high upper bound does not cover negative wire epochs | **READY**; preserve existing ULID/TimestampMs acceptance/refusal regressions |
+| 2.5 | `Clock: Send + Sync`, synchronous object-safe `fn now_ms(&self) -> Result<EpochMillis, ProtocolError>`; injection only, no async/system clock | **READY**; dyn injection and trait/signature checks, typed errors and deterministic readings |
+| 2.6 | TestClock `start_ms`/`now_ms: EpochMillis`, fixed baseline/current-time authority; elapsed is the difference. Reuse Timestamp validation/conversion, accept seconds input, canonical format; no private calendar/parser | **READY**; E6 pins baseline/elapsed, seconds/year0000/pre-1970 input, zero/exact-MAX advance and checked atomic errors including Duration::MAX; duration magnitude checked before narrowing |
+| 2.7 | E7 scans current P2B protocol/testkit sources/tests, embedded examples and any build scripts present, not new storage/engine crates | **READY**; Clippy plus source-level no-ambient-clock evidence; later storage/engine checks stay later |
+| 2.8 | Store-open handling of returned Clock errors is deferred P2C; successful EpochMillis readings are valid by construction | **SAFE_DEFER**; no Store-open test or storage implementation in P2B; E5 tests signed type-construction refusal instead |
+
+No canonical primitive or sha2 dependency can be deferred to P2B. Model f64
 support does not imply canonical float support; a future decision must specify
-fraction range/encoding before digested storage admits it.
+fraction range/encoding before digested storage admits it. This correction changes
+no ADR, protocol version or wire schema and leaves historical P2A evidence intact.
 
 ---
 

@@ -7,15 +7,15 @@
 use std::time::Duration;
 
 use serea_protocol::ids::{IdMinter, TimestampMs, UlidSource, UlidValue};
-use serea_protocol::{ProtocolError, Timestamp};
+use serea_protocol::{Clock, EpochMillis, ProtocolError, Timestamp};
 
 /// The frozen epoch every deterministic scenario starts from
 /// (GoalLatch Adapter §6.1).
 pub const FROZEN_EPOCH: &str = "2026-10-01T00:00:00.000Z";
 
-/// The millisecond timestamp behind [`FROZEN_EPOCH`], used as the default
-/// starting point for deterministic identifier minting. Well inside the frozen
-/// 48-bit range (`2^48-1` is `281_474_976_710_655`).
+/// The independent legacy seed for deterministic identifier minting, denoting
+/// 2026-09-20 rather than the clock's [`FROZEN_EPOCH`]. Preserved so P2B does not
+/// change identifier sequences. Well inside the frozen ULID 48-bit range.
 const BASE_TIMESTAMP_MS: u64 = 1_789_862_400_000;
 
 /// A clock that only moves when a test moves it.
@@ -24,16 +24,8 @@ const BASE_TIMESTAMP_MS: u64 = 1_789_862_400_000;
 /// `Instant::now` workspace-wide so this cannot regress into one.
 #[derive(Debug, Clone)]
 pub struct TestClock {
-    year: i64,
-    month: i64,
-    day: i64,
-    hour: i64,
-    minute: i64,
-    second: i64,
-    millis: i64,
-    /// Total fake milliseconds advanced since the clock was created, which is a
-    /// monotonic counter independent of the calendar position.
-    elapsed_ms: u64,
+    start_ms: EpochMillis,
+    now_ms: EpochMillis,
 }
 
 impl Default for TestClock {
@@ -55,23 +47,11 @@ impl TestClock {
     /// Returns a typed error rather than panicking: a scripted epoch is caller
     /// input, and this is the only time source in the workspace.
     pub fn at(start: &str) -> Result<Self, ProtocolError> {
-        let parts = parse_frozen_timestamp(start);
-        match parts {
-            Some(parts) => Ok(Self {
-                year: parts.year,
-                month: parts.month,
-                day: parts.day,
-                hour: parts.hour,
-                minute: parts.minute,
-                second: parts.second,
-                millis: parts.millis,
-                elapsed_ms: 0,
-            }),
-            None => Err(ProtocolError::MalformedValue {
-                field: serea_protocol::ValueField::Timestamp,
-                reason: serea_protocol::ValueRejection::Malformed,
-            }),
-        }
+        let start_ms = Timestamp::new(start)?.to_epoch_millis();
+        Ok(Self {
+            start_ms,
+            now_ms: start_ms,
+        })
     }
 
     /// The current fake time. Never changes unless a test changes it.
@@ -79,9 +59,7 @@ impl TestClock {
     /// Total by construction: the only mutator is [`TestClock::advance`], which
     /// validates the resulting instant before committing it.
     pub fn now(&self) -> Timestamp {
-        Timestamp::new(self.format()).unwrap_or_else(|error| {
-            unreachable!("`advance` commits only a validated instant: {error:?}")
-        })
+        Timestamp::from_epoch_millis(self.now_ms)
     }
 
     /// Advances fake time by `delta` and returns the new time.
@@ -95,130 +73,43 @@ impl TestClock {
             field: serea_protocol::ValueField::Timestamp,
             reason: serea_protocol::ValueRejection::OutOfRange,
         };
-        // `Duration::as_millis` saturates at `u64::MAX`, which does not fit
-        // `i64`, and clamping it to `i64::MAX` would then overflow the addition
-        // below in a debug build. Reject the unrepresentable delta outright.
+        // as_millis returns u128 and truncates sub-millisecond fractions, as in
+        // P1. Refuse enormous deltas rather than narrowing or saturating them.
         let delta_ms = i64::try_from(delta.as_millis()).map_err(|_| overflow())?;
-        let mut candidate = self.clone();
-        candidate.elapsed_ms = self
-            .elapsed_ms
-            .saturating_add(u64::try_from(delta_ms).unwrap_or(u64::MAX));
-        candidate.add_millis(delta_ms);
-        // Validate before committing.
-        Timestamp::new(candidate.format())?;
-        *self = candidate;
-        Ok(self.now())
+        let candidate = self
+            .now_ms
+            .get()
+            .checked_add(delta_ms)
+            .ok_or_else(overflow)?;
+        let candidate = EpochMillis::new(candidate)?;
+        let timestamp = Timestamp::from_epoch_millis(candidate);
+        self.now_ms = candidate;
+        Ok(timestamp)
     }
 
-    fn format(&self) -> String {
-        format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-            self.year, self.month, self.day, self.hour, self.minute, self.second, self.millis
-        )
+    /// The current signed instant. Always succeeds for this validated fake;
+    /// the Result shape matches the injected Clock port.
+    pub fn now_ms(&self) -> Result<EpochMillis, ProtocolError> {
+        Ok(self.now_ms)
     }
 
-    /// The total fake milliseconds advanced since the clock was created.
+    /// The total whole milliseconds advanced since creation, derived rather
+    /// than stored. The bounded wire-domain difference fits i64 and u64.
     pub fn elapsed_ms(&self) -> u64 {
-        self.elapsed_ms
-    }
-
-    fn add_millis(&mut self, delta_ms: i64) {
-        let total = self.millis + delta_ms;
-        self.millis = total.rem_euclid(1_000);
-        let mut carry = total.div_euclid(1_000);
-
-        self.second += carry;
-        carry = self.second.div_euclid(60);
-        self.second = self.second.rem_euclid(60);
-
-        self.minute += carry;
-        carry = self.minute.div_euclid(60);
-        self.minute = self.minute.rem_euclid(60);
-
-        self.hour += carry;
-        carry = self.hour.div_euclid(24);
-        self.hour = self.hour.rem_euclid(24);
-
-        self.day += carry;
-        // Normalise the calendar, honouring month lengths and leap years.
-        while self.day > i64::from(days_in_month(self.year, self.month)) {
-            self.day -= i64::from(days_in_month(self.year, self.month));
-            self.month += 1;
-            if self.month > 12 {
-                self.month = 1;
-                self.year += 1;
-            }
-        }
-    }
-}
-
-/// Splits a frozen-format timestamp into its calendar parts.
-fn parse_frozen_timestamp(value: &str) -> Option<CalendarParts> {
-    if value.len() != 24 {
-        return None;
-    }
-    let bytes = value.as_bytes();
-    if bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || bytes[10] != b'T'
-        || bytes[13] != b':'
-        || bytes[16] != b':'
-        || bytes[19] != b'.'
-        || bytes[23] != b'Z'
-    {
-        return None;
-    }
-    let number = |range: std::ops::Range<usize>| -> Option<i64> {
-        range.clone().try_fold(0i64, |accumulator, index| {
-            let digit = *bytes.get(index)?;
-            if digit.is_ascii_digit() {
-                Some(accumulator * 10 + i64::from(digit - b'0'))
-            } else {
-                None
-            }
+        let elapsed = self
+            .now_ms
+            .get()
+            .checked_sub(self.start_ms.get())
+            .unwrap_or_else(|| unreachable!("the full wire-domain span fits i64"));
+        u64::try_from(elapsed).unwrap_or_else(|error| {
+            unreachable!("advance only commits nonnegative deltas: {error:?}")
         })
-    };
-    let parts = CalendarParts {
-        year: number(0..4)?,
-        month: number(5..7)?,
-        day: number(8..10)?,
-        hour: number(11..13)?,
-        minute: number(14..16)?,
-        second: number(17..19)?,
-        millis: number(20..23)?,
-    };
-    let valid = (1..=12).contains(&parts.month)
-        && parts.day >= 1
-        && parts.day <= i64::from(days_in_month(parts.year, parts.month))
-        && parts.hour <= 23
-        && parts.minute <= 59
-        && parts.second <= 59;
-    valid.then_some(parts)
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct CalendarParts {
-    year: i64,
-    month: i64,
-    day: i64,
-    hour: i64,
-    minute: i64,
-    second: i64,
-    millis: i64,
-}
-
-/// The proleptic Gregorian leap rule.
-fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-fn days_in_month(year: i64, month: i64) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if is_leap_year(year) => 29,
-        2 => 28,
-        _ => 0,
+impl Clock for TestClock {
+    fn now_ms(&self) -> Result<EpochMillis, ProtocolError> {
+        Self::now_ms(self)
     }
 }
 

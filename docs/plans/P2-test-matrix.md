@@ -258,15 +258,27 @@ failure is the collision, reproduced.
 
 ## 7. Group E — clock and time
 
+**Accepted design; tests still to be evidenced.** All P2B BLOCKER/MAJOR design
+findings are accepted and resolved by the corrected frozen
+[design §8](P2-storage-task-engine.md#8-clock-and-time-representation), before
+production implementation. The cases below are requirements, not PASS results
+or a P2B completion claim.
+
 | # | Test | Pins |
 | --- | --- | --- |
-| E1 | `two_test_clocks_driven_identically_report_identical_time` | Determinism |
-| E2 | `epoch_millis_round_trips_through_the_wire_form_for_both_permitted_forms` | `…SSZ` and `…SS.mmmZ` |
-| E3 | `lexicographic_timestamp_order_is_wrong_and_epoch_millis_is_not` | **The bug this group exists for.** Asserts `Timestamp("…T09:14:22Z") > Timestamp("…T09:14:22.100Z")` while the epoch-millisecond values order correctly, so the design's refusal to compare wire forms is pinned rather than asserted |
-| E4 | `a_calendar_impossible_wire_value_is_refused` | `2026-02-30T00:00:00.000Z` |
-| E5 | `a_clock_reading_outside_the_48_bit_range_is_refused_at_open` | `Store::open` validates once |
-| E6 | `test_clock_epoch_millis_is_the_single_authority` | The structural change to `TestClock` |
-| E7 | `no_wall_clock_call_exists_in_either_new_crate` | A source-level assertion, complementing `.clippy.toml` |
+| E1 | `two_test_clocks_driven_identically_report_identical_time` | Determinism through injected `&dyn Clock`; compile-time `Clock: Send + Sync`, synchronous object safety and `Result<EpochMillis, ProtocolError>`; typed Clock errors remain representable, no ambient/system clock |
+| E2 | `both_wire_forms_preserve_the_instant_and_epoch_output_is_canonical` | Seconds and `.mmmZ` accepted unchanged, year0000 legal. Epoch → Timestamp → epoch is exact; seconds → epoch → Timestamp yields `.000Z`, **not** original spelling. The original Timestamp retains its exact spelling in serialization/Eq/Hash. Explicit string evidence: `"2026-01-01T09:14:22Z" > "2026-01-01T09:14:22.000Z"`, but their EpochMillis values are **equal**; the two Timestamp objects remain unequal and keep their spelling-based hash behavior (do not require unequal hash outputs) |
+| E3 | `lexicographic_timestamp_order_is_wrong_and_epoch_millis_is_not` | Explicit **string** comparison: `"2026-01-01T09:14:22Z" > "2026-01-01T09:14:22.100Z"`, while the converted EpochMillis values satisfy **<**. Never use Timestamp comparison operators: its PartialOrd/Ord are removed, with no repo consumers; negative epochs and epoch zero also order numerically |
+| E4 | `wire_grammar_and_calendar_validation_are_unchanged` | Refuse `2026-02-30T00:00:00.000Z`, invalid leap days, offsets and fractional widths other than exactly three digits; accept both legal wire forms, year0000 (including its leap day), pre-1970, 2000 leap day and the final millisecond of year9999; refuse 1900 leap day. Conversion shares Timestamp validation, not a private parser |
+| E5 | `epoch_millis_signed_bounds_and_private_construction_are_enforced` | Private `i64` field, checked constructor/get/numeric Ord; MIN=-62_167_219_200_000 ↔ `0000-01-01T00:00:00.000Z`, MAX=253_402_300_799_999 ↔ `9999-12-31T23:59:59.999Z`; endpoints accepted, MIN−1/MAX+1/i64 extremes refused. Pin -1/0 and 2038 boundaries plus no unchecked public construction path. TimestampMs remains unsigned48 ULID time, with its existing acceptance/refusal regressions unchanged. **Store-open clock-error behavior is deferred to P2C**, not an out-of-range successful P2B Clock reading |
+| E6 | `test_clock_epoch_millis_is_the_single_authority` | `start_ms` and `now_ms` are EpochMillis; elapsed is their difference, not a separately mutable counter. `at` uses Timestamp validation/conversion and accepts seconds/year0000/negative epochs; `format` uses canonical `.mmmZ` conversion, no private calendar/parser. Zero and exact-MAX advance succeed; beyond-MAX, overflow and Duration::MAX return typed errors without changing current/elapsed time; duration magnitude checked before narrowing |
+| E7 | `no_wall_clock_call_exists_in_current_p2b_sources` | Source-level assertion over current `serea-protocol`/`serea-testkit` P2B sources and tests, embedded examples and any build scripts present, complementing `.clippy.toml`; **no new storage or task-engine crate prerequisite**. Later storage/engine assertions belong to their phases/O3 |
+
+Supporting API checks must pin the private EpochMillis field and absence of
+Timestamp PartialOrd/Ord without manufacturing a syntax-error RED. Preserve
+existing Timestamp wire-validation and unsigned48 TimestampMs/ULID tests. No
+schema, ADR or protocol-version change, storage implementation or testkit-private
+calendar/parser belongs to this group.
 
 ## 8. Group F — migrations and connection policy
 
@@ -497,7 +509,7 @@ even where a more specific group seems to cover it.
 | Subphase | Tests written first | Observed RED | Then |
 | --- | --- | --- | --- |
 | P2A | A/B/C/D groups and added boundary cases below | Shape/schema planned-step RED; whitespace and canonical/framing failures | All four groups green atomically |
-| P2B | E1–E7 | Timestamp/time conversion and deterministic clock failures | E green; canonical groups already closed P2A |
+| P2B | Corrected E1–E7 plus API/ULID regressions | Signed bounds, instant-versus-spelling conversion, explicit string/epoch ordering and checked atomic TestClock failures | Record actual E/API/ULID and applicable workspace/MSRV results; no Store or new storage/engine crates; canonical groups already belong to P2A |
 | P2C | F1–F18 | F1 against no store; F7 against DDL outside the migration transaction | Implement; F green |
 | P2D | G1–G20 | G11, G13 against a permissive helper; G15 against an unchecked table | Implement; G green |
 | P2E | H1–H17 | H6, H10, H14 against owner-only fencing | Implement; H green |
@@ -546,7 +558,7 @@ The same shape P1 used, to be run at the end of each subphase:
 
 ```text
 python3 tests/workspace_smoke.py
-cargo metadata --no-deps --format-version 1        # assert exactly four members
+cargo metadata --no-deps --format-version 1        # assert phase-appropriate members; P2B adds no crates
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --offline
 cargo test --workspace --all-targets --offline

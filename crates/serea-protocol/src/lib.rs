@@ -45,12 +45,13 @@
 //!   Index §2) and nothing about a grant's semantics.
 //! * `DeviceLinkPort` — Crate Map §2.1 places the `serea.device/1` wire types
 //!   and the port here, but the link itself is `serea-core`'s and P12.
-//! * `Clock` and `Ids` — the *injection points* both frozen items name are
-//!   present in P1, under the names the frozen *protocols* use rather than the
-//!   Crate Map's shorthand: [`ids::UlidSource`] and [`ids::IdMinter`] for
-//!   minting (Protocol Index §2 rule 1), and `serea_testkit::TestClock` for the
-//!   clock (Model Protocol §10, which requires the clock to be *injected* — a
-//!   `Clock` trait here would be a fourth port with no P1 consumer).
+//! * `Ids` — P1 provides [`ids::UlidSource`] and [`ids::IdMinter`] for minting
+//!   (Protocol Index §2 rule 1), under the frozen protocol names rather than
+//!   the Crate Map's shorthand.
+//!
+//! P2B adds the declared [`Clock`] injection port (Crate Map §3; Model Protocol
+//! §10), implemented by `serea_testkit::TestClock`, and the signed, wire-bounded
+//! [`EpochMillis`] instant. ULID-specific [`TimestampMs`] remains separate.
 //!
 //! The protocol documents under `docs/protocols/` are normative. Nothing here
 //! restates them as a second contract: every public item cites the section it
@@ -67,6 +68,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod canonical;
+pub mod clock;
 pub mod errors;
 pub mod ids;
 pub mod provider;
@@ -74,6 +76,7 @@ pub mod schema;
 pub mod types;
 
 pub use canonical::{CanonicalJsonError, canonicalize, derive_idempotency_key, digest_of};
+pub use clock::{Clock, EpochMillis};
 pub use errors::{
     ContractRule, IdentifierDomain, IdentifierRejection, ProtocolError, SerializationRejection,
     ValueField, ValueRejection,

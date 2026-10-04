@@ -1,5 +1,5 @@
 [package]
-name = "serea-storage"
+name = "serea-task-engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ publish.workspace = true
 
 [dependencies]
 serea-protocol.workspace = true
-rusqlite.workspace = true
-sha2.workspace = true
-serde.workspace = true
+serea-storage.workspace = true
+
+[dev-dependencies]
 serde_json.workspace = true

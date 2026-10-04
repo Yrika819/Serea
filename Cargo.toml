@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-testkit"]
+members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-task-engine", "crates/serea-testkit"]
 exclude = ["vendor/jsonschema-value", "vendor/serde_json"]
 
 [workspace.package]
@@ -20,6 +20,7 @@ publish = false
 [workspace.dependencies]
 serea-protocol = { path = "crates/serea-protocol" }
 serea-storage = { path = "crates/serea-storage" }
+serea-task-engine = { path = "crates/serea-task-engine" }
 
 # P2C: synchronous SQLite foundation, compiled from the bundled amalgamation.
 # No default cache/wasm adapters or optional runtime features.

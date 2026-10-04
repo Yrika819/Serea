@@ -1,6 +1,6 @@
 # ADR-0024: Lease Fencing and Commit-Under-Lease
 
-- Status: **Proposed** — P2A wire generation, P2E authority, and bounded P2F storage begin/known-outcome fencing implemented; no full architecture ratification
+- Status: **Proposed** — P2A wire generation, P2E authority, P2F-a storage fences and P2F-b engine integration implemented; no full architecture ratification
 - Architecture version: `serea-arch/0.2.0` at the time of writing
 - Decision date: not yet ratified
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
@@ -21,6 +21,11 @@
 > begin/known-outcome fences and atomic receipt/journal/task/lease transitions.
 > Its implementation retains the expiry policy below unchanged. This ADR remains
 > Proposed; scoped implementation does not ratify the full architecture.
+> [P2F-b closure](../plans/P2F-task-engine-review-and-closure.md#6-final-p2f-b-runtime-closure)
+> additionally validates engine acquire/begin/outcome/release delegation and task
+> deletion integration, including all83 P2F-a cases, one SQL-free audit authority,
+> independent reviews and stable/MSRV debug/release parity. Expiry/fencing semantics
+> are unchanged; recovery and full architecture acceptance remain unclaimed.
 > Historical SQL/docs probes below are
 > constructibility evidence, not current production runtime proof. P2A validation
 > remains recorded separately in its [closure record](../plans/P2A-review-and-closure.md).

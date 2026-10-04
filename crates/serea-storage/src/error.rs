@@ -54,6 +54,36 @@ pub enum StoreError {
     LeaseGenerationOverflow,
     /// Requested expiry is not later, or release predates acquisition.
     InvalidLeaseInterval,
+    /// An audited operation requires the single audit participant.
+    AuditRequired,
+    /// The audit participant returned an invalid or empty record batch.
+    AuditRejected,
+    /// A requested task is absent.
+    TaskNotFound,
+    /// A supplied task identity already exists.
+    TaskExists,
+    /// Durable task/step/provenance data cannot be decoded safely.
+    CorruptRow,
+    /// A whole operation's expected lifecycle predicate did not match.
+    IllegalTaskTransition,
+    /// A plan revision is stale or not the contiguous next revision.
+    PlanRevisionConflict,
+    /// The next revision cannot be represented.
+    PlanRevisionOverflow,
+    /// A plan would omit an ever-leased step.
+    PlanRevisionWouldDropExecutedStep,
+    /// A supplied plan is malformed or changes retained step facts.
+    InvalidPlan,
+    /// A plan does not have an ordinary prefix and VERIFY suffix.
+    InvalidPlanLayout,
+    /// A plan repeats a step identity.
+    DuplicateStepId,
+    /// A plan repeats a sequence.
+    DuplicateSequence,
+    /// A plan repeats a capability key.
+    DuplicateIdempotencyKey,
+    /// A task mutation supplies a backward or inconsistent timestamp.
+    InvalidTimestamp,
     /// The injected clock refused its reading.
     Clock(ProtocolError),
 }
@@ -85,6 +115,21 @@ impl StoreError {
             Self::AttemptCeilingReached => "AttemptCeilingReached",
             Self::LeaseGenerationOverflow => "LeaseGenerationOverflow",
             Self::InvalidLeaseInterval => "InvalidLeaseInterval",
+            Self::AuditRequired => "AuditRequired",
+            Self::AuditRejected => "AuditRejected",
+            Self::TaskNotFound => "TaskNotFound",
+            Self::TaskExists => "TaskExists",
+            Self::CorruptRow => "CorruptRow",
+            Self::IllegalTaskTransition => "IllegalTaskTransition",
+            Self::PlanRevisionConflict => "PlanRevisionConflict",
+            Self::PlanRevisionOverflow => "PlanRevisionOverflow",
+            Self::PlanRevisionWouldDropExecutedStep => "PlanRevisionWouldDropExecutedStep",
+            Self::InvalidPlan => "InvalidPlan",
+            Self::InvalidPlanLayout => "InvalidPlanLayout",
+            Self::DuplicateStepId => "DuplicateStepId",
+            Self::DuplicateSequence => "DuplicateSequence",
+            Self::DuplicateIdempotencyKey => "DuplicateIdempotencyKey",
+            Self::InvalidTimestamp => "InvalidTimestamp",
             Self::Clock(_) => "Clock",
         }
     }

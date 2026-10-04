@@ -598,6 +598,15 @@ in the [closure record](P2A-review-and-closure.md).
 
 ## 5.7 P2 versus P3 event atomicity
 
+**P2F-b reconciliation (selected design, runtime pending):** the
+[P2F-b gate](P2F-task-engine-review-and-closure.md) and revised
+[ADR-0021](../decisions/ADR-0021-p2-p3-event-atomicity-seam.md) supersede the raw
+Transaction/outer-body sketch below. A single engine-owned audit mapper receives
+storage-owned actual-write facts; storage privately persists its drafts inside the
+method savepoint. No raw SQL exposure, no registry, no second private production
+journal authority. Later outer Err rolls back all rows even when an earlier pure
+mapping ran. P2F-b remains OPEN; this is not participant-runtime or P3 evidence.
+
 **The question.** Event Protocol `E3` says an event and the state change it
 describes commit in one transaction, and `E4` says `seq` is gapless and assigned
 at commit. P2 must implement a durable task lifecycle, which means mutating

@@ -1293,6 +1293,37 @@ fn durable_unique_keys_and_null_idempotency_baseline() {
 }
 
 #[test]
+fn identical_nonnull_idempotency_keys_are_scoped_to_different_tasks() {
+    let db = dependencies("task_steps");
+    let first = step("CAPABILITY", "PLANNED");
+    insert(&db, "task_steps", &first).unwrap();
+    let mut second = first.clone();
+    second.insert("step_id", text("stp_01JQ8Z9M3R2CVN8H5FWK7PQDSG"));
+    second.insert("sequence", Value::Integer(1));
+    probe(
+        &db,
+        "task_steps",
+        &second,
+        Some(ffi::SQLITE_CONSTRAINT_UNIQUE),
+    );
+    let other_task = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNB";
+    let mut parent = base_row("tasks");
+    parent.insert("task_id", text(other_task));
+    insert(&db, "tasks", &parent).unwrap();
+    second.insert("task_id", text(other_task));
+    insert(&db, "task_steps", &second).unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM task_steps WHERE idempotency_key=?1",
+            [first.get("idempotency_key").unwrap()],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+}
+
+#[test]
 fn strict_integer_and_blob_types_are_not_silently_truncated_or_reinterpreted() {
     for (table, column) in [
         ("schema_migrations", "applied_at_ms"),

@@ -1,6 +1,6 @@
 # ADR-0021: The P2/P3 Event-Atomicity Seam
 
-- Status: **Proposed** — runtime acceptance requires the deferred P2C/P2F/P2G gates; P3 event guarantees require their own green gate
+- Status: **Proposed** — P2C/P2F state/audit runtime gates implemented; P2G acceptance remains deferred; P3 event guarantees require their own green gate
 - Architecture version: `serea-arch/0.2.0` at the time of writing
 - Decision date: not yet ratified
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
@@ -9,6 +9,13 @@
 > P2A records documentation direction only, including the event-protocol sequencing
 > annotation; no participant, journal or event runtime is implemented here. The
 > runtime gate below remains deferred and this ADR remains Proposed.
+>
+> The above describes historical P2A only. [P2F-b runtime closure](../plans/P2F-task-engine-review-and-closure.md#6-final-p2f-b-runtime-closure)
+> now proves the SQL-free P2 audit seam, one engine TaskJournal semantic authority,
+> same-savepoint state/journal failure safety and delegated P2F-a integration.
+> Three independent reviews, bounded terminal re-review and stable/MSRV debug/release
+> validation passed. This substantially satisfies the P2F gate, not P2G recovery or
+> P3 event atomicity. No RecoveryReport/event participant exists; this ADR stays Proposed.
 
 ## Context
 
@@ -62,30 +69,37 @@ seam exists at all: `serea-storage`'s `Tx` methods perform the state writes, whi
 the journal is owned by `serea-task-engine`, a layer above. `serea-storage` cannot
 name it. The seam is dependency inversion, not indirection for its own sake.
 
-```rust
-/// Immutable description of the transition being committed.
-///
-/// Built once, by the `Tx` method performing the state write, and passed to
-/// every participant. It is a parameter rather than participant state, so no
-/// participant can record a different transition from any other, and a stale
-/// value cannot survive a rolled-back transaction.
-pub struct DurableTransition<'a> { /* occurred_at_ms, actor, causation_id,
-                                      data_class, payload_digest, payload_json */ }
+The [P2F-b preimplementation gate](../plans/P2F-task-engine-review-and-closure.md)
+replaces the historical raw-Transaction signature with a narrow facts-to-records
+port. The following remains a signature sketch; actual P2F-b implementation and
+validated runtime evidence are linked above:
 
-/// Writes this participant's rows into the caller's open transaction.
-pub trait TransactionParticipant {
-    fn record(&self, tx: &Transaction<'_>, t: &DurableTransition<'_>)
-                   -> Result<(), StoreError>;
+```rust,ignore
+pub struct DurableTransition<'a> { /* private actual-write facts; read-only accessors */ }
+pub struct JournalRecords { /* ordered semantic drafts, no SQL capability */ }
+pub trait TaskAuditParticipant: Send + Sync {
+    fn records(&self, facts: &DurableTransition<'_>)
+        -> Result<JournalRecords, StoreError>;
 }
 ```
 
-`Store::transact` opens `BEGIN IMMEDIATE`; its successful body returns the result
-and immutable transition(s) describing writes actually performed. Propagate
-`body(&tx)?` before invoking any participant. Then call `record(&self, &tx, &t)` in
-fixed order on the same transaction, then commit. A failed body, failed participant
-or failed commit rolls back the whole set; a successful no-op returns no transitions
-and records nothing. Never accept a prebuilt transition detached from the successful
-write. This seam is deferred runtime design, not P2A implementation.
+Storage privately constructs facts from successful writes. The single engine-owned
+TaskJournal maps them to ordered journal drafts. Storage binds their envelope to
+those facts, computes payload digests and task-local sequences, and INSERTs through
+its private SQL sink. The participant receives no Connection, Transaction, Tx or
+SQL executor. No public independent append or detached transition submission exists.
+
+`Store::transact_with_audit` supplies exactly one participant for BEGIN IMMEDIATE.
+Each whole operation invokes it after its state-write body succeeds, **inside that
+operation's method savepoint**, not in a second outer-precommit replay. This preserves
+P2F-a's catchable journal-failure/method rollback guarantee. Failed method bodies
+never invoke their participant. Participant failure rolls back the entire method;
+cleanup failure marks the outer transaction rollback-only. Successful no-ops append
+nothing. A later outer-body failure can follow an earlier successful invocation,
+but all its SQL state/journal rows roll back; therefore the guarantee is **no durable
+journal on outer Err**, not the historical stronger invocation-count claim. Mapping
+must be pure and have no external effects or buffered transition state. Outer COMMIT
+failure returns no durable-success result. Never accept prebuilt detached facts.
 
 **Four properties this signature has and the earlier one did not**, each of which
 was a defect in the sketch the audit replaced:
@@ -93,21 +107,24 @@ was a defect in the sketch the audit replaced:
 | Property | Why |
 | --- | --- |
 | The transition is a **parameter**, not participant state | The earlier `fn append(&mut self, tx)` was told *that* a commit was happening but not *what* was being committed, so the identity had to live in the hook's mutable state — set before the call, and stale if a `transact` body returned early. That is a correctness hazard in an audit record, not a style one |
-| `&self` on `Store::transact` needs **no interior mutability** | Participants are held as `Arc<dyn TransactionParticipant>` assembled at construction. A `Box<dyn CommitHook>` behind a `&self` store could only be called as `&mut self` through a `RefCell` or a `Mutex`, which would have contradicted ADR-0024's "the only mutex in `serea-storage` guards the single SQLite connection" |
-| **Neither participant needs `&mut self` semantically** | `TaskJournal` computes `journal_seq` as `MAX(journal_seq) + 1` — SQL. P3's event participant allocates `seq` from a `store_meta` counter — also SQL, in the same transaction. Neither mutates Rust state, so no lock is needed for the guarantee |
+| Shared participant receivers need **no extra interior mutability** | The audited transaction receives exactly one synchronous participant. There is no registry or participant-local queue/counter; only the existing connection mutex guards SQLite. |
+| **The audit mapper needs no mutable receiver** | TaskJournal maps immutable facts without counters. Storage allocates task-local journal sequence in SQL; a future event-specific capability will allocate its event sequence in the same transaction. No participant-local mutable identity or lock is needed. |
 | **Rollback needs no cleanup** | The transition is owned by the caller, not buffered by the participant, so a rolled-back transaction leaves nothing to discard |
 
 **A generic hook registry is not needed, and is rejected.** P2 registers exactly
 one participant. A registry would add ordering, interior mutability and a
 lifecycle question in exchange for a capability P2 does not use. The narrower
-form — `Store::transact` calls its participants explicitly, in a fixed order,
-after its successful body returns immutable transitions and before commit — gives
-P3 the identical seam with less hidden behaviour, so that is what is specified.
+form invokes the single P2 audit participant explicitly from immutable actual-write
+facts inside the method savepoint. P3 later adds its event-specific storage capability
+at this fixed dispatch point, from the same facts/transaction, rather than gaining a
+generic SQL escape. P2F-b implements no event participant.
 
 ### P2 registers exactly one participant: `TaskJournal`
 
-`serea-task-engine` owns `TaskJournal`, which writes append-only `task_journal`
-rows. `task_journal` is **not** an event log: it has no `EventKind`, no `Actor` in
+`serea-task-engine` owns `TaskJournal`'s semantic mapping; storage privately persists
+its append-only `task_journal` drafts in the same transaction. P2F-a's temporary
+private outcome mapper was removed with the P2F-b engine seam; no second production
+authority or legacy fallback remains. `task_journal` is **not** an event log: it has no `EventKind`, no `Actor` in
 the frozen enum, no `seq`, and it is not on any wire surface.
 
 That last point is easy to state and easy to get wrong, because an earlier draft
@@ -187,6 +204,10 @@ they neither promise complete future event payloads nor authorize event backfill
 
 ## What P2 can honestly claim at closure
 
+The table below describes intended **whole-P2 closure**, not P2F-b closure.
+P2F-b proves its owned state/receipt/journal operations; T5 recovery and
+RecoveryReport accounting below remain P2G requirements and are NOT current claims.
+
 This is the part that must not be fudged, so it is stated as a table rather than
 prose.
 
@@ -250,9 +271,9 @@ sequencing note, not a relaxation.
 
 | File | Change |
 | --- | --- |
-| `crates/serea-storage/src/tx.rs` | `DurableTransition`, `TransactionParticipant`, the participant list on `Store`; `transact` invoking them inside the transaction, each with the transition its caller just performed |
+| `crates/serea-storage/src/tx.rs` | Privately constructed DurableTransition, one TaskAuditParticipant port, and private journal persistence inside each whole-operation savepoint; no participant list or registry |
 | `crates/serea-storage/src/store.rs` | Every mutating path becomes `transact`-shaped; no public method writes alone |
-| `crates/serea-task-engine/src/journal.rs` | `TaskJournal` implementing `TransactionParticipant` |
+| `crates/serea-task-engine/src/journal.rs` | TaskJournal implementing TaskAuditParticipant as the single production journal-semantic authority, without rusqlite |
 | `crates/serea-task-engine/src/recovery.rs` | `RecoveryReport.pending_event_transitions` |
 | `crates/serea-storage/migrations/0001_initial.sql` | `task_journal` with the envelope columns, `payload_json` and `payload_ref_digest`, and **no `event_seq`** — the earlier draft reserved it for a back-fill this ADR no longer performs. Full DDL in [P2 SQLite schema §4.9](../plans/P2-sqlite-schema.md#49-task_journal) |
 

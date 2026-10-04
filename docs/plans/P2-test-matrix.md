@@ -61,6 +61,20 @@ plan/query/delete/H17, waiting/cancellation, recovery and full participant seam
 rows below remain historical future obligations, not PASS for this bounded slice.
 No new event runtime or test count is inferred here; use the linked closure.
 
+## Current P2F-b runtime closure annotation
+
+[P2F-b closure §6](P2F-task-engine-review-and-closure.md#6-final-p2f-b-runtime-closure)
+records applicable I/J/K/L lifecycle/plan/receipt/cancellation/deletion coverage,
+G10/G17/G18 reference integration, engine-owned H wrappers and §18.1 regressions.
+The independent121-pair relation AND exact reason/code oracle passes; runtime
+revisions/provenance, one audit authority, protected-row refusal and candidate-only
+blob sweep are tested. Three independent implementation reviews, accepted
+remediation and bounded terminal review are complete. Full stable/Rust1.85 tests
+pass740 executions (all624 baseline identities retained,116 new); all four focused
+modes agree. I9/K4 recovery scans remain P2G; K8 ordinary rollback is pinned here,
+while crash/SIGKILL proof remains P2H. WAITING writer APIs and P3 are not implemented.
+Historical matrix rows are not automatically PASS outside this owned scope.
+
 ## 1. Ground rules
 
 Inherited from P1's closure and re-applied:
@@ -472,7 +486,7 @@ P2E cannot record H10 RED/GREEN without P2F's production outcome method.
 | I1 | `every_one_of_the_121_task_state_pairs_matches_the_frozen_table` | Task Protocol §4.2, transcribed literally and compared in both directions |
 | I2 | `terminal_states_have_no_outgoing_transition` | `T8`, as the absence of an arm |
 | I3 | `an_illegal_transition_is_refused_and_persists_nothing` | The illegal state is never written |
-| I4 | `an_illegal_transition_fails_the_task_with_an_invariant_reason` | The frozen consequence |
+| I4 | `an_illegal_transition_fails_the_task_with_an_invariant_reason` | Explicit host `fail_invariant` remediation, separate from I3's pure refusal; illegal target is never written and terminal states remain unchanged |
 | I5 | `policy_class_is_immutable_by_trigger` | A raw `UPDATE` is refused, not just a Rust error |
 | I6 | `policy_class_is_set_at_creation_and_readable_after_reopen` | |
 | I7 | `data_class_may_be_raised_but_never_lowered` | The monotonic trigger |
@@ -643,7 +657,7 @@ P2I.
 | H deletion / P2F | H17 physical step deletion cascades its leases row via owning lifecycle/deletion surface; no P2E deletion API or release inference from cascade. |
 | G / P2D | Original JSON/SCJ-1 only; class-first PRIVATE refusal even on existing-row read/dedupe; SECRET/CREDENTIAL put/get refusal; full marker/stored-length/unprotect/canonical-plaintext-digest verification and backend unit-error boundary. Owned Arc/private BlobRef/local cfg(test) double; unchanged migration. No text/reference/role/deletion API or PRIVATE ordinary-row support. Actual runtime evidence pending. |
 | Transaction / P2C | Opaque Tx body Err rolls back; no public raw SQL/connection escape. No participant/journal runtime or ADR acceptance. |
-| Transaction / P2F/P2G | Body Err never calls participants; participant failure rolls back writes; no-op records nothing; successful body returns immutable actual transition(s), journal shares transaction; no event_seq/backfill and P2 pending count is journal row count. |
+| Transaction / P2F-b/P2G | Failed method state-write body never calls its audit participant; participant failure rolls back the method; cleanup failure prevents outer commit; no-op records nothing. Successful methods construct immutable actual facts and record inside their savepoint. Later outer body Err leaves no durable journal, although an earlier successful method's pure mapper may have run. No event sequence/backfill; P2 pending count remains historical journal row count. See [P2F-b gate](P2F-task-engine-review-and-closure.md). |
 | Registry / P2A | Per-surface task/action2 with event/model/etc1, envelope1; unsupported major refused per surface. Protocol manifest/source/schema/docs agree. |
 
 ## 19. Verification command set

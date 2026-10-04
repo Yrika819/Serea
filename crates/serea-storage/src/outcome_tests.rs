@@ -1,4 +1,6 @@
 //! Private, schema-valid P2F fixtures. All transitions use the real public API.
+#[path = "audit_tests.rs"]
+mod audit_seam;
 #[path = "outcome_review_tests.rs"]
 mod review;
 use super::LeaseGuard;
@@ -91,12 +93,16 @@ fn acquire_at(
 }
 fn acquire(store: &Store) -> LeaseGuard {
     store
-        .transact(|tx| acquire_at(tx, STEP, OWNER, None, 10, 20))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, STEP, OWNER, None, 10, 20)
+        })
         .unwrap()
 }
 fn begin(store: &Store, g: &LeaseGuard, now: i64) -> Result<(), StoreError> {
     let c = Context::new();
-    store.transact(|tx| tx.begin_attempt(g, time(now), &c.view()))
+    store.transact_with_audit(&crate::audit::TestAudit, |tx| {
+        tx.begin_attempt(g, time(now), &c.view())
+    })
 }
 fn running(store: &Store) -> LeaseGuard {
     let g = acquire(store);
@@ -106,7 +112,7 @@ fn running(store: &Store) -> LeaseGuard {
 fn success(store: &Store, g: LeaseGuard, now: i64) -> Result<crate::StepCommit, StoreError> {
     let c = Context::new();
     let r = receipt();
-    store.transact(|tx| {
+    store.transact_with_audit(&crate::audit::TestAudit, |tx| {
         tx.commit_step_outcome(
             g,
             StepOutcome::Succeeded {
@@ -187,7 +193,8 @@ fn current_guard_commits_whole_atomic_set_and_no_second_charge() {
     assert_eq!((out.attempt, out.generation), (1, 1));
     let blob = out.result.unwrap();
     assert_eq!(
-        s.transact(|tx| tx.get_blob(&blob)).unwrap(),
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.get_blob(&blob))
+            .unwrap(),
         b"{\"ok\":true}"
     );
     assert_eq!(
@@ -282,7 +289,11 @@ fn expiry_does_not_generalize_to_renewal() {
     let s = memory();
     let g = running(&s);
     assert_eq!(
-        s.transact(|tx| tx.renew_lease(&g, time(20), time(30))),
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.renew_lease(
+            &g,
+            time(20),
+            time(30)
+        )),
         Err(StoreError::LeaseExpired)
     );
     success(&s, g, 21).unwrap();
@@ -292,7 +303,9 @@ fn expired_old_guard_is_fenced_after_committed_different_owner_reclaim() {
     let s = memory();
     let old = running(&s);
     let g = s
-        .transact(|tx| acquire_at(tx, STEP, "worker-B", Some(1), 20, 30))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, STEP, "worker-B", Some(1), 20, 30)
+        })
         .unwrap();
     fenced_unchanged(&s, old);
     begin(&s, &g, 21).unwrap();
@@ -304,7 +317,9 @@ fn same_owner_reclaim_fences_old_generation_without_receipt_journal_or_task_chan
     let s = memory();
     let old = running(&s);
     let g = s
-        .transact(|tx| acquire_at(tx, STEP, OWNER, Some(1), 20, 30))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, STEP, OWNER, Some(1), 20, 30)
+        })
         .unwrap();
     fenced_unchanged(&s, old);
     begin(&s, &g, 21).unwrap();
@@ -315,7 +330,8 @@ fn committed_release_fences_outcome_with_unchanged_step_copy() {
     let s = memory();
     let g = running(&s);
     let old = duplicate(&g);
-    s.transact(|tx| tx.release_lease(g, time(12))).unwrap();
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.release_lease(g, time(12)))
+        .unwrap();
     fenced_unchanged(&s, old);
 }
 #[test]
@@ -391,13 +407,15 @@ fn stale_and_expired_invalid_data_precedence_is_lease_fenced() {
     let s = memory();
     let old = running(&s);
     drop(
-        s.transact(|tx| acquire_at(tx, STEP, OWNER, Some(1), 20, 30))
-            .unwrap(),
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, STEP, OWNER, Some(1), 20, 30)
+        })
+        .unwrap(),
     );
     let c = Context::new();
     let before = snapshot(&s);
     assert_eq!(
-        s.transact(|tx| tx.commit_step_outcome(
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.commit_step_outcome(
             old,
             StepOutcome::Succeeded {
                 result_json: b"bad",
@@ -416,7 +434,7 @@ fn rolled_back_initial_acquisition_origin_cannot_alias_same_owner_generation() {
     let s = memory();
     let mut old = None;
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             old = Some(acquire_at(tx, STEP, OWNER, None, 10, 20)?);
             Err::<(), _>(StoreError::Sqlite)
         }),
@@ -432,14 +450,16 @@ fn rolled_back_reclaim_origin_cannot_alias_same_owner_new_generation() {
     drop(running(&s));
     let mut old = None;
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             old = Some(acquire_at(tx, STEP, OWNER, Some(1), 20, 30)?);
             Err::<(), _>(StoreError::Sqlite)
         }),
         Err(StoreError::Sqlite)
     );
     let g = s
-        .transact(|tx| acquire_at(tx, STEP, OWNER, Some(1), 20, 30))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, STEP, OWNER, Some(1), 20, 30)
+        })
         .unwrap();
     begin(&s, &g, 21).unwrap();
     fenced_unchanged(&s, old.unwrap());
@@ -451,7 +471,7 @@ fn pending_guard_can_begin_and_commit_only_in_origin_transaction() {
     let c = Context::new();
     let r = receipt();
     let out = s
-        .transact(|tx| {
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
             let g = acquire_at(tx, STEP, OWNER, None, 10, 20)?;
             tx.begin_attempt(&g, time(11), &c.view())?;
             tx.commit_step_outcome(
@@ -476,7 +496,7 @@ fn outer_outcome_rollback_restores_all_durable_facts_and_original_lease() {
     let c = Context::new();
     let r = receipt();
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             tx.commit_step_outcome(
                 g,
                 StepOutcome::Succeeded {
@@ -492,8 +512,10 @@ fn outer_outcome_rollback_restores_all_durable_facts_and_original_lease() {
     );
     assert_eq!(snapshot(&s), before);
     // Only a test-private duplicate remains. The consumed public guard is gone.
-    s.transact(|tx| tx.renew_lease(&probe, time(13), time(30)))
-        .unwrap();
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
+        tx.renew_lease(&probe, time(13), time(30))
+    })
+    .unwrap();
 }
 #[test]
 fn next_ordinary_step_makes_task_ready_without_scheduling() {
@@ -513,12 +535,14 @@ fn verifier_becomes_eligible_then_completes_task_atomically() {
     let g = running(&s);
     assert_eq!(success(&s, g, 12).unwrap().task_state, TaskState::Verifying);
     let g = s
-        .transact(|tx| acquire_at(tx, NEXT_STEP, OWNER, None, 13, 20))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, NEXT_STEP, OWNER, None, 13, 20)
+        })
         .unwrap();
     begin(&s, &g, 14).unwrap();
     let c = Context::new();
     let out = s
-        .transact(|tx| {
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
             tx.commit_step_outcome(
                 g,
                 StepOutcome::Succeeded {
@@ -557,7 +581,9 @@ fn out_of_sequence_begin_refuses_without_second_charge() {
     let s = memory();
     add_next(&s, "NOTIFY");
     let g = s
-        .transact(|tx| acquire_at(tx, NEXT_STEP, OWNER, None, 10, 20))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, NEXT_STEP, OWNER, None, 10, 20)
+        })
         .unwrap();
     let before = snapshot(&s);
     assert_eq!(begin(&s, &g, 11), Err(StoreError::LeaseFenced));
@@ -569,7 +595,7 @@ fn non_effect_success_has_result_and_no_receipt() {
     s.conn.lock().unwrap().execute_batch("DELETE FROM task_steps; INSERT INTO task_steps(step_id,task_id,sequence,kind,status,input_digest) VALUES ('stp_01JQ8Z9M3R2CVN8H5FWK7PQDSF','tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA',0,'NOTIFY','PLANNED','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');").unwrap();
     let g = running(&s);
     let c = Context::new();
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         tx.commit_step_outcome(
             g,
             StepOutcome::Succeeded {
@@ -624,7 +650,7 @@ fn known_final_failure_commits_complete_error_task_journal_and_release() {
     let s = memory();
     let g = running(&s);
     let out = s
-        .transact(|tx| {
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
             failure_call(
                 tx,
                 g,
@@ -665,8 +691,13 @@ fn ambiguous_provider_effect_is_not_guessed_as_known_final_failure() {
     let g = running(&s);
     let before = snapshot(&s);
     assert_eq!(
-        s.transact(|tx| failure_call(tx, g, ActionErrorKind::Ambiguous, None))
-            .err(),
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| failure_call(
+            tx,
+            g,
+            ActionErrorKind::Ambiguous,
+            None
+        ))
+        .err(),
         Some(StoreError::ConstraintViolation)
     );
     assert_eq!(snapshot(&s), before);
@@ -677,8 +708,13 @@ fn non_object_error_details_are_refused_atomically() {
     let g = running(&s);
     let before = snapshot(&s);
     assert_eq!(
-        s.transact(|tx| failure_call(tx, g, ActionErrorKind::ProviderError, Some(b"[]")))
-            .err(),
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| failure_call(
+            tx,
+            g,
+            ActionErrorKind::ProviderError,
+            Some(b"[]")
+        ))
+        .err(),
         Some(StoreError::CanonicalJson)
     );
     assert_eq!(snapshot(&s), before);
@@ -697,7 +733,7 @@ fn receipt_capability_and_idempotency_must_match_durable_step() {
         let c = Context::new();
         let before = snapshot(&s);
         assert_eq!(
-            s.transact(|tx| tx.commit_step_outcome(
+            s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.commit_step_outcome(
                 g,
                 StepOutcome::Succeeded {
                     result_json: b"{}",
@@ -726,7 +762,7 @@ fn late_failure(trigger: Option<&str>, bytes: &[u8], expected: StoreError) {
     let c = Context::new();
     let r = receipt();
     let refs = s
-        .transact(|tx| {
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
             let a = tx.put_blob(b"1001", DataClass::Public)?;
             assert_eq!(
                 tx.commit_step_outcome(
@@ -753,8 +789,16 @@ fn late_failure(trigger: Option<&str>, bytes: &[u8], expected: StoreError) {
         );
     }
     assert_eq!(after[4].len(), before[4].len() + 2);
-    assert_eq!(s.transact(|tx| tx.get_blob(&refs.0)).unwrap(), b"1001");
-    assert_eq!(s.transact(|tx| tx.get_blob(&refs.1)).unwrap(), b"1002");
+    assert_eq!(
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.get_blob(&refs.0))
+            .unwrap(),
+        b"1001"
+    );
+    assert_eq!(
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.get_blob(&refs.1))
+            .unwrap(),
+        b"1002"
+    );
 }
 macro_rules! abort_case {
     ($name:ident,$timing:literal,$event:literal,$table:literal,$condition:literal) => {
@@ -911,7 +955,7 @@ fn failed_savepoint_cleanup_makes_outer_transaction_rollback_only() {
     s.conn.lock().unwrap().execute_batch("CREATE TEMP TRIGGER p2f_rollback BEFORE INSERT ON side_effect_receipts BEGIN SELECT RAISE(ROLLBACK,'private diagnostic'); END;").unwrap();
     let r = receipt();
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             tx.put_blob(b"1001", DataClass::Public)?;
             assert_eq!(
                 tx.commit_step_outcome(
@@ -943,7 +987,7 @@ fn begin_late_failure_is_method_atomic_and_borrowed_guard_remains_usable() {
     let before = snapshot(&s);
     s.conn.lock().unwrap().execute_batch("CREATE TEMP TRIGGER p2f_abort BEFORE INSERT ON task_journal BEGIN SELECT RAISE(ABORT,'private diagnostic'); END;").unwrap();
     let c = Context::new();
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         assert_eq!(
             tx.begin_attempt(&g, time(11), &c.view()),
             Err(StoreError::ConstraintViolation)
@@ -1011,8 +1055,15 @@ fn retry_reclaim_spends_new_charge_and_ceiling_remains_acquisition_only() {
         .unwrap();
     let g = running(&s);
     assert_eq!(
-        s.transact(|tx| acquire_at(tx, STEP, OWNER, Some(1), 20, 30))
-            .err(),
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| acquire_at(
+            tx,
+            STEP,
+            OWNER,
+            Some(1),
+            20,
+            30
+        ))
+        .err(),
         Some(StoreError::AttemptCeilingReached)
     );
     let out = success(&s, g, 21).unwrap();
@@ -1031,7 +1082,7 @@ fn actual_outer_commit_failure_rolls_back_success_receipt_journal_and_release() 
     let c = Context::new();
     let r = receipt();
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             tx.commit_step_outcome(
                 g,
                 StepOutcome::Succeeded {
@@ -1048,8 +1099,10 @@ fn actual_outer_commit_failure_rolls_back_success_receipt_journal_and_release() 
     );
     assert_eq!(snapshot(&s), before);
     assert_eq!(scalar::<i64>(&s, "SELECT count(*) FROM p2f_child"), 0);
-    s.transact(|tx| tx.renew_lease(&probe, time(13), time(30)))
-        .unwrap();
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
+        tx.renew_lease(&probe, time(13), time(30))
+    })
+    .unwrap();
 }
 #[test]
 fn failed_acquisition_commit_origin_never_authorizes_outcome() {
@@ -1057,7 +1110,7 @@ fn failed_acquisition_commit_origin_never_authorizes_outcome() {
     deferred_tables(&s);
     let mut old = None;
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             old = Some(acquire_at(tx, STEP, OWNER, None, 10, 20)?);
             tx.inner.execute("INSERT INTO p2f_child VALUES(99)", [])?;
             Ok(())
@@ -1101,12 +1154,21 @@ fn two_stores_observe_reclaim_fencing_current_outcome_and_durable_reopen() {
     let b = file.open();
     let old = running(&a);
     assert_eq!(
-        b.transact(|tx| acquire_at(tx, STEP, "worker-B", Some(1), 12, 30))
-            .err(),
+        b.transact_with_audit(&crate::audit::TestAudit, |tx| acquire_at(
+            tx,
+            STEP,
+            "worker-B",
+            Some(1),
+            12,
+            30
+        ))
+        .err(),
         Some(StoreError::LeaseHeld)
     );
     let g = b
-        .transact(|tx| acquire_at(tx, STEP, OWNER, Some(1), 20, 30))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, STEP, OWNER, Some(1), 20, 30)
+        })
         .unwrap();
     fenced_unchanged(&a, old);
     begin(&b, &g, 21).unwrap();
@@ -1129,7 +1191,8 @@ fn two_stores_observe_reclaim_fencing_current_outcome_and_durable_reopen() {
     assert_eq!(snapshot(&reopened), state);
     assert_eq!(
         reopened
-            .transact(|tx| tx.get_blob(&expected.result.unwrap()))
+            .transact_with_audit(&crate::audit::TestAudit, |tx| tx
+                .get_blob(&expected.result.unwrap()))
             .unwrap(),
         b"{\"ok\":true}"
     );
@@ -1143,7 +1206,9 @@ fn committed_reclaim_wins_before_cross_store_old_outcome_attempt() {
     let b = file.open();
     let old = running(&a);
     let g = b
-        .transact(|tx| acquire_at(tx, STEP, "worker-B", Some(1), 20, 30))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, STEP, "worker-B", Some(1), 20, 30)
+        })
         .unwrap();
     fenced_unchanged(&a, old);
     begin(&b, &g, 21).unwrap();
@@ -1164,7 +1229,9 @@ fn simultaneous_outcome_and_reclaim_serialize_without_partial_or_duplicate_facts
     });
     let reclaim = std::thread::spawn(move || {
         barrier.wait();
-        b.transact(|tx| acquire_at(tx, STEP, "worker-B", Some(1), 20, 30))
+        b.transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, STEP, "worker-B", Some(1), 20, 30)
+        })
     });
     let outcome = outcome.join().unwrap();
     let reclaim = reclaim.join().unwrap();
@@ -1258,11 +1325,13 @@ fn multiple_verifiers_keep_task_verifying_until_last_known_success() {
         ("stp_01JQ8Z9M3R2CVN8H5FWK7PQDSH", 16, TaskState::Completed),
     ] {
         let g = s
-            .transact(|tx| acquire_at(tx, id, OWNER, None, now, 30))
+            .transact_with_audit(&crate::audit::TestAudit, |tx| {
+                acquire_at(tx, id, OWNER, None, now, 30)
+            })
             .unwrap();
         begin(&s, &g, now + 1).unwrap();
         let out = s
-            .transact(|tx| {
+            .transact_with_audit(&crate::audit::TestAudit, |tx| {
                 tx.commit_step_outcome(
                     g,
                     StepOutcome::Succeeded {
@@ -1291,7 +1360,7 @@ fn borrowed_begin_outer_rollback_preserves_guard_for_actual_committed_authority(
     let c = Context::new();
     let before = snapshot(&s);
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             tx.begin_attempt(&g, time(11), &c.view())?;
             Err::<(), _>(StoreError::Sqlite)
         }),
@@ -1328,7 +1397,9 @@ fn duplicate_receipt_identity_rolls_back_second_steps_whole_outcome() {
     let g = running(&s);
     success(&s, g, 12).unwrap();
     let g = s
-        .transact(|tx| acquire_at(tx, NEXT_STEP, OWNER, None, 13, 30))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, NEXT_STEP, OWNER, None, 13, 30)
+        })
         .unwrap();
     begin(&s, &g, 14).unwrap();
     let before = snapshot(&s);
@@ -1336,7 +1407,7 @@ fn duplicate_receipt_identity_rolls_back_second_steps_whole_outcome() {
     r.idempotency_key = IdempotencyKey::new(format!("idk_{}", "b".repeat(64))).unwrap();
     let c = Context::new();
     assert_eq!(
-        s.transact(|tx| tx.commit_step_outcome(
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.commit_step_outcome(
             g,
             StepOutcome::Succeeded {
                 result_json: b"true",
@@ -1356,7 +1427,7 @@ fn final_failure_with_late_journal_error_rolls_back_complete_error_and_task() {
     let g = running(&s);
     let before = snapshot(&s);
     s.conn.lock().unwrap().execute_batch("CREATE TEMP TRIGGER p2f_abort BEFORE INSERT ON task_journal WHEN NEW.journal_kind='TASK_TERMINAL' BEGIN SELECT RAISE(ABORT,'private diagnostic'); END;").unwrap();
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         assert_eq!(
             failure_call(tx, g, ActionErrorKind::ProviderError, None).err(),
             Some(StoreError::ConstraintViolation)
@@ -1377,7 +1448,7 @@ fn outer_panic_rolls_back_outcome_and_reopen_preserves_committed_lease() {
     let r = receipt();
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = s.transact(|tx| {
+            let _ = s.transact_with_audit(&crate::audit::TestAudit, |tx| {
                 tx.commit_step_outcome(
                     g,
                     StepOutcome::Succeeded {

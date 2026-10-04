@@ -169,7 +169,8 @@ impl Store {
 
     /// Runs a synchronous body in BEGIN IMMEDIATE. Ok commits, Err explicitly
     /// rolls back. Commit failures are typed errors; no success is manufactured.
-    /// Tx exposes blobs, lease authority and atomic P2F begin/outcome, not SQL.
+    /// Tx exposes blobs and low-level lease authority, not SQL. Audited lifecycle
+    /// methods refuse with AuditRequired here; use transact_with_audit explicitly.
     /// Propagate errors to roll back surrounding operations; failed method
     /// savepoint cleanup makes the
     /// transaction rollback-only even if the closure catches the operation error.
@@ -177,9 +178,29 @@ impl Store {
         &self,
         body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
+        self.transact_in(None, body)
+    }
+
+    /// Runs with exactly one synchronous audit participant borrowed only for
+    /// this transaction. Whole-operation methods persist its drafts in their
+    /// savepoint, not at outer commit. No SQL capability is given to the mapper.
+    pub fn transact_with_audit<T>(
+        &self,
+        participant: &dyn crate::audit::TaskAuditParticipant,
+        body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.transact_in(Some(participant), body)
+    }
+
+    fn transact_in<T>(
+        &self,
+        audit: Option<&dyn crate::audit::TaskAuditParticipant>,
+        body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
         let mut conn = self.connection()?;
         let mut tx = Tx {
             inner: conn.transaction_with_behavior(TransactionBehavior::Immediate)?,
+            audit,
             protection: self.protection.clone(),
             rollback_only: false,
             origin: Arc::new(std::sync::atomic::AtomicBool::new(false)),

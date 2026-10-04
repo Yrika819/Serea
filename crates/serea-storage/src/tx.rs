@@ -67,6 +67,7 @@
 /// ```
 pub struct Tx<'conn> {
     pub(crate) inner: rusqlite::Transaction<'conn>,
+    pub(crate) audit: Option<&'conn dyn crate::audit::TaskAuditParticipant>,
     pub(crate) protection: Option<std::sync::Arc<dyn crate::AtRestProtection>>,
     pub(crate) rollback_only: bool,
     // Capability provenance only; never a substitute for SQLite lease authority.
@@ -74,6 +75,47 @@ pub struct Tx<'conn> {
 }
 
 impl Tx<'_> {
+    /// Failure-atomic envelope for storage whole operations. Unwind cleanup also
+    /// protects a caller that catches the panic inside the outer transaction.
+    pub(crate) fn operation_savepoint<T>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> Result<T, crate::StoreError>,
+    ) -> Result<T, crate::StoreError> {
+        self.ensure_active()?;
+        self.inner.execute_batch("SAVEPOINT serea_operation")?;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(self)));
+        match result {
+            Ok(Ok(value)) => match self.inner.execute_batch("RELEASE serea_operation") {
+                Ok(()) => Ok(value),
+                Err(error) => {
+                    self.rollback_only = true;
+                    Err(error.into())
+                }
+            },
+            Ok(Err(error)) => {
+                if self
+                    .inner
+                    .execute_batch("ROLLBACK TO serea_operation; RELEASE serea_operation")
+                    .is_err()
+                {
+                    self.rollback_only = true;
+                    return Err(crate::StoreError::Sqlite);
+                }
+                Err(error)
+            }
+            Err(panic) => {
+                if self
+                    .inner
+                    .execute_batch("ROLLBACK TO serea_operation; RELEASE serea_operation")
+                    .is_err()
+                {
+                    self.rollback_only = true;
+                }
+                std::panic::resume_unwind(panic)
+            }
+        }
+    }
+
     pub(crate) fn ensure_active(&self) -> Result<(), crate::StoreError> {
         if self.rollback_only || self.inner.is_autocommit() {
             Err(crate::StoreError::Sqlite)

@@ -832,6 +832,7 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
             "open_with_protection",
             "schema_version",
             "transact",
+            "transact_with_audit",
             "verify_integrity"
         ]
     );
@@ -840,8 +841,8 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
         ["class", "digest", "get_blob", "new", "put_blob"]
     );
     assert!(public_methods(include_str!("tx.rs")).is_empty());
-    // P2E authority is unchanged. P2F admits only whole begin/outcome methods;
-    // independent parent/text/reference mutations and future engine stay excluded.
+    // P2E authority is unchanged. P2F adds audited whole operations, never
+    // independent parent/text/reference mutations or SQL escape capabilities.
     assert_eq!(
         public_methods(include_str!("lease.rs")),
         [
@@ -853,7 +854,31 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
     );
     assert_eq!(
         public_methods(include_str!("outcome.rs")),
-        ["begin_attempt", "commit_step_outcome"]
+        [
+            "acquire_audited",
+            "begin_attempt",
+            "commit_step_outcome",
+            "release_audited"
+        ]
+    );
+    assert_eq!(
+        public_methods(include_str!("task.rs")),
+        [
+            "insert_task",
+            "load_task",
+            "load_task",
+            "put_plan_revision",
+            "start_planning"
+        ]
+    );
+    assert_eq!(
+        public_methods(include_str!("lifecycle.rs")),
+        [
+            "block_task",
+            "cancel_task",
+            "delete_task",
+            "fail_task_invariant"
+        ]
     );
     let root = include_str!("lib.rs");
     assert!(root.contains("mod lease;"));

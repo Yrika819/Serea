@@ -62,6 +62,22 @@ historical P2F engine/create/plan/query/delete and full ADR-0021 seam obligation
 below are **not closed** by this bounded owner-directed slice. Current validation
 and closure status live in the linked evidence, not these historical sketches.
 
+## Current P2F-b implementation and closure annotation
+
+[P2F-b's runtime closure ledger](P2F-task-engine-review-and-closure.md) supersedes the
+historical engine/participant sketches below. Selected scope is creation, explicit
+planning entry, full plan persistence/revisions, narrow reads, existing lease/outcome
+wrappers, block/cancel/invariant failure and candidate-scoped deletion. One engine
+TaskJournal maps storage actual-write facts; storage persists drafts inside each
+method savepoint, without exposing rusqlite or replaying a second journal at commit.
+IDs/time/context remain explicit. No recovery or reconciled-absent writer, wait
+or approval orchestration, registry, executor or P3 work. This selected architecture
+is now implemented: three independent implementation reviews, accepted remediation,
+bounded terminal PASS and complete stable/Rust1.85 debug/release validation are
+recorded in the linked closure. All624 baseline executions remain, final740/new116.
+ADR-0021/0022/0024 stay Proposed. Historical sketches below do not imply recovery,
+waiting writers or whole-P2/P3 completion.
+
 ## 1. Scope, and the crates in it
 
 Across all P2 phases, P2 creates exactly two runtime crates and no others.
@@ -358,6 +374,12 @@ succeeded steps keep their receipts and Serea never undoes an external effect. A
 in-flight step's lease is released separately, by the worker or by recovery.
 
 ### 4.1 The durable-transition participant seam — paper compile
+
+**Historical sketch, superseded by the P2F-b gate and revised ADR-0021.** Do not
+implement the raw-Transaction signature or outer-body-only dispatch below. The
+selected port transforms actual facts into journal drafts; storage privately
+persists them inside each method savepoint. A later outer body failure leaves no
+durable journal, but can occur after an earlier successful method's pure mapper ran.
 
 Deferred **P2F/P2G** runtime design (ADR-0021 remains Proposed), not the P2C
 opaque-Tx API in §3. This paper signature does not authorize exposing a raw SQL
@@ -1465,6 +1487,12 @@ first discovered during P2C or P2H.
 
 ### 10.1 Public surface
 
+The following is the **historical full-P2 sketch**, not the P2F-b public API.
+[P2F-b's selected surface](P2F-task-engine-review-and-closure.md) omits recovery
+and reconciled-absent, adds explicit planning entry, timestamps and attribution,
+and re-exports the existing storage outcome types. It does not implement waiting
+or provider execution. The old signatures below are retained for design lineage.
+
 ```rust
 pub struct TaskEngine { store: Store, journal: TaskJournal }
 
@@ -1540,22 +1568,24 @@ fn legal_task_transition(from: TaskState, to: TaskState) -> bool {
 
 Two properties, both deliberate:
 
-1. **`COMPLETED`, `FAILED` and `CANCELLED` have no arm.** `T8` is therefore a
-   property of the *absence* of an arm rather than of a runtime check. Adding a new
-   `TaskState` variant is a compile error here, because `use TaskState::*` inside a
-   `matches!` over a tuple of two enums forces exhaustiveness only if every variant
-   appears — which is why the test enumerates all 121 pairs and compares them to a
-   literal transcription of Task Protocol §4.2.
+1. **The shown `matches!` is NOT compile-exhaustive.** Its wildcard false arm
+   accepts enum growth without a compiler error; `use TaskState::*` changes none
+   of that. P2F-b replaces this historical sketch with an exhaustive outer match
+   over every TaskState, including explicit false terminal-source arms. An
+   independent literal 121-pair oracle and a check against all eleven protocol
+   WIRE_NAMES pin the actual relation. Terminals have no outgoing legal edge.
 2. **The reason a transition is legal is not scattered string literals.** A second
    function, `task_transition_reason(from, to) -> TransitionReason`, returns which
    frozen rule authorises it, so `failure_reason`, `blocked_reason` and the
    journal's `reason_code` all come from one place. Bounds §9 requires a typed
    refusal naming the bound, and a scattered `&str` is how that gets lost.
 
-An illegal transition is `EngineError::IllegalTaskTransition`, and per Task
-Protocol §4.2 the host then fails the task to `FAILED` with an
-invariant-violation reason — **without persisting the illegal state**, which is
-the whole point of checking before the write.
+Pure validation returns `EngineError::IllegalTaskTransition` without writes.
+The host may separately invoke the dedicated `fail_invariant` whole transition
+from an expected eligible nonterminal state to FAILED/INVARIANT_VIOLATION. This
+remediation is not a hidden side effect of an illegal-target request; the illegal
+state is never written, and terminals are never rewritten. I3 and I4 test those
+distinct operations.
 
 ### 10.3 `policy_class` immutability
 
@@ -1635,10 +1665,13 @@ ceiling, and its task moves `BLOCKED` with an invariant-violation reason.
 
 ### 10.5 Plan revision handling
 
-`persist_plan` with `revision > tasks.plan_revision`:
+P2F-b selects `persist_plan` with `revision == tasks.plan_revision + 1`, using
+checked arithmetic and PLANNING/expected-revision SQL predicates:
 
-- Every step's sequence must be **new** or **unchanged**. `UNIQUE (task_id,
-  sequence)` makes a rename a constraint violation rather than a silent renumber.
+- Every retained step's sequence must be **unchanged**. `UNIQUE (task_id,
+  sequence)` detects collisions, NOT a renumber to a vacant sequence. Whole-plan
+  validation separately refuses renumbering and middle insertion; new steps must
+  exceed the task's historical sequence high-water mark.
 - A revision may **append** at higher sequences and may **delete** steps that are
   still `PLANNED`. ADR-0018 §5 explains why renumbering and mid-plan insertion are
   refused: each changes the meaning of Task Protocol §3.2's prerequisite rule for a

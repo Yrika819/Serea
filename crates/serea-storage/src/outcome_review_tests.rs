@@ -29,7 +29,7 @@ fn isolated_update(tx: &mut Tx<'_>, sql: &str, g: &LeaseGuard) -> usize {
 fn rollback_isolated(s: &Store, sql: &str, g: &LeaseGuard, expected: usize) {
     let before = snapshot(s);
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             assert_eq!(isolated_update(tx, sql, g), expected);
             Err::<(), _>(StoreError::Sqlite)
         }),
@@ -61,7 +61,7 @@ fn exact_production_success_and_failure_updates_fence_without_classification() {
             match case {
                 "same-owner-reclaim" | "other-owner-reclaim" => {
                     let next = s
-                        .transact(|tx| {
+                        .transact_with_audit(&crate::audit::TestAudit, |tx| {
                             acquire_at(
                                 tx,
                                 STEP,
@@ -80,8 +80,10 @@ fn exact_production_success_and_failure_updates_fence_without_classification() {
                 }
                 "released" => {
                     let release = duplicate(&g);
-                    s.transact(|tx| tx.release_lease(release, time(12)))
-                        .unwrap();
+                    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
+                        tx.release_lease(release, time(12))
+                    })
+                    .unwrap();
                 }
                 "wrong-task" => g.task_id = TaskId::new(OTHER_TASK).unwrap(),
                 "wrong-step" => g.step_id = StepId::new(NEXT_STEP).unwrap(),
@@ -145,7 +147,9 @@ fn owner_only_update_mutant_is_killed_by_same_owner_new_generation_case() {
         let s = memory();
         let old = running(&s);
         let current = s
-            .transact(|tx| acquire_at(tx, STEP, OWNER, Some(1), 20, 30))
+            .transact_with_audit(&crate::audit::TestAudit, |tx| {
+                acquire_at(tx, STEP, OWNER, Some(1), 20, 30)
+            })
             .unwrap();
         begin(&s, &current, 21).unwrap();
         let sql = super::super::outcome::first_write_sql(failure);
@@ -166,7 +170,7 @@ fn poison_probe(mode: &str) {
     let c = Context::new();
     let before = snapshot(&s);
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             tx.put_blob(b"1001", DataClass::Public)?;
             let result: Result<(), StoreError> = tx.probe_outcome_scope(|inner| {
                 inner.put_blob(b"1002", DataClass::Public)?;
@@ -222,7 +226,7 @@ fn successful_method_release_error_sets_rollback_only_even_with_active_outer_tx(
 fn caught_method_unwind_restores_method_writes_but_commits_unrelated_outer_work() {
     let s = memory();
     let before = snapshot(&s);
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         tx.put_blob(b"1001", DataClass::Public)?;
         let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _: Result<(), StoreError> = tx.probe_outcome_scope(|inner| {
@@ -260,7 +264,7 @@ fn caught_method_unwind_failed_cleanup_keeps_active_outer_tx_rollback_only() {
     let before = snapshot(&s);
     let c = Context::new();
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             tx.put_blob(b"1001", DataClass::Public)?;
             let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let _: Result<(), StoreError> = tx.probe_outcome_scope(|inner| {
@@ -295,8 +299,10 @@ fn caught_method_unwind_failed_cleanup_keeps_active_outer_tx_rollback_only() {
 fn corrupt_existing_result_blob_refuses_after_update_and_preserves_unrelated_work() {
     let s = memory();
     let g = running(&s);
-    s.transact(|tx| tx.put_blob(b"{\"ok\":true}", DataClass::Public))
-        .unwrap();
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
+        tx.put_blob(b"{\"ok\":true}", DataClass::Public)
+    })
+    .unwrap();
     s.conn
         .lock()
         .unwrap()
@@ -308,7 +314,7 @@ fn corrupt_existing_result_blob_refuses_after_update_and_preserves_unrelated_wor
     let before = snapshot(&s);
     let c = Context::new();
     let r = receipt();
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         tx.put_blob(b"1001", DataClass::Public)?;
         assert_eq!(
             tx.commit_step_outcome(
@@ -345,13 +351,15 @@ fn reused_committed_result_blob_survives_late_outcome_failure() {
     let s = memory();
     let g = running(&s);
     let blob = s
-        .transact(|tx| tx.put_blob(b"{\"ok\":true}", DataClass::Public))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            tx.put_blob(b"{\"ok\":true}", DataClass::Public)
+        })
         .unwrap();
     let before = snapshot(&s);
     s.conn.lock().unwrap().execute_batch("CREATE TEMP TRIGGER p2f_abort BEFORE INSERT ON side_effect_receipts BEGIN SELECT RAISE(ABORT,'private diagnostic'); END;").unwrap();
     let c = Context::new();
     let r = receipt();
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         assert_eq!(
             tx.commit_step_outcome(
                 g,
@@ -370,7 +378,8 @@ fn reused_committed_result_blob_survives_late_outcome_failure() {
     .unwrap();
     assert_eq!(snapshot(&s), before);
     assert_eq!(
-        s.transact(|tx| tx.get_blob(&blob)).unwrap(),
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.get_blob(&blob))
+            .unwrap(),
         b"{\"ok\":true}"
     );
 }
@@ -383,7 +392,7 @@ fn result_blob_written_before_method_in_same_outer_tx_survives_caught_failure() 
     let c = Context::new();
     let r = receipt();
     let blob = s
-        .transact(|tx| {
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
             let blob = tx.put_blob(b"{\"ok\":true}", DataClass::Public)?;
             assert_eq!(
                 tx.commit_step_outcome(
@@ -407,7 +416,8 @@ fn result_blob_written_before_method_in_same_outer_tx_survives_caught_failure() 
     }
     assert_eq!(after[4].len(), 1);
     assert_eq!(
-        s.transact(|tx| tx.get_blob(&blob)).unwrap(),
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| tx.get_blob(&blob))
+            .unwrap(),
         b"{\"ok\":true}"
     );
 }
@@ -425,7 +435,7 @@ fn non_default_actor_version_causation_and_payload_identity_are_persisted() {
         causation_id: Some(&cause),
     };
     let r = receipt();
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         tx.begin_attempt(&g, time(11), &context)?;
         tx.commit_step_outcome(
             g,
@@ -481,7 +491,7 @@ fn begin_zero_row_and_journal_failure_preserve_before_and_after_outer_writes() {
         let before = snapshot(&s);
         s.conn.lock().unwrap().execute_batch(trigger).unwrap();
         let c = Context::new();
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             tx.put_blob(b"1001", DataClass::Public)?;
             assert_eq!(tx.begin_attempt(&g, time(11), &c.view()), Err(error));
             tx.put_blob(b"1002", DataClass::Public)?;
@@ -501,7 +511,7 @@ fn known_final_failure_release_error_restores_full_error_task_journal_set() {
     let g = running(&s);
     let before = snapshot(&s);
     s.conn.lock().unwrap().execute_batch("CREATE TEMP TRIGGER p2f_fail BEFORE UPDATE ON leases BEGIN SELECT RAISE(ABORT,'private diagnostic'); END;").unwrap();
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         tx.put_blob(b"1001", DataClass::Public)?;
         assert_eq!(
             failure_call(tx, g, ActionErrorKind::ProviderError, None).err(),
@@ -524,7 +534,7 @@ fn known_final_failure_actual_outer_commit_refusal_restores_all_facts() {
     deferred_tables(&s);
     let before = snapshot(&s);
     assert_eq!(
-        s.transact(|tx| {
+        s.transact_with_audit(&crate::audit::TestAudit, |tx| {
             failure_call(tx, g, ActionErrorKind::ProviderError, None)?;
             tx.inner.execute("INSERT INTO p2f_child VALUES(99)", [])?;
             Ok(())
@@ -542,7 +552,7 @@ fn known_final_failure_outer_panic_rolls_back_and_reopens_prior_authority() {
     let before = snapshot(&s);
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = s.transact(|tx| {
+            let _ = s.transact_with_audit(&crate::audit::TestAudit, |tx| {
                 failure_call(tx, g, ActionErrorKind::ProviderError, None)?;
                 panic!("controlled outer final-failure panic");
                 #[allow(unreachable_code)]
@@ -564,7 +574,7 @@ fn future_receipt_observation_refuses_complete_outcome_and_preserves_outer_write
     let mut r = receipt();
     r.observed_at = Timestamp::from_epoch_millis(time(50));
     let c = Context::new();
-    s.transact(|tx| {
+    s.transact_with_audit(&crate::audit::TestAudit, |tx| {
         tx.put_blob(b"1001", DataClass::Public)?;
         assert_eq!(
             tx.commit_step_outcome(
@@ -607,7 +617,9 @@ fn interleaved_verification_layout_is_outside_supported_slice_not_auto_scheduled
     let g = running(&s);
     assert_eq!(success(&s, g, 12).unwrap().task_state, TaskState::Ready);
     let verifier = s
-        .transact(|tx| acquire_at(tx, NEXT_STEP, OWNER, None, 13, 30))
+        .transact_with_audit(&crate::audit::TestAudit, |tx| {
+            acquire_at(tx, NEXT_STEP, OWNER, None, 13, 30)
+        })
         .unwrap();
     let before = snapshot(&s);
     assert_eq!(begin(&s, &verifier, 14), Err(StoreError::LeaseFenced));

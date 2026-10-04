@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""P2C workspace shape: exactly protocol/storage/testkit, engine only in P2F.
+"""P2F workspace shape: exactly protocol/storage/task-engine/testkit.
 
 Python 3.9-compatible standard library only; no Cargo invocation or network.
 Checks ordinary, build, dev and target-specific dependencies, including aliases,
 dotted keys, subtables, workspace inheritance and path package identities.
-Storage's only internal runtime dependency is protocol; testkit is dev-only.
+Engine's internal non-dev dependencies are limited to protocol/storage, with no
+non-dev rusqlite edge. Storage cannot depend on engine, even for tests; its only
+internal non-dev dependency is protocol. Protocol is a leaf; testkit is dev-only.
 The focused TOML subset supports ordinary tables, dotted/quoted keys, single-line
 strings, booleans, decimal integers, arrays and inline tables. Unsupported syntax
 (e.g. multiline strings, arrays of tables, floats/dates) fails inspection; no
@@ -20,10 +22,12 @@ ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_MEMBERS = [
     "crates/serea-protocol",
     "crates/serea-storage",
+    "crates/serea-task-engine",
     "crates/serea-testkit",
 ]
 PROTOCOL = "serea-protocol"
 STORAGE = "serea-storage"
+ENGINE = "serea-task-engine"
 TESTKIT = "serea-testkit"
 DEPENDENCY_KINDS = ("dependencies", "build-dependencies", "dev-dependencies")
 
@@ -324,7 +328,7 @@ def main() -> int:
             raise ValueError("workspace.members must be an array of strings")
         if sorted(members) != EXPECTED_MEMBERS:
             failures.append(
-                f"expected exactly P2C members {EXPECTED_MEMBERS}, got {members}; no engine until P2F"
+                f"expected exactly P2F members {EXPECTED_MEMBERS}, got {members}"
             )
         for member in EXPECTED_MEMBERS:
             path = ROOT / member / "Cargo.toml"
@@ -341,6 +345,14 @@ def main() -> int:
             for name, internal, is_dev in dependency_tables(manifest, shared, manifest_path):
                 if owner == PROTOCOL and internal:
                     failures.append(f"{PROTOCOL} depends on internal {name}; protocol is a leaf")
+                if owner == ENGINE and internal and not is_dev and name not in (PROTOCOL, STORAGE):
+                    failures.append(
+                        f"{ENGINE} has internal non-dev dependency {name}; only protocol/storage are allowed"
+                    )
+                if owner == ENGINE and name == "rusqlite" and not is_dev:
+                    failures.append(f"{ENGINE} has non-dev dependency rusqlite; use storage instead")
+                if owner == STORAGE and name == ENGINE:
+                    failures.append(f"{STORAGE} depends on {ENGINE}; forbidden even in [dev-dependencies]")
                 if owner == STORAGE and internal and not is_dev and name != PROTOCOL:
                     failures.append(
                         f"{STORAGE} has internal non-dev dependency {name}; only protocol is allowed"
@@ -358,7 +370,9 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P2C protocol/storage/testkit workspace; storage runtime protocol-only; testkit dev-only")
+    print("OK: exact P2F protocol/storage/task-engine/testkit workspace; "
+          "engine non-dev internal protocol/storage-only, no rusqlite; "
+          "storage non-dev internal protocol-only, no engine even in dev; testkit dev-only")
     return 0
 
 

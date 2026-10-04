@@ -58,9 +58,9 @@ jobs:
       - name: Workspace smoke test
         run: python3 tests/workspace_smoke.py
 
-      # P2C exit criterion: exactly protocol/storage/testkit, no engine until P2F,
-      # asserted rather than printed. `pipefail` matters because a failing
-      # `cargo metadata` is masked by the printer's exit code.
+      # P2F graph inventory: exactly protocol/storage/task-engine/testkit,
+      # asserted rather than printed; smoke above checks dependency boundaries.
+      # A test-only engine package is not evidence of a production engine GREEN.
       - name: Workspace shape (exact member list)
         shell: bash
         run: |
@@ -69,7 +69,7 @@ jobs:
           python3 - <<'PY'
           import json, sys
           names = sorted(p["name"] for p in json.load(open("metadata.json"))["packages"])
-          expected = ["serea-protocol", "serea-storage", "serea-testkit"]
+          expected = ["serea-protocol", "serea-storage", "serea-task-engine", "serea-testkit"]
           print("workspace members:", ", ".join(names))
           if names != expected:
               print(f"FAIL: expected exactly {expected}", file=sys.stderr)
@@ -80,8 +80,9 @@ jobs:
       - name: Formatting
         run: cargo fmt --all -- --check
 
-      - name: Check (all targets, offline)
-        run: cargo check --workspace --all-targets --offline
+      # Check feature-gated targets too, matching the all-features Clippy gate.
+      - name: Check (all targets, all features, offline)
+        run: cargo check --workspace --all-targets --all-features --offline
 
       - name: Tests (all targets, offline)
         run: cargo test --workspace --all-targets --offline

@@ -4,11 +4,12 @@ use std::sync::atomic::Ordering;
 use rusqlite::{OptionalExtension, named_params};
 use serea_protocol::{
     ActionErrorKind, ActorId, ActorKind, DataClass, EpochMillis, ErrorCode, ErrorMessage, EventId,
-    FailureReason, HostAction, SemVer, SideEffectReceipt, StepStatus, TaskState, canonicalize,
-    digest_of,
+    FailureReason, HostAction, LeaseOwner, ReasonCode, SemVer, SideEffectReceipt, StepId,
+    StepStatus, TaskId, TaskState, canonicalize, digest_of,
 };
 
 use super::LeaseGuard;
+use crate::audit::{AuditOperation, DurableTransition};
 use crate::{BlobRef, StoreError, Tx};
 
 /// Audit attribution, not lease authority. All values are validated protocol
@@ -61,7 +62,7 @@ pub enum StepOutcome<'a> {
 }
 
 /// Inner outcome success. These facts are durable only after the enclosing
-/// Store::transact returns Ok; an outer rollback/commit failure discards them.
+/// Store::transact_with_audit returns Ok; outer rollback/commit failure discards them.
 #[derive(Debug)]
 pub struct StepCommit {
     /// The committed step status.
@@ -215,13 +216,16 @@ impl Tx<'_> {
 
     /// Starts a leased attempt without charging a second acquisition. A matching
     /// lease must be unexpired. A borrowed guard can be retried after a cleaned-up
-    /// method error, but its SQLite fence/lifecycle must still match.
+    /// method error, but its SQLite fence/lifecycle must still match. Requires
+    /// an explicit participant through Store::transact_with_audit; a plain
+    /// transaction refuses with AuditRequired before any write.
     pub fn begin_attempt(
         &mut self,
         guard: &LeaseGuard,
         now: EpochMillis,
         context: &TransitionContext<'_>,
     ) -> Result<(), StoreError> {
+        self.require_audit()?;
         self.outcome_savepoint(|tx| {
             let before = before(tx, guard, "LEASED")?;
             if before.expires <= now.get() { return Err(StoreError::LeaseExpired); }
@@ -237,11 +241,14 @@ impl Tx<'_> {
             one(changed, StoreError::LeaseFenced)?;
             let to = if before.task_state == TaskState::Verifying { TaskState::Verifying } else { TaskState::Executing };
             tx.outcome_task(guard, &before, to, now, None)?;
-            let audit = Audit { guard, before:&before, context, now, result:None, reason:None };
-            tx.outcome_journal(&audit, "STEP_ATTEMPT_STARTED", "LEASED", "EXECUTING")?;
-            if before.task_state != to {
-                tx.outcome_journal(&audit, "TASK_STATE_CHANGED", before.task_state.wire_name(), to.wire_name())?;
-            }
+            let mut facts = DurableTransition::task(AuditOperation::AttemptStarted, &guard.task_id,
+                Some(before.task_state), to, before.class, now, context);
+            facts.step_id = Some(guard.step_id.clone());
+            facts.step_from = Some(StepStatus::new("LEASED").map_err(|_| StoreError::CorruptRow)?);
+            facts.step_to = Some(StepStatus::new("EXECUTING").map_err(|_| StoreError::CorruptRow)?);
+            facts.attempt = Some(before.attempt);
+            facts.generation = Some(guard.generation.get());
+            tx.record_transition(&facts)?;
             Ok(())
         })
     }
@@ -249,7 +256,8 @@ impl Tx<'_> {
     /// Atomically records one known outcome under current durable SQLite authority.
     /// Expiry alone does not fence an outcome; committed reclaim or release does.
     /// The guard is consumed on **every** result, including infrastructure errors.
-    /// Inner Ok is not durable until Store::transact returns Ok. No replacement
+    /// Requires Store::transact_with_audit; plain transactions fail before writes.
+    /// Inner Ok is not durable until that audited transaction returns Ok. No replacement
     /// capability is returned after rollback or an ambiguous commit failure.
     ///
     /// Outcome and release cannot be composed as two terminal uses:
@@ -278,6 +286,7 @@ impl Tx<'_> {
         now: EpochMillis,
         context: &TransitionContext<'_>,
     ) -> Result<StepCommit, StoreError> {
+        self.require_audit()?;
         self.outcome_savepoint(|tx| tx.commit_outcome_in(&guard, outcome, now, context))
     }
 
@@ -291,7 +300,7 @@ impl Tx<'_> {
         let before = before(self, guard, "EXECUTING")?;
         valid_time(&before, now)?;
         ordinary_class(before.class)?;
-        let (status, result, to, reason) = match outcome {
+        let (status, result, to, reason, receipt_id, operation) = match outcome {
             StepOutcome::Succeeded {
                 result_json,
                 receipt,
@@ -315,19 +324,14 @@ impl Tx<'_> {
                 }
                 let to = self.success_task_state(guard, &before)?;
                 self.outcome_task(guard, &before, to, now, None)?;
-                let audit = Audit {
-                    guard,
-                    before: &before,
-                    context,
-                    now,
-                    result: Some(&blob),
-                    reason: None,
-                };
-                self.outcome_journal(&audit, "STEP_COMMITTED", "EXECUTING", "SUCCEEDED")?;
-                if receipt.is_some() {
-                    self.outcome_journal(&audit, "RECEIPT_RECORDED", "EXECUTING", "SUCCEEDED")?;
-                }
-                ("SUCCEEDED", Some(blob), to, None)
+                (
+                    "SUCCEEDED",
+                    Some(blob),
+                    to,
+                    None,
+                    receipt.map(|r| r.receipt_id.clone()),
+                    AuditOperation::StepSucceeded,
+                )
             }
             StepOutcome::Failed(failure) => {
                 if failure.kind == ActionErrorKind::Ambiguous {
@@ -360,47 +364,20 @@ impl Tx<'_> {
                     now,
                     Some(failure.failure_reason),
                 )?;
-                let audit = Audit {
-                    guard,
-                    before: &before,
-                    context,
-                    now,
-                    result: None,
-                    reason: Some(failure.failure_reason.as_str()),
-                };
-                self.outcome_journal(&audit, "STEP_FAILED", "EXECUTING", "FAILED")?;
                 (
                     "FAILED",
                     None,
                     TaskState::Failed,
-                    Some(failure.failure_reason.as_str()),
+                    Some(
+                        ReasonCode::new(failure.failure_reason.as_str())
+                            .map_err(|_| StoreError::ConstraintViolation)?,
+                    ),
+                    None,
+                    AuditOperation::StepFailed,
                 )
             }
         };
-        let audit = Audit {
-            guard,
-            before: &before,
-            context,
-            now,
-            result: result.as_ref(),
-            reason,
-        };
-        if before.task_state != to {
-            self.outcome_journal(
-                &audit,
-                "TASK_STATE_CHANGED",
-                before.task_state.wire_name(),
-                to.wire_name(),
-            )?;
-            if to.is_terminal() {
-                self.outcome_journal(
-                    &audit,
-                    "TASK_TERMINAL",
-                    before.task_state.wire_name(),
-                    to.wire_name(),
-                )?;
-            }
-        }
+
         one(self.inner.execute(
             "UPDATE leases SET released_at_ms=:now WHERE step_id=:step AND owner=:owner
                 AND generation=:generation AND released_at_ms IS NULL AND acquired_at_ms<=:now
@@ -409,8 +386,27 @@ impl Tx<'_> {
             named_params! { ":now":now.get(), ":step":guard.step_id.as_str(), ":owner":guard.owner.as_str(),
                 ":generation":guard.generation.get(), ":task":guard.task_id.as_str(), ":status":status },
         )?, StoreError::LeaseFenced)?;
+        let step_status = StepStatus::new(status).map_err(|_| StoreError::ConstraintViolation)?;
+        let mut facts = DurableTransition::task(
+            operation,
+            &guard.task_id,
+            Some(before.task_state),
+            to,
+            before.class,
+            now,
+            context,
+        );
+        facts.step_id = Some(guard.step_id.clone());
+        facts.step_from = Some(StepStatus::new("EXECUTING").map_err(|_| StoreError::CorruptRow)?);
+        facts.step_to = Some(step_status.clone());
+        facts.attempt = Some(before.attempt);
+        facts.generation = Some(guard.generation.get());
+        facts.result = result.as_ref().map(|b| b.digest().clone());
+        facts.receipt_id = receipt_id;
+        facts.reason = reason;
+        self.record_transition(&facts)?;
         Ok(StepCommit {
-            step_status: StepStatus::new(status).map_err(|_| StoreError::ConstraintViolation)?,
+            step_status,
             task_state: to,
             attempt: before.attempt,
             generation: guard.generation.get(),
@@ -486,39 +482,6 @@ impl Tx<'_> {
                 ":generation":guard.generation.get() },
         )?, StoreError::ConstraintViolation)
     }
-
-    fn outcome_journal(
-        &self,
-        audit: &Audit<'_>,
-        kind: &str,
-        from: &str,
-        to: &str,
-    ) -> Result<(), StoreError> {
-        let payload = format!(
-            "{{\"attempt\":{},\"generation\":{},\"result_digest\":{}}}",
-            audit.before.attempt,
-            audit.guard.generation.get(),
-            audit.result.map_or_else(
-                || "null".to_owned(),
-                |r| format!("\"{}\"", r.digest().as_str())
-            )
-        );
-        let digest = digest_of(&payload).map_err(|_| StoreError::CanonicalJson)?;
-        one(self.inner.execute(
-            "INSERT INTO task_journal(journal_id,task_id,step_id,journal_seq,journal_kind,
-                state_from,state_to,attempt,reason_code,actor_kind,actor_id,actor_version,causation_id,
-                data_class_rank,occurred_at_ms,payload_digest,payload_json,payload_ref_digest)
-             SELECT :task||':'||(coalesce(max(journal_seq),0)+1),:task,:step,coalesce(max(journal_seq),0)+1,
-                :kind,:from,:to,:attempt,:reason,:actor_kind,:actor_id,:version,:cause,:rank,:now,:digest,:payload,:ref
-             FROM task_journal WHERE task_id=:task",
-            named_params! { ":task":audit.guard.task_id.as_str(), ":step":audit.guard.step_id.as_str(), ":kind":kind,
-                ":from":from, ":to":to, ":attempt":audit.before.attempt, ":reason":audit.reason,
-                ":actor_kind":audit.context.actor_kind.wire_name(), ":actor_id":audit.context.actor_id.as_str(),
-                ":version":audit.context.actor_version.as_str(), ":cause":audit.context.causation_id.map(|c|c.as_str()),
-                ":rank":audit.before.class.rank(), ":now":audit.now.get(), ":digest":digest.as_str(), ":payload":payload,
-                ":ref":audit.result.map(|r|r.digest().as_str()) },
-        )?, StoreError::ConstraintViolation)
-    }
 }
 
 fn success_update_sql() -> String {
@@ -556,11 +519,142 @@ impl Tx<'_> {
     }
 }
 
-struct Audit<'a> {
-    guard: &'a LeaseGuard,
-    before: &'a Before,
-    context: &'a TransitionContext<'a>,
+impl Tx<'_> {
+    /// Audited whole acquisition, delegating the unchanged P2E authority checks.
+    #[allow(clippy::too_many_arguments)]
+    pub fn acquire_audited(
+        &mut self,
+        task_id: TaskId,
+        step_id: StepId,
+        owner: LeaseOwner,
+        expected_generation: Option<u32>,
+        now: EpochMillis,
+        expires_at: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<LeaseGuard, StoreError> {
+        self.require_audit()?;
+        self.operation_savepoint(|tx| {
+            let prior = tx.lease_audit_row(&task_id, &step_id)?;
+            lease_audit_class(prior.1)?;
+            let guard = tx.acquire_lease(
+                task_id,
+                step_id,
+                owner,
+                expected_generation,
+                now,
+                expires_at,
+            )?;
+            let after = tx.lease_audit_row(&guard.task_id, &guard.step_id)?;
+            let facts = lease_facts(
+                AuditOperation::LeaseAcquired,
+                &guard.task_id,
+                &guard.step_id,
+                prior,
+                after,
+                now,
+                context,
+            )?;
+            tx.record_transition(&facts)?;
+            Ok(guard)
+        })
+    }
+
+    /// Consumes the guard on every result, just like the low-level P2E release.
+    pub fn release_audited(
+        &mut self,
+        guard: LeaseGuard,
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<(), StoreError> {
+        self.require_audit()?;
+        self.operation_savepoint(|tx| {
+            let task_id = guard.task_id.clone();
+            let step_id = guard.step_id.clone();
+            let generation = guard.generation.get();
+            let prior = tx.lease_audit_row(&task_id, &step_id)?;
+            lease_audit_class(prior.1)?;
+            tx.release_lease(guard, now)?;
+            let after = tx.lease_audit_row(&task_id, &step_id)?;
+            let mut facts = lease_facts(
+                AuditOperation::LeaseReleased,
+                &task_id,
+                &step_id,
+                prior,
+                after,
+                now,
+                context,
+            )?;
+            // Successful release checked this generation against leases, not the step copy.
+            facts.generation = Some(generation);
+            tx.record_transition(&facts)
+        })
+    }
+
+    fn lease_audit_row(&self, task: &TaskId, step: &StepId) -> Result<LeaseAuditRow, StoreError> {
+        self.inner
+            .query_row(
+                "SELECT t.state,t.data_class_rank,s.status,s.attempt,s.lease_generation
+             FROM tasks t JOIN task_steps s ON s.task_id=t.task_id
+             WHERE t.task_id=?1 AND s.step_id=?2",
+                [task.as_str(), step.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?
+            .ok_or(StoreError::LeaseFenced)
+    }
+}
+
+type LeaseAuditRow = (String, u8, String, u32, u32);
+
+fn lease_audit_class(rank: u8) -> Result<DataClass, StoreError> {
+    let class = match rank {
+        0 => DataClass::Public,
+        1 => DataClass::Personal,
+        2 => DataClass::Private,
+        _ => return Err(StoreError::ClassRefused),
+    };
+    ordinary_class(class)?;
+    Ok(class)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lease_facts(
+    operation: AuditOperation,
+    task: &TaskId,
+    step: &StepId,
+    prior: LeaseAuditRow,
+    after: LeaseAuditRow,
     now: EpochMillis,
-    result: Option<&'a BlobRef>,
-    reason: Option<&'a str>,
+    context: &TransitionContext<'_>,
+) -> Result<DurableTransition, StoreError> {
+    let state = |s: &str| match s {
+        "RECEIVED" => Ok(TaskState::Received),
+        "PLANNING" => Ok(TaskState::Planning),
+        "READY" => Ok(TaskState::Ready),
+        "EXECUTING" => Ok(TaskState::Executing),
+        "WAITING_APPROVAL" => Ok(TaskState::WaitingApproval),
+        "WAITING_USER" => Ok(TaskState::WaitingUser),
+        "VERIFYING" => Ok(TaskState::Verifying),
+        "BLOCKED" => Ok(TaskState::Blocked),
+        "COMPLETED" => Ok(TaskState::Completed),
+        "FAILED" => Ok(TaskState::Failed),
+        "CANCELLED" => Ok(TaskState::Cancelled),
+        _ => Err(StoreError::CorruptRow),
+    };
+    let class = lease_audit_class(after.1)?;
+    let mut facts = DurableTransition::task(
+        operation,
+        task,
+        Some(state(&prior.0)?),
+        state(&after.0)?,
+        class,
+        now,
+        context,
+    );
+    facts.step_id = Some(step.clone());
+    facts.step_from = Some(StepStatus::new(prior.2).map_err(|_| StoreError::CorruptRow)?);
+    facts.step_to = Some(StepStatus::new(after.2).map_err(|_| StoreError::CorruptRow)?);
+    facts.attempt = Some(after.3);
+    facts.generation = Some(after.4);
+    Ok(facts)
 }

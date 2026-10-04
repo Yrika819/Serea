@@ -11,7 +11,7 @@ use serea_storage::{PlanWrite, StepInput, Store};
 /// Owns lifecycle orchestration, not identifier entropy, clocks or effect execution.
 /// A successful mutation result is published only after the outer commit succeeds.
 pub struct TaskEngine {
-    store: Store,
+    pub(crate) store: Store,
 }
 
 impl TaskEngine {

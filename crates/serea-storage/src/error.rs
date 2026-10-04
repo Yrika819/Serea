@@ -84,6 +84,10 @@ pub enum StoreError {
     DuplicateIdempotencyKey,
     /// A task mutation supplies a backward or inconsistent timestamp.
     InvalidTimestamp,
+    /// Recovery observation no longer matches durable facts, even within one Tx.
+    RecoverySnapshotStale,
+    /// Requested recovery action lacks validated durable evidence.
+    InvalidRecoveryAction,
     /// The injected clock refused its reading.
     Clock(ProtocolError),
 }
@@ -130,6 +134,8 @@ impl StoreError {
             Self::DuplicateSequence => "DuplicateSequence",
             Self::DuplicateIdempotencyKey => "DuplicateIdempotencyKey",
             Self::InvalidTimestamp => "InvalidTimestamp",
+            Self::RecoverySnapshotStale => "RecoverySnapshotStale",
+            Self::InvalidRecoveryAction => "InvalidRecoveryAction",
             Self::Clock(_) => "Clock",
         }
     }

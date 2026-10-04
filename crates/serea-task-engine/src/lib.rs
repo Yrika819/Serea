@@ -1,9 +1,9 @@
 //! Deterministic task lifecycle orchestration. IDs, time and attribution are supplied
 //! by the host; SQLite remains the lease, outcome and transaction authority.
-//! No execution, recovery, event runtime or ambient clock is part of this crate.
+//! Recovery classifies durable facts; no execution, event runtime or ambient clock.
 //!
-//! Recovery is a later phase, not a placeholder API:
-//! ```compile_fail
+//! Recovery is an explicit-time, deterministic lifecycle operation:
+//! ```
 //! use serea_task_engine::TaskEngine;
 //! let _ = TaskEngine::recover;
 //! ```
@@ -23,12 +23,14 @@
 mod engine;
 mod error;
 mod journal;
+mod recovery;
 mod transition;
 mod types;
 
 pub use engine::TaskEngine;
 pub use error::EngineError;
 pub use journal::TaskJournal;
+pub use recovery::{RecoveryDecision, RecoveryReport};
 pub use serea_storage::{
     CancellationOutcome, DeletionOutcome, LeaseGuard, StepCommit, StepFailure, StepOutcome,
     TransitionContext,

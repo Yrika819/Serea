@@ -241,6 +241,62 @@ it is not a lease registry and never replaces SQLite authority.
 
 ## 5. Before P2F–P2G — engine and recovery
 
+**Current P2G annotation:** the [frozen selected design](P2G-review-and-closure.md#preimplementation-reconciliation-frozen-before-production-edits)
+has a **CLOSED P2G runtime gate** per coordinator closure direction; see the
+[closure ledger](P2G-review-and-closure.md) and [terminal generation-1 report](P2G-review-generation-1.md).
+Three independent reviews R1/R2/R3 returned terminal **PASS**, zero findings/gaps;
+final true stable1.98.1/exact MSRV1.85.0 validation passed: workspace **801 regular +
+45 doctests = 846** each, storage **362 + 37 = 399** and engine **103 + 3 = 106**
+each in all four modes. Focused56 engine recovery/41 storage unit/9 capability
+doctests remain valid. Baseline740 → final846 adds97 regular +9 net doctests, with
+no missing comparable identities; the intentional recovery-absence compile-fail
+→ positive API check replacement preserves all3 original engine blocks and35 other
+baseline doctest obligations. Earlier pending/READY/sketch statuses below are
+explicitly historical lineage, not new contract approval or P2H/P3 completion.
+Current production/selected design supersede the older one-statement recovery and
+receipt-only repair prose.
+
+Recovery uses `recover(now: EpochMillis, context)`, no retained Clock. One finite
+BEGIN IMMEDIATE snapshot/writer reservation and whole-pass savepoint contain
+narrow storage raw inspection/conditional operations via a restricted RecoveryPass
+closure: no SQL/unrestricted Tx, acquisition/authority escape, clock reads or
+external callbacks/effects. Any error rolls back all pass mutations, even when a
+storage caller catches it; a report is published only after outer commit.
+
+EXECUTING + receipt is trigger-impossible corruption. Schema-representable
+SUCCEEDED + receipt stale aggregate repair requires complete corroborating P2F
+outcome audit, valid provenance/result, released matching authority, a unique legal
+destination and **no superseding task edge including recovery**. Never reconstruct
+a missing outcome batch. Complete P2F COMMIT with caller non-observation (N6) needs
+no outcome repair, repeated outcome journal or re-effect. The terminal fixture is
+a strict no-op; a nonterminal outcome may receive first classification audit,
+counted by the existing selected repairs definition, not repair invented due to
+caller non-observation. Process proof remains P2H pending.
+
+Journal-only decisions deduplicate existing structural envelopes plus recomputed
+durable-fact fingerprint and static reason identity, never free text or a marker
+table. Identity excludes caller time/actor and recovery journal sequence; repairs
+use stable post-repair facts, while changed durable facts permit new decisions.
+Second-pass identity compares logical durable-state bytes, not SQLite/WAL files.
+
+Crash-only exhaustion is not provider failure. Stranded READY uses truthful legal
+READY → PLANNING (REPLAN) → BLOCKED in one operation, no fake begin/started_at/new
+revision and no widened oracle. Known illegal blockade sources preserve pending
+waits with journal-only evidence. No RECONCILED_ABSENT writer exists: receipt
+absence/expiry cannot prove external absence; existing closures are conservative,
+not successful predecessors.
+
+Counters follow the selected ledger exactly: examined counts inspected identities
+including terminal tasks; resumed counts distinct ResumeNormally eligibility;
+repairs counts distinct durably changed tasks including first-time decision audit;
+violations counts distinct attributable invalid tasks; decisions are ordered
+classifications and actual revocations. Pending is the final committed ALL-journal
+count including recovery audit, never an event queue/backfill/delivery. E3/E4 stay
+unclaimed P3 obligations; ADR-0021's P2 runtime gate is complete, but its status
+remains Proposed for the P3 event gate/architecture ratification. ADR-0024 remains
+Proposed/unratified despite its closed P2G runtime gate. ADR-0024's
+expiry/known-outcome semantics and ADR-0022 are unchanged.
+
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
 | 5.1 | One transition relation with exhaustive outer TaskState match and independent 121-pair oracle | **DESIGN_RECONCILED; runtime pending** | `matches!` has a wildcard false arm and does NOT fail compilation when an enum grows. Terminal sources explicitly refuse every destination; independently pin eleven protocol wire names, 37 legal pairs and 84 illegal pairs. SQL does not encode the table. See [P2F-b gate](P2F-task-engine-review-and-closure.md). | P2F-b | No |
@@ -248,10 +304,10 @@ it is not a lease registry and never replaces SQLite authority.
 | 5.3 | **Historical 32 presence-matrix `N`/`0` probes refused by SQL; not complete error-shape coverage** | **READY** | Was 24/32. Single-column/partial-error cases require the additional gate in §10. The eight gaps — `completed_at`/`result_digest` on `EXECUTING` and `WAITING`, `lease_expires_at` on `WAITING`/`SUCCEEDED`/`FAILED`/`RECONCILED_ABSENT` — closed by three additive constraints. All 51 constructible cells and all 37 transitions still construct | P2F | No |
 | 5.4 | `lease_expires_at` gets a **biconditional**, not an implication | **READY** | `lease_owner` was already biconditional, so the pair was half-constrained: a terminal step could carry an expiry with no owner. ADR-0024 clears both together, so no designed path produces it — but a future writer clearing only `lease_owner` would pass | P2F | No |
 | 5.5 | All 56 `kind × status` cells: **51 constructible, 5 correctly refused** | **READY** | The 5 are `WAITING` on a non-wait kind. Asserting 56/56 would assert the opposite of ADR-0018 | P2F | No |
-| 5.6 | `receipt ⇒ SUCCEEDED` is a trigger; `RECONCILED_ABSENT ⇒ no receipt` is recovery's scan | **READY_WITH_LIMITATION** | A cross-table property no `CHECK` can express. Stated as detected-not-prevented | P2G | No |
-| 5.7 | Recovery runs `foreign_key_check` **before** classifying | **READY** | Without it, §9.1 row 3b's "spanning tables" case is not decidable. It is the only integrity pragma that sees a referential violation | P2G | No |
+| 5.6 | `receipt ⇒ SUCCEEDED` is a trigger; `RECONCILED_ABSENT ⇒ no receipt` is recovery's scan | **READY_WITH_LIMITATION** | Historical status retained; current narrow semantic scan detects invalid outcome combinations. EXECUTING + receipt is corruption, not repair; stale SUCCEEDED aggregate requires the complete proof above. No absence writer | P2G | No |
+| 5.7 | Recovery runs catalog and `foreign_key_check` preflight **before** mutation/classifying | **READY** | Historical status retained; current selected gate refuses the whole pass for **ANY FK failure**, not just spanning-table damage. Task-semantic inspection requires intact relational attribution, preserves original raw values and never uses enum fallback | P2G | No |
 | 5.8 | Recovery never executes | **READY** | `ExpiredLease` never becomes blind re-execution. P2 cannot read `replay_safety` — it lives in a descriptor and there is no registry — so P2 records the decision durably and P5 acts on it | P2G | No |
-| 5.9 | `pending_event_transitions` needs no column | **READY** | With `event_seq` dropped, in P2 every journal row is pre-event history, so the count is the row count. It is the size of the window during which `E3` did not hold — a fact to display, not a queue to drain | P2G | No |
+| 5.9 | `pending_event_transitions` needs no column | **READY** | Historical status retained; current report counts final committed **ALL task_journal rows**, including recovery audit. No queue/backfill/delivery or E3/E4 claim; no new column | P2G | No |
 
 ---
 
@@ -261,7 +317,7 @@ it is not a lease registry and never replaces SQLite authority.
 | --- | --- | --- | --- | --- | --- |
 | 6.1 | **A deterministic mid-`COMMIT` abort is not injectable through `rusqlite`** | **READY** | Every injection point was worked through. Returning `Err` before `execute_batch("COMMIT")` reaches nothing inside SQLite; `SIGKILL` in flight is timing-dependent; `SQLITE_TESTCTRL` / a fault VFS / a SQLite fault build needs a custom build; a second writer cannot interrupt a commit because SQLite serialises writers | P2H | No |
 | 6.2 | N7 is a **stress test with weak assertions** | **READY** | Assert `quick_check` is `ok`, the database opens, `foreign_key_check` is empty. **Never** an exact row count. N5 (pre-commit) plus N6 (post-commit) are the deterministic coverage | P2H | No |
-| 6.3 | N6 — crash after `COMMIT`, before the caller observes `Ok` — is the most valuable window | **READY** | Measured with `SIGKILL` in a child process: 0 rows before commit, 1 row after, `quick_check` ok, and SQLite recovers the stale `-wal` on next open | P2H | No |
+| 6.3 | N6 — crash after `COMMIT`, before the caller observes `Ok` — is the most valuable window | **READY** | Historical SQLite SIGKILL probe only, not current engine crash proof. Complete P2F outcome is atomic; N6 now asserts complete-state no-op, no repair/repeated outcome/effect. Real child-process harness remains P2H pending | P2H | No |
 | 6.4 | Two OS processes writing one file both succeed | **READY** | Measured: 40 of 40 writes landed, `quick_check` ok, `busy_timeout` serialising correctly | P2H | No |
 | 6.5 | The injection point must be inert when unused | **READY** | A test asserts the hook list is empty in a release-configuration build, so an inert hook cannot become a hidden code path | P2H | No |
 

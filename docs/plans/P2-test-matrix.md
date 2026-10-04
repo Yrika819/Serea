@@ -133,20 +133,22 @@ process** and asserts against durable expectations.
 | N3 | After `INSERT tasks`, before the journal insert | abort | **No task row.** The whole transaction rolled back |
 | N4 | After the fenced step `UPDATE`, before the receipt insert | abort | Step is not `SUCCEEDED`, no receipt row. `T4` holds in the *conservative* direction: nothing advanced |
 | N5 | After every write, before `COMMIT` | abort | Nothing is durable. Every row the transaction wrote is absent |
-| N6 | After `COMMIT`, before the caller observes `Ok` | abort, without printing success | **The row is present**, and a recovery pass reports `ReceiptAlreadyCommitted` rather than re-effecting. This is the window that separates "committed" from "believed committed" |
+| N6 | After `COMMIT`, before the caller observes `Ok` | abort, without printing success | **Complete committed state is present**: P2F step/result/ref/receipt/task/journal/release committed atomically. Recovery needs no outcome repair, repeated outcome journal or re-effect due to caller non-observation; a consistent terminal task yields only `TerminalNoop`. A nonterminal task may receive first classification audit under the existing report definition. Real child-process proof remains P2H pending |
 | N7 | **`COMMIT` in flight** — reclassified by the P2 autonomous audit | `SIGKILL` from a sibling thread while `execute_batch("COMMIT")` runs | **A stress test, not a pin.** Assert only `PRAGMA quick_check` is `ok`, the database is openable, and `foreign_key_check` is empty. Never assert an exact row count: whether the WAL frame reached disk depends on timing |
 | N8 | A fault injected between the fenced write and `rows_affected` inspection | return `Err` **after** the write, before the check | The transaction is rolled back by the drop of `Tx`; no receipt row exists. This is the one window an `Err` *does* model, and it is labelled as such rather than called a crash |
 
 Two extra assertions that make N6 meaningful:
 
-- **N6a.** The parent asserts the committed row exists **and** that the child's
-  exit code indicates it never printed success. If the child could report success
-  and the row were absent, the test fails; if it could report failure and the row
-  were present, recovery must handle it, which N6's second half covers.
-- **N6b.** Recovery after N6 must produce **zero** new external-effect
-  representations: no second receipt row, no second `task_journal` entry for the
-  same transition. `UNIQUE (step_id)` on `side_effect_receipts` and the
-  `journal_seq` precondition together enforce this.
+- **N6a.** The parent asserts the complete committed outcome exists **and** that
+  the child never reported success. Caller non-observation does not make durable
+  truth incomplete. P2G's complete-state no-op fixture is not the P2H process proof.
+- **N6b.** Recovery after N6 must produce **zero outcome repairs/re-effects**:
+  no second receipt or outcome journal batch due to caller non-observation. The
+  terminal fixture is a strict logical durable-state no-op, including journals and
+  released authority. A complete nonterminal outcome may receive first classification
+  audit, counted in `repairs_committed` by the existing selected report definition;
+  it is not an outcome repair invented because the caller did not observe COMMIT.
+  Do not inject an impossible `EXECUTING` + receipt or stale aggregate for N6.
 
 The fault hook is a `TxHook` the production build never populates. A test asserts
 the hook list is empty in a release-configuration build, so an inert hook cannot
@@ -558,24 +560,54 @@ than a boolean.
 
 ## 15. Group M — recovery
 
+The [frozen P2G selected design](P2G-review-and-closure.md#preimplementation-reconciliation-frozen-before-production-edits)
+supersedes the historical M sketch. **P2G is CLOSED for its runtime gate** per
+coordinator closure direction; see the [closure ledger](P2G-review-and-closure.md)
+and [terminal generation-1 report](P2G-review-generation-1.md). Three independent
+reviews R1/R2/R3 returned terminal **PASS**, zero findings/standalone gaps, and final
+validation passed on true stable **1.98.1** and exact MSRV **1.85.0**: workspace
+**801 regular + 45 doctests = 846** on each; storage **362 + 37 = 399** and engine
+**103 + 3 = 106** each in all four toolchain/debug-release modes. Focused recovery
+coverage is 56 engine + 41 storage unit + 9 capability doctests.
+Baseline **704 regular + 36 doctests = 740** has **97 new regular + 9 net doctests =
+106** additional executions. No comparable baseline identities are missing: one
+recovery-absence compile-fail was intentionally replaced by a positive API check,
+all three original engine doctest blocks remain, and the other35 baseline doctest
+obligations are preserved. Prior pending/not-CLOSED wording is historical lineage.
+No P2H process proof, P3 guarantee or ADR acceptance is claimed. Rows below remain
+reconciled coverage obligations, not a one-to-one test-count ledger.
+
 | # | Test | Pins |
 | --- | --- | --- |
-| M1–M11 | One test per row of the recovery table | §9.1 of the design |
+| M1–M11 | Selected classification table coverage, including held/released authority, terminal no-op, conservative existing absence and crash-only ceiling reassessment | §9.1; no blind retry, fabricated absence/provider failure/begin, or widened transition oracle |
 | M12 | **a_recovery_pass_changes_durable_state_the_first_time_and_nothing_the_second** | `T5` |
-| M13 | `byte_identical_durable_state_after_the_second_pass` | The strongest form of M12: a full dump comparison |
+| M13 | `byte_identical_durable_state_after_the_second_pass` | Deterministic logical durable-state bytes across all task/step/lease/receipt/journal/revision/ref/blob rows; **not physical SQLite/WAL bytes** |
 | M14 | `an_expired_in_flight_lease_yields_needs_reconciliation_and_no_execution` | The blind-re-execution prohibition |
-| M15 | `a_receipt_present_with_an_incomplete_transition_is_repaired_without_re_effect` | Task Protocol §6 |
-| M16 | `the_repair_produces_no_second_receipt_row` | |
-| M17 | `a_corrupt_row_yields_invariant_violation_not_a_silent_skip` | Protocol Index §4.2 rule 5 |
-| M18 | `an_unrecognised_status_yields_blocked_unrecognised_state` | The exact frozen code string |
-| M19 | `pending_event_transitions_is_greater_than_zero_after_a_task_creation` | ADR-0021's visible `E3` debt |
+| M15 | `a_proven_stale_succeeded_aggregate_is_repaired_without_re_effect` | SUCCEEDED + valid receipt/result, complete corroborating P2F outcome audit, valid provenance, released matching authority, unique legal destination and no superseding task edge **including recovery**. EXECUTING + receipt is corruption; missing outcome evidence is not reconstructed |
+| M16 | `the_repair_produces_no_second_receipt_row` | Task-only legal repair plus recovery audit; no repeated P2F outcome batch. Complete committed state instead needs no repair (N6); process proof remains P2H |
+| M17 | `a_corrupt_row_yields_invariant_violation_not_a_silent_skip` | Catalog and **any FK** failure refuse before mutation; only attributable task-semantic damage uses narrow raw inspection/legal quarantine, with whole-pass savepoint rollback on later refusal |
+| M18 | `unrecognised_raw_state_or_status_is_quarantined_without_enum_fallback` | Frozen `UNRECOGNISED_STATE`; original raw evidence retained. Known illegal blockade sources get journal-only evidence preserving pending waits, not a forbidden edge or fake wait resolution |
+| M19 | `pending_event_transitions_is_greater_than_zero_after_a_task_creation` | Final committed count of **ALL** task_journal rows, including recovery audit; not queue/backfill/delivery. E3/E4 remain P3, unclaimed |
 | M20 | `recovery_invokes_nothing` | **A source-level assertion**: no `CapabilityProvider`, `ModelProvider`, or `HostGoalProvider` symbol is reachable from the recovery module's call graph |
-| M21 | `recovery_reads_the_clock_only_through_the_injected_trait` | No ambient clock |
+| M21 | `recovery_uses_only_explicit_epoch_millis_and_context` | `recover(now: EpochMillis, context)`, no retained/injected Clock read or external callback under the finite whole-pass writer reservation |
 | M22 | `recovery_on_an_empty_database_is_a_no_op` | |
 
-**RED for M12**: the test runs two passes and compares two full dumps. Against an
-implementation whose second pass re-writes `updated_at_ms`, the dumps differ and the
-test reports the differing rows.
+**Historical RED target for M12**: two logical dumps expose second-pass
+`updated_at_ms` churn. Current first genuine API RED and focused GREEN belong to
+the P2G evidence, not an assertion that this old mutation was actually observed.
+Journal-only decisions also need deduplication: existing structural envelope plus
+recomputed durable-fact fingerprint and static reason identity, not free text or
+a marker table. Changed durable facts permit new decisions; repairs use stable
+post-repair identity, excluding caller time/actor and recovery journal sequence.
+
+Additional selected coverage pins restricted `RecoveryPass` capability boundaries
+(no acquisition, unrestricted Tx/SQL or authority escape), file-backed writer
+serialization, pass/savepoint atomicity and report publication only after commit.
+Counter assertions use the selected ledger exactly: examined includes terminal
+identities; resumed counts distinct eligible tasks; repairs counts distinct tasks
+with durable changes including first-time decision audit; violations counts
+distinct attributable invalid tasks; decisions are ordered classifications and
+actual revocation observations; pending count is the final all-journal count.
 
 ## 16. Group O — non-negotiables
 
@@ -610,7 +642,7 @@ even where a more specific group seems to cover it.
 | P2D | G1–G9, G11–G16, G19–G35; private FK fixtures | Genuine compile RED against intended missing production blob/protection APIs, not a fake helper or unchecked table; actual evidence pending | Implement narrow blob seam and record actual focused/full stable/Rust 1.85 debug/release validation and independent reviews; ADR-0022 stays Proposed |
 | P2E | H1–H8, H14/H14b, acquisition H15/H18/H22, H16, H19–H21 and §18.1 authority regressions | Intended missing-API RED if genuinely absent; H6 without expiry, stale renew/release, strict extension, caller-caught partial acquisition and explicit max-u32 refusal | Implement selected lease-authority gate only; record actual RED/GREEN/reviews/validation before closure. Partial implementation is not closure; no H9–H13 or fake outcome method, no schema change; ADR-0024 stays Proposed |
 | P2F | H9–H13, outcome H15/H22, begin H18, deletion H17; I1–I15, J1–J15, K1–K8, L1–L10 plus G10/G17/G18 and whole-transition reference atomicity | H10 owner-only outcome fence and released authority despite unchanged step copy; H18 double charge; I1 omitted transition; J12 missing task_id | Implement begin and embedded whole-outcome fences with receipt/journal/task assertions plus engine/reference/role/deletion surface; PRIVATE ordinary-row writes fail closed even with a blob backend until complete row design |
-| P2G | M1–M22 | M12 on the second-pass rewrite | Implement; M green |
+| P2G | Reconciled M1–M22 plus selected integrity/capability/race/counter coverage | Genuine missing recovery API RED; M12 rewrite remains a historical RED target | **CLOSED runtime gate**: final workspace846, storage399/engine106 in all four modes; three independent terminal PASS reviews, zero findings/gaps. See Group M's [closure ledger](P2G-review-and-closure.md)/[terminal report](P2G-review-generation-1.md); prior pending status is historical, P2H/P3 separate |
 | P2H | N1–N8 **plus F25/F26** | N4 and N6 on a `transact` with no injection point; cross-binary temp identity and crash-child inherited-directory reopen | Implement; N and deferred F25/F26 green |
 | P2I | O1–O15 | O6 and O10 on a `Store` with a bare `update_task_state` | Remove; all green |
 

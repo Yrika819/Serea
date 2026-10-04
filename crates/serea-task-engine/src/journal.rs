@@ -12,6 +12,36 @@ pub struct TaskJournal;
 
 impl TaskAuditParticipant for TaskJournal {
     fn records(&self, facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
+        if facts.operation() == AuditOperation::RecoveryDecision {
+            // Select static names rather than rendering arbitrary storage strings.
+            let decision = match facts.recovery_decision() {
+                Some("ResumeNormally") => "ResumeNormally",
+                Some("HeldLease") => "HeldLease",
+                Some("NeedsReconciliation") => "NeedsReconciliation",
+                Some("AwaitApproval") => "AwaitApproval",
+                Some("AwaitUser") => "AwaitUser",
+                Some("BlockedTask") => "BlockedTask",
+                Some("ReceiptAlreadyCommitted") => "ReceiptAlreadyCommitted",
+                Some("CorruptOrInvariantViolation") => "CorruptOrInvariantViolation",
+                _ => return Err(StoreError::AuditRejected),
+            };
+            let fingerprint = facts.recovery_identity().ok_or(StoreError::AuditRejected)?;
+            let observed = facts.recovery_observed_fingerprint().map_or_else(
+                || "null".to_owned(),
+                |digest| format!("\"{}\"", digest.as_str()),
+            );
+            return Ok(vec![JournalRecord {
+                kind: JournalKind::RecoveryDecision,
+                state_from: facts.task_from().map(|state| state.wire_name().to_owned()),
+                state_to: Some(facts.task_to().wire_name().to_owned()),
+                reason: facts.reason().cloned(),
+                payload_json: format!(
+                    "{{\"decision\":\"{decision}\",\"fingerprint\":\"{}\",\"observed_fingerprint\":{observed}}}",
+                    fingerprint.as_str(),
+                )
+                .into_bytes(),
+            }]);
+        }
         // Only validated digests and numeric evidence are rendered; no ordinary
         // prose or raw effect payload is copied into journal diagnostics.
         let payload = format!(
@@ -84,7 +114,9 @@ impl TaskAuditParticipant for TaskJournal {
             AuditOperation::Cancelled => vec![task(JournalKind::TaskCancelRequested)],
             AuditOperation::PlanningStarted
             | AuditOperation::Blocked
-            | AuditOperation::InvariantFailed => vec![],
+            | AuditOperation::InvariantFailed
+            | AuditOperation::RecoveryStateChanged => vec![],
+            AuditOperation::RecoveryDecision => return Err(StoreError::AuditRejected),
         };
         if let Some(from) = facts.task_from().filter(|from| *from != facts.task_to()) {
             if !crate::legal_task_transition(from, facts.task_to()) {

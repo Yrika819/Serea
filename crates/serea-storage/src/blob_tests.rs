@@ -882,9 +882,23 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
     );
     let root = include_str!("lib.rs");
     assert!(root.contains("mod lease;"));
+    // P2G adds only inspected, fenced recovery operations, not raw row writers.
+    assert!(root.contains("mod recovery;"));
+    let recovery = include_str!("recovery.rs");
+    let transaction_methods = recovery.split("impl Tx<'_> {").nth(1).unwrap();
+    assert_eq!(
+        public_methods(transaction_methods),
+        [
+            "apply_recovery",
+            "inspect_recovery_task",
+            "recovery_journal_count",
+            "recovery_pass",
+            "recovery_preflight",
+            "recovery_tasks",
+        ]
+    );
     for forbidden in [
         "mod engine;",
-        "mod recovery;",
         "mod journal;",
         "mod participant;",
         "pub mod testing",

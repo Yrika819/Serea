@@ -25,7 +25,27 @@
 > additionally validates engine acquire/begin/outcome/release delegation and task
 > deletion integration, including all83 P2F-a cases, one SQL-free audit authority,
 > independent reviews and stable/MSRV debug/release parity. Expiry/fencing semantics
-> are unchanged; recovery and full architecture acceptance remain unclaimed.
+> are unchanged; at that historical P2F-b gate recovery and full architecture
+> acceptance remained unclaimed.
+>
+> **Current P2G annotation:** conditional recovery revocation is now implemented
+> under one finite BEGIN IMMEDIATE snapshot/whole-pass savepoint. A restricted
+> RecoveryPass closure cannot acquire or let authority escape; no LeaseGuard is
+> reconstructed. **P2G's runtime gate is CLOSED** per coordinator closure direction;
+> see the [closure ledger](../plans/P2G-review-and-closure.md) and
+> [terminal generation-1 report](../plans/P2G-review-generation-1.md).
+> Three independent reviews R1/R2/R3 returned terminal PASS, zero findings/gaps;
+> final true stable1.98.1/exact MSRV1.85.0 validation passed: workspace801 regular
+> +45 doctests=846 each, storage362+37=399 and engine103+3=106 each in all four modes.
+> Focused56/41/9 evidence is retained; earlier pending/not-CLOSED wording is
+> historical pre-closure lineage. ADR status remains **Proposed/unratified**.
+> Exact observed unreleased authority with
+> expiry <= explicit now can be revoked, fencing the old generation; SQLite
+> serialization decides outcome-first versus recovery-first and reclaim ordering.
+> **The expiry/known-outcome semantics below are unchanged**: expiry alone does not
+> erase current known-result authority. This is a P2G gate annotation, not full ADR
+> ratification, a new approved contract, or P2H child-process proof.
+>
 > Historical SQL/docs probes below are
 > constructibility evidence, not current production runtime proof. P2A validation
 > remains recorded separately in its [closure record](../plans/P2A-review-and-closure.md).
@@ -371,6 +391,15 @@ concluded that `max_attempts_per_step = 3` buys three executions.
 crashes rather than by failures, the correct outcome is **not** `FAILED`: nothing
 was proven to have failed. Such a step is `NeedsReconciliation` with `attempt` at
 the ceiling, and the task moves `BLOCKED` with an invariant-violation reason.
+
+> P2G implementation annotation: a stranded READY plan reaches truthful
+> reassessment via legal READY → PLANNING (REPLAN) → BLOCKED in the same atomic
+> operation, never forbidden READY → BLOCKED, fake begin/started_at or invented
+> provider failure. Known sources without a legal blockade preserve pending waits
+> with journal-only evidence. Recovery cannot prove external absence from expiry or
+> receipt absence, so RECONCILED_ABSENT has no writer; existing absence closures are
+> classified conservatively. Historical sketch/probe statuses retain their lineage;
+> this does not widen the frozen transition oracle or change outcome authority.
 
 ### What the ceiling refusal actually leaves behind
 

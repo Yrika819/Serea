@@ -681,15 +681,16 @@ fudged:
 | --- | --- |
 | `T1` task state is durable and authoritative | **Claimed.** `tasks.state` is a CHECK-constrained column and the only authority |
 | `T4` a step's success and receipt persist before the task advances | **Claimed.** Both are in the same `Tx` |
-| `T5` recovery is idempotent | **Claimed.** Conditional writes with full preconditions |
+| `T5` recovery is idempotent | **Claimed** (historical intended closure scope; current P2G runtime gate CLOSED, not whole-P2/P3 or ADR acceptance). Conditional repairs plus structural-envelope/recomputed-fingerprint deduplication of journal-only decisions; no marker table |
 | `TB-7` cross-record atomicity for task, step, receipt and journal rows | **Claimed** |
 | `E3` an event and its state change commit together | **NOT claimed.** Deferred to P3 by construction |
 | `E4` `seq` gapless and assigned at commit | **NOT claimed.** No `seq` exists in P2 |
 
 To make the deferral *visible* rather than silent, `RecoveryReport` carries
-`pending_event_transitions: u64`, counting all P2 journal rows (no event_seq
-column or backfill), and a P2 test asserts that number is greater than zero after a task
-creation. An operator can see the `E3` debt from inside the product.
+`pending_event_transitions: u64`, the final committed count of **ALL** P2
+`task_journal` rows including recovery audit (no event_seq column, queue, backfill
+or delivery), and a P2 test asserts it is greater than zero after task creation.
+An operator can see the `E3` debt; `E3`/`E4` remain unclaimed P3 obligations.
 
 **One more consequence, stated because it is easy to miss.** P2 must not create
 the `serea_events` table, and it must not create a `store_meta.next_seq` counter.
@@ -1014,21 +1015,45 @@ effects by read-back. None of that is available in P2: there is no Capability
 Registry, no provider, no model router, and no device link.
 
 **Resolution: P2 recovery is durable classification and decision production, not
-execution.** `recover()` reads durable state, classifies every non-terminal task
-against **one** exhaustive table, writes at most one conditional mutation per
-task inside one `Tx`, appends a `RECOVERY_DECISION` journal row, and returns a
-`RecoveryReport`. It never invokes anything and never re-effects anything.
+execution.** The [frozen P2G selected design](P2G-review-and-closure.md#preimplementation-reconciliation-frozen-before-production-edits)
+supersedes the historical one-statement-per-task sketch. **P2G is CLOSED for its
+runtime gate** per coordinator closure direction; see the [closure ledger](P2G-review-and-closure.md)
+and [terminal generation-1 report](P2G-review-generation-1.md). All three independent
+reviews R1/R2/R3 returned terminal **PASS**, zero findings/standalone gaps. Final
+true stable1.98.1 and exact MSRV1.85.0 validation passed: workspace **801 regular +
+45 doctests = 846** on each; storage **362 + 37 = 399**, engine **103 + 3 = 106**,
+each in all four toolchain/debug-release modes. Focused56/41/9 recovery evidence
+is retained; baseline740 to final846 adds97 regular +9 net doctests, with the
+intentional absence compile-fail → positive API check replacement and no missing
+comparable identities (all3 original engine blocks/35 other doctest obligations
+preserved). Prior pending statuses are historical, not current closure status;
+historical sketches are not new contract approval or P2H/P3/ADR acceptance.
+
+`TaskEngine::recover(&mut self, now: EpochMillis, context: &TransitionContext<'_>)`
+uses explicit time/attribution, no retained Clock. One finite `BEGIN IMMEDIATE`
+snapshot/writer reservation encloses the whole pass and a whole-pass savepoint.
+No external callbacks/effects or clock reads occur under the lock. Storage's
+restricted `RecoveryPass` closure exposes narrow inspection/conditional operations,
+not SQL/unrestricted Tx, acquisition or escaping lease authority. Any error rolls
+back the entire pass, even when caught by a storage caller; the engine returns a
+successful report only after outer commit.
+
+Catalog/migration authority and **ANY FK failure** refuse before mutation.
+Only task-semantic damage with intact relational attribution uses storage's narrow
+raw snapshot; original state/status are retained, never coerced into fallback enums.
+Unreadable structure refuses; ordinary typed loading stays fail closed.
 
 | `RecoveryDecision` | Condition | P2 action |
 | --- | --- | --- |
-| `ResumeNormally` | Non-terminal, no lease held, no in-flight step | Journal only. No state change |
+| `ResumeNormally` | Eligible non-terminal work, no held/uncertain authority | Journal once; eligibility only, no execution or guessed completion. VERIFYING without a verifier remains VERIFYING |
 | `AwaitUser` | A `WAITING` step of kind `WAIT_USER` or `WAIT_SCHEDULE` exists | Journal only. P2 cannot deliver input |
 | `AwaitApproval` | A `WAITING` step of kind `WAIT_APPROVAL` exists | Journal only. P2 cannot re-render against a device roster; that is P6/P12 |
-| `ExpiredLease` | A held lease with `expires_at_ms <= now_ms` | Release the lease and journal. **Then classify the step separately** |
-| `NeedsReconciliation` | A released-or-expired lease on a step that was `EXECUTING` | Journal. **No re-execution, ever, in P2** |
-| `ReceiptAlreadyCommitted` | A `side_effect_receipts` row exists for the step and the task has not advanced | Commit the state transition from durable facts. No re-effect (Task Protocol §6, `T4`) |
+| `HeldLease` | Matching unexpired unreleased authority | Preserve/defer; never execute |
+| `ExpiredLease` | Matching unreleased authority with `expires_at_ms <= now` | Conditionally revoke exact observed owner/generation/expiry and task/step facts, fence the old generation and audit. Never reconstruct LeaseGuard; SQLite serialization decides outcome/reclaim/recovery ordering |
+| `NeedsReconciliation` | Released authority with uncertain EXECUTING work, crash-only exhausted LEASED/EXECUTING work, or existing RECONCILED_ABSENT | Journal once; no re-execution, inferred absence or provider failure. Exhaustion blocks only through truthful legal edges |
+| `ReceiptAlreadyCommitted` | SUCCEEDED + valid receipt/result | Observation without outcome/receipt rewrite; stale aggregate repair only with complete corroborating P2F audit, valid provenance/result, released matching authority, unique legal destination and no superseding task edge, **including recovery**. Otherwise quarantine/refuse |
 | `TerminalNoop` | `state.is_terminal()` | Nothing. No journal row |
-| `CorruptOrInvariantViolation` | A row violates a `CHECK`, a foreign key, or a transition predicate | Move the task `BLOCKED` with `blocked_reason: UNRECOGNISED_STATE`, or refuse the whole pass. Never silently skip |
+| `CorruptOrInvariantViolation` | Attributable semantic damage or unknown raw state/status, with intact relations | Legal blocking/compatibility quarantine or journal-only evidence preserving known illegal blockade sources and pending waits. Never fabricate a recognised source enum. ANY FK/catalog failure instead returns typed whole-pass Err, no successful report |
 
 **`ExpiredLease` -> `NeedsReconciliation`, never a blind re-execution.** Task
 Protocol §6 says an expired lease on a step with no receipt and
@@ -1037,19 +1062,50 @@ Protocol §6 says an expired lease on a step with no receipt and
 records the decision and P5 acts on it after restart. The decision is durable, so
 nothing is lost by deferring the action.
 
-**Idempotency of the pass (`T5`).** Every classification is a read, and every
-mutation is a single conditional statement whose `WHERE` clause contains the full
-precondition the read observed — state, lease generation, receipt presence and
-step status. A second pass over unchanged durable state therefore matches nothing
-and writes nothing. No "recovery already ran" marker is needed or added, because
-a marker would be a second source of truth for a property that is structurally
-true.
+**Receipt and crash boundaries.** EXECUTING + receipt is impossible through the
+migration 0001 receipt trigger and is corruption, not a recovery window. A stale
+SUCCEEDED aggregate is schema-representable, but a partial committed P2F outcome
+is not: P2F atomically commits step/result/ref/receipt/task/journal/release.
+N6 caller non-observation leaves complete state, requiring no outcome repair,
+repeated outcome journal or re-effect. The terminal fixture is a strict no-op;
+a nonterminal outcome may receive first classification audit counted by the
+existing selected report definition, not invented outcome repair. Real
+child-process proof remains P2H pending.
+Never reconstruct a missing outcome audit batch.
+
+**Truthful exhaustion/absence.** A stranded READY plan at its crash-only ceiling
+enters real reassessment via legal READY → PLANNING (REPLAN) → BLOCKED in the same
+operation; no fake begin, started_at, model/provider failure or new revision.
+The frozen transition oracle is unchanged. RECONCILED_ABSENT has **no writer**:
+P2G cannot prove external absence from expiry or receipt absence. Existing absence
+closures are classified conservatively, never as successful predecessors.
+
+**Idempotency of the pass (`T5`).** Conditional predicates protect repairs and
+revocation, but journal-only decisions additionally match existing structural
+envelope fields, a static reason-code identity and a recomputed fingerprint of
+relevant durable facts in the same writer transaction. Free text is not authority;
+no marker table/column is added. Identity covers task/step/revision/attempt/
+generation/lease/result/receipt/provenance and excludes caller time/actor and
+recovery journal sequence. Repairs identify the stable post-repair situation;
+materially changed facts permit new decisions. Compare deterministic logical
+durable-state bytes, not physical SQLite/WAL bytes. Unchanged post-repair facts
+with the same explicit now/context cause no churn; a newly revoked lease
+observation need not recur.
+
+**Report accounting.** Examined counts inspected identities including terminal
+tasks; resumed counts distinct ResumeNormally tasks (eligibility); repairs counts
+distinct durably changed tasks including first-time decision audit; violations
+counts distinct attributable invalid tasks. Decisions are ordered classifications
+and actual authority-revocation observations. Pending event transitions is the
+final committed count of ALL task_journal rows, including recovery audit, never a
+queue/backfill/delivered event count.
 
 **What P2 must establish, and what it must not pretend.** Established: restart
 persistence, idempotent recovery analysis, stale-lease detection, and the
 structural absence of any duplicated external effect. Not established and not
 claimed: any provider execution, any read-back reconciliation, any approval
-re-render, any model turn, and `E3`.
+re-render, any model turn, and `E3`/`E4`. Final P2G runtime validation and terminal
+review passed; that closure is not P2H crash proof, P3 completion or ADR acceptance.
 
 Classification: `P2_DESIGN_DECISION`, recorded in
 [P2 design §9](../plans/P2-storage-task-engine.md#9-recovery). It implements

@@ -1,6 +1,6 @@
 # ADR-0021: The P2/P3 Event-Atomicity Seam
 
-- Status: **Proposed** — P2C/P2F state/audit runtime gates implemented; P2G acceptance remains deferred; P3 event guarantees require their own green gate
+- Status: **Proposed** — P2 runtime gate complete, including CLOSED P2G recovery; P3 event gate and architecture ratification remain outstanding, E3/E4 unclaimed
 - Architecture version: `serea-arch/0.2.0` at the time of writing
 - Decision date: not yet ratified
 - Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
@@ -15,7 +15,19 @@
 > same-savepoint state/journal failure safety and delegated P2F-a integration.
 > Three independent reviews, bounded terminal re-review and stable/MSRV debug/release
 > validation passed. This substantially satisfies the P2F gate, not P2G recovery or
-> P3 event atomicity. No RecoveryReport/event participant exists; this ADR stays Proposed.
+> P3 event atomicity. At that historical P2F-b point no RecoveryReport existed.
+>
+> **Current P2-side closure annotation:** the P2 runtime gate is complete,
+> including **CLOSED P2G recovery** per coordinator closure direction; see the
+> [closure ledger](../plans/P2G-review-and-closure.md) and
+> [terminal generation-1 report](../plans/P2G-review-generation-1.md).
+> All three independent reviews R1/R2/R3 returned terminal PASS, zero findings/gaps;
+> final true stable1.98.1/exact MSRV1.85.0 validation passed: workspace801 regular
+> +45 doctests=846 each, storage362+37=399 and engine103+3=106 each in all four modes.
+> Earlier P2G pending/not-CLOSED wording is historical pre-closure lineage.
+> This ADR remains **Proposed** for P3's event gate/architecture ratification;
+> P2 runtime closure is not ADR acceptance or P2H proof. No event participant,
+> E3/E4 guarantee, delivered event or backfill is implemented here.
 
 ## Context
 
@@ -205,8 +217,11 @@ they neither promise complete future event payloads nor authorize event backfill
 ## What P2 can honestly claim at closure
 
 The table below describes intended **whole-P2 closure**, not P2F-b closure.
-P2F-b proves its owned state/receipt/journal operations; T5 recovery and
-RecoveryReport accounting below remain P2G requirements and are NOT current claims.
+P2F-b proves its owned state/receipt/journal operations; P2G's T5 recovery and
+RecoveryReport accounting runtime gate is now CLOSED after final validation and
+three independent terminal PASS reviews. Earlier pending wording is historical.
+The table's **Claimed** statuses retain intended whole-P2 scope, not whole-P2/P3
+closure or architecture ratification; the P2-side runtime gate is complete.
 
 This is the part that must not be fudged, so it is stated as a table rather than
 prose.
@@ -221,9 +236,17 @@ prose.
 | `E4` `seq` gapless, assigned at commit | **NOT claimed** | No `seq` exists in P2 |
 | `E1`, `E2`, `E5`–`E10` | **NOT claimed** | All belong to `serea-event-bus` or the device link |
 
+> Current T5 implementation annotation supersedes the table's historical
+> single-statement rationale: conditional repair/revocation also requires
+> same-transaction structural-envelope/static-reason/recomputed-fingerprint
+> deduplication for journal-only decisions. No free-text authority or marker table;
+> identity compares logical durable-state bytes, not physical SQLite/WAL files.
+> This is CLOSED P2-side runtime evidence, not ADR ratification or P3 event proof.
+
 To make the deferral **visible rather than silent**, `RecoveryReport` carries
-`pending_event_transitions: u64`, counting all P2 `task_journal` rows. There is no
-`event_seq` column, acknowledgement or queue to drain. P3 preserves this historical
+`pending_event_transitions: u64`, the **final committed count of ALL** P2
+`task_journal` rows, including recovery audit, published only after the pass commits.
+There is no `event_seq` column, acknowledgement or queue to drain. P3 preserves this historical
 count separately from newly atomic transitions; it does not backfill it. A P2 test asserts the count is greater than
 zero after a task creation. An operator can therefore see the `E3` debt from
 inside the product, and a P3 upgrade can measure exactly how much history predates
@@ -268,6 +291,11 @@ A single note added under `E3` and `E4`, and a changelog section:
 sequencing note, not a relaxation.
 
 ## Deferred runtime implementation gate (P2C/P2F/P2G, not P2A)
+
+Historical deferred gate heading retained: the P2-side runtime gate is complete,
+including CLOSED P2G recovery with final validation and three independent terminal
+PASS reviews. Prior pending status is historical; this is not the P3
+event-atomicity gate or ADR acceptance.
 
 | File | Change |
 | --- | --- |

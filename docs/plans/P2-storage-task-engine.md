@@ -1345,29 +1345,64 @@ successful Clock value. No Store implementation or open test enters P2B.
 
 ## 9. Recovery
 
-`TaskEngine::recover()` produces durable classification and committed repairs. It
-invokes nothing and re-effects nothing.
+`TaskEngine::recover(&mut self, now: EpochMillis, context: &TransitionContext<'_>)`
+produces durable classification and committed repairs. Time and attribution are
+explicit; recovery retains no injected Clock, reads no ambient clock, invokes
+nothing and re-effects nothing.
+
+The [frozen P2G selected design](P2G-review-and-closure.md#preimplementation-reconciliation-frozen-before-production-edits)
+supersedes the historical recovery sketch. **P2G is CLOSED for its runtime gate**
+per coordinator closure direction; see the [closure ledger](P2G-review-and-closure.md)
+and [terminal generation-1 report](P2G-review-generation-1.md). All three independent
+reviews (R1/R2/R3) returned terminal **PASS**, with zero findings or standalone gaps;
+final validation passed on true stable **1.98.1** and exact MSRV **1.85.0**.
+Each workspace result is **801 regular + 45 doctests = 846**; storage is
+**362 regular + 37 doctests = 399**, engine **103 regular + 3 doctests = 106**,
+each in all four toolchain/debug-release modes. Focused coverage remains
+56 engine recovery + 41 storage recovery unit + 9 capability doctests.
+Baseline **704 + 36 = 740** to final846 is **97 new regular + 9 net doctests = 106**.
+No comparable baseline identities are missing: one recovery-absence compile-fail
+obligation was intentionally replaced by a positive API check, all three original
+engine doctest blocks remain, and the other35 baseline doctest obligations are
+preserved. Earlier pending/not-CLOSED annotations are historical pre-closure
+lineage, not current status. No P2H/P3 completion or ADR acceptance is claimed.
+
+The whole finite pass uses one `BEGIN IMMEDIATE` snapshot/writer reservation and
+a whole-pass savepoint, with no external callbacks/effects or clock reads under
+the lock. Storage exposes a restricted `RecoveryPass` closure, not Connection,
+arbitrary SQL or unrestricted Tx writers; it cannot acquire or let lease authority
+escape. Any error rolls back every pass mutation, including when a storage caller
+catches it; `TaskEngine::recover` publishes a report only after outer commit.
 
 ### 9.1 The classification table
 
-One exhaustive table, the recovery analogue of the transition table in §10.2. A
-`(state, step_status, lease, receipt)` combination not in the table is
-`CorruptOrInvariantViolation`, never a default arm.
+Classification depends on validated plan/provenance, result and authority facts,
+not just `(state, step_status, lease, receipt)`. Catalog/migration authority and
+**ANY** `foreign_key_check` failure are whole-pass preflight gates before mutation.
+Storage then provides narrow task-semantic raw inspection, retaining original
+state/status and validated attribution; malformed values never fall back to a
+recognised enum, and ordinary typed loading remains fail closed. Unsupported or
+unreadable combinations are classified as corruption or typed pass refusal, never
+guessed into eligibility.
 
 | # | Condition | Decision | P2 mutation |
 | --- | --- | --- | --- |
 | 1 | `state.is_terminal()` | `TerminalNoop` | None. **No journal row** |
-| 2 | A row violates a `CHECK`, a foreign key`, or `json_valid`, and the damage is attributable to one task | `CorruptOrInvariantViolation`, then `BlockedTask` | Move the task `BLOCKED` with `blocked_reason: UNRECOGNISED_STATE` and continue the pass |
-| 3 | An unrecognised `status` or `state` string | `CorruptOrInvariantViolation`, then `BlockedTask` | As #2 — Protocol Index §4.2 rule 5 |
-| 3b | Corruption not attributable to one task: a corrupt `schema_migrations` row, or a `foreign_key_check` failure spanning tables | `RefusedPass` | **No mutation at all.** The pass returns `Err`, because there is no task to attribute the damage to and blocking every task would be a worse lie. §7.1's recovery tier runs `foreign_key_check` **first**, so this row is decidable before any classification begins — and it is the only integrity pragma that can see a referential violation at all |
-| 4 | A held lease with `expires_at_ms <= now_ms` | `ExpiredLease` | P2G-owned conditional authority revocation using stored binding/generation, plus journal. Do not reconstruct a P2E LeaseGuard or call its consuming public release from durable fields. Then classify under #5 or #6; the recovery seam is a P2G implementation gate |
-| 5 | The step was `EXECUTING`, its lease is gone, and a receipt row exists | `ReceiptAlreadyCommitted` | Commit the task transition from durable facts. **No re-effect** (Task Protocol §6, `T4`) |
-| 6 | The step was `EXECUTING`, its lease is gone, and no receipt exists | `NeedsReconciliation` | Journal only. **No re-execution, ever, in P2** |
+| 2 | Task-local semantic damage with intact relational attribution | `CorruptOrInvariantViolation` | Legal quarantine/blocking where truthful; otherwise journal-only evidence preserving the known source and pending wait. Never disable constraints or erase damaged raw fields to force `BLOCKED` |
+| 3 | An unrecognised raw `status` or `state` string | `CorruptOrInvariantViolation` | `UNRECOGNISED_STATE` compatibility quarantine where writable; retain original raw evidence, never fabricate a known source enum. Known states use only legal edges; pending user/approval waits are preserved |
+| 3b | Invalid catalog/migration authority, **any FK failure**, or unreadable relational structure | Typed pass refusal (`Err`, not a report decision) | **No mutation anywhere.** Catalog and FK preflight precede task classification in the same snapshot; even a task-attributable FK violation refuses the entire pass. This is §7.1's recovery integrity tier, not a universal page-check claim |
+| 4 | A valid matching unreleased lease with `expires_at_ms <= now` | `ExpiredLease`, then stable classification | Conditionally revoke the exact observed owner/generation/expiry and task/step facts, plus audit; fence the old generation. Never reconstruct LeaseGuard. SQLite serialization decides outcome-first/recovery-first, reclaim-first/recovery-first and competing passes |
+| 4a | A valid matching unexpired unreleased lease | `HeldLease` | Preserve authority; classify without execution |
+| 5 | Receipt with non-`SUCCEEDED` status, including `EXECUTING` | `CorruptOrInvariantViolation` | Migration 0001's receipt trigger forbids this normal write; corruption, never conversion to success |
+| 5a | `SUCCEEDED` + valid receipt/result and compatible aggregate | `ReceiptAlreadyCommitted` observation / normal eligibility | No receipt, outcome or aggregate rewrite. A consistent terminal task has only row #1's in-memory no-op |
+| 5b | Schema-representable `SUCCEEDED` + receipt with proven stale aggregate | `ReceiptAlreadyCommitted` repair | Conditional task-only legal repair plus recovery audit, requiring a corroborating complete P2F outcome audit, valid plan/provenance/result, released matching authority and a unique legal destination with **no superseding task edge, including recovery**. Otherwise quarantine/refuse; never reconstruct a missing outcome batch |
+| 6 | `EXECUTING`, released authority, no receipt/result | `NeedsReconciliation` | Journal once. **No re-execution, ever, in P2** |
+| 6a | Crash-only acquisition ceiling exhausted on `LEASED`/`EXECUTING` after authority release | `NeedsReconciliation` / `BlockedTask` | Legal audited blocking, never invented provider failure. Stranded `READY` enters real reassessment via `READY → PLANNING` (`REPLAN`) then `PLANNING → BLOCKED` in the same operation; no fake begin, started_at, execution or new revision |
 | 7 | A `WAITING` step of kind `WAIT_APPROVAL` | `AwaitApproval` | Journal only. P2 cannot re-render against a device roster (P6/P12) |
 | 8 | A `WAITING` step of kind `WAIT_USER` or `WAIT_SCHEDULE` | `AwaitUser` | Journal only. P2 cannot deliver input |
-| 9 | `EXECUTING`, no lease, current step `LEASED` or `PLANNED` | `ResumeNormally` | Journal only. No state change |
-| 10 | `EXECUTING`, the current step is `SUCCEEDED`, all steps terminal | `ResumeNormally` | Advance the task per the transition table |
-| 11 | Any other non-terminal combination | `ResumeNormally` or `CorruptOrInvariantViolation` | Journal only |
+| 9 | Eligible work, no held/uncertain authority, current step `LEASED` with released authority and budget available, or `PLANNED` | `ResumeNormally` | Journal once; eligibility is not execution and acquired step facts stay intact |
+| 10 | `VERIFYING` after ordinary success without a verifier | `ResumeNormally` / deferred verification | Remain `VERIFYING`; never invent `COMPLETED`. Stale aggregate repair requires row #5b's proof, not success alone |
+| 11 | `BLOCKED`, existing `RECONCILED_ABSENT`, or another non-terminal combination | `BlockedTask`, `NeedsReconciliation`, eligibility or corruption/refusal as facts permit | Never infer a block cleared. Existing absence closure is conservative, not a successful predecessor. **No `RECONCILED_ABSENT` writer**: expiry or receipt absence cannot prove external absence; no read-back exists in P2G |
 
 **`ExpiredLease` never becomes blind re-execution.** Task Protocol §6 permits
 re-issuing an expired-lease step with the same key when `replay_safety` is
@@ -1378,18 +1413,26 @@ this is the difference between deferring and guessing.
 
 ### 9.2 Idempotency of the pass (`T5`)
 
-Every classification is a read; every mutation is a single conditional statement
-whose `WHERE` carries **every precondition the read observed** — task state, lease
-generation, lease owner, step status, and receipt presence. A second pass over
-unchanged durable state therefore matches nothing and writes nothing.
+Conditional repair/revocation predicates compare the observed durable facts, but
+that alone cannot deduplicate **journal-only** decisions. In the same writer
+transaction, existing `RECOVERY_DECISION` evidence is matched by its structural
+envelope, static reason-code identity and a recomputed fingerprint of relevant
+durable facts. Free-text payload is not authority. Identity covers task/step,
+revision, attempt, generation, lease, result, receipt and provenance; it excludes
+caller time/actor and recovery journal sequence. Repairs identify the stable
+post-repair situation; materially changed durable facts permit a new decision.
+No marker table or column is added.
 
-No "recovery already ran" marker exists, and none is added: a marker would be a
-second source of truth for a property that is structurally true, and ADR-0021's
-`pending_event_transitions` count gives the operator the visibility a marker was
-wanted for. With `event_seq` removed from the schema that count is simply the
-journal row count: in P2 every transition predates an event participant, so the
-number is the size of the window during which `E3` did not hold. It is a fact to
-display, not a backlog to drain.
+A second pass over unchanged post-repair facts with the same explicit now/context
+causes no durable churn. Compare deterministic **logical durable-state bytes**
+(task/step/lease/receipt/journal/revision/ref/blob rows), not physical SQLite/WAL
+files or metadata. Stable classifications recur; mutation observations such as
+newly revoked authority need not recur.
+
+`pending_event_transitions` is the **final committed count of ALL `task_journal`
+rows**, including recovery audit. It is not a queue, outbox, backfill or delivered
+event count. P2 creates no events and claims neither `E3` nor `E4`; P3 owns those
+forward-only guarantees.
 
 ### 9.3 What recovery establishes, and what it does not claim
 
@@ -1412,26 +1455,30 @@ pub struct RecoveryReport {
     pub decisions: Vec<RecoveryDecision>,
 }
 
-/// One row of the §9.1 table, with the mutation decided for it. `blocked_task` and
-/// `refused_pass` are distinct outcomes rather than one "or refuse the pass"
-/// branch, so the report says which happened instead of leaving a caller to guess.
+/// Current P2G classifications; whole-pass refusal returns Err, not a decision.
 pub enum RecoveryDecision {
     ResumeNormally      { task_id: TaskId, next_step_id: Option<StepId> },
+    HeldLease           { task_id: TaskId, step_id: StepId },
     AwaitUser           { task_id: TaskId },
-    AwaitApproval       { task_id: TaskId, step_id: StepId },
-    ExpiredLease        { task_id: TaskId, step_id: StepId, owner: LeaseOwner },
-    NeedsReconciliation { task_id: TaskId, step_id: StepId, receipt_present: bool },
+    AwaitApproval       { task_id: TaskId, step_id: Option<StepId> },
+    ExpiredLease        { task_id: TaskId, step_id: StepId },
+    NeedsReconciliation { task_id: TaskId, step_id: StepId },
     ReceiptAlreadyCommitted { task_id: TaskId, step_id: StepId, receipt_id: ReceiptId },
     TerminalNoop        { task_id: TaskId, state: TaskState },
-    CorruptOrInvariantViolation { task_id: Option<TaskId>, reason: ReasonCode },
-    /// The task was moved to `BLOCKED` and the pass continued.
-    BlockedTask         { task_id: TaskId, reason: BlockedReason },
-    /// The whole pass was refused, because the corruption was not attributable to
-    /// one task — a corrupt `schema_migrations` row, or a `foreign_key_check`
-    /// failure spanning tables.
-    RefusedPass         { reason: ReasonCode },
+    CorruptOrInvariantViolation { task_id: TaskId, reason: ReasonCode },
+    BlockedTask         { task_id: TaskId },
 }
 ```
+
+Counter definitions match the selected ledger: `tasks_examined` counts inspected
+task identities, including terminal tasks; `tasks_resumed` counts distinct tasks
+classified `ResumeNormally` (eligibility only); `repairs_committed` counts distinct
+tasks with committed durable changes, **including first-time decision audit**;
+`invariant_violations` counts distinct attributable invalid tasks. `decisions` are
+ordered in-memory classifications and actual authority-revocation observations;
+`pending_event_transitions` has §9.2's final all-journal definition. Recognised
+terminal tasks receive only in-memory `TerminalNoop`: no timestamp normalization,
+lease release or journal, even when cancelled with in-flight work.
 
 ### 9.4 Migration and crash edge cases — classified
 
@@ -1458,7 +1505,7 @@ testing SQLite.
 | 1 | **Crash during the migration transaction** | **SQLITE GUARANTEE**, verified | SQLite's DDL is transactional. Measured: `BEGIN; CREATE TABLE c1(…); INSERT INTO schema_migrations …; ROLLBACK;` leaves **no** table and **no** row. §7.1's "the version marker and the DDL share a transaction" depends on this and it is true |
 | 2 | **`PRAGMA user_version` participates in a transaction** | **Historical SQLite probe**, not a Store marker | Measured: `user_version=1; BEGIN; PRAGMA user_version=9; ROLLBACK;` leaves `user_version = 1`. Store deliberately does **not** set user_version; schema_migrations alone is authoritative |
 | 3 | **Migration row committed but schema incomplete** | **Atomic migration requirement** | DDL and schema_migrations row share BEGIN IMMEDIATE … COMMIT. Failure rolls both back; acceptance still requires full ordered-catalog validation and integrity gates, not just a marker. No user_version mirror |
-| 4 | **Crash after `COMMIT`, before the caller observes `Ok`** | **DIRECTLY TESTED** | N6, via `SIGKILL` in a child process. Measured by the earlier audit: 0 rows before commit, 1 row after, `quick_check` ok, and SQLite recovers the stale `-wal` on the next open. This is the genuinely dangerous window and the reason recovery exists |
+| 4 | **Crash after `COMMIT`, before the caller observes `Ok`** | **P2H process proof pending; historical SQLite probe only** | N6: P2F atomically commits step/result/ref/receipt/task/journal/release. Caller non-observation does not leave a partial outcome: complete committed state needs no repair, repeated outcome journal or re-effect. P2G's complete-state no-op fixture is not child-process crash evidence |
 | 5 | **Checksum changed after a migration was applied** | **TYPED FAILURE** | `MigrationChecksumMismatch`; the store does not open. Note the limit honestly: the `checksum` column is **mutable by any writer**, so SQLite provides no protection here — the check is Serea's own comparison at open, and it detects a *different binary*, not a tampered file |
 | 6 | **Duplicate migration ID** | **SQLITE GUARANTEE** + **TYPED FAILURE** | `version INTEGER PRIMARY KEY` gives a `UNIQUE constraint failed: schema_migrations.version`. Measured. The store additionally never renumbers or reuses a version, so the constraint is defence rather than the primary mechanism |
 | 7 | **Migration downgrade / open-newer refusal** | **TYPED FAILURE requirement** | Validate full ordered catalog prefix; any newer catalog version ⇒ SchemaTooNew. No downgrade/best effort. Historical user_version=99 readability is not evidence of Store refusal; Store ignores that pragma |
@@ -1471,7 +1518,7 @@ testing SQLite.
 | 14 | **Two OS processes writing one file** | **DIRECTLY TESTED** (N-group) | Measured by the earlier audit: 40 of 40 writes landed, `quick_check` ok, `busy_timeout` serialising correctly. SQLite permits exactly one writer at a time and the pragma is the mechanism |
 | 15 | **Deterministic mid-`COMMIT` abort** | **IMPOSSEIBLE through `rusqlite`** — already recorded | Ledger 6.1. Every injection point was worked through; it needs a custom SQLite build or a fault VFS. Not deferred, **not attempted** |
 | 16 | **A stale `-shm` from another machine** | **SQLITE behaviour, not relied upon** | Measured: a mismatched `-shm` caused no observable damage. But §7.5's rule stands — never carry it, because upstream permits the wal-index to be architecture-specific. Not tested, because the rule is "do not copy it", which needs no test |
-| 17 | **Recovery runs on a store whose `foreign_key_check` fails** | **DIRECTLY TESTED** | `RefusedPass`. §9.1 row 3b is undecidable without it, and it is the only pragma that sees a referential violation (§7.1) |
+| 17 | **Recovery runs on a store whose `foreign_key_check` fails** | **P2G runtime gate CLOSED** | Typed whole-pass refusal before any mutation for **any** FK failure, even task-attributable damage. Catalog preflight and FK inspection share the recovery snapshot (§9.1 row 3b) |
 
 **Two rows are honest non-claims rather than gaps.** Case 11 (disk full) has a
 correct *data-integrity* behaviour by case 1 and an unspecified *operational*
@@ -1491,7 +1538,9 @@ The following is the **historical full-P2 sketch**, not the P2F-b public API.
 [P2F-b's selected surface](P2F-task-engine-review-and-closure.md) omits recovery
 and reconciled-absent, adds explicit planning entry, timestamps and attribution,
 and re-exports the existing storage outcome types. It does not implement waiting
-or provider execution. The old signatures below are retained for design lineage.
+or provider execution. P2G now implements only the explicit-time/context recovery
+surface in §9; `close_reconciled_absent` still has no writer. The old signatures
+below are retained for design lineage, not an approved new API contract.
 
 ```rust
 pub struct TaskEngine { store: Store, journal: TaskJournal }
@@ -2104,11 +2153,11 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 
 | | |
 | --- | --- |
-| **Files** | `crates/serea-task-engine/src/recovery.rs`; reuse P2F's journal/participant seam, whose outcome atomicity must already be proven by H12 |
-| **Tests first** | Every row of the recovery table; pass once changes state; **pass twice is a no-op**; expired in-flight lease → `NeedsReconciliation` and **no** re-execution; receipt present with an incomplete transition → repaired without re-effect; a corrupt row → `CorruptOrInvariantViolation`; `pending_event_transitions > 0` after a task creation |
-| **Surface** | `recover`, `RecoveryReport`, `RecoveryDecision`; recovery uses the P2F TaskJournal seam and owns its conditional authority-revocation design, not reconstruction of a public lease guard |
-| **Exit criteria** | All rows; byte-identical durable state after the second pass; no network, no clock other than `TestClock`, no model or provider symbol reachable from the test binary |
-| **Forbidden** | Provider calls, model calls, approval delivery |
+| **Files** | `crates/serea-task-engine/src/recovery.rs`, its recovery integration tests, storage recovery snapshot/pass/operation and tests; reuse P2F's one TaskJournal/private participant sink, not a second SQL mapper or event participant |
+| **Tests first** | Selected §9 classifications; first-pass decision/repair then logical-byte second-pass no-op; expiry → reconciliation without execution; non-SUCCEEDED receipt → corruption; stale SUCCEEDED aggregate repair only with complete corroborating P2F evidence and no superseding edge; complete committed outcome no-op; any FK/catalog failure → pass refusal; raw corruption/legal quarantine/wait preservation; final all-journal count and exact counters |
+| **Surface** | `recover(now: EpochMillis, context)`, `RecoveryReport`, `RecoveryDecision`; restricted storage `RecoveryPass` closure under one BEGIN IMMEDIATE snapshot and whole-pass savepoint. No authority acquisition/escape, public guard reconstruction, retained clock or external callbacks |
+| **Exit criteria** | **CLOSED runtime gate**: selected coverage/logical identity, final stable1.98.1/exact MSRV1.85.0 workspace and four-mode storage/engine validation passed; three independent terminal PASS reviews, zero findings/gaps. See §9, [closure ledger](P2G-review-and-closure.md) and [terminal report](P2G-review-generation-1.md). Historical pending status is superseded; P2H process proof is separate |
+| **Forbidden** | Provider/model calls, approval delivery, blind retry, fabricated absence closure/provider failure/begin, forbidden task edges, P3 event delivery/backfill |
 
 ### 15.8 P2H — fault injection
 
@@ -2117,7 +2166,7 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 | **Files** | `crates/serea-storage/tests/crash.rs`, `tests/support/child.rs`; `crates/serea-testkit/src/faults.rs` |
 | **Tests first** | Every crash window in [the test matrix §3](P2-test-matrix.md#3-crash-and-fault-injection), plus deferred F25 cross-binary temp identity and F26 crash-child inherited-directory reopen |
 | **Surface** | A `TxHook` injection point used **only** by tests; child-process helpers |
-| **Exit criteria** | Each window reopened in a fresh process and asserted against durable expectations; in particular "crash after commit before the caller observes success" shows the row present **and** recovery reporting `ReceiptAlreadyCommitted` rather than re-effecting |
+| **Exit criteria** | Each window reopened in a fresh process and asserted against durable expectations; N6 requires **no outcome repair or re-effect** due to caller non-observation, with strict no-op for the terminal fixture. A complete nonterminal outcome may receive first classification audit counted by §9.3's existing repairs_committed definition, not invented outcome repair. This child-process proof remains pending P2H |
 | **Forbidden** | Adding an injection point to a production code path that is not a no-op when unused. A fault hook that is present but inert in release builds is a hazard |
 | **Explicit** | No test may simulate a crash by returning an `Err` before commit and calling it a crash |
 

@@ -23,6 +23,8 @@ pub enum AuditOperation {
     Blocked,
     InvariantFailed,
     Cancelled,
+    RecoveryDecision,
+    RecoveryStateChanged,
 }
 
 /// Immutable facts from successful writes in an open operation savepoint.
@@ -62,6 +64,9 @@ pub struct DurableTransition {
     pub(crate) actor_id: ActorId,
     pub(crate) actor_version: SemVer,
     pub(crate) causation_id: Option<EventId>,
+    pub(crate) recovery_identity: Option<Digest>,
+    pub(crate) recovery_observed_fingerprint: Option<Digest>,
+    pub(crate) recovery_decision: Option<String>,
 }
 
 impl DurableTransition {
@@ -95,7 +100,21 @@ impl DurableTransition {
             actor_id: context.actor_id.clone(),
             actor_version: context.actor_version.clone(),
             causation_id: context.causation_id.cloned(),
+            recovery_identity: None,
+            recovery_observed_fingerprint: None,
+            recovery_decision: None,
         }
+    }
+
+    /// Original raw observation, distinct from the stable post-repair identity.
+    pub fn recovery_observed_fingerprint(&self) -> Option<&Digest> {
+        self.recovery_observed_fingerprint.as_ref()
+    }
+    pub fn recovery_identity(&self) -> Option<&Digest> {
+        self.recovery_identity.as_ref()
+    }
+    pub fn recovery_decision(&self) -> Option<&str> {
+        self.recovery_decision.as_deref()
     }
 
     pub fn task_id(&self) -> &TaskId {
@@ -157,7 +176,7 @@ impl DurableTransition {
     }
 }
 
-/// P2F journal kinds. Recovery and reconciled-absent writers are not this port.
+/// Journal vocabulary supported by the single audit port. No absent writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JournalKind {
     TaskInserted,
@@ -171,6 +190,7 @@ pub enum JournalKind {
     ReceiptRecorded,
     TaskCancelRequested,
     TaskTerminal,
+    RecoveryDecision,
 }
 
 impl JournalKind {
@@ -187,6 +207,7 @@ impl JournalKind {
             Self::ReceiptRecorded => "RECEIPT_RECORDED",
             Self::TaskCancelRequested => "TASK_CANCEL_REQUESTED",
             Self::TaskTerminal => "TASK_TERMINAL",
+            Self::RecoveryDecision => "RECOVERY_DECISION",
         }
     }
 }
@@ -229,7 +250,10 @@ impl Tx<'_> {
             .audit
             .ok_or(StoreError::AuditRequired)?
             .records(facts)?;
-        if drafts.is_empty() {
+        if drafts.is_empty()
+            || (facts.operation == AuditOperation::RecoveryDecision
+                && (drafts.len() != 1 || drafts[0].kind != JournalKind::RecoveryDecision))
+        {
             return Err(StoreError::AuditRejected);
         }
         // Validate the complete batch before its first INSERT. Journal semantics
@@ -245,11 +269,50 @@ impl Tx<'_> {
                     return Err(StoreError::AuditRejected);
                 }
                 let payload = String::from_utf8(payload).map_err(|_| StoreError::AuditRejected)?;
+                if draft.kind == JournalKind::RecoveryDecision {
+                    let value: serde_json::Value =
+                        serde_json::from_str(&payload).map_err(|_| StoreError::AuditRejected)?;
+                    let text = |key| value.get(key).and_then(serde_json::Value::as_str);
+                    if text("fingerprint") != facts.recovery_identity().map(Digest::as_str)
+                        || text("observed_fingerprint")
+                            != facts.recovery_observed_fingerprint().map(Digest::as_str)
+                        || text("decision") != facts.recovery_decision()
+                        || value
+                            .get("observed_fingerprint")
+                            .is_some_and(|value| !value.is_null() && !value.is_string())
+                        || value.get("raw_state").is_some()
+                        || value.get("raw_status").is_some()
+                    {
+                        return Err(StoreError::AuditRejected);
+                    }
+                }
                 let digest = digest_of(&payload).map_err(|_| StoreError::AuditRejected)?;
                 Ok((draft, payload, digest))
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
         for (draft, payload, digest) in rows {
+            let reference = facts.recovery_identity.as_ref().or(facts.result.as_ref());
+            if draft.kind == JournalKind::RecoveryDecision {
+                let exists: bool = self.inner.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM task_journal WHERE task_id=?1
+                        AND step_id IS ?2 AND journal_kind='RECOVERY_DECISION'
+                        AND state_from IS ?3 AND state_to IS ?4 AND attempt IS ?5
+                        AND reason_code IS ?6 AND payload_ref_digest=?7)",
+                    rusqlite::params![
+                        facts.task_id.as_str(),
+                        facts.step_id.as_ref().map(StepId::as_str),
+                        draft.state_from,
+                        draft.state_to,
+                        facts.attempt,
+                        draft.reason.as_ref().map(ReasonCode::as_str),
+                        reference.map(Digest::as_str)
+                    ],
+                    |r| r.get(0),
+                )?;
+                if exists {
+                    continue;
+                }
+            }
             let changed = self.inner.execute(
                 "INSERT INTO task_journal(journal_id,task_id,step_id,journal_seq,journal_kind,
                     state_from,state_to,attempt,reason_code,actor_kind,actor_id,actor_version,causation_id,
@@ -264,7 +327,7 @@ impl Tx<'_> {
                     ":actor_kind": facts.actor_kind.wire_name(), ":actor_id": facts.actor_id.as_str(),
                     ":version": facts.actor_version.as_str(), ":cause": facts.causation_id.as_ref().map(EventId::as_str),
                     ":rank": facts.data_class.rank(), ":now": facts.now.get(), ":digest": digest.as_str(),
-                    ":payload": payload, ":ref": facts.result.as_ref().map(Digest::as_str),
+                    ":payload": payload, ":ref": reference.map(Digest::as_str),
                 },
             )?;
             if changed != 1 {
@@ -290,6 +353,7 @@ fn validate_draft(facts: &DurableTransition, draft: &JournalRecord) -> Result<()
         JournalKind::StepFailed => facts.operation == AuditOperation::StepFailed,
         JournalKind::TaskCancelRequested => facts.operation == AuditOperation::Cancelled,
         JournalKind::TaskStateChanged | JournalKind::TaskTerminal => true,
+        JournalKind::RecoveryDecision => facts.operation == AuditOperation::RecoveryDecision,
     };
     if !operation_matches {
         return Err(StoreError::AuditRejected);
@@ -335,6 +399,11 @@ fn validate_draft(facts: &DurableTransition, draft: &JournalRecord) -> Result<()
         JournalKind::ReceiptRecorded => facts.receipt_id.is_some() && to == Some("SUCCEEDED"),
         JournalKind::TaskCancelRequested => facts.task_to == TaskState::Cancelled,
         JournalKind::TaskTerminal => facts.task_to.is_terminal(),
+        JournalKind::RecoveryDecision => {
+            facts.recovery_identity.is_some()
+                && facts.recovery_decision.is_some()
+                && facts.reason.is_some()
+        }
     };
     if evidence {
         Ok(())
@@ -351,20 +420,31 @@ pub(crate) struct TestAudit;
 #[cfg(test)]
 impl TaskAuditParticipant for TestAudit {
     fn records(&self, facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
-        let payload = format!(
-            "{{\"attempt\":{},\"generation\":{},\"result_digest\":{}}}",
-            facts
-                .attempt
-                .map_or_else(|| "null".into(), |n| n.to_string()),
-            facts
-                .generation
-                .map_or_else(|| "null".into(), |n| n.to_string()),
-            facts
-                .result
-                .as_ref()
-                .map_or_else(|| "null".into(), |d| format!("\"{}\"", d.as_str()))
-        )
-        .into_bytes();
+        let payload = if facts.operation == AuditOperation::RecoveryDecision {
+            serde_json::to_vec(&serde_json::json!({
+                "decision": facts.recovery_decision(),
+                "fingerprint": facts.recovery_identity().map(Digest::as_str),
+                "observed_fingerprint": facts.recovery_observed_fingerprint().map(Digest::as_str),
+
+                "attempt": facts.attempt(), "generation": facts.generation(),
+            }))
+            .map_err(|_| StoreError::AuditRejected)?
+        } else {
+            format!(
+                "{{\"attempt\":{},\"generation\":{},\"result_digest\":{}}}",
+                facts
+                    .attempt
+                    .map_or_else(|| "null".into(), |n| n.to_string()),
+                facts
+                    .generation
+                    .map_or_else(|| "null".into(), |n| n.to_string()),
+                facts
+                    .result
+                    .as_ref()
+                    .map_or_else(|| "null".into(), |d| format!("\"{}\"", d.as_str()))
+            )
+            .into_bytes()
+        };
         let step = |kind| JournalRecord {
             kind,
             state_from: facts.step_from.as_ref().map(|s| s.as_str().to_owned()),
@@ -394,9 +474,11 @@ impl TaskAuditParticipant for TestAudit {
             }
             AuditOperation::StepFailed => vec![step(JournalKind::StepFailed)],
             AuditOperation::Cancelled => vec![task(JournalKind::TaskCancelRequested)],
+            AuditOperation::RecoveryDecision => vec![task(JournalKind::RecoveryDecision)],
             AuditOperation::PlanningStarted
             | AuditOperation::Blocked
-            | AuditOperation::InvariantFailed => vec![],
+            | AuditOperation::InvariantFailed
+            | AuditOperation::RecoveryStateChanged => vec![],
         };
         if facts.task_from.is_some_and(|from| from != facts.task_to) {
             rows.push(task(JournalKind::TaskStateChanged));

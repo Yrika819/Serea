@@ -23,10 +23,21 @@ The coordinator records current final workspace/MSRV validation, test counts,
 bounded regression review and integration status in the closure record. P2B is
 Clock/time only and is not delivered here; P2A introduces no SQLite or runtime.
 
+## Current P2D frozen-gate reconciliation (2026-10-04)
+
+[P2D's pre-implementation gate](P2D-review-and-closure.md#1-preflight-and-frozen-pre-implementation-design-gate)
+is authoritative for the blob slice below. P2D adds only `Tx::put_blob`,
+`Tx::get_blob`, `BlobRef` and the owned PRIVATE-only protection seam. Reference
+attachment/roles, `delete_task` and blob+reference atomicity are P2F. There is no
+classified-text API: the complete ordinary-row PRIVATE surface, including JSON
+extensions, is deferred and future writers must fail closed even with a blob
+backend. ADR-0022 stays **Proposed**. These are design requirements, not P2D RED,
+GREEN, runtime-test or closure evidence; historical evidence below is preserved.
+
 ## 1. Scope, and the crates in it
 
 Across all P2 phases, P2 creates exactly two runtime crates and no others.
-**P2C has exactly three workspace members: protocol/storage/testkit.** Storage's
+**P2C and P2D have exactly three workspace members: protocol/storage/testkit.** Storage's
 only internal runtime dependency is protocol; testkit is dev-only. The engine
 crate is created in **P2F**, never as a P2C placeholder:
 
@@ -125,12 +136,12 @@ DDL does not implement participants, journal writes, classification or fencing.
 Crate Map §3 lists `BlobStore` as a `serea-storage` type. **P2 does not define
 it**, and the reason is a correctness one rather than a preference.
 
-A `BlobStore` that owns its own connection or its own transaction can write a blob
-*outside* the caller's transaction. That is exactly the torn write this design
-exists to prevent: a blob committed with no reference is an orphan, and a
-reference committed with no blob is a dangling row. In the filesystem variant of
-the same mistake the window is unavoidable; in SQLite it is avoidable and choosing
-`BlobStore` would choose the window.
+A `BlobStore` that owns its own connection or its own transaction could write a
+blob *outside* the caller's later reference transition. That would introduce a
+torn-write window between the blob and reference. Keeping both in the caller's
+SQLite transaction permits P2F to prevent that window; a separate blob transaction
+would defeat the whole-transition design. P2D itself permits standalone blob
+writes and exposes no reference writer, so it does not claim orphan prevention.
 
 So the blob operations are `Tx::put_blob` and `Tx::get_blob`, and `BlobRef` — the
 type that identifies a blob — is kept, because it appears in the public API for
@@ -197,13 +208,19 @@ field that formats untrusted input.
 only `Clock` carries a protocol category. `Display` and `Debug` render category
 names only, and the error source chain exposes no underlying diagnostics.
 
-**Future P2D–P2G categories, not current P2C variants:** `CanonicalJson`,
-`DigestMismatch`, `BlobMissing`, `BlobCorrupt`, `ClassRefused { class }`,
-`AtRestProtectionUnavailable { class }`, `LeaseHeld`, `LeaseFenced`,
-`LeaseExpired`, `AttemptCeilingReached`, `IllegalTaskTransition`,
-`IllegalStepTransition`, `DuplicateIdempotencyKey`, `PolicyClassImmutable`,
-`Protocol(ProtocolError)`. Later consumer design must settle these categories
-without widening the current error disclosure boundary.
+**Frozen P2D categories, not P2C variants:** `CanonicalJson`, `BlobMissing`,
+`BlobCorrupt`, `ClassRefused`, `AtRestProtectionUnavailable` and
+`AtRestProtectionFailed`, all payload-free. No caller-supplied expected digest
+exists, so there is no `DigestMismatch` write category: corrupt existing rows
+must fail read/dedupe verification instead. `AtRestProtectionError` is a unit
+error; backend refusal/failure maps to `AtRestProtectionFailed`, never a dynamic
+message or backend source chain. Absence maps to `AtRestProtectionUnavailable`.
+
+**Later P2E–P2G categories:** `LeaseHeld`, `LeaseFenced`, `LeaseExpired`,
+`AttemptCeilingReached`, `IllegalTaskTransition`, `IllegalStepTransition`,
+`DuplicateIdempotencyKey`, `PolicyClassImmutable`, `Protocol(ProtocolError)`.
+Later consumer design must settle these categories without widening the current
+error disclosure boundary.
 
 Two rules:
 
@@ -317,40 +334,84 @@ crate that owns the call" enforces the bound at the call site.
 ## 6. Blob store
 
 Full mechanics are in [P2 SQLite schema §5](P2-sqlite-schema.md#5-content-addressed-blobs).
-The API-level decisions:
+The [frozen P2D gate](P2D-review-and-closure.md) narrows the API to:
 
 ```rust
 impl Tx<'_> {
-    /// The only blob entry point. Takes **bytes**, never a `Value` (ADR-0019).
+    /// Original UTF-8 JSON bytes, never arbitrary binary or a parsed `Value`.
     pub fn put_blob(&mut self, bytes: &[u8], class: DataClass) -> Result<BlobRef, StoreError>;
     pub fn get_blob(&mut self, r: &BlobRef) -> Result<Vec<u8>, StoreError>;
-    pub fn put_step_blob(&mut self, step_id: StepId, role: StepBlobRole,
-                         bytes: &[u8], class: DataClass) -> Result<BlobRef, StoreError>;
-    pub fn put_task_blob(&mut self, task_id: TaskId, role: TaskBlobRole,
-                         bytes: &[u8], class: DataClass) -> Result<BlobRef, StoreError>;
+}
 
-    /// The **only** path that writes a classified free-text value
-    /// (`title`, `result_summary`, `error_message`, `effect_summary`).
-    ///
-    /// Dispatches exactly like `put_blob`: `PRIVATE` with no configured backend is
-    /// refused with `AtRestProtectionUnavailable`, `SECRET` and `CREDENTIAL` with
-    /// `ClassRefused`. A SQLite `CHECK` cannot record a per-column class, so this
-    /// single function *is* the enforcement for those columns — which is weaker than
-    /// the blob store's schema-level cap, and is claimed as weaker. ADR-0022.
-    pub fn put_classified_text(&mut self, slot: ClassifiedTextSlot,
-                               value: &str, class: DataClass) -> Result<(), StoreError>;
+pub struct AtRestProtectionError; // payload-free unit error
+pub trait AtRestProtection: Send + Sync {
+    fn protect(&self, plaintext: &[u8]) -> Result<Vec<u8>, AtRestProtectionError>;
+    fn unprotect(&self, protected: &[u8]) -> Result<Vec<u8>, AtRestProtectionError>;
+}
+
+impl Store {
+    pub fn open_with_protection(path: &Path, clock: &dyn Clock,
+                                protection: Arc<dyn AtRestProtection>) -> Result<Self, StoreError>;
+    pub fn open_in_memory_with_protection(clock: &dyn Clock,
+                                          protection: Arc<dyn AtRestProtection>) -> Result<Self, StoreError>;
 }
 ```
 
-`put_blob` canonicalises, digests, classifies, and inserts the blob row. It does
-**not** create a reference, and it does not commit either: it takes `&mut Tx`, so
-the caller's reference insert and the caller's `COMMIT` are the same transaction.
-There is no `put_blob` on `Store`, only on `Tx`. That is what makes orphan
-prevention structural rather than a sweeper's job — a crash between the two
-inserts rolls back both.
+`Store` owns `Option<Arc<dyn AtRestProtection>>`; normal constructors keep no
+backend, and the two protection constructors delegate to the unchanged P2C open
+path. No Store lifetime is introduced. `Tx` accesses protection only during its
+existing transaction lifetime. The object-safe trait is PRIVATE-only: presence
+means PRIVATE capability, so no class parameter or capability list is needed.
+The backend owns its opaque envelope and may be nondeterministic. It is trusted
+to actually protect; storage cannot prove cryptographic soundness.
 
-`get_blob` re-canonicalises and re-digests, returning `BlobCorrupt` on mismatch.
-A digest that is never re-verified detects nothing.
+`PLAN`, `PLAN_REVISION`, `ARGUMENTS`, `INSTRUCTION` and `RESULT` documents are
+JSON, admitted only within ADR-0019's SCJ-1 domain. Original bytes preserve
+malformed/duplicate-key evidence; the API cannot prove provenance after a caller
+has already parsed and reserialized. Fractional model temperature may be
+wire-valid but is not SCJ-1-admissible; do not coerce it or promise all wire-valid
+JSON can be stored.
+
+Class dispatch precedes any dedupe success: `SECRET`/`CREDENTIAL` return
+`ClassRefused`; PRIVATE without a backend returns `AtRestProtectionUnavailable`,
+even if the exact row exists. Canonical plaintext determines the SHA-256 digest.
+PUBLIC/PERSONAL store canonical plaintext with `NONE`; PRIVATE stores backend
+bytes with `AT_REST`. `size_bytes` is stored-content length, including PRIVATE
+envelope/expansion, not plaintext length or a resource ceiling.
+
+Both reads and dedupe reuse require exact `(digest, data_class_rank)` lookup,
+correct protection marker and stored length, then unprotect if PRIVATE,
+SCJ-1-canonicalize and verify the plaintext digest. Corrupt content/metadata is
+`BlobCorrupt`; backend refusal/failure is `AtRestProtectionFailed`. Never bless a
+conflict with `INSERT OR IGNORE`. Reads return canonical plaintext bytes.
+
+`BlobRef` has private `Digest`/`DataClass` fields, a public constructor from an
+already-validated `Digest` plus `DataClass`, read accessors and payload-safe
+`Debug`, but no `Serialize`. It identifies a row, not host authorization or
+inferred content classification. A lower-class reference cannot resolve a
+higher-class-only row; a missing exact row returns `BlobMissing`.
+
+No blob method exists on `Store`; `Tx::put_blob` inserts only the blob and does
+not commit or attach it. P2D's required rollback test covers only an
+in-process blob insertion, not crash survival, orphan prevention or blob+reference
+atomicity; this reconciliation supplies no runtime proof. Whole-transition
+attachment, role APIs (`put_step_blob`/`put_task_blob`) and `delete_task` are
+**P2F**, with private composite-FK fixtures allowed in P2D and no public parent
+mutation. The production migration/catalog/checksum remain unchanged; no 0002.
+
+**Deferred ordinary-row protection.** There is no `put_classified_text` API.
+Protecting four prose fields alone would omit `error_details`, journal payloads,
+provider references and all task/step/receipt/journal JSON extensions (including
+origin/budget extensions). A complete reversible row-surface design is still
+required. Until then every future ordinary-row PRIVATE-bearing write must refuse
+before SQLite **even when a blob backend is configured**; SECRET/CREDENTIAL
+remain refused. No plaintext fallback or encrypt-later path is permitted.
+
+The synthetic reversible double is local to `serea-storage` under `cfg(test)`,
+not a testkit API or production backend: **NOT ENCRYPTION, NOT SECURITY, NEVER
+PRODUCTION**. See [Crate Map §5.4](../architecture/03-crate-map.md#54-p2d-storage-local-at-rest-double-exception).
+ADR-0022 remains **Proposed** until the complete ordinary-row question is
+resolved. No runtime tests are claimed passed by this reconciliation.
 
 ## 7. Migrations and connection policy
 
@@ -1018,7 +1079,9 @@ written once and the job is the deliverable rather than an assumption.
    `kind × status` cells; a `blobs` row with `PRIVATE` and `PUBLIC` ranks so the
    generated `data_class` column is exercised; `leases` rows at two generations so
    `lease_generation` is non-trivial; `plan_revisions`; both blob-ref tables; and
-   `task_journal` rows in order.
+   `task_journal` rows in order. This remains a later-phase fixture, not P2D
+   task/reference runtime evidence; any synthetic PRIVATE blob transform must be
+   test-only, and ordinary-row PRIVATE protection cannot be inferred from it.
 3. Every timestamp, id and digest is a **literal constant**, never derived from a
    clock or an RNG, so the fixture is byte-reproducible.
 4. Quiesce callers; retry `checkpoint_for_close` until Complete (parse all three
@@ -1036,7 +1099,7 @@ and asserts:
 | 1 | `PRAGMA schema_version`; full ordered `schema_migrations` version/name/checksum prefix matching embedded catalog | schema migration/version |
 | 2 | `sqlite_master` inventory is **10 tables / 7 triggers / 6 explicit indexes**, and each table's `sql` text matches | no object is architecture-dependent |
 | 3 | `PRAGMA quick_check` has no row differing from `ok`; `PRAGMA foreign_key_check` returns zero rows | integrity on a foreign machine (§7.1's tiers) |
-| 4 | Every stored digest re-computes from its own canonical bytes | digest stability |
+| 4 | Every stored blob digest re-computes from canonical **plaintext** bytes after unprotect when PRIVATE, never from backend envelope bytes | digest stability |
 | 5 | Every `idempotency_key` re-derives from IDK-1 and matches | IDK-1 is architecture-independent |
 | 6 | Every `TaskStep` survives the full Rust round trip and compares **semantically**, field by field | `TaskStep` round trip |
 | 7 | `lease_generation` values are exactly those written, at both generations | lease fencing state |
@@ -1522,8 +1585,8 @@ attached. The review's independent verdict is in §13.
 | --- | --- | --- |
 | 1 | Can stale worker A commit after B owns a reclaimed lease? | No. `lease_generation` increments on every acquisition and every commit carries it in its `WHERE`; zero rows is `LeaseFenced`. ADR-0024 |
 | 2 | Can a corrupt row widen authority? | Class ranks are integers with generated labels, so rank and label cannot disagree; `policy_class` has an `UPDATE` trigger; `state`, `kind` and every code-shaped field have `CHECK`s. A corrupt row is *refused*, and recovery's row #2 detects it |
-| 3 | Can a `PRIVATE` blob hit disk unencrypted? | P2D's planned write dispatch must refuse without a backend. The CHECK requires the `AT_REST` **marker**, not cryptographic protection; a raw writer can lie about that marker. P2C adds no protection runtime. ADR-0022, [schema §7](P2-sqlite-schema.md#7-verified-behaviour) |
-| 4 | Can `SECRET` or `CREDENTIAL` enter ordinary SQLite? | No, by any writer that leaves constraint checking enabled: `data_class_rank BETWEEN 0 AND 2` on all seven classified tables makes those rows unconstructible, verified on each. **The boundary, stated once:** `PRAGMA ignore_check_constraints = ON` disables every `CHECK` in the schema for a local file writer, and P2 does not mitigate that. Every trigger and foreign key still holds under it — which is where this design spends its structural budget, and **the P2 autonomous audit verified that claim rather than assuming it**. **The second boundary is `PRAGMA foreign_keys = OFF`**, which the earlier revision of this answer did not name: upstream defaults to OFF but the selected bundled build defaults to ON; explicit setting/assertion remains mandatory. One line disables it, and a `task_steps` row referencing a non-existent task is then accepted. So the composite-key anti-laundering guarantee in [schema §5.3](P2-sqlite-schema.md#53-classification-and-laundering) is *structural* against a writer who leaves enforcement on and *pragma-dependent* against a local file writer — which `TB-7` already excludes from tamper-evidence. ADR-0022, [schema §7](P2-sqlite-schema.md#the-pragma-boundary-in-full), tests O14/O15 |
+| 3 | Can a `PRIVATE` blob hit disk unencrypted? | Frozen P2D dispatch refuses without a backend **before dedupe success**; configured protection is trusted, not cryptographically proved. Read/dedupe verifies marker, stored length and canonical plaintext digest after unprotect. The CHECK requires only the `AT_REST` **marker**; a raw writer can lie about it. Ordinary-row PRIVATE writes remain fail-closed even with a blob backend. ADR-0022, [schema §5](P2-sqlite-schema.md#5-content-addressed-blobs) |
+| 4 | Can `SECRET` or `CREDENTIAL` enter ordinary SQLite? | Rank-3/4 rows are refused while CHECKs are enabled: all seven current classified tables cap ranks at 2, and P2D blob put/get must refuse both classes. Historical named-five-table SQL probes remain in [schema §7](P2-sqlite-schema.md#7-verified-behaviour), not P2D runtime PASS. Neither ranks nor BlobRef infer the class of relabelled bytes. CHECKs require `ignore_check_constraints = OFF`; durable composite FKs require `foreign_keys = ON`; ordinary triggers are independent of both. Upstream defaults FK OFF, bundled ON; Store explicitly sets/asserts ON. FK-OFF permits dangling refs, not PRIVATE-only resolution through P2D's exact lookup. Local-file tamper-evidence remains unclaimed. ADR-0022, [schema §5.3](P2-sqlite-schema.md#53-classification-and-laundering), tests O14/O15 |
 | 5 | Can recovery turn ambiguity into a second effect? | No. P2 recovery never executes. `NeedsReconciliation` records the decision durably for P5. Task Protocol §6.2 |
 | 6 | Can a state transition occur without the audit seam? | Every transition writes a `task_journal` row through the same `Tx`, as a `TransactionParticipant` receiving the same `DurableTransition` every other participant receives — so no participant can record a different transition from any other. `E3` itself is **not claimed**, and the P2 autonomous audit established it is **not retroactively claimable**: it holds forward from P3's first migration and never held for P2-era transitions. No event is reconstructed. ADR-0021 |
 | 7 | Can a migration failure leave a partial upgrade accepted? | No. The DDL and the `schema_migrations` row share one transaction, and checksums are re-verified at every open. §7.1 |
@@ -1531,7 +1594,7 @@ attached. The review's independent verdict is in §13.
 | 9 | Can an old process write after a new one superseded it? | No, for any write that requires a lease. Of the three that do not: `persist_plan` (`AND state = 'PLANNING'`) and `cancel` (`state NOT IN (terminal)`) carry a full expected-state predicate, so a stale writer wins a race it was always allowed to win or affects zero rows. `insert_task` and `delete_task` carry none, and that is sound rather than sloppy: a `TaskId` is never reused ([Protocol Index §2](../protocols/00-protocol-index.md#2-identifier-grammar) rule 3), so a duplicate `INSERT` is a retry of the same creation and a `DELETE` is idempotent. What a stale process **cannot** do is write step or receipt state |
 | 10 | Can extension JSON override a normalised column? | No. `extensions` is a single forward-compatible column with a `json_valid` object `CHECK`, and no code path reads it for a decision. ADR-0021 records that it is retained, not interpreted |
 | 11 | Can inconsistent rows fabricate terminal success? | No. `state` has an 11-value `CHECK`; `COMPLETED` is only reachable through the transition table; `SUCCEEDED` requires `result_digest`; a receipt is reachable only through `commit_step_succeeded`; and recovery's invariant scan refuses a receipt on a non-`SUCCEEDED` step |
-| 12 | Does any error or log path quote `PRIVATE`/`SECRET` bytes? | No. `StoreError` renders machine-readable causes only, and carries no lease identity beyond the step's own id and generation counter — neither is replayable. ADR-0019's canonicalization returns no payload on error, and `errors.rs` needs no change. The residual, disclosed: the prose fields (`ErrorMessage`, `DescriptorDescription`) are `PRIVATE` for log egress under ADR-0023, and the four classified `TEXT` columns are enforced by the write chokepoint rather than by the schema |
+| 12 | Does any error or log path quote `PRIVATE`/`SECRET` bytes? | No. `StoreError` renders machine-readable causes only, and carries no lease identity beyond the step's own id and generation counter — neither is replayable. ADR-0019's canonicalization returns no payload on error, and `errors.rs` needs no change. P2D also discards backend diagnostics/source chains through its unit protection error. The residual, disclosed: prose fields (`ErrorMessage`, `DescriptorDescription`) are `PRIVATE` for log egress under ADR-0023; the complete ordinary-row PRIVATE surface, including JSON extensions, has no protected representation yet and future writers must refuse it before SQLite even with a blob backend |
 
 ## 12. Resource bounds — still open
 
@@ -1596,7 +1659,7 @@ executed between passes**, which is where the substantive findings came from.
 | **ADR-0024's commit statement referenced a column that does not exist** and violated the lease biconditional | A4, blocker | Statement corrected: no `receipt_id`, lease columns cleared |
 | **ADR-0018's "a `CHECK` for every matrix row" was false** — `lease_generation` unenforced above `PLANNED` | A5, blocker | Added `CHECK (status = 'PLANNED' OR lease_generation >= 1)` and `task_steps_idempotency_key_immutable` |
 | **`SECRET`/`CREDENTIAL` accepted on `tasks`** | A6, blocker | Rank capped at 0–2 on **every** classified table |
-| **"A P2 deployment holds no `PRIVATE` durable data" rested on a false premise** — `AssistantTask.data_class` is host-assigned | A7, major | Restated on the dispatch, not on "nothing can produce `PRIVATE`"; classified `TEXT` columns recorded as the disclosed weaker guarantee |
+| **"A P2 deployment holds no `PRIVATE` durable data" rested on a false premise** — `AssistantTask.data_class` is host-assigned | A7, major | Historically restated on dispatch, with classified `TEXT` columns called a weaker guarantee. P2D D5/D6 supersede that text design: no text API, complete ordinary-row PRIVATE protection deferred/fail-closed even with a blob backend; no production PRIVATE task support |
 | **`FAILED` required `error_details`**, which the frozen schema makes optional | A8, blocker | Constraint removed; a wire-valid error without `details` is accepted |
 | **Full P2 eventually makes four workspace members** | Historical A9; phase correction D1 | P2C has exactly three (protocol/storage/testkit); only P2F adds engine as fourth. Earlier four-member P2C exit was incorrect |
 | **`CANCELLED` was unconstructible** | B1, blocker | Second `CHECK` replaced with `state = 'CANCELLED' OR (both null)` |
@@ -1747,7 +1810,7 @@ Three proposals were rejected on the merits, and none is a defect:
 | --- | --- |
 | Create `serea-event-bus` in P2 to satisfy `E3` | Crate Map §4.1's reason for that crate is that it is *separate*. The honest deferral is recorded instead |
 | Bound `RecoveryReport.decisions` with a cap | `max_concurrent_tasks` bounds it operationally. A second bound here would be an unratified one under `B3` |
-| Recover with an explicit "blob-store garbage collector runs nightly" comment | Orphan prevention is structural — P2 writes blob and reference in one transaction — so a sweeper is a repair tool, not a scheduled job. No claim is made either way |
+| Recover with an explicit "blob-store garbage collector runs nightly" comment | Historical whole-P2 rationale: blob and reference share one transaction, so a sweeper is a repair tool, not a scheduled job. P2D does not deliver that reference writer or prove orphan prevention; attachment/atomicity are P2F |
 
 ### 13.5 Historical positive-constructibility verification record
 
@@ -1804,9 +1867,9 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 | **P2A** | Four Option conversions, presence/kind/text validation, SCJ-1/digest/IDK-1, sha2 0.11 no defaults, manifests/registry/schemas/tests/docs/migrations | — |
 | **P2B** | Signed EpochMillis, synchronous Clock, instant-preserving timestamp conversion, removal of Timestamp ordering, TestClock authority | P2A |
 | **P2C** | Production migrations, opaque Store/Tx transaction foundation, connection policy and retryable close checkpoint; exactly three members | P2B |
-| **P2D** | Blobs/classification/delete_task | P2C |
+| **P2D** | JSON blob put/get, BlobRef, PRIVATE-only owned protection seam and class refusal | P2C |
 | **P2E** | Authoritative lease fencing/revocation | P2C |
-| **P2F** | TaskEngine, lifecycle/plan/cancellation, consumer query/view design; engine fourth member | P2D, P2E |
+| **P2F** | TaskEngine, lifecycle/plan/cancellation/deletion, reference roles/attachment and blob+reference atomicity, consumer query/view design; engine fourth member | P2D, P2E |
 | **P2G** | Recovery/journal | P2F |
 | **P2H** | Fault injection | P2C |
 | **P2I** | Independent runtime review/closure | all |
@@ -1861,11 +1924,12 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 
 | | |
 | --- | --- |
-| **Files** | `crates/serea-storage/src/{blob,classify}.rs`; `crates/serea-testkit/src/at_rest.rs` |
-| **Tests first** | Content addressing; dedupe within a class; wrong digest rejected; corrupt blob detected on read; rollback leaves no orphan; `PRIVATE` with no backend refused; the two `CHECK`s against a hand-written `INSERT`; `SECRET` and `CREDENTIAL` refused on every path; cross-class laundering refused |
-| **Surface** | `put_blob`, `get_blob`, `put_step_blob`, `put_task_blob`, `BlobRef`, `AtRestProtection` |
-| **Exit criteria** | All pass; the `PRIVATE` refusal writes **no** row; a same-digest two-class write stores two rows |
-| **Forbidden** | Task or step mutation. A blob test must not need a task |
+| **Files** | Storage blob/classification implementation plus `Store`/`Tx`/error/root wiring and storage-local `cfg(test)` tests/double; no testkit, manifest, dependency or smoke-rule changes |
+| **Tests first** | Applicable Group G (G1–G9, G11–G16, G19–G35; G19 composite-FK fixtures private) against the intended API: genuine missing-API compile RED is valid, never a permissive fake helper. Original-JSON/SCJ-1 refusals, corrupt-existing-row dedupe (replacement G5), read/metadata integrity, missing/forged refs, no-backend PRIVATE read/dedupe, backend failures, rollback and class caps |
+| **Surface** | Only `Tx::put_blob/get_blob`, `BlobRef`, PRIVATE-only `AtRestProtection` / unit `AtRestProtectionError`, two owned-Arc protection constructors; no text or reference/role API |
+| **Exit criteria** | Record actual focused and final-tree stable/Rust 1.85 debug/release results and three read-only independent reviews in the P2D closure record; no runtime PASS claimed here. No-backend PRIVATE refuses even existing-row reuse; same plaintext at two allowed classes stores two rows; read/dedupe verifies marker, stored size and canonical plaintext digest |
+| **Frozen migration** | Keep production 0001/catalog/checksum `sha256:d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea` unchanged; no 0002 |
+| **Forbidden / deferred** | Task/step/receipt/journal mutation; text API; reference attachment/roles, `delete_task`, blob+reference atomicity (P2F); crash proof (P2H); real encryption/key custody, resource bounds, P2E/P3 work. Future ordinary-row PRIVATE writes fail closed even with a blob backend; ADR-0022 stays Proposed |
 
 ### 15.5 P2E — leases and fencing
 
@@ -1882,8 +1946,8 @@ gate; P2B provides Clock/time before storage. No storage runtime enters P2A.
 | | |
 | --- | --- |
 | **Files** | `crates/serea-task-engine/Cargo.toml`; `src/{lib,engine,transition,plan,outcome,error}.rs`; P2F consumer-led TaskQueries/view/StepPhase design and storage query wiring; workspace/smoke/CI membership grows to four here, not in P2C |
-| **Tests first** | All 121 legal and illegal transitions; terminal states never transition; `policy_class` immutability by trigger; plan persistence before execution; unstarted/in-flight/terminal step representation; `UNIQUE (task_id, sequence)`; step parent binding; attempt ceiling; cancellation and its no-op; receipt-before-advance; the ADR-0018 presence matrix against the database |
-| **Surface** | `TaskEngine`, `TaskRecord`, `StepRecord`, `Plan`, `PlanRevision`, `StepOutcome`, `CancellationOutcome`, `DeletionOutcome`, `task_transition_reason` |
+| **Tests first** | All 121 legal and illegal transitions; terminal states never transition; `policy_class` immutability by trigger; plan persistence before execution; unstarted/in-flight/terminal step representation; `UNIQUE (task_id, sequence)`; step parent binding; attempt ceiling; cancellation and its no-op; receipt-before-advance; the ADR-0018 presence matrix against the database; deferred G10/G17/G18 reference/deletion cases and whole-transition blob+reference atomicity. Ordinary-row PRIVATE-bearing writers refuse before SQLite even with a blob backend until a complete protected row design exists |
+| **Surface** | `TaskEngine`, `TaskRecord`, `StepRecord`, `Plan`, `PlanRevision`, `StepOutcome`, `CancellationOutcome`, `DeletionOutcome`, `task_transition_reason`; whole-transition reference attachment/role APIs and `delete_task` |
 | **Exit criteria** | Every test above; `Store` has no mutating method outside `transact`, asserted by a compile-level check that the test suite exercises no other route |
 | **Forbidden** | Any execution path. There is no `ExecutionHandle` in P2, and its absence is the scope boundary |
 

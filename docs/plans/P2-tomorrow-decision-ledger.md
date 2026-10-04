@@ -174,15 +174,22 @@ opaque JSON without disabling precision or reserving wire keys.
 
 ## 4. Before P2D–P2E — blobs, classification, leases
 
+**P2D frozen-gate reconciliation (2026-10-04).**
+[Gate D1–D14](P2D-review-and-closure.md#1-preflight-and-frozen-pre-implementation-design-gate)
+supersedes the earlier blob/text sketches. The rows below are design decisions,
+not P2D runtime PASS. Historical SQL measurements retain their original scope;
+reference/role/deletion runtime and blob+reference atomicity are **P2F**, not P2D.
+P2E lease evidence and scope are unchanged.
+
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
-| 4.1 | `put_blob` takes `&[u8]`; there is no `put_blob_value` | **READY** | Requires original text at the raw-input boundary; a bytes API alone cannot prove provenance | P2D | No |
-| 4.2 | `PRIMARY KEY (digest, data_class_rank)` is sufficient for P2 | **READY** | Measured: the same digest at two classes stores two rows; the same digest at one class twice is refused. Cross-class laundering via a `PUBLIC` reference resolving a `PRIVATE` blob is prevented **while `foreign_keys` is on** | P2D | No |
-| 4.3 | `StoreError::ClassEscalationRequired` is removed, not left as a dead arm | **READY** | Unreachable by construction once the composite key pins a reference's class to the blob's | P2D | No |
-| 4.4 | `SECRET`/`CREDENTIAL` are unconstructible on **all five** classified tables | **READY** | Measured, all 8 probes: `tasks`, `blobs`, `side_effect_receipts`, `plan_revisions`, `task_journal`. The earlier draft's claim was true of the blob store and false of everything else | P2D | No |
-| 4.5 | `PRIVATE` with no backend is **refused**, with nothing written | **READY** | ADR-0022. Fail-closed means precisely that: an error, and no plaintext fallback, no "encrypt later", no warning-and-continue | P2D | No |
-| 4.6 | `size_bytes = length(content)` is a **consistency** invariant, not a bound | **READY** | ADR-0020: it rejects a torn length without inventing a ceiling. Measured: a mismatched length is refused | P2D | No |
-| 4.7 | Four classified `TEXT` columns are enforced by **one write chokepoint**, and that is weaker | **READY_WITH_LIMITATION** | `title`, `result_summary`, `error_message`, `effect_summary` can hold `PRIVATE` prose and a `CHECK` cannot record a per-column class. The guarantee is `Tx::put_classified_text` being the only path — claimed as weaker, not as equivalent | P2D | No. Do not upgrade the claim |
+| 4.1 | Only `Tx::put_blob/get_blob` and `BlobRef`; put accepts original UTF-8 JSON bytes, no `Value` or arbitrary binary | **READY_WITH_LIMITATION** | D1/D4: PLAN/PLAN_REVISION/ARGUMENTS/INSTRUCTION/RESULT are JSON with all SCJ-1 refusals; fractional model temperature is noncanonicalizable, no coercion. A bytes API cannot prove raw provenance | P2D | No |
+| 4.2 | Composite key plus exact `(digest, rank)` lookup; verified same-class dedupe | **READY** | Historical SQL: two classes store two rows; same-key duplicate INSERT is refused. D2/D12/D13 require read/unprotect/SCJ-1/plaintext-digest verification before API reuse, not conflict-success. Composite FK fixtures remain private; reference runtime/atomicity is P2F | P2D / P2F references | No |
+| 4.3 | No `ClassEscalationRequired` or expected-digest write / `DigestMismatch` variant | **READY** | D3/D13: exact lookup never substitutes a higher-class row. Replace obsolete G5 wrong-digest input with corrupt-existing-row dedupe refusal; identifying refs are not authorization | P2D | No |
+| 4.4 | `SECRET`/`CREDENTIAL` refuse on blob put/get; SQL class caps remain | **READY** | D2: dispatch before any success, including forged refs. Historical eight probes covered the five named tables `tasks`, `blobs`, `side_effect_receipts`, `plan_revisions`, `task_journal`, not all seven current rank-capped tables; private fixtures also test both reference-table caps. No defense against disabled CHECKs or locally relabeled content | P2D | No |
+| 4.5 | No-backend PRIVATE put/get/dedupe **refuse before success**, even for an existing row | **READY** | D2/D9: `AtRestProtectionUnavailable`; configured backend refusal/failure maps to `AtRestProtectionFailed`. No plaintext fallback, encrypt-later or warning-and-continue | P2D | No |
+| 4.6 | `size_bytes = length(content)` means **stored byte length**, not logical length or bound | **READY** | D11/ADR-0020: PRIVATE includes envelope/expansion; read/dedupe also verify consistency. Historical SQL refused mismatched length; name/schema unchanged | P2D | No |
+| 4.7 | No `put_classified_text`; complete ordinary-row PRIVATE protection deferred | **SAFE_DEFER** protection / **READY** refusal obligation | D5 supersedes the historical four-prose-field chokepoint. All future PRIVATE-bearing task/step/receipt/journal writers must refuse before SQLite **even with a blob backend** until a complete reversible design covers prose, error/journal JSON, provider references and all extensions including origin/budget | Later row writers; not P2D | No. Do not claim PRIVATE task support |
 | 4.8 | `acquire_lease` is two statements in ADR-0024's order | **READY** | Executed verbatim. First acquisition → `LEASED`, `attempt = 1`, `generation = 1`; expiry reclaim → `generation` 1→2, `attempt` 1→2. **With the §4.6 trigger added, the first acquisition aborts** | P2E | No |
 | 4.9 | There is **no** `leases_generation_matches_step` trigger | **READY** | §4.6 published one; §4.0, §7, ADR-0024 and the design's §13.1 had all removed it. Following §4.6 made the first acquisition fail — the round-2 blocker, reintroduced | P2E | No |
 | 4.10 | The stale-generation commit returns **0 rows** | **READY** | Verified within one connection and **across two independent connections on one file**, so a process-local mutex cannot be what makes the test pass | P2E | No |
@@ -190,6 +197,12 @@ opaque JSON without disabling precision or reserving wire keys.
 | 4.12 | **An expiry reclaim spends an attempt**, so the bound is on acquisitions | **READY_WITH_LIMITATION** | Measured: a crash-only loop against a ceiling of 2 is stopped after 2 acquisitions with **0 executions**. Correct — counting a crash is the only way `attempt` distinguishes a crash from a retry — but the effective execution budget is `max_attempts_per_step − crashes`, and exhaustion by crashes yields `BLOCKED`, not `FAILED` | P2E | No |
 | 4.13 | The ceiling refusal **rolls back**, and what it leaves differs by case | **READY** | Ceiling 0: step `PLANNED`, `attempt = 0`, **no `leases` row**. Ceiling 2, third acquisition: step reverts to `('LEASED', 2, 2)` with one `leases` row | P2E | No |
 | 4.14 | `renew` refuses an expired lease, including at exactly `now` | **READY** | Executed: `expires_at_ms > :now_ms` accepts before expiry and returns 0 rows at expiry and after | P2E | No |
+| 4.15 | Store owns `Option<Arc<dyn AtRestProtection>>`; PRIVATE-only object-safe `Send + Sync` protect/unprotect | **READY** | D8/D9: `Result<Vec<u8>, AtRestProtectionError>`, payload-free unit error; no class parameter/capability list or backend diagnostic/source chain. Default constructors have no backend; two protection constructors delegate to unchanged P2C open path, no Store lifetime | P2D | No |
+| 4.16 | Plaintext identity, backend-owned opaque envelope | **READY_WITH_LIMITATION** | D10/D12: SHA-256 of SCJ-1 canonical plaintext; PUBLIC/PERSONAL store canonical/NONE, PRIVATE backend bytes/AT_REST. Backend may be nondeterministic and is trusted to protect; reads/dedupe verify marker, stored size, unprotect, canonicalization and digest | P2D | No crypto claim |
+| 4.17 | Storage-local `cfg(test)` double, not testkit API | **READY** | D7: NOT ENCRYPTION, NOT SECURITY, NEVER PRODUCTION. [Crate Map §5.4](../architecture/03-crate-map.md#54-p2d-storage-local-at-rest-double-exception) avoids a testkit → storage edge/cycle; no manifest/dependency/smoke-rule changes | P2D | No |
+| 4.18 | Migration 0001/catalog/checksum unchanged; no 0002 | **READY** | D14: `sha256:d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`; stored-size/marker/composite-key contract fits the existing schema | P2D | No |
+| 4.19 | RED must target the intended missing API, not a permissive fake helper | **READY** | D3 plus Group G: missing-API compile RED is valid new-surface evidence; actual RED/GREEN commands remain to be recorded. Private FK fixtures do not authorize public parent mutation | P2D | No |
+| 4.20 | ADR-0022 remains Proposed beyond blob GREEN | **READY_WITH_LIMITATION** | D6: the blob seam/refusal does not resolve complete ordinary-row protection, ship a real backend or prove production PRIVATE task support | P2D / later row design | No acceptance claim |
 
 ---
 
@@ -198,7 +211,7 @@ opaque JSON without disabling precision or reserving wire keys.
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
 | 5.1 | The 121-pair transition table is one exhaustive `matches!` | **READY** | `COMPLETED`/`FAILED`/`CANCELLED` have no arm, so `T8` is a property of absence. **All 37 legal pairs constructible; all 84 illegal pairs are accepted by SQL and refused by the engine** — the schema deliberately does not encode the table | P2F | No |
-| 5.2 | `Tx` exposes whole transitions, never row-level updates | **READY** | There is no `update_task_state`, no `set_step_status`, no `insert_receipt`, so `T4` cannot be composed wrongly | P2F | No |
+| 5.2 | `Tx` exposes whole transitions, never row-level updates | **READY** | There is no `update_task_state`, no `set_step_status`, no `insert_receipt`, so `T4` cannot be composed wrongly. Reference attachment/roles, `delete_task` and blob+reference atomicity land here, not P2D; PRIVATE-bearing ordinary-row writes remain fail-closed even with a blob backend until the full row design exists | P2F | No |
 | 5.3 | **Historical 32 presence-matrix `N`/`0` probes refused by SQL; not complete error-shape coverage** | **READY** | Was 24/32. Single-column/partial-error cases require the additional gate in §10. The eight gaps — `completed_at`/`result_digest` on `EXECUTING` and `WAITING`, `lease_expires_at` on `WAITING`/`SUCCEEDED`/`FAILED`/`RECONCILED_ABSENT` — closed by three additive constraints. All 51 constructible cells and all 37 transitions still construct | P2F | No |
 | 5.4 | `lease_expires_at` gets a **biconditional**, not an implication | **READY** | `lease_owner` was already biconditional, so the pair was half-constrained: a terminal step could carry an expiry with no owner. ADR-0024 clears both together, so no designed path produces it — but a future writer clearing only `lease_owner` would pass | P2F | No |
 | 5.5 | All 56 `kind × status` cells: **51 constructible, 5 correctly refused** | **READY** | The 5 are `WAITING` on a non-wait kind. Asserting 56/56 would assert the opposite of ADR-0018 | P2F | No |
@@ -225,16 +238,17 @@ opaque JSON without disabling precision or reserving wire keys.
 
 | # | Item | Status | Why deferring is safe |
 | --- | --- | --- | --- |
-| 7.1 | A real `AtRestProtection` backend | **SAFE_DEFER** | ADR-0022 refuses `PRIVATE` with no backend, writes nothing, and says so. The trait plus a test-only double prove the wiring. P2 can receive PRIVATE values and must refuse them without a backend |
+| 7.1 | A real `AtRestProtection` backend | **SAFE_DEFER** | P2D specifies no-backend PRIVATE blob refusal even on read/dedupe; a local test-only double can test wiring but proves no crypto. Complete ordinary-row PRIVATE writes refuse even with a blob backend; ADR-0022 stays Proposed |
 | 7.2 | The `SECRET` sealed store | **SAFE_DEFER** | No crate owns it anywhere in the architecture. P2 refuses `SECRET` at the storage layer, which is the correct posture, not a gap |
 | 7.3 | `NOTIFY`'s eventual capability shape | **SAFE_DEFER** | ADR-0018 §4 makes it host-internal and names the ADR that would change it. The obligation is recorded |
 | 7.4 | Resource-bound numeric values | **SAFE_DEFER** | P0's gap, still open. Inventing a number with no measurement behind it is the `MAX_VALUE_LENGTH` mistake P1 already retracted. §12 keeps this visible and does **not** claim closure |
 | 7.5 | `insert_at` plan revisions | **SAFE_DEFER** | P2 V1 is append-only; the cost is that a mid-plan insertion needs a new task, and ADR-0018 §5 names the relaxation |
 | 7.6 | `max_concurrent_steps_per_task` | **SAFE_DEFER** | Correctly **not** enforced. It is an engine convention with no `CHECK`, trigger or partial index, so it is not structural and is not claimed |
 | 7.7 | The remaining §2 bounds | **SAFE_DEFER** | Counters and configuration belong to `serea-core`. P2 exposes the durable facts each bound's owner needs |
-| 7.8 | Retention (the 30-day trigger) | **SAFE_DEFER** | P12's, because the notification surface and the bound configuration are both `serea-core`'s. P2 provides `delete_task`; P2 enforces no retention bound, and that is a non-claim |
+| 7.8 | Retention (the 30-day trigger) | **SAFE_DEFER** | P12's, because the notification surface and the bound configuration are both `serea-core`'s. P2F provides `delete_task`; P2 enforces no retention bound, and that is a non-claim |
 | 7.9 | A canonical-number dependency | **SAFE_DEFER** | SCJ-1 refuses every `f64`, so P2A needs no float formatter. Fraction encoding/range needs a future decision |
 | 7.10 | Empirical Apple Silicon verification | **SAFE_DEFER** to CI | The design contains nothing architecture-dependent — established by exhaustive source audit — but this host is `x86_64`. The confirmation is the cross-architecture fixture job, and that job is the deliverable |
+| 7.11 | Complete ordinary-row PRIVATE protected representation | **SAFE_DEFER** | Historical four-TEXT dispatch omitted JSON/extensions and reversibility. Every future PRIVATE-bearing task/step/receipt/journal writer refuses before SQLite even with a blob backend until the full design exists; no text API or PRIVATE task support in P2D |
 
 ---
 
@@ -250,7 +264,8 @@ accident. Each is a **non-claim**, not a pending item.
 | `C4`'s second half | `side_effect_class` lives in a descriptor and there is no registry in P2 |
 | `T6`'s comparison | The plan path checks `risk_class ≤ policy_class` only when a descriptor is available, and in P2 it never is. Recorded as a non-claim, not a partial enforcement |
 | Any §2 bound other than `max_attempts_per_step` | See §7 |
-| Any `PRIVATE` at-rest support | P2 ships the trait and the refusal, not a backend |
+| Production `PRIVATE` at-rest or task support | P2D specifies a blob trait/refusal seam only, no real backend; full ordinary-row PRIVATE protection remains unresolved/fail-closed even with a blob backend. ADR-0022 stays Proposed |
+| P2D orphan prevention, blob+reference atomicity or crash durability | Blob rollback is only in-process rollback; attachment/roles/deletion are P2F and crash evidence is P2H |
 | The resource-bound gap | P0's gap, unchanged |
 | Tamper-evidence against a local file writer | Security Invariants §6 records it "Not specified". CHECKs require `ignore_check_constraints = OFF`, foreign keys require ON, and ordinary triggers are independent of both settings; a local file writer can bypass these, and no tamper-evidence is claimed |
 | `NOTIFY` rendering | `serea-core` renders it in P12 |

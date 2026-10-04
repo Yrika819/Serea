@@ -314,6 +314,19 @@ Three properties of this matrix are worth stating explicitly:
 3. **Deny is the default.** A value with no declared class, a destination with
    no rule, or a mismatch between declared and computed class is a denial.
 
+**P2D implementation annotation (no wire/version or matrix change).** The
+[frozen P2D gate](../plans/P2D-review-and-closure.md) specifies a PRIVATE-only
+blob protection seam, not production PRIVATE task support. Ordinary storage
+refuses `SECRET`/`CREDENTIAL`; PRIVATE blob put/get and existing-row dedupe
+refuse without a configured backend before any success. A configured backend
+must protect canonical JSON plaintext and reads/dedupe must unprotect and verify
+its plaintext digest. The `AT_REST` SQL marker alone is not encryption proof.
+No real backend ships. Complete ordinary task/step/receipt/journal PRIVATE
+protection, including JSON extensions, is deferred: future PRIVATE-bearing row
+writers must fail closed before SQLite **even with a blob backend** until that
+design exists. [ADR-0022](../decisions/ADR-0022-durable-private-data-at-rest.md)
+remains **Proposed**; this annotation claims no runtime-test PASS.
+
 ### 5.1 `cloud_model_private_egress`
 
 The default is `false`. It is a durable host setting, changed only from the

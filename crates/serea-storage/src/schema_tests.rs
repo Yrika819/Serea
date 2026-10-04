@@ -1,5 +1,6 @@
-//! Pure DDL contract tests: always execute the production migration, never a
-//! reduced test schema. Memory connections here do not exercise Store policy.
+//! DDL contract tests: always execute the production migration, never a reduced
+//! test schema. Raw memory connections do not exercise Store policy; the FK-OFF
+//! control additionally checks exact-class lookup through Store/Tx.
 
 use std::collections::BTreeMap;
 
@@ -818,7 +819,8 @@ fn generated_class_labels_and_ranks_match_protocol_in_both_directions() {
 #[test]
 fn blob_protection_length_and_class_scoped_deduplication() {
     let db = schema();
-    for rank in 0..=2 {
+    // SECRET (3) and CREDENTIAL (4) refuse even recognized protection markers.
+    for rank in 0..=4 {
         for protection in ["NONE", "AT_REST", "UNKNOWN"] {
             let mut row = base_row("blobs");
             row.insert("data_class_rank", Value::Integer(rank));
@@ -827,7 +829,7 @@ fn blob_protection_length_and_class_scoped_deduplication() {
                 &db,
                 "blobs",
                 &row,
-                protection == if rank == 2 { "AT_REST" } else { "NONE" },
+                rank <= 2 && protection == if rank == 2 { "AT_REST" } else { "NONE" },
             );
         }
     }
@@ -850,6 +852,36 @@ fn blob_protection_length_and_class_scoped_deduplication() {
     let mut other_class = base_row("blobs");
     other_class.insert("data_class_rank", Value::Integer(1));
     probe(&db, "blobs", &other_class, None);
+}
+
+#[test]
+fn private_at_rest_marker_is_structural_not_encryption_proof() {
+    let db = schema();
+    // SQL only checks class/marker/length consistency: opaque bytes and explicit
+    // plaintext both pass. The plaintext control is NOT encryption evidence.
+    for content in [
+        &b"\xff\0schema-only opaque bytes"[..],
+        &br#"{"plaintext_marker_control":"PRIVATE plaintext; NOT ENCRYPTION"}"#[..],
+    ] {
+        let mut row = base_row("blobs");
+        let size = i64::try_from(content.len()).unwrap();
+        row.insert("data_class_rank", Value::Integer(2));
+        row.insert("protection", text("AT_REST"));
+        row.insert("size_bytes", Value::Integer(size));
+        row.insert("content", Value::Blob(content.to_vec()));
+        db.execute_batch("SAVEPOINT marker_control;").unwrap();
+        insert(&db, "blobs", &row).unwrap();
+        let stored: (String, i64, Vec<u8>) = db
+            .query_row(
+                "SELECT protection, size_bytes, content FROM blobs",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, ("AT_REST".to_owned(), size, content.to_vec()));
+        db.execute_batch("ROLLBACK TO marker_control; RELEASE marker_control;")
+            .unwrap();
+    }
 }
 
 #[test]
@@ -887,31 +919,144 @@ fn plan_revision_and_blob_role_baselines_and_closed_vocabularies() {
 #[test]
 fn composite_blob_foreign_keys_refuse_missing_or_wrong_class_references() {
     for table in ["plan_revisions", "task_blob_refs", "step_blob_refs"] {
-        let db = dependencies(table);
-        let mut row = base_row(table);
-        probe(&db, table, &row, None);
-        let digest_column = if table == "plan_revisions" {
-            "plan_digest"
-        } else {
-            "digest"
-        };
-        row.insert(digest_column, text(&format!("sha256:{}", "b".repeat(64))));
-        probe(&db, table, &row, Some(ffi::SQLITE_CONSTRAINT_FOREIGNKEY));
-        db.execute("DELETE FROM blobs WHERE data_class_rank = 0", [])
-            .unwrap();
-        row.insert(digest_column, digest());
-        probe(&db, table, &row, Some(ffi::SQLITE_CONSTRAINT_FOREIGNKEY));
-        row.insert("data_class_rank", Value::Integer(2));
-        probe(&db, table, &row, None);
-        row.insert(
-            if table == "step_blob_refs" {
-                "step_id"
+        for lower_rank in [0, 1] {
+            let db = dependencies(table);
+            // The same digest exists in exactly two classes. Each composite
+            // reference must resolve its own class, not merely a matching digest.
+            assert_eq!(
+                db.execute(
+                    "DELETE FROM blobs WHERE data_class_rank NOT IN (?, 2)",
+                    [lower_rank],
+                )
+                .unwrap(),
+                1
+            );
+            let mut row = base_row(table);
+            let digest_column = if table == "plan_revisions" {
+                "plan_digest"
             } else {
-                "task_id"
-            },
-            text("missing-parent"),
-        );
-        probe(&db, table, &row, Some(ffi::SQLITE_CONSTRAINT_FOREIGNKEY));
+                "digest"
+            };
+            for rank in [lower_rank, 2] {
+                row.insert("data_class_rank", Value::Integer(rank));
+                row.insert(digest_column, digest());
+                probe(&db, table, &row, None);
+                row.insert(digest_column, text(&format!("sha256:{}", "b".repeat(64))));
+                probe(&db, table, &row, Some(ffi::SQLITE_CONSTRAINT_FOREIGNKEY));
+            }
+            assert_eq!(
+                db.execute("DELETE FROM blobs WHERE data_class_rank = ?", [lower_rank])
+                    .unwrap(),
+                1
+            );
+            // A PRIVATE-only blob cannot be laundered through either lower class.
+            row.insert(digest_column, digest());
+            for rank in [0, 1] {
+                row.insert("data_class_rank", Value::Integer(rank));
+                probe(&db, table, &row, Some(ffi::SQLITE_CONSTRAINT_FOREIGNKEY));
+            }
+            row.insert("data_class_rank", Value::Integer(2));
+            probe(&db, table, &row, None);
+            row.insert(
+                if table == "step_blob_refs" {
+                    "step_id"
+                } else {
+                    "task_id"
+                },
+                text("missing-parent"),
+            );
+            probe(&db, table, &row, Some(ffi::SQLITE_CONSTRAINT_FOREIGNKEY));
+        }
+    }
+}
+
+#[test]
+fn composite_blob_foreign_keys_off_allow_dangling_refs_without_private_resolution() {
+    use crate::{BlobRef, Store, StoreError};
+    use serea_protocol::{Clock, EpochMillis, ProtocolError, digest_of};
+
+    struct Fixed;
+    impl Clock for Fixed {
+        fn now_ms(&self) -> Result<EpochMillis, ProtocolError> {
+            EpochMillis::new(0)
+        }
+    }
+
+    let blob_digest = digest_of("{}").unwrap();
+    for (table, roles) in [
+        ("task_blob_refs", &["PLAN", "PLAN_REVISION"][..]),
+        (
+            "step_blob_refs",
+            &["ARGUMENTS", "INSTRUCTION", "RESULT"][..],
+        ),
+    ] {
+        for class in [DataClass::Public, DataClass::Personal] {
+            let store = Store::open_in_memory(&Fixed).unwrap();
+            {
+                let db = store.conn.lock().unwrap();
+                assert_eq!(
+                    db.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0))
+                        .unwrap(),
+                    1
+                );
+                insert(&db, "tasks", &task("READY")).unwrap();
+                if table == "step_blob_refs" {
+                    insert(&db, "task_steps", &step("CAPABILITY", "SUCCEEDED")).unwrap();
+                }
+                // Deliberate raw-writer fixture, not a supported PRIVATE write
+                // or encryption evidence. No lower-class blob row exists.
+                let mut private = base_row("blobs");
+                private.insert("digest", text(blob_digest.as_str()));
+                private.insert("data_class_rank", Value::Integer(2));
+                private.insert("protection", text("AT_REST"));
+                insert(&db, "blobs", &private).unwrap();
+
+                let mut row = base_row(table);
+                row.insert("digest", text(blob_digest.as_str()));
+                row.insert("data_class_rank", Value::Integer(i64::from(class.rank())));
+                for role in roles {
+                    row.insert("role", text(role));
+                    probe(&db, table, &row, Some(ffi::SQLITE_CONSTRAINT_FOREIGNKEY));
+                }
+
+                // Toggle outside any transaction so SQLite cannot silently
+                // ignore the pragma. This models a constraint-disabling writer.
+                db.pragma_update(None, "foreign_keys", "OFF").unwrap();
+                assert_eq!(
+                    db.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0))
+                        .unwrap(),
+                    0
+                );
+                for role in roles {
+                    row.insert("role", text(role));
+                    assert_result(
+                        insert(&db, table, &row),
+                        None,
+                        &format!("FK OFF: {table}/{role}/{class:?}"),
+                    );
+                }
+                db.pragma_update(None, "foreign_keys", "ON").unwrap();
+                assert_eq!(
+                    db.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0))
+                        .unwrap(),
+                    1
+                );
+                assert_eq!(
+                    strings(
+                        &db,
+                        "SELECT \"table\" || ':' || parent FROM pragma_foreign_key_check",
+                    ),
+                    vec![format!("{table}:blobs"); roles.len()],
+                    "dangling composite refs: {table}/{class:?}"
+                );
+            }
+            let lower_class_ref = BlobRef::new(blob_digest.clone(), class);
+            assert_eq!(
+                store.transact(|tx| tx.get_blob(&lower_class_ref)),
+                Err(StoreError::BlobMissing),
+                "dangling refs must not resolve PRIVATE: {table}/{class:?}"
+            );
+        }
     }
 }
 

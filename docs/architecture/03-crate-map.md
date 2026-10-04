@@ -293,8 +293,9 @@ Everything else in the planned tree is created at `serea-arch/0.2.0`.
 
 ## 5. Test doubles: `serea-testkit`, not a `testing` module
 
-> Test doubles live in one dev-only crate. They are unreachable from any
-> production wiring because nothing in the runtime graph may name them.
+> Reusable test doubles live in one dev-only crate. They are unreachable from
+> production wiring because nothing in the runtime graph may name them. The
+> narrowly scoped storage-local exception is recorded in §5.4.
 
 ### 5.1 The decision
 
@@ -305,6 +306,7 @@ Everything else in the planned tree is created at `serea-arch/0.2.0`.
 | `TestClock` | `serea-testkit` | Wall-clock injection is required by every determinism property; one implementation means one set of semantics |
 | `Fixtures` loader | `serea-testkit`, reading `fixtures/` | Synthetic data only (`alice@example.test` and friends). Keeps PII-shaped fixtures out of production crates |
 | **`FakeGoalLatchProvider`** | **`providers/serea-provider-goallatch`** | **Exception, and deliberate** |
+| P2D synthetic `AtRestProtection` double | Local `serea-storage` `cfg(test)` code only | PRIVATE blob wiring tests only; no reusable testkit API or new dependency edge (§5.4) |
 
 ### 5.2 Why `FakeGoalLatchProvider` is the exception
 
@@ -337,6 +339,30 @@ testkit types.
 Enforcement: `serea-testkit` is a workspace member listed under
 `[workspace.dependencies]` but referenced only from `[dev-dependencies]`, and a
 workspace lint fails the build if any non-dev dependency edge targets it.
+
+### 5.4 P2D storage-local at-rest double exception
+
+The [frozen P2D gate](../plans/P2D-review-and-closure.md) keeps the PRIVATE-only
+`AtRestProtection` trait in `serea-storage`. Its synthetic reversible double is
+local `cfg(test)` storage code, not a public `testing` module, Cargo feature,
+reusable testkit API or runtime backend. **NOT ENCRYPTION, NOT SECURITY, NEVER
+PRODUCTION**: it tests refusal, protect/unprotect wiring and plaintext-digest
+verification only; it proves no cryptographic property or PRIVATE task support.
+
+A testkit-owned implementation of this storage trait would require a new
+`serea-testkit → serea-storage` dependency. Storage currently has no dev-dependency
+section and no testkit edge. If a storage → testkit dev edge were also added,
+that placement would risk a dependency cycle. The local unit-test-only exception
+avoids the new testkit → storage edge and that hypothetical cycle; no manifest,
+dependency-graph or workspace-smoke rule change is authorized. Reusable
+provider mocks and `TestClock` remain in testkit under the existing rule.
+
+P2D's storage seam owns `Option<Arc<dyn AtRestProtection>>`; it introduces no
+storage → credential-store edge, real encryption or key-custody decision.
+Complete ordinary-row PRIVATE protection remains deferred/fail-closed even with
+a blob backend, and [ADR-0022](../decisions/ADR-0022-durable-private-data-at-rest.md)
+remains **Proposed**. This annotation does not change the architecture or wire
+version and records no runtime-test PASS.
 
 ---
 

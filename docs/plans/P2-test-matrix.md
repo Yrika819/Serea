@@ -3,9 +3,10 @@
 - **Branch:** `p2/design-preparation`
 - **Base commit:** `c3737039e3e38dbba554dc0b9075025f87948358`
 - **Status:** plan only. No test is implemented by this run.
-- **Method:** Red/Green. Every group below states the RED observation that must be
-  seen **before** any implementation change, so that a manufactured RED — a syntax
-  error, a missing module — cannot pass for evidence.
+- **Method:** Red/Green. Each group specifies the RED to record **before**
+  implementation, not an assertion that it was observed. A syntax error or fake
+  permissive helper is manufactured RED; a P2D test against the intended new API
+  may genuinely fail to compile because that production API is not yet present.
 
 ## Current P2A integration annotation (2026-10-03)
 
@@ -25,6 +26,18 @@ objects and genuine precise numbers through raw/Value/flatten paths; ten tests
 in `json_value_preservation.rs` cover that independent N3 regression.
 Historical audit/probe measurements retain their original scope.
 
+## Current P2D frozen-gate annotation (2026-10-04)
+
+[P2D's frozen gate](P2D-review-and-closure.md) supersedes the old Group G
+sketch. P2D is JSON blob put/get and BlobRef with an owned PRIVATE-only protection
+seam. G10/G17/G18 and public references/roles/deletion/blob+reference atomicity
+are P2F. G19 and other FK/corruption cases use private storage SQL fixtures only;
+no public task/step mutation is added to make a test reachable. The local
+`cfg(test)` double is NOT ENCRYPTION, NOT SECURITY, NEVER PRODUCTION; no testkit
+API, dependency or smoke-rule change. Complete ordinary-row PRIVATE protection,
+including extensions, stays deferred/fail-closed even with a blob backend and
+ADR-0022 stays Proposed. No P2D RED/GREEN or runtime-test PASS is claimed here.
+
 ## 1. Ground rules
 
 Inherited from P1's closure and re-applied:
@@ -35,9 +48,11 @@ Inherited from P1's closure and re-applied:
 2. **No network, no filesystem outside the test's own temporary directory, no
    subprocess** except the deliberate child-process crash harness.
 3. **Every fixture is synthetic.** `.test` domains, as P1 established.
-4. **No RED is manufactured by a syntax error.** Where a type or module must exist
-   for a test to compile, the test is written against the *intended* signature and
-   the failure is an assertion about behaviour.
+4. **No RED is manufactured by a syntax error or permissive fake helper.** Write
+   tests against the *intended production* signature. For P2D's genuinely absent
+   blob API, a missing-API compile failure is valid initial RED; after the API
+   exists, pin behaviour with assertions. Do not replace production dispatch with
+   a helper and call its failure pre-fix evidence.
 5. **A fix without a test that fails on the pre-fix code is not a fix.** P1's
    Pass C found nine unpinned fixes by mutating each one out; this matrix assumes
    that discipline and is written to be mutation-checked.
@@ -52,7 +67,7 @@ Inherited from P1's closure and re-applied:
 | D. Idempotency preimage vectors and the collision | P2A | ADR-0019 §2–§3 |
 | E. Clock and time | P2B | §8 of the design |
 | F. Migrations and connection policy | P2C, except F25/F26 in P2H | §7 of the design |
-| G. Blobs and classification | P2D | ADR-0022, schema §5 |
+| G. Blobs and classification | P2D except G10/G17/G18 in P2F | Frozen P2D gate, ADR-0022 (Proposed), schema §5; G19/FK fixtures private |
 | H. Leases and fencing | P2E | ADR-0024 |
 | I. Task lifecycle and transitions | P2F | §10 of the design |
 | J. Plan, sequence and parent binding | P2F | §10.5 |
@@ -331,33 +346,57 @@ the applicable set, not all 35 rows. No historical table below establishes PASS.
 
 ## 9. Group G — blobs and classification
 
+Required coverage, **not PASS evidence**. Applicable P2D set:
+**G1–G9, G11–G16, G19–G35**. G10/G17/G18 are P2F. Composite FK/metadata
+corruption tests use storage-private SQL fixtures, never public parent mutation.
+
 | # | Test | Pins |
 | --- | --- | --- |
-| G1 | `a_blob_is_stored_under_the_digest_of_its_canonical_bytes` | Content addressing |
-| G2 | `the_same_bytes_at_the_same_class_dedupe_to_one_row` | Deduplication |
-| G3 | `the_same_bytes_at_two_classes_store_two_rows` | The composite key |
-| G4 | `a_public_reference_cannot_read_a_private_blob` | **The laundering case.** A `BlobRef` at `PERSONAL` cannot resolve a blob stored `PRIVATE` |
-| G5 | `a_wrong_digest_is_refused_on_write` | `DigestMismatch` |
-| G6 | `a_corrupt_blob_is_detected_on_read` | Bytes edited under the digest; `BlobCorrupt` |
-| G7 | `read_returns_bytes_identical_to_canonical_bytes` | Round-trip |
-| G8 | `canonical_forms_that_differ_only_in_member_order_dedupe` | ADR-0019 §1 rule 3 |
-| G9 | `a_rollback_after_put_blob_leaves_no_blob_row` | **Orphan prevention, structurally.** No orphan can exist from P2's own writes |
-| G10 | `a_rollback_after_put_blob_leaves_no_reference_row` | Same |
-| G11 | `private_without_a_backend_is_refused_and_writes_nothing` | ADR-0022's core case |
-| G12 | `private_with_a_backend_stores_bytes_that_are_not_the_plaintext` | Using the test double, which is labelled as not encryption |
-| G13 | `secret_is_refused_on_every_write_path` | `ClassRefused` |
-| G14 | `credential_is_refused_on_every_write_path` | `ClassRefused` |
-| G15 | `a_hand_written_insert_of_a_secret_row_is_refused_by_the_check` | The SQL enforcement, not just the Rust path |
-| G16 | `a_hand_written_insert_of_a_private_row_without_protection_is_refused` | The second `CHECK` refuses a missing/wrong `AT_REST` **marker** only; a correctly labelled plaintext control is accepted by SQL. This is not proof of encryption or backend use; P2D dispatch/backend tests are separate |
-| G17 | `deleting_a_task_cascades_to_every_dependent_row_in_one_transaction` | Task Protocol §8 |
-| G18 | `an_unreferenced_blob_survives_a_task_delete_because_another_task_references_it` | Shared blobs |
-| G19 | `a_still_referenced_blob_cannot_be_deleted_directly` | `ON DELETE RESTRICT` |
-| G20 | `size_bytes_matches_length_of_content` | The consistency `CHECK` |
+| G1 | `a_blob_is_stored_under_the_digest_of_its_canonical_bytes` | SHA-256 of SCJ-1 canonical **plaintext**, never protected envelope bytes |
+| G2 | `the_same_bytes_at_the_same_class_dedupe_to_one_row` | Existing row passes full read/unprotect/SCJ-1/digest verification before reuse |
+| G3 | `the_same_bytes_at_two_classes_store_two_rows` | Composite key, including PRIVATE with the local double; PUBLIC/PERSONAL use NONE |
+| G4 | `a_public_reference_cannot_read_a_private_blob` | Construct PUBLIC and PERSONAL refs for a PRIVATE-only digest: exact lookup yields `BlobMissing`, never lower-class substitution |
+| G5 | `a_corrupt_existing_row_is_refused_on_dedupe` | **Replaces obsolete wrong-digest-write G5.** Privately edit content under an existing digest, then put the original JSON; `BlobCorrupt`, no overwrite or conflict-success. No expected-digest parameter / `DigestMismatch` variant |
+| G6 | `a_corrupt_blob_is_detected_on_read` | Valid but wrong JSON and non-SCJ-1 stored bytes; `BlobCorrupt`, not silent data or caller-input error |
+| G7 | `read_returns_bytes_identical_to_canonical_bytes` | PUBLIC/PERSONAL and test-double PRIVATE return canonical plaintext |
+| G8 | `canonical_forms_that_differ_only_in_member_order_dedupe` | ADR-0019 SCJ-1; original raw JSON inputs, whitespace/order normalize |
+| G9 | `a_rollback_after_put_blob_leaves_no_blob_row` | In-process blob rollback only; **not** orphan prevention, crash durability or blob+reference atomicity |
+| G10 | `a_rollback_after_put_blob_leaves_no_reference_row` | **P2F deferred.** Whole-transition blob+reference rollback/atomicity, not a P2D reference API |
+| G11 | `private_without_a_backend_is_refused_and_writes_nothing` | Put and get return `AtRestProtectionUnavailable`; no plaintext fallback. Existing-row cases G21 |
+| G12 | `private_with_a_backend_stores_bytes_that_are_not_the_plaintext` | Local `cfg(test)` synthetic reversible double: NOT ENCRYPTION, NOT SECURITY, NEVER PRODUCTION; canonical plaintext digest and AT_REST marker |
+| G13 | `secret_is_refused_on_every_blob_path` | Put/get including constructed SECRET refs return `ClassRefused`, even with a backend |
+| G14 | `credential_is_refused_on_every_blob_path` | Put/get including constructed CREDENTIAL refs return `ClassRefused`, even with a backend |
+| G15 | `a_hand_written_insert_of_a_secret_row_is_refused_by_the_check` | Both rank 3 and 4; unchanged production CHECK, not just Rust dispatch; full cap inventory G33 |
+| G16 | `a_hand_written_insert_of_a_private_row_without_protection_is_refused` | Missing/wrong AT_REST **marker** refused; correctly labelled plaintext control is SQL-accepted. Not encryption/backend proof |
+| G17 | `deleting_a_task_cascades_to_every_dependent_row_in_one_transaction` | **P2F deferred.** Task Protocol §8, no P2D delete_task |
+| G18 | `an_unreferenced_blob_survives_a_task_delete_because_another_task_references_it` | **P2F deferred.** Shared-blob deletion behaviour; historical test name retained |
+| G19 | `a_still_referenced_blob_cannot_be_deleted_directly` | P2D **private SQL fixture** for existing ON DELETE RESTRICT; no public reference/deletion writer |
+| G20 | `size_bytes_matches_length_of_content` | Stored-content length, including PRIVATE envelope/expansion; not plaintext length or a bound; INSERT consistency and read/dedupe validation |
+| G21 | `private_existing_row_cannot_bypass_missing_backend_on_read_or_dedupe` | Write with test backend, reopen without it, then put/get exact PRIVATE row: `AtRestProtectionUnavailable`, existing row unchanged |
+| G22 | `backend_protect_and_unprotect_fail_closed` | Inject protect/unprotect refusal/failure; put/get/dedupe return `AtRestProtectionFailed` through the payload-free unit error; no successful reuse or inserted row |
+| G23 | `unprotected_invalid_or_wrong_plaintext_is_corrupt` | Backend returns invalid UTF-8/JSON, SCJ-1-refused JSON or valid wrong-digest JSON: get/dedupe `BlobCorrupt`, distinct from backend failure |
+| G24 | `stored_size_corruption_is_refused_on_read_and_dedupe` | Private fixture disables CHECK only to inject inconsistent size, restores it, then exercises PUBLIC/PERSONAL/PRIVATE verification |
+| G25 | `protection_marker_corruption_is_refused_on_read_and_dedupe` | PRIVATE/NONE and PUBLIC/PERSONAL/AT_REST injected privately; `BlobCorrupt` even though lookup succeeds |
+| G26 | `put_accepts_original_json_only_with_scj1_refusals` | Malformed JSON/UTF-8, nested/escaped duplicate names, fractional/exponent numbers, range and depth refusals; accepting scalar/object/array, integer, Unicode and whitespace controls. Fractional model temperature is not coerced |
+| G27 | `nondeterministic_envelopes_keep_plaintext_identity_and_verified_dedupe` | Expanding/nondeterministic test transform round-trips; same canonical plaintext keeps digest and one same-class row. Stored length includes envelope; crypto is not inferred |
+| G28 | `blob_ref_is_identification_not_authority` | Private validated Digest/DataClass fields, public constructor/read accessors/safe Debug, no Serialize; missing/forged exact refs yield BlobMissing, not alias or authority |
+| G29 | `store_owns_protection_without_borrowed_lifetimes` | Drop caller Arc after constructor, use Store across transactions; object-safe Send + Sync trait and payload-free unit error; no class parameter/capability list |
+| G30 | `protection_constructors_share_the_p2c_open_path` | File/memory protection constructors preserve migration/connection/Clock/checkpoint policy; normal constructors retain no backend, no new Store lifetime |
+| G31 | `composite_reference_fks_reject_lower_class_substitution` | Private task/step/ref fixtures pin exact digest+rank FKs, including PLAN/PLAN_REVISION/ARGUMENTS/INSTRUCTION/RESULT schema roles. No public attachment API; FK-OFF control shows dangling ref acceptance, not successful PRIVATE read |
+| G32 | `p2d_surface_excludes_text_reference_and_parent_mutation` | No text/role/attachment/delete_task/task/step/receipt/journal APIs or lease/engine runtime. Future ordinary-row PRIVATE writers must refuse even with blob protection until the full row design exists; no P2D runtime claim for absent writers |
+| G33 | `p2d_preserves_migration_and_all_seven_class_caps` | Exact production 0001/catalog/checksum unchanged, no 0002; private fixtures exercise SECRET/CREDENTIAL caps on blobs/tasks/receipts/revisions/journal and both ref tables |
+| G34 | `blob_and_backend_errors_disclose_no_payload_or_source_chain` | Display/Debug/source checks for canonical, missing/corrupt, class refusal and protection unavailable/failed categories; no rejected JSON, protected bytes or backend diagnostics |
+| G35 | `blob_dispatch_calls_protection_only_for_private` | PUBLIC/PERSONAL never call configured protect/unprotect; SECRET/CREDENTIAL refuse without calling it. PRIVATE read/dedupe requires unprotect and verification; refusals preserve existing rows and insert none |
 
-**RED for G11**, observed on pre-fix code: there is no `put_blob` at all, so the
-test is written first against a deliberately permissive local helper that writes
-whatever class it is handed. G11 and G13 fail, and G15 fails because the table has
-no `CHECK`. Those three failures are the RED.
+**P2D RED requirement, not an observed result.** Write tests against intended
+`Tx::put_blob/get_blob`, `BlobRef` and protection constructors first. A genuine
+compile failure naming those missing production APIs is valid initial RED; do
+not create a permissive helper or unchecked substitute table. P2C's production
+migration already has the relevant CHECKs, so claiming G15 RED against an
+unchecked table would be fabricated evidence. Once APIs exist, behaviour cases
+must pin failures directly, notably replacement G5 and PRIVATE existing-row
+read/dedupe refusal. Record actual RED/GREEN commands in the P2D closure record;
+this documentation run provides none.
 
 ## 10. Group H — leases and fencing
 
@@ -523,9 +562,9 @@ even where a more specific group seems to cover it.
 | P2A | A/B/C/D groups and added boundary cases below | Shape/schema planned-step RED; whitespace and canonical/framing failures | All four groups green atomically |
 | P2B | Corrected E1–E7 plus API/ULID regressions | Signed bounds, instant-versus-spelling conversion, explicit string/epoch ordering and checked atomic TestClock failures | Record actual E/API/ULID and applicable workspace/MSRV results; no Store or new storage/engine crates; canonical groups already belong to P2A |
 | P2C | Applicable F1–F35 **minus F25/F26**; phase O4/O7 | F1 against no store; F7 against DDL outside migration; fresh bootstrap/concurrent-init and one-snapshot newer-priority repairs; prefix/read-only/clock/instant/checkpoint boundaries | Implement foundation only; applicable F green, exactly three members; child infrastructure optional (owner direction 21) |
-| P2D | G1–G20 | G11, G13 against a permissive helper; G15 against an unchecked table | Implement; G green |
+| P2D | G1–G9, G11–G16, G19–G35; private FK fixtures | Genuine compile RED against intended missing production blob/protection APIs, not a fake helper or unchecked table; actual evidence pending | Implement narrow blob seam and record actual focused/full stable/Rust 1.85 debug/release validation and independent reviews; ADR-0022 stays Proposed |
 | P2E | H1–H17 | H6, H10, H14 against owner-only fencing | Implement; H green |
-| P2F | I1–I15, J1–J15, K1–K8, L1–L10 | I1 on the omitted transition; J12 on the missing `task_id` predicate | Implement; I, J, K, L green |
+| P2F | I1–I15, J1–J15, K1–K8, L1–L10 plus G10/G17/G18 and whole-transition reference atomicity | I1 on the omitted transition; J12 on the missing `task_id` predicate | Implement engine/reference/role/deletion surface; PRIVATE-bearing ordinary-row writes fail closed even with a blob backend until the complete row design exists |
 | P2G | M1–M22 | M12 on the second-pass rewrite | Implement; M green |
 | P2H | N1–N8 **plus F25/F26** | N4 and N6 on a `transact` with no injection point; cross-binary temp identity and crash-child inherited-directory reopen | Implement; N and deferred F25/F26 green |
 | P2I | O1–O15 | O6 and O10 on a `Store` with a bare `update_task_state` | Remove; all green |
@@ -538,7 +577,9 @@ P2I.
 
 | Not tested | Why | Deferred to |
 | --- | --- | --- |
-| That a real at-rest backend is sound | P2 ships none | The backend's own decision (ADR-0022, open question 1) |
+| That a real at-rest backend is sound | P2 ships none; local double is synthetic wiring only | The backend's own decision (ADR-0022, open question 1) |
+| Complete ordinary-row PRIVATE support | P2D has no text API or full reversible row representation; future PRIVATE-bearing task/step/receipt/journal writes, including extensions, refuse even with a blob backend | ADR-0022 open question 3; ADR stays Proposed |
+| P2D blob+reference atomicity, orphan prevention or crash survival | G9 is ordinary blob rollback only; P2D has no reference/deletion writer | P2F attachment/roles/deletion; P2H crash evidence |
 | That a `SECRET` sealed store exists | It does not | Open question 2 |
 | `C4`'s `side_effect_class != NONE` half | No Capability Registry | P5 |
 | `T6`'s risk-class comparison | No descriptors | P5 |
@@ -547,7 +588,7 @@ P2I.
 | `origin` / `attempt_budget` extension round-trip | Three JSON columns, pinned by I14 and F-group schema checks | — |
 | Any §2 bound other than `max_attempts_per_step` | Counters belong to `serea-core` | `serea-core` |
 | Payload-byte, blob-byte and object-count limits | **Still P0's open gap.** P2 imposes none and this matrix claims none | The separate bounds decision |
-| Retention / `max_retained_tasks` | `delete_task` exists; the 30-day trigger is **P12's**, because the bound configuration it reads and the purge notification both land in `serea-core` then | P12 |
+| Retention / `max_retained_tasks` | `delete_task` is P2F, not P2D; the 30-day trigger is **P12's**, because the bound configuration it reads and the purge notification both land in `serea-core` then | P12 |
 | `max_concurrent_steps_per_task` | The engine's one-effecting-step-at-a-time rule is a convention with no `CHECK` or trigger behind it, so it is not structural and is not claimed | `serea-core` (the bound), P5 (the router that serialises effecting calls) |
 | Read-back reconciliation of an ambiguous effect | P2 has no capability | P5 |
 | Approval re-render against a device roster | P2 has no device link | P6/P12 |
@@ -561,6 +602,7 @@ P2I.
 | C/D / P2A | Duplicate names (nested and escaped equivalents) refused before Value; lost duplicates cannot be recovered. f64 model temperature remains wire-valid but SCJ-1 refuses it. Names and values each framed; 282-byte vector1. Historical p.r.list A/B low-level private raw framing only; typed invalid-ID rejection; valid-ID typed derivation accepts every SCJ-1 root, including pinned pp.rr.list scalars and legal objects; ActionRequest rejects nonobjects. |
 | B/SQL / P2C/P2F | Each of six error columns singly populated outside FAILED refused; all partial mandatory-error subsets refused on FAILED; details optional on FAILED. SQL generation0 <-> wireNone, positive u32, overflow rollback. Historical 32-cell probes alone are insufficient. |
 | H / P2E/P2F | Released guard cannot commit without reacquisition even when step copy is unchanged; authoritative lease absent/wrong owner/generation refuses; same-owner reclaim fences old guard; expired-unreclaimed known outcome commit succeeds but begin/renew fails; u32::MAX acquisition refuses. begin_attempt borrows guard, outcome consumes it. |
+| G / P2D | Original JSON/SCJ-1 only; class-first PRIVATE refusal even on existing-row read/dedupe; SECRET/CREDENTIAL put/get refusal; full marker/stored-length/unprotect/canonical-plaintext-digest verification and backend unit-error boundary. Owned Arc/private BlobRef/local cfg(test) double; unchanged migration. No text/reference/role/deletion API or PRIVATE ordinary-row support. Actual runtime evidence pending. |
 | Transaction / P2C | Opaque Tx body Err rolls back; no public raw SQL/connection escape. No participant/journal runtime or ADR acceptance. |
 | Transaction / P2F/P2G | Body Err never calls participants; participant failure rolls back writes; no-op records nothing; successful body returns immutable actual transition(s), journal shares transaction; no event_seq/backfill and P2 pending count is journal row count. |
 | Registry / P2A | Per-surface task/action2 with event/model/etc1, envelope1; unsupported major refused per surface. Protocol manifest/source/schema/docs agree. |

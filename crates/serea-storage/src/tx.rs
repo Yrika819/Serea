@@ -1,4 +1,5 @@
-/// Opaque transaction capability. P2C provides no row-level SQL escape hatch.
+/// Opaque transaction capability. Blob operations are transaction-scoped;
+/// there is no row-level SQL escape hatch or task/step mutation.
 /// Later phases add whole-transition methods here, not independent writes on Store.
 ///
 /// External callers cannot extract the underlying transaction:
@@ -10,6 +11,28 @@
 /// ```compile_fail
 /// use serea_storage::Tx;
 /// fn bypass(tx: &Tx<'_>) { tx.execute_batch("DELETE FROM tasks").unwrap(); }
+/// ```
+/// P2D does not expose deferred classified-text or parent-reference helpers:
+/// ```compile_fail
+/// use serea_storage::Tx;
+/// let _ = Tx::put_classified_text;
+/// ```
+/// ```compile_fail
+/// use serea_storage::Tx;
+/// let _ = Tx::put_task_blob;
+/// ```
+/// ```compile_fail
+/// use serea_storage::Tx;
+/// let _ = Tx::put_step_blob;
+/// ```
+/// Nor does it start deletion or lease runtime:
+/// ```compile_fail
+/// use serea_storage::Store;
+/// let _ = Store::delete_task;
+/// ```
+/// ```compile_fail
+/// use serea_storage::Tx;
+/// let _ = Tx::acquire_lease;
 /// ```
 /// The public transaction capability remains usable without a SQL escape hatch:
 /// ```
@@ -25,4 +48,5 @@
 /// ```
 pub struct Tx<'conn> {
     pub(crate) inner: rusqlite::Transaction<'conn>,
+    pub(crate) protection: Option<std::sync::Arc<dyn crate::AtRestProtection>>,
 }

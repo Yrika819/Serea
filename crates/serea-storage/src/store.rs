@@ -1,11 +1,11 @@
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use serea_protocol::Clock;
 
-use crate::{Migrations, StoreError, Tx, migrate};
+use crate::{AtRestProtection, Migrations, StoreError, Tx, migrate};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Profile {
@@ -23,7 +23,9 @@ pub enum CheckpointOutcome {
 }
 
 /// Single-connection SQLite foundation, serialized by a connection mutex.
-/// No clock borrow is retained and no domain write API exists in P2C.
+/// No clock borrow is retained. Blob operations require an opaque Tx; task and
+/// step transitions are not implemented. Optional PRIVATE blob protection is
+/// owned, not borrowed, and is not complete PRIVATE task/row protection.
 ///
 /// Do not call Store methods again from a transact closure: the connection lock
 /// is already held. Panic rolls back the SQL transaction and poisons the mutex.
@@ -41,6 +43,7 @@ pub enum CheckpointOutcome {
 pub struct Store {
     pub(crate) conn: Mutex<Connection>,
     profile: Profile,
+    protection: Option<Arc<dyn AtRestProtection>>,
 }
 
 impl Store {
@@ -99,6 +102,7 @@ impl Store {
         Ok(Self {
             conn: Mutex::new(conn),
             profile: Profile::File,
+            protection: None,
         })
     }
 
@@ -114,7 +118,33 @@ impl Store {
         Ok(Self {
             conn: Mutex::new(conn),
             profile: Profile::Memory,
+            protection: None,
         })
+    }
+
+    /// Opens through the identical P2C preflight/policy path, then retains an
+    /// owned PRIVATE blob backend. No backend is invoked while opening.
+    /// Backend injection alone is not a claim of cryptographic quality or
+    /// protected ordinary task rows. P2D ships no production backend.
+    pub fn open_with_protection(
+        path: &Path,
+        clock: &dyn Clock,
+        protection: Arc<dyn AtRestProtection>,
+    ) -> Result<Self, StoreError> {
+        let mut store = Self::open(path, clock)?;
+        store.protection = Some(protection);
+        Ok(store)
+    }
+
+    /// Injects owned PRIVATE blob protection into the non-durable memory test
+    /// profile. Normal callers can keep using open_in_memory with no backend.
+    pub fn open_in_memory_with_protection(
+        clock: &dyn Clock,
+        protection: Arc<dyn AtRestProtection>,
+    ) -> Result<Self, StoreError> {
+        let mut store = Self::open_in_memory(clock)?;
+        store.protection = Some(protection);
+        Ok(store)
     }
 
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {
@@ -139,7 +169,8 @@ impl Store {
 
     /// Runs a synchronous body in BEGIN IMMEDIATE. Ok commits, Err explicitly
     /// rolls back. Commit failures are typed errors; no success is manufactured.
-    /// Tx is opaque: whole-transition operations belong to later phases.
+    /// Tx exposes blob operations, not SQL. Whole task/step transitions belong
+    /// to later phases; propagate operation errors to roll back the closure.
     pub fn transact<T>(
         &self,
         body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
@@ -147,6 +178,7 @@ impl Store {
         let mut conn = self.connection()?;
         let mut tx = Tx {
             inner: conn.transaction_with_behavior(TransactionBehavior::Immediate)?,
+            protection: self.protection.clone(),
         };
         match body(&mut tx) {
             Ok(value) => {

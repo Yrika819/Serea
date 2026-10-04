@@ -14,6 +14,16 @@
   [ADR-0024](../decisions/ADR-0024-lease-fencing-and-commit-under-lease.md) for
   the invariants the constraints enforce.
 
+## Current P2D frozen-gate annotation (2026-10-04)
+
+[P2D's frozen gate](P2D-review-and-closure.md) supersedes the old blob/text
+sketches. P2D is only JSON blob put/get, `BlobRef` and PRIVATE-only protection;
+reference attachment/roles, deletion and blob+reference atomicity are P2F.
+Ordinary-row PRIVATE protection, including JSON extensions, remains deferred and
+future writers must fail closed even with a blob backend. ADR-0022 remains
+**Proposed**. Historical SQL probes below are preserved; this reconciliation
+claims no P2D runtime-test PASS.
+
 ## 1. Tables in P2, and the ones deliberately absent
 
 | Table | In P2? | Why |
@@ -75,19 +85,25 @@ Stored as JSON, and why each is safe:
 | `ActionError.details` | The frozen shape is a closed object whose `details` is an open JSON object; the schema already caps it with `maxProperties: 64` |
 | `ActionRequest.arguments` and `ActionResult.output` | **Not stored as JSON columns at all.** They are content-addressed blobs, which is what Task Protocol §3.1 requires and what makes dedup, digest verification, and right-to-delete possible |
 
-Everything else is a column.
+Everything else is a column. These normalization/JSON choices do **not** imply
+at-rest protection. Opaque extensions and error/journal JSON can carry PRIVATE
+content just as prose can; all belong to the deferred complete ordinary-row
+surface (§4.3), not the P2D blob backend.
 
 ## 3. Class ranks are integers, labels are generated
 
+This ordinary-store illustration admits only ranks 0–2. The protocol still has
+all five ranks: `PUBLIC` (0), `PERSONAL` (1), `PRIVATE` (2), `SECRET` (3) and
+`CREDENTIAL` (4); the latter two are refused by the ordinary-store cap, not
+removed from the protocol.
+
 ```sql
-data_class_rank    INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 4),
+data_class_rank    INTEGER NOT NULL CHECK (data_class_rank BETWEEN 0 AND 2),
 data_class         TEXT GENERATED ALWAYS AS (
                        CASE data_class_rank
                          WHEN 0 THEN 'PUBLIC'
                          WHEN 1 THEN 'PERSONAL'
-                         WHEN 2 THEN 'PRIVATE'
-                         WHEN 3 THEN 'SECRET'
-                         ELSE 'CREDENTIAL'
+                         ELSE 'PRIVATE'
                        END) STORED,
 policy_class_rank  INTEGER NOT NULL CHECK (policy_class_rank BETWEEN 0 AND 7),
 policy_class       TEXT GENERATED ALWAYS AS (…eight RiskClass values…) STORED,
@@ -158,6 +174,11 @@ not a Markdown SQL copy. All snippets below are **non-authoritative explanatory
 fragments**, not standalone migrations. Consult the production file for the full
 constraints, triggers and indexes; never assemble a migration from these snippets.
 
+P2D keeps this production file, catalog and checksum unchanged; no 0002:
+`sha256:d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`.
+The existing schema supports the narrow blob seam; PRIVATE row protection is a
+separate unresolved design, not a reason to relabel plaintext as protected.
+
 Every one of the **14 durable instants** has an inclusive `EpochMillis` CHECK:
 `BETWEEN -62167219200000 AND 253402300799999`. Nullable instants remain nullable;
 existing presence and ordering checks still apply. Counters, generation, sizes
@@ -181,7 +202,7 @@ comments, whitespace and final newline; this is not SCJ-1 canonical JSON.
 | --- | --- |
 | `data_class_rank BETWEEN 0 AND 2` | A `SECRET` or `CREDENTIAL` row is **unconstructible**, so `DC5` holds at the storage layer and not merely in Rust |
 | `(data_class_rank = 2) = (protection = 'AT_REST')` | Enforces the `PRIVATE`/`AT_REST` **marker pairing only**. A direct `INSERT` can label unchanged plaintext `AT_REST`; this CHECK does not prove encryption or backend use. Protection enforcement belongs to P2D, not P2C |
-| `size_bytes = length(content)` | A **consistency** check, not a bound. Under ADR-0020 a consistency invariant is not a resource limit, and this one rejects a torn-length row without inventing a size ceiling |
+| `size_bytes = length(content)` | Stored-content byte length: PUBLIC/PERSONAL canonical plaintext, PRIVATE backend bytes including envelope/expansion. Keep the name/schema; this is a **consistency** check, not logical plaintext length or a resource bound (ADR-0020) |
 | `PRIMARY KEY (digest, data_class_rank)` | Deduplication *within* a class, and no cross-class laundering — see §5.3 |
 
 **The digest predicate is three clauses, not one.** `substr(digest, 8) NOT GLOB
@@ -248,16 +269,23 @@ two clauses. The value of having them is that a corrupt row in one of these fiel
 is a corrupt row that changes a control-flow decision — Event Protocol §4 requires
 a code to be a stable machine-readable value.
 
-**What is *not* structurally enforced here, stated plainly.** `tasks.title`,
-`tasks.result_summary`, `task_steps.error_message` and
-`side_effect_receipts.effect_summary` are `TEXT` columns holding content that a
-caller may classify `PRIVATE`. The schema cannot record a per-column class, so
-these columns require the **planned P2D classified-write dispatch** — a single
-`Tx::put_classified_text` chokepoint — and *not* by a `CHECK`. ADR-0022's
-"put the rule where it cannot be forgotten" applies to the blob store; for text
-columns the guarantee is "one chokepoint function", which is weaker and is claimed
-as such. P2D tests must pin that no second write path exists; this slice does not
-implement that path or prove encryption merely from the `AT_REST` marker.
+**What is *not* protected here, stated plainly.** The earlier four-field text
+chokepoint was incomplete and is superseded by P2D D5: there is **no
+`Tx::put_classified_text` API** or reversible ordinary-row representation in P2D.
+`tasks.title`, `tasks.result_summary`, `task_steps.error_message` and
+`side_effect_receipts.effect_summary` are only examples. The complete surface
+also includes error details, journal payloads, provider references and every
+PRIVATE-bearing task/step/receipt/journal JSON extension, including task origin
+and budget extensions. `json_valid`, class caps and the blob protection marker
+cannot protect those bytes.
+
+Until a complete row-surface design exists, every future ordinary-row
+PRIVATE-bearing writer must fail closed **before SQLite, even with a blob
+backend configured**. SECRET/CREDENTIAL remain refused. P2D supplies no parent,
+receipt or journal writer and cannot claim enforcement of a text chokepoint that
+does not exist. A SQL-accepted PRIVATE row in the historical probes below is
+schema evidence, not encryption or production PRIVATE task support. ADR-0022
+remains **Proposed**.
 
 ### 4.4 `task_steps`
 
@@ -510,7 +538,11 @@ remembering to delete the references by hand — and Data Classification §8.2 s
 requires the cascade to be correct in **one transaction**. Two tables cost a
 duplicate definition and buy real referential integrity.
 
-**`step_blob_refs` has three roles, and all three are written.** `ARGUMENTS`
+P2D adds no public reference/role API or task/step mutation. The composite FKs
+remain in production 0001 and may be exercised with private SQL fixtures; the
+whole-transition writers and blob+reference atomicity proof belong to **P2F**.
+
+**`step_blob_refs` has three roles, all reserved for P2F writers.** `ARGUMENTS`
 carries a `CAPABILITY`, `DELEGATE` or `VERIFY` step's arguments; `INSTRUCTION`
 carries the host-written input document whose digest is `input_digest` for every
 other kind; `RESULT` carries the result document. Without `INSTRUCTION` a
@@ -600,44 +632,75 @@ avoids a P2 counter masquerading as the event sequence.
 
 ## 5. Content-addressed blobs
 
+P2D accepts **original UTF-8 JSON bytes**, not arbitrary binary or a parsed
+`Value`. PLAN/PLAN_REVISION/ARGUMENTS/INSTRUCTION/RESULT are JSON documents;
+ADR-0019 SCJ-1 refusals apply, including duplicate keys, invalid UTF-8/JSON,
+non-integer numbers and structural depth. Fractional model temperature remains
+wire-valid but noncanonicalizable; no coercion or universal wire-JSON admission
+is promised. Raw-byte provenance remains a caller obligation.
+
 ### 5.1 Write path
 
 ```text
-put_blob(tx, bytes, class)
-  1. canonicalize(bytes)                    ADR-0019 SCJ-1; depth <= 64
-  2. digest := sha256(canonical)
-  3. if the store already holds (digest, class) -> return the existing BlobRef
-  4. class dispatch:
-       PUBLIC | PERSONAL                      -> protection = 'NONE'
-       PRIVATE  and no backend configured     -> StoreError::AtRestProtectionUnavailable
-       PRIVATE  and backend configured         -> protection = 'AT_REST', content = protect(...)
-       SECRET | CREDENTIAL                     -> StoreError::ClassRefused
-  5. INSERT INTO blobs (...)                 -- a UNIQUE conflict is the dedupe case
-  6. the caller inserts the matching row into task_blob_refs / step_blob_refs
+Tx::put_blob(bytes, class)
+  1. class dispatch, before lookup or any dedupe success:
+       SECRET | CREDENTIAL                 -> StoreError::ClassRefused
+       PRIVATE and no backend              -> StoreError::AtRestProtectionUnavailable
+       PUBLIC | PERSONAL | PRIVATE+backend  -> continue
+  2. canonical := canonicalize(original JSON bytes)  -- ADR-0019 SCJ-1
+       input refusal -> StoreError::CanonicalJson
+  3. digest := sha256(canonical plaintext)
+  4. exact lookup of (digest, data_class_rank):
+       existing row -> verify by the full read path below, then reuse BlobRef
+       missing row  -> continue
+  5. PUBLIC | PERSONAL -> content = canonical, protection = 'NONE'
+     PRIVATE           -> content = protect(canonical), protection = 'AT_REST'
+       backend refusal/failure -> StoreError::AtRestProtectionFailed
+  6. size_bytes := stored content byte length; INSERT INTO blobs (...)
+       never treat a conflict as success without the same existing-row verification
+  7. return BlobRef; caller's transact controls COMMIT/rollback
 ```
 
-Steps 5 and 6 are both inside the **caller's** transaction, and P2 offers no
-`put_blob` outside a `Tx`. That is what makes orphan prevention structural rather
-than a sweeper's job: a crash between 5 and 6 rolls back both, so no orphan can
-exist from P2's own writes. A garbage-collection query for unreferenced blobs
-therefore exists as a repair tool, not as a routine requirement.
+The PRIVATE-only object-safe `AtRestProtection: Send + Sync` has
+`protect/unprotect(&self, &[u8]) -> Result<Vec<u8>, AtRestProtectionError>`; the
+error is a payload-free unit, with no backend diagnostic/source chain. No class
+parameter or capability list is needed. Store owns
+`Option<Arc<dyn AtRestProtection>>`; default constructors have no backend and
+the two protection constructors reuse P2C's unchanged open path. Backend bytes
+are an opaque, possibly nondeterministic envelope; the digest remains the
+canonical plaintext digest, never a ciphertext identity.
+
+Dedupe verifies protection marker, stored length, unprotect, SCJ-1 and digest;
+`INSERT OR IGNORE` is not integrity verification. There is no expected-digest
+write parameter or `DigestMismatch` variant; G5 now covers corrupt-existing-row
+dedupe refusal. Standalone blob rows are allowed in P2D. It offers no reference
+writer, so blob rollback proves neither orphan prevention nor blob+reference
+atomicity. P2F must attach references within the same whole-transition transaction;
+crash evidence belongs to P2H.
 
 ### 5.2 Read path
 
 ```text
-get_blob(tx, ref)
-  1. SELECT content, protection, data_class_rank FROM blobs WHERE (digest, class) = ref
-  2. zero rows -> StoreError::BlobMissing
-  3. if protection = 'AT_REST' -> unprotect(...)     ADR-0022
-  4. re-canonicalize and re-digest; mismatch -> StoreError::BlobCorrupt
-  5. return the canonical bytes
+Tx::get_blob(ref)
+  1. dispatch ref.class as on write: SECRET/CREDENTIAL refuse;
+       PRIVATE without backend refuses, even for an existing row
+  2. SELECT content, protection, size_bytes, data_class_rank
+       FROM blobs WHERE digest = ref.digest AND data_class_rank = ref.class.rank()
+       zero rows -> StoreError::BlobMissing
+  3. verify marker (NONE for PUBLIC/PERSONAL, AT_REST for PRIVATE)
+       and size_bytes == stored content byte length; invalid -> StoreError::BlobCorrupt
+  4. PRIVATE -> plaintext := unprotect(content)
+       backend refusal/failure -> StoreError::AtRestProtectionFailed
+     PUBLIC | PERSONAL -> plaintext := content
+  5. re-canonicalize plaintext and verify sha256(canonical) == ref.digest
+       invalid SCJ-1 or digest mismatch -> StoreError::BlobCorrupt
+  6. return canonical plaintext bytes
 ```
 
-Step 4 costs one hash per read and is the entire point: Task Protocol §3.1 says
-`result_digest` "Detects result corruption or partial writes on recovery". A digest
-that is never re-verified detects nothing. A corrupt `blobs` row therefore becomes
-`BlobCorrupt` at read time and `CorruptOrInvariantViolation` during recovery, never
-a silently wrong result.
+The same verification governs dedupe success. A digest never re-verified detects
+nothing; neither marker acceptance nor a successful SQL lookup proves content
+integrity. Later P2G recovery can classify this failure as
+`CorruptOrInvariantViolation`; that consumer is not implemented by P2D.
 
 ### 5.3 Classification and laundering
 
@@ -645,19 +708,23 @@ The composite primary key `(digest, data_class_rank)` is the safety-relevant
 choice. Keyed by `digest` alone, a reference classified `PERSONAL` could resolve a
 blob stored `PRIVATE`, laundering a private payload downward — which `DC3` forbids
 and which no `CHECK` on a single class column would catch. With a composite key, a
-reference at class `X` can only ever resolve bytes stored at class `X`, and a reader
-can never widen its own view of a value's class.
+reference at class `X` uses an exact lookup and can only resolve a row stored at
+class `X`; no digest-only fallback is permitted. `BlobRef` privately holds a
+validated `Digest` and `DataClass`, with a public constructor, read accessors and
+payload-safe `Debug`, but no `Serialize`. It is identification, not host
+authorization or content-classification inference. A forged PUBLIC or PERSONAL
+reference to a PRIVATE-only row yields `BlobMissing`, not lower-class access.
 
 Deduplication still works for the case that matters: the same arguments written
 twice at the same class are stored once. Storing identical bytes at two classes is
 wasteful and safe, which is the correct trade for a store that decides what may be
 persisted.
 
-**A consequence worth stating:** because the composite foreign key pins a
-reference's class to the blob's, `StoreError::ClassEscalationRequired` — which an
-earlier draft of the API carried — is **unreachable**. Escalation is
-unrepresentable by construction, not merely unimplemented. The variant has been
-removed rather than left as a dead arm.
+**A consequence worth stating:** `StoreError::ClassEscalationRequired`, which an
+earlier draft carried, has no role in this API. Exact lookup never substitutes a
+higher-class row, and composite FKs reject mismatched durable references when
+enforcement is enabled. A caller can construct an identifying `BlobRef`, but
+that does not authorize declassification or make an absent exact row exist.
 
 **The guarantee's real boundary, which the P2 autonomous audit added.** The
 anti-laundering property above rests on `PRIMARY KEY (digest, data_class_rank)`
@@ -675,14 +742,17 @@ VALUES (?, 'PLAN', ?, 0);   -- references a blob stored at class 2: ACCEPTED
 COMMIT;
 ```
 
-No pragma trickery and no privilege beyond file write, and a `PUBLIC` reference
-now resolves a `PRIVATE` blob. So the honest statement is the same one ADR-0022
-already makes for `ignore_check_constraints`, applied symmetrically:
+No pragma trickery and no privilege beyond file write: the historical SQL probe
+accepts a **dangling PUBLIC reference** when only a PRIVATE blob row exists. That
+breaks referential integrity; it does not make P2D's exact `(digest, rank)` read
+resolve the PRIVATE row. The FK guarantee's honest boundary is the same one
+ADR-0022 makes for `ignore_check_constraints`, applied symmetrically:
 
-> The composite key is a **structural** guarantee — a reader can never widen its
-> own view of a value's class — against any writer that leaves constraint
-> enforcement enabled. It is a **pragma-dependent** guarantee against a local file
-> writer, who disables it with one line. See §7.
+> The composite FKs provide a **structural, pragma-dependent** guarantee that
+> durable references have matching blob rows while `foreign_keys = ON`. A local
+> file writer can disable that guarantee with one line. P2D separately requires
+> exact `(digest, rank)` lookup and content verification; it claims no protection
+> against a local writer rewriting rows or classifying copied content. See §7.
 
 This does not weaken the design; it names the boundary the threat model already
 excludes. [Trust Boundaries §2 `TB-7`](../architecture/02-trust-boundaries.md#tb-7-core-to-durable-store)
@@ -694,6 +764,7 @@ ADR-0020 just closed. What was missing was not a control — it was the sentence
 
 ### 5.4 Deletion
 
+Deferred **P2F** whole-transition design, not a P2D API or runtime proof.
 Task Protocol §8 and Data Classification §8.2 step 2, in one transaction:
 
 ```sql
@@ -725,7 +796,7 @@ survives the sweep and an unreferenced one is removed.
 **Retention is not P2's to enforce.** `max_retained_tasks` is a
 [Bounds Protocol §2](../protocols/10-bounds-protocol.md#2-the-bound-set) bound and
 Crate Map §3.1 gives bound configuration and global counters to `serea-core`.
-P2 provides `delete_task`; the **30-day retention trigger is P12's**, because the
+P2F provides `delete_task`; the **30-day retention trigger is P12's**, because the
 notification surface and the bound configuration are both `serea-core`'s and
 arriving together in P12 keeps the trigger with the configuration it reads. Task
 Protocol §8's retention *interval* is honoured by P2 only as a value

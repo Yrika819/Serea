@@ -30,6 +30,18 @@ pub enum StoreError {
     UnsupportedSqlite,
     /// A panicking transaction poisoned the connection mutex.
     LockPoisoned,
+    /// Original bytes are not a UTF-8 SCJ-1 JSON document.
+    CanonicalJson,
+    /// No row exists at the exact blob digest and class.
+    BlobMissing,
+    /// Stored metadata or canonical plaintext integrity is invalid.
+    BlobCorrupt,
+    /// SECRET/CREDENTIAL cannot use ordinary blob storage.
+    ClassRefused,
+    /// PRIVATE requires an injected at-rest backend.
+    AtRestProtectionUnavailable,
+    /// The injected backend refused protection or unprotection.
+    AtRestProtectionFailed,
     /// The injected clock refused its reading.
     Clock(ProtocolError),
 }
@@ -49,6 +61,12 @@ impl StoreError {
             Self::ConnectionPolicy => "ConnectionPolicy",
             Self::UnsupportedSqlite => "UnsupportedSqlite",
             Self::LockPoisoned => "LockPoisoned",
+            Self::CanonicalJson => "CanonicalJson",
+            Self::BlobMissing => "BlobMissing",
+            Self::BlobCorrupt => "BlobCorrupt",
+            Self::ClassRefused => "ClassRefused",
+            Self::AtRestProtectionUnavailable => "AtRestProtectionUnavailable",
+            Self::AtRestProtectionFailed => "AtRestProtectionFailed",
             Self::Clock(_) => "Clock",
         }
     }

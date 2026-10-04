@@ -25,14 +25,17 @@
 /// use serea_storage::Tx;
 /// let _ = Tx::put_step_blob;
 /// ```
-/// Nor does it start deletion or lifecycle/outcome runtime:
+/// No deletion or independent row-level outcome writer is exposed:
 /// ```compile_fail
 /// use serea_storage::Store;
 /// let _ = Store::delete_task;
 /// ```
 /// ```compile_fail
-/// use serea_storage::Tx;
-/// let _ = Tx::begin_attempt;
+/// use serea_storage::{Tx, LeaseGuard, TransitionContext};
+/// use serea_protocol::EpochMillis;
+/// fn immutable(tx: &Tx<'_>, g: &LeaseGuard, c: &TransitionContext<'_>, now: EpochMillis) {
+///     tx.begin_attempt(g, now, c).unwrap();
+/// }
 /// ```
 /// ```compile_fail
 /// use serea_storage::Tx;

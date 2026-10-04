@@ -23,8 +23,8 @@ pub enum CheckpointOutcome {
 }
 
 /// Single-connection SQLite foundation, serialized by a connection mutex.
-/// No clock borrow is retained. Blob operations require an opaque Tx; task and
-/// step transitions are not implemented. Optional PRIVATE blob protection is
+/// No clock borrow is retained. Blobs and atomic P2F begin/outcome transitions
+/// require an opaque Tx. Optional PRIVATE blob protection is
 /// owned, not borrowed, and is not complete PRIVATE task/row protection.
 ///
 /// Do not call Store methods again from a transact closure: the connection lock
@@ -169,9 +169,9 @@ impl Store {
 
     /// Runs a synchronous body in BEGIN IMMEDIATE. Ok commits, Err explicitly
     /// rolls back. Commit failures are typed errors; no success is manufactured.
-    /// Tx exposes blobs and failure-atomic lease acquisition, not SQL. Whole
-    /// task/step transitions belong to later phases. Propagate errors to roll
-    /// back surrounding operations; failed lease savepoint cleanup makes the
+    /// Tx exposes blobs, lease authority and atomic P2F begin/outcome, not SQL.
+    /// Propagate errors to roll back surrounding operations; failed method
+    /// savepoint cleanup makes the
     /// transaction rollback-only even if the closure catches the operation error.
     pub fn transact<T>(
         &self,

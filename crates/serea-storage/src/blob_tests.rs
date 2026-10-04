@@ -840,7 +840,8 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
         ["class", "digest", "get_blob", "new", "put_blob"]
     );
     assert!(public_methods(include_str!("tx.rs")).is_empty());
-    // P2E admits lease authority only; all P2D deferred surfaces stay excluded.
+    // P2E authority is unchanged. P2F admits only whole begin/outcome methods;
+    // independent parent/text/reference mutations and future engine stay excluded.
     assert_eq!(
         public_methods(include_str!("lease.rs")),
         [
@@ -849,6 +850,10 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
             "release_lease",
             "renew_lease"
         ]
+    );
+    assert_eq!(
+        public_methods(include_str!("outcome.rs")),
+        ["begin_attempt", "commit_step_outcome"]
     );
     let root = include_str!("lib.rs");
     assert!(root.contains("mod lease;"));

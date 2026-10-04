@@ -21,6 +21,17 @@ runtime remains deferred. Dated baseline gap
 observations below are preserved, not rewritten as present-day failures.
 See [frozen gate](P2A-review-and-closure.md).
 
+## Current P2F bounded outcome reconciliation (2026-10-04)
+
+[P2F gate/evidence](P2F-review-and-closure.md) implements storage begin and atomic
+known-outcome fences with receipt/journal/RESULT/task/lease facts. Expiry enables
+reclaim, not independent revocation of current known-result authority; no contract
+expiry change. P2E marker and SQL authority remain intact. Supported layout is
+ordinary prefix / VERIFY suffix. No scheduler, engine wrapper, recovery, P3 event
+participant, full upper-layer ADR-0021 seam or arbitrary-plan support is delivered.
+Historical broader runtime claims below retain their future scope; ADR-0021/22/24
+remain Proposed. Full validation/status is in P2F evidence, not inferred here.
+
 ## 1. How to read this document
 
 Every finding is classified into exactly one bucket. The bucket is a statement
@@ -892,7 +903,7 @@ constructibility scope. ADR-0024 stays **Proposed**: lease closure is not outcom
   inside their origin Tx. This rejection gate never replaces authoritative SQL
   and introduces no durable token, local lease map or schema change.
 
-**P2F owns begin and embedded outcome fencing, not P2E:**
+**P2F implements the bounded storage begin/outcome slice, not P2E:**
 
 - `begin_attempt` borrows `&LeaseGuard`, requires authoritative matching unreleased/
   unexpired authority and never increments attempt again. H18 acquisition charge
@@ -915,7 +926,7 @@ selected API and named SQL predicates. The P2A optional wire generation member
 is already implemented; it does not establish authority or full runtime fencing.
 Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION` design resolved by the frozen
 phase decisions; disposition: **Proposed ADR-0024, P2E authority implemented and
-closed, P2F outcome proof pending**.
+closed, bounded P2F outcome evidence in its linked closure record**.
 
 ## 5.11 Time representation
 

@@ -9,6 +9,17 @@
 - **Companion:** [P2 autonomous audit](P2-autonomous-audit.md), which carries the
   evidence for every `READY` row below.
 
+## Current P2F bounded implementation annotation (2026-10-04)
+
+[P2F gate/evidence](P2F-review-and-closure.md) completes the acquisition/begin split
+and storage known-outcome SQL fencing, receipt/journal/RESULT reference/task/lease
+atomicity. Expired but current unreclaimed/unreleased results remain admissible;
+no ADR-0024 expiry decision changed. Supported ordering is ordinary prefix then
+VERIFY suffix. P2E authority is unchanged. The historical larger P2F engine,
+creation/plan/query/delete and full participant seam obligations remain deferred;
+no new member, scheduler, recovery or P3 work. Use the linked closure for actual
+review/validation/status; ADR-0021/22/24 remain Proposed.
+
 ## How to read this
 
 `READY` means specified for implementation, grounded in a frozen contract,
@@ -20,9 +31,9 @@ current final workspace/MSRV validation, test counts, bounded regression review
 and integration status are coordinator-owned in the
 [closure record](P2A-review-and-closure.md), not inferred from earlier runs. ADR-0018
 runtime is deferred and ADR-0021/22/24 remain **Proposed** runtime; 0024's wire
-generation is the implemented P2A slice. Its P2E authority is a selected
-implementation gate, not actual closure, including any partial implementation;
-begin/outcome fences remain P2F. The historical audit is not current closure.
+generation is the implemented P2A slice. P2E authority is CLOSED in its own
+closure record; bounded P2F begin/outcome evidence is linked above. The historical
+audit is not current runtime closure.
 
 | Status | Meaning |
 | --- | --- |

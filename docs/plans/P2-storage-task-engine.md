@@ -48,6 +48,20 @@ receipt/journal/task assertions, outcome H15/H22, begin H18 and deletion H17.
 ADR-0024 remains **Proposed**, including after lease-only GREEN. Historical probes
 below retain their historical scope. Migration 0001 stays unchanged; no 0002.
 
+## Current P2F bounded storage reconciliation (2026-10-04)
+
+[P2F's frozen gate and evidence](P2F-review-and-closure.md) implements only storage
+`begin_attempt` and consuming `commit_step_outcome`: known success/final failure,
+RESULT blob/reference, optional known-effect receipt, task transition, required
+private journal and lease finalization in one method savepoint. Outcomes retain
+ADR-0024's expiry policy; P2E authority is unchanged. The supported sequential
+layout is an ordinary prefix and VERIFY suffix, not arbitrary mixed plans.
+PRIVATE ordinary rows remain fail-closed. No new crate, migration, dependency,
+engine wrapper, scheduler, recovery or P3 participant/event work. The broader
+historical P2F engine/create/plan/query/delete and full ADR-0021 seam obligations
+below are **not closed** by this bounded owner-directed slice. Current validation
+and closure status live in the linked evidence, not these historical sketches.
+
 ## 1. Scope, and the crates in it
 
 Across all P2 phases, P2 creates exactly two runtime crates and no others.
@@ -310,13 +324,13 @@ checked u32.
   owner formatter or **Drop release**.
 
 **P2F**, not P2E, implements `begin_attempt` and every embedded outcome UPDATE
-fence. Both check authoritative owner/generation/unreleased authority with task
+fence. Both implemented storage methods check authoritative owner/generation/unreleased authority with task
 binding, not just the step copy; begin also requires unexpired authority and
 borrows `&LeaseGuard` without a second attempt increment. Outcomes consume it and
 may commit a known result after expiry only while unreclaimed/unreleased. Release
 and reclaim fence that outcome. H9–H13 must prove no receipt/journal/task mutation
-on a fenced result. See ADR-0024 for the named outcome EXISTS predicate. These are
-implementation gates, not proof from partial P2E work or historical probes.
+on a fenced result. See ADR-0024 for the named outcome EXISTS predicate. Actual scoped P2F runtime proof is recorded in its closure evidence; it is not
+inferred from partial P2E work or historical probes.
 
 ## 4. Transaction boundaries
 

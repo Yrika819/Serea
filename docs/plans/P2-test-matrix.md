@@ -49,6 +49,18 @@ only. P2F owns begin and embedded outcome fences: H9–H13, outcome H15/H22, beg
 H18 and deletion H17. No fake P2E outcome API. Historical probes do not prove the
 current gate; ADR-0024 remains Proposed even after lease-only GREEN. No schema change.
 
+## Current P2F bounded storage annotation (2026-10-04)
+
+[P2F evidence](P2F-review-and-closure.md) owns actual begin/known-outcome tests:
+H9–H13, outcome H15/H22, begin H18, success RESULT reference/receipt/journal/task
+atomicity and method/outer failure safety. Exact/past expiry current outcomes
+commit; expiry reclaim/release fence them. Isolated production UPDATE tests and
+an owner-only mutant control separately pin embedded generation predicates.
+The supported layout is ordinary-prefix / VERIFY-suffix. Broader engine,
+plan/query/delete/H17, waiting/cancellation, recovery and full participant seam
+rows below remain historical future obligations, not PASS for this bounded slice.
+No new event runtime or test count is inferred here; use the linked closure.
+
 ## 1. Ground rules
 
 Inherited from P1's closure and re-applied:
@@ -416,7 +428,8 @@ and stale-worker tests, not a local lease registry or an in-memory substitute.
 P2E proves authority across connections; P2F separately proves embedded outcome
 UPDATE fences. Private SQL fixtures may seed parents/budgets/corruption but do not
 authorize public lifecycle/outcome methods in P2E. These are planned regressions,
-not observed RED/GREEN or current runtime PASS.
+not blanket observed RED/GREEN or runtime PASS. P2E authority and the bounded
+P2F begin/outcome rows have their own linked closure evidence above.
 
 | # | Phase | Test | Pins |
 | --- | --- | --- | --- |

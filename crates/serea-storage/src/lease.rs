@@ -8,9 +8,17 @@ use serea_protocol::{EpochMillis, LeaseOwner, StepId, TaskId};
 
 use crate::{StoreError, Tx};
 
+#[path = "outcome.rs"]
+mod outcome;
+pub use outcome::{StepCommit, StepFailure, StepOutcome, TransitionContext};
+
 #[cfg(test)]
 #[path = "lease_tests.rs"]
 mod lease_tests;
+
+#[cfg(test)]
+#[path = "outcome_tests.rs"]
+mod outcome_tests;
 
 /// Nonclone handle to a particular acquisition, not authority by itself.
 /// Every operation checks SQLite's authoritative leases row. Dropping a guard
@@ -131,7 +139,7 @@ impl Tx<'_> {
     /// transaction subsequently commits. A private savepoint restores all its
     /// writes. Failed savepoint cleanup makes the outer Tx rollback-only.
     /// Successful acquisition spends one durable attempt, including a reclaim
-    /// before any execution. No lifecycle begin/outcome/journal API is here.
+    /// before any execution. Begin/outcome never charge this acquisition again.
     #[allow(clippy::too_many_arguments)]
     pub fn acquire_lease(
         &mut self,

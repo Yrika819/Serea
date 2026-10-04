@@ -6,8 +6,9 @@
 //! class. PRIVATE blobs fail closed without injected protection; P2D ships no
 //! real backend and claims no complete PRIVATE task/row support. SECRET and
 //! CREDENTIAL are refused. Transaction-scoped acquisition/renewal/release use
-//! SQLite authority. No begin/outcome/task lifecycle, engine, recovery,
-//! participant, receipt/journal or event runtime is implemented.
+//! SQLite authority. P2F adds atomic begin/known outcome transitions with result,
+//! receipt and journal fencing. No engine, recovery, public participant registry
+//! or event runtime is implemented.
 
 mod blob;
 mod classify;
@@ -20,7 +21,7 @@ mod tx;
 pub use blob::BlobRef;
 pub use classify::{AtRestProtection, AtRestProtectionError};
 pub use error::StoreError;
-pub use lease::LeaseGuard;
+pub use lease::{LeaseGuard, StepCommit, StepFailure, StepOutcome, TransitionContext};
 pub use migrate::{Migration, Migrations};
 pub use store::{CheckpointOutcome, Store};
 pub use tx::Tx;

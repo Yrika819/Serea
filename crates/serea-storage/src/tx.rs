@@ -1,5 +1,5 @@
-/// Opaque transaction capability. Blob operations are transaction-scoped;
-/// there is no row-level SQL escape hatch or task/step mutation.
+/// Opaque transaction capability. Blob and lease operations are scoped here;
+/// there is no SQL escape hatch or independent lifecycle row mutation.
 /// Later phases add whole-transition methods here, not independent writes on Store.
 ///
 /// External callers cannot extract the underlying transaction:
@@ -25,14 +25,30 @@
 /// use serea_storage::Tx;
 /// let _ = Tx::put_step_blob;
 /// ```
-/// Nor does it start deletion or lease runtime:
+/// Nor does it start deletion or lifecycle/outcome runtime:
 /// ```compile_fail
 /// use serea_storage::Store;
 /// let _ = Store::delete_task;
 /// ```
 /// ```compile_fail
 /// use serea_storage::Tx;
-/// let _ = Tx::acquire_lease;
+/// let _ = Tx::begin_attempt;
+/// ```
+/// ```compile_fail
+/// use serea_storage::Tx;
+/// let _ = Tx::commit_step;
+/// ```
+/// ```compile_fail
+/// use serea_storage::Tx;
+/// let _ = Tx::insert_receipt;
+/// ```
+/// ```compile_fail
+/// use serea_storage::Tx;
+/// let _ = Tx::append_journal;
+/// ```
+/// ```compile_fail
+/// use serea_storage::Tx;
+/// let _ = Tx::validate_guard;
 /// ```
 /// The public transaction capability remains usable without a SQL escape hatch:
 /// ```
@@ -49,4 +65,17 @@
 pub struct Tx<'conn> {
     pub(crate) inner: rusqlite::Transaction<'conn>,
     pub(crate) protection: Option<std::sync::Arc<dyn crate::AtRestProtection>>,
+    pub(crate) rollback_only: bool,
+    // Capability provenance only; never a substitute for SQLite lease authority.
+    pub(crate) origin: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Tx<'_> {
+    pub(crate) fn ensure_active(&self) -> Result<(), crate::StoreError> {
+        if self.rollback_only || self.inner.is_autocommit() {
+            Err(crate::StoreError::Sqlite)
+        } else {
+            Ok(())
+        }
+    }
 }

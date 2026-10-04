@@ -838,57 +838,84 @@ changing lease owner token stored with the occurrence record". P2 applies the
 same mechanism to task steps, so this is applying a frozen precedent rather than
 inventing one.
 
-**Resolution: a monotonic `lease_generation`, checked inside the statement.**
+**Resolution: monotonic generation and SQLite authority, with separate phase gates.**
+[P2E E1–E11](P2E-review-and-closure.md#1-preflight-and-frozen-pre-implementation-gate)
+is the frozen **lease-authority gate**, implemented and closed with actual
+implementation, independent review/remediation and stable/MSRV/debug/release
+validation in that record. Historical SQL/docs probes retain their original
+constructibility scope. ADR-0024 stays **Proposed**: lease closure is not outcome proof.
 
-- `leases(step_id PRIMARY KEY, owner, generation, acquired_at_ms, expires_at_ms,
-  released_at_ms)`.
-- `generation` starts at 1 and increments on **every** acquisition, including an
-  expiry reclaim. It never resets and never decreases. SQL leases and private LeaseGuard use
-    positive u32 generations; the step uses SQL 0 only before its first lease, mapped
-    to wire None. Both SQL copies are bounded by 4294967295; overflow refuses and
-    rolls back, never wraps or clamps.
-- **No `token` column.** An earlier draft of this resolution specified one, and
-  ADR-0024 removed it as overengineering: `generation` alone already discriminates
-  two acquisitions by the same owner after a reclaim, and a second value that must be
-  kept consistent with the first, and that no statement needed, is a liability. The
-  ADR is the authority; this summary was corrected to match rather than left
-  forwarding a schema the ADR deleted.
-- `acquire_lease` is **two statements in one `BEGIN IMMEDIATE`**: the `leases`
-  upsert, whose `DO UPDATE` `WHERE` permits the update only when the lease is
-  released or expired, and then the step update, which **reads** its generation back
-  out of `leases` rather than guessing it. A competing acquisition affects zero rows
-  on the first statement and is refused. There is no read-then-write window, and the
-  two generation copies cannot diverge observably.
-- The acquire predicate accepts `PLANNED`, `LEASED` **and** `EXECUTING`. A
-  `PLANNED`-only predicate made retries, expiry reclaim, and Task Protocol §6.3
-  structurally unreachable, because a step whose lease was released is still
-  `LEASED`/`EXECUTING`.
-- **Every** outcome write matches the step's `step_id`, `task_id`,
-  `lease_generation` and `lease_owner`, **and EXISTS** an authoritative `leases`
-  row matching step, generation, owner and `released_at_ms IS NULL`. Zero affected
-  rows is `LeaseFenced`; release revokes the generation permanently. An expired
-  but unreclaimed/unreleased lease may commit a known result, but cannot renew or
-  begin a new attempt. `begin_attempt` borrows the nonclone `&LeaseGuard`.
-- The fenced write is the **first** statement in the transaction. SQLite does not
-  roll back on a zero-row `UPDATE`, so the `rows_affected == 0` check must be
-  explicit and must happen before any receipt or journal row is written.
+**P2E owns acquisition/renewal/release/ceilings/overflow/caught-error atomicity:**
 
-The five required semantics are specified in full in
-[ADR-0024](../decisions/ADR-0024-lease-fencing-and-commit-under-lease.md):
-acquire, renew, release, commit-under-lease, expired reclaim. `renew` refuses to
-extend an already-expired lease, which is what stops a stalled worker from
-resurrecting its own fence.
+- Existing `leases(step_id PRIMARY KEY, owner, generation, acquired_at_ms,
+  expires_at_ms, released_at_ms)` is authority; no token or generation consistency
+  trigger, no schema change, no 0002. Positive u32 generation starts at 1 and
+  increments on every successful acquisition/reclaim. SQL step generation 0 means
+  never leased and maps to wire None; positive SQL generation maps to Some.
+- Selected `Tx::acquire_lease(task_id, step_id, owner, expected_generation:
+  Option<u32>, now: EpochMillis, expires_at: EpochMillis)` uses **absolute instants**
+  and retains no Clock. None binds SQL0; Some(n) is exact observed positive
+  generation; Some(0) is LeaseFenced. Never replace caller expectation with a
+  fresh read. Core owns `max_lease_seconds`. Expiry <= now is InvalidLeaseInterval.
+- For valid interval/generation inputs, missing/wrong-parent/noneligible step is
+  LeaseFenced; accept
+  PLANNED/LEASED/EXECUTING only. On a bound eligible step, active unreleased authority
+  gives LeaseHeld before stale expectation gives LeaseFenced, then durable budget
+  exhaustion gives AttemptCeilingReached, then eligible max-u32 gives payload-free
+  LeaseGenerationOverflow **before mutation**. SQL also bounds the increment with
+  `generation < 4294967295`. No wrap/clamp/SQLite text matching/CHECK-error inference.
+- **Complete internal savepoint under BEGIN IMMEDIATE** includes authority/budget
+  reads, the leases upsert then derived step UPDATE, and any ceiling/later failure.
+  Keep exact expected-generation equality in the step UPDATE; derive its new
+  generation from leases. Read tasks.max_attempts_per_step durably here and charge
+  attempt once per successful acquisition/reclaim; refusal spends nothing.
+- On any acquisition error, explicitly roll back and release the savepoint even
+  if a caller catches Err and returns Ok from the outer body. Cleanup failure marks
+  outer Tx rollback-only and prevents commit; do not depend on ?. Earlier caller
+  writes may commit after successful cleanup, but no partial acquisition may.
+- `renew_lease(&LeaseGuard, now: EpochMillis, new_expiry: EpochMillis)` checks
+  authoritative task/step/owner/generation/unreleased binding. Stale/missing/released
+  => LeaseFenced first; matching expired-at/before-now => LeaseExpired; then equal/
+  shorter than **authoritative old expiry** => InvalidLeaseInterval unchanged.
+  Strict extension changes only leases expiry, never the step acquisition snapshot.
+- `release_lease(LeaseGuard, now: EpochMillis)` permits matching expired authority;
+  stale/missing/released => LeaseFenced and matching now < acquired_at =>
+  InvalidLeaseInterval. Only released_at changes, all step copies remain unchanged.
+  Guard is consumed on every result, including infrastructure failure; Err is **not
+  proof of durable release**. Inner Ok is not durable until outer commit. Safety
+  over retryability requires eventual expiry/recovery after a consuming error.
+- Guard fields are private, with no constructor/Clone/Copy/Serde/owner formatter or
+  Drop release. SQLite alone authorizes writes. A returned guard's purported
+  authority is invalidated by outer rollback. A private origin commit marker
+  stays unpublished after rollback/panic/commit failure and prevents same-owner
+  generation reuse from reviving an escaped capability. Pending guards work only
+  inside their origin Tx. This rejection gate never replaces authoritative SQL
+  and introduces no durable token, local lease map or schema change.
 
-"Do not rely solely on process-local mutexes" is honoured literally: the only
-mutex in `serea-storage` guards the single SQLite connection. No mutex guards
-lease semantics, and no lease predicate is evaluated in process memory.
+**P2F owns begin and embedded outcome fencing, not P2E:**
 
-Adding `lease_generation` to the wire `TaskStep` is a **new optional field**, so
-it is an architecture-minor addition and is folded into ADR-0018's field matrix
-rather than needing its own amendment.
+- `begin_attempt` borrows `&LeaseGuard`, requires authoritative matching unreleased/
+  unexpired authority and never increments attempt again. H18 acquisition charge
+  is P2E; its no-second-charge begin proof is P2F.
+- Every outcome UPDATE matches step/task/owner/generation **and EXISTS** matching
+  authoritative unreleased lease. Released authority refuses even with an unchanged
+  step copy; same-owner reclaim fences the old outcome. Known outcome after expiry
+  is allowed only while unreclaimed/unreleased; outcomes consume the guard.
+- The fenced UPDATE is the first mutation. Explicit zero-row => LeaseFenced and
+  rollback precede result references, receipt, task advancement and participant/
+  journal append. H9–H13 must assert current/stale outcomes and no receipt/journal/
+  task mutation on refusal; lease-only GREEN proves none of these.
+- H15 acquisition-copy agreement and H22 cross-connection authority are P2E;
+  their outcome halves are P2F. H17 physical deletion cascade is P2F, not a P2E
+  release API. Use separate file-backed Stores, not a process-local lease registry;
+  child-process crash evidence belongs to P2H.
 
-Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION`. Disposition: PROPOSED
-ADR-0024.
+See [ADR-0024](../decisions/ADR-0024-lease-fencing-and-commit-under-lease.md) for the
+selected API and named SQL predicates. The P2A optional wire generation member
+is already implemented; it does not establish authority or full runtime fencing.
+Classification: `MUST_FIX_BEFORE_P2_IMPLEMENTATION` design resolved by the frozen
+phase decisions; disposition: **Proposed ADR-0024, P2E authority implemented and
+closed, P2F outcome proof pending**.
 
 ## 5.11 Time representation
 
@@ -1051,7 +1078,9 @@ separate P2A commits and no action/2 without implemented primitives.
 ADR-0018/19/20/23 are Accepted within their stated P2A scopes after corrected
 docs GREEN and owner ratification; 0018 runtime plan/lifecycle enforcement is deferred. ADR-0021/22/24 remain Proposed for runtime P2C–P2G:
 participant/journal, at-rest dispatch and full fencing do not land in P2A. Only
-0024's wire generation member/validation is P2A. B3 is semantic minor, not patch,
+0024's wire generation member/validation is P2A. Its P2E lease-authority slice is
+implemented and closed; begin and embedded outcome fences remain P2F (§5.10).
+B3 is semantic minor, not patch,
 and introduces no resource bounds. See [frozen gate](P2A-review-and-closure.md).
 
 ## 8. Open questions this design does not answer

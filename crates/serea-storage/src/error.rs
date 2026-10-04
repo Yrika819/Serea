@@ -42,6 +42,18 @@ pub enum StoreError {
     AtRestProtectionUnavailable,
     /// The injected backend refused protection or unprotection.
     AtRestProtectionFailed,
+    /// Acquisition encountered current unreleased, unexpired authority.
+    LeaseHeld,
+    /// The requested generation, binding or guard is not authoritative.
+    LeaseFenced,
+    /// A matching current guard has expired and cannot renew.
+    LeaseExpired,
+    /// The durable acquisition budget is exhausted.
+    AttemptCeilingReached,
+    /// An otherwise eligible acquisition cannot advance positive-u32 generation.
+    LeaseGenerationOverflow,
+    /// Requested expiry is not later, or release predates acquisition.
+    InvalidLeaseInterval,
     /// The injected clock refused its reading.
     Clock(ProtocolError),
 }
@@ -67,6 +79,12 @@ impl StoreError {
             Self::ClassRefused => "ClassRefused",
             Self::AtRestProtectionUnavailable => "AtRestProtectionUnavailable",
             Self::AtRestProtectionFailed => "AtRestProtectionFailed",
+            Self::LeaseHeld => "LeaseHeld",
+            Self::LeaseFenced => "LeaseFenced",
+            Self::LeaseExpired => "LeaseExpired",
+            Self::AttemptCeilingReached => "AttemptCeilingReached",
+            Self::LeaseGenerationOverflow => "LeaseGenerationOverflow",
+            Self::InvalidLeaseInterval => "InvalidLeaseInterval",
             Self::Clock(_) => "Clock",
         }
     }

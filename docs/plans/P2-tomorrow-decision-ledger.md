@@ -19,8 +19,10 @@ accepts ADR-0018/19/20/23 within their stated scopes. P2A slices are implemented
 current final workspace/MSRV validation, test counts, bounded regression review
 and integration status are coordinator-owned in the
 [closure record](P2A-review-and-closure.md), not inferred from earlier runs. ADR-0018
-runtime is deferred and ADR-0021/22/24 remain **Proposed** runtime; 0024 wire
-generation only is implemented. The historical audit is not current closure.
+runtime is deferred and ADR-0021/22/24 remain **Proposed** runtime; 0024's wire
+generation is the implemented P2A slice. Its P2E authority is a selected
+implementation gate, not actual closure, including any partial implementation;
+begin/outcome fences remain P2F. The historical audit is not current closure.
 
 | Status | Meaning |
 | --- | --- |
@@ -179,7 +181,27 @@ opaque JSON without disabling precision or reserving wire keys.
 supersedes the earlier blob/text sketches. The rows below are design decisions,
 not P2D runtime PASS. Historical SQL measurements retain their original scope;
 reference/role/deletion runtime and blob+reference atomicity are **P2F**, not P2D.
-P2E lease evidence and scope are unchanged.
+
+**P2E authority implementation and closure (2026-10-04).**
+[Gate E1–E11](P2E-review-and-closure.md#1-preflight-and-frozen-pre-implementation-gate)
+supersedes the old lease statement-count/overflow/outcome sketches. P2E owns
+acquire/renew/release, durable ceilings, pre-mutation overflow and caught-error
+savepoint atomicity only. Actual implementation/review/remediation and full
+stable/MSRV/debug/release evidence is in its closure record; historical probes
+are not current runtime proof. P2F owns begin and embedded outcome UPDATE fences with
+H9–H13 receipts/journal/task assertions, outcome H15/H22, begin H18 and deletion
+H17. ADR-0024 remains Proposed, including after lease-only GREEN.
+
+Selected storage lease methods take absolute `EpochMillis` now/expiry, no TTL or
+retained Clock; core owns max_lease_seconds. Guard fields are private, with no
+constructor/Clone/Copy/Serde/owner formatter/**Drop release**. Release consumes
+the guard on **every result**, including infrastructure errors. Err is not proof
+of durable release; inner Ok is not durable until outer commit. Safety over
+retryability requires eventual expiry/recovery after consuming errors. A guard
+returned inside a transaction has no authority if that transaction rolls back.
+A private origin marker is published only after confirmed commit and rejects
+escaped rollback/panic/failed-commit capabilities despite later generation reuse;
+it is not a lease registry and never replaces SQLite authority.
 
 | # | Decision | Status | Evidence | Owner / phase | Needs 6.1 Sol reasoning? |
 | --- | --- | --- | --- | --- | --- |
@@ -190,13 +212,13 @@ P2E lease evidence and scope are unchanged.
 | 4.5 | No-backend PRIVATE put/get/dedupe **refuse before success**, even for an existing row | **READY** | D2/D9: `AtRestProtectionUnavailable`; configured backend refusal/failure maps to `AtRestProtectionFailed`. No plaintext fallback, encrypt-later or warning-and-continue | P2D | No |
 | 4.6 | `size_bytes = length(content)` means **stored byte length**, not logical length or bound | **READY** | D11/ADR-0020: PRIVATE includes envelope/expansion; read/dedupe also verify consistency. Historical SQL refused mismatched length; name/schema unchanged | P2D | No |
 | 4.7 | No `put_classified_text`; complete ordinary-row PRIVATE protection deferred | **SAFE_DEFER** protection / **READY** refusal obligation | D5 supersedes the historical four-prose-field chokepoint. All future PRIVATE-bearing task/step/receipt/journal writers must refuse before SQLite **even with a blob backend** until a complete reversible design covers prose, error/journal JSON, provider references and all extensions including origin/budget | Later row writers; not P2D | No. Do not claim PRIVATE task support |
-| 4.8 | `acquire_lease` is two statements in ADR-0024's order | **READY** | Executed verbatim. First acquisition → `LEASED`, `attempt = 1`, `generation = 1`; expiry reclaim → `generation` 1→2, `attempt` 1→2. **With the §4.6 trigger added, the first acquisition aborts** | P2E | No |
-| 4.9 | There is **no** `leases_generation_matches_step` trigger | **READY** | §4.6 published one; §4.0, §7, ADR-0024 and the design's §13.1 had all removed it. Following §4.6 made the first acquisition fail — the round-2 blocker, reintroduced | P2E | No |
-| 4.10 | The stale-generation commit returns **0 rows** | **READY** | Verified within one connection and **across two independent connections on one file**, so a process-local mutex cannot be what makes the test pass | P2E | No |
-| 4.11 | `attempt` increments at acquisition **only** | **READY** | Measured `attempt == 1` after both `acquire` and `begin_attempt`. Double-charging made `max_attempts_per_step = 3` buy one | P2E | No |
-| 4.12 | **An expiry reclaim spends an attempt**, so the bound is on acquisitions | **READY_WITH_LIMITATION** | Measured: a crash-only loop against a ceiling of 2 is stopped after 2 acquisitions with **0 executions**. Correct — counting a crash is the only way `attempt` distinguishes a crash from a retry — but the effective execution budget is `max_attempts_per_step − crashes`, and exhaustion by crashes yields `BLOCKED`, not `FAILED` | P2E | No |
-| 4.13 | The ceiling refusal **rolls back**, and what it leaves differs by case | **READY** | Ceiling 0: step `PLANNED`, `attempt = 0`, **no `leases` row**. Ceiling 2, third acquisition: step reverts to `('LEASED', 2, 2)` with one `leases` row | P2E | No |
-| 4.14 | `renew` refuses an expired lease, including at exactly `now` | **READY** | Executed: `expires_at_ms > :now_ms` accepts before expiry and returns 0 rows at expiry and after | P2E | No |
+| 4.8 | Complete acquisition savepoint; upsert then derived step UPDATE with exact caller expectation | **READY — selected gate** | E2/E3/E8/E10: `acquire_lease(task_id, step_id, owner, expected_generation: Option<u32>, now: EpochMillis, expires_at: EpochMillis)`. None -> SQL0, Some positive exact, Some(0) -> LeaseFenced; never substitute fresh read. Expiry <= now -> InvalidLeaseInterval. Missing/wrong-parent/noneligible -> LeaseFenced; for valid interval/generation inputs on bound PLANNED/LEASED/EXECUTING, held active -> LeaseHeld before stale expectation -> LeaseFenced before durable ceiling before overflow. Historical first/reclaim SQL probes are not production proof | P2E | No |
+| 4.9 | No generation consistency trigger or schema change; explicit bounded overflow classification | **READY — selected gate** | E6: eligible max-u32 -> payload-free LeaseGenerationOverflow before any mutation, after authority/expectation/ceiling precedence; SQL increment also predicates generation < 4294967295. No wrap/clamp/CHECK-message parsing or weakening. Migration 0001 unchanged, no 0002. Historical phantom-trigger failure remains rationale only; H14b and overflow regressions require runtime proof | P2E | No |
+| 4.10 | Embedded outcome UPDATE fence returns zero/LeaseFenced on stale/released authority | **READY — P2F gate** | E1/E11: H9–H13 assert real current/stale outcome, no receipt/journal/task mutation; outcome H15/H22 are P2F, including two independent file-backed Stores. Step copy alone is not authority; known expired-unreclaimed/unreleased outcome may commit. Historical single/cross-connection SQL probes are not current runtime proof; no fake P2E commit API. H17 deletion is also P2F | P2F; P2E only H22 authority | No |
+| 4.11 | Attempt increments once per acquisition; begin borrows guard and never increments again | **READY — split gates** | E7: P2E H18 acquisition half charges once; P2F H18 begin half must prove attempt still 1 across actual acquire/begin. Historical double-charge measurement explains the rule, not current begin runtime proof | P2E acquisition / P2F begin | No |
+| 4.12 | Every expiry reclaim spends an acquisition; refusal spends nothing | **READY_WITH_LIMITATION — selected gate** | E7: tasks.max_attempts_per_step read durably inside acquisition savepoint; exhausted attempt >= ceiling -> AttemptCeilingReached before overflow. Historical ceiling-2 crash-only loop: 2 acquisitions then third refused, 0 executions; not a child-crash test. Effective execution budget is ceiling minus pre-begin crashes; eventual BLOCKED/NeedsReconciliation rather than FAILED is recovery's disposition, not P2E task mutation | P2E budget / P2G recovery | No |
+| 4.13 | Every acquisition error explicitly rolls back/releases savepoint; cleanup failure makes outer Tx rollback-only | **READY — selected gate** | E2: catch a late acquisition Err and return Ok, committing unrelated outer writes but no partial upsert/step/attempt change; do not rely on ?. Cleanup failure must prevent outer commit even after body Ok. Historical ceiling0 -> PLANNED/0/no lease and third against ceiling2 -> ('LEASED',2,2)/one lease are pre-call-state illustrations, not current caught-error proof | P2E | No |
+| 4.14 | Strict authoritative renewal; release revokes only authority and consumes on every result | **READY — selected gate** | E4/E5/E8: renew(&guard, now, new_expiry): stale/missing/released -> LeaseFenced first; matching expiry <= now -> LeaseExpired; then equal/shorter new expiry -> InvalidLeaseInterval unchanged, require > authoritative old. release(guard, now) permits matching expired authority; matching now < acquired_at -> InvalidLeaseInterval, stale/released -> LeaseFenced. Renew changes only leases expiry, release only released_at; step copy remains unchanged acquisition snapshot. Consuming Err is no proof of durable release; no Drop release. Historical expiry probes alone are insufficient | P2E | No |
 | 4.15 | Store owns `Option<Arc<dyn AtRestProtection>>`; PRIVATE-only object-safe `Send + Sync` protect/unprotect | **READY** | D8/D9: `Result<Vec<u8>, AtRestProtectionError>`, payload-free unit error; no class parameter/capability list or backend diagnostic/source chain. Default constructors have no backend; two protection constructors delegate to unchanged P2C open path, no Store lifetime | P2D | No |
 | 4.16 | Plaintext identity, backend-owned opaque envelope | **READY_WITH_LIMITATION** | D10/D12: SHA-256 of SCJ-1 canonical plaintext; PUBLIC/PERSONAL store canonical/NONE, PRIVATE backend bytes/AT_REST. Backend may be nondeterministic and is trusted to protect; reads/dedupe verify marker, stored size, unprotect, canonicalization and digest | P2D | No crypto claim |
 | 4.17 | Storage-local `cfg(test)` double, not testkit API | **READY** | D7: NOT ENCRYPTION, NOT SECURITY, NEVER PRODUCTION. [Crate Map §5.4](../architecture/03-crate-map.md#54-p2d-storage-local-at-rest-double-exception) avoids a testkit → storage edge/cycle; no manifest/dependency/smoke-rule changes | P2D | No |
@@ -334,9 +356,12 @@ fails without the fix: **A6/A6a/A6b/A6c** and **F28 + H1**.
   transition(s), body error propagates before participants, then same-transaction
   participants and commit. No detached prebuilt identity, no event_seq/backfill;
   P2 pending count is journal row count, not a queue.
-- Outcome fence EXISTS authoritative lease matching owner/generation/unreleased.
-  Release permanently revokes that generation. Expired but unreclaimed/unreleased
-  may commit known outcome; renewal/begin require unexpired lease. begin_attempt
-  borrows nonclone guard. Tests and runtime remain P2E/P2F.
+- **P2F** outcome UPDATE embeds EXISTS authoritative lease matching owner/
+  generation/unreleased and task binding. Release permanently revokes generation
+  despite unchanged step copy. Expired but unreclaimed/unreleased may commit known
+  outcome; P2F borrowed begin and P2E renewal require unexpired authority. H9–H13,
+  outcome H15/H22, begin H18 and deletion H17 are P2F; P2E owns only acquisition
+  H15/H18/H22 and authority regressions. Partial P2E implementation is not closure
+  or outcome proof; ADR-0024 stays Proposed even after lease-only GREEN.
 - Prior READY/69-of-69/32-cell experiment evidence is historical and does not
   establish these added regressions or production implementation.

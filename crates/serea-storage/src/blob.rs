@@ -90,6 +90,7 @@ impl Tx<'_> {
         original_json: &[u8],
         class: DataClass,
     ) -> Result<BlobRef, StoreError> {
+        self.ensure_active()?;
         self.protection_for(class)?;
         let canonical = canonical_bytes(original_json)?;
         let blob = BlobRef::new(plaintext_digest(&canonical), class);
@@ -127,6 +128,7 @@ impl Tx<'_> {
     /// fn bypass(store: &Store, blob: &BlobRef) { store.get_blob(blob).unwrap(); }
     /// ```
     pub fn get_blob(&mut self, blob: &BlobRef) -> Result<Vec<u8>, StoreError> {
+        self.ensure_active()?;
         let backend = self.protection_for(blob.class)?;
         // Keep row decoding failures distinct from execution/connection failures.
         let stored = self.inner.query_row(

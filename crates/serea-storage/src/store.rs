@@ -169,8 +169,10 @@ impl Store {
 
     /// Runs a synchronous body in BEGIN IMMEDIATE. Ok commits, Err explicitly
     /// rolls back. Commit failures are typed errors; no success is manufactured.
-    /// Tx exposes blob operations, not SQL. Whole task/step transitions belong
-    /// to later phases; propagate operation errors to roll back the closure.
+    /// Tx exposes blobs and failure-atomic lease acquisition, not SQL. Whole
+    /// task/step transitions belong to later phases. Propagate errors to roll
+    /// back surrounding operations; failed lease savepoint cleanup makes the
+    /// transaction rollback-only even if the closure catches the operation error.
     pub fn transact<T>(
         &self,
         body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
@@ -179,10 +181,20 @@ impl Store {
         let mut tx = Tx {
             inner: conn.transaction_with_behavior(TransactionBehavior::Immediate)?,
             protection: self.protection.clone(),
+            rollback_only: false,
+            origin: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
-        match body(&mut tx) {
+        let result = body(&mut tx);
+        if tx.rollback_only {
+            if !tx.inner.is_autocommit() {
+                tx.inner.rollback()?;
+            }
+            return Err(StoreError::Sqlite);
+        }
+        match result {
             Ok(value) => {
                 tx.inner.commit()?;
+                tx.origin.store(true, std::sync::atomic::Ordering::Release);
                 Ok(value)
             }
             Err(error) => {

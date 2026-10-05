@@ -198,6 +198,10 @@ impl Store {
         body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         let mut conn = self.connection()?;
+        // P2H N1: real process death before BEGIN IMMEDIATE is issued. Entirely
+        // absent from a build without the test-only fault feature.
+        #[cfg(feature = "p2h-fault-injection")]
+        crate::fault::reach(crate::fault::Window::BeforeBegin)?;
         let mut tx = Tx {
             inner: conn.transaction_with_behavior(TransactionBehavior::Immediate)?,
             audit,
@@ -205,6 +209,9 @@ impl Store {
             rollback_only: false,
             origin: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
+        // P2H N2: real process death after BEGIN IMMEDIATE, before any write.
+        #[cfg(feature = "p2h-fault-injection")]
+        crate::fault::reach(crate::fault::Window::AfterBegin)?;
         let result = body(&mut tx);
         if tx.rollback_only {
             if !tx.inner.is_autocommit() {
@@ -214,7 +221,13 @@ impl Store {
         }
         match result {
             Ok(value) => {
+                // P2H N5: every write is done; die before COMMIT.
+                #[cfg(feature = "p2h-fault-injection")]
+                crate::fault::reach(crate::fault::Window::BeforeCommit)?;
                 tx.inner.commit()?;
+                // P2H N6: COMMIT returned Ok and the caller never learns that.
+                #[cfg(feature = "p2h-fault-injection")]
+                crate::fault::reach(crate::fault::Window::AfterCommit)?;
                 tx.origin.store(true, std::sync::atomic::Ordering::Release);
                 Ok(value)
             }

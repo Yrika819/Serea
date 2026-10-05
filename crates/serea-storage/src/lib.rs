@@ -11,6 +11,11 @@
 //! facts; task-engine owns journal semantics and recovery orchestration. Recovery
 //! inspection and fenced repairs remain storage-owned; no event runtime is implemented.
 
+// P2H: the crate has no unsafe code, and the P2H fault seam adds none. Declaring
+// it here makes that a compile error rather than a review comment, matching
+// protocol, task-engine and testkit.
+#![forbid(unsafe_code)]
+
 mod audit;
 mod blob;
 mod classify;
@@ -22,6 +27,12 @@ mod recovery;
 mod store;
 mod task;
 mod tx;
+
+// P2H: the crash/fault seam is a compiled capability that exists only when the
+// test-only `p2h-fault-injection` feature is requested from a dev-dependency
+// edge. A release or production build has no `fault` module to name.
+#[cfg(feature = "p2h-fault-injection")]
+pub mod fault;
 
 pub use audit::{
     AuditOperation, DurableTransition, JournalKind, JournalRecord, JournalRecords,

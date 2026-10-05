@@ -313,7 +313,18 @@ impl Tx<'_> {
                     named_params! { ":digest":digest.as_str(), ":now":now.get(), ":step":guard.step_id.as_str(), ":task":guard.task_id.as_str(),
                         ":owner":guard.owner.as_str(), ":generation":guard.generation.get(), ":pre_status":"EXECUTING", ":expected_task":before.task_state.wire_name() },
                 )?;
+                // P2H N8: the fenced write succeeded but its rows_affected has
+                // not been inspected. A deterministic test-only error here is a
+                // fault-injection rollback, NOT a process crash.
+                #[cfg(feature = "p2h-fault-injection")]
+                crate::fault::reach(crate::fault::Window::BeforeFenceInspection)?;
                 one(changed, StoreError::LeaseFenced)?;
+                // P2H N4: the fenced step UPDATE is accepted, and the child dies
+                // before the result blob, reference, receipt, task aggregate,
+                // journal batch and lease release are written. The fresh
+                // verifier must see the conservative pre-outcome state.
+                #[cfg(feature = "p2h-fault-injection")]
+                crate::fault::reach(crate::fault::Window::AfterFencedStepWrite)?;
                 let blob = self.put_blob(result_json, before.class)?;
                 one(self.inner.execute(
                     "INSERT INTO step_blob_refs(step_id,role,digest,data_class_rank) VALUES (:step,'RESULT',:digest,:rank)",

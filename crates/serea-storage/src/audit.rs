@@ -290,6 +290,11 @@ impl Tx<'_> {
                 Ok((draft, payload, digest))
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
+        // P2H: audit persistence fault. The whole batch is validated and not one
+        // journal row has been written; a failure here must roll the whole
+        // enclosing operation back. Absent without the test-only feature.
+        #[cfg(feature = "p2h-fault-injection")]
+        crate::fault::reach(crate::fault::Window::BeforeJournalInsert)?;
         for (draft, payload, digest) in rows {
             let reference = facts.recovery_identity.as_ref().or(facts.result.as_ref());
             if draft.kind == JournalKind::RecoveryDecision {

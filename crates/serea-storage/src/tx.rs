@@ -85,13 +85,25 @@ impl Tx<'_> {
         self.inner.execute_batch("SAVEPOINT serea_operation")?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(self)));
         match result {
-            Ok(Ok(value)) => match self.inner.execute_batch("RELEASE serea_operation") {
-                Ok(()) => Ok(value),
-                Err(error) => {
+            Ok(Ok(value)) => {
+                // P2H: a savepoint RELEASE that fails makes the outer
+                // transaction rollback-only. Injected exactly like a real
+                // release failure, and absent without the test-only feature.
+                #[cfg(feature = "p2h-fault-injection")]
+                if let Err(error) =
+                    crate::fault::reach(crate::fault::Window::BeforeSavepointRelease)
+                {
                     self.rollback_only = true;
-                    Err(error.into())
+                    return Err(error);
                 }
-            },
+                match self.inner.execute_batch("RELEASE serea_operation") {
+                    Ok(()) => Ok(value),
+                    Err(error) => {
+                        self.rollback_only = true;
+                        Err(error.into())
+                    }
+                }
+            }
             Ok(Err(error)) => {
                 if self
                     .inner

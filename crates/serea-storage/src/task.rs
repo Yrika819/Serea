@@ -319,6 +319,10 @@ impl Tx<'_> {
                     ":tools":task.attempt_budget.max_tool_calls, ":attempts":task.attempt_budget.max_attempts_per_step,
                     ":budget":budget, ":ext":extensions },
             )?, StoreError::ConstraintViolation)?;
+            // P2H N3: the task row exists but its audit/journal row does not.
+            // Dying here proves task and journal share one transaction.
+            #[cfg(feature = "p2h-fault-injection")]
+            crate::fault::reach(crate::fault::Window::AfterTaskInsert)?;
             let snapshot = tx.load_task(&task.task_id)?;
             tx.record_transition(&DurableTransition::task(AuditOperation::TaskInserted, &task.task_id, None,
                 TaskState::Received, task.data_class, task.created_at.to_epoch_millis(), context))?;

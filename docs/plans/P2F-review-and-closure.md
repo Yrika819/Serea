@@ -3,7 +3,7 @@
 ## 1. Authoritative start and corrected frozen design
 
 Branch `p2/p2e-lease-fencing`; starting HEAD
-`df6088e247dcfb28dc0570d9afafda25bcde60a5` (`feat: implement P2E lease fencing`).
+`d3413af80a0f2b82926c643607a0ffad1f55fcb5` (`feat: implement P2E lease fencing`).
 Exact branch/HEAD and clean worktree verified before edits and again on continuation.
 Stable Rust 1.98.1 and MSRV 1.85.0 baselines each passed **510 regular + 29 doctests
 = 539 executions**, zero failures/ignored. Execution identities retained in ignored

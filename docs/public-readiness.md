@@ -1,8 +1,8 @@
 # Public-readiness audit
 
-**Status: READY_FOR_PRIVATE_STAGING**
+**Status: LOCAL_HISTORY_SANITIZED — PRIVATE REMOTE REWRITE PENDING**
 
-**Audit scope:** all locally reachable Git refs and the current working tree, including the post-P2 closure documentation commit. No history rewrite has been authorized.
+**Audit scope:** all locally reachable Git refs and the current working tree. The owner explicitly authorized a pre-public history rewrite to remove machine-specific home paths; that rewrite has completed locally and all phase refs were rewritten consistently.
 
 **P3:** NOT STARTED.
 
@@ -26,9 +26,13 @@ A separate heuristic sweep of tracked text surfaced 221 strings meeting a delibe
 
 ## Privacy audit
 
-- Current-tree search initially found machine-specific home paths in `docs/plans/P0-closure.md`, `docs/plans/P2-autonomous-audit.md`, and `docs/threat-model/02-adversaries-and-attack-surface.md`. The working copies have been generalized to `$HOME` or repository-relative wording; no content from the separate local-MCP project was accessed.
-- Historical reachable blobs still contain the former user-home root in those three documentation paths, including an explicit path to a separate local-MCP repository. These are historical privacy disclosures, not secrets. **OWNER_REVIEW_REQUIRED before Public**; no history rewrite has been performed or authorized.
-- Current and historical source/documentation were searched for personal names, private emails, phone/address patterns, hostnames, LAN IPs, machine identifiers, account IDs, OAuth IDs, and repository-local absolute paths. The current-tree `$HOME` paths were generalized (**REMOVE_OR_GENERALIZE**, completed). `alice@example.test`, `bob@example.test`, and `mei.tanaka@example.com` are **SAFE_EXAMPLE** values. Upstream maintainer names/emails retained in vendored `jsonschema-value`/`serde_json` manifests and upstream contributing guidance are **REQUIRED_PUBLIC_TECHNICAL** provenance/contact information, not project-owner details. The sole project commit identity is the public-safe GitHub noreply identity below. No additional verified owner-private material was identified beyond the historical paths above.
+- The owner explicitly authorized removal of the historical machine-specific paths before publication.
+- The complete reachable local history was rewritten with `git-filter-repo` 2.47.0 using exact literal replacements for the former Serea checkout path and separate local-MCP path.
+- The current tree, every reachable commit, and commit messages were rescanned afterward; no former machine-specific home, Desktop checkout, or local-MCP path remains.
+- A complete pre-rewrite Git bundle was kept only as a local recovery artifact outside the repository. It is not tracked and must never be pushed or published.
+- The rewrite changed commit object IDs. The generated commit map was used to update tracked current-document references from old private-history SHAs to the rewritten public-history SHAs; no old full SHA remains in the tracked current tree.
+- Current and rewritten historical source/documentation were searched for personal names, private emails, phone/address patterns, hostnames, LAN IPs, machine identifiers, account IDs, OAuth IDs, and repository-local absolute paths. `alice@example.test`, `bob@example.test`, and `mei.tanaka@example.com` are **SAFE_EXAMPLE** values. Upstream maintainer names/emails retained in vendored manifests and upstream contributing guidance are **REQUIRED_PUBLIC_TECHNICAL** provenance/contact information.
+- The sole project commit identity remains the public-safe GitHub noreply identity documented below.
 - Do not expose credentials or private user data in issues or pull requests.
 
 ## Commit identity audit
@@ -176,14 +180,11 @@ The table includes all 108 packages resolved by `Cargo.lock` at audit time, incl
 
 ## Project license
 
-**BLOCKER — OWNER LICENSE DECISION REQUIRED.** No root `LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`, or `COPYING` exists. No license has been selected or added. Owner options compatible with the locked dependency expressions include `MIT OR Apache-2.0` (dual license, giving downstream recipients a choice) or MIT (simple permissive terms); retain applicable third-party notices, including the Unicode-3.0 notice. The owner must choose. Do not publish until the exact project license is approved and added.
+**PASS — owner selected MIT.** Serea is licensed under the root `LICENSE` file with `Copyright (c) 2026 Yrika819`. Workspace package metadata declares `license = "MIT"` and all four workspace crates inherit it through `license.workspace = true`. README links to the MIT license. Applicable third-party and vendored licenses remain in force and are not relicensed by the Serea project license.
 
 ## Project-name collision
 
-- GitHub repository search for `Serea` returned multiple exact-name repositories, largely small or unrelated projects, and the established `Sereal/Sereal` serialization project; the Rust-language GitHub query returned no direct Serea software match.
-- crates.io API search for `serea` returned no crates.
-- General web search through Google was blocked by its interstitial, so general-web coverage is incomplete.
-- Assessment: **REVIEW_REQUIRED**, not a formal trademark opinion. `Serea` and the established software name `Sereal` are visually/phonologically close; assess before Public. No automatic rename.
+The owner reviewed the known exact-name and near-name collisions and explicitly accepts them for this OSS publication. Serea remains the project name. The repository identity `Yrika819/Serea` is unambiguous; no legal trademark opinion or claim of exclusive naming rights is made. **Disposition: OWNER_ACCEPTED.**
 
 ## README
 
@@ -236,13 +237,15 @@ Workflows print and assert architecture in the full jobs. The runner labels desc
 
 ## Private staging status
 
-**PRIVATE_STAGING_VERIFIED; PUBLICATION BLOCKED.** GitHub CLI 2.101.0 API identity is `Yrika819` (user ID `143304522`), matching the numeric ID in the commit noreply identity; `gh auth status` still displays the old login label `yutaGOTO819`. Exact repository `Yrika819/Serea` was created as private. GitHub Actions were disabled before the first push and the setting was re-read as `enabled: false`. Local `main` was created at `977a20aabcbcf33a56369c75abe4f09c27428ac2` and pushed without force; remote `main` matches that SHA and is the default branch. Both workflows and README are present. The Actions runs endpoint reports zero runs; no hosted CI was executed. GitHub reports repository size 0 KiB despite the successful push and remote ref, so the size field was not treated as evidence of missing content. No LFS or submodule is present in the audited tree. This staging status does not authorize Public visibility.
+The GitHub repository `Yrika819/Serea` remains **PRIVATE** and GitHub Actions remain disabled. The first private staging push used the pre-rewrite history; the owner then authorized privacy remediation before Public. The sanitized rewritten history is currently local and ready to replace private `main` with a guarded force-with-lease update. No GitHub-hosted workflow has run. This record does not itself authorize skipping the final post-push verification.
 
 ## Blockers
 
-1. **Project LICENSE:** owner choice and exact license file required before Public.
-2. **Historical privacy:** owner review/explicit acceptance required for user-home and separate local-MCP paths in three historical blobs, or separate explicit authorization for history rewrite. History has not been rewritten.
-3. **Name collision:** review required because of exact-name projects and the established `Sereal` software identity; general-web query was blocked.
-4. **Mandatory publication gate unresolved:** project license, historical privacy owner review, and project-name collision review remain unresolved. The remaining P1–P25 categories must be confirmed PASS or OWNER_ACCEPTED before any visibility change.
+No unresolved content, secret, license, privacy, or project-name blocker remains in the local sanitized candidate.
 
-Do not switch Public while any mandatory category is UNKNOWN or unresolved. Actions must remain disabled while the repository is private.
+Remaining procedural gates before Public:
+
+1. Replace the PRIVATE remote `main` with the sanitized rewritten history using a guarded force-with-lease update.
+2. Verify the remote contains the rewritten `main`, remains private, Actions remain disabled, and zero workflow runs exist.
+3. Re-run the final P1–P25 publication gate against the rewritten remote.
+4. Only then switch visibility to Public and enable Actions.

@@ -2,7 +2,7 @@
 
 - **Project:** Serea
 - **Branch:** `p2/design-preparation`
-- **Base commit:** `c3737039e3e38dbba554dc0b9075025f87948358`
+- **Base commit:** `007f038af19ae7855ad00b7e58389ce04d0fe727`
   (`p1/workspace-protocol-skeleton`, P1 closed)
 - **Historical P1 baseline:** `serea-arch/0.2.0`; current frozen P2A contract `serea-arch/1.0.0`
 - **Scope:** design preparation only. No production Rust, no SQLite code, no

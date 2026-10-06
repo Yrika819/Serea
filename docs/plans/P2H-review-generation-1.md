@@ -26,7 +26,7 @@ This terminal review is limited to the generation-0 remediation and the affected
 - Scope kind: `working tree`
 - Scope description: Current P2H implementation against P2H generation-0 findings and resolution: seam isolation, crash windows, fresh verifier, N7, fixture identity, child lifecycle and release proof.
 - Scope mode: `implementation delta plus affected execution chains`
-- Baseline: `6fe6bd3e6d60924257d9d222fcf01ae000d841b9` plus frozen initial report/resolution
+- Baseline: `f50fd8f0aa01ae8847c92506a61015fa586a69ec` plus frozen initial report/resolution
 - Target: current `p2/p2h-crash-fault-injection` working tree
 - Changed paths: 11 implementation/test/tool files plus four P2H review/closure records
 - Completion: `Complete within reviewed scope`

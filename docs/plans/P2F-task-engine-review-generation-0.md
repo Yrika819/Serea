@@ -25,7 +25,7 @@ The date is the editor-provided review date, not an empirical runtime clock clai
 - Scope kind: `working tree`
 - Scope description: All tracked P2F-b changes and untracked storage/engine source versus e82abd4, before remediation.
 - Scope mode: `full frozen scope`
-- Baseline: `e82abd475596dce5a303ef2c3d7eaa3241b774be`
+- Baseline: `e1b71040366a0bad8e1b70739d37281c3b895720`
 - Target: `working tree`
 - Changed paths: `35`
 - Diff size: `798 tracked additions / 245 tracked deletions plus untracked source`

@@ -1,9 +1,9 @@
 # P2 Tomorrow Decision Ledger
 
 - **Branch:** `p2/autonomous-preimplementation-audit`
-- **Base commit:** `ec4659c007a914e5d90bb3067d3858a4e299b797` (`p2/design-preparation`)
+- **Base commit:** `0663333c169d078f278274fb334257633fb7a90d` (`p2/design-preparation`)
   — the base this ledger was written against, **not** the audit commit
-- **Audit commit:** `732b3ad92801dcb15d5b45548cbb23f325abafe0`
+- **Audit commit:** `e76fa01ca0704a53a8c0a01518d1d1b8c903cd63`
 - **Purpose:** so that tomorrow's 6.1 Sol High implementation begins with a small
   number of genuine reasoning decisions rather than a hundred implicit ones.
 - **Companion:** [P2 autonomous audit](P2-autonomous-audit.md), which carries the

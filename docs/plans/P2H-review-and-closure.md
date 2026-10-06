@@ -2,14 +2,14 @@
 
 ## Status
 
-**CLOSED at P2H commit `14017e3981cf23ac2b4a076aad435f16eb59b535`.** This ledger was initially assembled immediately before that commit; this P2I update records the now-verified committed state.
+**CLOSED at P2H commit `8417b1fff325e311120050f6c733f185111a90bc`.** This ledger was initially assembled immediately before that commit; this P2I update records the now-verified committed state.
 
 P2H scope is restricted to real child-process crash windows, narrowly scoped test-only fault seams, fresh-process durable verification, N1–N8 and F25/F26. It adds no production runtime feature behavior. P2H is committed; P2I final closure is in progress on `p2/p2i-final-closure`. P3 is not started.
 
 Starting branch: `p2/p2g-recovery`
-Starting/parent HEAD: `6fe6bd3e6d60924257d9d222fcf01ae000d841b9`
+Starting/parent HEAD: `f50fd8f0aa01ae8847c92506a61015fa586a69ec`
 Implementation branch: `p2/p2h-crash-fault-injection`
-P2H commit: `14017e3981cf23ac2b4a076aad435f16eb59b535`; parent: `6fe6bd3e6d60924257d9d222fcf01ae000d841b9`. No push or amend occurred.
+P2H commit: `8417b1fff325e311120050f6c733f185111a90bc`; parent: `f50fd8f0aa01ae8847c92506a61015fa586a69ec`. No push or amend occurred.
 
 ## Baseline and scope
 
@@ -102,8 +102,8 @@ The x86_64-only run scope and the absence of empirical Apple Silicon validation 
 ## P2H closure proof
 
 P2H was committed once as `feat: implement P2H crash fault injection` at
-`14017e3981cf23ac2b4a076aad435f16eb59b535`, directly on
-`6fe6bd3e6d60924257d9d222fcf01ae000d841b9`. The P2H commit was verified with a
+`8417b1fff325e311120050f6c733f185111a90bc`, directly on
+`f50fd8f0aa01ae8847c92506a61015fa586a69ec`. The P2H commit was verified with a
 clean worktree before creating `p2/p2i-final-closure`. No push or amend occurred.
 
 P2I is the current phase and remains open until Group O, whole-P2 reviews and

@@ -25,7 +25,7 @@ Date is editor-provided review date, not a runtime time-source claim.
 - Scope kind: `file set`
 - Scope description: Six-file accepted-remediation delta and affected callers/callees only.
 - Scope mode: `implementation delta plus affected execution chains`
-- Baseline: Frozen generation0 at HEAD e82abd475596dce5a303ef2c3d7eaa3241b774be plus its working-tree fingerprint.
+- Baseline: Frozen generation0 at HEAD e1b71040366a0bad8e1b70739d37281c3b895720 plus its working-tree fingerprint.
 - Target: Current accepted remediation working tree.
 - Changed paths: `6`
 - Diff size: `Unavailable - bounded source/behavior delta rather than an additional Git commit`

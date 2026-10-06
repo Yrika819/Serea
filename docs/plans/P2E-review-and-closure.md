@@ -3,7 +3,7 @@
 ## 1. Preflight and frozen pre-implementation gate
 
 Starting branch: `p2/p2d-blobs-classification`. Starting HEAD:
-`ec3b7858fba9b70103f357543783ad782304b5c7` (`feat: implement P2D blob classification`).
+`e6c57a03211d8493ac82cdd35ab402379ccf24da` (`feat: implement P2D blob classification`).
 Git status was clean. Both requested offline baseline commands passed before
 branch creation. Both actual baselines: **460 regular + 19 doctests = 479**, zero
 failures or ignored executions; separately logged count-confirmation reruns also

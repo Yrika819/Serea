@@ -1,7 +1,7 @@
 # P2 Test Matrix
 
 - **Branch:** `p2/design-preparation`
-- **Base commit:** `c3737039e3e38dbba554dc0b9075025f87948358`
+- **Base commit:** `007f038af19ae7855ad00b7e58389ce04d0fe727`
 - **Status:** plan only. No test is implemented by this run.
 - **Method:** Red/Green. Each group specifies the RED to record **before**
   implementation, not an assertion that it was observed. A syntax error or fake

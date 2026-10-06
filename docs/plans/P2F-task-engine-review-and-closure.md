@@ -13,9 +13,9 @@ is the authoritative final runtime closure**, superseding historical pending tex
 ## 1. Preflight and baseline
 
 Starting branch: `p2/p2e-lease-fencing`. Starting HEAD:
-`e82abd475596dce5a303ef2c3d7eaa3241b774be`
+`e1b71040366a0bad8e1b70739d37281c3b895720`
 (`feat: implement P2F atomic outcome fencing`), with clean worktree.
-Parent P2E: `df6088e247dcfb28dc0570d9afafda25bcde60a5`.
+Parent P2E: `d3413af80a0f2b82926c643607a0ffad1f55fcb5`.
 Created `p2/p2f-task-engine-core` from that exact HEAD. No amend or push.
 
 Both commands passed before branch creation:
@@ -356,7 +356,7 @@ no next feature or P2G work is begun, no feature commit is created, and P2F-b is
 ### Historical exact resume point
 
 Branch `p2/p2f-task-engine-core`; HEAD remains
-`e82abd475596dce5a303ef2c3d7eaa3241b774be`. Worktree intentionally dirty with this
+`e1b71040366a0bad8e1b70739d37281c3b895720`. Worktree intentionally dirty with this
 gate, corrected architecture docs, test-only engine scaffold and four-member
 workspace/smoke/CI integration. First/last known engine result is the same E0432 RED;
 there is no engine GREEN or completed postimplementation review.

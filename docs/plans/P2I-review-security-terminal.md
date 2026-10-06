@@ -2,7 +2,7 @@
 
 - **Review identity:** `p2i-security-terminal-14017e3-20261006`
 - **Review mode:** second, separate main-agent review pass; fresh security checklist and direct source/diff inspection. No subagent or delegated reviewer was used.
-- **Scope:** P2A `10622803fc52e7ed8e91de5ce41f472b09793766` through P2H `14017e3981cf23ac2b4a076aad435f16eb59b535`, plus the current dirty P2I delta.
+- **Scope:** P2A `824c6ce1931cc5b4f9f77e72bdbedc600a2e31af` through P2H `8417b1fff325e311120050f6c733f185111a90bc`, plus the current dirty P2I delta.
 - **Prior lineage:** `P2I-review-security.md` remains unchanged as generation-0 / incomplete evidence. This terminal report does not upgrade or overwrite it.
 - **Supporting bounded evidence:** `P2I-review-coverage.md`, `P2I-recovery-coverage.md`, and `P2I-vendor-provenance.md`; current Git diff and normal-edge Cargo dependency tree were inspected directly.
 - **Excluded:** P3 implementation, exhaustive third-party vulnerability certification, arbitrary feature combinations, and guarantees outside the frozen P2 contract.

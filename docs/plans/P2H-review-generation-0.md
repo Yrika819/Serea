@@ -26,7 +26,7 @@ This is the frozen initial review record. Its findings describe the pre-remediat
 - Scope kind: `working tree`
 - Scope description: P2H test-only storage seam, child-process crash harness, fresh verifier, N1–N8, F25/F26, and release-exclusion proof script, versus exact P2G HEAD.
 - Scope mode: `full frozen scope`
-- Baseline: `6fe6bd3e6d60924257d9d222fcf01ae000d841b9`
+- Baseline: `f50fd8f0aa01ae8847c92506a61015fa586a69ec`
 - Target: initial P2H working tree on `p2/p2h-crash-fault-injection` (uncommitted snapshot)
 - Changed paths: 11 implementation/test/tool paths; no migration, vendor, lockfile or protocol changes
 - Diff size: 75 tracked insertions / 5 tracked deletions, plus `fault.rs`, `crash.rs` and release proof script at initial review; subsequent bounded fixes are documented in resolution

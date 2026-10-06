@@ -24,7 +24,7 @@ This is a terminal immutable report. Editor date is not ambient runtime time evi
 - Scope kind: `working tree`
 - Scope description: Generation-0 first-GREEN snapshot to final remedied storage/engine recovery delta, affected authority/classification/audit/tests, and six P2G plan/Proposed ADR annotations.
 - Scope mode: `implementation delta plus affected execution chains`
-- Baseline: `first-GREEN snapshot tmp/p2g-first-green-snapshot; original HEAD 7c05ffae3503115a069761d40201aaf84595679a`
+- Baseline: `first-GREEN snapshot tmp/p2g-first-green-snapshot; original HEAD 7625d206e1fe6794fd21c63ef9b97a8546289e5a`
 - Target: `working tree`
 - Changed paths: `12`
 - Diff size: `Restricted capability, bounded semantic/predicate fixes and focused regressions; six scoped documentation corrections`

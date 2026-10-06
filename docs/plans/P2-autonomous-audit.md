@@ -44,8 +44,8 @@
 >   no historical measurement below is promoted to final-tree evidence.
 
 - **Branch:** `p2/autonomous-preimplementation-audit`
-- **Base commit:** `ec4659c007a914e5d90bb3067d3858a4e299b797` (`p2/design-preparation`)
-- **Audit commit:** `732b3ad92801dcb15d5b45548cbb23f325abafe0` — this document's
+- **Base commit:** `0663333c169d078f278274fb334257633fb7a90d` (`p2/design-preparation`)
+- **Audit commit:** `e76fa01ca0704a53a8c0a01518d1d1b8c903cd63` — this document's
   own commit, on `p2/autonomous-preimplementation-audit`
 - **Audit date:** 2026-10-03
 - **Scope:** design hardening only. No production Rust, no runtime crate, no
@@ -67,9 +67,9 @@ implementation has not started.
 | --- | --- |
 | cwd | repository root |
 | Branch at start | `p2/design-preparation` |
-| HEAD at start | `ec4659c007a914e5d90bb3067d3858a4e299b797` |
+| HEAD at start | `0663333c169d078f278274fb334257633fb7a90d` |
 | Worktree | clean |
-| P1 parent baseline | `c3737039e3e38dbba554dc0b9075025f87948358` (`p1/workspace-protocol-skeleton`) present |
+| P1 parent baseline | `007f038af19ae7855ad00b7e58389ce04d0fe727` (`p1/workspace-protocol-skeleton`) present |
 | Host | macOS 15.7.7, `x86_64`, rustc 1.98.1, SQLite 3.43.2 (system + Python `sqlite3`), Node 24.21.0 |
 
 The audit branch was created from the exact commit above. The

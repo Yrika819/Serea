@@ -6,7 +6,7 @@
 
 Initial status was **OPEN — design reconciliation / implementation pending**. The preimplementation reconciliation below was frozen before production edits; the final measured disposition and evidence are recorded in the closure sections below. This closes P2G only, not P2H, P2I, P3 or full ADR ratification.
 
-Starting HEAD: `7c05ffae3503115a069761d40201aaf84595679a`.
+Starting HEAD: `7625d206e1fe6794fd21c63ef9b97a8546289e5a`.
 Starting branch: `p2/p2f-task-engine-core`; clean preflight.
 Implementation branch: `p2/p2g-recovery`, created from the exact starting HEAD.
 
@@ -177,6 +177,6 @@ ADR-0021's **P2-side runtime gate is complete**; status stays **Proposed** becau
 
 ### Closure, commit and remaining phases
 
-P2G is CLOSED at this scoped runtime gate. The user-authorized closure commit is the single commit containing this record, subject `feat: implement P2G recovery`, on `p2/p2g-recovery`, parent **7c05ffae3503115a069761d40201aaf84595679a**. Its actual SHA and clean-worktree verification are recorded in the final handoff; no amend or push is authorized.
+P2G is CLOSED at this scoped runtime gate. The user-authorized closure commit is the single commit containing this record, subject `feat: implement P2G recovery`, on `p2/p2g-recovery`, parent **7625d206e1fe6794fd21c63ef9b97a8546289e5a**. Its actual SHA and clean-worktree verification are recorded in the final handoff; no amend or push is authorized.
 
 P2H and P2I remain **NOT STARTED**. P2H still owns real child-process crash-window proof, bounded fault seams and deferred F25/F26 portability/crash harness work; P2I owns final non-negotiable sweep. No P2H production implementation, P3, provider/model runtime, external reconciliation, approval delivery, scheduler/worker loop, empirical Apple-Silicon execution or physical SQLite-file byte identity is claimed. Any optional post-commit P2H readiness audit is strictly read-only and reported only in the final handoff.

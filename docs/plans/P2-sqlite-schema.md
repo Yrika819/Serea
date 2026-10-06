@@ -1,7 +1,7 @@
 # P2 SQLite Schema
 
 - **Branch:** `p2/design-preparation`
-- **Base commit:** `c3737039e3e38dbba554dc0b9075025f87948358`
+- **Base commit:** `007f038af19ae7855ad00b7e58389ce04d0fe727`
 - **Status:** historical design preparation, reconciled after the frozen P2C
   gate. Production `0001_initial.sql` is now the sole DDL authority (§4.0).
   This disjoint schema/docs slice adds no Rust runtime or dependency.

@@ -5,8 +5,8 @@
   (`997f747`), then one architecture-minor step by the bounded corrective pass
   recorded in [Corrective pass](#corrective-pass) below
 - **Branch:** `p1/workspace-protocol-skeleton`
-- **Base commit:** `78ad2550f1862aa3644d2b36f06616f4512707eb` (`p0/architecture-freeze`, P0 CLOSED)
-- **P1 closure commit:** `997f74733a682eff84729a1a71ddd7a72b48b856` (unchanged by the
+- **Base commit:** `1666d05e4bbbc091bb1e1c4e2532022d5cd0d196` (`p0/architecture-freeze`, P0 CLOSED)
+- **P1 closure commit:** `6a45fd9b3c3d66081c7be133d991041eb9c14c65` (unchanged by the
   corrective pass, which is a separate commit)
 - **Scope boundary:** protocol contracts only. No task engine, no durable state,
   no scheduler, no external service, no Android, no credential bytes, no

@@ -3,7 +3,7 @@
 - Status: **Accepted** — complete O/L/P validation implemented in P2A
 - Architecture version: `serea-arch/1.0.0` (current frozen contract set)
 - Decision date: 2026-10-03 — owner direction
-- Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
+- Recorded by: P2 design preparation, from `007f038af19ae7855ad00b7e58389ce04d0fe727`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.6
 
 > Accepted on owner ratification after three corrected documentation gate reviews

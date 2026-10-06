@@ -1,7 +1,7 @@
 # P2A Review and Closure Gate
 
 - Date: 2026-10-03
-- Scope: final P2A contract implementation and integration record on `p2/p2a-protocol-corrections`, from checkpoint `484672227c7694ba7df110e05abb1cbccdcc1eed`. Earlier docs-only subagent evidence is retained in its original scope; this record now belongs to the coordinating implementation run.
+- Scope: final P2A contract implementation and integration record on `p2/p2a-protocol-corrections`, from checkpoint `694c78af1edc59faa4073aca4ed2315cd7bf833d`. Earlier docs-only subagent evidence is retained in its original scope; this record now belongs to the coordinating implementation run.
 - Initial evidence: findings from **three independent subagent reviewers under the coordinator**, frozen before disposition as G01–G19 below. Initial evidence IDs: `PASSA3973237e`, `PASSBfec63a0c`, `PASSCcf67af61`. Findings are pooled; individual finding attribution is not recorded and is not invented.
 - Corrected documentation gate: **three independent subagent re-reviews GREEN**, performed under the coordinator and frozen inline in §4: `A3973237e`, `Bfec63a0c`, `Ccf67af61`. No unresolved documentation majors in that gate. Owner direction ratified the design contingent on GREEN; no user-supplied test results are claimed.
 - Production state: **P2A implemented, independent final reviews GREEN, workspace tests 307/307 PASS** on stable and Rust 1.85. Original F1–F6 and numeric/object follow-ups N1/N3 are resolved; N2 error precedence is intentionally documented/tested. Actual final command evidence and limitations are in §4.7; no storage/task-engine/event runtime is delivered.

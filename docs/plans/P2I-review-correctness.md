@@ -1,7 +1,7 @@
 # P2I Whole-P2 Review Summary — Correctness / Architecture / Durability
 
 - **Independent reviewer ID:** `cr-20261006-p2i-4e92ab` (continued recheck on P2I working tree)
-- **Scope:** P2A `10622803fc52e7ed8e91de5ce41f472b09793766` inclusive through P2H `14017e3981cf23ac2b4a076aad435f16eb59b535`; additional P2I delta on branch `p2/p2i-final-closure`.
+- **Scope:** P2A `824c6ce1931cc5b4f9f77e72bdbedc600a2e31af` inclusive through P2H `8417b1fff325e311120050f6c733f185111a90bc`; additional P2I delta on branch `p2/p2i-final-closure`.
 - **Review mode:** independent read-only review; initial scope inventory included 242 changed paths and 76,736 additions / 2,257 deletions.
 - **Raw report:** reviewer results were returned inline to the coordinator, not persisted as a canonical code-review report. This file is an attributed coordinator summary, not a substitute for the full response or a review-validator report.
 - **Final recommendation:** **Discuss — incomplete review coverage. Not terminal PASS.**

@@ -3,7 +3,7 @@
 ## 1. Preflight and frozen design gate
 
 Starting branch `p2/p2b-clock-time`, clean worktree; exact starting HEAD
-`98a038e1423656554e1b408ca192b228622a5b35` (`feat: implement P2B clock and time`).
+`5d63c5f661670aa8ac2dea35f49a9e2762161bc8` (`feat: implement P2B clock and time`).
 Both offline workspace all-feature baselines were executed twice, with captured
 logs in `tmp/p2c-baseline-{stable,msrv}.log`: **336 regular + 5 doctests = 341**
 on each toolchain, zero failures. Created `p2/p2c-storage-foundation` from that

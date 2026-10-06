@@ -24,7 +24,7 @@ This is an immutable review input. Remediation and adjudication are separate. Ed
 - Scope kind: `working tree`
 - Scope description: First focused GREEN storage/engine recovery implementation and tests, existing SQLite dev-edge reuse, versus exact P2F HEAD. Snapshot includes both complete crate trees and frozen ledger.
 - Scope mode: `full frozen scope`
-- Baseline: `7c05ffae3503115a069761d40201aaf84595679a`
+- Baseline: `7625d206e1fe6794fd21c63ef9b97a8546289e5a`
 - Target: `working tree`
 - Changed paths: `14`
 - Diff size: `169 tracked additions / 26 tracked deletions plus 4742 lines in four new Rust files and closure ledger`

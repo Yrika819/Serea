@@ -3,7 +3,7 @@
 ## 1. Preflight
 
 Starting branch: `p2/p2a-protocol-corrections`.
-Starting HEAD: `10622803fc52e7ed8e91de5ce41f472b09793766`
+Starting HEAD: `824c6ce1931cc5b4f9f77e72bdbedc600a2e31af`
 (`feat: implement P2A protocol corrections`). Worktree was clean.
 Both `cargo test --workspace --all-features --offline` and
 `cargo +1.85.0 test --workspace --all-features --offline` passed **307/307**

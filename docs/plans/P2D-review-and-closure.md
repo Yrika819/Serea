@@ -3,7 +3,7 @@
 ## 1. Preflight and frozen pre-implementation design gate
 
 Starting branch `p2/p2c-storage-foundation`, clean worktree, exact HEAD
-`1d4519e36155eb0fa295354e2891782ed845a63e`
+`03d71cd2e8875ef3c5cfd75dade4ad48952384f7`
 (`feat: implement P2C storage foundation`). Stable and Rust 1.85 offline
 workspace all-feature baselines both passed **402 regular + 10 doctests = 412**.
 Created `p2/p2d-blobs-classification` from that exact HEAD. No amend or push.

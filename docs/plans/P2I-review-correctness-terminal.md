@@ -2,7 +2,7 @@
 
 - **Review identity:** `p2i-correctness-terminal-14017e3-20261006`
 - **Review mode:** coordinator review, read-only source/contract/test-assertion inspection; terminal synthesis over bounded coverage ledgers plus independent high-risk source spot-checks.
-- **Scope:** P2A `10622803fc52e7ed8e91de5ce41f472b09793766` through P2H `14017e3981cf23ac2b4a076aad435f16eb59b535`, plus current P2I diff.
+- **Scope:** P2A `824c6ce1931cc5b4f9f77e72bdbedc600a2e31af` through P2H `8417b1fff325e311120050f6c733f185111a90bc`, plus current P2I diff.
 - **Prior lineage:** `P2I-review-correctness.md` is retained as generation-0 / incomplete evidence and is not replaced or represented as PASS.
 - **Coverage inputs:** `P2I-review-coverage.md`, `P2I-recovery-coverage.md`, `P2I-vendor-provenance.md`, phase closure records, current Git diff and source/test checks described below.
 - **P3:** excluded; no production implementation started.

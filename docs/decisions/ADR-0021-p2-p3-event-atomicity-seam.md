@@ -3,7 +3,7 @@
 - Status: **Proposed** — P2 runtime gate complete, including CLOSED P2G recovery; P3 event gate and architecture ratification remain outstanding, E3/E4 unclaimed
 - Architecture version: `serea-arch/0.2.0` at the time of writing
 - Decision date: not yet ratified
-- Recorded by: P2 design preparation, from `c3737039e3e38dbba554dc0b9075025f87948358`
+- Recorded by: P2 design preparation, from `007f038af19ae7855ad00b7e58389ce04d0fe727`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.7
 
 > P2A records documentation direction only, including the event-protocol sequencing

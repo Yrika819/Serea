@@ -2,7 +2,7 @@
 
 This is a finite supporting review artifact, **not a closure claim**. The generation-0 reports `P2I-review-correctness.md` and `P2I-review-security.md` remain unchanged and incomplete.
 
-Baseline/target: parent of P2A `484672227c7694ba7df110e05abb1cbccdcc1eed` through P2H `14017e3981cf23ac2b4a076aad435f16eb59b535`; current dirty P2I delta is separately captured by current diff and closure record. The inventory is mechanically computed from all nine phase commits and contains 242 unique changed paths. Phase labels identify commits touching a path. Category assignment is inventory, not source review.
+Baseline/target: parent of P2A `694c78af1edc59faa4073aca4ed2315cd7bf833d` through P2H `8417b1fff325e311120050f6c733f185111a90bc`; current dirty P2I delta is separately captured by current diff and closure record. The inventory is mechanically computed from all nine phase commits and contains 242 unique changed paths. Phase labels identify commits touching a path. Category assignment is inventory, not source review.
 
 ## Bounded A1 passes
 

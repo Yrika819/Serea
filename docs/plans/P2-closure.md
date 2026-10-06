@@ -3,9 +3,9 @@
 - **Repository:** Serea
 - **Status:** **CLOSED — all P2I review and validation gates are GREEN.**
 - **Current branch:** `p2/p2i-final-closure`
-- **P2H commit:** `14017e3981cf23ac2b4a076aad435f16eb59b535`
-- **P2H parent:** `6fe6bd3e6d60924257d9d222fcf01ae000d841b9`
-- **P2I commit:** `e276103638cdb50f7005091b59fb373dda87d98a`
+- **P2H commit:** `8417b1fff325e311120050f6c733f185111a90bc`
+- **P2H parent:** `f50fd8f0aa01ae8847c92506a61015fa586a69ec`
+- **P2I commit:** `0826c16dd77bf50a724b84377e2e2d88ab8d1bcf`
 - **Pushed:** no
 - **P3 production implementation:** not started
 
@@ -15,16 +15,16 @@ The generation-0 P2A–P2H review reports below remain preserved as historical e
 
 | Phase | Commit | Scope/status |
 |---|---|---|
-| P2A | `10622803fc52e7ed8e91de5ce41f472b09793766` | Protocol and canonical corrections |
-| P2B | `98a038e1423656554e1b408ca192b228622a5b35` | Clock and time |
-| P2C | `1d4519e36155eb0fa295354e2891782ed845a63e` | SQLite storage foundation and migration 0001 |
-| P2D | `ec3b7858fba9b70103f357543783ad782304b5c7` | Blob/classification boundary |
-| P2E | `df6088e247dcfb28dc0570d9afafda25bcde60a5` | Lease authority |
-| P2F-a | `e82abd475596dce5a303ef2c3d7eaa3241b774be` | Atomic outcome fencing |
-| P2F-b | `7c05ffae3503115a069761d40201aaf84595679a` | Task-engine integration |
-| P2G | `6fe6bd3e6d60924257d9d222fcf01ae000d841b9` | Recovery |
-| P2H | `14017e3981cf23ac2b4a076aad435f16eb59b535` | Crash/fault injection |
-| P2I | `e276103638cdb50f7005091b59fb373dda87d98a` | Group O, whole-P2 review reconciliation and this closure record; CLOSED |
+| P2A | `824c6ce1931cc5b4f9f77e72bdbedc600a2e31af` | Protocol and canonical corrections |
+| P2B | `5d63c5f661670aa8ac2dea35f49a9e2762161bc8` | Clock and time |
+| P2C | `03d71cd2e8875ef3c5cfd75dade4ad48952384f7` | SQLite storage foundation and migration 0001 |
+| P2D | `e6c57a03211d8493ac82cdd35ab402379ccf24da` | Blob/classification boundary |
+| P2E | `d3413af80a0f2b82926c643607a0ffad1f55fcb5` | Lease authority |
+| P2F-a | `e1b71040366a0bad8e1b70739d37281c3b895720` | Atomic outcome fencing |
+| P2F-b | `7625d206e1fe6794fd21c63ef9b97a8546289e5a` | Task-engine integration |
+| P2G | `f50fd8f0aa01ae8847c92506a61015fa586a69ec` | Recovery |
+| P2H | `8417b1fff325e311120050f6c733f185111a90bc` | Crash/fault injection |
+| P2I | `0826c16dd77bf50a724b84377e2e2d88ab8d1bcf` | Group O, whole-P2 review reconciliation and this closure record; CLOSED |
 
 The P2H commit has exactly the specified P2G parent. The P2I branch was created only after the P2H commit was verified clean. There has been no amend or push.
 
@@ -149,4 +149,4 @@ P2 journals supported audited task-engine transition operations; it does not cla
 
 ## Next phase boundary
 
-**P2 status is CLOSED. P2I is CLOSED.** P2I commit: `e276103638cdb50f7005091b59fb373dda87d98a`; parent: `14017e3981cf23ac2b4a076aad435f16eb59b535`. Terminal correctness review: PASS. Terminal security review: PASS. The worktree after the P2I commit was clean. No P3 production code or migration has begun.
+**P2 status is CLOSED. P2I is CLOSED.** P2I commit: `0826c16dd77bf50a724b84377e2e2d88ab8d1bcf`; parent: `8417b1fff325e311120050f6c733f185111a90bc`. Terminal correctness review: PASS. Terminal security review: PASS. The worktree after the P2I commit was clean. No P3 production code or migration has begun.

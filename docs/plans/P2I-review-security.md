@@ -1,7 +1,7 @@
 # P2I Whole-P2 Review Summary — Security / Authority / Regression / Claims
 
 - **Independent reviewer ID:** `cr-20261006-p2i-security-14017e3` (continued recheck on P2I working tree)
-- **Scope:** P2A `10622803fc52e7ed8e91de5ce41f472b09793766` inclusive through P2H `14017e3981cf23ac2b4a076aad435f16eb59b535`; additional P2I delta on branch `p2/p2i-final-closure`.
+- **Scope:** P2A `824c6ce1931cc5b4f9f77e72bdbedc600a2e31af` inclusive through P2H `8417b1fff325e311120050f6c733f185111a90bc`; additional P2I delta on branch `p2/p2i-final-closure`.
 - **Review mode:** independent read-only review; initial inventory included nine implementation commits, 242 changed paths and 76,736 additions / 2,257 deletions.
 - **Raw report:** reviewer results were returned inline to the coordinator, not persisted as a canonical code-review report. This file is an attributed coordinator summary, not a substitute for the full response or a review-validator report.
 - **Final recommendation:** **Discuss — incomplete whole-P2 coverage. Not terminal PASS.**
@@ -12,7 +12,7 @@
 | Candidate | Final disposition | Evidence / limitation |
 |---|---|---|
 | Fault-feature exclusion wording | Fixed to distinguish normal/default production builds from explicitly feature-enabled seam-bearing builds. | `Cargo.toml`, storage crate root and `fault.rs` now state the same configuration boundary. No universal arbitrary-feature exclusion is claimed. |
-| Stale P2H precommit status | Fixed. | P2H closure ledger records commit `14017e3981cf23ac2b4a076aad435f16eb59b535` and P2I in progress. |
+| Stale P2H precommit status | Fixed. | P2H closure ledger records commit `8417b1fff325e311120050f6c733f185111a90bc` and P2I in progress. |
 | Complete/replayable audit-history overclaim | Fixed by narrowing ADR-0021 wording. | It now scopes retained journal history to supported audited task-engine operations and excludes low-level lease-only mutation and deletion-after-cascade. |
 | Default-feature production exclusion architecture question | Not retained as a current blocker. | User-authorized test/dev-oriented feature is only requested by the engine dev-dependency in this workspace; explicit feature opt-in remains seam-bearing and disclosed. This is not architecture ratification. |
 | LeaseGuard database-domain question | Not established as a P2 defect. | No frozen multi-database isolation contract or attacker-accessible bypass was proved. No database-identity isolation guarantee is claimed. |

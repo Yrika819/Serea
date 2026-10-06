@@ -38,6 +38,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+mod support;
+use support::event_bus;
 
 use rusqlite::{Connection, types::ValueRef};
 use serea_protocol::*;
@@ -139,7 +141,7 @@ impl Fixture {
     }
 
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap())
+        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
 
     fn sql(&self) -> Connection {
@@ -1148,7 +1150,7 @@ fn a_savepoint_release_fault_makes_the_outer_transaction_rollback_only() {
     // The caller *catches* the operation error and asks to commit anyway.
     let task = assistant_task(1);
     let caught: Result<(), EngineError> = store
-        .transact_with_audit(&TaskJournal, |tx| {
+        .transact_with_participants(&TaskJournal, &event_bus(), |tx| {
             let _ = tx.insert_task(&task, &c.view());
             Ok(())
         })

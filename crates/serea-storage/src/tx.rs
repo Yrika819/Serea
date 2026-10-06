@@ -68,6 +68,7 @@
 pub struct Tx<'conn> {
     pub(crate) inner: rusqlite::Transaction<'conn>,
     pub(crate) audit: Option<&'conn dyn crate::audit::TaskAuditParticipant>,
+    pub(crate) events: Option<&'conn dyn crate::audit::EventParticipant>,
     pub(crate) protection: Option<std::sync::Arc<dyn crate::AtRestProtection>>,
     pub(crate) rollback_only: bool,
     pub(crate) event_count: u8,

@@ -170,7 +170,7 @@ impl Store {
     /// Runs a synchronous body in BEGIN IMMEDIATE. Ok commits, Err explicitly
     /// rolls back. Commit failures are typed errors; no success is manufactured.
     /// Tx exposes blobs and low-level lease authority, not SQL. Audited lifecycle
-    /// methods refuse with AuditRequired here; use transact_with_audit explicitly.
+    /// methods refuse with AuditRequired here; use transact_with_participants.
     /// Propagate errors to roll back surrounding operations; failed method
     /// savepoint cleanup makes the
     /// transaction rollback-only even if the closure catches the operation error.
@@ -178,23 +178,35 @@ impl Store {
         &self,
         body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.transact_in(None, body)
+        self.transact_in(None, None, body)
     }
 
-    /// Runs with exactly one synchronous audit participant borrowed only for
-    /// this transaction. Whole-operation methods persist its drafts in their
-    /// savepoint, not at outer commit. No SQL capability is given to the mapper.
+    /// Runs the fixed Task Audit + Event participants in one transaction.
+    /// Neither participant receives SQL or transaction re-entry capability.
+    pub fn transact_with_participants<T>(
+        &self,
+        audit: &dyn crate::audit::TaskAuditParticipant,
+        events: &dyn crate::audit::EventParticipant,
+        body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.transact_in(Some(audit), Some(events), body)
+    }
+
+    /// Preserves the P2 journal-only test harness. It is absent from every
+    /// production build; P3 task transitions require transact_with_participants.
+    #[cfg(test)]
     pub fn transact_with_audit<T>(
         &self,
         participant: &dyn crate::audit::TaskAuditParticipant,
         body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.transact_in(Some(participant), body)
+        self.transact_in(Some(participant), None, body)
     }
 
     fn transact_in<T>(
         &self,
         audit: Option<&dyn crate::audit::TaskAuditParticipant>,
+        events: Option<&dyn crate::audit::EventParticipant>,
         body: impl FnOnce(&mut Tx<'_>) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         let mut conn = self.connection()?;
@@ -205,6 +217,7 @@ impl Store {
         let mut tx = Tx {
             inner: conn.transaction_with_behavior(TransactionBehavior::Immediate)?,
             audit,
+            events,
             protection: self.protection.clone(),
             rollback_only: false,
             event_count: 0,

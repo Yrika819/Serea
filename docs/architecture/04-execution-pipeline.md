@@ -225,7 +225,9 @@ evidence row, `CAPABILITY_COMPLETED` with `seq` assigned inside the transaction,
 and the task state `EXECUTING → VERIFYING`. `model_usage` already has its row
 from stage 3.
 
-The task moves to `COMPLETED`; `TASK_COMPLETED` commits with `result_summary`.
+The task moves to `COMPLETED`; `TASK_COMPLETED` commits with the available
+result digest. Task Engine lifecycle events do not copy result bodies into the
+event payload.
 
 ### Stage 10 — Delivery
 

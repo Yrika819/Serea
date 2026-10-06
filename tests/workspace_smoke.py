@@ -348,9 +348,9 @@ def main() -> int:
             for name, internal, is_dev in dependency_tables(manifest, shared, manifest_path):
                 if owner == PROTOCOL and internal:
                     failures.append(f"{PROTOCOL} depends on internal {name}; protocol is a leaf")
-                if owner == ENGINE and internal and not is_dev and name not in (PROTOCOL, STORAGE):
+                if owner == ENGINE and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS):
                     failures.append(
-                        f"{ENGINE} has internal non-dev dependency {name}; only protocol/storage are allowed"
+                        f"{ENGINE} has internal non-dev dependency {name}; only protocol/storage/event-bus are allowed"
                     )
                 if owner == ENGINE and name == "rusqlite" and not is_dev:
                     failures.append(f"{ENGINE} has non-dev dependency rusqlite; use storage instead")
@@ -379,8 +379,8 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P3B protocol/storage/event-bus/task-engine/testkit workspace; "
-          "event-bus non-dev internal protocol/storage-only; storage protocol-only "
+    print("OK: exact P3C protocol/storage/event-bus/task-engine/testkit workspace; "
+          "event-bus protocol/storage-only; task-engine protocol/storage/event-bus; storage protocol-only "
           "with no Event Bus or task-engine edge; testkit dev-only")
     return 0
 

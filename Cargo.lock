@@ -707,6 +707,7 @@ dependencies = [
 name = "serea-event-bus"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "serea-protocol",
  "serea-storage",
 ]
@@ -739,8 +740,10 @@ version = "0.1.0"
 dependencies = [
  "rusqlite",
  "serde_json",
+ "serea-event-bus",
  "serea-protocol",
  "serea-storage",
+ "serea-testkit",
 ]
 
 [[package]]

@@ -49,7 +49,7 @@ class VirtualManifestTests(unittest.TestCase):
             **{path: f'[package]\nname = "{name}"\n' for name, path in self.paths.items()},
         }
         self.add(smoke.EVENT_BUS, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\n')
-        self.add(ENGINE, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\n[dev-dependencies]\nserde_json = "1"\n')
+        self.add(ENGINE, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\n[dev-dependencies]\nserde_json = "1"\n')
 
     def run_main(self):
         def read(path, **kwargs):
@@ -82,7 +82,7 @@ class VirtualManifestTests(unittest.TestCase):
         self.manifests[self.paths[owner]] += text
 
     def test_exact_workspace_succeeds(self):
-        self.assert_main(0, "OK: exact P3B")
+        self.assert_main(0, "OK: exact P3C")
 
     def test_commented_and_indented_dependency_headers_refuse_testkit(self):
         for header in ('[dependencies] # ordinary Cargo comment', '  [dependencies]',
@@ -112,7 +112,7 @@ class VirtualManifestTests(unittest.TestCase):
         self.manifests[self.root_path] = self.manifests[self.root_path].replace('[workspace]', '  ["workspace"] # comment')
         for path in self.paths.values():
             self.manifests[path] = self.manifests[path].replace('[package]', '  ["package"] # comment')
-        self.assert_main(0, "OK: exact P3B")
+        self.assert_main(0, "OK: exact P3C")
 
     def test_inherited_dependency_cannot_override_package_identity(self):
         self.manifests[self.root_path] += '\n[workspace.dependencies]\nhelper = { package = "serea-testkit", version = "1" }\n'
@@ -163,7 +163,7 @@ class VirtualManifestTests(unittest.TestCase):
     def test_storage_protocol_runtime_and_testkit_dev_are_allowed(self):
         self.manifests[self.root_path] += '\n[workspace.dependencies]\nwire = { path = "crates/serea-protocol", package = "serea-protocol" }\nhelper = { path = "crates/serea-testkit", package = "serea-testkit" }\n'
         self.add(smoke.STORAGE, '\n[dependencies]\nwire.workspace = true\n[target.\'cfg(unix)\'.build-dependencies]\nwire.workspace = true\n[target.\'cfg(unix)\'.dev-dependencies.helper]\nworkspace = true\n')
-        self.assert_main(0, "OK: exact P3B")
+        self.assert_main(0, "OK: exact P3C")
 
     def test_protocol_is_leaf_even_for_dev_dependencies(self):
         self.add(smoke.PROTOCOL, '\n[target.\'cfg(unix)\'.dev-dependencies]\nhelper = { package = "serea-storage", version = "1" }\n')
@@ -175,7 +175,7 @@ class VirtualManifestTests(unittest.TestCase):
 
     def test_comments_and_strings_are_not_dependencies(self):
         self.add(smoke.PROTOCOL, '\n# [dependencies]\n# serea-testkit = "1"\n[package.metadata]\nexample = "[dependencies] serea-testkit"\n[dependencies]\nexternal = "1"\n')
-        self.assert_main(0, "OK: exact P3B")
+        self.assert_main(0, "OK: exact P3C")
 
     def test_missing_workspace_dependency_fails_closed(self):
         self.add(smoke.STORAGE, '\n[dependencies]\nhelper = { workspace = true }\n')
@@ -300,12 +300,12 @@ class VirtualManifestTests(unittest.TestCase):
             for prefix in ('', 'target.\'cfg(unix)\'.'):
                 with self.subTest(kind=kind, prefix=prefix):
                     self.engine_dependencies(f'[{prefix}{kind}]\nwire = {{ package = "serea-protocol", version = "1" }}\nstore = {{ package = "serea-storage", version = "1" }}\n')
-                    self.assert_main(0, "OK: exact P3B")
+                    self.assert_main(0, "OK: exact P3C")
 
     def test_engine_workspace_path_aliases_are_allowed(self):
         self.manifests[self.root_path] += '\n[workspace.dependencies]\nwire = { path = "crates/serea-protocol" }\nstore = { path = "crates/serea-storage" }\n'
         self.engine_dependencies('[dependencies]\nwire.workspace = true\n[target.\'cfg(unix)\'.build-dependencies.store]\nworkspace = true\n')
-        self.assert_main(0, "OK: exact P3B")
+        self.assert_main(0, "OK: exact P3C")
 
     def test_engine_forbidden_internal_runtime_and_build_dependencies(self):
         for name in ('serea-event', 'serea-providers', 'serea-provider-http',
@@ -314,7 +314,7 @@ class VirtualManifestTests(unittest.TestCase):
                 for prefix in ('', 'target.\'cfg(unix)\'.'):
                     with self.subTest(name=name, kind=kind, prefix=prefix):
                         self.engine_dependencies(f'[{prefix}{kind}]\n{name} = "1"\n')
-                        self.assert_main(1, f"{ENGINE} has internal non-dev dependency {name}")
+                    self.assert_main(1, f"{ENGINE} has internal non-dev dependency {name}")
 
     def test_engine_forbidden_internal_alias_and_optional_dependency(self):
         self.engine_dependencies('[dependencies]\nhelper = { package = "serea-event", version = "1", optional = true }\n')
@@ -392,7 +392,7 @@ class VirtualManifestTests(unittest.TestCase):
     def test_engine_rusqlite_dev_and_storage_rusqlite_runtime_are_allowed(self):
         self.add(smoke.STORAGE, '\n[dependencies]\nrusqlite = "1"\n')
         self.engine_dependencies('[dev-dependencies]\nrusqlite = "1"\n[target.\'cfg(unix)\'.dev-dependencies]\nsql = { package = "rusqlite", version = "1" }\n')
-        self.assert_main(0, "OK: exact P3B")
+        self.assert_main(0, "OK: exact P3C")
 
     def test_storage_engine_dependency_is_forbidden_even_in_dev_scopes(self):
         for kind in smoke.DEPENDENCY_KINDS:
@@ -442,7 +442,7 @@ class VirtualManifestTests(unittest.TestCase):
                     with self.subTest(kind=kind, prefix=prefix, dependency=dependency):
                         self.engine_dependencies(f'[{prefix}{kind}]\n{dependency}\n')
                         if kind == 'dev-dependencies':
-                            self.assert_main(0, "OK: exact P3B")
+                            self.assert_main(0, "OK: exact P3C")
                         else:
                             self.assert_main(1, f"{ENGINE} names serea-testkit outside [dev-dependencies]")
 
@@ -452,7 +452,7 @@ class VirtualManifestTests(unittest.TestCase):
 
     def test_unused_workspace_dependencies_are_not_edges(self):
         self.manifests[self.root_path] += '\n[workspace.dependencies]\nengine = { path = "crates/serea-task-engine" }\nfuture = { package = "serea-event", version = "1" }\nrusqlite = "1"\n'
-        self.assert_main(0, "OK: exact P3B")
+        self.assert_main(0, "OK: exact P3C")
 
     def test_wrong_package_name_is_refused(self):
         self.manifests[self.paths[smoke.STORAGE]] = '[package]\nname = "external"\n'

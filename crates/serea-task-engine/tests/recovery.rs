@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Barrier;
 use std::sync::atomic::{AtomicU64, Ordering};
+mod support;
+use support::event_bus;
 
 fn at(n: i64) -> EpochMillis {
     EpochMillis::new(n).unwrap()
@@ -219,7 +221,7 @@ impl FileFixture {
         }
     }
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap())
+        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
     fn sql(&self) -> Connection {
         let conn = Connection::open(&self.path).unwrap();
@@ -298,7 +300,16 @@ fn same_except(before: &Dump, after: &Dump, allowed: &[&str]) {
         "no new marker table"
     );
     for (table, rows) in before {
-        if !allowed.contains(&table.as_str()) {
+        // A changed task aggregate in P3 recovery is paired with exactly the
+        // event rows/sequence metadata written by the same successful task
+        // transition. The dedicated P3 event assertions check its kind and
+        // count; unrelated tables remain byte-for-byte frozen here.
+        let event_participates = allowed.contains(&"tasks")
+            && matches!(
+                table.as_str(),
+                "event_content" | "event_sequence_ledger" | "event_store_state"
+            );
+        if !allowed.contains(&table.as_str()) && !event_participates {
             assert_eq!(rows, &after[table], "unexpected writes to {table}");
         }
     }
@@ -2453,7 +2464,6 @@ fn m20_recovery_dependency_and_source_closure_has_no_execution_or_upward_runtime
             "serea-core",
             "serea-scheduler",
             "serea-device",
-            "serea-event-bus",
             "reqwest",
             "tokio",
             "serea-testkit",
@@ -2463,7 +2473,22 @@ fn m20_recovery_dependency_and_source_closure_has_no_execution_or_upward_runtime
                 "upward/runtime dependency {forbidden} in {relative}"
             );
         }
+        if relative != "Cargo.toml" {
+            assert!(
+                !production.contains("serea-event-bus"),
+                "Event Bus dependency may only point from Task Engine, found in {relative}"
+            );
+        }
     }
+    let production = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(
+        production
+            .split("[dev-dependencies]")
+            .next()
+            .unwrap()
+            .contains("serea-event-bus"),
+        "Task Engine must use the P3 Event Bus participant"
+    );
     assert!(!include_str!("../../serea-storage/Cargo.toml").contains("serea-task-engine"));
 }
 
@@ -2487,7 +2512,7 @@ fn m21_explicit_now_is_the_only_recovery_clock_no_retained_or_ambient_clock() {
     let clock = OpenOnly {
         reads: AtomicU64::new(0),
     };
-    let mut e = TaskEngine::new(Store::open(&f.path, &clock).unwrap());
+    let mut e = TaskEngine::new(Store::open(&f.path, &clock).unwrap(), event_bus());
     single(&mut e, &c, StepKind::Notify, 3);
     let g = acquire(&mut e, &c, 1, None, 40, 50);
     drop(g);

@@ -1,8 +1,11 @@
 //! Expanded P2F-b contracts, written before wrapper/lifecycle integration.
 use serea_protocol::*;
+use serea_protocol::{UlidSource, UlidValue};
 use serea_storage::{AtRestProtection, AtRestProtectionError, Store, StoreError};
 use serea_task_engine::*;
 use std::sync::Arc;
+mod support;
+use support::event_bus;
 
 fn at(n: i64) -> EpochMillis {
     EpochMillis::new(n).unwrap()
@@ -119,7 +122,207 @@ fn input(task: u32, step: u32, seq: u32, kind: StepKind) -> PlanStep {
     }
 }
 fn engine() -> TaskEngine {
-    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap())
+    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap(), event_bus())
+}
+
+#[derive(Clone)]
+struct RepeatedUlid(UlidValue);
+impl UlidSource for RepeatedUlid {
+    fn next_ulid(&mut self) -> UlidValue {
+        self.0.clone()
+    }
+}
+
+#[test]
+fn p3c_task_creation_commits_task_journal_event_and_sequence_together() {
+    let path = std::env::temp_dir().join(format!("serea-p3c-{}.sqlite", std::process::id()));
+    let context = Context::new();
+    {
+        let mut engine = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), event_bus());
+        engine
+            .create_task(spec(91, DataClass::Personal), &context.view())
+            .unwrap();
+        // Model a caller that loses the successful response after COMMIT: a
+        // retry is rejected as the existing task and cannot append again.
+        assert_eq!(
+            engine
+                .create_task(spec(91, DataClass::Personal), &context.view())
+                .err()
+                .unwrap(),
+            EngineError::TaskExists
+        );
+    }
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let facts: (i64, i64, i64, i64) = conn.query_row(
+        "SELECT (SELECT count(*) FROM tasks WHERE task_id=?1),
+                (SELECT count(*) FROM task_journal WHERE task_id=?1 AND journal_kind='TASK_INSERTED'),
+                (SELECT count(*) FROM event_content WHERE kind='TASK_CREATED'),
+                (SELECT last_allocated_seq FROM event_store_state WHERE singleton=1)",
+        [tid(91).as_str()],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).unwrap();
+    assert_eq!(facts, (1, 1, 1, 1));
+    let event_json: String = conn
+        .query_row(
+            "SELECT event_json FROM event_content WHERE seq=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!event_json.contains("sensitive title sentinel"));
+    let event: SereaEvent = serde_json::from_str(&event_json).unwrap();
+    assert_eq!(event.kind, EventKind::TaskCreated);
+    assert_eq!(event.data_class, DataClass::Personal);
+    assert_eq!(event.correlation_id.as_ref(), Some(&tid(91)));
+    assert_eq!(
+        event.trace.as_ref().unwrap().task_id.as_ref(),
+        Some(&tid(91))
+    );
+    drop(conn);
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn task_journal_insert_failure_rolls_back_task_event_and_sequence() {
+    let path = std::env::temp_dir().join(format!(
+        "serea-p3c-journal-failure-{}.sqlite",
+        std::process::id()
+    ));
+    let context = Context::new();
+    let store = Store::open(&path, &Fixed).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_task_journal BEFORE INSERT ON task_journal
+             BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END;",
+        )
+        .unwrap();
+    let mut engine = TaskEngine::new(store, event_bus());
+    assert_eq!(
+        engine
+            .create_task(spec(95, DataClass::Personal), &context.view())
+            .err()
+            .unwrap(),
+        EngineError::Store(StoreError::ConstraintViolation)
+    );
+    drop(engine);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let rows: (i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT count(*) FROM tasks),
+                    (SELECT count(*) FROM task_journal),
+                    (SELECT count(*) FROM event_content),
+                    (SELECT last_allocated_seq FROM event_store_state WHERE singleton=1)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(rows, (0, 0, 0, 0));
+    drop(conn);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn task_transition_events_are_specific_and_step_lease_only_writes_emit_none() {
+    let path = std::env::temp_dir().join(format!("serea-p3c-kinds-{}.sqlite", std::process::id()));
+    let context = Context::new();
+    {
+        let mut engine = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), event_bus());
+        engine
+            .create_task(spec(93, DataClass::Personal), &context.view())
+            .unwrap();
+        engine
+            .start_planning(tid(93), TaskState::Received, 0, at(20), &context.view())
+            .unwrap();
+        engine
+            .persist_plan(
+                tid(93),
+                Plan {
+                    revision: 1,
+                    steps: vec![input(93, 1, 10, StepKind::Notify)],
+                },
+                at(30),
+                &context.view(),
+            )
+            .unwrap();
+        let guard = engine
+            .acquire(
+                tid(93),
+                sid(1),
+                LeaseOwner::new("worker-a").unwrap(),
+                None,
+                at(40),
+                at(50),
+                &context.view(),
+            )
+            .unwrap();
+        engine.release(guard, at(41), &context.view()).unwrap();
+        assert_eq!(
+            engine
+                .start_planning(tid(93), TaskState::Planning, 1, at(42), &context.view())
+                .err()
+                .unwrap(),
+            EngineError::IllegalTaskTransition
+        );
+    }
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let kinds: Vec<String> = conn
+        .prepare("SELECT kind FROM event_content ORDER BY seq")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        kinds,
+        ["TASK_CREATED", "TASK_STARTED", "TASK_STATE_CHANGED"]
+    );
+    drop(conn);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn duplicate_event_insert_rolls_back_transition_and_retry_does_not_duplicate() {
+    let path = std::env::temp_dir().join(format!(
+        "serea-p3c-insert-failure-{}.sqlite",
+        std::process::id()
+    ));
+    let context = Context::new();
+    let source = serea_testkit::DeterministicUlidSource::new().next_ulid();
+    let mut engine = TaskEngine::new(
+        Store::open(&path, &Fixed).unwrap(),
+        serea_event_bus::EventBus::new(RepeatedUlid(source)),
+    );
+    engine
+        .create_task(spec(94, DataClass::Personal), &context.view())
+        .unwrap();
+    assert_eq!(
+        engine
+            .start_planning(tid(94), TaskState::Received, 0, at(20), &context.view())
+            .err()
+            .unwrap(),
+        EngineError::Store(StoreError::ConstraintViolation)
+    );
+    assert!(
+        engine
+            .create_task(spec(94, DataClass::Personal), &context.view())
+            .is_err()
+    );
+    drop(engine);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let state: (String, i64, i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT state FROM tasks WHERE task_id=?1),
+                    (SELECT count(*) FROM task_journal WHERE task_id=?1),
+                    (SELECT count(*) FROM event_content WHERE kind='TASK_CREATED'),
+                    (SELECT last_allocated_seq FROM event_store_state WHERE singleton=1)",
+            [tid(94).as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(state, ("RECEIVED".into(), 1, 1, 1));
+    drop(conn);
+    std::fs::remove_file(path).unwrap();
 }
 fn prepare(e: &mut TaskEngine, c: &Context) {
     e.create_task(spec(1, DataClass::Personal), &c.view())
@@ -753,6 +956,7 @@ fn private_blob_backend_does_not_authorize_ordinary_task_data() {
     for class in [DataClass::Private, DataClass::Secret, DataClass::Credential] {
         let mut e = TaskEngine::new(
             Store::open_in_memory_with_protection(&Fixed, Arc::new(NeverProtection)).unwrap(),
+            event_bus(),
         );
         assert_eq!(
             e.create_task(spec(1, class), &c.view()).err(),
@@ -784,7 +988,7 @@ fn two_tasks_share_input_blob_but_delete_never_sweeps_other_task_or_standalone()
     let standalone = store
         .transact(|tx| tx.put_blob(b"{\"standalone\":true}", DataClass::Public))
         .unwrap();
-    let mut e = TaskEngine::new(store);
+    let mut e = TaskEngine::new(store, event_bus());
     for n in [1, 2] {
         e.create_task(spec(n, DataClass::Personal), &c.view())
             .unwrap();
@@ -829,7 +1033,7 @@ impl FileFixture {
         }
     }
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap())
+        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
 }
 impl Drop for FileFixture {
@@ -1129,7 +1333,7 @@ fn real_journal_mapper_has_literal_order_no_duplicates_and_terminal_noop() {
     let store = Store::open_in_memory(&Fixed).unwrap();
     let probe = RealAuditProbe::new();
     store
-        .transact_with_audit(&probe, |tx| {
+        .transact_with_participants(&probe, &event_bus(), |tx| {
             tx.insert_task(&created, &c.view())?;
             tx.start_planning(&tid(1), TaskState::Received, 0, at(20), &c.view())?;
             let p = input(1, 1, 10, StepKind::Notify);
@@ -1208,11 +1412,13 @@ fn outer_error_rolls_back_real_mapped_planning_and_journal() {
         .task;
     let store = Store::open_in_memory(&Fixed).unwrap();
     store
-        .transact_with_audit(&TaskJournal, |tx| tx.insert_task(&created, &c.view()))
+        .transact_with_participants(&TaskJournal, &event_bus(), |tx| {
+            tx.insert_task(&created, &c.view())
+        })
         .unwrap();
     let probe = RealAuditProbe::new();
     assert_eq!(
-        store.transact_with_audit(&probe, |tx| {
+        store.transact_with_participants(&probe, &event_bus(), |tx| {
             tx.start_planning(&tid(1), TaskState::Received, 0, at(20), &c.view())?;
             Err::<(), _>(StoreError::Sqlite)
         }),

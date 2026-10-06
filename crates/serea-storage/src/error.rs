@@ -58,6 +58,8 @@ pub enum StoreError {
     AuditRequired,
     /// The audit participant returned an invalid or empty record batch.
     AuditRejected,
+    /// A production task transition requires the fixed Event Bus participant.
+    EventParticipantRequired,
     /// A requested task is absent.
     TaskNotFound,
     /// A supplied task identity already exists.
@@ -131,6 +133,7 @@ impl StoreError {
             Self::InvalidLeaseInterval => "InvalidLeaseInterval",
             Self::AuditRequired => "AuditRequired",
             Self::AuditRejected => "AuditRejected",
+            Self::EventParticipantRequired => "EventParticipantRequired",
             Self::TaskNotFound => "TaskNotFound",
             Self::TaskExists => "TaskExists",
             Self::CorruptRow => "CorruptRow",

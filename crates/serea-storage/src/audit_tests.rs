@@ -1,8 +1,8 @@
 //! Audit seam contract tests, using the existing P2F-a fixtures and literal oracle.
 use super::*;
 use crate::audit::{
-    AuditOperation, DurableTransition, JournalKind, JournalRecord, JournalRecords,
-    TaskAuditParticipant, TestAudit,
+    AuditOperation, DurableTransition, EventParticipant, JournalKind, JournalRecord,
+    JournalRecords, TaskAuditParticipant, TestAudit,
 };
 use std::sync::atomic::AtomicUsize;
 
@@ -66,6 +66,48 @@ fn plain_audited_lease_wrappers_refuse_without_writing() {
         Err(StoreError::AuditRequired)
     );
     assert_eq!(snapshot(&s), before);
+}
+
+#[test]
+fn event_participant_serialization_error_rolls_back_task_journal_event_and_sequence() {
+    struct RejectEventSerialization;
+    impl EventParticipant for RejectEventSerialization {
+        fn events(
+            &self,
+            _: &DurableTransition,
+        ) -> Result<Vec<serea_protocol::SereaEvent>, StoreError> {
+            Err(StoreError::CanonicalJson)
+        }
+    }
+
+    let s = memory();
+    let g = running(&s);
+    let c = Context::new();
+    let before = snapshot(&s);
+    assert_eq!(
+        s.transact_with_participants(&TestAudit, &RejectEventSerialization, |tx| {
+            tx.commit_step_outcome(
+                g,
+                StepOutcome::Succeeded {
+                    result_json: b"{}",
+                    receipt: None,
+                },
+                time(12),
+                &c.view(),
+            )
+            .map(|_| ())
+        }),
+        Err(StoreError::CanonicalJson)
+    );
+    assert_eq!(snapshot(&s), before);
+    assert_eq!(scalar::<i64>(&s, "SELECT count(*) FROM event_content"), 0);
+    assert_eq!(
+        scalar::<i64>(
+            &s,
+            "SELECT last_allocated_seq FROM event_store_state WHERE singleton=1"
+        ),
+        0
+    );
 }
 
 #[test]

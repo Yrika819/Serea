@@ -63,9 +63,26 @@ GitHub-hosted macOS arm64 CI passed. Each ran fresh migration 0001→0002,
 close/reopen, and Store integrity validation through the storage migration test.
 No cross-architecture database artifact was exchanged.
 
-P3C–P3G have not started. Add each phase's commit, RED/GREEN evidence, Cloud
-validation, Fast/Full Actions run and job IDs, paired Mac results, review
-findings, and nonclaims when that phase closes.
+## P3C — Atomic Task Engine event participation
+
+| Evidence | Result |
+|---|---|
+| Commit | pending |
+| Scope | Fixed Storage audit+event participants; Task Engine event mapper; recovery event participation; operation inventory in [P3C task event inventory](P3C-task-event-inventory.md) |
+| RED proof | Before implementation, `p3c_task_creation_commits_task_journal_event_and_sequence_together` observed task+journal counts `(1,1)` with event+seq `(0,0)`; expected all four to commit. |
+| Focused GREEN | `cargo test -p serea-task-engine --all-targets --offline` — PASS (all five task-engine test binaries); focused workflow/recovery suites PASS. |
+| Failure-path coverage | Event mapper serialization failure; journal insert trigger failure; duplicate EventId insert failure; illegal transition refusal; terminal-specific/generic event selection; step lease writes produce no task lifecycle event; committed create retry produces no duplicate event. |
+| Workspace checks | Docs validator, workspace smoke, 75 smoke regression tests, metadata, fmt, diff check, full workspace all-target/all-feature test, and Clippy `-D warnings` — PASS. |
+| Cloud validation | PASS locally in the Codex Cloud workspace; exact commit evidence pending. |
+| Fast CI | pending |
+| Full CI | pending |
+| Linux stable / MSRV 1.85 | pending |
+| GitHub-hosted macOS Intel x86_64 / arm64 | pending |
+| Release fault-seam proof | pending |
+| Sequential review | Pending final diff review and Actions gate. Fixed two participants only; no generic registry/list/callback or Store re-entry; Event Bus depends only on Protocol/Storage; Storage has no Event Bus edge. |
+| Nonclaims | No range-aware replay/retention runtime, Scheduler runtime, scheduler-produced events, or P3 crash-matrix closure. |
+
+P3D–P3G evidence will be appended after each gated phase.
 
 ## Project nonclaims
 

@@ -2,6 +2,7 @@ use crate::{
     CancellationOutcome, DeletionOutcome, EngineError, LeaseGuard, NewTask, Plan, PlanRevision,
     StepCommit, StepOutcome, TaskJournal, TaskRecord, TransitionContext,
 };
+use serea_event_bus::EventBus;
 use serea_protocol::{
     AssistantTask, BlockedReason, EpochMillis, LeaseOwner, StepId, TaskId, TaskOriginKind,
     TaskState, Timestamp,
@@ -12,11 +13,12 @@ use serea_storage::{PlanWrite, StepInput, Store};
 /// A successful mutation result is published only after the outer commit succeeds.
 pub struct TaskEngine {
     pub(crate) store: Store,
+    pub(crate) event_bus: EventBus,
 }
 
 impl TaskEngine {
-    pub fn new(store: Store) -> Self {
-        Self { store }
+    pub fn new(store: Store, event_bus: EventBus) -> Self {
+        Self { store, event_bus }
     }
 
     pub fn create_task(
@@ -45,7 +47,9 @@ impl TaskEngine {
             extensions: spec.extensions,
         };
         self.store
-            .transact_with_audit(&TaskJournal, |tx| tx.insert_task(&task, context))
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
+                tx.insert_task(&task, context)
+            })
             .map(TaskRecord::from)
             .map_err(EngineError::from)
     }
@@ -59,7 +63,7 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<TaskRecord, EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| {
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
                 tx.start_planning(&task_id, expected_state, expected_revision, now, context)
             })
             .map(TaskRecord::from)
@@ -85,7 +89,7 @@ impl TaskEngine {
                 .collect(),
         };
         self.store
-            .transact_with_audit(&TaskJournal, |tx| {
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
                 tx.put_plan_revision(&task_id, write, now, context)
             })
             .map_err(EngineError::from)
@@ -104,7 +108,7 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<LeaseGuard, EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| {
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
                 tx.acquire_audited(
                     task_id,
                     step_id,
@@ -126,7 +130,9 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<(), EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| tx.begin_attempt(guard, now, context))
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
+                tx.begin_attempt(guard, now, context)
+            })
             .map_err(EngineError::from)
     }
 
@@ -139,7 +145,7 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<StepCommit, EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| {
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
                 tx.commit_step_outcome(guard, outcome, now, context)
             })
             .map_err(EngineError::from)
@@ -152,7 +158,9 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<(), EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| tx.release_audited(guard, now, context))
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
+                tx.release_audited(guard, now, context)
+            })
             .map_err(EngineError::from)
     }
 
@@ -165,7 +173,7 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<TaskRecord, EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| {
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
                 tx.block_task(&task_id, expected_state, reason, now, context)
             })
             .map(TaskRecord::from)
@@ -180,7 +188,7 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<TaskRecord, EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| {
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
                 tx.fail_task_invariant(&task_id, expected_state, now, context)
             })
             .map(TaskRecord::from)
@@ -195,7 +203,7 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<CancellationOutcome, EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| {
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
                 tx.cancel_task(&task_id, by, now, context)
             })
             .map_err(EngineError::from)

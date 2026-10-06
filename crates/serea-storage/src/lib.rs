@@ -39,8 +39,8 @@ mod tx;
 pub mod fault;
 
 pub use audit::{
-    AuditOperation, DurableTransition, JournalKind, JournalRecord, JournalRecords,
-    TaskAuditParticipant,
+    AuditOperation, DurableTransition, EventParticipant, JournalKind, JournalRecord,
+    JournalRecords, TaskAuditParticipant,
 };
 pub use blob::BlobRef;
 pub use classify::{AtRestProtection, AtRestProtectionError};

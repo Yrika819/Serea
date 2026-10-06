@@ -262,7 +262,7 @@ impl Tx<'_> {
                     before.class.rank()
                 ],
             )?)?;
-            let facts = DurableTransition::task(
+            let mut facts = DurableTransition::task(
                 AuditOperation::Cancelled,
                 task_id,
                 Some(before.state),
@@ -271,6 +271,7 @@ impl Tx<'_> {
                 now,
                 context,
             );
+            facts.cancelled_by = Some(by.clone());
             tx.record_transition(&facts)?;
             Ok(CancellationOutcome {
                 changed: true,

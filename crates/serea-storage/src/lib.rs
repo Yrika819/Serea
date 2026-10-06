@@ -60,8 +60,9 @@ pub use recovery::{
 };
 pub use scheduler::{
     MissedOccurrencePolicy, ScheduleCommandOutcome, ScheduleCommandState, ScheduleDraft,
-    ScheduleOccurrenceDraft, ScheduleOccurrenceLease, ScheduleOwnerKind, ScheduleTriggerKind,
-    SchedulerConsumerLease, SchedulerCursorSnapshot,
+    ScheduleOccurrenceDraft, ScheduleOccurrenceLease, ScheduleOwnerKind, ScheduleStateCommand,
+    ScheduleStateCommandRequest, ScheduleTriggerKind, SchedulerConsumerLease,
+    SchedulerCursorSnapshot,
 };
 pub use store::{CheckpointOutcome, Store};
 pub use task::{PlanRevisionSnapshot, PlanWrite, StepInput, StepSnapshot, TaskSnapshot};

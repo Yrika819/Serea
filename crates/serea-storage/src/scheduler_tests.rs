@@ -230,6 +230,91 @@ fn cancellation_retry_returns_committed_revision_without_duplicate_event() {
 }
 
 #[test]
+fn pause_blocks_new_claims_and_resume_advances_the_schedule_revision() {
+    let store = Store::open_in_memory(&Fixed).unwrap();
+    let schedule = ScheduleId::new(format!("sch_{:026}", 6)).unwrap();
+    let create = EventId::new(format!("evt_{:026}", 760)).unwrap();
+    let create_digest = Digest::new(format!("sha256:{}", "f".repeat(64))).unwrap();
+    store
+        .transact(|tx| {
+            tx.create_schedule_command(
+                &create,
+                &create_digest,
+                schedule_draft(6),
+                at(0),
+                lifecycle_event(EventKind::ScheduleCreated, 761, &create, &schedule),
+            )
+        })
+        .unwrap();
+    store
+        .transact(|tx| tx.enqueue_schedule_occurrence(occurrence_draft(schedule.clone(), 1)))
+        .unwrap();
+
+    let pause = EventId::new(format!("evt_{:026}", 762)).unwrap();
+    let pause_digest = Digest::new(format!("sha256:{}", "1".repeat(64))).unwrap();
+    let paused = store
+        .transact(|tx| {
+            tx.change_schedule_state_command(crate::ScheduleStateCommandRequest {
+                message_id: pause.clone(),
+                request_digest: pause_digest.clone(),
+                schedule_id: schedule.clone(),
+                expected_revision: 1,
+                command: crate::ScheduleStateCommand::Pause,
+                now: at(1),
+                event: lifecycle_event(EventKind::SchedulePaused, 763, &pause, &schedule),
+            })
+        })
+        .unwrap();
+    assert_eq!(paused.revision, 2);
+    assert_eq!(
+        store.transact(|tx| {
+            tx.claim_schedule_occurrence(
+                &schedule,
+                "2026-01-01T00:00[Etc/UTC]",
+                2,
+                "worker-a",
+                at(2),
+                at(10),
+            )
+        }),
+        Err(StoreError::ScheduleNotActive)
+    );
+
+    let resume = EventId::new(format!("evt_{:026}", 764)).unwrap();
+    let resume_digest = Digest::new(format!("sha256:{}", "2".repeat(64))).unwrap();
+    let active = store
+        .transact(|tx| {
+            tx.change_schedule_state_command(crate::ScheduleStateCommandRequest {
+                message_id: resume.clone(),
+                request_digest: resume_digest.clone(),
+                schedule_id: schedule.clone(),
+                expected_revision: 2,
+                command: crate::ScheduleStateCommand::Resume,
+                now: at(3),
+                event: lifecycle_event(EventKind::ScheduleResumed, 765, &resume, &schedule),
+            })
+        })
+        .unwrap();
+    assert_eq!(active.revision, 3);
+    assert_eq!(
+        store
+            .transact(|tx| {
+                tx.claim_schedule_occurrence(
+                    &schedule,
+                    "2026-01-01T00:00[Etc/UTC]",
+                    3,
+                    "worker-a",
+                    at(4),
+                    at(10),
+                )
+            })
+            .unwrap()
+            .schedule_revision,
+        3
+    );
+}
+
+#[test]
 fn lifecycle_event_failure_rolls_schedule_and_command_receipt_back() {
     let path = std::env::temp_dir().join(format!(
         "serea-p3e-command-rollback-{}.sqlite",
@@ -371,6 +456,67 @@ fn active_schedule_and_pending_occurrence_bounds_refuse_without_partial_rows() {
 }
 
 #[test]
+fn duplicate_source_event_id_cannot_create_a_second_occurrence() {
+    let store = Store::open_in_memory(&Fixed).unwrap();
+    let schedule = ScheduleId::new(format!("sch_{:026}", 8)).unwrap();
+    let mut draft = schedule_draft(8);
+    draft.trigger_kind = ScheduleTriggerKind::HostEvent;
+    draft.recurrence = None;
+    draft.event_predicate = Some(serde_json::json!({"kind":"TASK_CREATED"}));
+    draft.timezone = None;
+    draft.recurrence_evaluator = None;
+    draft.tzdb_version = None;
+    draft.next_due_at = None;
+    draft.next_local_label = None;
+    let command = EventId::new(format!("evt_{:026}", 800)).unwrap();
+    let digest = Digest::new(format!("sha256:{}", "5".repeat(64))).unwrap();
+    store
+        .transact(|tx| {
+            tx.create_schedule_command(
+                &command,
+                &digest,
+                draft,
+                at(0),
+                lifecycle_event(EventKind::ScheduleCreated, 801, &command, &schedule),
+            )
+        })
+        .unwrap();
+    let source = EventId::new(format!("evt_{:026}", 802)).unwrap();
+    for occurrence_key in ["host-event-a", "host-event-b"] {
+        let occurrence = ScheduleOccurrenceDraft {
+            schedule_id: schedule.clone(),
+            occurrence_key: occurrence_key.into(),
+            schedule_revision: 1,
+            trigger_kind: ScheduleTriggerKind::HostEvent,
+            source_event_id: Some(source.clone()),
+            intended_local_label: None,
+            timezone: None,
+            recurrence_evaluator: None,
+            tzdb_version: None,
+            due_at: Some(at(0)),
+            not_before: None,
+            created_at: at(0),
+        };
+        let result = store.transact(|tx| tx.enqueue_schedule_occurrence(occurrence));
+        if occurrence_key == "host-event-a" {
+            result.unwrap();
+        } else {
+            assert_eq!(result, Err(StoreError::ConstraintViolation));
+        }
+    }
+    let count: i64 = store
+        .transact(|tx| {
+            Ok(tx.inner.query_row(
+                "SELECT count(*) FROM schedule_occurrences WHERE schedule_id=?1",
+                [schedule.as_str()],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
 fn claim_fence_reclaims_expired_lease_and_rejects_stale_mapping() {
     let store = Store::open_in_memory(&Fixed).unwrap();
     seed_schedule(&store);
@@ -419,10 +565,15 @@ fn cancel_first_refuses_claim_but_claim_first_mapping_survives_cancel() {
     seed_occurrence(&store, "occurrence-a");
     store
         .transact(|tx| {
-            tx.cancel_schedule(
-                &ScheduleId::new("sch_00000000000000000000000001").unwrap(),
+            let schedule = ScheduleId::new("sch_00000000000000000000000001").unwrap();
+            let command = EventId::new(format!("evt_{:026}", 790)).unwrap();
+            tx.cancel_schedule_command(
+                &command,
+                &Digest::new(format!("sha256:{}", "3".repeat(64))).unwrap(),
+                &schedule,
                 1,
                 at(1),
+                lifecycle_event(EventKind::ScheduleCancelled, 791, &command, &schedule),
             )
         })
         .unwrap();
@@ -457,10 +608,15 @@ fn cancel_first_refuses_claim_but_claim_first_mapping_survives_cancel() {
         .unwrap();
     second
         .transact(|tx| {
-            tx.cancel_schedule(
-                &ScheduleId::new("sch_00000000000000000000000001").unwrap(),
+            let schedule = ScheduleId::new("sch_00000000000000000000000001").unwrap();
+            let command = EventId::new(format!("evt_{:026}", 792)).unwrap();
+            tx.cancel_schedule_command(
+                &command,
+                &Digest::new(format!("sha256:{}", "4".repeat(64))).unwrap(),
+                &schedule,
                 1,
                 at(1),
+                lifecycle_event(EventKind::ScheduleCancelled, 793, &command, &schedule),
             )
         })
         .unwrap();

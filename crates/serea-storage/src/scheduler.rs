@@ -119,6 +119,57 @@ pub enum ScheduleCommandState {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleStateCommand {
+    Pause,
+    Resume,
+    Cancel,
+}
+
+pub struct ScheduleStateCommandRequest {
+    pub message_id: EventId,
+    pub request_digest: Digest,
+    pub schedule_id: ScheduleId,
+    pub expected_revision: u32,
+    pub command: ScheduleStateCommand,
+    pub now: EpochMillis,
+    pub event: EventDraft,
+}
+
+impl ScheduleStateCommand {
+    fn command_kind(self) -> &'static str {
+        match self {
+            Self::Pause => "PAUSE",
+            Self::Resume => "RESUME",
+            Self::Cancel => "CANCEL",
+        }
+    }
+
+    fn result_state(self) -> ScheduleCommandState {
+        match self {
+            Self::Pause => ScheduleCommandState::Paused,
+            Self::Resume => ScheduleCommandState::Active,
+            Self::Cancel => ScheduleCommandState::Cancelled,
+        }
+    }
+
+    fn event_kind(self) -> EventKind {
+        match self {
+            Self::Pause => EventKind::SchedulePaused,
+            Self::Resume => EventKind::ScheduleResumed,
+            Self::Cancel => EventKind::ScheduleCancelled,
+        }
+    }
+}
+
+fn command_state_as_str(state: ScheduleCommandState) -> &'static str {
+    match state {
+        ScheduleCommandState::Active => "ACTIVE",
+        ScheduleCommandState::Paused => "PAUSED",
+        ScheduleCommandState::Cancelled => "CANCELLED",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchedulerConsumerLease {
     pub owner: String,
@@ -346,10 +397,8 @@ impl Tx<'_> {
         })
     }
 
-    /// Applies a cancellation command, appends its lifecycle event, and stores
-    /// the authenticated command result in this same transaction. A retry with
-    /// the same envelope ID/digest returns the committed result without
-    /// appending another event.
+    /// Applies a schedule state command, appends its specific lifecycle event,
+    /// and stores the authenticated command result in the same transaction.
     pub fn cancel_schedule_command(
         &mut self,
         message_id: &EventId,
@@ -359,9 +408,34 @@ impl Tx<'_> {
         now: EpochMillis,
         event: EventDraft,
     ) -> Result<ScheduleCommandOutcome, StoreError> {
+        self.change_schedule_state_command(ScheduleStateCommandRequest {
+            message_id: message_id.clone(),
+            request_digest: request_digest.clone(),
+            schedule_id: schedule_id.clone(),
+            expected_revision,
+            command: ScheduleStateCommand::Cancel,
+            now,
+            event,
+        })
+    }
+
+    pub fn change_schedule_state_command(
+        &mut self,
+        request: ScheduleStateCommandRequest,
+    ) -> Result<ScheduleCommandOutcome, StoreError> {
         self.ensure_active()?;
-        if event.event.kind != EventKind::ScheduleCancelled
-            || event.event.causation_id.as_ref() != Some(message_id)
+        let ScheduleStateCommandRequest {
+            message_id,
+            request_digest,
+            schedule_id,
+            expected_revision,
+            command,
+            now,
+            event,
+        } = request;
+        let result_state = command.result_state();
+        if event.event.kind != command.event_kind()
+            || event.event.causation_id.as_ref() != Some(&message_id)
             || event
                 .event
                 .payload
@@ -378,53 +452,88 @@ impl Tx<'_> {
                     "SELECT request_digest,command_kind,schedule_id,result_revision,result_state
                      FROM schedule_command_receipts WHERE message_id=?1",
                     [message_id.as_str()],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                        ))
-                    },
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
                 )
                 .optional()?;
-            if let Some((saved_digest, command_kind, saved_schedule_id, revision, state)) = existing
-            {
+            if let Some((saved_digest, command_kind, saved_id, revision, state)) = existing {
                 if saved_digest != request_digest.to_string()
-                    || command_kind != "CANCEL"
-                    || saved_schedule_id != schedule_id.as_str()
-                    || state != "CANCELLED"
+                    || command_kind != command.command_kind()
+                    || saved_id != schedule_id.as_str()
+                    || state != command_state_as_str(result_state)
                 {
                     return Err(StoreError::ScheduleCommandIdentityConflict);
                 }
                 return Ok(ScheduleCommandOutcome {
                     schedule_id: schedule_id.clone(),
                     revision: u32::try_from(revision).map_err(|_| StoreError::CorruptRow)?,
-                    state: ScheduleCommandState::Cancelled,
+                    state: result_state,
                     replayed: true,
                 });
             }
 
-            let revision = tx.cancel_schedule(schedule_id, expected_revision, now)?;
+            let current: Option<(String, i64, i64, i64)> = tx.inner.query_row(
+                "SELECT state,revision,created_at_ms,updated_at_ms FROM schedules WHERE schedule_id=?1",
+                [schedule_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            ).optional()?;
+            let Some((state, current_revision, created_at, updated_at)) = current else {
+                return Err(StoreError::ScheduleNotActive);
+            };
+            if current_revision != i64::from(expected_revision) {
+                return Err(StoreError::ScheduleRevisionConflict);
+            }
+            let allowed = match command {
+                ScheduleStateCommand::Pause => state == "ACTIVE",
+                ScheduleStateCommand::Resume => state == "PAUSED",
+                ScheduleStateCommand::Cancel => matches!(state.as_str(), "ACTIVE" | "PAUSED"),
+            };
+            if !allowed {
+                return Err(StoreError::ScheduleNotActive);
+            }
+            if now.get() < created_at || now.get() < updated_at {
+                return Err(StoreError::InvalidTimestamp);
+            }
+            if command == ScheduleStateCommand::Resume {
+                let active: i64 = tx.inner.query_row(
+                    "SELECT count(*) FROM schedules WHERE state='ACTIVE'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if active >= MAX_ACTIVE_SCHEDULES {
+                    return Err(StoreError::ScheduleActiveLimit);
+                }
+            }
+            let revision = expected_revision
+                .checked_add(1)
+                .ok_or(StoreError::PlanRevisionOverflow)?;
+            let next_state = command_state_as_str(result_state);
+            let changed = tx.inner.execute(
+                "UPDATE schedules SET state=?2,revision=?3,updated_at_ms=?4,
+                   cancelled_at_ms=CASE WHEN ?2='CANCELLED' THEN ?4 ELSE NULL END
+                 WHERE schedule_id=?1 AND revision=?5 AND state=?6",
+                rusqlite::params![
+                    schedule_id.as_str(), next_state, i64::from(revision), now.get(),
+                    current_revision, state
+                ],
+            )?;
+            if changed != 1 {
+                return Err(StoreError::ScheduleRevisionConflict);
+            }
             tx.append_event(event.event, event.retention_at)?;
             tx.inner.execute(
                 "INSERT INTO schedule_command_receipts(
                    message_id,request_digest,command_kind,schedule_id,result_revision,
                    result_state,committed_at_ms
-                 ) VALUES (?1,?2,'CANCEL',?3,?4,'CANCELLED',?5)",
+                 ) VALUES (?1,?2,?3,?4,?5,?6,?7)",
                 rusqlite::params![
-                    message_id.as_str(),
-                    request_digest.to_string(),
-                    schedule_id.as_str(),
-                    i64::from(revision),
-                    now.get()
+                    message_id.as_str(), request_digest.to_string(), command.command_kind(),
+                    schedule_id.as_str(), i64::from(revision), next_state, now.get()
                 ],
             )?;
             Ok(ScheduleCommandOutcome {
                 schedule_id: schedule_id.clone(),
                 revision,
-                state: ScheduleCommandState::Cancelled,
+                state: result_state,
                 replayed: false,
             })
         })
@@ -631,7 +740,7 @@ impl Tx<'_> {
             else {
                 return Err(StoreError::ScheduleOccurrenceNotClaimable);
             };
-            if occurrence_revision != revision {
+            if occurrence_revision > revision {
                 return Err(StoreError::ScheduleRevisionConflict);
             }
             let pending: i64 = tx.inner.query_row(
@@ -676,7 +785,7 @@ impl Tx<'_> {
                     i64::from(generation),
                     lease_expires_at.get(),
                     now.get(),
-                    revision,
+                    occurrence_revision,
                     occurrence_state,
                     generation - 1
                 ],
@@ -692,55 +801,6 @@ impl Tx<'_> {
                 lease_generation: generation,
                 lease_expires_at,
             })
-        })
-    }
-
-    /// Linearizes cancellation with claim through SQLite's immediate writer
-    /// transaction. Existing claims remain reconcilable after cancellation.
-    pub(crate) fn cancel_schedule(
-        &mut self,
-        schedule_id: &ScheduleId,
-        expected_revision: u32,
-        now: EpochMillis,
-    ) -> Result<u32, StoreError> {
-        self.ensure_active()?;
-        if expected_revision == 0 {
-            return Err(StoreError::ScheduleRevisionConflict);
-        }
-        self.operation_savepoint(|tx| {
-            let current: Option<(String, i64, i64, i64)> = tx
-                .inner
-                .query_row(
-                    "SELECT state,revision,created_at_ms,updated_at_ms FROM schedules WHERE schedule_id=?1",
-                    [schedule_id.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )
-                .optional()?;
-            let Some((state, revision, created_at, updated_at)) = current else {
-                return Err(StoreError::ScheduleNotActive);
-            };
-            if revision != i64::from(expected_revision) {
-                return Err(StoreError::ScheduleRevisionConflict);
-            }
-            if state == "CANCELLED" {
-                return Err(StoreError::ScheduleNotActive);
-            }
-            if now.get() < created_at || now.get() < updated_at {
-                return Err(StoreError::InvalidTimestamp);
-            }
-            let next = expected_revision
-                .checked_add(1)
-                .ok_or(StoreError::PlanRevisionOverflow)?;
-            let changed = tx.inner.execute(
-                "UPDATE schedules SET state='CANCELLED',revision=?2,updated_at_ms=?3,
-                   cancelled_at_ms=?3 WHERE schedule_id=?1 AND revision=?4
-                   AND state IN ('ACTIVE','PAUSED')",
-                rusqlite::params![schedule_id.as_str(), i64::from(next), now.get(), revision],
-            )?;
-            if changed != 1 {
-                return Err(StoreError::ScheduleRevisionConflict);
-            }
-            Ok(next)
         })
     }
 

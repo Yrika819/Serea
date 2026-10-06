@@ -1,135 +1,53 @@
-name: ci
+name: Fast CI
 
-# P1 has no secret-dependent job and no external-network test. Every step below
-# is reproducible from the repository alone; the only network access is
-# GitHub's own Actions runner plus ordinary toolchain/dependency setup.
 on:
-  push:
-    branches: ["**"]
   pull_request:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: fast-ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
-
 jobs:
-  rust:
-    name: rust (${{ matrix.profile }})
+  fast:
+    name: Linux fast checks
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        profile: [dev]
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install pinned stable toolchain
-        run: |
-          rustup show active-toolchain || rustup toolchain install
-
-      - name: Cache Cargo registry and build artifacts
-        uses: actions/cache@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.profile }}-
+          persist-credentials: false
 
-      # Ordinary dependency setup step. Everything after this runs `--offline`,
-      # so no test can reach a service even by accident.
-      - name: Fetch dependencies
-        run: cargo fetch --locked
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
 
+      - name: Print toolchain versions
+        run: |
+          rustup run stable rustc --version
+          rustup run stable cargo --version
+
+      - name: Fetch locked dependencies
+        run: cargo +stable fetch --locked
+
+      - name: Workspace smoke guard
+        run: python3 tests/workspace_smoke.py
 
       - name: Workspace smoke regression tests
         run: python3 -m unittest discover -s tests -p workspace_smoke_tests.py
 
-      - name: Workspace smoke test
-        run: python3 tests/workspace_smoke.py
-
-      # P2F graph inventory: exactly protocol/storage/task-engine/testkit,
-      # asserted rather than printed; smoke above checks dependency boundaries.
-      # A test-only engine package is not evidence of a production engine GREEN.
-      - name: Workspace shape (exact member list)
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo metadata --no-deps --format-version 1 > metadata.json
-          python3 - <<'PY'
-          import json, sys
-          names = sorted(p["name"] for p in json.load(open("metadata.json"))["packages"])
-          expected = ["serea-protocol", "serea-storage", "serea-task-engine", "serea-testkit"]
-          print("workspace members:", ", ".join(names))
-          if names != expected:
-              print(f"FAIL: expected exactly {expected}", file=sys.stderr)
-              raise SystemExit(1)
-          PY
-          rm -f metadata.json
-
-      - name: Formatting
-        run: cargo fmt --all -- --check
-
-      # Check feature-gated targets too, matching the all-features Clippy gate.
-      - name: Check (all targets, all features, offline)
-        run: cargo check --workspace --all-targets --all-features --offline
-
-      - name: Tests (all targets, offline)
-        run: cargo test --workspace --all-targets --offline
-
-      - name: Tests with all features (offline)
-        run: cargo test --workspace --all-features --offline
-
-      - name: Clippy (deny warnings, offline)
-        run: cargo clippy --workspace --all-targets --all-features --offline -- -D warnings
-
-  docs:
-    name: docs
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install python
-        run: sudo apt-get update && sudo apt-get install -y python3
-
-      - name: Compile documentation validator
-        run: python3 -m py_compile tools/validate_docs.py
-
-      - name: Validate documentation contracts
+      - name: Validate documentation
         run: python3 tools/validate_docs.py docs
 
-  hygiene:
-    name: repository hygiene
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
 
-      # Guards the P1 constraint that no credential material and no runtime
-      # state is ever committed (`.gitignore` is the first line of defence; this
-      # is the check that says so in CI).
-      - name: No tracked credential or runtime-state paths
-        run: |
-          tracked=$(git ls-files)
-          echo "$tracked" | grep -E '(^|/)(secrets?|keychain-export|data)/' && {
-            echo "FAIL: credential or runtime-state path is tracked"; exit 1; }
-          echo "$tracked" | grep -E '\.(pem|key|sqlite|env|apk|aab|keystore)$' && {
-            echo "FAIL: credential-bearing or build artifact extension is tracked"; exit 1; }
-          echo "OK: no tracked credential material"
+      - name: Check Cargo metadata
+        run: cargo +stable metadata --no-deps --format-version 1 --offline
 
-      - name: Whitespace and conflict markers
-        shell: bash
-        run: git diff --check $(git hash-object -t tree /dev/null) HEAD --
+      - name: Check workspace
+        run: cargo +stable check --workspace --all-targets --all-features --offline

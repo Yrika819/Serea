@@ -1,0 +1,172 @@
+name: Full CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-stable:
+    name: Linux stable full validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+
+      - name: Print environment and toolchain
+        run: |
+          uname -a
+          uname -m
+          rustup run stable rustc -vV
+          rustup run stable cargo --version
+          test "$(uname -m)" = x86_64
+
+      - name: Fetch locked dependencies
+        run: cargo +stable fetch --locked
+
+      - name: Workspace smoke guard
+        run: python3 tests/workspace_smoke.py
+
+      - name: Workspace smoke regression tests (Group O)
+        run: python3 -m unittest discover -s tests -p workspace_smoke_tests.py
+
+      - name: Validate documentation
+        run: python3 tools/validate_docs.py docs
+
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
+
+      - name: Check Cargo metadata
+        run: cargo +stable metadata --no-deps --format-version 1 --offline
+
+      - name: Check workspace (all targets and features)
+        run: cargo +stable check --workspace --all-targets --all-features --offline
+
+      - name: Test all targets
+        run: cargo +stable test --workspace --all-targets --offline
+
+      - name: Test all features
+        run: cargo +stable test --workspace --all-features --offline
+
+      - name: Clippy (deny warnings)
+        run: cargo +stable clippy --workspace --all-targets --all-features --offline -- -D warnings
+
+      - name: Prove release fault-seam exclusion
+        run: bash tools/prove_release_fault_exclusion.sh target/release-fault-exclusion
+
+  linux-msrv:
+    name: Linux MSRV 1.85.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install exact MSRV
+        run: rustup toolchain install 1.85.0 --profile minimal --component clippy
+
+      - name: Verify exact compiler and Cargo versions
+        run: |
+          rustc_version="$(rustup run 1.85.0 rustc --version)"
+          printf '%s\n' "$rustc_version"
+          case "$rustc_version" in
+            "rustc 1.85.0 "*) ;;
+            *) echo "Expected rustc 1.85.0 exactly" >&2; exit 1 ;;
+          esac
+          rustup run 1.85.0 cargo --version
+
+      - name: Fetch locked dependencies
+        run: cargo +1.85.0 fetch --locked
+
+      - name: Check workspace (all targets and features)
+        run: cargo +1.85.0 check --workspace --all-targets --all-features --locked --offline
+
+      - name: Test all targets
+        run: cargo +1.85.0 test --workspace --all-targets --locked --offline
+
+      - name: Test all features
+        run: cargo +1.85.0 test --workspace --all-features --locked --offline
+
+      - name: Clippy (deny warnings)
+        run: cargo +1.85.0 clippy --workspace --all-targets --all-features --locked --offline -- -D warnings
+
+  macos-intel:
+    name: macOS Intel x86_64
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+
+      - name: Print environment and require Intel architecture
+        run: |
+          sw_vers
+          uname -m
+          rustup run stable rustc -vV
+          rustup run stable cargo --version
+          test "$(uname -m)" = x86_64
+
+      - name: Fetch locked dependencies
+        run: cargo +stable fetch --locked
+
+      - name: Check workspace
+        run: cargo +stable check --workspace --all-targets --all-features --offline
+
+      - name: Test all features
+        run: cargo +stable test --workspace --all-features --offline
+
+      - name: P2H crash/fault suite
+        run: cargo +stable test -p serea-task-engine --test crash --offline
+
+  macos-arm64:
+    name: macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+
+      - name: Print environment and require Apple Silicon architecture
+        run: |
+          sw_vers
+          uname -m
+          rustup run stable rustc -vV
+          rustup run stable cargo --version
+          test "$(uname -m)" = arm64
+
+      - name: Fetch locked dependencies
+        run: cargo +stable fetch --locked
+
+      - name: Check workspace
+        run: cargo +stable check --workspace --all-targets --all-features --offline
+
+      - name: Test all features
+        run: cargo +stable test --workspace --all-features --offline
+
+      - name: P2H crash/fault suite
+        run: cargo +stable test -p serea-task-engine --test crash --offline

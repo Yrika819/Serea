@@ -65,7 +65,7 @@ implementation has not started.
 
 | Check | Result |
 | --- | --- |
-| cwd | `$HOME/Desktop/Serea` |
+| cwd | repository root |
 | Branch at start | `p2/design-preparation` |
 | HEAD at start | `ec4659c007a914e5d90bb3067d3858a4e299b797` |
 | Worktree | clean |

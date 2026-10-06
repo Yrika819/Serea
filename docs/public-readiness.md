@@ -1,6 +1,6 @@
 # Public-readiness audit
 
-**Status: LOCAL_HISTORY_SANITIZED — PRIVATE REMOTE REWRITE PENDING**
+**Status: READY_TO_MAKE_PUBLIC — FINAL PUBLICATION GATE PASS**
 
 **Audit scope:** all locally reachable Git refs and the current working tree. The owner explicitly authorized a pre-public history rewrite to remove machine-specific home paths; that rewrite has completed locally and all phase refs were rewritten consistently.
 
@@ -237,15 +237,23 @@ Workflows print and assert architecture in the full jobs. The runner labels desc
 
 ## Private staging status
 
-The GitHub repository `Yrika819/Serea` remains **PRIVATE** and GitHub Actions remain disabled. The first private staging push used the pre-rewrite history; the owner then authorized privacy remediation before Public. The sanitized rewritten history is currently local and ready to replace private `main` with a guarded force-with-lease update. No GitHub-hosted workflow has run. This record does not itself authorize skipping the final post-push verification.
+**SANITIZED_PRIVATE_STAGING_VERIFIED.** The GitHub repository `Yrika819/Serea` remains **PRIVATE** at this checkpoint. The pre-public history was replaced using a guarded `force-with-lease` update whose expected remote SHA matched exactly. Remote `main` now contains the sanitized rewritten history and MIT license. GitHub Actions remain disabled (`enabled: false`), the workflow-runs endpoint reports zero runs, `main` is the default branch, and the local worktree tracks the same remote history. No private hosted CI was executed.
 
-## Blockers
+## Final publication gate
 
-No unresolved content, secret, license, privacy, or project-name blocker remains in the local sanitized candidate.
+All mandatory categories P1–P25 are **PASS** or **OWNER_ACCEPTED**:
 
-Remaining procedural gates before Public:
+- full-history and current-tree secret audits: PASS; Gitleaks' six findings are fixed synthetic idempotency documentation/test values, not credentials;
+- historical credential paths, large/binary objects and commit-message secret review: PASS;
+- current and historical privacy: PASS after authorized history rewrite; no former machine-specific path remains in reachable history;
+- author identity: PASS — GitHub noreply only;
+- dependency and vendored-source licensing/provenance: PASS within the recorded audit scope;
+- Serea project license: PASS — MIT;
+- project-name collision: OWNER_ACCEPTED;
+- README / SECURITY / CONTRIBUTING claim accuracy: PASS;
+- GitHub Actions threat model: PASS — `contents: read`, no `pull_request_target`, no self-hosted runner, no workflow secrets, immutable full-SHA Action pinning, finite timeouts and no build cache;
+- runner-label/static workflow validation: PASS;
+- P2 closure consistency and rewritten Git history preservation: PASS;
+- sanitized private remote verification: PASS — Private, `main` correct, Actions disabled, zero runs.
 
-1. Replace the PRIVATE remote `main` with the sanitized rewritten history using a guarded force-with-lease update.
-2. Verify the remote contains the rewritten `main`, remains private, Actions remain disabled, and zero workflow runs exist.
-3. Re-run the final P1–P25 publication gate against the rewritten remote.
-4. Only then switch visibility to Public and enable Actions.
+**PUBLICATION_GATE = PASS.** The next authorized operation is changing the existing repository visibility to Public without deleting/recreating it, verifying Public state, then enabling GitHub Actions and beginning the public CI bootstrap.

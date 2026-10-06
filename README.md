@@ -35,3 +35,7 @@ The offline Cargo commands assume dependencies were fetched first. To verify the
 ## Evidence and limitations
 
 The P2 closure record documents the exact local validation results, crash harness scope, and nonclaims. CI results are evidence for their named hosted environments only; they do not prove behavior on every device, guarantee power-loss durability, or certify production readiness.
+
+## License
+
+Serea is licensed under the [MIT License](LICENSE). Third-party and vendored components remain under their respective licenses.

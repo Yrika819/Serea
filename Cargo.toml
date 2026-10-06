@@ -7,6 +7,7 @@ exclude = ["vendor/jsonschema-value", "vendor/serde_json"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+license = "MIT"
 publish = false
 
 # Shared dependency versions. P1 deliberately has no async runtime, no HTTP

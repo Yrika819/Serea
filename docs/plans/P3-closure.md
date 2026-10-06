@@ -85,6 +85,30 @@ No cross-architecture database artifact was exchanged.
 
 P3D–P3G evidence will be appended after each gated phase.
 
+## P3D — Bounded replay and retention (closed)
+
+| Evidence | Result |
+|---|---|
+| Behavior commit | 7ed1445cba008e8eda132d3c2379f44d0e6608cb (`feat: add bounded event replay and retention`) |
+| Scope | Typed high-water replay pages; exact intentional-expiry ranges; compacted-prefix boundary; corruption detection; bounded whole-content retention; Task lifecycle event 30-day deadline |
+| RED proof | New replay suite initially failed to compile because `ReplayItem`, replay/expiry APIs, and typed invalid-page errors were absent. |
+| Focused GREEN | `cargo test -p serea-event-bus --test replay --offline` — 6 tests PASS; `cargo test -p serea-task-engine --test workflow --offline` — 32 tests PASS. |
+| Covered behavior | Ordered pagination pinned to one high-water; appends after snapshot wait for next pass; exact expiry ranges; separate `HISTORY_EXPIRED_PREFIX`; content+ledger/range deletion rollback; consumer backlog does not delay expiry; unexplained absence is typed corruption; wire replay discriminators; replay/retention batch boundaries. |
+| Integrity and bounds | `Store::verify_integrity` checks accounting, contiguous coverage, canonical retained event objects, disjoint/merged expiry ranges, and deterministic bytes; metadata carries no event/task/actor/device fingerprint or content. Replay max 256, expiry delete batch max 512, payload/event limits unchanged. |
+| Workspace validation | docs validator PASS; workspace smoke PASS; 75 smoke regression tests PASS; metadata, fmt, diff check, all-target/all-feature workspace tests, and Clippy `-D warnings` PASS. |
+| Fast CI | PASS — run `37508701133`, Linux fast job `112423895712` |
+| Full CI | PASS — run `37508706509` |
+| Linux stable / MSRV 1.85 | PASS — jobs `112423921030` / `112423921458` |
+| GitHub-hosted macOS Intel x86_64 / arm64 | PASS — jobs `112423921066` / `112423920620` |
+| Release fault-seam proof | PASS — Linux stable job `112423921030` |
+| Sequential review | PASS; event content remains append-only and `serea.event/1` unchanged; retention is not cursor-gated; range and prefix results advance only through declared sequences; unexplained gaps stop at the first unverified sequence. |
+| Nonclaims | No Scheduler runtime or event consumption yet; no cross-architecture database artifact exchanged; no power-loss durability claim. |
+
+Paired portability evidence: GitHub-hosted macOS Intel x86_64 CI passed.
+GitHub-hosted macOS arm64 CI passed. Both ran the fresh 0001→0002,
+close/reopen, and integrity validation tests. No cross-architecture database
+artifact was exchanged.
+
 ## Project nonclaims
 
 P3 does not include Model Router, Capability Registry, Policy Engine, Approval

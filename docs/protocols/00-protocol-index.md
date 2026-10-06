@@ -1,9 +1,9 @@
 # Serea Protocol Index
 
-Status: **FROZEN current contract set** · Architecture version `serea-arch/1.0.0` · Ratified on 2026-10-03
+Status: **FROZEN current contract set** · Architecture version `serea-arch/2.0.0` · Ratified on 2026-10-06
 
 P0/P1 implementation baseline was `serea-arch/0.2.0`; the current frozen registry
-is architecture/1, task/2, action/2, event/1 and envelope version 1. Three corrected
+is architecture/2, task/2, action/2, device/2, event/1 and envelope version 1. Three corrected
 independent subagent documentation gate reviews under the coordinator are GREEN;
 owner direction ratified the design contingent on GREEN. P2A slices are
 implemented. The coordinator records current final workspace/MSRV validation,
@@ -142,7 +142,8 @@ Three independent version axes. They are never collapsed into one number.
 | `serea.action` | 2 |
 | `serea.task` | 2 |
 | `serea.model`, `serea.policy`, `serea.approval`, `serea.event` | 1 |
-| `serea.device`, `serea.goallatch`, `serea.data`, `serea.bounds`, `serea.scheduler` | 1 |
+| `serea.device` | 2 |
+| `serea.goallatch`, `serea.data`, `serea.bounds`, `serea.scheduler` | 1 |
 
 Dispatch/version validation consults this registry per surface, not one global
 major value. Envelope version remains 1; `serea.envelope` is not a surface.
@@ -240,8 +241,8 @@ rejected at review.
 - Where each decision is recorded: [Decision Index](../decisions/README.md)
 ## 9. Changelog
 
-- 2026-10-03: ratified frozen current architecture/1, task/2 and action/2;
-  event/1 and envelope version 1 unchanged. ADR-0018/19/20/23 Accepted in their
+- 2026-10-06: accepted architecture/2 and device/2 replay semantics under ADR-0026;
+  task/2, action/2, event/1 and envelope version 1 remain unchanged. ADR-0018/19/20/23 Accepted in their
   stated architectural/wire/primitive/validation scopes; P2A slices implemented.
   Current validation, test counts, bounded regression review and integration
   status is coordinator-owned in the [closure record](../plans/P2A-review-and-closure.md).

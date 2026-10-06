@@ -154,7 +154,7 @@ mod wire_surface {
             "serea.policy/1",
             "serea.approval/1",
             "serea.event/1",
-            "serea.device/1",
+            "serea.device/2",
             "serea.goallatch/1",
             "serea.data/1",
             "serea.bounds/1",

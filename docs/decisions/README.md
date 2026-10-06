@@ -1,6 +1,6 @@
 # Serea Decision Index
 
-Current frozen architecture: `serea-arch/1.0.0`; P0/P1 baseline
+Current frozen architecture: `serea-arch/2.0.0`; P0/P1 baseline
 `serea-arch/0.2.0` remains historical. Owner ratification after three corrected
 documentation re-reviews GREEN accepts ADR-0018/19/20/23 within the scopes below.
 P2A slices are implemented. The coordinator owns final workspace/MSRV validation,
@@ -51,7 +51,7 @@ MSRV verification. A green wire-member gate does not accept full runtime fencing
 
 | ADR | Decision | Status |
 | --- | --- | --- |
-| [ADR-0026](ADR-0026-event-retention-and-global-sequence.md) | Reconcile per-class event expiry with the gapless global sequence and replay | **Proposed**; owner must select A/B/C because all available designs change either frozen replay semantics or privacy deletion guarantees. Blocks migration 0002. |
+| [ADR-0026](ADR-0026-event-retention-and-global-sequence.md) | Minimal sequence ledger, independently expirable content, bounded range-aware replay | **Accepted**; Option A. Architecture `serea-arch/2.0.0`, replay response `serea.device/2`, event objects `serea.event/1`. |
 
 ### Numbering note
 
@@ -84,7 +84,8 @@ ADR-0020 is an **architecture-minor semantic clarification**, not patch; no
 resource bounds are introduced. ADR-0021/22 runtime work stays Proposed and
 outside P2A; no event or data wire major is raised.
 
-**Current contracts and implementation use architecture/1, task/2, action/2.**
+**Current contracts and implementation use architecture/2, task/2, action/2,
+device/2, and event/1.**
 The design-preparation/audit phases did not change production; the coordinator
 has implemented P2A slices, including the exact numeric follow-up. Final
 workspace/MSRV validation, smoke, bounded regression review,
@@ -116,4 +117,4 @@ The decisions are grounded in the available P0 architecture, protocols, and thre
 - [Protocol index](../protocols/00-protocol-index.md) and its linked protocols
 - [Threat-model index](../threat-model/README.md), [assets and trust boundaries](../threat-model/01-assets-and-trust-boundaries.md), and [adversaries and attack surface](../threat-model/02-adversaries-and-attack-surface.md)
 
-`03-abuse-cases-and-mitigations.md` and `04-security-invariants.md` were absent during the initial inventory, then appeared during this work and were read before finalizing. The complete available threat-model package confirms the fake-only GoalLatch boundary, read-only watcher, protocol change-control discipline, and the distinction between frozen design and implementation evidence. No source-document dependency remains unresolved at final review; the available frozen protocols remain normative. ADR-0017's historical minor change registered `DELETION_CASCADE_COMPLETED`; the separately ratified P2A architecture-major now establishes `serea-arch/1.0.0` as the current contract set. These version changes do not claim deferred runtime implementation or completed whole-workspace/MSRV validation.
+`03-abuse-cases-and-mitigations.md` and `04-security-invariants.md` were absent during the initial inventory, then appeared during this work and were read before finalizing. The complete available threat-model package confirms the fake-only GoalLatch boundary, read-only watcher, protocol change-control discipline, and the distinction between frozen design and implementation evidence. No source-document dependency remains unresolved at final review; the available frozen protocols remain normative. ADR-0017's historical minor change registered `DELETION_CASCADE_COMPLETED`; P2A established `serea-arch/1.0.0`; accepted ADR-0026 now establishes `serea-arch/2.0.0` as the current contract set. These version changes do not claim deferred runtime implementation or completed whole-workspace/MSRV validation.

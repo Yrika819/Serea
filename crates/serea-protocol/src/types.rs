@@ -533,8 +533,8 @@ impl WireSurface {
     pub const POLICY: &'static str = "serea.policy/1";
     /// The `serea.approval/1` surface (Approval Protocol).
     pub const APPROVAL: &'static str = "serea.approval/1";
-    /// The `serea.device/1` surface (Device Protocol).
-    pub const DEVICE: &'static str = "serea.device/1";
+    /// The `serea.device/2` surface (Device Protocol).
+    pub const DEVICE: &'static str = "serea.device/2";
     /// The `serea.goallatch/1` adapter-internal surface (GoalLatch Adapter §10).
     pub const GOALLATCH: &'static str = "serea.goallatch/1";
     /// The `serea.data/1` surface (Data Classification Protocol).
@@ -544,7 +544,7 @@ impl WireSurface {
     /// The `serea.scheduler/1` wire surface, not a scheduling runtime capability.
     pub const SCHEDULER: &'static str = "serea.scheduler/1";
 
-    /// Every supported surface/version pair registered at `serea-arch/1.0.0`.
+    /// Every supported surface/version pair registered at `serea-arch/2.0.0`.
     pub const ALL: [&'static str; 11] = [
         Self::ACTION,
         Self::TASK,

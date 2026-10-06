@@ -1,6 +1,6 @@
 # Event Protocol
 
-Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN for P0**
+Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN for P0** · Architecture: `serea-arch/2.0.0`
 
 Events are Serea's structured record of what it did and what it observed. They
 are the substrate for the Android Activity Timeline, the audit trail, and the
@@ -22,9 +22,9 @@ Three consequences:
 
 1. **Events are the protocol.** The Android client renders them. Any UI that
    reconstructs state by scraping text is doing it wrong.
-2. **Events are append-only.** There is no update and no delete on the event
-   log. Retention is a deletion of the whole record at the retention horizon,
-   never an edit of history.
+2. **Event content is append-only and immutable while retained.** Retention
+   deletes the complete content object. Separate minimal sequence metadata
+   records intentional expiry and is not event content.
 3. **Every event is attributable.** Each carries an `actor` and a `causation`
    chain back to a user instruction or a durable schedule.
 
@@ -58,7 +58,9 @@ is assigned at commit time, inside the same transaction as the state change the
 event describes.
 
 This is what makes the Activity Timeline resumable: a device that reconnects
-says "I have up to `seq` 10427" and receives exactly what it missed.
+supplies its verified cursor and receives retained events plus explicit
+intentional-expiry ranges through a committed high-water snapshot. Expired
+content is never reconstructed.
 
 ### 2.1 Actor
 
@@ -192,8 +194,8 @@ requirement and why adding an event kind is an architecture-minor change.
 
 | Kind | When |
 | --- | --- |
-| `EVENT_HISTORY_EXPIRED` | A cursor predates retained history; response identifies the oldest retained sequence and does not claim sequence corruption |
-| `EVENT_SEQUENCE_CORRUPTION` | A missing sequence is detected inside retained committed history; replay is stopped and the host reports an integrity failure |
+| `EVENT_HISTORY_EXPIRED` | A cursor predates the compacted sequence prefix; response identifies the new valid replay boundary |
+| `EVENT_SEQUENCE_CORRUPTION` | A sequence with no content and no valid intentional-expiry metadata is absent; replay stops and reports integrity failure |
 
 ### 3.9 Scheduler activity
 
@@ -261,20 +263,26 @@ Required behaviour:
 3. `data_class` is enforced before render: a `PRIVATE`-class event payload is
    redacted per the data-classification protocol before it crosses the device
    link.
-4. A cursor older than retained history receives response status
-   `HISTORY_EXPIRED` and emits `EVENT_HISTORY_EXPIRED`; both identify the oldest
-   retained sequence. The client displays that history expired, advances its
-   cursor to immediately before the oldest retained sequence, and requests
-   again. This is normal retention, not a claim that activity was not recorded.
-5. A missing sequence inside the retained range is corruption, not expiry. The
-   host emits `EVENT_SEQUENCE_CORRUPTION`, stops that replay without advancing
-   the client's cursor past the gap, and returns an integrity error; the client
-   retains its last verified cursor, displays an integrity warning, and does not
-   silently resume across the missing sequence. Host repair/audit is required
-   before replay can continue.
-6. A cursor at or beyond the current committed high-water mark returns an empty
+4. Replay uses the `serea.device/2` result representation. A page is ordered and
+   contains retained event items and/or exact `INTENTIONALLY_EXPIRED_RANGE`
+   items. For a retained event, the consumer processes/deduplicates it. For an
+   intentional range, it advances the monotonic verified cursor across exactly
+   the declared inclusive range without inventing event content. Range items
+   never carry payload, identity, or content-derived data.
+5. A cursor older than the compacted prefix receives typed
+   `HISTORY_EXPIRED_PREFIX` with `new_replay_boundary`, equal to the
+   compacted-through high-water, and emits `EVENT_HISTORY_EXPIRED`. The client
+   displays an explicit history-expired marker and uses that value as its
+   exclusive `after_seq` cursor on the next request. Prefix expiry is distinct
+   from an interior intentional range.
+6. An allocated sequence with neither retained content nor valid expiry
+   metadata is `CORRUPTION`. The host emits `EVENT_SEQUENCE_CORRUPTION`, stops
+   without advancing beyond the unexplained sequence, and the client retains
+   its last verified cursor and reports an integrity warning. It must not
+   relabel the absence as retention.
+7. A cursor at or beyond the current committed high-water mark returns an empty
    page and leaves the cursor unchanged.
-7. Events are shown with their `actor` and causation, so "why did this happen"
+8. Events are shown with their `actor` and causation, so "why did this happen"
    is answerable from the timeline alone.
 
 ## 7. Audit use
@@ -310,21 +318,22 @@ is an audit artifact, not a task artifact.
 Identifiers such as `TaskId`, `StepId`, and related trace IDs in an event are
 immutable opaque historical values. Event content must not use task/step foreign
 keys with `ON DELETE CASCADE` or `ON DELETE SET NULL`; deleting a task never
-mutates a retained event. Event retention or an explicitly authorized content
-erasure design is the only mechanism that removes retained event content.
-Interaction between such erasure and global `seq` is unresolved in
-[ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md); no
-schema implementing either FK or erasure behavior is authorized until that ADR
-is decided.
+mutates a retained event. Event retention removes complete content objects
+independently. Minimal sequence metadata contains no task/step/device/actor
+identity, payload digest, payload-derived fingerprint, user content, schedule
+arguments, or PRIVATE/SECRET/CREDENTIAL data. Prefix compaction may remove
+detailed sequence state below a contiguous high-water only after no detailed
+proof below it is needed; the compact boundary remains sufficient to return
+`HISTORY_EXPIRED_PREFIX`. See [ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md).
 
 ## 9. Invariants summary
 
 | # | Invariant |
 | --- | --- |
 | E1 | Events are structured data with stable kinds; prose is never the protocol. |
-| E2 | The event log is append-only; there is no update or delete of individual events. |
+| E2 | Retained event content is immutable; expiry deletes complete content and records minimal intentional-expiry metadata atomically. |
 | E3 | An event and its state change commit in one transaction — never one without the other. |
-| E4 | `seq` is gapless and monotonic, assigned at commit. |
+| E4 | Per-host `seq` allocation is monotonic and gapless at creation, transactionally assigned; every allocated seq is durably accounted for as retained content, declared expiry, or compacted prefix. |
 | E5 | Every event has an `actor` and a `causation` chain to a user or a schedule. |
 | E6 | Control flow never depends on parsing `reason_code` prose; codes are enums. |
 | E7 | Unknown event kinds are skipped by clients, never fatal. |
@@ -342,8 +351,8 @@ architecture version per [§4.1](00-protocol-index.md#41-semantics).
 | Architecture version | Change | Kind | Authority |
 | --- | --- | --- | --- |
 | `serea-arch/0.2.0` | Added `DELETION_CASCADE_COMPLETED` to §3.7. It is the completion record of one right-to-delete cascade transaction, carrying the deletion counts, as required by [Data Classification §8.2](09-data-classification-protocol.md#82-deletion-cascades) step 4. No existing kind was renamed, repurposed, or removed; the wire surface remains `serea.event/1`; unknown kinds still fail closed on a host parse and are still skipped by clients (§4.2 rules 3 and 4, §6 rule 2, `E7`). | Minor — a backward-compatible addition | [ADR-0017](../decisions/ADR-0017-deletion-cascade-completed-event-kind.md) |
+| `serea-arch/2.0.0` | Accepted Option A: separates minimal sequence accountability from independently expirable complete content; replay distinguishes exact interior intentional-expiry ranges, compacted-prefix history expiry, and unexplained corruption. `serea.event/1` objects remain unchanged; replay response moves to `serea.device/2`. | Major architecture/replay semantics; event surface unchanged | [ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md) |
 | 2026-10-06 | Clarified that deletion work and `DELETION_CASCADE_COMPLETED` insert precede the one COMMIT inside the same transaction. This reconciles ADR-0017 wording with E3 and Data Classification §8.2; a post-commit append is forbidden. | Editorial clarification of accepted transaction semantics | Owner direction; E3; Data Classification §8.2 |
-| 2026-10-06 | Task/step identifiers in event content are immutable historical values; event content has no cascading or nulling FK to task/step rows. Physical event-content erasure and seq-gap behavior are deferred to Proposed ADR-0026. | Retention constraint; storage design gate | Owner direction; ADR-0026 |
 
 ## 9. P2A validation changelog and deferred runtime seam
 

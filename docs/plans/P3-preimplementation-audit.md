@@ -1,9 +1,9 @@
 # Serea P3 Preimplementation Audit
 
-- **Status:** `BLOCKED_PENDING_OWNER_DECISION`
+- **Status:** `P3A_CLOSURE_IN_PROGRESS`
 - **Audit base:** `p3/preimplementation-audit` at `da117b5f9c4572bb989f5bf7f3d61b9cb2886164`
 - **Audit branch:** `p3/preimplementation-audit`
-- **Scope:** documentation and design only. No P3 runtime, schema migration, dependency, or behavior change.
+- **Scope:** P3 architecture, protocols, docs, and the exact supported-surface registry update required by the `serea.device/2` replay response. No Event Bus/Scheduler runtime, schema migration, new dependency, or event-retention behavior change.
 - **Authority reviewed:** repository contracts at the audit base; public branch and CI identities supplied with the task.
 
 ## 1. Executive disposition
@@ -18,13 +18,12 @@ The owner directions in this closure pass resolve the fixed transaction
 composition (Accepted ADR-0025), Scheduler SQL/COMMIT ordering, P3 subscriber
 scope and startup/replay boundary, event foreign-key policy, ADR-0017 ordering,
 recurrence evaluator, operational bounds, cancellation/claim fence, and command
-retry identity. One architecture contradiction remains: the frozen global
-gapless sequence and corruption-on-interior-gap rule cannot coexist with
-independent per-class content deletion. Proposed ADR-0026 compares viable
-designs and recommends a range-aware sequence ledger, but that changes frozen
-replay semantics. The exact owner choice in ADR-0026 is required before
-closure. Status remains `BLOCKED_PENDING_OWNER_DECISION`; migration 0002 is not
-created.
+retry identity. The owner selected Option A in ADR-0026 on 2026-10-06.
+Accepted semantics now separate minimal sequence accountability from
+independently expirable complete event content, and define exact range-aware
+replay, compacted-prefix expiry, and corruption. Architecture moves to
+`serea-arch/2.0.0`; only the replay-bearing device surface moves to
+`serea.device/2`; actual event objects remain `serea.event/1`.
 
 No P2 behavior changes. P2's `task_journal` remains the pre-P3 non-event audit
 record and is never backfilled into `SereaEvent`. P2's `RecoveryReport` field
@@ -60,9 +59,9 @@ exclusion; **AMBIGUOUS** lacks one implementation interpretation;
 | HISTORICAL | `docs/plans/P2-test-matrix.md` §§E, F, H, M, O | P2 tests use explicit `EpochMillis`, injected `Clock`/`TestClock`, and no ambient system clock; P2 crash evidence is bounded process/fault evidence, not power-loss certification. | Protocol/Storage/TaskEngine | P3 deterministic core receives explicit time; hosted CI evidence remains environment-scoped. | P3 deterministic time injection; named process-crash tests, no broader durability claim. |
 | NONCLAIM | `README.md` Current status/Evidence; P2 Closure §§ADR status/nonclaims | P3 runtime not implemented; no event bus, scheduler, migration 0002, event delivery, event backfill, provider runtime, or power-loss guarantee is claimed. | Project | Audit documentation cannot represent these as shipped. | Docs validation and repository/source inventory. |
 | FROZEN | `docs/protocols/09-data-classification-protocol.md` §§2–3,6,8; `docs/decisions/ADR-0010-*` | Classification inherits maximum input class; CREDENTIAL only credential store, SECRET sealed store only, PRIVATE encrypted at rest and controlled cloud egress; unclassified defaults to CREDENTIAL. | Protocol + Storage + each egress owner | Event/schedule content requires declared inherited class, protected content reference policy, retention/deletion handling; P2 ordinary rows remain PRIVATE fail-closed. | Per-class storage refusal/protection/redaction tests; class cannot be lowered through event or schedule derivation. |
-| OWNER-SELECTED BOUNDS | `docs/protocols/10-bounds-protocol.md` §2 | Existing catch-up=10, concurrent tasks=8, and lease=120 remain; P3 operational limits now specify scope, refusal, visibility, and zero behavior. | Core owns bound config; enforcing crate owns each check. | Bounds do not settle retention/sequence semantics; ADR-0026 remains a gate. | Boundary tests; pre-mutation refusal/no partial write; bounded scans/deletes. |
+| OWNER-SELECTED BOUNDS | `docs/protocols/10-bounds-protocol.md` §2 | Existing catch-up=10, concurrent tasks=8, and lease=120 remain; P3 operational limits now specify scope, refusal, visibility, and zero behavior. | Core owns bound config; enforcing crate owns each check. | Retained content and active sequence/range metadata are bounded separately under Accepted ADR-0026. | Boundary tests; pre-mutation refusal/no partial write; bounded scans/deletes. |
 | OWNER-RESOLVED SCOPE | Event Protocol §§5–8; Scheduler Protocol §§2,6 | Device timeline remains replay surface; Scheduler is sole internal durable consumer; no generic external subscribers. Scheduler-specific singleton cursor; notification is wake-only; replay uses committed high-water snapshots. | Event Bus, Scheduler, device timeline | Startup order and replay boundary are specified. | Replay/live race, cursor/task mapping atomicity, startup recovery replay tests. |
-| CONTRADICTORY | Event Protocol §§2,6,8,9; Proposed ADR-0026 | Gapless global seq plus corruption on missing interior seq conflicts with independent whole-record class expiry. | Event Protocol owner + privacy/data owner | ADR-0026 recommends option A but replay semantics change; owner must choose A/B/C. No migration until selected. | Expiry interleaving, replay range, explicit forget, device cursor, Scheduler cursor, bounded storage tests after decision. |
+| RESOLVED_BY_OWNER | Event Protocol §§2,6,8–10; Accepted ADR-0026 | Option A separates durable sequence accountability from independently expirable event content. | Event Bus + Storage + device replay + Scheduler | Exact interior expiry is a typed range; expired prefix and unexplained corruption are distinct. Architecture/2 and device/2 are recorded; event/1 remains unchanged. | P3B–P3G prove expiry interleaving, replay range, explicit deletion, device/Scheduler cursor, bounded storage. |
 
 ### Relevant current implementation facts
 
@@ -140,13 +139,14 @@ with handled occurrence work. External generic subscriber cursors are out of P3.
 No events are silently discarded except whole-record retention at their
 configured horizon. Event rows never use `ON DELETE CASCADE` or `SET NULL` to
 task/step rows; event identifiers are immutable opaque historical values and
-task deletion does not mutate retained events. The physical deletion and
-interior-sequence semantics remain blocked by ADR-0026.
+task deletion does not mutate retained events. Accepted ADR-0026 defines the
+minimal expiry metadata and typed replay outcomes.
 
 Host parsers reject unknown `EventKind`; forward-compatible clients skip it and
 continue. Payloads are structured validated event facts, not arbitrary model
 output. The P3 limits are selected in Bounds Protocol §2. Retention count/bytes
-are numeric limits, but their enforcement semantics depend on ADR-0026.
+are numeric limits; ADR-0026 Option A requires content and sequence metadata to
+be enforced within separate deterministic bounds.
 
 ## 4. Atomicity contradiction and proposed ADR-0025
 
@@ -353,7 +353,8 @@ may race a P2 recovery pass on task rows.
 | External side effects | Existing Task Engine→Capability path only | None | None | None; scheduled work follows normal Task Engine path |
 
 No ownership is duplicated; Accepted ADR-0025 fixes participant composition
-within this matrix. ADR-0026 still blocks retention/replay schema.
+within this matrix. Accepted ADR-0026 authorizes the range-aware retention and
+replay schema described below.
 
 ## 9. Minimum crate graph
 
@@ -412,7 +413,7 @@ transaction. No speculative outbox or task_journal alteration is justified.
 | Object | Proposed columns/constraints | Why it belongs to P3 | Open detail |
 |---|---|---|---|
 | `store_meta` singleton | singleton key; `next_seq INTEGER NOT NULL CHECK(next_seq > 0)` initialized to 1 | Proposed ADR-0021 explicitly assigns the Event Bus per-host `next_seq` counter here; transactional gapless allocator must have one authority. | SQLite signed-integer ceiling and sequence exhaustion behavior; no second schema version source. |
-| Event sequence/content (shape blocked by ADR-0026) | Global seq allocator plus event content; if option A is chosen, separate minimal immutable sequence ledger and independently expirable complete content rows. | Durable event history, seq integrity, class retention and replay. | ADR-0026 must decide event/1 interior expiry before SQL. No task/step FKs with CASCADE/SET NULL. Frozen event/1 has no `BlobRef`; no hidden wire indirection. |
+| Event sequence/content (Option A accepted by ADR-0026) | Global seq allocator; active minimal sequence state; complete event content; explicit expiry ranges; compacted-prefix high-water. | Durable event history, seq integrity, class retention and replay. | Minimal metadata holds no task/step/device/actor IDs, digest/fingerprint, user content, schedule args, or PRIVATE/SECRET/CREDENTIAL data. No task/step FKs with CASCADE/SET NULL. Frozen event/1 has no `BlobRef`; no hidden wire indirection. |
 | `schedules` | `schedule_id PK`; owner identity; state; trigger type and canonical validated recurrence/event predicate; template reference or protected payload ref; `policy_class`; approval policy; timezone; created/updated UTC milliseconds; `next_due_at_ms`; local occurrence identity/version; missed policy; last processed marker; schedule generation/version; schedule lease generation/owner/expiry if lease is held here | Durable schedule definition/state and due instant required by Scheduler Protocol. | Store PERSONAL/PRIVATE fields policy, schedule/template bounds, exact recurrence serialization, index for active next_due. |
 | `schedule_occurrences` | schedule ID + canonical occurrence/source key unique; due UTC ms; source event/task identity as relevant; state (pending/claimed/mapped/skipped); `not_before_ms`; lease owner/generation/expiry; mapped task ID; processing timestamps/reason | Dedup, bounded catch-up cursor, crash reconciliation and one occurrence→one task mapping. | Whether scheduler lease belongs per-schedule or per-occurrence, canonical key encoding, cancellation race version and resumable-vs-terminal occurrence states. |
 | `schedule_command_receipts` | authenticated envelope `message_id` primary key; canonical request digest; command kind/schedule identity; durable result reference/status | Retry after caller loss returns the committed result; same ID with different body is refused. | Exact result serialization and receipt retention must be bounded; IDK-1 is not used. |
@@ -493,7 +494,7 @@ definition/occurrence retention is governed by the selected schedule horizon;
 deletion must remove protected payload references and occurrence mappings
 consistently. Event references are immutable opaque historical IDs; event rows
 have no task/step `ON DELETE CASCADE` or `SET NULL`. Their own event-content
-retention and sequence-gap behavior remain the ADR-0026 blocker.
+retention and sequence-gap behavior follow Accepted ADR-0026 Option A.
 
 ## 12. Idempotency and concurrency inventory
 
@@ -530,23 +531,23 @@ bound only as an explicit decision, not by type cargo-culting.
 | Event payload / per-transaction events | 32768 bytes / 16 | Canonical UTF-8 payload bytes / all events in one outer transaction; refusal rolls back state+journal+event+seq; zero permits no payload/events. |
 | Device replay / Scheduler scan page | 256 / 256 | Returned/read rows, not matches; preserve cursor at last returned/handled seq; zero disables page operation. |
 | Recovery / retention-delete batch | 512 / 512 | Rows examined / complete records deleted; deterministic continuation; zero recovery work; retention batch zero is invalid when expiry is enabled. |
-| Retained event content / event-store bytes | 1000000 / 536870912 | Capacity refusal after eligible pruning; typed error if still full; no silent drop. Exact enforcement depends on ADR-0026. |
+| Retained event content / event-store bytes | 1000000 / 536870912 | Capacity refusal after eligible pruning; typed error if still full; no silent drop. Minimal sequence/range metadata is separately bounded and compacted under ADR-0026 Option A. |
 | Retry loop | Per-task attempts and per-wake catch-up exist; scheduler operation retry ceiling absent | Define retry policy/exhaustion for recurring storage/provider/transient scheduler failures. |
 
 The Bounds Protocol defines exact row scopes, exhaustion/error visibility and
 zero semantics. Slow device replay cannot block task execution: delivery is
-downstream from durable commit. Retained count/byte enforcement cannot be
-finalized until ADR-0026 selects what metadata survives content expiry.
+downstream from durable commit. Retained content count/byte enforcement and
+sequence/range metadata compaction follow Accepted ADR-0026 Option A.
 
 ## 14. Test-first implementation plan
 
-No tests are added in this audit. Proposed RED-first sequence follows dependency
-and transaction prerequisites; phases may be split further only after the
-ADR-0026 retention/replay semantic choice closes.
+No P3 runtime tests are added in this audit. The P3A closure validates docs and
+the version-registry alignment; P3B onward follows the RED-first implementation
+sequence under the now-accepted ADR-0026 contract.
 
 | Phase | Scope | Expected production files (future only) | Test groups | Migration | Closure gate | Execution |
 |---|---|---|---|---|---|---|
-| P3A — Contract and transaction gate | Resolve retention/sequence contradiction; other owner directions now incorporated. | Docs/protocol/ADR only | Cross-doc inventory, compile/API contract sketches, operation→event matrix; no runtime RED tests yet. | None | ADR-0026 owner choice recorded; replay and retention semantics unambiguous. | CLOUD |
+| P3A — Contract and transaction gate | Close accepted retention/sequence semantics and version registry; other owner directions incorporated. | Docs/protocol/ADR and exact device surface registry update only | Cross-doc inventory, protocol version registry checks, operation→event matrix; no runtime RED tests yet. | None | ADR-0026 Accepted; architecture/device versions and replay semantics consistent; prescribed validation and paired platform CI GREEN. | CLOUD |
 | P3B — Migration and durable event log | 0002 event metadata/log, event schema mapping, sequence allocation, append-only constraints, retention metadata/query primitives. | `crates/serea-storage/{migrations,src}`; `crates/serea-event-bus` | 0001 immutable; upgrade/rollback; seq gaplessness/rollback; append-only; schema, class and query ordering. | Yes, migration 0002 | Crash-safe storage primitives with no P2 runtime changes or backfill. | CLOUD; GITHUB_ACTIONS |
 | P3C — Atomic TaskEngine event participation | Wire existing task transition operation facts to EventBus while preserving TaskJournal and savepoint guarantees. | `crates/serea-storage/src/{store,tx}`; `crates/serea-task-engine/src`; `crates/serea-event-bus/src` | Event+state+journal all-or-nothing; no-op/refusal; COMMIT caller-loss retry; no historical backfill. | No new migration beyond P3B | E3/E4 forward proof over enumerated task transitions; no one-participant API escape. | CLOUD; GITHUB_ACTIONS |
 | P3D — Event query/replay and delivery | Ordered history pages, retention expiry/corruption responses, internal scheduler source API, device timeline at-least-once boundary as authorized. | `crates/serea-event-bus/src`; later Core/device integration only if included | cursor/replay/live races, duplicate delivery, unknown kinds, slow consumer isolation, retention. | Maybe cursor table only if decision selects it | No loss across replay/retention; resource caps selected. | CLOUD; GITHUB_ACTIONS |
@@ -594,17 +595,14 @@ lineage; where it calls these items unresolved, this section supersedes it.
 | Recurrence evaluator | Serea owns recurrence grammar/policy. Jiff `=0.2.38` owns timezone/DST conversion only; require `default-features=false`, `std` + `tzdb-bundle-always` (no host zoneinfo/concatenated features), bundled `jiff-tzdb =0.1.9` carrying IANA TZDB `2026e`. Both crates: `Unlicense OR MIT`, declared MSRV 1.70, compatible with 1.85. Persist intended local label, timezone, resolved UTC instant, evaluator/TZDB version; TZDB updates affect unresolved future occurrences only. Metadata/source checked 2026-10-06. |
 | Operational bounds | Bounds Protocol §2 now records all ten new requested values with exact scopes, exhaustion/durable visibility/error behavior and zero semantics. Existing catch-up 10, concurrent tasks 8, lease 120 are unchanged. No silent truncation/drop. |
 | Cancel/claim and command retry | Claim revalidates ACTIVE state, expected revision/generation, unmapped/unprocessed occurrence, and current lease fence transactionally. Cancel-first blocks later claim; claim-first task may continue and is not silently cancelled. Authenticated common envelope `message_id` is the durable command-dedupe key, bound to request digest/outcome; different body under same ID refuses. IDK-1 is not reused because its preimage semantics differ. |
-| Retention and global seq | **Unresolved owner choice.** ADR-0026 compares ledger/content separation, contiguous-prefix retention, and checkpointed epochs. Option A is recommended for privacy and per-class retention, but interior expiry changes current wire replay semantics. Owner must select A with range-aware replay/versioning, B while explicitly accepting delayed deletion, or C with checkpoint/proof semantics. |
+| Retention and global seq | **Owner-selected and accepted.** ADR-0026 Option A separates minimal sequence existence/availability metadata from independently expirable complete content; replay declares exact interior expiry ranges; compacted-prefix history expiry and unexplained corruption are separate typed outcomes. Architecture is `serea-arch/2.0.0`, replay surface is `serea.device/2`, event objects remain `serea.event/1`; B and C are rejected. |
 
-### Exact blocker
+### P3A gate
 
-Event Protocol E2/E4, §6 replay corruption/`HISTORY_EXPIRED`, and §8's
-independent retention horizons are contradictory when differently-retained
-events interleave in a global gapless seq. No documentation-only interpretation
-can make interior deletion both preserve current clients' “gap means corruption”
-rule and satisfy per-class deletion. ADR-0026 remains Proposed. An owner choice
-must define whether event/1 replay semantics change; do not create migration
-0002 until that choice is recorded.
+Event Protocol E2/E4, §6, and §8 are reconciled by Accepted ADR-0026 Option A.
+The remaining P3A gate is repository consistency plus the specified docs,
+smoke, metadata, formatting, and GitHub Actions validation. P3B may start only
+after those checks pass on the exact P3A closure commit.
 
 ## 17. Final audit status
 
@@ -614,8 +612,8 @@ must define whether event/1 replay semantics change; do not create migration
 - P2 runtime behavior changed: **NO**
 - Local Mac used: **NO**
 - Local Mac required for P3: **NO**
-- Readiness: **BLOCKED_PENDING_OWNER_DECISION** — ADR-0026 retention/sequence semantics only
+- Readiness: **P3A_CLOSURE_IN_PROGRESS** — no owner semantic decision remains; validation and commit/CI gates are pending
 
-The safest implementable direction is documented, but the owner decisions above
-are required before the implementation prompt can be deterministic. This audit
-does not fabricate closure or authorize P3 implementation.
+Owner authorization selects Option A and explicitly authorizes P3 implementation
+after P3A's repository and CI gates. This audit records the current contract;
+runtime and migration work remains unstarted until that gate is GREEN.

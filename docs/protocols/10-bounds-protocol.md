@@ -114,9 +114,9 @@ would make mandatory expiry impossible. Existing
 `max_scheduler_catch_up_per_wake = 10`, `max_concurrent_tasks = 8`, and
 `max_lease_seconds = 120` are unchanged.
 
-The retention-count and event-byte enforcement model depends on the unresolved
-sequence/retention decision in [ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md);
-these numeric ceilings do not resolve that semantic conflict.
+The retention-count and event-byte enforcement model follows the accepted
+sequence/retention semantics in [ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md).
+These numeric ceilings remain as stated and do not retain payload-derived metadata.
 
 ### 2.1 Where these live in durable state
 
@@ -595,5 +595,5 @@ unexplained failure is indistinguishable from a bug.
   batch, retained-count and event-store byte defaults in §2 with exact scopes,
   exhaustion/durable visibility, event/error behavior and zero semantics. The
   existing catch-up=10, concurrent tasks=8 and lease=120 bounds are unchanged.
-  Retained-content capacity enforcement remains subject to Proposed ADR-0026;
-  these bounds do not resolve the gapless-sequence/retention contradiction.
+  Retained-content capacity enforcement follows Accepted ADR-0026 Option A;
+  content capacity and minimal sequence metadata are bounded independently.

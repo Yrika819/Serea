@@ -1,6 +1,6 @@
 # System Overview
 
-Architecture version: `serea-arch/1.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
+Architecture version: `serea-arch/2.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
 
 Serea is a personal-assistant system. This document states what it is, draws the
 system it is, names every component and its owner, and records what it
@@ -19,7 +19,7 @@ proposes actions, and — only when policy and a bounded human grant say so —
 changes that world. Everything is durable, everything is auditable, and the
 model has no authority whatsoever.
 
-| Dimension | Position at `serea-arch/1.0.0` |
+| Dimension | Position at `serea-arch/2.0.0` |
 | --- | --- |
 | Deployment | One Serea Core host process on the owner's Mac; one Pixel 7a Android client |
 | Concurrency | Single user, single host. `max_concurrent_tasks` is 8 by default, not a distributed-systems exercise |

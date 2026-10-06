@@ -574,7 +574,7 @@ fn pro_index_6_every_envelope_surface_name_is_accepted() {
         "serea.policy/1",
         "serea.approval/1",
         "serea.event/1",
-        "serea.device/1",
+        "serea.device/2",
         "serea.goallatch/1",
         "serea.data/1",
         "serea.bounds/1",

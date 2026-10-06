@@ -1,6 +1,6 @@
 # Crate Map
 
-Architecture version: `serea-arch/1.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
+Architecture version: `serea-arch/2.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
 
 This document fixes how the Serea Core Rust workspace is divided, which crate
 may depend on which, and which planned crates this architecture declines to
@@ -150,7 +150,7 @@ runtime graph may name it, and it may not be re-exported by any runtime crate.
 The Android provider needs to reach a paired device, and the device link lives in
 `serea-core`. If the provider depended on `serea-core` directly, the graph would
 close: `core → provider-android → core`. It does not, because the *wire types*
-for `serea.device/1` and the `DeviceLinkPort` trait declaration live in
+for `serea.device/2` and the `DeviceLinkPort` trait declaration live in
 `serea-protocol`, and the link's transport implementation is injected into the
 provider at composition time by `serea-core`. The provider depends on the port;
 it never depends on the server.

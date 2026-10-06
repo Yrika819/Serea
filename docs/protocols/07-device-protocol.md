@@ -1,6 +1,6 @@
 # Device Protocol
 
-Protocol ID: `PROTO-DEVICE` · Surface: `serea.device/1` · Status: **FROZEN for P0**
+Protocol ID: `PROTO-DEVICE` · Surface: `serea.device/2` · Status: **FROZEN, architecture `serea-arch/2.0.0`**
 
 This protocol defines the link between Serea Core (the Mac) and the Android
 client (Pixel 7a, Android 17, API 37). It covers transport, pairing, sessions,
@@ -307,7 +307,7 @@ Every device frame is the common envelope
 ```json
 {
   "envelope_version": "1",
-  "surface": "serea.device/1",
+  "surface": "serea.device/2",
   "message_id": "evt_01JQ8ZK5H4NQW9T2XR7BV3M8DF",
   "correlation_id": "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA",
   "causation_id": null,
@@ -358,7 +358,7 @@ dropped.
 ```json
 {
   "envelope_version": "1",
-  "surface": "serea.device/1",
+  "surface": "serea.device/2",
   "message_id": "evt_01JQ8ZM7P6WXR2K5TY9BN4MQ8V",
   "correlation_id": "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA",
   "causation_id": "evt_01JQ8ZK9S3QMW7T4XZ6CD8NRP2",
@@ -518,27 +518,49 @@ monotonic `seq` cursor and is resumable across reconnects.
 | --- | --- |
 | `after_seq` | Cursor, exclusive. `null` means "from the beginning". Serialized as a decimal **string** because `seq` may exceed JavaScript's exact integer range ([Protocol Index §5](00-protocol-index.md#5-serialization)). |
 | `limit` | `1..200`, default `50`. A page shorter than `limit` means the stream was caught up as of the page's `seq`. |
-| Response | A page of items plus `next_seq`, which is `null` at the live edge. It also includes `history_status: AVAILABLE`, `EXPIRED`, or `INTEGRITY_ERROR` and the relevant oldest retained sequence or missing sequence information. |
+| Response | An ordered page of typed results through `snapshot_high_water_seq`, captured once per replay pass. Each result is a retained event or exact intentional-expiry range; a stale cursor may instead receive prefix expiry, and an unproved gap returns corruption. `next_seq` is the last verified/processed sequence and is `null` only when no advancement occurred. |
 
 ### 8.1 Resumability
 
-The device persists `last_rendered_seq` in local durable storage, updated after
-each successfully rendered page. On `RECONNECT` the device sends that cursor and
-the host replays from it. Re-delivery is permitted and deduplicated by event id;
-a cursor never silently skips a committed, retained event.
+The device persists `last_verified_seq` in local durable storage, updated after
+each successfully processed event or declared range. On `RECONNECT` the device
+sends that cursor and the host replays from it through a snapshot high-water.
+Re-delivery is permitted and deduplicated by event id; a cursor never silently
+skips retained event content.
 
-When the host returns `history_status: EXPIRED`, it emits
-`EVENT_HISTORY_EXPIRED` and supplies the oldest retained `seq`. The device shows
-an explicit history-expired marker, sets its next exclusive cursor to the value
-immediately before that oldest retained sequence, and fetches again. The marker
-means older history was removed under normal retention; it does not claim a
-commit was lost.
+The host reports prefix compaction as `HISTORY_EXPIRED_PREFIX` with
+`new_replay_boundary`, equal to the compacted-through high-water. It emits
+`EVENT_HISTORY_EXPIRED`; the device shows an explicit history-expired marker,
+sets its exclusive `after_seq` cursor to that boundary, and requests again.
+This means older history was removed under normal retention; it does not claim
+a commit was lost. Prefix expiry is distinct from interior intentional expiry.
 
-When the host returns `history_status: INTEGRITY_ERROR`, it emits
-`EVENT_SEQUENCE_CORRUPTION` and identifies the missing sequence/range. The device
-keeps its last verified cursor, shows an integrity warning, and stops advancing
-or replaying beyond the gap until host repair is complete. It must not relabel
-this as history expiry or acknowledge unseen later events as contiguous.
+An interior `INTENTIONALLY_EXPIRED_RANGE` carries inclusive `first_seq` and
+`last_seq`, and no event content or identifying metadata. The device advances
+its cursor across exactly that range without rendering or reconstructing
+events. Adjacent ranges may be coalesced only when every sequence in the
+combined interval is intentionally expired. Retained events and range items
+remain ordered and cannot overlap.
+
+When the host returns `CORRUPTION`, it emits `EVENT_SEQUENCE_CORRUPTION` and
+identifies the first unexplained sequence. The device keeps its last verified
+cursor, shows an integrity warning, and stops advancing or replaying beyond the
+gap until host repair is complete. It must not relabel this as retention or
+acknowledge unseen later events as contiguous.
+
+The version-2 result discriminator is closed and typed:
+
+```json
+[
+  { "kind": "EVENT", "event": { "surface": "serea.event/1", "seq": "18423" } },
+  { "kind": "INTENTIONALLY_EXPIRED_RANGE", "first_seq": "18424", "last_seq": "18429" },
+  { "kind": "HISTORY_EXPIRED_PREFIX", "new_replay_boundary": "19000" },
+  { "kind": "CORRUPTION", "first_unexplained_seq": "19001" }
+]
+```
+
+The examples abbreviate the event object. A version-1 device replay response
+cannot represent these outcomes and is rejected; no downgrade is permitted.
 
 ### 8.2 Unknown event kinds
 
@@ -620,5 +642,17 @@ approval is not a denial and not a retry.
 | D8 | Revocation is a host decision; a revoked or unpaired device is refused, and a burned `DeviceId` is never reissued. |
 | D9 | `DEVICE_CAPABILITY_REPORT` informs availability and grants nothing; absence of a capability means unavailable, not probably supported. |
 | D10 | No notification action causes or authorizes an effect; high-risk approval requires the full in-app screen. |
-| D11 | Unknown timeline event kinds are skipped and never fatal, and the timeline cursor resumes across reconnects without gap or duplication. |
+| D11 | Unknown timeline event kinds are skipped and never fatal; verified cursor advances across retained events or exact declared expiry ranges, and never across unexplained absence. |
 | D12 | Approvals are never pre-granted, queued, or auto-resolved offline; pending approvals re-render on reconnect and are never auto-granted or auto-denied. |
+
+## 11. Changelog and migration note
+
+| Architecture version | Surface | Change | Kind | Authority |
+| --- | --- | --- | --- | --- |
+| `serea-arch/2.0.0` | `serea.device/2` | Timeline replay uses typed retained-event, exact intentional-expiry-range, expired-prefix, and corruption outcomes. Actual event objects remain `serea.event/1`; envelope version remains 1. | Major; device clients must implement `/2` and persist a verified cursor that advances over declared expiry ranges only. | [ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md) |
+
+All Device Protocol peers must implement `serea.device/2`; the surface major
+applies to the whole authenticated link. Pairing, session, approval, and other
+non-replay payload shapes do not otherwise change. Actual event consumers that
+read `serea.event/1` objects do not change wire format. Unsupported `/1` peers
+are rejected without silent downgrade.

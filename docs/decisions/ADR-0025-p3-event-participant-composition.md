@@ -1,7 +1,7 @@
 # ADR-0025: P3 Event Participant Composition
 
 - **Status:** **Accepted** — fixed P3 transaction composition; runtime implementation remains deferred
-- **Architecture version:** `serea-arch/1.0.0`
+- **Architecture version at acceptance:** `serea-arch/1.0.0` (current is `serea-arch/2.0.0`)
 - **Decision date:** 2026-10-06
 - **Scope:** Compose P2 task audit and P3 event persistence under one SQLite transaction.
 

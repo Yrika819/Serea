@@ -1,8 +1,8 @@
 # ADR-0026: Event Retention and the Gapless Global Sequence
 
-- **Status:** Proposed — owner semantic choice required before P3 implementation
-- **Architecture version:** `serea-arch/1.0.0`
-- **Decision date:** 2026-10-06 (proposal)
+- **Status:** Accepted — Option A, selected by owner on 2026-10-06
+- **Architecture version:** `serea-arch/2.0.0`
+- **Decision date:** 2026-10-06
 - **Scope:** Reconcile Event Protocol E2/E3/E4/E7 with class-specific retention,
   history expiry, deletion, task references, replay, and finite storage.
 
@@ -20,9 +20,9 @@ continuity may violate the class retention horizon and explicit “forget this�
 deletion obligations. This is an architecture contradiction, not an index or
 SQL implementation detail.
 
-No option below is authorized for implementation by this Proposed ADR. Migration
-0002 must wait for the owner choice because the choice determines durable schema,
-replay semantics, and potentially wire compatibility.
+The owner selected Option A and authorized range-aware replay, independently
+expirable content, and the minimum replay-response/version change. Migration
+0002 and P3 implementation follow the accepted semantics below.
 
 ## Options
 
@@ -38,19 +38,19 @@ content-derived data unless the owner explicitly classifies and retains it.
 
 | Concern | Analysis |
 |---|---|
-| Wire `serea.event/1` | Existing event envelope remains unchanged when content exists. A reader encountering an expired interior seq needs a new response representation (expired range/marker or equivalent); current event/1 `HISTORY_EXPIRED` only reports a cursor before the oldest retained seq. Existing clients would call this interior absence corruption. |
+| Wire `serea.event/1` | Actual event objects remain unchanged. The replay response is part of `serea.device/2`; it represents an intentionally expired range as a typed item. |
 | E2 | Content is removed whole; the minimal sequence ledger remains append-only. This requires redefining “event record” as content plus envelope and treating the ledger as separate protocol metadata. |
 | E3 | State, ledger append, content append, and seq allocation remain in the same transaction. Retention is a separate transaction that removes content only. |
 | E4 | Allocation remains globally gapless. The ledger proves every seq existed; content can be absent only with an explicit expiry record. The protocol's current equivalence of missing content and corruption must change. |
 | E7 | Unknown event kinds still skip when content is available. Old clients cannot understand new interior-expiry responses, so unknown-kind forward compatibility alone does not solve it. |
-| `HISTORY_EXPIRED` | Current oldest-retained response handles prefix expiry. Interior expiry needs a distinct range-aware response or cursor rule; expanding its current meaning risks clients advancing incorrectly. |
+| `HISTORY_EXPIRED` | Prefix compaction is reported as `HISTORY_EXPIRED_PREFIX` with the new valid replay boundary. Interior expiry is `INTENTIONALLY_EXPIRED_RANGE`, never prefix expiry. |
 | Explicit “forget this” | Can physically remove event content while retaining only a minimal seq fact. This best supports deletion, subject to proving that the ledger contains no identifying or content-derived data. |
 | Task deletion | Opaque TaskId/StepId values in retained event content are immutable historical identifiers. No event FK may cascade or set NULL. Task deletion removes task rows, not retained events; content can later expire under event retention. |
 | Per-class retention | Each content record can expire independently without rewriting another. Scheduler-consumed source events must remain available until its durable cursor passes them or else a durable equivalent must preserve handled/unhandled meaning. |
-| Device replay | Requires clients to receive an explicit expiry range/marker and advance only over that declared range. Existing replay rule treats an interior gap as corruption, so device behavior changes. |
-| DB schema | `event_sequence_ledger(seq PRIMARY KEY, minimal append-only metadata)` plus `event_content(seq UNIQUE FK to ledger, event envelope/payload, class, expiry)` and an expiry/range index. No FK from retained content to task/step. Expiry transaction deletes whole content rows. |
-| Storage bounds | Bound content rows/bytes and ledger/range bytes separately. To stay finite, compact an old contiguous ledger prefix into a high-water checkpoint; preserve detailed ledger entries only over the active retention window. Interior-expiry representation must itself have a bound and deterministic compaction. |
-| Version impact | Not backward compatible with current replay semantics as stated. `serea.event/1` may remain the shape of actual events, but response/cursor semantics and E2/E4 architecture meaning change; require explicit architecture version/change-control decision. |
+| Device replay | A page contains ordered retained event items and/or exact intentional-expiry ranges. A consumer advances its monotonic verified cursor over a declared range only; an unexplained absence is corruption and stops replay. |
+| DB schema | Active sequence state plus event content, minimal detailed expiry ranges, and compact prefix high-water metadata. No FK from retained content to task/step. Expiry transaction records intentional absence and deletes whole content rows atomically. |
+| Storage bounds | Bound content rows/bytes and active ledger/range bytes separately. Fold only a contiguous prefix whose detailed proof is no longer needed into a compact expired-prefix high-water; interior ranges stay explicit while needed. |
+| Version impact | Architecture `serea-arch/2.0.0` records the breaking replay semantic change. Bump only the affected replay response surface to `serea.device/2`; keep actual event objects at `serea.event/1` and envelope version 1. Old device/1 clients are rejected for this response rather than silently downgraded. |
 
 ### B. Physical retention of only a contiguous sequence prefix
 
@@ -114,28 +114,34 @@ Option C offers stronger range-integrity evidence than A but retains more
 content-derived metadata, requires more machinery, and does not preserve the
 current client replay contract either.
 
-Option A is recommended **only if** the owner authorizes range-aware replay and
-retention metadata semantics. It is not backward-compatible with the frozen
-Event Protocol §6/E4 rule that an interior missing seq is corruption and with
-the current single-prefix `HISTORY_EXPIRED` behavior. No clear option is both
-privacy-correct and backward-compatible under the current frozen wording.
+The owner selected Option A. It is intentionally not backward-compatible with
+the prior interior-gap and single-prefix replay rules; Device Protocol/2 makes
+that break explicit. Option B and Option C are rejected.
 
-## Exact owner choice required
+## Accepted Option A semantics
 
-Choose one:
-
-1. **A — ledger plus expirable content**, and authorize an architecture change
-   defining intentional interior expiry, its replay response/cursor behavior,
-   and minimal retained ledger fields; or
-2. **B — contiguous-prefix retention**, and explicitly accept that per-class
-   horizons are minimums and “forget this”/task deletion may retain event
-   content beyond its nominal horizon; or
-3. **C — checkpointed retention epochs**, and authorize new proof/checkpoint
-   semantics, a wire response change, and the associated privacy review.
-
-Until selected, E2/E4, `HISTORY_EXPIRED`, deletion, retention schema, and
-retained-count/byte enforcement are not jointly implementable. ADR remains
-Proposed and migration 0002 is blocked.
+- Sequence allocation is monotonic, gapless at creation, per-host, and
+  transactional. Every allocated sequence is accounted for durably.
+- Sequence/integrity metadata contains only sequence existence and availability
+  state. It must not retain task, step, device, actor, payload, schedule, or
+  other content-derived identity or fingerprints.
+- Event content is a complete independently expirable object. Expiry metadata
+  and whole-content deletion commit atomically. Missing content without valid
+  expiry metadata is corruption.
+- Replay has typed outcomes: retained event, intentional expired range,
+  expired prefix, or corruption. Consumers advance over only retained events
+  they process or the exact declared intentional range. Prefix expiry returns
+  the new valid boundary. Interior expiry is never `HISTORY_EXPIRED_PREFIX`.
+- Detailed ledger/range state is compacted only when all detailed proof below
+  a contiguous boundary is unnecessary. The compact prefix high-water remains
+  bounded; it does not preserve one row per historical sequence.
+- The Scheduler is the only P3 internal durable consumer. Retention policy
+  takes precedence over Scheduler backlog. On intentional expiry Scheduler
+  skips the exact range without fabricating a match; unexplained absence stops
+  as corruption. No new event kind is introduced for this degradation.
+- `serea.event/1` event objects and envelope version 1 are unchanged. Device
+  timeline replay moves to `serea.device/2`; architecture is
+  `serea-arch/2.0.0`. Unrelated wire surfaces do not change.
 
 ## Frozen sources
 
@@ -144,3 +150,6 @@ Proposed and migration 0002 is blocked.
 - [Task Protocol §8](../protocols/02-task-protocol.md#8-task-retention-and-privacy)
 - [Bounds Protocol §2](../protocols/10-bounds-protocol.md#2-the-bound-set)
 - [ADR-0017](ADR-0017-deletion-cascade-completed-event-kind.md)
+
+Migration 0002 may implement these accepted semantics, subject to P3A
+cross-document closure and validation.

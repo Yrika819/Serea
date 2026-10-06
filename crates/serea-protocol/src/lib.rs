@@ -43,7 +43,7 @@
 //! * `ApprovalRequest` and `ApprovalGrant` — owned by `serea-capability`
 //!   (Crate Map §3.1) and P6. P1 defines `ApprovalId` and `GrantId` (Protocol
 //!   Index §2) and nothing about a grant's semantics.
-//! * `DeviceLinkPort` — Crate Map §2.1 places the `serea.device/1` wire types
+//! * `DeviceLinkPort` — Crate Map §2.1 places the `serea.device/2` wire types
 //!   and the port here, but the link itself is `serea-core`'s and P12.
 //! * `Ids` — P1 provides [`ids::UlidSource`] and [`ids::IdMinter`] for minting
 //!   (Protocol Index §2 rule 1), under the frozen protocol names rather than

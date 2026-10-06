@@ -28,6 +28,7 @@ mod migrate;
 #[cfg(test)]
 mod migration_0002_tests;
 mod recovery;
+mod scheduler;
 mod store;
 mod task;
 mod tx;
@@ -57,6 +58,11 @@ pub use recovery::{
     RecoveryAction, RecoveryApplied, RecoveryAuthority, RecoveryPass, RecoveryReceiptRepair,
     RecoverySnapshot, RecoveryStep,
 };
+pub use scheduler::{
+    MissedOccurrencePolicy, ScheduleCommandOutcome, ScheduleCommandState, ScheduleDraft,
+    ScheduleOccurrenceDraft, ScheduleOccurrenceLease, ScheduleOwnerKind, ScheduleTriggerKind,
+    SchedulerConsumerLease, SchedulerCursorSnapshot,
+};
 pub use store::{CheckpointOutcome, Store};
 pub use task::{PlanRevisionSnapshot, PlanWrite, StepInput, StepSnapshot, TaskSnapshot};
 pub use tx::Tx;
@@ -68,5 +74,7 @@ mod foundation_tests;
 
 #[cfg(test)]
 mod protection_tests;
+#[cfg(test)]
+mod scheduler_tests;
 #[cfg(test)]
 mod schema_tests;

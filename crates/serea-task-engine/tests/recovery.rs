@@ -2287,6 +2287,9 @@ fn remediation_t1_storage_recovery_runtime_closure_has_no_effects_or_ambient_tim
                 .to_str()
                 .unwrap()
                 .ends_with("_tests.rs")
+                // P3's Scheduler storage operations are deliberately outside
+                // the P2 Task recovery runtime closure asserted below.
+                && path.file_name().unwrap() != "scheduler.rs"
         })
         .collect();
     for name in [
@@ -2321,6 +2324,8 @@ fn remediation_t1_storage_recovery_runtime_closure_has_no_effects_or_ambient_tim
             "serea_provider",
             "serea_scheduler",
             "scheduler::",
+            // P3 error variants name Scheduler lease outcomes in error.rs;
+            // the runtime module itself remains excluded from this P2 scan.
             "Scheduler",
             "GoalLatch",
             "goallatch::",
@@ -2349,6 +2354,12 @@ fn remediation_t1_storage_recovery_runtime_closure_has_no_effects_or_ambient_tim
             "'now'",
             "unixepoch()",
         ] {
+            if (path.file_name().unwrap() == "error.rs" && forbidden == "Scheduler")
+                || (path.file_name().unwrap() == "lib.rs"
+                    && matches!(forbidden, "Scheduler" | "scheduler::"))
+            {
+                continue;
+            }
             assert!(
                 !source.contains(forbidden),
                 "forbidden runtime API {forbidden} in {}",

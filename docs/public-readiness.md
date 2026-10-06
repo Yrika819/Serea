@@ -10,11 +10,11 @@ This record is an audit log, not a license grant or legal opinion. Scanner scrat
 
 ## Git history secret audit
 
-- Reachable history inventory: 17 commits, 651 reachable Git objects, 471 unique blobs across all local refs. `git remote -v` was empty at audit start.
-- Specialized scanner: Gitleaks 8.30.1, full Git history with `--log-opts="--all"`; 17 commits and approximately 4.86 MB scanned. It reported six `generic-api-key` hits, all on `idempotency_key` example/test values in `docs/architecture/README.md`, `docs/architecture/04-execution-pipeline.md`, `docs/protocols/08-goallatch-adapter-protocol.md`, `crates/serea-protocol/tests/schema_contracts.rs`, and `crates/serea-protocol/tests/json_value_preservation.rs`. These are fixed synthetic protocol values, not credentials: **DOCUMENTATION_EXAMPLE** or **TEST_FIXTURE**.
+- Reachable history inventory at initial scan: 18 commits, approximately 480 unique blobs across reachable refs. After private staging, `main` preserves the complete history and adds no rewritten or squashed commits.
+- Specialized scanner: Gitleaks 8.30.1, full Git history with `--log-opts="--all"`; 18 commits and approximately 4.89 MB scanned. It reported six `generic-api-key` hits, all on `idempotency_key` example/test values in `docs/architecture/README.md`, `docs/architecture/04-execution-pipeline.md`, `docs/protocols/08-goallatch-adapter-protocol.md`, `crates/serea-protocol/tests/schema_contracts.rs`, and `crates/serea-protocol/tests/json_value_preservation.rs`. These are fixed synthetic protocol values, not credentials: **DOCUMENTATION_EXAMPLE** or **TEST_FIXTURE**.
 - Independent scan: a custom Git-object scan examined every reachable blob for high-confidence GitHub/OpenAI/AWS/Bearer/PEM/OAuth/password/environment credential patterns. One `sk-`-shaped value is the deliberate `sk-proj-generation-private-marker` in `crates/serea-protocol/tests/p2a_types.rs`, used to prove error redaction: **TEST_FIXTURE**. A broad environment-assignment match in the vendored `serde_json/Cargo.toml.orig` is ordinary Cargo feature/configuration syntax: **FALSE_POSITIVE**.
 - Classification: no `REAL_SECRET` identified. SHA-256 vectors, IDKs, ULIDs, protocol IDs, and synthetic test markers are not credentials.
-- Gitleaks' separate current-directory scan timed out while traversing generated build output and was partial; it is not treated as a clean result. The independent reachable-blob scan includes all current committed source/docs; rerun a tracked-tree-only secret scan after the final readiness commit.
+- Gitleaks' separate current-directory scan timed out while traversing generated build output and was partial; it is not treated as a clean result. A tracked-tree-only scan was completed from ignored scratch against 292 files after readiness changes; scanner output remains ephemeral.
 
 ## Current-tree secret audit
 
@@ -234,15 +234,15 @@ Workflows print and assert architecture in the full jobs. The runner labels desc
 - The release fault proof's scope is its named A/B/C/D builds; it does not claim that an arbitrary all-features release artifact is seam-free.
 - No CODE_OF_CONDUCT is added; it is OPTIONAL / NOT ADDED.
 
-## Pre-remote readiness status
+## Private staging status
 
-**READY_FOR_PRIVATE_STAGING.** Repository integrity and local Git access are sound; there is no current remote. `gh` 2.101.0 is authenticated; `gh auth status` displays the old login `yutaGOTO819`, while authenticated `gh api user` returns `Yrika819` (user ID `143304522`), matching the numeric ID in the commit noreply identity. The authenticated API identity is treated as the current owner; verify exact repo ownership/collision before creation. No REAL_SECRET was found in reachable history or the current repository tree. Both workflows passed static YAML/shell/security checks, and the required lightweight local checks passed. This status permits private staging only; it does not authorize Public visibility.
+**PRIVATE_STAGING_VERIFIED; PUBLICATION BLOCKED.** GitHub CLI 2.101.0 API identity is `Yrika819` (user ID `143304522`), matching the numeric ID in the commit noreply identity; `gh auth status` still displays the old login label `yutaGOTO819`. Exact repository `Yrika819/Serea` was created as private. GitHub Actions were disabled before the first push and the setting was re-read as `enabled: false`. Local `main` was created at `977a20aabcbcf33a56369c75abe4f09c27428ac2` and pushed without force; remote `main` matches that SHA and is the default branch. Both workflows and README are present. The Actions runs endpoint reports zero runs; no hosted CI was executed. GitHub reports repository size 0 KiB despite the successful push and remote ref, so the size field was not treated as evidence of missing content. No LFS or submodule is present in the audited tree. This staging status does not authorize Public visibility.
 
 ## Blockers
 
 1. **Project LICENSE:** owner choice and exact license file required before Public.
 2. **Historical privacy:** owner review/explicit acceptance required for user-home and separate local-MCP paths in three historical blobs, or separate explicit authorization for history rewrite. History has not been rewritten.
 3. **Name collision:** review required because of exact-name projects and the established `Sereal` software identity; general-web query was blocked.
-4. **Private staging not yet verified:** exact `Yrika819/Serea` collision check, Actions disablement before push, private push, and remote verification remain pending.
+4. **Mandatory publication gate unresolved:** project license, historical privacy owner review, and project-name collision review remain unresolved. The remaining P1–P25 categories must be confirmed PASS or OWNER_ACCEPTED before any visibility change.
 
-Do not switch Public while any mandatory category is UNKNOWN or unresolved.
+Do not switch Public while any mandatory category is UNKNOWN or unresolved. Actions must remain disabled while the repository is private.

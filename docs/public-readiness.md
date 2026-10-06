@@ -1,6 +1,6 @@
 # Public-readiness audit
 
-**Status: READY_TO_MAKE_PUBLIC — FINAL PUBLICATION GATE PASS**
+**Status: PUBLIC_AND_CI_VALIDATED**
 
 **Audit scope:** all locally reachable Git refs and the current working tree. The owner explicitly authorized a pre-public history rewrite to remove machine-specific home paths; that rewrite has completed locally and all phase refs were rewritten consistently.
 
@@ -205,7 +205,7 @@ The owner reviewed the known exact-name and near-name collisions and explicitly 
 - Checkout sets `persist-credentials: false`; PR jobs execute no deployment or privileged operation.
 - No `actions/cache` or `target/` cache is used. Runners are disposable.
 - Every job has a finite timeout. Concurrency cancels superseded runs. Full CI uses `fail-fast: false` nowhere because there is no matrix; jobs are independent and report separately.
-- No private-repository Actions run has been started. Actions should remain disabled during private staging.
+- No private-repository Actions run was started. Actions were enabled only after the repository was verified Public; all initial hosted CI below ran on the Public repository.
 
 ## Action SHA provenance
 
@@ -225,7 +225,7 @@ Workflows print and assert architecture in the full jobs. The runner labels desc
 
 - Fast PR and `main` push: Linux stable, locked dependency fetch, smoke guard/tests, docs validator, fmt, metadata, and all-target/all-feature check. No full portability matrix.
 - Full validation: `main` push or manual `workflow_dispatch`, no initial schedule. Linux stable performs check, all-target tests, all-feature tests, Clippy, Group O, docs/smoke/fmt/metadata, and release fault-exclusion proof. Linux MSRV installs exact Rust 1.85.0 and runs check/tests/Clippy. Current official Intel and arm64 macOS jobs print/assert architecture and run workspace check, all-feature tests, and P2H crash suite.
-- No local full Rust/MSRV/portability matrix is rerun for these docs/workflow-only readiness changes. Remote CI is intentionally deferred until the repository is Public and Actions are explicitly enabled.
+- No local full Rust/MSRV/portability matrix was rerun for these docs/workflow-only readiness changes. The remote Public CI bootstrap described below now provides the Linux/MSRV/macOS hosted evidence.
 
 ## Known nonclaims
 
@@ -235,9 +235,9 @@ Workflows print and assert architecture in the full jobs. The runner labels desc
 - The release fault proof's scope is its named A/B/C/D builds; it does not claim that an arbitrary all-features release artifact is seam-free.
 - No CODE_OF_CONDUCT is added; it is OPTIONAL / NOT ADDED.
 
-## Private staging status
+## Private staging record
 
-**SANITIZED_PRIVATE_STAGING_VERIFIED.** The GitHub repository `Yrika819/Serea` remains **PRIVATE** at this checkpoint. The pre-public history was replaced using a guarded `force-with-lease` update whose expected remote SHA matched exactly. Remote `main` now contains the sanitized rewritten history and MIT license. GitHub Actions remain disabled (`enabled: false`), the workflow-runs endpoint reports zero runs, `main` is the default branch, and the local worktree tracks the same remote history. No private hosted CI was executed.
+**SANITIZED_PRIVATE_STAGING_VERIFIED before publication.** The pre-public history was replaced using a guarded `force-with-lease` update whose expected remote SHA matched exactly. At that checkpoint the repository remained Private, remote `main` contained the sanitized rewritten history and MIT license, GitHub Actions were disabled, and the workflow-runs endpoint reported zero runs. No private hosted CI was executed.
 
 ## Final publication gate
 
@@ -256,4 +256,29 @@ All mandatory categories P1–P25 are **PASS** or **OWNER_ACCEPTED**:
 - P2 closure consistency and rewritten Git history preservation: PASS;
 - sanitized private remote verification: PASS — Private, `main` correct, Actions disabled, zero runs.
 
-**PUBLICATION_GATE = PASS.** The next authorized operation is changing the existing repository visibility to Public without deleting/recreating it, verifying Public state, then enabling GitHub Actions and beginning the public CI bootstrap.
+**PUBLICATION_GATE = PASS.** The existing repository was subsequently changed from Private to Public without deletion or recreation; `main` and the rewritten history were preserved.
+
+
+## Public release and CI validation
+
+- Repository: <https://github.com/Yrika819/Serea>
+- Visibility: **PUBLIC**; default branch `main`.
+- GitHub Actions were enabled only after Public visibility was verified.
+- Fast CI manual bootstrap: run `37477567529` — **SUCCESS** on head `084b5048176afe94d63127e30ad07a8c41ca7e0f`.
+- Full CI manual bootstrap: run `37477783465` — **SUCCESS** on the same head.
+  - Linux stable full validation: **SUCCESS**, including all-target tests, all-feature tests, warning-denied Clippy, Group O/docs/smoke and release fault-seam exclusion.
+  - Linux MSRV 1.85.0: **SUCCESS**, with the exact compiler gate plus check/tests/Clippy.
+  - macOS Intel x86_64: **SUCCESS**, including all-feature tests and P2H crash/fault suite.
+  - macOS arm64: **SUCCESS**, including all-feature tests and P2H crash/fault suite.
+- Apple Silicon empirical claim is deliberately narrow: **GitHub-hosted macOS arm64 CI passed.** It is not universal device or power-loss durability certification.
+- Release fault-seam proof completed successfully in the Linux stable job; its existing A/B/C/D scope remains unchanged.
+
+## Public repository security settings
+
+- Private Vulnerability Reporting: enabled.
+- Dependabot vulnerability alerts: enabled.
+- Dependabot security updates: enabled.
+- Secret scanning: enabled.
+- Secret scanning push protection: enabled.
+- GitHub Actions workflow permissions remain least-privilege at `contents: read`; no workflow secrets or self-hosted runners are used.
+- `main` branch protection blocks force pushes and branch deletion and requires the `Linux fast checks` status in normal protected-flow updates. Administrator enforcement is disabled so the single-owner repository retains an emergency maintenance path; mandatory external review is not configured.

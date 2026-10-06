@@ -1,9 +1,10 @@
 # Serea Protocol Index
 
-Status: **FROZEN current contract set** · Architecture version `serea-arch/2.0.0` · Ratified on 2026-10-06
+Status: **FROZEN current contract set** · Architecture version `serea-arch/2.1.0` · Ratified on 2026-10-06
 
 P0/P1 implementation baseline was `serea-arch/0.2.0`; the current frozen registry
-is architecture/2, task/2, action/2, device/2, event/1 and envelope version 1. Three corrected
+is architecture/2.1, task/2, action/2, device/2, event/1, scheduler/1 and
+envelope version 1. Three corrected
 independent subagent documentation gate reviews under the coordinator are GREEN;
 owner direction ratified the design contingent on GREEN. P2A slices are
 implemented. The coordinator records current final workspace/MSRV validation,
@@ -247,3 +248,6 @@ rejected at review.
   Current validation, test counts, bounded regression review and integration
   status is coordinator-owned in the [closure record](../plans/P2A-review-and-closure.md).
   ADR-0021/22/24 runtime stays Proposed; 0024 wire generation only is implemented.
+- 2026-10-06: ADR-0027 accepts the Serea calendar recurrence grammar V1 and
+  advances the architecture to `serea-arch/2.1.0`; `serea.scheduler/1` and all
+  other wire surfaces are unchanged.

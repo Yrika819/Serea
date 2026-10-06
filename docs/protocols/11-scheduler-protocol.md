@@ -1,6 +1,6 @@
 # Scheduler Protocol
 
-Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN for P0** · Implementation: **Deferred to P3**
+Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.1.0`** · Implementation: **P3 in progress**
 
 This protocol defines durable schedules and event-driven wakeups that may create
 or resume Serea tasks. The scheduler is a trigger and persistence subsystem, not
@@ -119,30 +119,78 @@ Task Protocol and does not undo completed effects.
 
 ## 5. Timezone, daylight-saving transitions, and missed occurrences
 
-Recurrence definitions use Serea's recurrence grammar, an IANA timezone and
-local calendar fields; due instants are computed and persisted in UTC. For each
-resolved occurrence persist the intended local label, timezone identifier,
-resolved UTC instant, evaluator version, and TZDB version. A TZDB update affects
-future unresolved occurrences only; it never rewrites a processed occurrence or
-changes the UTC instant already assigned to a pending/resolved occurrence.
+### 5.1 Calendar recurrence grammar V1
+
+Calendar schedules use the closed `CalendarRecurrenceV1` JSON value defined by
+[ADR-0027](../decisions/ADR-0027-calendar-recurrence-grammar-v1.md). Serea owns
+its recurrence semantics; Jiff owns timezone and DST resolution only. The
+Schedule's existing `timezone` field is the authoritative IANA timezone and is
+not repeated in recurrence JSON.
+
+All values contain exactly `version`, `kind`, and `anchor_local`, plus the
+fields required by the selected kind. `version` is the string `"1"`.
+`anchor_local` is exactly `YYYY-MM-DDTHH:MM`: no offset, seconds, fractional
+part, or timezone suffix. It must name a real Gregorian date in the supported
+durable range 0000-01-01 through 9999-12-31 and a valid hour/minute.
+
+| Kind | Exact additional fields | Candidate rule |
+|---|---|---|
+| `ONCE` | None | Exactly the anchor local label; it has no next occurrence after durable processing. |
+| `DAILY` | Integer `interval` ≥ 1 | Candidate date is on or after the anchor date and its whole local-calendar-day difference modulo interval is zero. Preserve anchor HH:MM. |
+| `WEEKLY` | Integer `interval` ≥ 1; non-empty unique `weekdays` | ISO Monday-based week index from the anchor week is divisible by interval. Emit selected weekdays on or after the anchor date at anchor HH:MM. |
+
+There is no implicit interval default. Weekday tokens are `MO`, `TU`, `WE`,
+`TH`, `FR`, `SA`, and `SU`; storage and output order them canonically in that
+sequence. Reject unknown kinds or fields, missing fields, duplicate JSON keys,
+duplicate weekdays, non-integer numbers, interval zero, malformed local labels,
+impossible dates, invalid times, offsets, seconds, and timezone text embedded in
+`anchor_local`. V1 defines no `COUNT`, `UNTIL`, end date, exception dates,
+`BYSETPOS`, monthly, yearly, hourly, or smaller-unit recurrence.
+
+Persist recurrence as a closed compact SCJ-1 object with integer-only numeric
+fields, duplicate-key rejection, canonical object serialization, and weekday
+normalization. Equivalent semantic input is stored in one canonical form;
+runtime control flow uses the decoded value rather than raw JSON text.
+
+An occurrence identity is the owning `ScheduleId` plus the intended local label
+and the Schedule's IANA timezone. It is not the resolved UTC instant, TZDB
+version, lease, TaskId, or observed clock time. Encode the local label and zone
+deterministically as structured data; do not introduce a global identifier
+prefix. Persist the intended label, timezone, resolved UTC instant, evaluator
+version, and TZDB version. Schedule edits affect future unresolved candidates
+only. Existing resolved, pending, claimed, mapped, and processed rows keep
+their label and instant; a new recurrence resolving to the same ScheduleId,
+label, and timezone reuses the existing identity.
+
+An ONCE recurrence has no next occurrence after its single occurrence is durably
+processed; it never converts to DAILY and adds no Schedule lifecycle state.
+Recurring schedules stop through the existing `PAUSED` or `CANCELLED` lifecycle.
+
+Due instants are computed and persisted in UTC. A TZDB update affects future
+unresolved occurrences only; it never changes an instant assigned to a
+resolved occurrence.
+
+### 5.2 Timezone evaluator and DST
 
 P3 selects Jiff `=0.2.38` as the timezone conversion and gap/fold evaluator,
-with `default-features = false` and only the required `std` and
-`tzdb-bundle-always` features (plus `tz-fat` if needed). This excludes
+with `default-features = false` and exactly the required `std` and
+`tzdb-bundle-always` features. This excludes
 `tzdb-zoneinfo` and `tzdb-concatenated`, so authoritative recurrence resolution
 cannot silently consult host OS TZDB. Jiff 0.2.38 resolves exact
 `jiff-tzdb =0.1.9`; its embedded IANA database reports version `2026e`.
 Crates.io metadata checked 2026-10-06 reports both packages as `Unlicense OR
 MIT`, each declaring Rust 1.70; both are compatible with the workspace's Rust
 1.85 MSRV. Pin the evaluator, bundled data crate, and TZDB data version and
-persist evaluator/TZDB versions per resolved occurrence. Jiff does not own or
-expand Serea's recurrence grammar or occurrence policy.
+persist evaluator/TZDB versions per resolved occurrence. Since the bundled source
+is forced on every supported OS and host-database features are disabled, Linux,
+macOS Intel, and macOS arm64 share the same authoritative TZDB. Jiff does not
+own or expand Serea's recurrence grammar or occurrence policy.
 
 For a local time that does not exist during a daylight-saving gap, the occurrence
 is assigned to the first valid local instant after the gap. For a local time that
 occurs twice during a daylight-saving fold, it fires once, at the earlier UTC
-instant. The persisted occurrence identity prevents the repeated local label
-from creating two tasks.
+instant. The persisted intended-label occurrence identity prevents the repeated local
+label from creating two tasks.
 
 When Core is unavailable past a due instant, or a calendar fires late, apply the
 schedule's stored missed policy, subject to the following bounds:
@@ -240,3 +288,9 @@ not connect an external scheduler or perform real scheduled effects.
 | S7 | Approval waits release scheduler leases and resume the same task. |
 | S8 | Proactive watcher execution remains read-only; proposals require a separate user action to cause effects. |
 | S9 | Scheduler implementation and real scheduled effects remain deferred to P3. |
+
+## 10. Changelog
+
+- 2026-10-06: ADR-0027 defines `CalendarRecurrenceV1` with ONCE, DAILY, and
+  WEEKLY only; architecture advances to `serea-arch/2.1.0`. The Scheduler
+  surface remains `serea.scheduler/1`.

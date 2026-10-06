@@ -56,8 +56,24 @@ for the old SHAs only.
 | `4da482e94cd3ddd4d29b5ef5f4ab826c242b74b0` | `2a972c73f22053c78c4cff9ebfa258750e5f0b3f` |
 | `eabda5f1fc3ec2b9f656952f4adbe87acd745285` | `6a278d33d2f411d27c20cbb17cc8b06e6a99f668` |
 
-A post-rewrite baseline validation record and exact-SHA CI runs are appended
-after they complete.
+### Sanitized baseline validation
+
+| Gate | Exact-SHA result |
+|---|---|
+| Commit | `8ab2eab8b1b399945644acb70fae3c62e8e24bdf` |
+| Local docs, workspace smoke, 75 smoke unit tests, metadata, fmt, diff check, identity guard and its 3 tests | PASS in Cloud |
+| Fast CI | PASS — PR run `37541026358`, Linux job `112533782791` |
+| Full CI | PASS — PR run `37541026436` |
+| Linux stable | PASS — job `112533783719` |
+| Linux MSRV 1.85.0 | PASS — job `112533783718` |
+| macOS Intel x86_64 | PASS — job `112533783397` |
+| macOS Apple Silicon arm64 | PASS — job `112533783753` |
+| Release fault-seam proof | PASS — job `112533783719` |
+
+These runs validate the rewritten history plus identity guard and SHA document
+reconciliation at the exact sanitized commit above. Duplicate push-triggered
+runs `37541022537` (Fast CI) and `37541022549` (Full CI) also passed at the same
+SHA.
 
 ## P3A — Contract and transaction gate
 
@@ -173,28 +189,27 @@ Paired portability evidence: GitHub-hosted macOS Intel x86_64 CI passed.
 GitHub-hosted macOS arm64 CI passed. Both ran all-feature tests and the task
 engine crash suite. No cross-architecture database artifact was exchanged.
 
-## P3F — Scheduler runtime and recurrence (blocked before implementation)
+## P3F contract — CalendarRecurrenceV1 (accepted; contract CI pending)
 
-P3F has not started. Contract tracing identified an architecture-level gap in
-the frozen [Scheduler Protocol §5](../protocols/11-scheduler-protocol.md#5-timezone-daylight-saving-transitions-and-missed-occurrences):
-it requires recurrence definitions to use “Serea's recurrence grammar” and
-local calendar fields, but the repository defines no recurrence grammar or
-canonical recurrence representation. In particular, it does not specify the
-supported frequency/field set, required and optional fields, field ranges,
-invalid-combination handling, or how the canonical local occurrence label is
-derived from a recurrence definition.
+The owner selected the structured JSON grammar in ADR-0027. Its only kinds are
+ONCE, DAILY, and WEEKLY. V1 has exact kind-specific fields, a local civil minute
+anchor, strict closed-object and duplicate-key validation, canonical SCJ-1
+storage, ISO weekday ordering, and no end rule or additional frequency. The
+Schedule timezone remains authoritative. Calendar occurrence identity is the
+intended local label plus IANA timezone under ScheduleId; TZDB/evaluator
+versions and resolved instants are separate durable facts. DST gaps resolve to
+the first valid instant after the gap; folds select the earlier UTC instant.
 
-These details determine which persisted `schedules.recurrence_json` values are
-valid and how schedule edits, uniqueness keys, and future occurrences behave.
-Choosing a daily/weekly subset, an RRULE form, or another representation in
-implementation would create a new compatibility contract rather than follow an
-accepted one. Jiff and the bundled TZDB resolve timezone/DST conversion only;
-they do not define this grammar. No recurrence runtime, Jiff dependency, or
-runtime crate has been added. The remaining P3F work is blocked until the owner
-defines or selects the recurrence grammar and canonical occurrence identity.
+Architecture changes from `serea-arch/2.0.0` to `serea-arch/2.1.0`, a minor
+contract addition. `serea.scheduler/1` remains unchanged. ADR-0027, Scheduler
+Protocol, Protocol Index, current architecture documents, decision index, crate
+map, and this closure record carry the contract. No runtime code or Jiff
+manifest dependency is included in this contract commit.
 
-The independent P3E storage foundation remains green. P3F and P3G are not
-closed; P3 is partially complete.
+The docs-only contract closure is pushed separately and awaits exact-SHA Fast
+CI, Full CI, Linux stable, MSRV, paired Intel/arm64, and release fault proof.
+P3F runtime implementation must not begin until those jobs pass. P3F runtime and
+P3G remain open; P3 remains partially complete.
 
 ## Project nonclaims
 

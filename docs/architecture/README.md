@@ -1,6 +1,6 @@
 # Serea Architecture
 
-Architecture version: `serea-arch/2.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
+Architecture version: `serea-arch/2.1.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-06
 
 This directory is the architecture package for Serea Core. It describes how the
 frozen protocols in [`docs/protocols/`](../protocols/00-protocol-index.md) are
@@ -56,9 +56,9 @@ Neither is allowed to quietly widen the other.
 
 **Three version axes, never collapsed** ([Protocol Index §4](../protocols/00-protocol-index.md#4-versioning)):
 
-| Axis | Current value at `serea-arch/2.0.0` | Governs |
+| Axis | Current value at `serea-arch/2.1.0` | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/2.0.0` | The whole contract set, including this package |
+| Architecture version | `serea-arch/2.1.0` | The whole contract set, including this package |
 | Capability version | Per-descriptor SemVer, e.g. `calendar.events.list` at `1.2.0` | One capability's input/output contract |
 | Wire protocol version | `serea.action/2`, `serea.task/2`; `serea.model/1`, `serea.policy/1`, `serea.approval/1`, `serea.event/1`, `serea.device/2`, `serea.goallatch/1`, `serea.data/1`, `serea.bounds/1`, `serea.scheduler/1` | One transport or serialization surface; envelope version stays 1 |
 
@@ -78,14 +78,21 @@ No store/engine/event runtime or Clock/P2B is delivered. Source, schemas, manife
 versions, tests and these docs belong to one P2A integration, with no preliminary
 docs-only commit. See [frozen gate](../plans/P2A-review-and-closure.md).
 
-### 3.2 Current architecture/2 contract
+### 3.2 Architecture/2.0 history
 
 Accepted ADR-0026 changes the replay contract to distinguish retained events,
 intentional interior expiry ranges, expired prefixes, and unexplained
-corruption. It raises the architecture version to `serea-arch/2.0.0` and the
+corruption. This change raised the architecture version to `serea-arch/2.0.0` and the
 affected replay surface to `serea.device/2`. Actual event objects remain
 `serea.event/1`; unrelated wire surfaces and envelope version 1 are unchanged.
 The Protocol Index is the current registry authority.
+
+### 3.3 Current architecture/2.1 contract
+
+Accepted ADR-0027 defines Serea calendar recurrence as the closed ONCE, DAILY,
+and WEEKLY `CalendarRecurrenceV1` grammar. It advances the current architecture
+to `serea-arch/2.1.0`; the Scheduler surface remains `serea.scheduler/1`. Jiff
+resolves local timezone and DST rules but does not own recurrence semantics.
 
 ## 4. Identifier discipline in this package
 

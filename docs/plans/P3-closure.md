@@ -132,6 +132,29 @@ Paired portability evidence: GitHub-hosted macOS Intel x86_64 CI passed.
 GitHub-hosted macOS arm64 CI passed. Both ran all-feature tests and the task
 engine crash suite. No cross-architecture database artifact was exchanged.
 
+## P3F — Scheduler runtime and recurrence (blocked before implementation)
+
+P3F has not started. Contract tracing identified an architecture-level gap in
+the frozen [Scheduler Protocol §5](../protocols/11-scheduler-protocol.md#5-timezone-daylight-saving-transitions-and-missed-occurrences):
+it requires recurrence definitions to use “Serea's recurrence grammar” and
+local calendar fields, but the repository defines no recurrence grammar or
+canonical recurrence representation. In particular, it does not specify the
+supported frequency/field set, required and optional fields, field ranges,
+invalid-combination handling, or how the canonical local occurrence label is
+derived from a recurrence definition.
+
+These details determine which persisted `schedules.recurrence_json` values are
+valid and how schedule edits, uniqueness keys, and future occurrences behave.
+Choosing a daily/weekly subset, an RRULE form, or another representation in
+implementation would create a new compatibility contract rather than follow an
+accepted one. Jiff and the bundled TZDB resolve timezone/DST conversion only;
+they do not define this grammar. No recurrence runtime, Jiff dependency, or
+runtime crate has been added. The remaining P3F work is blocked until the owner
+defines or selects the recurrence grammar and canonical occurrence identity.
+
+The independent P3E storage foundation remains green. P3F and P3G are not
+closed; P3 is partially complete.
+
 ## Project nonclaims
 
 P3 does not include Model Router, Capability Registry, Policy Engine, Approval

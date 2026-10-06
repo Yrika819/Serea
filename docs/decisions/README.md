@@ -46,6 +46,12 @@ MSRV verification. A green wire-member gate does not accept full runtime fencing
 | [ADR-0023](ADR-0023-text-field-validation-categories.md) | Complete O/L/P validation, pinned whitespace, exact identifier subtraction | **Accepted**, complete O/L/P validation implemented in P2A |
 | [ADR-0024](ADR-0024-lease-fencing-and-commit-under-lease.md) | Authoritative unreleased lease fencing and revocation | **Proposed**; P2E authority, P2F outcome/engine integration and P2G recovery implemented; full architecture ratification remains outstanding |
 
+## P3 proposals
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [ADR-0025](ADR-0025-p3-event-participant-composition.md) | Compose task journal and event writes atomically under the P2 SQLite transaction seam | **Proposed**; owner must select the narrow API and event-producing operation inventory before implementation. See the [P3 preimplementation audit](../plans/P3-preimplementation-audit.md). |
+
 ### Numbering note
 
 `ADR-0013` through `ADR-0015` are absent from this repository. This index does not

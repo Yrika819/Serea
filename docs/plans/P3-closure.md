@@ -83,7 +83,7 @@ No cross-architecture database artifact was exchanged.
 | Sequential review | PASS. Fixed TaskAuditParticipant + EventParticipant composition only; Task Engine accepts the concrete Event Bus mapper; no generic registry/list/callback or Store re-entry; Event Bus depends only on Protocol/Storage; Storage has no Event Bus edge. |
 | Nonclaims | No range-aware replay/retention runtime, Scheduler runtime, scheduler-produced events, or P3 crash-matrix closure. |
 
-P3D–P3G evidence will be appended after each gated phase.
+P3F–P3G evidence will be appended after each gated phase.
 
 ## P3D — Bounded replay and retention (closed)
 
@@ -108,6 +108,29 @@ Paired portability evidence: GitHub-hosted macOS Intel x86_64 CI passed.
 GitHub-hosted macOS arm64 CI passed. Both ran the fresh 0001→0002,
 close/reopen, and integrity validation tests. No cross-architecture database
 artifact was exchanged.
+
+## P3E — Durable Scheduler storage and claims (closed)
+
+| Evidence | Result |
+|---|---|
+| Initial behavior commit | 94084303e6cee055c5381db3a84d75ac499ba636 (`feat: add durable scheduler claims`) |
+| Follow-up commit | 44ef12b13e385a5fff44fdc53bb66c7c31d1e647 (`fix: complete scheduler state command fences`) |
+| Scope | Typed schedule creation and state commands with authenticated retry receipts; bounded occurrence rows; source EventId uniqueness; fenced occurrence claims and mappings; singleton durable Scheduler replay cursor |
+| RED proof | New Scheduler storage suite first failed to compile because schedule/occurrence storage and claim APIs did not exist. Follow-up tests required pause/resume lifecycle behavior and duplicate source-event rejection. |
+| Focused GREEN | `cargo test -p serea-storage scheduler_tests --offline` — 10 tests PASS; storage Clippy `-D warnings` PASS. |
+| Covered behavior | Active schedule and pending occurrence bounds; competing Store connections; lease expiry/reclamation and stale-fence refusal; cancellation-versus-claim ordering; pause/resume revision handling; command retry idempotency; source EventId dedupe; event insertion rollback; pinned high-water cursor and stale consumer generation. |
+| Workspace validation | docs validator, workspace smoke, 75 smoke regression tests, metadata, fmt, all-target/all-feature workspace tests, Clippy `-D warnings`, and diff check — PASS. |
+| Fast CI | PASS — run 37511789290, Linux fast job 112434529945. |
+| Full CI | PASS — run 37511795677. |
+| Linux stable / MSRV 1.85 | PASS — jobs 112434550249 / 112434550240. |
+| GitHub-hosted macOS Intel x86_64 / arm64 | PASS — jobs 112434549877 / 112434550097. |
+| Release fault-seam proof | PASS — Linux stable job 112434550249. |
+| Sequential review | PASS; lifecycle mutation, event, and receipt share one transaction; occurrence mapping is fenced and independent of schedule cancellation after claim; storage has no Task Engine or Event Bus dependency. |
+| Nonclaims | No recurring occurrence expansion, Scheduler runtime, Task creation+mapping transaction, approval/device resumption, or integrated crash-matrix closure. |
+
+Paired portability evidence: GitHub-hosted macOS Intel x86_64 CI passed.
+GitHub-hosted macOS arm64 CI passed. Both ran all-feature tests and the task
+engine crash suite. No cross-architecture database artifact was exchanged.
 
 ## Project nonclaims
 

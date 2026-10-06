@@ -1,15 +1,15 @@
 # P2 Durable Task Runtime — Closure Evidence (CLOSED)
 
 - **Repository:** Serea
-- **Status:** **CLOSED — all P2I review and validation gates are GREEN.** The P2I commit is pending until the authorized single commit is created.
+- **Status:** **CLOSED — all P2I review and validation gates are GREEN.**
 - **Current branch:** `p2/p2i-final-closure`
 - **P2H commit:** `14017e3981cf23ac2b4a076aad435f16eb59b535`
 - **P2H parent:** `6fe6bd3e6d60924257d9d222fcf01ae000d841b9`
-- **P2I commit:** none
+- **P2I commit:** `e276103638cdb50f7005091b59fb373dda87d98a`
 - **Pushed:** no
 - **P3 production implementation:** not started
 
-This file is deliberately marked OPEN. Two independent P2A–P2H reviews were performed, but both identified coverage limits and therefore cannot honestly be recorded as the two required whole-P2 terminal PASS reviews. All scoped phase work and validations recorded below remain evidence; they do not substitute for the P2I review gate.
+The generation-0 P2A–P2H review reports below remain preserved as historical evidence, including their coverage limits. The terminal whole-P2 reviews are recorded separately and passed; later evidence closed the named coverage cells without rewriting the earlier review history.
 
 ## Phase history
 
@@ -24,7 +24,7 @@ This file is deliberately marked OPEN. Two independent P2A–P2H reviews were pe
 | P2F-b | `7c05ffae3503115a069761d40201aaf84595679a` | Task-engine integration |
 | P2G | `6fe6bd3e6d60924257d9d222fcf01ae000d841b9` | Recovery |
 | P2H | `14017e3981cf23ac2b4a076aad435f16eb59b535` | Crash/fault injection |
-| P2I | — | Group O, whole-P2 review reconciliation and this closure record; OPEN |
+| P2I | `e276103638cdb50f7005091b59fb373dda87d98a` | Group O, whole-P2 review reconciliation and this closure record; CLOSED |
 
 The P2H commit has exactly the specified P2G parent. The P2I branch was created only after the P2H commit was verified clean. There has been no amend or push.
 
@@ -105,7 +105,7 @@ The generation-0 reports [correctness/durability](P2I-review-correctness.md) and
 - **Terminal correctness/durability:** [P2I-review-correctness-terminal.md](P2I-review-correctness-terminal.md) — PASS.
 - **Terminal security/authority:** [P2I-review-security-terminal.md](P2I-review-security-terminal.md) — PASS.
 
-No unresolved Blocker, Major, or release-relevant test gap remains within the frozen P2 scope. Explicit P2 nonclaims and later-phase ADR obligations remain preserved below. P2I commit is pending until the authorized single commit is created.
+No unresolved Blocker, Major, or release-relevant test gap remains within the frozen P2 scope. Explicit P2 nonclaims and later-phase ADR obligations remain preserved below. Terminal correctness and security reviews both passed.
 
 ## ADR status and P2 nonclaims
 
@@ -149,4 +149,4 @@ P2 journals supported audited task-engine transition operations; it does not cla
 
 ## Next phase boundary
 
-**P2 status is CLOSED.** The P2I commit is pending until the single authorized commit is created. Only after that commit and a clean worktree may a read-only P3 preimplementation audit be considered. No P3 production code or migration has begun.
+**P2 status is CLOSED. P2I is CLOSED.** P2I commit: `e276103638cdb50f7005091b59fb373dda87d98a`; parent: `14017e3981cf23ac2b4a076aad435f16eb59b535`. Terminal correctness review: PASS. Terminal security review: PASS. The worktree after the P2I commit was clean. No P3 production code or migration has begun.

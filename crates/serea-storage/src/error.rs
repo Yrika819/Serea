@@ -84,6 +84,16 @@ pub enum StoreError {
     DuplicateIdempotencyKey,
     /// A task mutation supplies a backward or inconsistent timestamp.
     InvalidTimestamp,
+    /// Event payload exceeds the frozen 32 KiB canonical byte bound.
+    EventPayloadTooLarge,
+    /// One transaction attempted to append more than sixteen events.
+    EventTransactionLimit,
+    /// Event history has no capacity after eligible retention pruning.
+    EventStoreCapacity,
+    /// Global event sequence cannot advance without overflowing SQLite's integer domain.
+    EventSequenceOverflow,
+    /// Event content declares a class that this Store cannot safely persist.
+    EventClassRefused,
     /// Recovery observation no longer matches durable facts, even within one Tx.
     RecoverySnapshotStale,
     /// Requested recovery action lacks validated durable evidence.
@@ -134,6 +144,11 @@ impl StoreError {
             Self::DuplicateSequence => "DuplicateSequence",
             Self::DuplicateIdempotencyKey => "DuplicateIdempotencyKey",
             Self::InvalidTimestamp => "InvalidTimestamp",
+            Self::EventPayloadTooLarge => "EventPayloadTooLarge",
+            Self::EventTransactionLimit => "EventTransactionLimit",
+            Self::EventStoreCapacity => "EventStoreCapacity",
+            Self::EventSequenceOverflow => "EventSequenceOverflow",
+            Self::EventClassRefused => "EventClassRefused",
             Self::RecoverySnapshotStale => "RecoverySnapshotStale",
             Self::InvalidRecoveryAction => "InvalidRecoveryAction",
             Self::Clock(_) => "Clock",

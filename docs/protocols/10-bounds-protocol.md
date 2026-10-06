@@ -78,6 +78,14 @@ enforced anywhere else is a bug.
 | `max_retention_delete_batch` | 512 | whole event records eligible for deletion in one retention transaction | Delete no more than the batch; continue later; never partially rewrite a row; retention deadline still applies |
 | `max_retained_events` | 1000000 | retained event content records per host, excluding any minimal sequence-integrity metadata selected by retention ADR | At capacity, prune only contract-eligible records; if capacity remains exhausted, refuse new event-producing transactions atomically with typed capacity error; no silent drop |
 | `max_event_store_bytes` | 536870912 | total SQLite bytes attributable to event content and sequence-integrity metadata, measured by the documented deterministic accounting method | At capacity, prune only contract-eligible records; if still full, refuse event-producing transactions atomically with typed capacity error; no silent drop |
+
+For `max_event_store_bytes`, the deterministic logical accounting is the
+UTF-8 byte length of each retained canonical `SereaEvent` object, plus 8 bytes
+for each active sequence-ledger entry and 16 bytes for each detailed intentional
+expiry range. The fixed singleton metadata row, SQLite page/index/WAL overhead,
+and scheduler tables are excluded. This makes the same durable event state
+account identically on Linux, Intel macOS, and arm64 macOS; it is not a claim
+about physical database-file size.
 | `duplicate_window_ms` | 86400000 (24 h) | global | Not an exhaustion; a match returns `DUPLICATE_SUPPRESSED` (§5) |
 | `approval_request_expiry_ms` | 1800000 (30 min) | per-approval | Approval → `EXPIRED`, never a grant |
 | `task_retention_days` | 30 | per-task | Task body deleted; counters survive |

@@ -20,9 +20,12 @@ mod audit;
 mod blob;
 mod classify;
 mod error;
+mod event;
 mod lease;
 mod lifecycle;
 mod migrate;
+#[cfg(test)]
+mod migration_0002_tests;
 mod recovery;
 mod store;
 mod task;

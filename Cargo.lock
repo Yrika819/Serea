@@ -704,6 +704,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "serea-event-bus"
+version = "0.1.0"
+dependencies = [
+ "serea-protocol",
+ "serea-storage",
+]
+
+[[package]]
 name = "serea-protocol"
 version = "0.1.0"
 dependencies = [

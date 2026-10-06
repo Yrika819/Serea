@@ -104,19 +104,28 @@ fn rows(conn: &Connection) -> Vec<(i64, String, String, i64)> {
 
 fn assert_initial(conn: &Connection, stamp: i64) {
     let embedded = Migrations::embedded();
-    assert_eq!(Migrations::LATEST, 1);
-    assert_eq!(embedded.len(), 1);
     assert_eq!(embedded[0].version, 1);
     assert_eq!(embedded[0].name, "0001_initial");
     assert_eq!(embedded[0].sql, INITIAL_SQL);
     assert_eq!(
-        rows(conn),
-        vec![(
+        rows(conn).first(),
+        Some(&(
             1,
             "0001_initial".into(),
             Migrations::checksum(INITIAL_SQL).as_str().into(),
             stamp
-        )]
+        ))
+    );
+}
+
+fn assert_latest(conn: &Connection, stamp: i64) {
+    assert_eq!(Migrations::LATEST, 2);
+    assert_eq!(Migrations::embedded().len(), 2);
+    assert_initial(conn, stamp);
+    assert_eq!(rows(conn).len(), 2);
+    assert_eq!(
+        scalar(conn, "SELECT max(version) FROM schema_migrations"),
+        2
     );
 }
 
@@ -191,8 +200,8 @@ fn absent_and_zero_length_files_migrate_exactly_once_and_reopen_keeps_original_s
         }
         {
             let store = temp.open();
-            assert_eq!(store.schema_version().unwrap(), 1);
-            assert_initial(&store.conn.lock().unwrap(), STAMP);
+            assert_eq!(store.schema_version().unwrap(), 2);
+            assert_latest(&store.conn.lock().unwrap(), STAMP);
             store.verify_integrity().unwrap();
             assert_eq!(
                 store.checkpoint_for_close().unwrap(),
@@ -201,8 +210,8 @@ fn absent_and_zero_length_files_migrate_exactly_once_and_reopen_keeps_original_s
         }
         for stamp in [0, EpochMillis::MAX] {
             let store = Store::open(&temp.path, &FixedClock(stamp)).unwrap();
-            assert_initial(&store.conn.lock().unwrap(), STAMP);
-            assert_eq!(store.schema_version().unwrap(), 1);
+            assert_latest(&store.conn.lock().unwrap(), STAMP);
+            assert_eq!(store.schema_version().unwrap(), 2);
             store.verify_integrity().unwrap();
         }
     }
@@ -354,8 +363,8 @@ fn catalog_prefix_refusals_are_typed_and_leave_main_bytes_unchanged() {
 #[test]
 fn newer_version_takes_priority_over_wrong_names_checksums_and_missing_prefix() {
     for sql in [
-        "UPDATE schema_migrations SET version=2, name='0002_future'",
-        "UPDATE schema_migrations SET version=2, name='wrong', checksum='sha256:0000000000000000000000000000000000000000000000000000000000000000'",
+        "UPDATE schema_migrations SET version=3, name='0003_future'",
+        "UPDATE schema_migrations SET version=3, name='wrong', checksum='sha256:0000000000000000000000000000000000000000000000000000000000000000'",
         "UPDATE schema_migrations SET name='wrong', checksum='sha256:0000000000000000000000000000000000000000000000000000000000000000'; INSERT INTO schema_migrations VALUES (3, '0003_future', 'sha256:0000000000000000000000000000000000000000000000000000000000000000', 0)",
     ] {
         let temp = TempStore::new();
@@ -378,7 +387,7 @@ fn live_uncheckpointed_wal_refusals_preserve_main_wal_and_committed_state() {
         (false, "DROP TABLE unrelated", StoreError::NotSereaStore),
         (
             true,
-            "UPDATE schema_migrations SET version=2, name='0002_future'",
+            "UPDATE schema_migrations SET version=3, name='0003_future'",
             StoreError::SchemaTooNew,
         ),
         (
@@ -503,7 +512,7 @@ fn malformed_earlier_catalog_rows_do_not_hide_a_later_future_version() {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO schema_migrations VALUES (2, '0002_future', ?1, 0)",
+                "INSERT INTO schema_migrations VALUES (3, '0003_future', ?1, 0)",
                 [Migrations::checksum(INITIAL_SQL).as_str()],
             )
             .unwrap();
@@ -1235,13 +1244,13 @@ fn concurrent_fresh_open_commits_one_catalog_and_busy_opener_can_retry() {
         })
         .collect();
     for store in &stores {
-        assert_eq!(store.schema_version().unwrap(), 1);
-        assert_initial(&store.conn.lock().unwrap(), STAMP);
+        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_latest(&store.conn.lock().unwrap(), STAMP);
         store.verify_integrity().unwrap();
     }
     drop(stores);
     let reopened = temp.open();
-    assert_initial(&reopened.conn.lock().unwrap(), STAMP);
+    assert_latest(&reopened.conn.lock().unwrap(), STAMP);
     reopened.verify_integrity().unwrap();
 }
 

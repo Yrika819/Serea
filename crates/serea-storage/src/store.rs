@@ -207,6 +207,7 @@ impl Store {
             audit,
             protection: self.protection.clone(),
             rollback_only: false,
+            event_count: 0,
             origin: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         // P2H N2: real process death after BEGIN IMMEDIATE, before any write.
@@ -398,7 +399,7 @@ mod policy_tests {
                 Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
             assert_eq!(
                 migrate::inspect(&reader, Migrations::embedded(), false).unwrap(),
-                1
+                2
             );
             drop(reader);
             configure_file(conn).unwrap();

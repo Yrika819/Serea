@@ -18,15 +18,22 @@ pub struct Migration {
 
 /// Ordered migration source catalog. schema_migrations is the only version authority.
 pub struct Migrations;
-static EMBEDDED: [Migration; 1] = [Migration {
-    version: 1,
-    name: "0001_initial",
-    sql: include_str!("../migrations/0001_initial.sql"),
-}];
+static EMBEDDED: [Migration; 2] = [
+    Migration {
+        version: 1,
+        name: "0001_initial",
+        sql: include_str!("../migrations/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "0002_event_scheduler",
+        sql: include_str!("../migrations/0002_event_scheduler.sql"),
+    },
+];
 
 impl Migrations {
     /// Latest version understood by this binary.
-    pub const LATEST: u32 = 1;
+    pub const LATEST: u32 = 2;
 
     /// The production migration sources in deterministic application order.
     pub fn embedded() -> &'static [Migration] {

@@ -237,9 +237,10 @@ decision must never be made by parsing prose.**
 
 ## 5. Ordering and delivery
 
-- `seq` is assigned at commit and is strictly increasing with no gaps.
-  Reordering, deduplication, and gap detection are all derivable from `seq`
-  alone.
+- `seq` is assigned at commit and is strictly increasing with no gaps at
+  creation. After retention, replay gaps are resolved only by typed
+  `INTENTIONALLY_EXPIRED_RANGE` metadata; sequence values alone cannot
+  distinguish intentional expiry from corruption.
 - Commit atomicity: the event and the state change it describes are written in
   **one transaction**. An event that exists always describes a change that
   happened; a change that happened always has its event.
@@ -248,6 +249,21 @@ decision must never be made by parsing prose.**
   every event carries a stable id.
 - Within a task, events are totally ordered. Across tasks, only `seq` order is
   guaranteed, and that is sufficient.
+
+The P3 Storage API accepts a typed `SereaEvent` draft, replaces its sequence
+with the next host sequence, and writes the canonical complete object and
+sequence state through the caller's existing transaction. It enforces the
+32,768-byte canonical payload bound and 16-event outer-transaction bound before
+commit. An append failure rolls back its sequence allocation; an enclosing
+transaction or savepoint rollback removes both the event and allocation.
+Storage refuses PRIVATE content without an at-rest protection backend and
+refuses SECRET/CREDENTIAL event content.
+
+The event-store byte bound uses deterministic logical accounting rather than
+SQLite file size: canonical event-object UTF-8 bytes plus 8 bytes per active
+sequence-ledger row and 16 bytes per detailed intentional-expiry range. Fixed
+singleton metadata, SQLite page/index/WAL overhead, and Scheduler tables are
+excluded. See [Bounds Protocol §2](10-bounds-protocol.md#2-the-bound-set).
 
 ## 6. The Activity Timeline
 

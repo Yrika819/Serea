@@ -23,7 +23,7 @@ green on its exact commit.
 | Evidence | Result |
 |---|---|
 | Closure commit | `687bee58205b1e71e63425fda16172ab4ab45ad1` |
-| Evidence record commit | Pending |
+| Evidence record commit | e6d05b65414570fd927e647e4dc375302272c2c6 |
 | Scope | ADR-0026 Option A; Event/Device replay contract; protocol registry and current architecture references; audit reconciliation |
 | RED tests | Not applicable to docs/version-registry closure; existing protocol registry checks run below |
 | GREEN tests | `python3 tests/workspace_smoke.py`; 74-test `workspace_smoke_tests.py`; `cargo test -p serea-protocol --offline` |
@@ -39,11 +39,24 @@ green on its exact commit.
 | Sequential review | PASS — docs/version surfaces reconciled; explicit device/1 and device/3 refusals tested; no P3 runtime behavior entered |
 | Nonclaims | No migration 0002, Event Bus runtime, Scheduler runtime, P3 task transitions, or runtime retention/replay behavior yet |
 
-## P3B–P3G
+## P3B — Durable event foundation (in progress)
 
-Not started. Add a phase subsection with commit, RED/GREEN evidence, Cloud
+| Evidence | Result |
+|---|---|
+| Scope | Migration 0002, event metadata/content schema, transactional typed event append, scheduler durable schema foundation, serea-event-bus crate edge |
+| RED proof | cargo test -p serea-storage migration_0002_tests:: first failed because the migration catalog lacked version 2; the typed append test then failed to compile because Tx::append_event did not exist |
+| Focused GREEN | cargo test -p serea-storage migration_0002_tests:: --offline — 11 tests PASS; cargo test -p serea-event-bus --offline — PASS |
+| Workspace checks | docs validator PASS; workspace smoke PASS; regression suite PASS (75 tests; one additional test guards the new Storage/Event Bus direction); fmt, metadata, diff check, and full workspace all-target/all-feature tests PASS |
+| Covered behavior | Migration 0001 checksum unchanged; 0001→0002 apply/reopen; production 0002 DDL rollback; seq allocation + event row transaction atomicity; rollback creates no committed gap; two Store connections serialize; content immutability; privacy-minimal sequence/range columns; payload, transaction-count, and logical byte capacity refusals |
+| Cloud validation | Workspace full gates in progress |
+| Fast CI / Full CI | Pending P3B commit |
+| Linux stable / MSRV 1.85 / Intel / arm64 / fault proof | Pending paired GitHub Actions |
+| Sequential review | In progress; no generic SQL API or reverse Storage→Event Bus dependency; byte accounting is deterministic logical bytes, independent of SQLite page/WAL representation |
+| Nonclaims | No retention execution, range-aware replay runtime, Scheduler runtime, Task Engine event participation, or crash-matrix closure yet |
+
+P3C–P3G have not started. Add each phase's commit, RED/GREEN evidence, Cloud
 validation, Fast/Full Actions run and job IDs, paired Mac results, review
-findings, and nonclaims when each phase closes.
+findings, and nonclaims when that phase closes.
 
 ## Project nonclaims
 

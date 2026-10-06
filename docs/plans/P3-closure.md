@@ -67,19 +67,20 @@ No cross-architecture database artifact was exchanged.
 
 | Evidence | Result |
 |---|---|
-| Commit | pending |
+| Behavior commit | fb647f7bbea802855a5a16bd552747e8fdbce899 (`feat: make task transitions event-atomic`) |
+| Documentation follow-up | e593a057498a7dff77b1b3cbc28bed4e2a494db0 (`docs: clarify Task Engine event role`) |
 | Scope | Fixed Storage audit+event participants; Task Engine event mapper; recovery event participation; operation inventory in [P3C task event inventory](P3C-task-event-inventory.md) |
 | RED proof | Before implementation, `p3c_task_creation_commits_task_journal_event_and_sequence_together` observed task+journal counts `(1,1)` with event+seq `(0,0)`; expected all four to commit. |
-| Focused GREEN | `cargo test -p serea-task-engine --all-targets --offline` — PASS (all five task-engine test binaries); focused workflow/recovery suites PASS. |
+| Focused GREEN | `cargo test -p serea-task-engine --all-targets --offline` — PASS (all five task-engine test binaries); Storage event-participant serialization rollback test PASS; focused workflow/recovery suites PASS. |
 | Failure-path coverage | Event mapper serialization failure; journal insert trigger failure; duplicate EventId insert failure; illegal transition refusal; terminal-specific/generic event selection; step lease writes produce no task lifecycle event; committed create retry produces no duplicate event. |
 | Workspace checks | Docs validator, workspace smoke, 75 smoke regression tests, metadata, fmt, diff check, full workspace all-target/all-feature test, and Clippy `-D warnings` — PASS. |
 | Cloud validation | PASS locally in the Codex Cloud workspace; exact commit evidence pending. |
-| Fast CI | pending |
-| Full CI | pending |
-| Linux stable / MSRV 1.85 | pending |
-| GitHub-hosted macOS Intel x86_64 / arm64 | pending |
-| Release fault-seam proof | pending |
-| Sequential review | Pending final diff review and Actions gate. Fixed two participants only; no generic registry/list/callback or Store re-entry; Event Bus depends only on Protocol/Storage; Storage has no Event Bus edge. |
+| Fast CI | PASS — run `37506453647`, job `112416544924`, at docs-only descendant `e593a05`; earlier P3C run `37506345232` was canceled by that follow-up push before workspace check completed. |
+| Full CI | PASS — run `37506354685`, on behavior commit `fb647f7`. |
+| Linux stable / MSRV 1.85 | PASS — jobs `112415916865` / `112415917357`. |
+| GitHub-hosted macOS Intel x86_64 / arm64 | PASS — jobs `112415917261` / `112415917325`. |
+| Release fault-seam proof | PASS — Linux stable job `112415916865`. |
+| Sequential review | PASS. Fixed TaskAuditParticipant + EventParticipant composition only; Task Engine accepts the concrete Event Bus mapper; no generic registry/list/callback or Store re-entry; Event Bus depends only on Protocol/Storage; Storage has no Event Bus edge. |
 | Nonclaims | No range-aware replay/retention runtime, Scheduler runtime, scheduler-produced events, or P3 crash-matrix closure. |
 
 P3D–P3G evidence will be appended after each gated phase.

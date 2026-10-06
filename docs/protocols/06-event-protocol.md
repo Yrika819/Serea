@@ -170,9 +170,10 @@ repurposing one is major.
 `DELETION_CASCADE_COMPLETED` is the **completion record of one cascade
 transaction**, and its meaning is deliberately narrow:
 
-- It is emitted once per cascade, after the transaction that deleted the items,
-  the provenance rows, and the content-addressed blobs, and wrote the
-  tombstones. The payload carries the counts, so a partial failure is visible
+- The delete statements, provenance/blob deletion, tombstones, and event insert
+  occur in that order in one transaction, followed by one COMMIT. The event is
+  inserted after deletion work succeeds but before that same transaction
+  commits. The payload carries the counts, so a partial failure is visible
   rather than silent.
 - It is **not** a per-item deletion event. `MEMORY_ITEM_DELETED` records that
   one item was removed and why; `DELETION_CASCADE_COMPLETED` records that a
@@ -306,6 +307,16 @@ corresponding `APPROVAL_CONSUMED` event was never exercised.
 `POLICY_CHANGED` outliving the task it relates to is intentional: policy history
 is an audit artifact, not a task artifact.
 
+Identifiers such as `TaskId`, `StepId`, and related trace IDs in an event are
+immutable opaque historical values. Event content must not use task/step foreign
+keys with `ON DELETE CASCADE` or `ON DELETE SET NULL`; deleting a task never
+mutates a retained event. Event retention or an explicitly authorized content
+erasure design is the only mechanism that removes retained event content.
+Interaction between such erasure and global `seq` is unresolved in
+[ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md); no
+schema implementing either FK or erasure behavior is authorized until that ADR
+is decided.
+
 ## 9. Invariants summary
 
 | # | Invariant |
@@ -331,6 +342,8 @@ architecture version per [§4.1](00-protocol-index.md#41-semantics).
 | Architecture version | Change | Kind | Authority |
 | --- | --- | --- | --- |
 | `serea-arch/0.2.0` | Added `DELETION_CASCADE_COMPLETED` to §3.7. It is the completion record of one right-to-delete cascade transaction, carrying the deletion counts, as required by [Data Classification §8.2](09-data-classification-protocol.md#82-deletion-cascades) step 4. No existing kind was renamed, repurposed, or removed; the wire surface remains `serea.event/1`; unknown kinds still fail closed on a host parse and are still skipped by clients (§4.2 rules 3 and 4, §6 rule 2, `E7`). | Minor — a backward-compatible addition | [ADR-0017](../decisions/ADR-0017-deletion-cascade-completed-event-kind.md) |
+| 2026-10-06 | Clarified that deletion work and `DELETION_CASCADE_COMPLETED` insert precede the one COMMIT inside the same transaction. This reconciles ADR-0017 wording with E3 and Data Classification §8.2; a post-commit append is forbidden. | Editorial clarification of accepted transaction semantics | Owner direction; E3; Data Classification §8.2 |
+| 2026-10-06 | Task/step identifiers in event content are immutable historical values; event content has no cascading or nulling FK to task/step rows. Physical event-content erasure and seq-gap behavior are deferred to Proposed ADR-0026. | Retention constraint; storage design gate | Owner direction; ADR-0026 |
 
 ## 9. P2A validation changelog and deferred runtime seam
 

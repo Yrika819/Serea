@@ -21,6 +21,7 @@ contains at least:
 | `schedule_id` | Stable `ScheduleId`, never reused. |
 | `owner_device_id` | The paired device/user identity that created the schedule, or the host admin identity for a host-created schedule. |
 | `state` | `ACTIVE`, `PAUSED`, or `CANCELLED`. |
+| `revision` | Monotonically increasing generation changed by each committed definition or state mutation; claims compare the expected revision under the transaction fence. |
 | `trigger` | A validated event predicate or calendar recurrence, exactly one trigger form per schedule. |
 | `task_template` | Host-validated task intent and permitted arguments; a schedule does not persist model-authored authority. |
 | `policy_class` | Fixed ceiling for spawned work; a scheduled task cannot raise it. |
@@ -33,8 +34,12 @@ contains at least:
 
 Creation, change, pause, resume, and cancellation require an authenticated user
 or host administrator action. Model output may propose a schedule but cannot
-create or mutate durable schedule state. Every mutation is persisted before its
-corresponding scheduler event is appended.
+create or mutate durable schedule state. Mutation and its corresponding
+scheduler event use one Storage transaction: execute the schedule/state SQL
+mutation, append the event and allocate its sequence inside that same uncommitted
+transaction, then COMMIT once. “Persisted before event appended” specifies SQL
+statement order within this transaction. It never means two transactions or a
+commit between the mutation and event.
 
 A schedule's policy ceiling and task template are immutable for already-created
 tasks. Editing a schedule affects future occurrences only. Raising its policy
@@ -114,10 +119,24 @@ Task Protocol and does not undo completed effects.
 
 ## 5. Timezone, daylight-saving transitions, and missed occurrences
 
-Recurrence definitions use an IANA timezone and local calendar fields; due
-instants are computed and persisted in UTC. A timezone database update affects
-future calculations only; it never rewrites a processed occurrence or changes
-the UTC instant already assigned to a pending occurrence.
+Recurrence definitions use Serea's recurrence grammar, an IANA timezone and
+local calendar fields; due instants are computed and persisted in UTC. For each
+resolved occurrence persist the intended local label, timezone identifier,
+resolved UTC instant, evaluator version, and TZDB version. A TZDB update affects
+future unresolved occurrences only; it never rewrites a processed occurrence or
+changes the UTC instant already assigned to a pending/resolved occurrence.
+
+P3 selects Jiff `=0.2.38` as the timezone conversion and gap/fold evaluator,
+with `default-features = false` and only the required `std` and
+`tzdb-bundle-always` features (plus `tz-fat` if needed). This excludes
+`tzdb-zoneinfo` and `tzdb-concatenated`, so authoritative recurrence resolution
+cannot silently consult host OS TZDB. Jiff 0.2.38 resolves exact
+`jiff-tzdb =0.1.9`; its embedded IANA database reports version `2026e`.
+Crates.io metadata checked 2026-10-06 reports both packages as `Unlicense OR
+MIT`, each declaring Rust 1.70; both are compatible with the workspace's Rust
+1.85 MSRV. Pin the evaluator, bundled data crate, and TZDB data version and
+persist evaluator/TZDB versions per resolved occurrence. Jiff does not own or
+expand Serea's recurrence grammar or occurrence policy.
 
 For a local time that does not exist during a daylight-saving gap, the occurrence
 is assigned to the first valid local instant after the gap. For a local time that
@@ -154,6 +173,31 @@ Scheduler lifecycle events are owned by the [Event Protocol](06-event-protocol.m
 `SCHEDULE_CANCELLED`, `SCHEDULE_OCCURRENCE_MISSED`, and
 `SCHEDULE_TASK_CREATED`. They are committed in the same transaction as the
 schedule/occurrence state change they describe.
+
+For schedule cancellation and occurrence claim, each claim transaction
+revalidates that the schedule is `ACTIVE`, its expected revision/generation is
+current, the occurrence is unmapped and unprocessed, and the scheduler lease
+fence is current. If cancellation commits first, a later claim refuses. If the
+claim and task mapping commit first, that already-created task may continue
+under normal Task Protocol reconciliation; cancellation prevents future
+occurrences and does not silently cancel the task.
+
+Retries of an authenticated schedule command reuse the common authenticated
+envelope's stable `message_id` as the durable command-deduplication identity.
+The receipt binds that ID to the authenticated envelope/request digest and
+stored outcome; reusing an ID with different request content is refused. A new
+message ID is a new command. IDK-1 is not reused because its frozen task/action
+preimage fields and semantics do not match schedule lifecycle commands.
+
+P3 external generic subscribers are out of scope. The device timeline remains
+the frozen replay surface. The Scheduler is the sole internal durable Event Bus
+consumer and uses a Scheduler-specific singleton cursor/state row, not a generic
+subscriber registry. In-memory notifications are wake optimizations with zero
+authority. Startup order is: open/migrate Store; validate event metadata;
+recover Task Engine; reconcile Scheduler occurrences; replay Scheduler events
+from its durable cursor; enter live mode. Each replay pass snapshots committed
+high-water `seq` and processes only through that value. Events produced while
+handling the batch are processed on a later pass.
 
 ## 7. Approval interaction and authority
 

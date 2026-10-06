@@ -1,7 +1,7 @@
 # Serea P3 Preimplementation Audit
 
 - **Status:** `BLOCKED_PENDING_OWNER_DECISION`
-- **Audit base:** `main` at `cb580be8dd0057202c6b0f9c783391460bfc1875`
+- **Audit base:** `p3/preimplementation-audit` at `da117b5f9c4572bb989f5bf7f3d61b9cb2886164`
 - **Audit branch:** `p3/preimplementation-audit`
 - **Scope:** documentation and design only. No P3 runtime, schema migration, dependency, or behavior change.
 - **Authority reviewed:** repository contracts at the audit base; public branch and CI identities supplied with the task.
@@ -14,16 +14,17 @@ with a durable ordered timeline and replay, plus a durable schedule/occurrence
 trigger that admits or resumes ordinary tasks. Neither is a generic message
 broker nor a second task engine.
 
-The implementation gate is **not closed**. The architecture cannot honestly be
-called ready until the owner resolves the transaction-boundary conflicts in
-§4, reconciles the accepted ADR-0017 wording recorded in §4, and
-ratifies or rejects the proposed ADR-0025. There is also a
-specific unresolved capability boundary for event subscribers and history
-replay (§5). The frozen scheduler protocol explicitly includes local calendar
-recurrence and IANA/DST behavior; this audit does not remove or silently narrow
-that accepted contract. Its implementation dependency and timezone-data source
-must be selected before recurrence implementation. No migration 0002 is created
-by this audit.
+The owner directions in this closure pass resolve the fixed transaction
+composition (Accepted ADR-0025), Scheduler SQL/COMMIT ordering, P3 subscriber
+scope and startup/replay boundary, event foreign-key policy, ADR-0017 ordering,
+recurrence evaluator, operational bounds, cancellation/claim fence, and command
+retry identity. One architecture contradiction remains: the frozen global
+gapless sequence and corruption-on-interior-gap rule cannot coexist with
+independent per-class content deletion. Proposed ADR-0026 compares viable
+designs and recommends a range-aware sequence ledger, but that changes frozen
+replay semantics. The exact owner choice in ADR-0026 is required before
+closure. Status remains `BLOCKED_PENDING_OWNER_DECISION`; migration 0002 is not
+created.
 
 No P2 behavior changes. P2's `task_journal` remains the pre-P3 non-event audit
 record and is never backfilled into `SereaEvent`. P2's `RecoveryReport` field
@@ -53,14 +54,15 @@ exclusion; **AMBIGUOUS** lacks one implementation interpretation;
 | ACCEPTED_ADR | `docs/decisions/ADR-0017-deletion-cascade-completed-event-kind.md` | Registered `DELETION_CASCADE_COMPLETED` means one completed deletion-cascade transaction with counts; it is not per-item/task-retention event. | Event Protocol + deletion owner when implemented | Keep narrow kind semantics and privacy-aware payload. | Kind/schema and cascade-transaction atomicity test when that subsystem exists; not P3 scope by itself. |
 | FROZEN | `docs/architecture/03-crate-map.md` §§1–3 | Acyclic lower-layer dependencies; protocol is L0, Storage/Event Bus L1, Task Engine/Scheduler L3; Event Bus owns event/seq/log/retention; Scheduler owns durable schedules/wakes; Core composes. | Each listed crate | Keep graph below and do not create a new core crate or Storage→TaskEngine edge. | Cargo normal-edge graph/smoke checks; no runtime testkit edge. |
 | FROZEN | `docs/architecture/04-execution-pipeline.md` §§1–3,6 | Pipeline stages 9–10 commit receipt/evidence/event/task state together, then deliver via event timeline; worked examples and crash/recovery table make this contract concrete. | Task Engine + Event Bus + Storage; Core delivery | Build the P3 operation→event matrix from actual transition paths; delivery stays after commit and cannot share the state transaction. | For every listed transition, success/rollback event assertions plus delivery replay after commit; map each crash row to a named test. |
-| PROPOSED_ADR | `docs/decisions/ADR-0021-p2-p3-event-atomicity-seam.md` | E3 is forward-only; no retroactive P2 event fabrication; P2 journal is distinct; Event Bus appends events and allocates seq in the same Storage transaction using actual-write facts. P2-side seam is implemented, but the ADR is still Proposed and its P3 participant shape is not ratified. | Storage transaction; TaskEngine journal semantics; Event Bus event semantics | Must compose journal and event write within one transaction without making P2 journal an event log. Current `Store::transact_with_audit` accepts one audit participant. | State+journal+event+sequence success/rollback tests; no-commit publication; P2 rows remain unchanged. |
-| ACCEPTED_ADR + CONTRADICTORY WORDING | `docs/decisions/ADR-0017-deletion-cascade-completed-event-kind.md` Context/Decision; Data Protocol §8.2; Event Protocol E3 | ADR-0017 describes the completion event as emitted “after the transaction … has committed”; Data Protocol §8.2 step 4 records the event within the single cascade operation, while E3 requires event and described state change in one transaction. | Deletion owner + Storage + Event Bus | Literal post-commit append violates E3; interpret “after” as after delete/tombstone statements but before commit, or amend the accepted ADR wording. Do not implement post-commit. | Cascade fault points prove delete/tombstone/event all commit or all roll back; explicit event absent on failed cascade. |
+| ACCEPTED_ADR | `docs/decisions/ADR-0025-p3-event-participant-composition.md` | Fixed composition has exactly TaskAuditParticipant and EventParticipant; both execute in the same Storage transaction/savepoint over immutable successful-write facts. | Storage; Task Engine journal semantics; Event Bus event semantics | No registry/list, Store re-entry, SQL escape, or dependency inversion. Journal/event/seq/state roll back together. | State+journal+event+sequence success/rollback tests; no-op/refusal contract; P2 rows remain unchanged. |
+| RESOLVED WORDING | `docs/decisions/ADR-0017-deletion-cascade-completed-event-kind.md`; Data Protocol §8.2; Event E3 | Delete/provenance/blob statements and tombstones succeed, then event insert occurs before the same transaction's one COMMIT. | Deletion owner + Storage + Event Bus | Post-commit append is forbidden; corrected ADR and protocol changelog record same-transaction order. | Cascade fault points prove delete/tombstone/event all commit or all roll back. |
 | HISTORICAL | `docs/plans/P2-closure.md` §§Workspace, nonclaims, next phase | P2 is closed at 0001 with no event bus/scheduler, no E3/E4, no backfill. `pending_event_transitions` is a committed journal-row count. | Storage + Task Engine | Migration 0001 is frozen; preserve report meaning; P3 event guarantee begins only for new transitions after its atomic participant is live. | Migration checksum unchanged; upgrade fixture proves existing count and journal unchanged. |
 | HISTORICAL | `docs/plans/P2-test-matrix.md` §§E, F, H, M, O | P2 tests use explicit `EpochMillis`, injected `Clock`/`TestClock`, and no ambient system clock; P2 crash evidence is bounded process/fault evidence, not power-loss certification. | Protocol/Storage/TaskEngine | P3 deterministic core receives explicit time; hosted CI evidence remains environment-scoped. | P3 deterministic time injection; named process-crash tests, no broader durability claim. |
 | NONCLAIM | `README.md` Current status/Evidence; P2 Closure §§ADR status/nonclaims | P3 runtime not implemented; no event bus, scheduler, migration 0002, event delivery, event backfill, provider runtime, or power-loss guarantee is claimed. | Project | Audit documentation cannot represent these as shipped. | Docs validation and repository/source inventory. |
 | FROZEN | `docs/protocols/09-data-classification-protocol.md` §§2–3,6,8; `docs/decisions/ADR-0010-*` | Classification inherits maximum input class; CREDENTIAL only credential store, SECRET sealed store only, PRIVATE encrypted at rest and controlled cloud egress; unclassified defaults to CREDENTIAL. | Protocol + Storage + each egress owner | Event/schedule content requires declared inherited class, protected content reference policy, retention/deletion handling; P2 ordinary rows remain PRIVATE fail-closed. | Per-class storage refusal/protection/redaction tests; class cannot be lowered through event or schedule derivation. |
-| FROZEN | `docs/protocols/10-bounds-protocol.md` §§2,2.4 | Catch-up limit 10 is frozen. Event/schedule counts, payload bytes, subscribers, replay batches, recovery scans, and storage size lack operational bounds; structural schema caps do not substitute. | Core owns bound config; enforcing crate owns each check | No invented numeric values; P3 implementation cannot claim resource boundedness until required workload bounds are chosen. | Boundary tests once owner chooses required bound values; pre-mutation refusal/no partial write. |
-| AMBIGUOUS | Event Protocol §§5–8; Crate Map §3 | Device timeline replay is defined, but generic subscriber identity/durability, internal live notification mechanism, event-predicate scan cursor, subscriber deletion, and whether external consumers are admitted are not. | Event Bus; Scheduler as one internal consumer; Core device link | Choose only the device timeline plus internal scheduler consumer for P3 unless owner expands scope; durable event history is authoritative, but cursor persistence location remains open. | Replay/live race, subscriber restart, cursor commit crash, retention and deletion tests after scope decision. |
+| OWNER-SELECTED BOUNDS | `docs/protocols/10-bounds-protocol.md` §2 | Existing catch-up=10, concurrent tasks=8, and lease=120 remain; P3 operational limits now specify scope, refusal, visibility, and zero behavior. | Core owns bound config; enforcing crate owns each check. | Bounds do not settle retention/sequence semantics; ADR-0026 remains a gate. | Boundary tests; pre-mutation refusal/no partial write; bounded scans/deletes. |
+| OWNER-RESOLVED SCOPE | Event Protocol §§5–8; Scheduler Protocol §§2,6 | Device timeline remains replay surface; Scheduler is sole internal durable consumer; no generic external subscribers. Scheduler-specific singleton cursor; notification is wake-only; replay uses committed high-water snapshots. | Event Bus, Scheduler, device timeline | Startup order and replay boundary are specified. | Replay/live race, cursor/task mapping atomicity, startup recovery replay tests. |
+| CONTRADICTORY | Event Protocol §§2,6,8,9; Proposed ADR-0026 | Gapless global seq plus corruption on missing interior seq conflicts with independent whole-record class expiry. | Event Protocol owner + privacy/data owner | ADR-0026 recommends option A but replay semantics change; owner must choose A/B/C. No migration until selected. | Expiry interleaving, replay range, explicit forget, device cursor, Scheduler cursor, bounded storage tests after decision. |
 
 ### Relevant current implementation facts
 
@@ -132,20 +134,19 @@ at/above high-water returns empty. Device dedup uses event ID. A durable cursor
 table is **not required by the frozen device protocol** because it describes a
 client cursor, but storage/retention must have enough state to determine oldest
 retained sequence. Scheduler `HOST_EVENT` consumption must deduplicate by source
-`EventId`; where its cursor lives and how it atomically advances with occurrence
-work are unresolved.
+`EventId`; its durable Scheduler-specific singleton cursor advances atomically
+with handled occurrence work. External generic subscriber cursors are out of P3.
 
 No events are silently discarded except whole-record retention at their
-configured horizon. Event Protocol defines retention classes but not a physical
-deletion procedure, foreign-key policy, tombstone requirements, or coordination
-with task deletion. Deletion/cascade must not rewrite events or allow a dangling
-event reference to be mistaken for a retained task. These are migration and
-retention design gates.
+configured horizon. Event rows never use `ON DELETE CASCADE` or `SET NULL` to
+task/step rows; event identifiers are immutable opaque historical values and
+task deletion does not mutate retained events. The physical deletion and
+interior-sequence semantics remain blocked by ADR-0026.
 
 Host parsers reject unknown `EventKind`; forward-compatible clients skip it and
 continue. Payloads are structured validated event facts, not arbitrary model
-output. Maximum bytes, retained count, query/replay batch, simultaneous
-consumers, and recovery scan bounds remain unselected.
+output. The P3 limits are selected in Bounds Protocol §2. Retention count/bytes
+are numeric limits, but their enforcement semantics depend on ADR-0026.
 
 ## 4. Atomicity contradiction and proposed ADR-0025
 
@@ -160,10 +161,9 @@ consumers, and recovery scan bounds remain unselected.
   with no event, while same-transaction append forbids that state.
 - **Runtime consequence:** crash between state commit and append loses the
   schedule event, violating E3 and making auditing incomplete.
-- **Safest interpretation:** treat §1's “before” as draft ordering within one
-  uncommitted transaction, with the event row written before the transaction
-  commits; a crash rolls both back. This matches E3 and §6, but changes the
-  literal interpretation of §1 and needs owner ratification.
+- **Resolution:** E3 and §6 govern. §1's “before” is SQL statement order within
+  the same uncommitted transaction: mutate state, append event/allocate seq,
+  COMMIT once. It never means two transactions.
 
 ### Contradiction B: accepted Storage API versus two participants
 
@@ -180,26 +180,21 @@ consumers, and recovery scan bounds remain unselected.
   not depend upward on Task Engine/Event Bus.
 - **Runtime consequence:** without a concrete adapter/API, every P2-mutating
   operation either misses events or introduces a cycle/second commit boundary.
-- **Safest interpretation:** no outbox, no post-commit publication, no
-  backfill, and no new generic registry. Prefer an explicit, narrowly scoped
-  composition of the existing journal mapping and an event-specific storage
-  capability around actual-write facts in the same transaction/savepoint.
-  Precisely where that composition lives, how it preserves P2 savepoint
-  failure guarantees, and whether `Tx` is extended are owner decisions.
+- **Resolution:** Accepted ADR-0025 fixes exactly two participants in the same
+  transaction/savepoint over immutable facts. Task Engine owns journal meaning;
+  Event Bus owns event meaning; Storage owns transaction/facts. No registry,
+  Store re-entry, post-commit publication, backfill, or upward Storage edge.
 
-### Proposed ADR-0025 (not accepted)
+### Accepted ADR-0025 (runtime deferred)
 
 **Title:** P3 Event Participant Composition and Atomic Publication
 
-**Status:** Proposed; owner decision required.
-
-Proposed constraints: preserve forward-only E3; one SQLite transaction commits
-state, TaskJournal and `SereaEvent` rows; allocate `seq` only there; no
-post-commit/outbox path; no synthetic P2 events; no generic mutable hook
-registry; no Storage→TaskEngine/EventBus runtime edge. Preserve failure rollback
-and no-op behavior of current P2 operations. The ADR must choose the explicit
-composition/API and enumerate which existing operations are event-producing.
-This audit does not choose a public signature or mark the proposal accepted.
+Status: Accepted 2026-10-06. It preserves forward-only E3; one SQLite
+transaction commits state, TaskJournal and `SereaEvent` rows; seq is allocated
+only there; no post-commit/outbox path, synthetic P2 events, generic mutable
+registry, or Storage→TaskEngine/EventBus runtime edge. Participant failure
+rolls back all rows and sequence allocation. Exact event coverage remains a P3
+operation inventory, not an open composition decision.
 
 ### Contradiction C: deletion completion event after commit
 
@@ -213,10 +208,9 @@ This audit does not choose a public signature or mark the proposal accepted.
   transaction and can be absent after a crash between commit and append.
 - **Runtime consequence:** literal ADR wording violates E3 and can leave a
   completed privacy deletion without its completion record.
-- **Safest interpretation:** “after” means after the delete/tombstone SQL
-  operations within the still-open transaction, before COMMIT. Because ADR-0017
-  is Accepted, amend its wording only through the project decision process;
-  never silently use a second transaction.
+- **Resolution:** delete statements, provenance/blob deletion, tombstones,
+  completion-event insert, one COMMIT. ADR-0017 and Event Protocol changelog
+  now state this order. Never use a post-commit append.
 
 ## 5. Scheduler: Serea-specific contract
 
@@ -245,8 +239,8 @@ frozen recurrence protocol additionally requires IANA local-calendar
 calculation and deterministic DST gap/fold policy. That calculation is not
 expressible with EpochMillis alone: EpochMillis is enough to persist and order
 resolved instants, but a timezone rules source/recurrence evaluator is needed to
-derive them. Dependency/data-source selection is open; no dependency is added
-here.
+derive them. Scheduler Protocol §5 selects pinned Jiff with bundled TZDB for
+conversion only; no dependency is added to Cargo in this docs-only closure.
 
 For one-time due triggers, due means `now >= due_at`. Overdue items are processed
 according to their persisted missed policy and catch-up bound. Clock moving
@@ -256,7 +250,9 @@ unprocess work; no due item becomes “un-due” after its claim. Duplicate wake
 resolve through the durable occurrence key. A large jump is a bounded catch-up,
 never an unbounded task burst. DST/timezone behavior follows Scheduler Protocol
 §5. Exact behavior for timezone database changes is frozen for pending versus
-processed occurrences; evaluator version/data retention remains unresolved.
+processed occurrences. Jiff `=0.2.38` with always-bundled `jiff-tzdb =0.1.9`
+is selected for timezone/DST calculation only; persist evaluator and TZDB
+version for each resolved occurrence.
 
 Persisted due instants and lease expiry are evaluated with explicit UTC
 `EpochMillis`. A backward wall-clock adjustment may delay lease reclamation; a
@@ -278,11 +274,11 @@ callback requirement.
 Pause/cancel prevent new occurrences after state is revalidated under the
 occurrence fence; already-created tasks continue unless independently cancelled
 through Task Protocol. Rescheduling changes future occurrences; already-created
-tasks keep their frozen template/policy. The protocol is underspecified for a
-cancel race with an already claimed but not yet mapped occurrence; safest
-behavior is revalidate inside the mapping transaction so cancel-before-commit
-prevents task creation and commit-before-cancel is an already-created task.
-Owner should confirm this linearization point.
+tasks keep their frozen template/policy. Claim transactionally revalidates
+ACTIVE state, expected schedule revision/generation, unmapped/unprocessed
+occurrence, and current lease fence. Cancel-first refuses later claim;
+claim-first may continue under ordinary reconciliation and is not silently
+cancelled.
 
 ## 6. Transaction windows and resolution
 
@@ -294,16 +290,15 @@ Owner should confirm this linearization point.
 | Task advanced/created, schedule occurrence still active/unmapped | Impossible for schedule-created task | In one transaction write occurrence mapping, task creation/state, associated events and relevant cursor. | Triggered rollback tests with a failure at each participant; no orphan task. |
 | Event cursor advanced, handler work not committed | Must not occur for durable Scheduler consumption | Cursor/occurrence work commits with task mapping, or cursor is not advanced until idempotent work commits; source EventId unique key prevents duplicate task. | Crash before/after cursor write and handler write; restart has neither skipped event nor duplicate task. |
 | Handler work committed, cursor not advanced | Repairable only when work is idempotent | On replay, unique source EventId/occurrence mapping returns prior task, then advances cursor in same transaction. | Replay same source event after crash; exactly one mapping and task. |
-| Delivery happened, acknowledgement/cursor missing | Allowed at-least-once delivery | Stable EventId/message_id dedup at consumer; no exactly-once claim. Device timeline client owns its last-seen cursor unless owner chooses durable server cursor. | Deliver then crash before ack; duplicate is harmless and ordered. |
+| Delivery happened, acknowledgement/cursor missing | Allowed at-least-once delivery | Stable EventId/message_id dedup at consumer; no exactly-once claim. Device client owns its last-seen cursor; Scheduler uses its own singleton durable cursor. | Deliver then crash before ack; duplicate is harmless and ordered. |
 | Schedule cancel races due claim | Linearize under Storage transaction/fence | Revalidate ACTIVE state while holding fenced occurrence transaction; cancel-before-claim commit prevents new task; claim/mapping commit first means existing task is retained. | Two-connection interleaving tests in both commit orders, including stale lease. |
-| Event publish call retries after caller lost commit result | Must be idempotent by source operation identity | Deterministic semantic operation identity/dedupe key is required; EventId and sequence alone do not dedupe a reissued business operation. Exact P3 mapping to existing IDK-1 is unresolved. | Child killed after COMMIT before return; retry yields one event and one seq allocation. |
+| Event publish call retries after caller lost commit result | Must be idempotent by source operation identity | Authenticated common-envelope `message_id` is the durable command key, bound to request digest and stored result; same ID/different body refuses. IDK-1 is not reused because its task/action preimage semantics differ. | Child killed after COMMIT before return; retry yields one event and one seq allocation. |
 
 P2's existing `IDK-1` is defined for task/action idempotency preimages, not
-automatically for schedule operations or subscriber cursors. Reuse it only when
-the semantic preimage and domain match. Scheduler operation identity is
-ScheduleId+canonical occurrence/source EventId; lifecycle create/update/cancel
-needs an authenticated request identity or explicit version/command identity,
-not an invented second hash scheme.
+schedule lifecycle commands. Schedule occurrence identity remains
+ScheduleId+canonical occurrence/source EventId. Authenticated lifecycle-command
+retry identity reuses the envelope `message_id`; its durable receipt binds the
+request digest and outcome, without inventing another identifier prefix.
 
 ## 7. Journal boundary and P2 compatibility
 
@@ -322,21 +317,23 @@ existing Task Engine with existing TaskIds; it never writes task recovery
 decisions itself. Event Bus startup validates sequence/history integrity and
 offers replay; it does not repair task state. Composition root startup order:
 
-1. Open Store and apply migration 0002 transactionally.
+1. Open Store and apply the installed migrations transactionally.
 2. Validate event sequence metadata/log invariants.
 3. Run `TaskEngine::recover` once with explicit `EpochMillis` and publish its
    report only after its existing transaction commits.
 4. Run Scheduler reconciliation with explicit time and event high-water/cursors;
    acquire/reclaim occurrence leases, reuse mapped task IDs, and process bounded
    due work.
-5. Start transient notification and device delivery workers; they may replay
-   committed events and cannot become authorities.
+5. Replay Scheduler events from the durable Scheduler cursor through a
+   committed high-water snapshot. Events created while handling this replay
+   wait for a later pass.
+6. Enter live mode; transient notification is a wake optimization only and
+   device delivery replays committed history.
 
-The precise interaction order between task recovery events and Scheduler's
-replay boundary must ensure recovery events are not skipped. The safest initial
-cursor is the last durably committed consumer cursor (or a full bounded scan
-from retained history); cursor persistence and this startup fence are unresolved.
-No independent Scheduler authority may race a P2 recovery pass on task rows.
+Task recovery precedes Scheduler reconciliation and replay. Replay starts at the
+durable Scheduler cursor and snapshots committed high-water after reconciliation;
+it cannot miss a committed recovery event. No independent Scheduler authority
+may race a P2 recovery pass on task rows.
 
 ## 8. Ownership / authority matrix
 
@@ -346,7 +343,7 @@ No independent Scheduler authority may race a P2 recovery pass on task rows.
 | Schedule definitions/state | No ownership | Durable row/constraint authority only | No ownership | **Authoritative owner** |
 | Occurrence and due processing state | No ownership | Durable transaction/unique/fence mechanism | Source event history only | **Authoritative semantic owner** |
 | Event facts, sequence, history, retention | Supplies task transition facts | Atomic durable rows and seq counter; does not define EventKind | **Authoritative semantic owner** | Supplies schedule/occurrence event facts |
-| Delivery cursor | No ownership | Cursor storage if selected | **Protocol owner**, persistence choice open | Owns its source EventId/catch-up cursor if selected |
+| Delivery cursor | No ownership | Persists Scheduler-specific singleton cursor | **Protocol owner**, replay semantics | Owns source EventId and durable internal cursor; device cursor remains client-side |
 | Task step retry / provider idempotency | **Authoritative owner**, existing IDK/receipt/recovery | Persists fences/receipts atomically | No ownership | No ownership |
 | Schedule retry/catch-up | No ownership | Persists due/claim/fence/cursor | No ownership | **Authoritative owner**, bounded by frozen catch-up=10 |
 | Clock access | Receives explicit EpochMillis; no ambient time | Persists validated instants; no hidden `now()` | Event timestamps passed in facts; no ambient time | Injects/receives Clock at runtime boundary; passes EpochMillis into core |
@@ -355,8 +352,8 @@ No independent Scheduler authority may race a P2 recovery pass on task rows.
 | Transaction boundary | Calls storage operation/participant API; not independent commit authority | **Sole SQLite transaction authority** | Supplies event participant/write facts within Storage Tx | Supplies schedule participant/write facts within Storage Tx |
 | External side effects | Existing Task Engine→Capability path only | None | None | None; scheduled work follows normal Task Engine path |
 
-No ownership is duplicated; the outstanding participant API proposal must honor
-this matrix.
+No ownership is duplicated; Accepted ADR-0025 fixes participant composition
+within this matrix. ADR-0026 still blocks retention/replay schema.
 
 ## 9. Minimum crate graph
 
@@ -415,17 +412,15 @@ transaction. No speculative outbox or task_journal alteration is justified.
 | Object | Proposed columns/constraints | Why it belongs to P3 | Open detail |
 |---|---|---|---|
 | `store_meta` singleton | singleton key; `next_seq INTEGER NOT NULL CHECK(next_seq > 0)` initialized to 1 | Proposed ADR-0021 explicitly assigns the Event Bus per-host `next_seq` counter here; transactional gapless allocator must have one authority. | SQLite signed-integer ceiling and sequence exhaustion behavior; no second schema version source. |
-| `serea_events` | wire `message_id`/EventId primary key; `seq INTEGER UNIQUE NOT NULL`; `kind`; `occurred_at_ms`; `correlation_id`; `causation_id`; actor kind/id/version; `data_class_rank`; trace task/step/attempt fields; validated `payload_json`; retention class/expiry metadata; constraints and query indexes | Durable append-only Event Protocol log, sequence order, class retention, replay and event predicates. | Exact SQL names/types, payload byte cap, FK behavior for task/step deletion, per-class expiry field, unknown-kind persistence compatibility, and index set must be finalized. Frozen event/1 has no `BlobRef` member; adding an internal payload reference/render indirection needs an explicit design and must not silently widen the wire surface. |
+| Event sequence/content (shape blocked by ADR-0026) | Global seq allocator plus event content; if option A is chosen, separate minimal immutable sequence ledger and independently expirable complete content rows. | Durable event history, seq integrity, class retention and replay. | ADR-0026 must decide event/1 interior expiry before SQL. No task/step FKs with CASCADE/SET NULL. Frozen event/1 has no `BlobRef`; no hidden wire indirection. |
 | `schedules` | `schedule_id PK`; owner identity; state; trigger type and canonical validated recurrence/event predicate; template reference or protected payload ref; `policy_class`; approval policy; timezone; created/updated UTC milliseconds; `next_due_at_ms`; local occurrence identity/version; missed policy; last processed marker; schedule generation/version; schedule lease generation/owner/expiry if lease is held here | Durable schedule definition/state and due instant required by Scheduler Protocol. | Store PERSONAL/PRIVATE fields policy, schedule/template bounds, exact recurrence serialization, index for active next_due. |
 | `schedule_occurrences` | schedule ID + canonical occurrence/source key unique; due UTC ms; source event/task identity as relevant; state (pending/claimed/mapped/skipped); `not_before_ms`; lease owner/generation/expiry; mapped task ID; processing timestamps/reason | Dedup, bounded catch-up cursor, crash reconciliation and one occurrence→one task mapping. | Whether scheduler lease belongs per-schedule or per-occurrence, canonical key encoding, cancellation race version and resumable-vs-terminal occurrence states. |
+| `schedule_command_receipts` | authenticated envelope `message_id` primary key; canonical request digest; command kind/schedule identity; durable result reference/status | Retry after caller loss returns the committed result; same ID with different body is refused. | Exact result serialization and receipt retention must be bounded; IDK-1 is not used. |
 
-No independent `event_outbox` or synthetic backfill table. No separate generic
-subscriber table is included until durable external subscribers are authorized.
-If Scheduler needs an independent durable cursor, it may be represented by a
-P3 consumer cursor row keyed to the one internal Scheduler identity, or by
-unique occurrence source EventIds; owner must select after replay semantics are
-closed. Avoid a cursor table if the occurrence uniqueness record fully prevents
-skips and duplicates.
+No independent `event_outbox` or synthetic backfill table. No generic
+subscriber table is included. The sole Scheduler consumer has a
+Scheduler-specific singleton durable cursor/state row and unique occurrence
+source EventIds; device timeline cursors remain client-owned.
 
 Candidate indexes, subject to exact query plans: unique event `seq`; event
 retention/sequence range index; event source/task correlation index only where
@@ -494,27 +489,24 @@ secret-derived material.
 Schedule templates may contain PERSONAL intent and arguments; classification
 must inherit source data and be persisted. PRIVATE template content needs
 protected representation or must be refused/redacted. Retention: schedule
-definition/occurrence retention is unspecified beyond Event Protocol's
-schedule-retention class; deletion must remove protected payload references and
-all occurrence mappings consistently. Event Protocol says retained events are
-append-only and expires whole records; the FK/cascade and whether task deletion
-deletes or redacts old event rows remain unresolved. Safest interim rule: don't
-FK event rows with `ON DELETE CASCADE` to task rows, and never rewrite a retained
-event to remove a foreign key. Owner must decide tombstone/reference behavior
-before schema freeze.
+definition/occurrence retention is governed by the selected schedule horizon;
+deletion must remove protected payload references and occurrence mappings
+consistently. Event references are immutable opaque historical IDs; event rows
+have no task/step `ON DELETE CASCADE` or `SET NULL`. Their own event-content
+retention and sequence-gap behavior remain the ADR-0026 blocker.
 
 ## 12. Idempotency and concurrency inventory
 
 | Operation | Identity/dedupe domain | Retry/crash rule | Fencing/concurrency |
 |---|---|---|---|
 | Event append | Stable source operation identity + event kind/ordinal; EventId for resulting event. Existing IDK-1 applies only if preimage/domain is identical. | On committed retry return/reuse existing event and sequence; on rollback no event/seq allocation. Exact source operation key not frozen. | SQLite writer transaction serializes sequence assignment; avoid independent in-memory counter. |
-| Schedule create | ScheduleId plus authenticated create command/request identity | Retry of same command returns same schedule; ID reuse forbidden; whether create request identity is durable is open. | Unique ScheduleId; serialization in Storage. |
-| Schedule update/reschedule | ScheduleId plus expected version/generation and command identity | Stale update refuses; retry same committed version is idempotent. | Version compare-and-swap under immediate transaction. |
-| Schedule cancel/pause/resume | ScheduleId plus desired state/command version | Repeating same state is durable no-op/no duplicate event; cancellation is not task cancellation. | Schedule generation plus transaction linearization vs claim. |
+| Schedule create | Authenticated common-envelope `message_id` plus request digest; ScheduleId for the created object | Retry of same message ID returns durable result; same ID/different body refuses; a new message ID is a new command. | Unique ScheduleId; serialized Storage transaction. |
+| Schedule update/reschedule | Envelope `message_id` plus request digest and expected revision/generation | Stale update refuses; retry returns committed result. | Revision compare-and-swap under immediate transaction. |
+| Schedule cancel/pause/resume | Envelope `message_id` plus request digest and expected revision/generation | Repeating the same command returns its durable result; cancellation prevents future occurrences, not already-mapped tasks. | Transactional cancel/claim order; claim checks ACTIVE, revision, occurrence status and lease fence. |
 | Due-item claim | ScheduleId + canonical occurrence key (or source EventId) | Expiry allows reclaim then mapping check; duplicate claim cannot create second occurrence. | Scheduler Protocol requires existing `max_lease_seconds` (120 s default); scheduler-specific owner/generation fence still needed. |
 | Due-item execution/task creation | Unique occurrence key → TaskId mapping | Task+mapping atomic; replay returns same TaskId; never infer external effect from lease. | Scheduler claim + Storage transaction; TaskEngine owns task write. |
-| Subscriber delivery | EventId/message_id; device client dedup | At-least-once only; replay after uncertain ack. | Global sequence order; no durable generic subscriber model specified. |
-| Scheduler cursor commit | Source EventId/high-water plus consumer identity if a cursor row is adopted | Handler+cursor atomic, or handler idempotent before cursor advances; retain source identity to repair. | One Scheduler consumer lease or SQLite compare-and-swap. |
+| Device timeline delivery | EventId/message_id; device client dedup | At-least-once only; replay after uncertain ack. | Device client cursor; no server generic subscriber state. |
+| Scheduler cursor commit | Scheduler-specific singleton cursor plus source EventId/high-water | Handler/occurrence work and cursor advance are atomic or safely idempotent; never advance over unhandled work. | Sole internal durable consumer; SQLite compare-and-swap/fence. |
 
 Concurrency decisions: two scheduler workers require occurrence or schedule
 lease generation and stale-fence refusal; two Event Bus delivery workers can
@@ -533,28 +525,28 @@ bound only as an explicit decision, not by type cargo-culting.
 | Due recurrence catch-up per schedule per wake | Yes: 10 | Enforce before task creation; defer remainder durably with retry event. |
 | Concurrent scheduled tasks | Existing global `max_concurrent_tasks = 8` | Use ordinary Task Engine admission; no scheduler shadow counter. |
 | Scheduler lease duration | Yes: existing `max_lease_seconds = 120` default is explicitly reused by Scheduler Protocol §4 | Enforce this bound; lease generation/owner semantics remain scheduler-specific, and UTC clock-jump behavior is called out in §5. |
-| Outstanding active schedules | No | Owner must choose before accepting unbounded schedule creation or explicitly define a structural operational policy. |
-| Pending occurrence queue / missed history | No | Choose retention and backlog cap or accept potentially unbounded durable growth. |
-| Events per transaction / payload bytes | No | Choose write and storage limits consistent with event payload schemas. |
-| Subscribers / replay page / per-consumer backlog | No | Decide P3 subscriber scope, page cap and slow-consumer policy. |
-| Event/task/schedule recovery scan | No | Specify deterministic indexed bounded scans and continuation cursor. |
-| Retained event count/bytes | No | Retention durations exist; physical volume bound and pruning batch are absent. |
+| Active schedules | 256 | Global active rows; create/reactivation refuses at cap with bounded `BOUND_EXCEEDED` or typed error; zero disables active schedules. |
+| Pending occurrences per schedule | 256 | Pending/claimed/due-unmapped; leave due identity and cursor for retry; never drop; zero refuses admission/claim. |
+| Event payload / per-transaction events | 32768 bytes / 16 | Canonical UTF-8 payload bytes / all events in one outer transaction; refusal rolls back state+journal+event+seq; zero permits no payload/events. |
+| Device replay / Scheduler scan page | 256 / 256 | Returned/read rows, not matches; preserve cursor at last returned/handled seq; zero disables page operation. |
+| Recovery / retention-delete batch | 512 / 512 | Rows examined / complete records deleted; deterministic continuation; zero recovery work; retention batch zero is invalid when expiry is enabled. |
+| Retained event content / event-store bytes | 1000000 / 536870912 | Capacity refusal after eligible pruning; typed error if still full; no silent drop. Exact enforcement depends on ADR-0026. |
 | Retry loop | Per-task attempts and per-wake catch-up exist; scheduler operation retry ceiling absent | Define retry policy/exhaustion for recurring storage/provider/transient scheduler failures. |
 
-No arbitrary numeric values are proposed. Slow consumer cannot block task
-execution by architecture: delivery is downstream from durable commit; queue or
-network pressure may defer delivery but cannot hold the task transaction open.
-Exact queue cap and backpressure behavior are open.
+The Bounds Protocol defines exact row scopes, exhaustion/error visibility and
+zero semantics. Slow device replay cannot block task execution: delivery is
+downstream from durable commit. Retained count/byte enforcement cannot be
+finalized until ADR-0026 selects what metadata survives content expiry.
 
 ## 14. Test-first implementation plan
 
 No tests are added in this audit. Proposed RED-first sequence follows dependency
-and transaction prerequisites; phases may be split further only after ADR-0025
-and the subscriber/cursor decision close.
+and transaction prerequisites; phases may be split further only after the
+ADR-0026 retention/replay semantic choice closes.
 
 | Phase | Scope | Expected production files (future only) | Test groups | Migration | Closure gate | Execution |
 |---|---|---|---|---|---|---|
-| P3A — Contract and transaction gate | Resolve contradictions, event participant composition, subscriber scope, data/retention rules, recurrence evaluator source, bounds; accept needed ADRs. | Docs/protocol/ADR only | Cross-doc inventory, compile/API contract sketches, operation→event matrix; no runtime RED tests yet. | None | Owner decisions recorded; exact P3 operations and event semantics unambiguous. | CLOUD |
+| P3A — Contract and transaction gate | Resolve retention/sequence contradiction; other owner directions now incorporated. | Docs/protocol/ADR only | Cross-doc inventory, compile/API contract sketches, operation→event matrix; no runtime RED tests yet. | None | ADR-0026 owner choice recorded; replay and retention semantics unambiguous. | CLOUD |
 | P3B — Migration and durable event log | 0002 event metadata/log, event schema mapping, sequence allocation, append-only constraints, retention metadata/query primitives. | `crates/serea-storage/{migrations,src}`; `crates/serea-event-bus` | 0001 immutable; upgrade/rollback; seq gaplessness/rollback; append-only; schema, class and query ordering. | Yes, migration 0002 | Crash-safe storage primitives with no P2 runtime changes or backfill. | CLOUD; GITHUB_ACTIONS |
 | P3C — Atomic TaskEngine event participation | Wire existing task transition operation facts to EventBus while preserving TaskJournal and savepoint guarantees. | `crates/serea-storage/src/{store,tx}`; `crates/serea-task-engine/src`; `crates/serea-event-bus/src` | Event+state+journal all-or-nothing; no-op/refusal; COMMIT caller-loss retry; no historical backfill. | No new migration beyond P3B | E3/E4 forward proof over enumerated task transitions; no one-participant API escape. | CLOUD; GITHUB_ACTIONS |
 | P3D — Event query/replay and delivery | Ordered history pages, retention expiry/corruption responses, internal scheduler source API, device timeline at-least-once boundary as authorized. | `crates/serea-event-bus/src`; later Core/device integration only if included | cursor/replay/live races, duplicate delivery, unknown kinds, slow consumer isolation, retention. | Maybe cursor table only if decision selects it | No loss across replay/retention; resource caps selected. | CLOUD; GITHUB_ACTIONS |
@@ -586,35 +578,33 @@ P3 requires no Gmail/Calendar OAuth, Android secrets, Local MCP credentials,
 user-private database, external provider, or Actions secret. Local Mac use and
 Local MCP are not required.
 
-## 16. Owner decisions required
+## 16. Owner-direction closure and remaining choice
 
-1. Ratify or reject Proposed ADR-0025's event/journal transaction participant
-   composition; name the exact narrow API and event-producing task transition
-   inventory while preserving acyclic edges and P2 failure guarantees.
-2. Resolve Scheduler Protocol §1 vs §6: confirm schedule state plus event are
-   one transaction and interpret §1's “persist before appended” as within that
-   uncommitted transaction.
-3. Define Event Bus live wake/replay boundary and the sole Scheduler consumer's
-   cursor ownership/persistence, including replay-vs-live and startup after
-   TaskEngine recovery. Confirm whether any external consumers are in P3
-   (safest scope: none).
-4. Resolve task deletion/retention versus append-only event references: event
-   FK/cascade/tombstone semantics and whether task-linked payload is redacted,
-   expired, or retained without dangling references.
-5. Reconcile Accepted ADR-0017's “after transaction has committed” language
-   with Event Protocol E3 and Data Classification §8.2; confirm the completion
-   event is inserted after deletion statements but before the same COMMIT, or
-   authorize a reviewed ADR amendment.
-6. Confirm recurrence remains required in P3 and choose a reproducible IANA
-   timezone rule source/evaluator/version policy; EpochMillis alone cannot
-   implement the frozen local calendar rules. No dependency selected here.
-7. Select missing operational bounds for outstanding schedules, occurrence
-   backlog/retention, event payload/transaction volume, replay batches,
-   subscribers and recovery scans; or explicitly stage/limit their use before
-   implementation.
-8. Confirm schedule cancel-vs-claim linearization and how authenticated create,
-   update, pause/resume and cancellation commands deduplicate when caller loses
-   the commit response.
+The following owner directions are incorporated in the normative source
+documents and this audit. The older analysis in §§3–15 is retained as audit
+lineage; where it calls these items unresolved, this section supersedes it.
+
+| Direction | Closure record |
+|---|---|
+| Fixed transaction composition | Accepted ADR-0025: exactly the existing TaskAuditParticipant and new EventParticipant; same Storage transaction/savepoint and immutable successful-write facts. Task Engine owns journal semantics, Event Bus owns event semantics, Storage owns transaction and facts. Failures roll back state/journal/event/seq; no-op/refusal writes neither unless a frozen refusal event applies. No registry, Store re-entry, or Storage dependency upward. |
+| Scheduler §1/§6 | One transaction and one COMMIT. Schedule/state mutation SQL precedes event append/seq allocation inside the same uncommitted transaction. Never two transactions. |
+| Subscriber scope and startup | No external generic subscribers. Device timeline is replay surface. Scheduler is sole durable internal consumer with a Scheduler-specific singleton cursor/state row. In-memory signal is wake-only. Startup is Store open/migrate → validate event metadata → TaskEngine recovery → Scheduler occurrence reconciliation → Scheduler replay → live. Replay snapshots committed high-water seq and stops at it; batch-generated events wait for next pass. |
+| Event references and task deletion | TaskId/StepId and related event identifiers are immutable opaque historical values. Event rows have no `ON DELETE CASCADE` or `SET NULL` relation to task/step rows. Task deletion does not mutate retained events. |
+| ADR-0017 | Delete statements, provenance/blob deletion, tombstones, completion-event insert, then one COMMIT. Event insert is after successful deletion work but before that transaction commits. |
+| Recurrence evaluator | Serea owns recurrence grammar/policy. Jiff `=0.2.38` owns timezone/DST conversion only; require `default-features=false`, `std` + `tzdb-bundle-always` (no host zoneinfo/concatenated features), bundled `jiff-tzdb =0.1.9` carrying IANA TZDB `2026e`. Both crates: `Unlicense OR MIT`, declared MSRV 1.70, compatible with 1.85. Persist intended local label, timezone, resolved UTC instant, evaluator/TZDB version; TZDB updates affect unresolved future occurrences only. Metadata/source checked 2026-10-06. |
+| Operational bounds | Bounds Protocol §2 now records all ten new requested values with exact scopes, exhaustion/durable visibility/error behavior and zero semantics. Existing catch-up 10, concurrent tasks 8, lease 120 are unchanged. No silent truncation/drop. |
+| Cancel/claim and command retry | Claim revalidates ACTIVE state, expected revision/generation, unmapped/unprocessed occurrence, and current lease fence transactionally. Cancel-first blocks later claim; claim-first task may continue and is not silently cancelled. Authenticated common envelope `message_id` is the durable command-dedupe key, bound to request digest/outcome; different body under same ID refuses. IDK-1 is not reused because its preimage semantics differ. |
+| Retention and global seq | **Unresolved owner choice.** ADR-0026 compares ledger/content separation, contiguous-prefix retention, and checkpointed epochs. Option A is recommended for privacy and per-class retention, but interior expiry changes current wire replay semantics. Owner must select A with range-aware replay/versioning, B while explicitly accepting delayed deletion, or C with checkpoint/proof semantics. |
+
+### Exact blocker
+
+Event Protocol E2/E4, §6 replay corruption/`HISTORY_EXPIRED`, and §8's
+independent retention horizons are contradictory when differently-retained
+events interleave in a global gapless seq. No documentation-only interpretation
+can make interior deletion both preserve current clients' “gap means corruption”
+rule and satisfy per-class deletion. ADR-0026 remains Proposed. An owner choice
+must define whether event/1 replay semantics change; do not create migration
+0002 until that choice is recorded.
 
 ## 17. Final audit status
 
@@ -624,7 +614,7 @@ Local MCP are not required.
 - P2 runtime behavior changed: **NO**
 - Local Mac used: **NO**
 - Local Mac required for P3: **NO**
-- Readiness: **BLOCKED_PENDING_OWNER_DECISION**
+- Readiness: **BLOCKED_PENDING_OWNER_DECISION** — ADR-0026 retention/sequence semantics only
 
 The safest implementable direction is documented, but the owner decisions above
 are required before the implementation prompt can be deterministic. This audit

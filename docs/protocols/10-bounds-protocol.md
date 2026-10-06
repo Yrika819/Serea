@@ -68,9 +68,55 @@ enforced anywhere else is a bug.
 | `max_daily_spend_usd` | 5.00 | global (per calendar day) | Task → `FAILED`, reason `BOUND_EXCEEDED_DAILY_SPEND` |
 | `max_retained_tasks` | 500 | global | Oldest terminal tasks purged per retention; never non-terminal |
 | `max_scheduler_catch_up_per_wake` | 10 | per-schedule per wake | Remaining due occurrences stay durably queued for a `RETRY_DUE` wake; emit `SCHEDULE_CATCH_UP_DEFERRED`; no occurrence is silently dropped |
+| `max_active_schedules` | 256 | global active schedule records | Refuse create/reactivation at capacity; return bound error and emit `BOUND_EXCEEDED` when the error event itself fits the transaction/event-store limits; preserve existing rows |
+| `max_pending_occurrences_per_schedule` | 256 | per-schedule pending, claimed, or due-unmapped occurrence records | Stop before adding/claiming beyond the cap; keep due identity and replay cursor durable for retry; no occurrence is discarded; bound error visibility follows `BOUND_EXCEEDED` rule above |
+| `max_event_payload_bytes` | 32768 | UTF-8 bytes of canonical serialized event `payload` object, excluding envelope/storage metadata | Refuse event and roll back its described state/journal/sequence; return typed bound error; emit a bounded `BOUND_EXCEEDED` only if transaction/store capacity permits |
+| `max_events_per_transaction` | 16 | all event rows appended by one SQLite transaction, across fixed participants and composed operations | Refuse the operation before exceeding the cap and roll back the whole transaction; typed bound error; do not append an extra error event past the cap |
+| `max_event_replay_page` | 256 | returned device timeline events per replay request | Return at most 256 with an explicit continuation cursor; caller resumes from last returned seq; no row is skipped or silently truncated; zero disables replay and returns a typed bound error |
+| `max_scheduler_event_scan_page` | 256 | committed event rows examined by one Scheduler replay pass | Stop at page boundary, persist only the last fully handled cursor, and continue next pass; no filter-based skipping of unhandled rows |
+| `max_recovery_rows_per_batch` | 512 | durable task/schedule/occurrence rows examined by one recovery batch | Persist deterministic continuation position; resume in a later batch; never mark unexamined rows recovered |
+| `max_retention_delete_batch` | 512 | whole event records eligible for deletion in one retention transaction | Delete no more than the batch; continue later; never partially rewrite a row; retention deadline still applies |
+| `max_retained_events` | 1000000 | retained event content records per host, excluding any minimal sequence-integrity metadata selected by retention ADR | At capacity, prune only contract-eligible records; if capacity remains exhausted, refuse new event-producing transactions atomically with typed capacity error; no silent drop |
+| `max_event_store_bytes` | 536870912 | total SQLite bytes attributable to event content and sequence-integrity metadata, measured by the documented deterministic accounting method | At capacity, prune only contract-eligible records; if still full, refuse event-producing transactions atomically with typed capacity error; no silent drop |
 | `duplicate_window_ms` | 86400000 (24 h) | global | Not an exhaustion; a match returns `DUPLICATE_SUPPRESSED` (§5) |
 | `approval_request_expiry_ms` | 1800000 (30 min) | per-approval | Approval → `EXPIRED`, never a grant |
 | `task_retention_days` | 30 | per-task | Task body deleted; counters survive |
+
+### P3 event and Scheduler bounds (owner direction)
+
+The P3 rows above are authoritative host-wide defaults. Counts are checked in
+the same serialized Storage transaction that would consume the capacity, so
+concurrent writers cannot pass a stale in-memory check. A refusal changes no
+schedule, occurrence, task, event, or sequence state. A `BOUND_EXCEEDED` event
+uses the existing Event Protocol kind only when its own append stays within the
+payload, per-transaction, retained-count, and byte bounds. If it cannot fit, the
+operation returns a typed error and writes no event. Storage-cap errors return a
+typed capacity error with no event because appending that error could itself
+exceed the cap. No bound silently truncates, drops, or advances a cursor over
+unprocessed work.
+
+Scopes are exact: active schedules count rows whose durable state is ACTIVE;
+pending occurrences include pending, claimed, and due-but-unmapped records;
+event payload size is canonical UTF-8 JSON bytes for `payload` only; per-tx event
+count includes every appended event in the outer SQLite transaction; replay and
+scan pages count rows read, not matches; recovery batch counts durable rows
+examined; retention batch counts complete event records deleted. Event-store
+bytes use a deterministic page/content accounting rule that must be frozen with
+the retention schema before implementation.
+
+Zero means no capacity/work for the applicable resource: no active schedules,
+no pending occurrence admission/claim, no nonempty event payload, no
+event-producing transaction, no replay, no scheduler scan, no recovery row, no
+retention deletion, and no retained event count/bytes. An attempted use refuses
+with typed error and preserves durable work. A zero retention-delete batch is
+invalid at startup whenever retention obligations are enabled, because it
+would make mandatory expiry impossible. Existing
+`max_scheduler_catch_up_per_wake = 10`, `max_concurrent_tasks = 8`, and
+`max_lease_seconds = 120` are unchanged.
+
+The retention-count and event-byte enforcement model depends on the unresolved
+sequence/retention decision in [ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md);
+these numeric ceilings do not resolve that semantic conflict.
 
 ### 2.1 Where these live in durable state
 
@@ -540,7 +586,14 @@ unexplained failure is indistinguishable from a bug.
 | B16 | Bounds limit quantity; policy limits authority. A generous bound authorizes nothing, and a strict policy does not excuse an unbounded loop. |
 | B17 | Every exhausted task bound produces an event, a structured error or reason, and a durable task outcome — or it did not happen. |
 | B18 | Scheduler catch-up is capped per wake; remaining due occurrences stay durable and are processed by later bounded wakes. |
+| B19 | P3 schedule/event bounds refuse atomically, expose a typed error or bounded `BOUND_EXCEEDED` event when it fits, and never silently truncate/drop durable work. |
 ## 10. P2A clarification changelog
 
 - 2026-10-03: B3 operational/structural scope ratified by owner instruction,
   Accepted ADR-0020; no bound added, removed, re-defaulted or implemented here.
+- 2026-10-06: Added the proposed P3 schedule, event, replay, recovery, retention
+  batch, retained-count and event-store byte defaults in §2 with exact scopes,
+  exhaustion/durable visibility, event/error behavior and zero semantics. The
+  existing catch-up=10, concurrent tasks=8 and lease=120 bounds are unchanged.
+  Retained-content capacity enforcement remains subject to Proposed ADR-0026;
+  these bounds do not resolve the gapless-sequence/retention contradiction.

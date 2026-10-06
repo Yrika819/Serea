@@ -28,6 +28,7 @@ migration notes belong to one P2A integration, not a preliminary docs commit;
 | [ADR-0012](ADR-0012-capability-provider-protocol-boundary.md) | Capability/provider protocol is the sole effect boundary | Accepted |
 | [ADR-0016](ADR-0016-proactive-watcher-is-read-only.md) | Proactive watcher is read-only | Accepted |
 | [ADR-0017](ADR-0017-deletion-cascade-completed-event-kind.md) | `DELETION_CASCADE_COMPLETED` is a registered `EventKind` | Accepted |
+| [ADR-0025](ADR-0025-p3-event-participant-composition.md) | Fixed two-participant event/journal composition inside the Storage transaction | **Accepted**; P3 runtime remains deferred |
 
 ## P2 decision disposition
 
@@ -50,7 +51,7 @@ MSRV verification. A green wire-member gate does not accept full runtime fencing
 
 | ADR | Decision | Status |
 | --- | --- | --- |
-| [ADR-0025](ADR-0025-p3-event-participant-composition.md) | Compose task journal and event writes atomically under the P2 SQLite transaction seam | **Proposed**; owner must select the narrow API and event-producing operation inventory before implementation. See the [P3 preimplementation audit](../plans/P3-preimplementation-audit.md). |
+| [ADR-0026](ADR-0026-event-retention-and-global-sequence.md) | Reconcile per-class event expiry with the gapless global sequence and replay | **Proposed**; owner must select A/B/C because all available designs change either frozen replay semantics or privacy deletion guarantees. Blocks migration 0002. |
 
 ### Numbering note
 

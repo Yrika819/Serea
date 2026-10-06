@@ -56,9 +56,11 @@ enum, in `event.schema.json`, and in the protocol's changelog.
 
 Its meaning is deliberately narrow:
 
-- It is the **completion record of one cascade transaction**, emitted after the
-  transaction that deleted the items, the provenance rows, and the
-  content-addressed blobs and wrote the tombstones has committed. Its payload
+- It is the **completion record of one cascade transaction**. The deletion
+  statements, provenance/blob deletion, tombstones, and
+  `DELETION_CASCADE_COMPLETED` insert occur in that order in one transaction,
+  followed by one COMMIT. “After the deletion work succeeds” means after those
+  statements succeed but before the same transaction commits. Its payload
   carries the counts and evidence §8.2 step 4 requires.
 - It is **not** a generic deletion event. It does not report task deletion and
   does not report retention; both remain governed by
@@ -128,7 +130,7 @@ No migration note is required: §7 item 4 scopes a migration note to `Major`.
 | `event.schema.json` | Add the wire name to the `eventKind` enum, in the same order. |
 | `Event Protocol` §3.7 | Carry the row and the narrow-meaning note (done). |
 | Any event-stream consumer, including a future Android client | Skip an unrecognised kind rather than failing the stream (§4.2 rule 4, §6 rule 2, `E7`). |
-| The future right-to-delete implementation | Emit this kind once per committed cascade, with the counts, after the transaction commits. |
+| The future right-to-delete implementation | Insert this kind once after the deletion/tombstone statements succeed and before the same transaction's single COMMIT, with the counts. |
 | Payload validation for this kind | The event payload surface stays forward-compatible; the cascade counts are the emitting layer's obligation under §8.2 step 4. |
 
 ## Rejected alternatives

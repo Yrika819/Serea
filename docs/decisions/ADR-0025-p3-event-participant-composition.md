@@ -1,8 +1,8 @@
 # ADR-0025: P3 Event Participant Composition
 
-- **Status:** Proposed — owner decision required before P3 implementation
+- **Status:** **Accepted** — fixed P3 transaction composition; runtime implementation remains deferred
 - **Architecture version:** `serea-arch/1.0.0`
-- **Decision date:** not ratified
+- **Decision date:** 2026-10-06
 - **Scope:** Compose P2 task audit and P3 event persistence under one SQLite transaction.
 
 ## Context
@@ -21,36 +21,45 @@ transaction/facts, while preserving forward-only E3, no history backfill, and
 the existing P2 task journal. ADR-0021 remains Proposed; this ADR does not
 accept or change it.
 
-The current API does not specify how the existing journal mapping and a second
-event mapping compose. Separate transactions violate E3; a Storage dependency
-on Event Bus or Task Engine inverts the frozen graph; a generic mutable
-participant registry was rejected in ADR-0021; and a post-commit queue cannot
-repair a missing atomic event.
+The accepted composition is fixed and deliberately contains exactly two
+participants. Separate transactions violate E3; a Storage dependency on Event
+Bus or Task Engine inverts the frozen graph; a generic mutable participant
+registry was rejected in ADR-0021; and a post-commit queue cannot repair a
+missing atomic event.
 
-## Decision required
+## Decision
 
-The owner must select and ratify a narrow composition/API before runtime work.
-The proposal is constrained as follows:
+Storage owns the transaction boundary and derives immutable successful-write
+facts. Its fixed dispatch invokes exactly the existing `TaskAuditParticipant`
+and the new `EventParticipant`, in the same transaction and operation savepoint,
+against those same facts. There is no caller-supplied participant list, registry,
+or arbitrary participant ordering.
 
-1. One SQLite transaction commits a covered state write, its P2 journal record
-   when applicable, the event row, and event sequence allocation.
-2. State facts are derived from successful storage writes; callers cannot
-   submit detached or fabricated transition facts.
-3. Any participant serialization/write failure or outer transaction failure
-   rolls all covered rows and sequence changes back. Successful no-op/refusal
-   writes no event.
-4. P2 historical journal rows are never synthesized into events; migration
-   does not add `task_journal.event_seq`.
-5. Storage remains below Task Engine, Scheduler, and Event Bus. No dependency
-   cycle, Store re-entry, separate transaction, or unbounded generic registry.
-6. The accepted API must preserve P2 savepoint/error behavior and identify
-   exactly which existing/new state operations emit which event kinds.
+Ownership is split by meaning: Task Engine owns the task-journal semantic
+mapping; Event Bus owns `SereaEvent` semantic mapping and sequence allocation.
+Storage owns neither mapping. It provides the fixed transaction/savepoint,
+immutable facts, private persistence capability, and successful-write facts.
+Neither participant receives a `Store`, connection, transaction, `Tx`, or SQL
+executor, and neither may re-enter Storage.
+
+For every covered write, Storage performs the state mutation first, derives the
+immutable facts from successful writes, then invokes the fixed journal and event
+participants within that operation's savepoint. The outer transaction commits
+once. Any journal/event mapping, serialization, persistence, or commit failure
+rolls back state, journal, event, and sequence allocation together. A successful
+no-op or refusal emits neither a journal transition nor an event, except where
+an already-frozen contract explicitly defines a refusal event. There is no
+post-commit append and no second transaction.
+
+P2 journal rows are never synthesized into events; migration does not add
+`task_journal.event_seq`. Event coverage is forward-only and belongs to the
+explicit transition inventory for P3.
 
 ## Options to evaluate
 
 | Option | Assessment |
 |---|---|
-| Explicit fixed composition that invokes journal and event-specific mapping from the same immutable successful-write facts and storage transaction | Preferred direction for owner review; signature, dispatch ownership, and savepoint placement remain unresolved. |
+| Explicit fixed composition that invokes journal and event-specific mapping from the same immutable successful-write facts and storage transaction | **Accepted.** Exactly two participants, fixed dispatch, one transaction/savepoint. |
 | Generic list/registry of arbitrary transaction participants | Reject unless owner explicitly reopens ADR-0021; it introduces participant ordering/lifecycle and risks weakening the deliberately narrow P2 seam. |
 | Event append in a second/post-commit transaction or outbox | Rejected by E3 and ADR-0021; can leave committed state with no event. |
 | Event Bus/Task Engine dependency from Storage | Rejected by Crate Map layering and acyclic dependency rule. |
@@ -66,11 +75,12 @@ The proposal is constrained as follows:
 - The P3 storage/API design and migration 0002 must name event-producing
   operations without changing P2 migration 0001 or its historical semantics.
 
-## Owner disposition
+## Implementation boundary
 
-**Unresolved.** The P3 preimplementation audit records the concrete conflict and
-safe interpretation in [P3 Preimplementation Audit §4](../plans/P3-preimplementation-audit.md#4-atomicity-contradiction-and-proposed-adr-0025).
-This ADR must not be marked Accepted by the implementation agent.
+This ADR settles composition only. It does not authorize P3 runtime, migration
+0002, an Event Bus or Scheduler crate, or claim E3/E4 runtime proof. The exact
+transition-to-event inventory and transaction-fault tests remain P3
+implementation gates. The broader ADR-0021 runtime gate remains distinct.
 
 ## Frozen sources
 

@@ -28,9 +28,10 @@ mod store;
 mod task;
 mod tx;
 
-// P2H: the crash/fault seam is a compiled capability that exists only when the
-// test-only `p2h-fault-injection` feature is requested from a dev-dependency
-// edge. A release or production build has no `fault` module to name.
+// P2H: the crash/fault seam is absent from the normal/default build. The
+// workspace requests its explicitly test-oriented feature only through the
+// task-engine dev-dependency edge; any build that opts into the feature is
+// seam-bearing and is outside the default-production exclusion proof.
 #[cfg(feature = "p2h-fault-injection")]
 pub mod fault;
 

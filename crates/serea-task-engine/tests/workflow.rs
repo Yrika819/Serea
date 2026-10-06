@@ -165,6 +165,41 @@ fn result<'a>() -> StepOutcome<'a> {
 }
 
 #[test]
+fn task_projection_refuses_more_steps_than_the_task_schema_allows() {
+    let c = Context::new();
+    let mut e = engine();
+    prepare(&mut e, &c);
+    let steps = (1..=1025)
+        .map(|n| input(1, n, n, StepKind::Notify))
+        .collect();
+    assert!(matches!(
+        e.persist_plan(tid(1), Plan { revision: 1, steps }, at(30), &c.view(),),
+        Err(EngineError::InvalidPlan)
+    ));
+    let unchanged = e.load(tid(1)).unwrap();
+    assert_eq!(unchanged.task.state, TaskState::Planning);
+    assert_eq!(unchanged.plan_revision, 0);
+    let boundary_steps = (1..=1024)
+        .map(|n| input(1, n, n, StepKind::Notify))
+        .collect();
+    e.persist_plan(
+        tid(1),
+        Plan {
+            revision: 1,
+            steps: boundary_steps,
+        },
+        at(30),
+        &c.view(),
+    )
+    .unwrap();
+    let boundary_task = e.load(tid(1)).unwrap().task;
+    assert_eq!(boundary_task.steps.len(), 1024);
+    let wire = serde_json::to_value(&boundary_task).unwrap();
+    serea_protocol::schema::validate(serea_protocol::schema::SchemaName::AssistantTask, &wire)
+        .unwrap();
+}
+
+#[test]
 fn duplicate_creation_is_typed_and_journal_has_one_insert() {
     let c = Context::new();
     let mut e = engine();
@@ -802,6 +837,81 @@ impl Drop for FileFixture {
         std::fs::remove_dir_all(self.path.parent().unwrap()).unwrap();
     }
 }
+#[test]
+fn task_projection_refuses_error_details_over_the_task_schema_property_cap() {
+    let c = Context::new();
+    let mut e = engine();
+    ready(&mut e, &c, StepKind::Notify);
+    let g = acquire(&mut e, &c, None, 40, 50).unwrap();
+    e.begin_attempt(&g, at(41), &c.view()).unwrap();
+    let details = (0..65)
+        .map(|n| (format!("key-{n}"), serde_json::json!(n)))
+        .collect::<serde_json::Map<_, _>>();
+    let details_json = serde_json::to_vec(&details).unwrap();
+    let code = ErrorCode::new("KNOWN_FAILURE").unwrap();
+    let message = ErrorMessage::new("failure details cap sentinel").unwrap();
+    let action = HostAction::new("STOP").unwrap();
+    let reason = FailureReason::new("KNOWN_FAILURE").unwrap();
+    assert_eq!(
+        e.commit_step(
+            g,
+            StepOutcome::Failed(StepFailure {
+                kind: ActionErrorKind::ProviderError,
+                code: &code,
+                message: &message,
+                retryable: false,
+                host_action: &action,
+                details_json: Some(&details_json),
+                failure_reason: &reason,
+            }),
+            at(42),
+            &c.view(),
+        )
+        .err(),
+        Some(EngineError::Store(StoreError::CanonicalJson))
+    );
+    let loaded = e.load(tid(1)).unwrap();
+    assert_eq!(loaded.steps[0].step.status.as_str(), "EXECUTING");
+    assert!(loaded.steps[0].step.error.is_none());
+
+    let mut boundary = engine();
+    ready(&mut boundary, &c, StepKind::Notify);
+    let guard = acquire(&mut boundary, &c, None, 40, 50).unwrap();
+    boundary.begin_attempt(&guard, at(41), &c.view()).unwrap();
+    let details = (0..64)
+        .map(|n| (format!("key-{n}"), serde_json::json!(n)))
+        .collect::<serde_json::Map<_, _>>();
+    let details_json = serde_json::to_vec(&details).unwrap();
+    let code = ErrorCode::new("KNOWN_FAILURE").unwrap();
+    let message = ErrorMessage::new("failure details boundary sentinel").unwrap();
+    let action = HostAction::new("STOP").unwrap();
+    let reason = FailureReason::new("KNOWN_FAILURE").unwrap();
+    boundary
+        .commit_step(
+            guard,
+            StepOutcome::Failed(StepFailure {
+                kind: ActionErrorKind::ProviderError,
+                code: &code,
+                message: &message,
+                retryable: false,
+                host_action: &action,
+                details_json: Some(&details_json),
+                failure_reason: &reason,
+            }),
+            at(42),
+            &c.view(),
+        )
+        .unwrap();
+    let boundary_task = boundary.load(tid(1)).unwrap().task;
+    assert_eq!(
+        boundary_task.steps[0].error.as_ref().unwrap().details.len(),
+        64
+    );
+    let wire = serde_json::to_value(&boundary_task).unwrap();
+    serea_protocol::schema::validate(serea_protocol::schema::SchemaName::AssistantTask, &wire)
+        .unwrap();
+}
+
 #[test]
 fn reopened_unstarted_inflight_terminal_and_cancelled_rows_keep_provenance() {
     let f = FileFixture::new("provenance");

@@ -519,6 +519,44 @@ fn remediation_f5_received_residual_blocked_reason_preserves_raw_task_and_contin
 }
 
 #[test]
+fn zero_attempt_planned_work_conservatively_refuses_the_atomic_pass() {
+    let f = FileFixture::new("zero-attempt-planned");
+    let c = Context::new();
+    let mut e = f.open();
+    single(&mut e, &c, StepKind::Notify, 0);
+    let before = f.dump();
+    assert_eq!(
+        e.recover(at(50), &c.view()).err(),
+        Some(EngineError::Store(StoreError::InvalidRecoveryAction))
+    );
+    assert_eq!(
+        before,
+        f.dump(),
+        "unsupported disabled work must not be guessed or partially repaired"
+    );
+}
+
+#[test]
+fn zero_attempt_recovery_refusal_rolls_back_earlier_task_repairs_in_the_pass() {
+    let f = FileFixture::new("zero-attempt-mixed-atomic");
+    let c = Context::new();
+    let mut e = f.open();
+    committed_receipt(&mut e, &c);
+    ready(&mut e, &c, 2, 0, vec![input(2, 2, 10, StepKind::Notify)]);
+    f.execute("UPDATE tasks SET state='EXECUTING' WHERE task_id='tsk_00000000000000000000000001'");
+    let before = f.dump();
+    assert_eq!(
+        e.recover(at(50), &c.view()).err(),
+        Some(EngineError::Store(StoreError::InvalidRecoveryAction))
+    );
+    assert_eq!(
+        before,
+        f.dump(),
+        "the unsupported task must roll back earlier candidate repairs"
+    );
+}
+
+#[test]
 fn m0_empty_recovery_has_public_typed_zero_report() {
     let f = FileFixture::new("empty");
     let c = Context::new();

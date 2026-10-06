@@ -7,10 +7,10 @@ publish.workspace = true
 
 [features]
 # P2H crash/fault seam. Deliberately empty and deliberately NOT a default
-# feature: it only compiles when a test target requests it through a
-# dev-dependency edge, so `cargo build` and `cargo build --release` contain no
-# window type, no arming entry point and no process code at all. See
-# `docs/plans/P2H-review-and-closure.md` for the release-exclusion proof.
+# feature. The workspace requests it only from the task-engine dev-dependency
+# edge, so normal/default production builds exclude its window and arming API.
+# A build that explicitly opts into this feature contains the seam; the release
+# proof records that boundary in `docs/plans/P2H-review-and-closure.md`.
 p2h-fault-injection = []
 
 [dependencies]

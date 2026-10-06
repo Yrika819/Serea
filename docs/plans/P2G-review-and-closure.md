@@ -41,7 +41,7 @@ Two independent read-only audits challenged the historical table and the apparen
 
 ## Selected recovery table
 
-Global precedence is catalog authority, FK gate, then task inspection. Unsupported ordinary-row classes fail closed. Each row is still pending implementation/test evidence.
+At this preimplementation reconciliation point, global precedence was catalog authority, FK gate, then task inspection; unsupported ordinary-row classes were required to fail closed. Implementation and per-row evidence are recorded in the final dispositions and validation sections below.
 
 | Condition | Decision | Durable action |
 | --- | --- | --- |

@@ -180,13 +180,16 @@ than merely wrong:
 2. **It cannot make `E3` true.** A reconstructed event was written in a different
    transaction, months later, from a different process. For those rows the
    transaction `E3` describes does not exist and never will.
-3. **The historical material already exists.** `task_journal` is a complete,
-   durable record of every P2 transition, which is the entire reason for its
-   column list and for `payload_json`. Synthesising `serea_events` rows duplicates
-   data that is already stored, and manufactures events that never happened in the
-   transaction `E3` describes — and a reconstructed event is **indistinguishable**
-   from an atomically committed one unless provenance is added to a frozen wire
-   type.
+3. **The historical material already exists for journaled task-engine transitions.**
+   `task_journal` durably records the transitions routed through the P2 audit
+   participant, which is the reason for its column list and `payload_json`.
+   This is not a claim that every lower-level authority mutation or deletion has
+   a surviving journal record: lease-only storage operations are not audit
+   participants, and task deletion cascades its journal. Synthesising
+   `serea_events` rows from retained journal rows duplicates recorded data and
+   manufactures events that never happened in the transaction `E3` describes —
+   and a reconstructed event is **indistinguishable** from an atomically
+   committed one unless provenance is added to a frozen wire type.
 
 So: **`task_journal.event_seq` is dropped rather than back-filled.** P3's upgrade
 path *reads* `task_journal` for pre-P3 history and does not synthesise events.
@@ -307,8 +310,11 @@ event-atomicity gate or ADR acceptance.
 
 ## Consequences
 
-- P2 produces a complete, replayable audit trail even though it produces no
-  events. `T5` and `T4` are provable without P3.
+- P2 produces a durable journal for supported audited task-engine transition
+  operations even though it produces no events. It does not retain a complete
+  audit trail for every low-level lease mutation or for deletion after cascade;
+  E3 remains unproved in P2, and neither retroactive backfill nor replayable
+  event delivery is claimed.
 - `E3` holds **forward** from P3's first migration, and is recorded as never having
   held for P2-era transitions. No event is fabricated to paper over the gap.
 - The cost is one extra durable table and one extra write per transition in P2.

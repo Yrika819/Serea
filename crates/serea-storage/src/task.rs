@@ -13,6 +13,8 @@ use serea_protocol::{
 use crate::audit::{AuditOperation, DurableTransition};
 use crate::{BlobRef, Store, StoreError, TransitionContext, Tx};
 
+const MAX_TASK_SCHEMA_STEPS: usize = 1024;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskSnapshot {
     pub task: AssistantTask,
@@ -403,6 +405,9 @@ impl Tx<'_> {
             // Arithmetic refusal precedes provenance reconstruction: an unrepresentable
             // next revision must not require allocating/reading billions of revisions.
             revision.checked_add(1).ok_or(StoreError::PlanRevisionOverflow)?;
+            if plan.steps.len() > MAX_TASK_SCHEMA_STEPS {
+                return Err(StoreError::InvalidPlan);
+            }
             let before = tx.load_task(task_id)?;
             ordinary_class(class)?;
             let next = before.plan_revision.checked_add(1).ok_or(StoreError::PlanRevisionOverflow)?;

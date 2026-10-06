@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
+import sqlite3
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -436,6 +438,172 @@ class VirtualManifestTests(unittest.TestCase):
     def test_wrong_package_name_is_refused(self):
         self.manifests[self.paths[smoke.STORAGE]] = '[package]\nname = "external"\n'
         self.assert_main(1, "required member has wrong package name")
+
+
+class P2GroupOInvariantTests(unittest.TestCase):
+    """Mechanical guards for the P2 non-negotiables in test matrix Group O."""
+
+    root = smoke.ROOT
+
+    def rust_files(self, *members):
+        return [path for member in members
+                for path in sorted((self.root / "crates" / member / "src").rglob("*.rs"))
+                if not path.name.endswith("_tests.rs")]
+
+    @staticmethod
+    def without_rust_comments(source):
+        source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+        return re.sub(r"//[^\n]*", "", source)
+
+    def test_o1_no_network_symbols_or_network_runtime_dependencies(self):
+        sources = self.rust_files("serea-protocol", "serea-storage", "serea-task-engine")
+        forbidden = re.compile(r"(?:std::net|TcpStream|TcpListener|UdpSocket|reqwest|hyper::|ureq::|tokio::net|async_std::net)")
+        for path in sources:
+            source = self.without_rust_comments(path.read_text())
+            self.assertIsNone(forbidden.search(source), str(path))
+        root = smoke.load_manifest(self.root / "Cargo.toml")
+        shared = root["workspace"]["dependencies"]
+        for member in ("serea-protocol", "serea-storage", "serea-task-engine"):
+            manifest = smoke.load_manifest(self.root / "crates" / member / "Cargo.toml")
+            for name, _, is_dev in smoke.dependency_tables(
+                    manifest, shared, self.root / "crates" / member / "Cargo.toml"):
+                if not is_dev:
+                    self.assertNotIn(name, {"reqwest", "hyper", "ureq", "curl"}, member)
+        self.assertFalse(root["workspace"]["dependencies"]["jsonschema"].get("features"))
+        self.assertFalse(root["workspace"]["dependencies"]["jsonschema"].get("default-features", True))
+
+    def test_o2_subprocesses_are_confined_to_the_p2h_integration_harness(self):
+        forbidden = re.compile(r"std::process::Command|Command::new")
+        runtime = self.rust_files("serea-protocol", "serea-storage", "serea-task-engine")
+        for path in runtime:
+            self.assertIsNone(forbidden.search(path.read_text()), str(path))
+        harness = self.root / "crates/serea-task-engine/tests/crash.rs"
+        self.assertRegex(harness.read_text(), r"std::process::Command")
+
+    def test_o3_wall_clock_constructors_are_absent_and_linted(self):
+        forbidden = re.compile(r"(?:SystemTime|Instant)::now\s*\(")
+        for member in smoke.EXPECTED_MEMBERS:
+            for path in (self.root / member / "src").rglob("*.rs"):
+                source = self.without_rust_comments(path.read_text())
+                self.assertIsNone(forbidden.search(source), str(path))
+        clock_guard = (self.root / "crates/serea-testkit/tests/p2b_clock.rs").read_text()
+        self.assertIn('for banned in ["SystemTime::now(", "Instant::now("]', clock_guard)
+        clippy = (self.root / ".clippy.toml").read_text()
+        self.assertIn('std::time::SystemTime::now', clippy)
+        self.assertIn('std::time::Instant::now', clippy)
+
+    def test_o4_testkit_has_only_dev_dependency_reachability(self):
+        self.assertEqual(smoke.main(), 0)
+        for member in ("serea-protocol", "serea-storage", "serea-task-engine"):
+            path = self.root / "crates" / member / "Cargo.toml"
+            manifest = smoke.load_manifest(path)
+            shared = smoke.load_manifest(self.root / "Cargo.toml")["workspace"]["dependencies"]
+            for name, _, is_dev in smoke.dependency_tables(manifest, shared, path):
+                if name == smoke.TESTKIT:
+                    self.assertTrue(is_dev, f"{member} reaches testkit outside dev-dependencies")
+
+    def test_o5_frozen_enum_cardinalities_are_unchanged(self):
+        source = (self.root / "crates/serea-protocol/src/types.rs").read_text()
+        expected = {"DataClass": 5, "RiskClass": 8, "TaskState": 11,
+                    "StepKind": 8, "ActionErrorKind": 13, "EventKind": 60}
+        for name, count in expected.items():
+            pattern = re.compile(
+                rf"declare_enum!\(\s*(?:///[^\n]*\n\s*)*{name}\s*\{{(.*?)^\s*\}}\s*\);",
+                re.MULTILINE | re.DOTALL)
+            match = pattern.search(source)
+            self.assertIsNotNone(match, f"missing frozen enum declaration {name}")
+            actual = len(re.findall(r"=>\s*\"[A-Z0-9_]+\"", match.group(1)))
+            self.assertEqual(actual, count, f"{name} cardinality")
+
+    def test_o6_store_has_no_task_state_writer_outside_transact(self):
+        source = (self.root / "crates/serea-storage/src/store.rs").read_text()
+        self.assertIn("pub fn transact<", source)
+        self.assertIn("pub fn transact_with_audit<", source)
+        self.assertNotRegex(source, r"pub fn (?:update|insert|delete|write)_task")
+        self.assertNotRegex(source, r"(?i)\b(?:INSERT|UPDATE|DELETE|REPLACE)\s+(?:INTO\s+)?(?:tasks|task_steps|leases|task_journal)")
+
+    def test_o7_workspace_has_exactly_four_p2_members(self):
+        root = smoke.load_manifest(self.root / "Cargo.toml")
+        self.assertEqual(sorted(root["workspace"]["members"]), smoke.EXPECTED_MEMBERS)
+
+    def test_o8_all_direct_dependencies_belong_to_the_frozen_named_set(self):
+        root = smoke.load_manifest(self.root / "Cargo.toml")
+        shared = root["workspace"]["dependencies"]
+        named = set(shared)
+        for path in sorted((self.root / "crates").rglob("Cargo.toml")):
+            manifest = smoke.load_manifest(path)
+            for name, _, _ in smoke.dependency_tables(manifest, shared, path):
+                self.assertIn(name, named, f"unnamed direct dependency {name} in {path}")
+
+    def test_o9_no_event_kind_is_constructed_in_p2_production(self):
+        for path in self.rust_files("serea-protocol", "serea-storage", "serea-task-engine"):
+            source = self.without_rust_comments(path.read_text())
+            self.assertNotRegex(source, r"EventKind::", str(path))
+
+    def test_o10_migration_0001_has_no_serea_events_table(self):
+        sql = (self.root / "crates/serea-storage/migrations/0001_initial.sql").read_text()
+        self.assertNotRegex(sql, r"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?serea_events\b")
+
+    def test_o11_only_the_task_journal_audit_seam_is_a_production_participant(self):
+        sources = self.rust_files("serea-storage", "serea-task-engine")
+        joined = "\n".join(path.read_text() for path in sources)
+        self.assertIn("TaskAuditParticipant", joined)
+        self.assertNotIn("TransactionParticipant", joined)
+        self.assertNotRegex(joined, r"(?i)register_.*hook|commit_hook")
+        feature = (self.root / "crates/serea-storage/Cargo.toml").read_text()
+        engine = (self.root / "crates/serea-task-engine/Cargo.toml").read_text()
+        self.assertIn("p2h-fault-injection = []", feature)
+        dev_start = engine.index("[dev-dependencies]")
+        self.assertGreater(engine.index('features = ["p2h-fault-injection"]'), dev_start)
+        self.assertNotIn('features = ["p2h-fault-injection"]', engine[:dev_start])
+
+    def test_o12_error_formatters_do_not_render_payloads_or_lease_authority(self):
+        storage_error = (self.root / "crates/serea-storage/src/error.rs").read_text()
+        engine_error = (self.root / "crates/serea-task-engine/src/error.rs").read_text()
+        self.assertIn("f.write_str(self.category())", storage_error)
+        self.assertIn("f.write_str(match self", engine_error)
+        self.assertNotRegex(storage_error, r"write!\s*\([^;]*(?:payload|token|details|path)")
+        self.assertNotRegex(engine_error, r"write!\s*\([^;]*(?:payload|token|details|path)")
+
+    def test_o13_stress_suite_does_not_assert_variable_n7_outcomes(self):
+        crash = (self.root / "crates/serea-task-engine/tests/crash.rs").read_text()
+        n7 = crash[crash.index("fn n7_commit_in_flight_stress_never_corrupts_the_database"):]
+        self.assertNotRegex(n7, r"assert_eq!\([^\n]*(?:task_count|committed_count|observed_categories)")
+        self.assertIn("quick_check", n7)
+        self.assertIn("foreign_key_check", n7)
+
+    def test_o14_class_caps_and_presence_are_check_constraints_with_boundary_documented(self):
+        migration = self.root / "crates/serea-storage/migrations/0001_initial.sql"
+        sql = migration.read_text()
+        self.assertEqual(sql.count("CHECK (data_class_rank BETWEEN 0 AND 2)"), 7)
+        self.assertIn("CHECK (status <> 'PLANNED' OR", sql)
+        self.assertIn("CHECK ((status IN ('LEASED','EXECUTING')) =", sql)
+        self.assertIn("CHECK ((state = 'CANCELLED') =", sql)
+        matrix = (self.root / "docs/plans/P2-test-matrix.md").read_text()
+        self.assertIn("PRAGMA ignore_check_constraints", matrix)
+        self.assertIn("O14", matrix)
+
+        with sqlite3.connect(":memory:") as connection:
+            connection.executescript(sql)
+            digest = "sha256:" + "0" * 64
+            insert = "INSERT INTO blobs(digest,data_class_rank,protection,size_bytes,content) VALUES (?,3,'NONE',0,X'')"
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(insert, (digest,))
+            connection.execute("PRAGMA ignore_check_constraints = ON")
+            connection.execute(insert, (digest,))
+            self.assertEqual(connection.execute("SELECT data_class_rank FROM blobs").fetchone(), (3,))
+
+    def test_o15_authority_constraints_remain_trigger_or_foreign_key_based(self):
+        sql = (self.root / "crates/serea-storage/migrations/0001_initial.sql").read_text()
+        for trigger in (
+            "tasks_policy_class_immutable", "tasks_data_class_monotonic",
+            "side_effect_receipts_key_matches_step", "side_effect_receipts_task_matches_step",
+            "side_effect_receipts_step_must_succeed", "task_steps_idempotency_key_immutable",
+            "task_journal_step_task_matches",
+        ):
+            self.assertRegex(sql, rf"CREATE TRIGGER {trigger}\b")
+        self.assertIn("REFERENCES task_steps(step_id) ON DELETE CASCADE", sql)
+        self.assertIn("FOREIGN KEY (digest, data_class_rank)", sql)
 
 
 if __name__ == "__main__":

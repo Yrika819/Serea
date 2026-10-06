@@ -38,13 +38,13 @@ MSRV verification. A green wire-member gate does not accept full runtime fencing
 
 | ADR | Decision | Status / implementation phase |
 | --- | --- | --- |
-| [ADR-0018](ADR-0018-taskstep-lifecycle-and-field-presence.md) | Four Option conversions, seven unconditional fields, open wire status and lifecycle presence | **Accepted**, wire/lifecycle architectural decision; P2A checked wire implemented, engine/plan runtime P2F deferred |
+| [ADR-0018](ADR-0018-taskstep-lifecycle-and-field-presence.md) | Four Option conversions, seven unconditional fields, open wire status and lifecycle presence | **Accepted**, P2A wire and scoped P2F/P2G runtime lifecycle/recovery implemented; no claim beyond the closed P2 phase scope |
 | [ADR-0019](ADR-0019-canonical-json-and-idempotency-preimage.md) | Full SCJ-1/digest/IDK-1 primitives, sha2 0.11 no defaults | **Accepted**, full SCJ-1/digest/duplicate-aware parsing/IDK-1 implemented in P2A |
 | [ADR-0020](ADR-0020-bounds-b3-scope-clarification.md) | B3 operational versus structural semantic clarification | **Accepted**, semantic B3 clarification; architecture-minor in isolation, no resource bounds |
-| [ADR-0021](ADR-0021-p2-p3-event-atomicity-seam.md) | Shared-receiver immutable-successful-transition seam; E3 forward only, no backfill | **Proposed**, runtime P2C/P2F/P2G and P3 |
-| [ADR-0022](ADR-0022-durable-private-data-at-rest.md) | Fail-closed PRIVATE at-rest dispatch | **Proposed**, runtime P2D |
+| [ADR-0021](ADR-0021-p2-p3-event-atomicity-seam.md) | Shared-receiver immutable-successful-transition seam; E3 forward only, no backfill | **Proposed**; P2 journal/audit seam implemented, P3 event gate and E3/E4 outstanding; no event backfill |
+| [ADR-0022](ADR-0022-durable-private-data-at-rest.md) | Fail-closed PRIVATE at-rest dispatch | **Proposed**; P2D fail-closed blob dispatch implemented; real backend/key custody and ordinary-row PRIVATE representation outstanding |
 | [ADR-0023](ADR-0023-text-field-validation-categories.md) | Complete O/L/P validation, pinned whitespace, exact identifier subtraction | **Accepted**, complete O/L/P validation implemented in P2A |
-| [ADR-0024](ADR-0024-lease-fencing-and-commit-under-lease.md) | Authoritative unreleased lease fencing and revocation | **Proposed**, runtime P2E/P2F deferred; lease_generation wire member/validation only implemented in P2A |
+| [ADR-0024](ADR-0024-lease-fencing-and-commit-under-lease.md) | Authoritative unreleased lease fencing and revocation | **Proposed**; P2E authority, P2F outcome/engine integration and P2G recovery implemented; full architecture ratification remains outstanding |
 
 ### Numbering note
 
@@ -96,8 +96,10 @@ status: [the decision ledger](../plans/P2-tomorrow-decision-ledger.md).
   implement the SQLite store or task engine; those are deferred to P2 and later.
 - [P2 — Storage and Task Engine Design](../plans/P2-storage-task-engine.md) is the
   design package for the SQLite store, the durable `AssistantTask` lifecycle, and
-  restart recovery. Runtime remains design-only; P2A protocol/canonical slices
-  are implemented, not storage/engine/event runtime.
+  restart recovery. P2A–P2H scoped storage, engine and recovery runtime is now
+  implemented and closed. P2 does not implement an event bus or event delivery;
+  P3 E3/E4 and the Proposed ADR-0021 event gate remain outstanding. See
+  [P2 closure](../plans/P2-closure.md) for evidence and nonclaims.
 
 ## Frozen sources and dependency note
 

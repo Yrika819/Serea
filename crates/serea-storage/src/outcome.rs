@@ -12,6 +12,8 @@ use super::LeaseGuard;
 use crate::audit::{AuditOperation, DurableTransition};
 use crate::{BlobRef, StoreError, Tx};
 
+const MAX_ACTION_ERROR_DETAIL_PROPERTIES: usize = 64;
+
 /// Audit attribution, not lease authority. All values are validated protocol
 /// types; the transition itself is constructed only after its fenced write.
 /// No formatter exposes actor or causation identity.
@@ -354,7 +356,10 @@ impl Tx<'_> {
                         let text =
                             std::str::from_utf8(bytes).map_err(|_| StoreError::CanonicalJson)?;
                         let bytes = canonicalize(text).map_err(|_| StoreError::CanonicalJson)?;
-                        if bytes.first() != Some(&b'{') {
+                        let value: serde_json::Value = serde_json::from_slice(&bytes)
+                            .map_err(|_| StoreError::CanonicalJson)?;
+                        let object = value.as_object().ok_or(StoreError::CanonicalJson)?;
+                        if object.len() > MAX_ACTION_ERROR_DETAIL_PROPERTIES {
                             return Err(StoreError::CanonicalJson);
                         }
                         String::from_utf8(bytes).map_err(|_| StoreError::CanonicalJson)

@@ -16,13 +16,17 @@
 //!
 //! * is declared as `p2h-fault-injection = []` with no `default` feature, so
 //!   `cargo build` and `cargo build --release` never compile it;
-//! * is requested from exactly one place, the `[dev-dependencies]` edge of
-//!   `serea-task-engine`, which Cargo's resolver v2 unifies only when building
-//!   targets that need dev-dependencies (this crate's tests).
+//! * is requested inside the workspace only from the `[dev-dependencies]` edge
+//!   of `serea-task-engine`, so normal/default workspace production builds do
+//!   not enable it. Downstream builds can explicitly opt into Cargo features;
+//!   such a feature-enabled artifact contains this seam and is not a
+//!   production-exclusion proof.
 //!
-//! Therefore a release or production build of `serea-storage` contains no
-//! window type, no arming entry point, no process code and no registry: there
-//! is nothing to arm even in principle. There is deliberately **no**
+//! Therefore the normal/default storage release configuration contains no
+//! window type, no arming entry point and no registry. The mechanical proof is
+//! scoped to those default production artifacts and the explicit test target;
+//! it does not claim that arbitrary feature combinations exclude the seam.
+//! There is deliberately **no**
 //! environment-variable switch, no inert callback stored in `Store`, and no
 //! `Option<hook>` field that merely sits as `None` in production.
 //!

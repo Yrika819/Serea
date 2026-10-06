@@ -15,14 +15,15 @@ green on its exact commit.
 | Architecture version | `serea-arch/2.0.0` |
 | Replay response surface | `serea.device/2` |
 | Event object surface | `serea.event/1` unchanged |
-| P3 implementation branch | Pending P3A gate |
-| Draft PR | Pending P3A gate |
+| P3 implementation branch | `p3/event-bus-scheduler`, created from P3A closure commit |
+| Draft PR | [#1](https://github.com/Yrika819/Serea/pull/1), open against `main`, not merged |
 
 ## P3A — Contract and transaction gate
 
 | Evidence | Result |
 |---|---|
-| Commit | Pending |
+| Closure commit | `687bee58205b1e71e63425fda16172ab4ab45ad1` |
+| Evidence record commit | Pending |
 | Scope | ADR-0026 Option A; Event/Device replay contract; protocol registry and current architecture references; audit reconciliation |
 | RED tests | Not applicable to docs/version-registry closure; existing protocol registry checks run below |
 | GREEN tests | `python3 tests/workspace_smoke.py`; 74-test `workspace_smoke_tests.py`; `cargo test -p serea-protocol --offline` |
@@ -30,12 +31,12 @@ green on its exact commit.
 | Cargo metadata | `cargo metadata --no-deps --format-version 1 --offline` — PASS |
 | Formatting | `cargo fmt --all -- --check` — PASS |
 | Diff check | `git diff --check` — PASS |
-| Fast CI | Pending |
-| Full CI | Pending |
-| Linux stable / MSRV 1.85 | Pending |
-| GitHub-hosted macOS Intel x86_64 / arm64 | Pending / Pending |
-| Release fault-seam proof | Pending |
-| Sequential review | Pending |
+| Fast CI | PASS — run `37498596845`; Linux fast job `112389455412` |
+| Full CI | PASS — run `37498595882` |
+| Linux stable / MSRV 1.85 | PASS — jobs `112389449468` / `112389449489` |
+| GitHub-hosted macOS Intel x86_64 / arm64 | PASS — jobs `112389449064` / `112389449430` |
+| Release fault-seam proof | PASS — included in Linux stable full job `112389449468` |
+| Sequential review | PASS — docs/version surfaces reconciled; explicit device/1 and device/3 refusals tested; no P3 runtime behavior entered |
 | Nonclaims | No migration 0002, Event Bus runtime, Scheduler runtime, P3 task transitions, or runtime retention/replay behavior yet |
 
 ## P3B–P3G

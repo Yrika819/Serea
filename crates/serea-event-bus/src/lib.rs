@@ -8,7 +8,13 @@ use serea_protocol::{
     Actor, EnvelopeVersion, EventKind, IdMinter, Seq, SereaEvent, TaskState, Trace, UlidSource,
     WireSurface,
 };
-use serea_storage::{AuditOperation, DurableTransition, EventParticipant, StoreError, Tx};
+use serea_storage::{
+    AuditOperation, DurableTransition, EventDraft, EventParticipant, Store, StoreError, Tx,
+};
+
+pub use serea_storage::{EventReplayPage, EventRetentionReport, ReplayItem};
+
+const TASK_LIFECYCLE_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 
 struct ErasedUlidSource(Box<dyn UlidSource + Send>);
 
@@ -41,10 +47,31 @@ impl EventBus {
     ) -> Result<SereaEvent, StoreError> {
         tx.append_event(event, retention_at)
     }
+
+    /// Returns a bounded page through the committed high-water captured for
+    /// this read transaction.
+    pub fn replay(
+        store: &Store,
+        after_seq: Option<Seq>,
+        through_seq: Option<Seq>,
+        limit: u16,
+    ) -> Result<EventReplayPage, StoreError> {
+        store.replay_events(after_seq, through_seq, limit)
+    }
+
+    /// Applies one bounded whole-record expiry batch irrespective of consumer
+    /// backlog, then folds any now-contiguous expired prefix.
+    pub fn expire_eligible(
+        store: &Store,
+        now: serea_protocol::EpochMillis,
+        limit: u16,
+    ) -> Result<EventRetentionReport, StoreError> {
+        store.expire_eligible_events(now, limit)
+    }
 }
 
 impl EventParticipant for EventBus {
-    fn events(&self, facts: &DurableTransition) -> Result<Vec<SereaEvent>, StoreError> {
+    fn events(&self, facts: &DurableTransition) -> Result<Vec<EventDraft>, StoreError> {
         let Some(kind) = task_event_kind(facts) else {
             return Ok(Vec::new());
         };
@@ -102,30 +129,39 @@ impl EventParticipant for EventBus {
         let surface =
             WireSurface::new(WireSurface::EVENT).map_err(|_| StoreError::AuditRejected)?;
         let envelope_version = EnvelopeVersion::new("1").map_err(|_| StoreError::AuditRejected)?;
-        Ok(vec![SereaEvent {
-            envelope_version,
-            surface,
-            message_id,
-            seq: Seq::new(0),
-            kind,
-            occurred_at: serea_protocol::Timestamp::from_epoch_millis(facts.now()),
-            correlation_id: Some(facts.task_id().clone()),
-            causation_id: facts.causation_id().cloned(),
-            actor: Actor {
-                kind: facts.actor_kind(),
-                id: facts.actor_id().clone(),
-                version: facts.actor_version().clone(),
+        let retention_at = facts
+            .now()
+            .get()
+            .checked_add(TASK_LIFECYCLE_RETENTION_MS)
+            .and_then(|millis| serea_protocol::EpochMillis::new(millis).ok())
+            .ok_or(StoreError::InvalidTimestamp)?;
+        Ok(vec![EventDraft {
+            event: SereaEvent {
+                envelope_version,
+                surface,
+                message_id,
+                seq: Seq::new(0),
+                kind,
+                occurred_at: serea_protocol::Timestamp::from_epoch_millis(facts.now()),
+                correlation_id: Some(facts.task_id().clone()),
+                causation_id: facts.causation_id().cloned(),
+                actor: Actor {
+                    kind: facts.actor_kind(),
+                    id: facts.actor_id().clone(),
+                    version: facts.actor_version().clone(),
+                    extensions: Default::default(),
+                },
+                data_class: facts.data_class(),
+                trace: Some(Trace {
+                    task_id: Some(facts.task_id().clone()),
+                    step_id: facts.step_id().cloned(),
+                    attempt: facts.attempt(),
+                    extensions: Default::default(),
+                }),
+                payload,
                 extensions: Default::default(),
             },
-            data_class: facts.data_class(),
-            trace: Some(Trace {
-                task_id: Some(facts.task_id().clone()),
-                step_id: facts.step_id().cloned(),
-                attempt: facts.attempt(),
-                extensions: Default::default(),
-            }),
-            payload,
-            extensions: Default::default(),
+            retention_at: Some(retention_at),
         }])
     }
 }

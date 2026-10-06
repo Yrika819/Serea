@@ -1,7 +1,7 @@
 //! Audit seam contract tests, using the existing P2F-a fixtures and literal oracle.
 use super::*;
 use crate::audit::{
-    AuditOperation, DurableTransition, EventParticipant, JournalKind, JournalRecord,
+    AuditOperation, DurableTransition, EventDraft, EventParticipant, JournalKind, JournalRecord,
     JournalRecords, TaskAuditParticipant, TestAudit,
 };
 use std::sync::atomic::AtomicUsize;
@@ -72,10 +72,7 @@ fn plain_audited_lease_wrappers_refuse_without_writing() {
 fn event_participant_serialization_error_rolls_back_task_journal_event_and_sequence() {
     struct RejectEventSerialization;
     impl EventParticipant for RejectEventSerialization {
-        fn events(
-            &self,
-            _: &DurableTransition,
-        ) -> Result<Vec<serea_protocol::SereaEvent>, StoreError> {
+        fn events(&self, _: &DurableTransition) -> Result<Vec<EventDraft>, StoreError> {
             Err(StoreError::CanonicalJson)
         }
     }

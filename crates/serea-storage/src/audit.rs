@@ -238,7 +238,14 @@ pub trait TaskAuditParticipant: Send + Sync {
 /// The second and only other semantic participant in P3's fixed composition.
 /// It receives the same immutable successful-write facts as the journal mapper.
 pub trait EventParticipant: Send + Sync {
-    fn events(&self, facts: &DurableTransition) -> Result<Vec<SereaEvent>, StoreError>;
+    fn events(&self, facts: &DurableTransition) -> Result<Vec<EventDraft>, StoreError>;
+}
+
+/// A complete event object plus its independent retention deadline. The
+/// deadline is metadata outside `serea.event/1` and is not sent to consumers.
+pub struct EventDraft {
+    pub event: SereaEvent,
+    pub retention_at: Option<EpochMillis>,
 }
 
 impl Tx<'_> {
@@ -363,8 +370,8 @@ impl Tx<'_> {
                 return Err(StoreError::ConstraintViolation);
             }
         }
-        for event in event_drafts {
-            self.append_event(event, None)?;
+        for draft in event_drafts {
+            self.append_event(draft.event, draft.retention_at)?;
         }
         Ok(())
     }

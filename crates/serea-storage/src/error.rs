@@ -90,6 +90,9 @@ pub enum StoreError {
     EventPayloadTooLarge,
     /// One transaction attempted to append more than sixteen events.
     EventTransactionLimit,
+    InvalidEventReplayPage,
+    InvalidRetentionDeleteBatch,
+    EventHistoryCorrupt,
     /// Event history has no capacity after eligible retention pruning.
     EventStoreCapacity,
     /// Global event sequence cannot advance without overflowing SQLite's integer domain.
@@ -149,6 +152,9 @@ impl StoreError {
             Self::InvalidTimestamp => "InvalidTimestamp",
             Self::EventPayloadTooLarge => "EventPayloadTooLarge",
             Self::EventTransactionLimit => "EventTransactionLimit",
+            Self::InvalidEventReplayPage => "InvalidEventReplayPage",
+            Self::InvalidRetentionDeleteBatch => "InvalidRetentionDeleteBatch",
+            Self::EventHistoryCorrupt => "EventHistoryCorrupt",
             Self::EventStoreCapacity => "EventStoreCapacity",
             Self::EventSequenceOverflow => "EventSequenceOverflow",
             Self::EventClassRefused => "EventClassRefused",

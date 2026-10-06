@@ -164,7 +164,9 @@ impl Store {
     pub fn verify_integrity(&self) -> Result<(), StoreError> {
         let conn = self.connection()?;
         migrate::page_check(&conn, "PRAGMA integrity_check(100)")?;
-        migrate::foreign_key_check(&conn)
+        migrate::foreign_key_check(&conn)?;
+        drop(conn);
+        self.transact(|tx| crate::event::validate_event_history(&tx.inner))
     }
 
     /// Runs a synchronous body in BEGIN IMMEDIATE. Ok commits, Err explicitly

@@ -9,7 +9,8 @@
 //! SQLite authority. P2F adds atomic begin/known outcome transitions with result,
 //! receipt and journal fencing. The single SQL-free audit port accepts actual-write
 //! facts; task-engine owns journal semantics and recovery orchestration. Recovery
-//! inspection and fenced repairs remain storage-owned; no event runtime is implemented.
+//! inspection and fenced repairs remain storage-owned. P3 event append, replay,
+//! and retention use typed Store operations over the same transaction authority.
 
 // P2H: the crate has no unsafe code, and the P2H fault seam adds none. Declaring
 // it here makes that a compile error rather than a review comment, matching
@@ -39,12 +40,16 @@ mod tx;
 pub mod fault;
 
 pub use audit::{
-    AuditOperation, DurableTransition, EventParticipant, JournalKind, JournalRecord,
+    AuditOperation, DurableTransition, EventDraft, EventParticipant, JournalKind, JournalRecord,
     JournalRecords, TaskAuditParticipant,
 };
 pub use blob::BlobRef;
 pub use classify::{AtRestProtection, AtRestProtectionError};
 pub use error::StoreError;
+pub use event::{
+    EventReplayPage, EventRetentionReport, MAX_EVENT_REPLAY_PAGE, MAX_RETENTION_DELETE_BATCH,
+    ReplayItem,
+};
 pub use lease::{LeaseGuard, StepCommit, StepFailure, StepOutcome, TransitionContext};
 pub use lifecycle::{CancellationOutcome, DeletionOutcome};
 pub use migrate::{Migration, Migrations};

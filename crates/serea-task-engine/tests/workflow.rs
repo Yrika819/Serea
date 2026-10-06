@@ -162,6 +162,14 @@ fn p3c_task_creation_commits_task_journal_event_and_sequence_together() {
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).unwrap();
     assert_eq!(facts, (1, 1, 1, 1));
+    let retention_at: i64 = conn
+        .query_row(
+            "SELECT retention_at_ms FROM event_content WHERE seq=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(retention_at, at(10).get() + 30 * 24 * 60 * 60 * 1_000);
     let event_json: String = conn
         .query_row(
             "SELECT event_json FROM event_content WHERE seq=1",

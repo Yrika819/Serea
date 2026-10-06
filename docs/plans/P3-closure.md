@@ -1,16 +1,17 @@
 # P3 Event Bus and Scheduler Closure
 
 This record tracks accepted architecture, phase commits, validation evidence,
-and the limits of each claim. P3 runtime work does not begin until P3A's Fast CI,
-Full CI, Linux, MSRV, Intel macOS, arm64 macOS, and release fault-seam gates are
-green on its exact commit.
+and the limits of each claim. P3 runtime work does not begin until its phase gates
+are green on the exact commit. All CI run identifiers in the P3A–P3E historical
+sections below are **PRE_AUTHOR-SANITIZATION CI EVIDENCE**; those runs were not
+executed on the rewritten SHAs.
 
 ## Baseline
 
 | Item | Value |
 |---|---|
 | Starting branch | `p3/preimplementation-audit` |
-| Starting commit | `d280754b4175daa55300a1ac4f83031ca708cda0` |
+| Starting commit | `02c0f0d0c813a332a7c86feb8960364cc21a23a7` |
 | Owner semantic choice | ADR-0026 Option A, accepted |
 | Architecture version | `serea-arch/2.0.0` |
 | Replay response surface | `serea.device/2` |
@@ -18,12 +19,52 @@ green on its exact commit.
 | P3 implementation branch | `p3/event-bus-scheduler`, created from P3A closure commit |
 | Draft PR | [#1](https://github.com/Yrika819/Serea/pull/1), open against `main`, not merged |
 
+## Privacy repair and sanitized baseline
+
+The owner-authorized metadata-only rewrite covered both P3 refs after the
+unchanged `main` baseline. It changed author and committer identities to the
+approved GitHub noreply identity. Commit order, parent topology, author and
+committer timestamps, messages, and every commit tree were verified unchanged.
+The audit ref remains the rewritten equivalent of its P3A checkpoint and is an
+ancestor of the implementation ref. No other branch or tag was rewritten.
+
+| Ref | Before | After |
+|---|---|---|
+| `main` | `cb580be8dd0057202c6b0f9c783391460bfc1875` | unchanged |
+| `p3/preimplementation-audit` | `687bee58205b1e71e63425fda16172ab4ab45ad1` | `3e58d174b07bbc7a44bd3857cf403a09c86c7689` |
+| `p3/event-bus-scheduler` | `eabda5f1fc3ec2b9f656952f4adbe87acd745285` | `6a278d33d2f411d27c20cbb17cc8b06e6a99f668` |
+
+The old-to-new mapping for each P3 commit follows. The mapping is retained to
+reconcile source-history references; historical run IDs above remain evidence
+for the old SHAs only.
+
+| Old commit | Rewritten commit |
+|---|---|
+| `da117b5f9c4572bb989f5bf7f3d61b9cb2886164` | `e066561d7d3fd70e4f6300a519bda955b4583e65` |
+| `d280754b4175daa55300a1ac4f83031ca708cda0` | `02c0f0d0c813a332a7c86feb8960364cc21a23a7` |
+| `687bee58205b1e71e63425fda16172ab4ab45ad1` | `3e58d174b07bbc7a44bd3857cf403a09c86c7689` |
+| `e6d05b65414570fd927e647e4dc375302272c2c6` | `c09dec3c48c32fbdceba9e7533e1e0d0318af722` |
+| `df738660ab5196539b771234745e981b57baaba1` | `09fc6e653799e78fb4085b24cd51ff17502e14f9` |
+| `c37178252399361109f05e54abc7828a4204a721` | `e0ab3be8c706337a6f6f8ac59ab168dce093b7fb` |
+| `fb647f7bbea802855a5a16bd552747e8fdbce899` | `7f418e1254e053f8799d79bc5df46bf705542575` |
+| `e593a057498a7dff77b1b3cbc28bed4e2a494db0` | `d9e89314121b8672f0a482981837ac0ae5e3c2a4` |
+| `e11fa261c24c02fb5b1c51fb3b39fcc705d1faba` | `51f223c62db0f337f20d54d874c0022283d89e92` |
+| `7ed1445cba008e8eda132d3c2379f44d0e6608cb` | `6156bd34c13994657bca110c2efd48f5b1cd236b` |
+| `b3f7be3da6663bd0c61d3736f2a0869a055c3860` | `5eac2a4eb798da9e6f0db83ab40274542f6a823a` |
+| `94084303e6cee055c5381db3a84d75ac499ba636` | `a16e00f6ed73f8b8d785e24908ebf401c66525d9` |
+| `44ef12b13e385a5fff44fdc53bb66c7c31d1e647` | `346a773c622b0b9c16d0582704437a832b406180` |
+| `4da482e94cd3ddd4d29b5ef5f4ab826c242b74b0` | `2a972c73f22053c78c4cff9ebfa258750e5f0b3f` |
+| `eabda5f1fc3ec2b9f656952f4adbe87acd745285` | `6a278d33d2f411d27c20cbb17cc8b06e6a99f668` |
+
+A post-rewrite baseline validation record and exact-SHA CI runs are appended
+after they complete.
+
 ## P3A — Contract and transaction gate
 
 | Evidence | Result |
 |---|---|
-| Closure commit | `687bee58205b1e71e63425fda16172ab4ab45ad1` |
-| Evidence record commit | e6d05b65414570fd927e647e4dc375302272c2c6 |
+| Closure commit | `3e58d174b07bbc7a44bd3857cf403a09c86c7689` |
+| Evidence record commit | c09dec3c48c32fbdceba9e7533e1e0d0318af722 |
 | Scope | ADR-0026 Option A; Event/Device replay contract; protocol registry and current architecture references; audit reconciliation |
 | RED tests | Not applicable to docs/version-registry closure; existing protocol registry checks run below |
 | GREEN tests | `python3 tests/workspace_smoke.py`; 74-test `workspace_smoke_tests.py`; `cargo test -p serea-protocol --offline` |
@@ -43,7 +84,7 @@ green on its exact commit.
 
 | Evidence | Result |
 |---|---|
-| Commit | df738660ab5196539b771234745e981b57baaba1 |
+| Commit | 09fc6e653799e78fb4085b24cd51ff17502e14f9 |
 | Scope | Migration 0002, event metadata/content schema, transactional typed event append, scheduler durable schema foundation, serea-event-bus crate edge |
 | RED proof | cargo test -p serea-storage migration_0002_tests:: first failed because the migration catalog lacked version 2; the typed append test then failed to compile because Tx::append_event did not exist |
 | Focused GREEN | cargo test -p serea-storage migration_0002_tests:: --offline — 11 tests PASS; cargo test -p serea-event-bus --offline — PASS |
@@ -67,8 +108,8 @@ No cross-architecture database artifact was exchanged.
 
 | Evidence | Result |
 |---|---|
-| Behavior commit | fb647f7bbea802855a5a16bd552747e8fdbce899 (`feat: make task transitions event-atomic`) |
-| Documentation follow-up | e593a057498a7dff77b1b3cbc28bed4e2a494db0 (`docs: clarify Task Engine event role`) |
+| Behavior commit | 7f418e1254e053f8799d79bc5df46bf705542575 (`feat: make task transitions event-atomic`) |
+| Documentation follow-up | d9e89314121b8672f0a482981837ac0ae5e3c2a4 (`docs: clarify Task Engine event role`) |
 | Scope | Fixed Storage audit+event participants; Task Engine event mapper; recovery event participation; operation inventory in [P3C task event inventory](P3C-task-event-inventory.md) |
 | RED proof | Before implementation, `p3c_task_creation_commits_task_journal_event_and_sequence_together` observed task+journal counts `(1,1)` with event+seq `(0,0)`; expected all four to commit. |
 | Focused GREEN | `cargo test -p serea-task-engine --all-targets --offline` — PASS (all five task-engine test binaries); Storage event-participant serialization rollback test PASS; focused workflow/recovery suites PASS. |
@@ -89,7 +130,7 @@ P3F–P3G evidence will be appended after each gated phase.
 
 | Evidence | Result |
 |---|---|
-| Behavior commit | 7ed1445cba008e8eda132d3c2379f44d0e6608cb (`feat: add bounded event replay and retention`) |
+| Behavior commit | 6156bd34c13994657bca110c2efd48f5b1cd236b (`feat: add bounded event replay and retention`) |
 | Scope | Typed high-water replay pages; exact intentional-expiry ranges; compacted-prefix boundary; corruption detection; bounded whole-content retention; Task lifecycle event 30-day deadline |
 | RED proof | New replay suite initially failed to compile because `ReplayItem`, replay/expiry APIs, and typed invalid-page errors were absent. |
 | Focused GREEN | `cargo test -p serea-event-bus --test replay --offline` — 6 tests PASS; `cargo test -p serea-task-engine --test workflow --offline` — 32 tests PASS. |
@@ -113,8 +154,8 @@ artifact was exchanged.
 
 | Evidence | Result |
 |---|---|
-| Initial behavior commit | 94084303e6cee055c5381db3a84d75ac499ba636 (`feat: add durable scheduler claims`) |
-| Follow-up commit | 44ef12b13e385a5fff44fdc53bb66c7c31d1e647 (`fix: complete scheduler state command fences`) |
+| Initial behavior commit | a16e00f6ed73f8b8d785e24908ebf401c66525d9 (`feat: add durable scheduler claims`) |
+| Follow-up commit | 346a773c622b0b9c16d0582704437a832b406180 (`fix: complete scheduler state command fences`) |
 | Scope | Typed schedule creation and state commands with authenticated retry receipts; bounded occurrence rows; source EventId uniqueness; fenced occurrence claims and mappings; singleton durable Scheduler replay cursor |
 | RED proof | New Scheduler storage suite first failed to compile because schedule/occurrence storage and claim APIs did not exist. Follow-up tests required pause/resume lifecycle behavior and duplicate source-event rejection. |
 | Focused GREEN | `cargo test -p serea-storage scheduler_tests --offline` — 10 tests PASS; storage Clippy `-D warnings` PASS. |

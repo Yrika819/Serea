@@ -1,7 +1,7 @@
 # Serea P3 Preimplementation Audit
 
 - **Status:** `P3A_CLOSED`
-- **Audit base:** `p3/preimplementation-audit` at `da117b5f9c4572bb989f5bf7f3d61b9cb2886164`
+- **Audit base:** `p3/preimplementation-audit` at `e066561d7d3fd70e4f6300a519bda955b4583e65`
 - **Audit branch:** `p3/preimplementation-audit`
 - **Scope:** P3 architecture, protocols, docs, and the exact supported-surface registry update required by the `serea.device/2` replay response. No Event Bus/Scheduler runtime, schema migration, new dependency, or event-retention behavior change.
 - **Authority reviewed:** repository contracts at the audit base; public branch and CI identities supplied with the task.
@@ -612,7 +612,7 @@ after those checks pass on the exact P3A closure commit.
 - P2 runtime behavior changed: **NO**
 - Local Mac used: **NO**
 - Local Mac required for P3: **NO**
-- Readiness: **P3A_CLOSED** — all docs, Cloud validation, Fast CI, Full CI, paired macOS, MSRV, and fault-seam gates are green on `687bee58205b1e71e63425fda16172ab4ab45ad1`.
+- Readiness: **P3A_CLOSED** — all docs, Cloud validation, Fast CI, Full CI, paired macOS, MSRV, and fault-seam gates are green on `3e58d174b07bbc7a44bd3857cf403a09c86c7689`.
 
 Owner authorization selects Option A and explicitly authorizes P3 implementation
 after P3A's repository and CI gates. This audit records the current contract;

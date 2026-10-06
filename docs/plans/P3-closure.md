@@ -39,20 +39,29 @@ green on its exact commit.
 | Sequential review | PASS — docs/version surfaces reconciled; explicit device/1 and device/3 refusals tested; no P3 runtime behavior entered |
 | Nonclaims | No migration 0002, Event Bus runtime, Scheduler runtime, P3 task transitions, or runtime retention/replay behavior yet |
 
-## P3B — Durable event foundation (in progress)
+## P3B — Durable event foundation (closed)
 
 | Evidence | Result |
 |---|---|
+| Commit | df738660ab5196539b771234745e981b57baaba1 |
 | Scope | Migration 0002, event metadata/content schema, transactional typed event append, scheduler durable schema foundation, serea-event-bus crate edge |
 | RED proof | cargo test -p serea-storage migration_0002_tests:: first failed because the migration catalog lacked version 2; the typed append test then failed to compile because Tx::append_event did not exist |
 | Focused GREEN | cargo test -p serea-storage migration_0002_tests:: --offline — 11 tests PASS; cargo test -p serea-event-bus --offline — PASS |
-| Workspace checks | docs validator PASS; workspace smoke PASS; regression suite PASS (75 tests; one additional test guards the new Storage/Event Bus direction); fmt, metadata, diff check, and full workspace all-target/all-feature tests PASS |
+| Workspace checks | docs validator PASS; workspace smoke PASS; regression suite PASS (75 tests; one extra case guards the new Storage/Event Bus direction); fmt, metadata, diff check, full workspace all-target/all-feature tests, and clippy -D warnings PASS |
 | Covered behavior | Migration 0001 checksum unchanged; 0001→0002 apply/reopen; production 0002 DDL rollback; seq allocation + event row transaction atomicity; rollback creates no committed gap; two Store connections serialize; content immutability; privacy-minimal sequence/range columns; payload, transaction-count, and logical byte capacity refusals |
-| Cloud validation | Workspace full gates in progress |
-| Fast CI / Full CI | Pending P3B commit |
-| Linux stable / MSRV 1.85 / Intel / arm64 / fault proof | Pending paired GitHub Actions |
-| Sequential review | In progress; no generic SQL API or reverse Storage→Event Bus dependency; byte accounting is deterministic logical bytes, independent of SQLite page/WAL representation |
+| Cloud validation | PASS on P3B commit |
+| Fast CI | PASS — PR run 37503004570, job 112404502008; explicit dispatch run 37503026250 also PASS |
+| Full CI | PASS — run 37503034192 |
+| Linux stable / MSRV 1.85 | PASS — jobs 112404608220 / 112404608779 |
+| GitHub-hosted macOS Intel x86_64 / arm64 | PASS — jobs 112404608720 / 112404608694 |
+| Release fault-seam proof | PASS — Linux stable job 112404608220 |
+| Sequential review | PASS; no generic SQL API or reverse Storage→Event Bus dependency; byte accounting is deterministic logical bytes and excludes SQLite page/WAL representation |
 | Nonclaims | No retention execution, range-aware replay runtime, Scheduler runtime, Task Engine event participation, or crash-matrix closure yet |
+
+Paired portability evidence: GitHub-hosted macOS Intel x86_64 CI passed.
+GitHub-hosted macOS arm64 CI passed. Each ran fresh migration 0001→0002,
+close/reopen, and Store integrity validation through the storage migration test.
+No cross-architecture database artifact was exchanged.
 
 P3C–P3G have not started. Add each phase's commit, RED/GREEN evidence, Cloud
 validation, Fast/Full Actions run and job IDs, paired Mac results, review

@@ -32,6 +32,7 @@ use serea_storage::{
 pub const MAX_MODEL_PROMPT_BYTES: usize = 1_048_576;
 /// Maximum JSON Schema size accepted before routing.
 pub const MAX_MODEL_SCHEMA_BYTES: usize = 65_536;
+const AMBIGUOUS_PROVIDER_ERROR_KIND: &str = "AMBIGUOUS_DISPATCH";
 /// Default host bound for per-call output tokens.
 pub const DEFAULT_MAX_OUTPUT_TOKENS_PER_CALL: u32 = 2_048;
 
@@ -437,6 +438,10 @@ enum ModelDispatchFailure {
         error_kind: ModelErrorCode,
         retryable: bool,
     },
+    AmbiguousProvider {
+        request_id: serea_protocol::RequestId,
+        error_kind: ModelErrorCode,
+    },
     TerminalProvider {
         request_id: serea_protocol::RequestId,
         error_kind: ModelErrorCode,
@@ -787,6 +792,27 @@ impl ModelRouterV1 {
             Ok(response) => response,
             Err(error) => {
                 let at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+                if error.kind.as_str() == AMBIGUOUS_PROVIDER_ERROR_KIND {
+                    record_model_ambiguity(
+                        store,
+                        events,
+                        ModelFailureFacts {
+                            request_id: &request_id,
+                            metadata: ModelEventMetadataV1 {
+                                occurred_at: at,
+                                ..metadata
+                            },
+                            error_kind: error.kind.clone(),
+                            retryable: false,
+                            terminal_at: at,
+                            usage: None,
+                        },
+                    )?;
+                    return Err(ModelDispatchFailure::AmbiguousProvider {
+                        request_id,
+                        error_kind: error.kind,
+                    });
+                }
                 record_model_failure(
                     store,
                     events,
@@ -989,6 +1015,34 @@ fn record_model_failure(
                     )?;
                 }
             }
+            tx.append_event(failed.event, failed.retention_at)?;
+            Ok(())
+        })
+        .map_err(ModelDispatchFailure::Storage)
+}
+
+#[allow(dead_code)] // Used for typed adapter outcomes with uncertain processing.
+fn record_model_ambiguity(
+    store: &Store,
+    events: &EventBus,
+    mut facts: ModelFailureFacts<'_>,
+) -> Result<(), ModelDispatchFailure> {
+    facts.retryable = false;
+    facts.usage = None;
+    let failed = events
+        .draft_model_failed(ModelFailedEventV1 {
+            metadata: facts.metadata,
+            error_kind: facts.error_kind.clone(),
+            retryable: false,
+        })
+        .map_err(ModelDispatchFailure::Storage)?;
+    store
+        .transact(|tx| {
+            tx.mark_model_call_ambiguous(
+                facts.request_id,
+                facts.error_kind.as_str(),
+                facts.terminal_at,
+            )?;
             tx.append_event(failed.event, failed.retention_at)?;
             Ok(())
         })
@@ -1300,6 +1354,9 @@ mod tests {
         calls: AtomicUsize,
         called_event_visible_before_generate: AtomicBool,
         fail_next: AtomicBool,
+        ambiguous_next: AtomicBool,
+        mismatched_identity_next: AtomicBool,
+        wrong_cost_class_next: AtomicBool,
         last_request_id: Mutex<Option<serea_protocol::RequestId>>,
     }
 
@@ -1348,9 +1405,28 @@ mod tests {
                     retryable: true,
                 });
             }
+            if self.ambiguous_next.swap(false, Ordering::SeqCst) {
+                return Err(ModelError {
+                    kind: ModelErrorCode::new(AMBIGUOUS_PROVIDER_ERROR_KIND)
+                        .unwrap_or_else(|_| unreachable!()),
+                    message: serea_protocol::ErrorMessage::new("outcome may have been processed")
+                        .unwrap_or_else(|_| unreachable!()),
+                    retryable: true,
+                });
+            }
+            let model_id = if self.mismatched_identity_next.swap(false, Ordering::SeqCst) {
+                ModelId::new("gpt-oss-20b").unwrap_or_else(|_| unreachable!())
+            } else {
+                request.model_id.clone()
+            };
+            let cost_class = if self.wrong_cost_class_next.swap(false, Ordering::SeqCst) {
+                CostClass::Free
+            } else {
+                CostClass::Paid
+            };
             Ok(ModelResponse {
                 request_id: request.request_id.clone(),
-                model_id: request.model_id.clone(),
+                model_id,
                 provider_id: self.provider_id(),
                 content: "hello".into(),
                 structured: Some(serde_json::json!({"untrusted": true})),
@@ -1358,7 +1434,7 @@ mod tests {
                 usage: ModelUsage {
                     input_tokens: TokenCount::new(3),
                     output_tokens: TokenCount::new(2),
-                    cost_class: CostClass::Paid,
+                    cost_class,
                 },
                 latency_ms: 7,
                 repair_attempts: 2,
@@ -1379,6 +1455,9 @@ mod tests {
             calls: AtomicUsize::new(0),
             called_event_visible_before_generate: AtomicBool::new(false),
             fail_next: AtomicBool::new(false),
+            ambiguous_next: AtomicBool::new(false),
+            mismatched_identity_next: AtomicBool::new(false),
+            wrong_cost_class_next: AtomicBool::new(false),
             last_request_id: Mutex::new(None),
         });
         let bus = EventBus::new(IncrementingIds(0));
@@ -1537,6 +1616,117 @@ mod tests {
             serde_json::to_string(&final_events.items).unwrap_or_else(|_| unreachable!());
         assert!(!serialized_events.contains("sensitive diagnostic text"));
 
+        provider.ambiguous_next.store(true, Ordering::SeqCst);
+        let ambiguous_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let ambiguous_context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let ambiguous =
+            block_on(router.dispatch_chat_text(&call, &ambiguous_session, &ambiguous_context));
+        assert!(matches!(
+            ambiguous,
+            Err(ModelDispatchFailure::AmbiguousProvider { error_kind, .. })
+                if error_kind.as_str() == AMBIGUOUS_PROVIDER_ERROR_KIND
+        ));
+        let ambiguous_request = provider
+            .last_request_id
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .unwrap_or_else(|| unreachable!());
+        let ambiguous_attempt = store
+            .get_model_call_attempt(&ambiguous_request)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(ambiguous_attempt.state, ModelAttemptState::Ambiguous);
+        assert_eq!(ambiguous_attempt.actual_cost_usd_micros, None);
+        assert!(
+            store
+                .model_usage_for_request(&ambiguous_request)
+                .unwrap_or_else(|_| unreachable!())
+                .is_none()
+        );
+        let ambiguity_events =
+            EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert!(matches!(
+            ambiguity_events.items.last(),
+            Some(ReplayItem::Event { event }) if event.kind == EventKind::ModelFailed
+                && event.payload["error_kind"] == AMBIGUOUS_PROVIDER_ERROR_KIND
+                && event.payload["retryable"] == false
+        ));
+
+        provider
+            .mismatched_identity_next
+            .store(true, Ordering::SeqCst);
+        let spoof_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let spoof_context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let spoof_result =
+            block_on(router.dispatch_chat_text(&call, &spoof_session, &spoof_context));
+        assert!(matches!(
+            spoof_result,
+            Err(ModelDispatchFailure::TerminalProvider { error_kind, .. })
+                if error_kind.as_str() == "PROVIDER_PROTOCOL_FAILURE"
+        ));
+        let spoof_request = provider
+            .last_request_id
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .unwrap_or_else(|| unreachable!());
+        let spoof_attempt = store
+            .get_model_call_attempt(&spoof_request)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(spoof_attempt.state, ModelAttemptState::Failed);
+        assert_eq!(spoof_attempt.response_blob, None);
+        assert!(
+            store
+                .model_usage_for_request(&spoof_request)
+                .unwrap_or_else(|_| unreachable!())
+                .is_none()
+        );
+
+        provider.wrong_cost_class_next.store(true, Ordering::SeqCst);
+        let cost_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let cost_context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let cost_result = block_on(router.dispatch_chat_text(&call, &cost_session, &cost_context));
+        assert!(matches!(
+            cost_result,
+            Err(ModelDispatchFailure::TerminalProvider { error_kind, .. })
+                if error_kind.as_str() == "PROVIDER_METADATA_INVALID"
+        ));
+        let cost_request = provider
+            .last_request_id
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .unwrap_or_else(|| unreachable!());
+        let cost_attempt = store
+            .get_model_call_attempt(&cost_request)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(cost_attempt.state, ModelAttemptState::Failed);
+        assert_eq!(cost_attempt.response_blob, None);
+        assert!(
+            store
+                .model_usage_for_request(&cost_request)
+                .unwrap_or_else(|_| unreachable!())
+                .is_none()
+        );
+
         let calls_before_reopen = provider.calls.load(Ordering::SeqCst);
         drop(router);
         drop(provider);
@@ -1544,13 +1734,16 @@ mod tests {
         drop(wrong_price_context);
         drop(no_spend_context);
         drop(retry_context);
+        drop(ambiguous_context);
+        drop(spoof_context);
+        drop(cost_context);
         drop(store);
         let reopened = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
         let recovered = recover_completed_chat_text_response(&reopened, &response.request_id)
             .unwrap_or_else(|_| unreachable!())
             .unwrap_or_else(|| unreachable!());
         assert_eq!(recovered, response);
-        assert_eq!(calls_before_reopen, 2);
+        assert_eq!(calls_before_reopen, 5);
         assert_eq!(
             reopened
                 .model_usage_for_request(&response.request_id)
@@ -1562,7 +1755,11 @@ mod tests {
         );
         let reopened_events =
             EventBus::replay(&reopened, None, None, 16).unwrap_or_else(|_| unreachable!());
-        assert_eq!(reopened_events.items.len(), 4);
+        assert_eq!(reopened_events.items.len(), 10);
+        let serialized_reopened_events =
+            serde_json::to_string(&reopened_events.items).unwrap_or_else(|_| unreachable!());
+        assert!(!serialized_reopened_events.contains("hello"));
+        assert!(!serialized_reopened_events.contains("outcome may have been processed"));
         drop(reopened);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));

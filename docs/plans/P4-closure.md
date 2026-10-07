@@ -813,4 +813,9 @@ repair, fallback, dispatch gates, or P4E budgets.
   [37695569990](https://github.com/Yrika819/Serea/actions/runs/37695569990), and cross-architecture SQLite
   [37695570019](https://github.com/Yrika819/Serea/actions/runs/37695570019), including Linux stable,
   MSRV 1.85, Intel x86_64, arm64, release fault proof, and both SQLite transfer
-  directions. The evidence-only closure head still requires its own three gates.
+  directions. The closure-document head `27743c9588b144316542ad98c73969eceaa2e518`
+  passed Fast CI
+  [37696372204](https://github.com/Yrika819/Serea/actions/runs/37696372204), Full CI
+  [37696372072](https://github.com/Yrika819/Serea/actions/runs/37696372072), and cross-architecture SQLite
+  [37696372051](https://github.com/Yrika819/Serea/actions/runs/37696372051), with the same required job set and
+  both transfer directions.

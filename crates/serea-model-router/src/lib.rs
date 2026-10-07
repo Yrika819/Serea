@@ -24,7 +24,8 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use serea_event_bus::{
-    EventBus, ModelCompletedEventV1, ModelEventMetadataV1, ModelEventRelationV1, ModelFailedEventV1,
+    EventBus, ModelCompletedEventV1, ModelEventMetadataV1, ModelEventRelationV1,
+    ModelFailedEventV1, ModelOutputInvalidEventV1,
 };
 use serea_protocol::provider::{ModelCallContext, ModelProvider};
 use serea_protocol::{
@@ -447,7 +448,6 @@ pub enum RouterError {
 
 // The retryable/terminal details are consumed by the P4E orchestration ladder.
 #[allow(dead_code)]
-#[derive(Debug)]
 enum ModelDispatchFailure {
     Refused(RouterError),
     Storage(StoreError),
@@ -466,6 +466,13 @@ enum ModelDispatchFailure {
     TerminalProvider {
         request_id: serea_protocol::RequestId,
         error_kind: ModelErrorCode,
+    },
+    StructuredOutputInvalid {
+        request_id: serea_protocol::RequestId,
+        // Transient in-process input for the repair ladder; never log or persist.
+        #[allow(dead_code)]
+        raw_response: String,
+        validation_error: StructuredValidationError,
     },
 }
 
@@ -711,14 +718,49 @@ impl ModelRouterV1 {
         session: &RoutingSessionV1,
         context: &ModelDispatchContext<'_>,
     ) -> Result<ModelResponse, ModelDispatchFailure> {
+        if call.purpose != ModelPurpose::Chat
+            || !matches!(call.response_format, ResponseFormat::Text)
+        {
+            return Err(ModelDispatchFailure::Refused(
+                RouterError::IllegalPurposeFormat,
+            ));
+        }
+        self.dispatch_prepared(call, session, context).await
+    }
+
+    #[allow(dead_code)] // The repair ladder will become its production caller in P4E.
+    pub(crate) async fn dispatch_structured(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        context: &ModelDispatchContext<'_>,
+    ) -> Result<ModelResponse, ModelDispatchFailure> {
+        if call.purpose == ModelPurpose::Chat
+            || !matches!(call.response_format, ResponseFormat::JsonSchema { .. })
+        {
+            return Err(ModelDispatchFailure::Refused(
+                RouterError::IllegalPurposeFormat,
+            ));
+        }
+        self.dispatch_prepared(call, session, context).await
+    }
+
+    async fn dispatch_prepared(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        context: &ModelDispatchContext<'_>,
+    ) -> Result<ModelResponse, ModelDispatchFailure> {
         let store = context.store;
         let events = context.events;
         let price = &context.price;
         let max_daily_spend_usd_micros = context.max_daily_spend_usd_micros;
         let clock = context.clock;
-        if call.purpose != ModelPurpose::Chat
-            || !matches!(call.response_format, ResponseFormat::Text)
-        {
+        let is_chat_text = call.purpose == ModelPurpose::Chat
+            && matches!(call.response_format, ResponseFormat::Text);
+        let is_structured = call.purpose != ModelPurpose::Chat
+            && matches!(call.response_format, ResponseFormat::JsonSchema { .. });
+        if !is_chat_text && !is_structured {
             return Err(ModelDispatchFailure::Refused(
                 RouterError::IllegalPurposeFormat,
             ));
@@ -886,7 +928,7 @@ impl ModelRouterV1 {
         let usage_is_valid = response.usage.cost_class == price.cost_class()
             && response.usage.input_tokens.get() <= u64::from(effective.max_context_tokens)
             && response.usage.output_tokens.get() <= u64::from(effective_max_output_tokens)
-            && response.content.len() <= serea_storage::MAX_MODEL_RESPONSE_BYTES;
+            && (is_structured || response.content.len() <= serea_storage::MAX_MODEL_RESPONSE_BYTES);
         if !usage_is_valid {
             let at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
             let error_kind = stable_model_error("PROVIDER_METADATA_INVALID")?;
@@ -946,6 +988,81 @@ impl ModelRouterV1 {
                 error_kind,
             });
         }
+        let structured = if let ResponseFormat::JsonSchema { schema } = &call.response_format {
+            match validate_structured_response(schema, &response.content) {
+                Ok(value) => Some(value),
+                Err(validation_error) => {
+                    let invalid_at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+                    let error_kind = stable_model_error("MODEL_OUTPUT_INVALID")?;
+                    let actual_cost = calculate_cost_usd_micros(
+                        response.usage.input_tokens.get(),
+                        response.usage.output_tokens.get(),
+                        price.input_rate_microusd_per_million_tokens(),
+                        price.output_rate_microusd_per_million_tokens(),
+                    )
+                    .map_err(|_| {
+                        ModelDispatchFailure::Refused(RouterError::ProviderProtocolFailure)
+                    })?;
+                    let completed = events
+                        .draft_model_completed(ModelCompletedEventV1 {
+                            metadata: ModelEventMetadataV1 {
+                                occurred_at: invalid_at,
+                                ..metadata.clone()
+                            },
+                            finish_reason: response.finish_reason,
+                            input_tokens: response.usage.input_tokens.get(),
+                            output_tokens: response.usage.output_tokens.get(),
+                            cost_class: price.cost_class(),
+                            cost_usd_micros: actual_cost.get(),
+                            price_revision: price.price_revision().to_owned(),
+                            repair_attempts: 0,
+                        })
+                        .map_err(ModelDispatchFailure::Storage)?;
+                    let diagnostic_count = match &validation_error {
+                        StructuredValidationError::InvalidOutput(diagnostics) => {
+                            u8::try_from(diagnostics.len()).unwrap_or(32)
+                        }
+                        _ => 0,
+                    };
+                    let invalid = events
+                        .draft_model_output_invalid(ModelOutputInvalidEventV1 {
+                            metadata: ModelEventMetadataV1 {
+                                occurred_at: invalid_at,
+                                ..metadata
+                            },
+                            diagnostic_count,
+                        })
+                        .map_err(ModelDispatchFailure::Storage)?;
+                    let usage = ModelFailureUsage {
+                        input_tokens: response.usage.input_tokens,
+                        output_tokens: response.usage.output_tokens,
+                        latency_ms: u64::from(response.latency_ms),
+                        repair_attempts: 0,
+                        recorded_at: invalid_at,
+                    };
+                    store
+                        .transact(|tx| {
+                            tx.fail_model_call_with_usage(
+                                &request_id,
+                                error_kind.as_str(),
+                                invalid_at,
+                                usage,
+                            )?;
+                            tx.append_event(completed.event, completed.retention_at)?;
+                            tx.append_event(invalid.event, invalid.retention_at)?;
+                            Ok(())
+                        })
+                        .map_err(ModelDispatchFailure::Storage)?;
+                    return Err(ModelDispatchFailure::StructuredOutputInvalid {
+                        request_id,
+                        raw_response: response.content.clone(),
+                        validation_error,
+                    });
+                }
+            }
+        } else {
+            None
+        };
         let actual_cost = calculate_cost_usd_micros(
             response.usage.input_tokens.get(),
             response.usage.output_tokens.get(),
@@ -969,7 +1086,14 @@ impl ModelRouterV1 {
                 repair_attempts: 0,
             })
             .map_err(ModelDispatchFailure::Storage)?;
-        let response_json = serde_json::json!({"content": response.content.clone()});
+        let response_json = if let Some(structured) = &structured {
+            serde_json::json!({
+                "content": response.content.clone(),
+                "structured": structured,
+            })
+        } else {
+            serde_json::json!({"content": response.content.clone()})
+        };
         let serialized = serde_json::to_string(&response_json)
             .map_err(|_| ModelDispatchFailure::Refused(RouterError::ProviderProtocolFailure))?;
         let accepted_json = canonicalize(&serialized)
@@ -995,7 +1119,11 @@ impl ModelRouterV1 {
                 Ok(())
             })
             .map_err(ModelDispatchFailure::Storage)?;
-        Ok(response)
+        Ok(ModelResponse {
+            structured,
+            repair_attempts: 0,
+            ..response
+        })
     }
 }
 
@@ -1175,6 +1303,70 @@ pub fn recover_completed_chat_text_response(
         provider_id: attempt.provider_id,
         content: content.to_owned(),
         structured: None,
+        finish_reason: FinishReason::Stop,
+        usage: serea_protocol::ModelUsage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cost_class: usage.cost_class,
+        },
+        latency_ms,
+        repair_attempts: u32::from(usage.repair_attempts),
+    }))
+}
+
+/// Rebuilds a host-validated structured result after caller loss.
+///
+/// Recovery uses only the durable accepted response and attempt/accounting
+/// facts. It never calls a provider or repeats schema validation because the
+/// stored `COMPLETED` response was accepted by the host before commit.
+pub fn recover_completed_structured_response(
+    store: &Store,
+    request_id: &serea_protocol::RequestId,
+) -> Result<Option<ModelResponse>, ModelRecoveryError> {
+    let Some(attempt) = store
+        .get_model_call_attempt(request_id)
+        .map_err(ModelRecoveryError::Storage)?
+    else {
+        return Ok(None);
+    };
+    if attempt.state != ModelAttemptState::Completed || attempt.purpose == ModelPurpose::Chat {
+        return Ok(None);
+    }
+    let Some(response_bytes) = store
+        .get_model_call_response(request_id)
+        .map_err(ModelRecoveryError::Storage)?
+    else {
+        return Ok(None);
+    };
+    let usage = store
+        .model_usage_for_request(request_id)
+        .map_err(ModelRecoveryError::Storage)?
+        .ok_or(ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    if usage.cost_class != attempt.price.cost_class() || usage.repair_attempts > 2 {
+        return Err(ModelRecoveryError::Storage(StoreError::CorruptRow));
+    }
+    let document: serde_json::Value = serde_json::from_slice(&response_bytes)
+        .map_err(|_| ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    let object = document
+        .as_object()
+        .filter(|object| object.len() == 2)
+        .ok_or(ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    let content = object
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    let structured = object
+        .get("structured")
+        .cloned()
+        .ok_or(ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    let latency_ms = u32::try_from(usage.latency_ms)
+        .map_err(|_| ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    Ok(Some(ModelResponse {
+        request_id: attempt.request_id,
+        model_id: attempt.model_id,
+        provider_id: attempt.provider_id,
+        content: content.to_owned(),
+        structured: Some(structured),
         finish_reason: FinishReason::Stop,
         usage: serea_protocol::ModelUsage {
             input_tokens: usage.input_tokens,
@@ -1380,6 +1572,7 @@ mod tests {
         mismatched_request_id_next: AtomicBool,
         mismatched_provider_id_next: AtomicBool,
         wrong_cost_class_next: AtomicBool,
+        scripted_content: Mutex<String>,
         finish_next: Mutex<Option<FinishReason>>,
         last_request_id: Mutex<Option<serea_protocol::RequestId>>,
     }
@@ -1475,7 +1668,11 @@ mod tests {
                 request_id,
                 model_id,
                 provider_id,
-                content: "hello".into(),
+                content: self
+                    .scripted_content
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone(),
                 structured: Some(serde_json::json!({"untrusted": true})),
                 finish_reason,
                 usage: ModelUsage {
@@ -1507,6 +1704,7 @@ mod tests {
             mismatched_request_id_next: AtomicBool::new(false),
             mismatched_provider_id_next: AtomicBool::new(false),
             wrong_cost_class_next: AtomicBool::new(false),
+            scripted_content: Mutex::new("hello".into()),
             finish_next: Mutex::new(None),
             last_request_id: Mutex::new(None),
         });
@@ -1920,6 +2118,181 @@ mod tests {
             serde_json::to_string(&reopened_events.items).unwrap_or_else(|_| unreachable!());
         assert!(!serialized_reopened_events.contains("hello"));
         assert!(!serialized_reopened_events.contains("outcome may have been processed"));
+        drop(reopened);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn structured_dispatch_returns_host_validated_value_and_persists_it() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-structured-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let provider = Arc::new(DispatchFakeProvider {
+            store: Arc::clone(&store),
+            calls: AtomicUsize::new(0),
+            called_event_visible_before_generate: AtomicBool::new(false),
+            fail_next: AtomicBool::new(false),
+            ambiguous_next: AtomicBool::new(false),
+            mismatched_identity_next: AtomicBool::new(false),
+            mismatched_request_id_next: AtomicBool::new(false),
+            mismatched_provider_id_next: AtomicBool::new(false),
+            wrong_cost_class_next: AtomicBool::new(false),
+            scripted_content: Mutex::new(r#"{"count":7}"#.into()),
+            finish_next: Mutex::new(None),
+            last_request_id: Mutex::new(None),
+        });
+        let bus = EventBus::new(IncrementingIds(0));
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let router =
+            ModelRouterV1::new(roster, vec![provider.clone()]).unwrap_or_else(|_| unreachable!());
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+            "additionalProperties": false
+        });
+        let raw = r#"{"count":7}"#;
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: None,
+            purpose: ModelPurpose::Analysis,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "extract the count".into(),
+            }],
+            system: None,
+            response_format: ResponseFormat::JsonSchema { schema },
+            tools: Vec::new(),
+            max_output_tokens: 128,
+            temperature: 0.25,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+
+        let response = block_on(router.dispatch_structured(&call, &session, &context))
+            .unwrap_or_else(|_| unreachable!());
+
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(response.content, raw);
+        assert_eq!(response.structured, Some(serde_json::json!({"count":7})));
+        assert_eq!(response.repair_attempts, 0);
+        let attempt = store
+            .get_model_call_attempt(&response.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(attempt.state, ModelAttemptState::Completed);
+        let stored = store
+            .get_model_call_response(&response.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let stored: serde_json::Value =
+            serde_json::from_slice(&stored).unwrap_or_else(|_| unreachable!());
+        assert_eq!(stored["content"], raw);
+        assert_eq!(stored["structured"], serde_json::json!({"count":7}));
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert!(matches!(events.items.as_slice(), [
+            ReplayItem::Event { event: called },
+            ReplayItem::Event { event: completed },
+        ] if called.kind == EventKind::ModelCalled && completed.kind == EventKind::ModelCompleted));
+
+        let raw_invalid = r#"{"count":"private_fragment_marker"}"#;
+        *provider
+            .scripted_content
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = raw_invalid.into();
+        let invalid_result = block_on(router.dispatch_structured(&call, &session, &context));
+        let Err(ModelDispatchFailure::StructuredOutputInvalid {
+            request_id: invalid_request_id,
+            validation_error: StructuredValidationError::InvalidOutput(diagnostics),
+            ..
+        }) = invalid_result
+        else {
+            unreachable!()
+        };
+        assert!(
+            !serde_json::to_string(&diagnostics)
+                .unwrap_or_else(|_| unreachable!())
+                .contains("private_fragment_marker")
+        );
+        let invalid_attempt = store
+            .get_model_call_attempt(&invalid_request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(invalid_attempt.state, ModelAttemptState::Failed);
+        assert_eq!(invalid_attempt.response_blob, None);
+        let invalid_usage = store
+            .model_usage_for_request(&invalid_request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(invalid_usage.input_tokens.get(), 3);
+        assert_eq!(invalid_usage.output_tokens.get(), 2);
+        assert_eq!(invalid_usage.cost_usd_micros.get(), 5);
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        let event_json = serde_json::to_string(
+            &events
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ReplayItem::Event { event } => Some(&event.payload),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| unreachable!());
+        assert!(!event_json.contains("private_fragment_marker"));
+        assert!(matches!(events.items.as_slice(), [
+            ReplayItem::Event { event: called },
+            ReplayItem::Event { event: completed },
+            ReplayItem::Event { event: called_invalid },
+            ReplayItem::Event { event: completed_invalid },
+            ReplayItem::Event { event: output_invalid },
+        ] if called.kind == EventKind::ModelCalled
+            && completed.kind == EventKind::ModelCompleted
+            && called_invalid.kind == EventKind::ModelCalled
+            && completed_invalid.kind == EventKind::ModelCompleted
+            && output_invalid.kind == EventKind::ModelOutputInvalid));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        drop(context);
+        drop(router);
+        drop(provider);
+        drop(store);
+        let reopened = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let recovered = recover_completed_structured_response(&reopened, &response.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(recovered, response);
         drop(reopened);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));

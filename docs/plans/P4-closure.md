@@ -666,3 +666,49 @@ repair, fallback, dispatch gates, or P4E budgets.
   and cross-architecture SQLite
   [37689403666](https://github.com/Yrika819/Serea/actions/runs/37689403666)
   in both directions.
+
+### P4E slice: host-validated structured dispatch
+
+- RED evidence: the new structured dispatch test first failed to compile
+  because `dispatch_structured` did not exist. After adding accepted-output
+  recovery coverage, that test again failed to compile because
+  `recover_completed_structured_response` did not exist. Both entry points
+  were then implemented.
+- Structured dispatch remains crate-private. It accepts only non-CHAT
+  JSON-Schema prepared calls; routing has already enforced the purpose/format
+  matrix and host schema compilation. The provider's `content` is the only raw
+  validation source. Provider `structured` and provider repair counts remain
+  discarded by identity binding.
+- On host-valid STOP output, the router builds `structured` from the uniquely
+  parsed, schema-valid JSON value, persists `{content, structured}` with usage,
+  cost, completion state, and `MODEL_COMPLETED` in one transaction, and returns
+  a host-built response with zero repairs. Reopen recovery reconstructs the
+  accepted structured response from committed content and trusted attempt and
+  usage facts without a provider call.
+- On invalid structured STOP output, the router records trustworthy provider
+  usage/cost, marks the attempt FAILED, and appends `MODEL_COMPLETED` followed
+  by the typed content-free `MODEL_OUTPUT_INVALID` in one transaction. It
+  persists no invalid response. The private typed failure carries bounded
+  diagnostics and a transient raw response only in process memory for the
+  forthcoming repair ladder; it has no debug formatter and is not logged,
+  serialized, placed in events, or stored.
+- Focused tests pass for host structured value acceptance despite provider
+  spoofed `structured`, persistence/reopen reconstruction, invalid-output
+  failure state, usage/cost settlement, absence of a response blob, event
+  order, and absence of an invalid-content marker in the event payloads.
+- Sequential review: (1) structured purpose/format eligibility is checked at
+  the host-prepared routing boundary; (2) router dependencies remain within the
+  permitted protocol/storage/event-bus direction; (3) intent/event precede
+  provider entry and accepted completion or invalid-output accounting/event
+  are each atomic; (4) completion recovery reopens Store and does not redispatch;
+  (5) invalid content is absent from durable response, events, and logs while
+  diagnostics omit values; (6) provider identity, cost class, token maxima,
+  response size, schema/JSON depth, and diagnostic bounds remain enforced;
+  (7) scripted tests are deterministic, use reopened SQLite for recovery, and
+  assert persisted state; (8) docs limit this slice to structured dispatch and
+  explicitly leave repair/fallback and P4E closure open.
+- Local validation passes: fmt, workspace check, all-target tests,
+  all-feature tests, denied-warning Clippy, docs validation, workspace smoke,
+  all 76 workspace smoke unit tests, Cargo metadata, identity guard, and diff
+  check. Migrations 0001, 0002 and 0003 are unchanged. Exact-head Actions remain
+  pending.

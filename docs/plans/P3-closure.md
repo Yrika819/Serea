@@ -306,9 +306,9 @@ power-loss durability.
 The P3G test suite integrates Event Bus retention and replay, calendar and
 HOST_EVENT occurrences, explicit device resume, approval wake handoff, Task
 Engine mapping, restart, and repeated recovery. It also runs two independent
-Scheduler workers against one replayed source EventId and injects an occurrence
-insert failure to prove that occurrence admission and next-due advancement
-roll back together. Device-wait registration's event-participant failure also
+Scheduler workers against one replayed source EventId and injects a schedule
+cursor-update failure after occurrence admission to prove both writes roll back
+together. Device-wait registration's event-participant failure also
 proves Task state, journal, wait row, and Event sequence remain unchanged.
 
 P3G closure commit is `89d726ab1af0b94b9fd2e865f8e6ba663e00998a`. Cloud

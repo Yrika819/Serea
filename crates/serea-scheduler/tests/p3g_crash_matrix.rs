@@ -546,7 +546,7 @@ fn two_workers_replay_and_dispatch_one_host_event_occurrence_once() {
 }
 
 #[test]
-fn calendar_occurrence_insert_failure_rolls_back_occurrence_and_next_due() {
+fn calendar_cursor_update_failure_rolls_back_admitted_occurrence_and_next_due() {
     let db = path();
     let event_bus = bus(BASE + 50_000);
     let store = Store::open(&db, &Fixed).unwrap();
@@ -572,15 +572,16 @@ fn calendar_occurrence_insert_failure_rolls_back_occurrence_and_next_due() {
     let before = scheduler.schedule(&schedule_id).unwrap();
     assert_eq!(before.next_local_label.as_deref(), Some("2020-01-01T00:00"));
 
-    // Force the occurrence insert to fail after the recurrence was resolved.
-    // The occurrence row and schedule cursor must share one transaction.
+    // Fail after the occurrence insert succeeds but before the recurrence
+    // cursor update completes. Both writes must share one transaction.
     let fault = Connection::open(&db).unwrap();
     fault
         .execute_batch(
-            "CREATE TRIGGER p3g_fail_calendar_occurrence
-             BEFORE INSERT ON schedule_occurrences
-             WHEN NEW.trigger_kind = 'CALENDAR'
-             BEGIN SELECT RAISE(ABORT, 'injected calendar enqueue fault'); END;",
+            "CREATE TRIGGER p3g_fail_calendar_cursor
+             BEFORE UPDATE OF next_due_at_ms,next_local_label ON schedules
+             WHEN OLD.schedule_id = 'sch_00000000000000000000000084'
+               AND NEW.next_local_label IS NOT OLD.next_local_label
+             BEGIN SELECT RAISE(ABORT, 'injected calendar cursor fault'); END;",
         )
         .unwrap();
     assert!(
@@ -599,7 +600,7 @@ fn calendar_occurrence_insert_failure_rolls_back_occurrence_and_next_due() {
     );
 
     fault
-        .execute_batch("DROP TRIGGER p3g_fail_calendar_occurrence")
+        .execute_batch("DROP TRIGGER p3g_fail_calendar_cursor")
         .unwrap();
     assert_eq!(
         scheduler

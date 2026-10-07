@@ -657,3 +657,12 @@ repair, fallback, dispatch gates, or P4E budgets.
   all-feature tests, denied-warning Clippy, docs validation, workspace smoke,
   all 76 workspace smoke unit tests, Cargo metadata, identity guard, and diff
   check. No migration changed. Exact-head Actions remain pending.
+- Exact typed-event behavior commit `e6a15f765e8e21a000449f28b482e5fd3e0103a2`
+  passed Fast CI
+  [37689403697](https://github.com/Yrika819/Serea/actions/runs/37689403697),
+  Full CI
+  [37689403699](https://github.com/Yrika819/Serea/actions/runs/37689403699)
+  with Linux stable, MSRV 1.85, Intel x86_64, arm64, and release fault proof,
+  and cross-architecture SQLite
+  [37689403666](https://github.com/Yrika819/Serea/actions/runs/37689403666)
+  in both directions.

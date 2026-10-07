@@ -964,5 +964,15 @@ repair, fallback, dispatch gates, or P4E budgets.
   Final local validation passed fmt, workspace check, all-target tests,
   all-feature tests, denied-warning Clippy, docs validation, workspace smoke,
   76 Python smoke tests, Cargo metadata, identity guard, and diff check.
-- Actions status and exact commit are recorded after the pushed behavior
-  commit; this slice is not closed until exact-head Fast and Full CI pass.
+- Behavior commit: `c6296901a9dcdfe4abc00e8cfee6529ede447964`
+  (`feat: add deterministic model fallback`). Fast CI
+  [37704755840](https://github.com/Yrika819/Serea/actions/runs/37704755840)
+  passed; Full CI
+  [37704755890](https://github.com/Yrika819/Serea/actions/runs/37704755890)
+  passed Linux stable, MSRV 1.85, Intel, arm64, and release-fault exclusion;
+  cross-architecture SQLite
+  [37704755834](https://github.com/Yrika819/Serea/actions/runs/37704755834)
+  passed Intel-to-arm64 and arm64-to-Intel. No migration changed. This closes
+  the CHAT/TEXT one-step fallback behavior slice; structured fallback,
+  fallback/repair interaction, crash injection, and remaining P4E budgets stay
+  open.

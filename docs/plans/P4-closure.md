@@ -807,5 +807,10 @@ repair, fallback, dispatch gates, or P4E budgets.
   tests, denied-warning Clippy, docs validation, workspace smoke, all 76 Python
   smoke tests, Cargo metadata, identity guard, and diff check. The repository's
   CI smoke entry point is `tests/workspace_smoke.py`; the task-named
-  `tools/workspace_smoke.py` does not exist in this checkout. Exact-head Fast,
-  Full, and cross-architecture Actions are pending for this behavior slice.
+  `tools/workspace_smoke.py` does not exist in this checkout. Behavior commit
+  `b1b70b97add046ee65af3e26985f4ce62f9ccceb` passed Fast CI
+  [37695570012](https://github.com/Yrika819/Serea/actions/runs/37695570012), Full CI
+  [37695569990](https://github.com/Yrika819/Serea/actions/runs/37695569990), and cross-architecture SQLite
+  [37695570019](https://github.com/Yrika819/Serea/actions/runs/37695570019), including Linux stable,
+  MSRV 1.85, Intel x86_64, arm64, release fault proof, and both SQLite transfer
+  directions. The evidence-only closure head still requires its own three gates.

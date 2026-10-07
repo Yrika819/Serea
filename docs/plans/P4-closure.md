@@ -184,4 +184,10 @@ Model Router closure. P5 remains outside P4.
   metadata; identity guard; and `git diff --check`.
 - This is an internal P4D behavior sub-slice. P4D remains open; durable intent,
   `MODEL_CALLED`, provider dispatch, completion, failure and recovery are not
-  implemented yet. Actions validation is pending for its exact pushed commit.
+  implemented yet.
+- Exact pushed commit `d9479de37c997c11e0e7dca09341df59c83b3e2f` Actions:
+  [Fast CI 37657974845](https://github.com/Yrika819/Serea/actions/runs/37657974845)
+  GREEN; [Full CI 37657974779](https://github.com/Yrika819/Serea/actions/runs/37657974779)
+  GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
+  [cross-architecture SQLite 37657974803](https://github.com/Yrika819/Serea/actions/runs/37657974803)
+  GREEN in both directions.

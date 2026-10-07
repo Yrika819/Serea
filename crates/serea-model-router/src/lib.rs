@@ -9,6 +9,9 @@
 #![deny(missing_docs)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+#[cfg(test)]
+mod crash_tests;
+
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::sync::Arc;

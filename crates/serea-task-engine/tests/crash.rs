@@ -1482,14 +1482,17 @@ fn the_fault_seam_is_compiled_out_of_every_production_build() {
         !storage.contains("default = [\"p2h"),
         "storage must not enable any fault feature by default"
     );
-    let engine = fs::read_to_string(root.join("crates/serea-task-engine/Cargo.toml")).unwrap();
-    let dev = engine.split("[dev-dependencies]").nth(1).unwrap();
-    assert!(dev.contains("p2h-fault-injection"));
-    let runtime = engine.split("[dev-dependencies]").next().unwrap();
-    assert!(
-        !runtime.contains("p2h-fault-injection"),
-        "the fault feature must be requested only from a dev-dependency edge"
-    );
+    for crate_name in ["serea-task-engine", "serea-model-router"] {
+        let manifest =
+            fs::read_to_string(root.join(format!("crates/{crate_name}/Cargo.toml"))).unwrap();
+        let dev = manifest.split("[dev-dependencies]").nth(1).unwrap();
+        assert!(dev.contains("p2h-fault-injection"));
+        let runtime = manifest.split("[dev-dependencies]").next().unwrap();
+        assert!(
+            !runtime.contains("p2h-fault-injection"),
+            "the fault feature must be requested only from a dev-dependency edge"
+        );
+    }
     // The storage manifest has no path dependency that could smuggle it in.
     assert!(!storage.contains("[dependencies]\nserea-testkit"));
 }

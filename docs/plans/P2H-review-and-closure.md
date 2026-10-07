@@ -39,7 +39,7 @@ Fixture identity is label + sanitized binary identity + PID + per-process atomic
 
 ## Test-only seam and release exclusion
 
-`crates/serea-storage/src/fault.rs` is included behind `#[cfg(feature = "p2h-fault-injection")]`; all reach sites are similarly feature-gated. `Store` has no hook field/callback. There is no environment-controlled activation. The only workspace request for the feature is the task-engine dev-dependency edge; the normal engine runtime dependency is unchanged. Storage also has `#![forbid(unsafe_code)]`.
+`crates/serea-storage/src/fault.rs` is included behind `#[cfg(feature = "p2h-fault-injection")]`; all reach sites are similarly feature-gated. `Store` has no hook field/callback. There is no environment-controlled activation. The workspace requests the feature only from test-target dev-dependency edges in task-engine and model-router; their runtime dependency edges are unchanged. Storage also has `#![forbid(unsafe_code)]`.
 
 Narrow seam stages are: BeforeBegin, AfterBegin, AfterTaskInsert, BeforeFenceInspection, AfterFencedStepWrite, BeforeJournalInsert, BeforeSavepointRelease, BeforeCommit and AfterCommit. Stages map to explicit N/F contracts; no arbitrary callback surface is installed.
 

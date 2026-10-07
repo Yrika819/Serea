@@ -42,7 +42,7 @@ mod tx;
 
 // P2H: the crash/fault seam is absent from the normal/default build. The
 // workspace requests its explicitly test-oriented feature only through the
-// task-engine dev-dependency edge; any build that opts into the feature is
+// test-target dev-dependency edges; any build that opts into the feature is
 // seam-bearing and is outside the default-production exclusion proof.
 #[cfg(feature = "p2h-fault-injection")]
 pub mod fault;

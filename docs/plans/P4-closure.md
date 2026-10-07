@@ -480,3 +480,53 @@ Model Router closure. P5 remains outside P4.
   and cross-architecture SQLite
   [37680369792](https://github.com/Yrika819/Serea/actions/runs/37680369792)
   in both directions.
+- Exact closure-document head `f5ee0da08a27e35fb9d2a1f711103a89cd366660`
+  passed Fast CI
+  [37681151729](https://github.com/Yrika819/Serea/actions/runs/37681151729),
+  Full CI
+  [37681151730](https://github.com/Yrika819/Serea/actions/runs/37681151730)
+  including Linux stable, MSRV 1.85, Intel, arm64, and release fault proof,
+  and cross-architecture SQLite
+  [37681151791](https://github.com/Yrika819/Serea/actions/runs/37681151791)
+  in both directions.
+- P4D process-crash evidence slice: added a test-only child-process harness
+  that kills dispatch at four acknowledged boundaries: after durable intent
+  commit before provider entry, after the scripted provider receives the
+  request, after a valid response is staged before terminal commit, and after
+  completion commit before the caller receives the result. Fresh Store opens
+  prove unresolved intents recover once to AMBIGUOUS with reservation
+  preserved, no usage, and only MODEL_CALLED/MODEL_FAILED; the committed
+  response remains recoverable after caller loss. A separate injected
+  pre-commit storage failure proves attempt and event rollback together and
+  provider invocation count remains zero. These tests use the existing
+  feature-gated Storage crash seam only through a model-router dev-dependency;
+  runtime dependency edges and production dispatch code are unchanged.
+- RED evidence: the first harness compile failed because the router test target
+  could not access Storage's feature-gated crash seam and attempted to call a
+  private helper in another test module. Adding the feature only to the
+  router's dev-dependency and a local immediate-future test helper resolved the
+  compile failures; no production seam was added.
+- Focused tests pass for all three crash-harness tests, including four actual
+  child-process kill windows, the intent rollback assertion, recovery twice,
+  reservation preservation, content-free events, and caller-loss response
+  reconstruction. The existing P4D finish-reason and response-identity tests
+  remain in the same workspace suite.
+- Sequential review: (1) contract review maps the process windows to P4D crash
+  cases A-E and response identity remains covered separately; (2) crate graph
+  review confirms only a dev feature edge was added, with no runtime
+  TaskEngine/Policy/Testkit edge; (3) transaction review verifies the injected
+  failed intent transaction leaves no attempt/event and the completion blob,
+  usage, terminal state, and event roll back together; (4) recovery review
+  verifies child death, fresh Store reopen, one ambiguity transition, and
+  second-pass no-op; (5) privacy review confirms only test marker/request ID
+  files are used and events remain content-free; (6) accounting review checks
+  the full reservation survives ambiguity and usage remains absent; (7) test
+  review uses explicit acknowledgement files, SIGKILL proof, bounded waiting,
+  and reopened SQLite assertions with no timing-based success; (8) docs review
+  records the dev-only seam change, exact predecessor CI evidence, unchanged
+  migrations, and P4D-in-progress status.
+- Local validation passes: focused crash tests; fmt; workspace check; all
+  targets and all features; Clippy with denied warnings; documentation
+  validation; workspace smoke; all 76 workspace smoke tests; Cargo metadata;
+  identity guard; and `git diff --check`. Existing vendored serde_json emits
+  its prior `usize::max_value` deprecation warning; validation succeeds.

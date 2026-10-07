@@ -16,8 +16,8 @@ serde_json.workspace = true
 rusqlite.workspace = true
 serea-testkit.workspace = true
 # P2H: enables storage's test-only crash/fault seam for this crate's crash
-# harness. This is the ONLY place the feature is requested anywhere in the
-# workspace, and it is a dev-dependency edge, so Cargo's resolver v2 unifies it
-# only when building test targets. The engine's runtime dependency edge is
-# unchanged, so `cargo build --release` compiles storage without the seam.
+# harness. It is requested only from test-target dev-dependency edges in the
+# task-engine and model-router crates. Cargo's resolver v2 keeps the runtime
+# dependency edges unchanged, so `cargo build --release` compiles storage
+# without the seam.
 serea-storage = { workspace = true, features = ["p2h-fault-injection"] }

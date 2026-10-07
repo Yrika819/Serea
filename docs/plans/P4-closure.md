@@ -634,3 +634,26 @@ repair, fallback, dispatch gates, or P4E budgets.
   in both directions. The Linux, MSRV, Intel, and arm64 jobs are all GREEN.
 - This closes only the first P4E behavior slice; P4E remains in progress.
   Migrations 0001, 0002 and 0003 are unchanged.
+
+### P4E slice: typed structured-output-invalid event
+
+- RED evidence: the new Event Bus integration test failed to compile because
+  `ModelOutputInvalidEventV1` and `EventBus::draft_model_output_invalid` were
+  absent. The missing typed event surface was then added.
+- The event payload carries the common host-selected model metadata and a
+  diagnostic count bounded to 32. It has no field for prompt, response,
+  validator text, schema, or invalid JSON. Counts above the bound are refused.
+- Focused tests pass: five `model_events` integration tests, including exact
+  event kind/shape, content-free payload, and over-bound count refusal.
+- Sequential review: (1) Event Protocol kind and metadata semantics match
+  `MODEL_OUTPUT_INVALID`; (2) the event builder adds no dependency edge or
+  authority; (3) it produces only an event draft for the caller's existing
+  transaction composition; (4) it creates no dispatch/recovery state; (5) its
+  type has no content-bearing fields; (6) count is capped at 32; (7) tests
+  verify exact keys and reject 33 diagnostics without timing or platform
+  assumptions; (8) this record separates the event payload slice from the
+  still-incomplete validation/repair orchestration.
+- Local validation passes: fmt, workspace check, all-target tests,
+  all-feature tests, denied-warning Clippy, docs validation, workspace smoke,
+  all 76 workspace smoke unit tests, Cargo metadata, identity guard, and diff
+  check. No migration changed. Exact-head Actions remain pending.

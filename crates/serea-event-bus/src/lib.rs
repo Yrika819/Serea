@@ -126,6 +126,15 @@ pub struct ModelFailedEventV1 {
     pub retryable: bool,
 }
 
+/// Content-free host validation failure facts for a structured provider response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelOutputInvalidEventV1 {
+    /// Common host-selected attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// Number of bounded host validation diagnostics, from zero through 32.
+    pub diagnostic_count: u8,
+}
+
 struct ErasedUlidSource(Box<dyn UlidSource + Send>);
 
 impl UlidSource for ErasedUlidSource {
@@ -244,6 +253,22 @@ impl EventBus {
         );
         payload.insert("retryable".into(), Value::Bool(failure.retryable));
         self.draft_model_event(failure.metadata, EventKind::ModelFailed, payload)
+    }
+
+    /// Builds a bounded, content-free structured-output validation event.
+    pub fn draft_model_output_invalid(
+        &self,
+        failure: ModelOutputInvalidEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if failure.diagnostic_count > 32 {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&failure.metadata);
+        payload.insert(
+            "diagnostic_count".into(),
+            Value::from(failure.diagnostic_count),
+        );
+        self.draft_model_event(failure.metadata, EventKind::ModelOutputInvalid, payload)
     }
 
     fn draft_model_event(

@@ -101,3 +101,55 @@ fn model_called_event_has_only_bounded_host_metadata() {
     assert_eq!(draft.event.payload["relation_kind"], "NORMAL");
     assert!(draft.retention_at.is_some());
 }
+
+#[test]
+fn model_output_invalid_event_contains_only_bounded_failure_metadata() {
+    let bus = EventBus::new(FixedIds);
+    let draft = bus
+        .draft_model_output_invalid(serea_event_bus::ModelOutputInvalidEventV1 {
+            metadata: ModelEventMetadataV1 {
+                request_id: RequestId::new("req_00000000000000000000000004").unwrap(),
+                model_id: ModelId::new("gpt-oss-20b").unwrap(),
+                provider_id: ProviderId::new("provider").unwrap(),
+                task_id: None,
+                purpose: ModelPurpose::Analysis,
+                relation: ModelEventRelationV1::Normal,
+                data_class: DataClass::Public,
+                occurred_at: EpochMillis::new(1_767_225_600_003).unwrap(),
+            },
+            diagnostic_count: 32,
+        })
+        .unwrap();
+
+    assert_eq!(draft.event.kind, EventKind::ModelOutputInvalid);
+    assert_eq!(draft.event.payload.len(), 6);
+    assert_eq!(
+        draft.event.payload["request_id"],
+        "req_00000000000000000000000004"
+    );
+    assert_eq!(draft.event.payload["diagnostic_count"], 32);
+    assert!(!draft.event.payload.contains_key("raw_response"));
+    assert!(!draft.event.payload.contains_key("prompt"));
+}
+
+#[test]
+fn model_output_invalid_event_refuses_unbounded_diagnostic_count() {
+    let bus = EventBus::new(FixedIds);
+    let result = bus.draft_model_output_invalid(serea_event_bus::ModelOutputInvalidEventV1 {
+        metadata: ModelEventMetadataV1 {
+            request_id: RequestId::new("req_00000000000000000000000005").unwrap(),
+            model_id: ModelId::new("gpt-oss-20b").unwrap(),
+            provider_id: ProviderId::new("provider").unwrap(),
+            task_id: None,
+            purpose: ModelPurpose::Analysis,
+            relation: ModelEventRelationV1::Normal,
+            data_class: DataClass::Public,
+            occurred_at: EpochMillis::new(1_767_225_600_004).unwrap(),
+        },
+        diagnostic_count: 33,
+    });
+    assert!(matches!(
+        result,
+        Err(serea_storage::StoreError::InvalidModelCall)
+    ));
+}

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use serea_protocol::provider::ModelProvider;
 use serea_protocol::{
     DataClass, JsonSchemaMode, ModelCapabilities, ModelDescriptor, ModelId, ModelMessage,
-    ModelPurpose, ProviderHealth, ProviderId, ResponseFormat, TaskId,
+    ModelPurpose, ModelRequest, ProviderHealth, ProviderId, ResponseFormat, TaskId,
 };
 
 /// Maximum structural prompt size accepted before routing.
@@ -408,6 +408,8 @@ pub enum RouterError {
     DuplicateDiscoveredModel,
     /// A provider response did not match the host-selected dispatch identity.
     ProviderProtocolFailure,
+    /// The selected model is not the eligible result of the supplied session.
+    ModelSelectionInvalid,
 }
 
 /// Binds a provider response to the exact dispatch identity and removes fields
@@ -454,9 +456,21 @@ impl ProviderHealthSnapshotV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoutingSessionV1 {
     /// Selected model, if a chain candidate survived all filters.
-    pub decision: Option<ModelId>,
+    decision: Option<ModelId>,
     /// One immutable health snapshot for this logical operation.
-    pub health: ProviderHealthSnapshotV1,
+    health: ProviderHealthSnapshotV1,
+}
+
+impl RoutingSessionV1 {
+    /// The deterministic selected model, if a candidate survived all filters.
+    pub fn decision(&self) -> Option<&ModelId> {
+        self.decision.as_ref()
+    }
+
+    /// The immutable health snapshot reused by later dispatch decisions.
+    pub fn health(&self) -> &ProviderHealthSnapshotV1 {
+        &self.health
+    }
 }
 
 /// Host-owned routing instance with immutable roster, discovery and provider set.
@@ -543,6 +557,66 @@ impl ModelRouterV1 {
         Ok(RoutingSessionV1 {
             decision,
             health: snapshot,
+        })
+    }
+
+    /// Constructs a provider request only from a selected candidate in the
+    /// exact routing session. All request semantics are copied from the
+    /// immutable host-prepared call; the model identity is supplied by the
+    /// routing decision, never by prepared or provider-authored content.
+    pub fn build_request(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        request_id: &serea_protocol::RequestId,
+        selected_model_id: &ModelId,
+    ) -> Result<ModelRequest, RouterError> {
+        validate_purpose_format(call.purpose, &call.response_format, call.requirements)?;
+        if call.requirements.vision_required
+            || session.decision.as_ref() != Some(selected_model_id)
+            || !preference_chain(call.purpose).contains(&selected_model_id.as_str())
+        {
+            return Err(RouterError::ModelSelectionInvalid);
+        }
+        let entry = self
+            .roster
+            .entries
+            .get(selected_model_id.as_str())
+            .ok_or(RouterError::ModelSelectionInvalid)?;
+        let advertised = self
+            .discovered
+            .get(selected_model_id.as_str())
+            .ok_or(RouterError::ModelSelectionInvalid)?;
+        let provider = self
+            .providers
+            .get(entry.provider_id.as_str())
+            .ok_or(RouterError::ModelSelectionInvalid)?;
+        let effective = intersect(entry.allowed_capabilities, advertised.capabilities);
+        if !entry.enabled
+            || provider.0 != entry.provider_id
+            || session.health.health(&entry.provider_id) != ProviderHealth::Ready
+            || !deployment_permitted(call.data_class, entry.deployment_class, call.egress)
+            || !capabilities_satisfy(
+                effective,
+                call.requirements,
+                matches!(call.response_format, ResponseFormat::JsonSchema { .. }),
+            )
+        {
+            return Err(RouterError::ModelSelectionInvalid);
+        }
+        Ok(ModelRequest {
+            request_id: request_id.clone(),
+            model_id: selected_model_id.clone(),
+            task_id: call.task_id.clone(),
+            purpose: call.purpose,
+            messages: call.messages.clone(),
+            system: call.system.clone(),
+            response_format: call.response_format.clone(),
+            tools: call.tools.clone(),
+            max_output_tokens: call.max_output_tokens,
+            temperature: call.temperature,
+            deadline_ms: call.deadline_ms,
+            data_class: call.data_class,
         })
     }
 }

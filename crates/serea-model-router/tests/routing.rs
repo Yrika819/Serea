@@ -157,6 +157,61 @@ fn provider_response_identity_is_bound_and_untrusted_fields_are_cleared() {
 }
 
 #[test]
+fn post_routing_request_uses_selected_model_and_host_prepared_semantics() {
+    let roster = ModelRosterV1::new(vec![entry(
+        "nemotron-3-nano-30b",
+        "provider",
+        ModelDeploymentClass::Cloud,
+        true,
+        capabilities(JsonSchemaMode::Strict, 1000, 1000),
+        CostClass::Paid,
+    )])
+    .unwrap();
+    let provider = provider(
+        "provider",
+        vec![descriptor(
+            "nemotron-3-nano-30b",
+            "provider",
+            capabilities(JsonSchemaMode::Strict, 1000, 1000),
+        )],
+        ProviderHealth::Ready,
+    );
+    let router = ModelRouterV1::new(roster, vec![provider]).unwrap();
+    let call = prepared(
+        ModelPurpose::Chat,
+        ResponseFormat::Text,
+        DataClass::Public,
+        requirements(StructuredRequirementV1::Any),
+    );
+    let request_id = serea_protocol::RequestId::new("req_00000000000000000000000003")
+        .unwrap_or_else(|_| unreachable!());
+    let session = block_on(router.route(&call)).unwrap();
+    let request = router
+        .build_request(
+            &call,
+            &session,
+            &request_id,
+            &model_id("nemotron-3-nano-30b"),
+        )
+        .expect("configured selected model should produce a request");
+    assert_eq!(request.request_id, request_id);
+    assert_eq!(request.model_id, model_id("nemotron-3-nano-30b"));
+    assert_eq!(request.purpose, ModelPurpose::Chat);
+    assert_eq!(request.messages, call.messages());
+    assert_eq!(request.system.as_deref(), call.system());
+    assert_eq!(request.response_format, ResponseFormat::Text);
+    assert_eq!(request.tools, call.tools());
+    assert_eq!(request.max_output_tokens, call.max_output_tokens());
+    assert_eq!(request.temperature, call.temperature());
+    assert_eq!(request.deadline_ms, call.deadline_ms());
+    assert_eq!(request.data_class, call.data_class());
+    assert_eq!(
+        router.build_request(&call, &session, &request_id, &model_id("gpt-oss-20b"),),
+        Err(RouterError::ModelSelectionInvalid)
+    );
+}
+
+#[test]
 fn duplicate_model_id_and_provider_registration_are_rejected() {
     let item = entry(
         "nemotron-3-nano-30b",
@@ -236,7 +291,7 @@ fn missing_primary_discovery_selects_next_chain_member_without_reordering() {
     )))
     .unwrap();
     assert_eq!(
-        session.decision.map(|id| id.to_string()),
+        session.decision().map(|id| id.to_string()),
         Some("gpt-oss-20b".into())
     );
 }
@@ -319,7 +374,7 @@ fn tool_filter_and_price_never_reorder_the_frozen_chain() {
     )))
     .unwrap();
     assert_eq!(
-        routed.decision.map(|id| id.to_string()),
+        routed.decision().map(|id| id.to_string()),
         Some("gpt-oss-20b".into())
     );
 
@@ -369,7 +424,7 @@ fn tool_filter_and_price_never_reorder_the_frozen_chain() {
     )))
     .unwrap();
     assert_eq!(
-        routed.decision.map(|id| id.to_string()),
+        routed.decision().map(|id| id.to_string()),
         Some("nemotron-3-nano-30b".into())
     );
 }
@@ -404,7 +459,7 @@ fn personal_cloud_is_eligible_only_through_the_trusted_prepared_boundary() {
     assert_eq!(
         block_on(router.route(&prepared))
             .unwrap()
-            .decision
+            .decision()
             .map(|id| id.to_string()),
         Some("nemotron-3-nano-30b".into())
     );
@@ -441,7 +496,7 @@ fn strict_filters_best_effort_but_any_accepts_it() {
     )))
     .unwrap();
     assert_eq!(
-        any.decision.map(|id| id.to_string()),
+        any.decision().map(|id| id.to_string()),
         Some("nemotron-3-nano-30b".into())
     );
     let strict = block_on(router.route(&prepared(
@@ -453,7 +508,7 @@ fn strict_filters_best_effort_but_any_accepts_it() {
         requirements(StructuredRequirementV1::Strict),
     )))
     .unwrap();
-    assert_eq!(strict.decision, None);
+    assert_eq!(strict.decision(), None);
 }
 
 #[test]
@@ -512,13 +567,13 @@ fn tools_context_output_data_class_health_and_single_snapshot_are_enforced() {
     )))
     .unwrap();
     assert_eq!(
-        session.decision.map(|id| id.to_string()),
+        session.decision().map(|id| id.to_string()),
         Some("gpt-oss-20b".into())
     );
     assert_eq!(health_reads.load(Ordering::SeqCst), 2);
     assert_eq!(generate_calls.load(Ordering::SeqCst), 0);
     assert_eq!(
-        session.health.health(&provider_id("provider1")),
+        session.health().health(&provider_id("provider1")),
         ProviderHealth::Degraded
     );
 
@@ -534,7 +589,7 @@ fn tools_context_output_data_class_health_and_single_snapshot_are_enforced() {
             needs_tools
         )))
         .unwrap()
-        .decision
+        .decision()
         .map(|id| id.to_string()),
         Some("gpt-oss-20b".into())
     );
@@ -550,7 +605,7 @@ fn tools_context_output_data_class_health_and_single_snapshot_are_enforced() {
             too_large
         )))
         .unwrap()
-        .decision,
+        .decision(),
         None
     );
     let mut output_too_large = requirements(StructuredRequirementV1::Strict);
@@ -565,7 +620,7 @@ fn tools_context_output_data_class_health_and_single_snapshot_are_enforced() {
             output_too_large
         )))
         .unwrap()
-        .decision,
+        .decision(),
         None
     );
     for class in [DataClass::Private, DataClass::Secret, DataClass::Credential] {

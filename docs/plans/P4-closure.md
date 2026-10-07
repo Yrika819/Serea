@@ -191,3 +191,19 @@ Model Router closure. P5 remains outside P4.
   GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
   [cross-architecture SQLite 37657974803](https://github.com/Yrika819/Serea/actions/runs/37657974803)
   GREEN in both directions.
+- Second P4D RED proof: the post-routing request test initially failed to
+  compile because `ModelRouterV1::build_request` did not exist. The constructor
+  now binds to the same `RoutingSessionV1`, rechecks eligibility, and copies
+  only host-prepared request fields. Its focused test covers semantic-field
+  preservation and refusal to substitute a different model. This remains
+  request construction only; provider dispatch and durable intent are pending.
+- Sequential authority review found that a public mutable route decision
+  could let an in-process caller replace the selected chain member. The
+  decision and health snapshot are now private with read-only accessors, and
+  request construction is bound to that immutable session. Focused routing
+  tests pass after the change.
+- Local validation for this request-construction slice passes: fmt, workspace
+  check, all-target tests, all-feature tests, Clippy with denied warnings, docs
+  validation, workspace smoke and its 76 tests, Cargo metadata, identity guard,
+  and `git diff --check`. The slice has not yet been committed or pushed; its
+  Fast/Full Actions runs remain pending.

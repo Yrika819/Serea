@@ -260,6 +260,12 @@ Model Router closure. P5 remains outside P4.
   GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
   [cross-architecture SQLite 37672272956](https://github.com/Yrika819/Serea/actions/runs/37672272956)
   GREEN in both directions.
+- The exact closure-doc head `1a3e6bd00e1d4108ac90e45847cb3be3f50e5132` is
+  GREEN on [Fast CI 37672949637](https://github.com/Yrika819/Serea/actions/runs/37672949637),
+  [Full CI 37672949610](https://github.com/Yrika819/Serea/actions/runs/37672949610)
+  including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof, and
+  [cross-architecture SQLite 37672949712](https://github.com/Yrika819/Serea/actions/runs/37672949712)
+  in both directions.
 - Second P4D RED proof: the post-routing request test initially failed to
   compile because `ModelRouterV1::build_request` did not exist. The constructor
   now binds to the same `RoutingSessionV1`, rechecks eligibility, and copies

@@ -220,7 +220,10 @@ host classification inheritance, `max_schedule_template_bytes = 32768`, and
 occurrence-pinned template digests for edit/restart stability. Architecture
 advances from `serea-arch/2.1.0` to `serea-arch/2.2.0`; event and Scheduler
 surfaces remain `/1`. Contract CI is pending exact commit evidence. No runtime
-or migration change is claimed by this contract record.
+or migration change is claimed by this contract record. ADR-0028 was included
+in the follow-up contract commit `35e93a14f3e9ee9670f8563c738cd0d1e02a7e6e`;
+Fast CI run `37606284419` and Full CI run `37606291329` passed on that exact
+commit, including Linux stable/release proof, MSRV 1.85, Intel, and arm64.
 
 ## P3F contract — device-session task resume waits (ADR-0029 accepted)
 
@@ -237,8 +240,23 @@ the source cursor. Task origin, task kind/title, `WAITING_USER`, generic
 
 ADR-0029 advances architecture from `serea-arch/2.2.0` to `serea-arch/2.3.0`;
 `serea.event/1`, `serea.scheduler/1`, and `serea.task/2` remain unchanged.
-Contract validation and exact-SHA CI evidence will be recorded after the
-contract commit. This entry does not claim runtime implementation.
+Contract validation is green on exact commit
+`35e93a14f3e9ee9670f8563c738cd0d1e02a7e6e`: Fast CI run `37606284419` and
+Full CI run `37606291329`; Full CI jobs Linux stable/release proof
+`112742997443`, MSRV 1.85 `112742997733`, macOS arm64 `112742997778`, and
+macOS Intel `112742997819`. Runtime work is present only as an uncommitted,
+incomplete Cloud worktree; it has no authoritative behavior-commit CI evidence.
+
+## P3F contract — approval lifecycle wake handoff (ADR-0030 accepted)
+
+Approval lifecycle events carry only typed routing identity (`approval_id`,
+`task_id`, `step_id`) with matching task correlation and required matching
+task/step trace. P3 is authorized to materialize and expose a durable,
+deduplicated Scheduler wake and to preserve it until explicit P6 acknowledgement.
+It does not interpret approval authority, apply outcomes, or transition tasks.
+Architecture advances from `serea-arch/2.3.0` to `serea-arch/2.4.0`; Event,
+Scheduler, Approval, and Task surfaces remain unchanged. This contract commit's
+CI evidence is pending; no approval runtime or P6 implementation is claimed.
 
 ## Project nonclaims
 

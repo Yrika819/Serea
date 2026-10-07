@@ -1,6 +1,6 @@
 # Scheduler Protocol
 
-Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.3.0`** · Implementation: **P3 in progress**
+Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.4.0`** · Implementation: **P3 in progress**
 
 This protocol defines durable schedules and event-driven wakeups that may create
 or resume Serea tasks. The scheduler is a trigger and persistence subsystem, not
@@ -57,7 +57,7 @@ Supported wake types are:
 | `CALENDAR_DUE` | Persisted calendar recurrence reaches its calculated due instant | Process the due occurrence according to its missed-occurrence policy. |
 | `HOST_EVENT` | A committed Serea event matches the schedule's validated event predicate | Process once for that source event; duplicate delivery is deduplicated. |
 | `DEVICE_SESSION_ESTABLISHED` | A valid `DEVICE_CONNECTED` event identifies the connected `DeviceId` | Materialize bounded durable resume wakes only for explicit `DeviceResumeWaitV1` rows matching that device with registration high-water below the event sequence; each wake resumes the existing task at most once. |
-| `APPROVAL_EVENT` | `APPROVAL_GRANTED`, `APPROVAL_DENIED`, or `APPROVAL_EXPIRED` is committed for the waiting task | Resume or terminate the already existing task according to Approval and Task Protocol; never mint another occurrence task. |
+| `APPROVAL_EVENT` | `APPROVAL_GRANTED`, `APPROVAL_DENIED`, or `APPROVAL_EXPIRED` is committed with a valid `ApprovalLifecyclePayloadV1` | Materialize one durable `ApprovalLifecycleWake` for future P6 handling; Scheduler does not apply the outcome or transition a task. |
 | `CORE_RECOVERY` | Core starts or recovers durable state | Recalculate due state and reconcile interrupted occurrence processing without duplicating a task or effect. |
 | `RETRY_DUE` | A bounded catch-up batch leaves due occurrences queued, or a retryable scheduler/provider operation reaches its durable retry time | Carry `ScheduleId`, due occurrence identity, and `not_before`; deduplicate by that tuple and process at most the remaining per-wake bound. Persist the next wake atomically with the deferred cursor.
 
@@ -78,6 +78,16 @@ all pre-existing eligible waits have been materialized or classified stale.
 The durable wakes survive source event retention and are recovered after
 restart. Intentionally expired content has no device identity and creates no
 wake.
+
+Approval lifecycle payloads are routing identity only. Scheduler validates the
+closed approval/task/step IDs and correlation/trace consistency, materializes
+the wake and cursor atomically, and leaves the wake pending until an explicit
+future P6 acknowledgement. It does not load or validate grants, decide outcome
+semantics, or call TaskEngine from an approval event. Duplicate source delivery
+maps to one wake. An intentional expired range creates no synthetic approval
+wake; unexplained replay corruption stops before cursor advancement. See
+[Approval Protocol §10](05-approval-protocol.md#10-p3-lifecycle-event-handoff-boundary)
+and [ADR-0030](../decisions/ADR-0030-durable-approval-lifecycle-wake.md).
 
 ### 2.1 EventPredicateV1
 
@@ -364,3 +374,6 @@ not connect an external scheduler or perform real scheduled effects.
   `DeviceResumeWaitV1` eligibility with sequence-fenced materialized wakes.
   Architecture advances to `serea-arch/2.3.0`; Event, Scheduler, and Task
   wire surfaces remain unchanged.
+- 2026-10-07: ADR-0030 defines approval lifecycle routing and durable wake
+  handoff to future P6; Scheduler applies no Approval outcome. Architecture
+  advances to `serea-arch/2.4.0`; wire surfaces remain unchanged.

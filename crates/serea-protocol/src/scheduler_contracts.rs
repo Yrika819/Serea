@@ -4,7 +4,119 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::{DataClass, DeviceId, EventKind, TaskTitle, TextCategory, canonicalize};
+use crate::{
+    ApprovalId, DataClass, DeviceId, EventKind, StepId, TaskId, TaskTitle, TextCategory, Trace,
+    canonicalize,
+};
+
+/// Payload-free validation error for an approval lifecycle event payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalLifecyclePayloadError {
+    /// The kind, payload, correlation, or required task/step trace is invalid.
+    Invalid,
+}
+
+impl std::fmt::Display for ApprovalLifecyclePayloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("invalid ApprovalLifecyclePayloadV1")
+    }
+}
+
+impl std::error::Error for ApprovalLifecyclePayloadError {}
+
+/// Closed routing identity for an approval lifecycle event. It conveys no
+/// grant, policy, or approval authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalLifecyclePayloadV1 {
+    approval_id: ApprovalId,
+    task_id: TaskId,
+    step_id: StepId,
+    canonical_json: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawApprovalLifecyclePayload {
+    approval_id: ApprovalId,
+    task_id: TaskId,
+    step_id: StepId,
+}
+
+impl ApprovalLifecyclePayloadV1 {
+    /// Parses a closed payload for one approval lifecycle event and validates
+    /// its correlation and required task/step trace. Duplicate JSON keys are
+    /// rejected by SCJ-1 before typed decoding.
+    pub fn parse_event(
+        kind: EventKind,
+        input: &str,
+        correlation_id: Option<&TaskId>,
+        trace: Option<&Trace>,
+    ) -> Result<Self, ApprovalLifecyclePayloadError> {
+        if !matches!(
+            kind,
+            EventKind::ApprovalGranted | EventKind::ApprovalDenied | EventKind::ApprovalExpired
+        ) {
+            return Err(ApprovalLifecyclePayloadError::Invalid);
+        }
+        let canonical_input =
+            canonicalize(input).map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+        let value: Value = serde_json::from_slice(&canonical_input)
+            .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+        let object = value
+            .as_object()
+            .ok_or(ApprovalLifecyclePayloadError::Invalid)?;
+        let actual: Vec<&str> = object.keys().map(String::as_str).collect();
+        if actual != ["approval_id", "step_id", "task_id"] {
+            return Err(ApprovalLifecyclePayloadError::Invalid);
+        }
+        let raw: RawApprovalLifecyclePayload =
+            serde_json::from_value(value).map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+        let event_task = correlation_id.ok_or(ApprovalLifecyclePayloadError::Invalid)?;
+        let event_trace = trace.ok_or(ApprovalLifecyclePayloadError::Invalid)?;
+        if &raw.task_id != event_task
+            || event_trace.task_id.as_ref() != Some(&raw.task_id)
+            || event_trace.step_id.as_ref() != Some(&raw.step_id)
+        {
+            return Err(ApprovalLifecyclePayloadError::Invalid);
+        }
+        let source = serde_json::to_string(&serde_json::json!({
+            "approval_id": raw.approval_id,
+            "task_id": raw.task_id,
+            "step_id": raw.step_id,
+        }))
+        .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+        let canonical_json = String::from_utf8(
+            canonicalize(&source).map_err(|_| ApprovalLifecyclePayloadError::Invalid)?,
+        )
+        .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+        Ok(Self {
+            approval_id: raw.approval_id,
+            task_id: raw.task_id,
+            step_id: raw.step_id,
+            canonical_json,
+        })
+    }
+
+    /// Approval request identity used for durable routing.
+    pub fn approval_id(&self) -> &ApprovalId {
+        &self.approval_id
+    }
+
+    /// Existing task identity used for durable routing, not authority.
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+
+    /// Existing step identity used for durable routing, not authority.
+    pub fn step_id(&self) -> &StepId {
+        &self.step_id
+    }
+
+    /// Returns the canonical SCJ-1 JSON routing payload.
+    pub fn canonical_json(&self) -> &str {
+        &self.canonical_json
+    }
+}
 
 /// Payload-free validation error for the kind-specific DEVICE_CONNECTED payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

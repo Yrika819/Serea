@@ -1,9 +1,9 @@
 # Serea Protocol Index
 
-Status: **FROZEN current contract set** · Architecture version `serea-arch/2.3.0` · Ratified on 2026-10-07
+Status: **FROZEN current contract set** · Architecture version `serea-arch/2.4.0` · Ratified on 2026-10-07
 
 P0/P1 implementation baseline was `serea-arch/0.2.0`; the current frozen registry
-is architecture/2.3, task/2, action/2, device/2, event/1, scheduler/1 and
+is architecture/2.4, task/2, action/2, device/2, event/1, scheduler/1 and
 envelope version 1. Three corrected
 independent subagent documentation gate reviews under the coordinator are GREEN;
 owner direction ratified the design contingent on GREEN. P2A slices are
@@ -126,6 +126,12 @@ ADR-0029 adds the required `device_id` member to the closed
 `DEVICE_CONNECTED` kind-specific payload and an internal durable task-wait and
 resume-wake contract. It advances the architecture to `serea-arch/2.3.0`;
 `serea.event/1`, `serea.scheduler/1`, and `serea.task/2` remain unchanged.
+
+ADR-0030 defines the closed approval lifecycle routing payload and durable
+Scheduler handoff to future P6. Scheduler materializes and exposes the wake but
+does not evaluate approval authority or transition tasks. It advances the
+architecture to `serea-arch/2.4.0`; `serea.event/1`, `serea.scheduler/1`,
+`serea.approval/1`, and `serea.task/2` remain unchanged.
 
 ### 4.2 Compatibility rules
 
@@ -251,6 +257,11 @@ rejected at review.
 - Assets, adversaries, and mitigations: [Threat Model Index](../threat-model/README.md)
 - Where each decision is recorded: [Decision Index](../decisions/README.md)
 ## 9. Changelog
+
+- 2026-10-07: ADR-0030 adds closed approval lifecycle routing identity and a
+  durable Scheduler-to-P6 wake handoff. Architecture advances to
+  `serea-arch/2.4.0`; Event, Scheduler, Approval, and Task wire surfaces are
+  unchanged.
 
 - 2026-10-06: accepted architecture/2 and device/2 replay semantics under ADR-0026;
   task/2, action/2, event/1 and envelope version 1 remain unchanged. ADR-0018/19/20/23 Accepted in their

@@ -1,6 +1,6 @@
 # Approval Protocol
 
-Protocol ID: `PROTO-APPROVAL` · Surface: `serea.approval/1` · Status: **FROZEN for P0**
+Protocol ID: `PROTO-APPROVAL` · Surface: `serea.approval/1` · Status: **FROZEN for P0** · Architecture: `serea-arch/2.4.0`
 
 Approval is the point where Serea asks a human to lend authority it does not
 have. The design goal is the narrowest possible ask: specific capability,
@@ -256,3 +256,26 @@ afterwards, exactly once.
 | A9 | Denial is terminal for the step and never auto-retried. |
 | A10 | The proactive watcher raises no approvals. |
 | A11 | A grant is bound to the exact canonical arguments the user approved; any digest mismatch invalidates it before execution. |
+
+## 10. P3 lifecycle-event handoff boundary
+
+`APPROVAL_GRANTED`, `APPROVAL_DENIED`, and `APPROVAL_EXPIRED` events carry the
+closed `ApprovalLifecyclePayloadV1` routing object with exactly `approval_id`,
+`task_id`, and `step_id`. The event's `correlation_id` must equal the payload
+`task_id`; its trace is required and must carry the same `task_id` and
+`step_id`. These fields identify the Approval/Task/Step records for routing;
+they are not an `ApprovalGrant` and carry no authority.
+
+P3 Scheduler validates the routing identity and materializes one durable,
+deduplicated `ApprovalLifecycleWake` per source event. Reading the wake does not
+acknowledge it. Future P6 loads and validates authoritative Approval state,
+applies the outcome through Policy/Approval and Task contracts, then explicitly
+acknowledges the handoff. P3 does not validate or consume grants, decide whether
+an outcome is authoritative, approve a capability, or transition a task based
+on the event kind alone. See [ADR-0030](../decisions/ADR-0030-durable-approval-lifecycle-wake.md).
+
+## 11. Changelog
+
+- 2026-10-07: ADR-0030 specifies routing-only durable handoff for approval
+  lifecycle events. Architecture advances to `serea-arch/2.4.0`; the
+  `serea.approval/1` surface remains unchanged and P6 retains approval authority.

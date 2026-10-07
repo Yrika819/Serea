@@ -92,9 +92,9 @@ pub use provider::{
     ProviderContext,
 };
 pub use scheduler_contracts::{
-    DeviceConnectedPayloadError, DeviceConnectedPayloadV1, EventPredicateError, EventPredicateV1,
-    MAX_SCHEDULE_TEMPLATE_BYTES, ScheduledTaskTemplateV1, TemplateError,
-    event_kind_is_host_event_eligible,
+    ApprovalLifecyclePayloadError, ApprovalLifecyclePayloadV1, DeviceConnectedPayloadError,
+    DeviceConnectedPayloadV1, EventPredicateError, EventPredicateV1, MAX_SCHEDULE_TEMPLATE_BYTES,
+    ScheduledTaskTemplateV1, TemplateError, event_kind_is_host_event_eligible,
 };
 pub use schema::{MAX_INSTANCE_DEPTH, SchemaError, SchemaName, SchemaViolation};
 pub use types::{

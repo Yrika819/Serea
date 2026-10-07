@@ -1,6 +1,6 @@
 # Device Protocol
 
-Protocol ID: `PROTO-DEVICE` · Surface: `serea.device/2` · Status: **FROZEN, current architecture `serea-arch/2.3.0`**
+Protocol ID: `PROTO-DEVICE` · Surface: `serea.device/2` · Status: **FROZEN, current architecture `serea-arch/2.4.0`**
 
 This protocol defines the link between Serea Core (the Mac) and the Android
 client (Pixel 7a, Android 17, API 37). It covers transport, pairing, sessions,

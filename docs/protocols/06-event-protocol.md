@@ -1,6 +1,6 @@
 # Event Protocol
 
-Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN for P0** · Architecture: `serea-arch/2.3.0`
+Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN for P0** · Architecture: `serea-arch/2.4.0`
 
 Events are Serea's structured record of what it did and what it observed. They
 are the substrate for the Android Activity Timeline, the audit trail, and the
@@ -135,6 +135,17 @@ repurposing one is major.
 | `APPROVAL_EXPIRED` | Request expired unused |
 | `APPROVAL_CONSUMED` | A use was consumed by a step |
 | `APPROVAL_EXPIRED_UNUSED` | Grant hit expiry with uses remaining |
+
+`APPROVAL_GRANTED`, `APPROVAL_DENIED`, and `APPROVAL_EXPIRED` carry the closed
+`ApprovalLifecyclePayloadV1` object with exactly `approval_id`, `task_id`, and
+`step_id`. The host validates the existing ID grammars, requires
+`correlation_id == payload.task_id`, and requires a trace whose task and step
+match the payload before using the event for Scheduler handoff. These values
+are routing identity only and do not carry Approval authority. P3 materializes
+durable wakes for future P6 consumption; Scheduler never applies an outcome to
+a task from the event kind. Clients that do not interpret the kind-specific
+payload retain ordinary rendering behavior. The SereaEvent shape and
+`serea.event/1` remain unchanged (ADR-0030).
 
 ### 3.5 Policy and bounds
 
@@ -380,6 +391,7 @@ architecture version per [§4.1](00-protocol-index.md#41-semantics).
 | `serea-arch/0.2.0` | Added `DELETION_CASCADE_COMPLETED` to §3.7. It is the completion record of one right-to-delete cascade transaction, carrying the deletion counts, as required by [Data Classification §8.2](09-data-classification-protocol.md#82-deletion-cascades) step 4. No existing kind was renamed, repurposed, or removed; the wire surface remains `serea.event/1`; unknown kinds still fail closed on a host parse and are still skipped by clients (§4.2 rules 3 and 4, §6 rule 2, `E7`). | Minor — a backward-compatible addition | [ADR-0017](../decisions/ADR-0017-deletion-cascade-completed-event-kind.md) |
 | `serea-arch/2.0.0` | Accepted Option A: separates minimal sequence accountability from independently expirable complete content; replay distinguishes exact interior intentional-expiry ranges, compacted-prefix history expiry, and unexplained corruption. `serea.event/1` objects remain unchanged; replay response moves to `serea.device/2`. | Major architecture/replay semantics; event surface unchanged | [ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md) |
 | 2026-10-06 | Clarified that deletion work and `DELETION_CASCADE_COMPLETED` insert precede the one COMMIT inside the same transaction. This reconciles ADR-0017 wording with E3 and Data Classification §8.2; a post-commit append is forbidden. | Editorial clarification of accepted transaction semantics | Owner direction; E3; Data Classification §8.2 |
+| `serea-arch/2.4.0` | Defines closed approval lifecycle routing identity and requires correlation/trace consistency for Scheduler handoff. Event object shape and `serea.event/1` are unchanged; no Approval authority is conveyed. | Minor — backward-compatible kind-specific semantics | [ADR-0030](../decisions/ADR-0030-durable-approval-lifecycle-wake.md) |
 
 ## 9. P2A validation changelog and deferred runtime seam
 

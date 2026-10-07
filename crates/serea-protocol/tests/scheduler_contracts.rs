@@ -1,7 +1,111 @@
 use serea_protocol::{
-    DataClass, DeviceConnectedPayloadV1, EventKind, EventPredicateV1, MAX_SCHEDULE_TEMPLATE_BYTES,
-    ScheduledTaskTemplateV1, TaskTitle,
+    ApprovalLifecyclePayloadV1, DataClass, DeviceConnectedPayloadV1, EventKind, EventPredicateV1,
+    MAX_SCHEDULE_TEMPLATE_BYTES, ScheduledTaskTemplateV1, StepId, TaskId, TaskTitle, Trace,
 };
+
+const APPROVAL_ID: &str = "apr_01JQ8ZA1D4NFG8K2M6RTV9XCWB";
+const TASK_ID: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";
+const STEP_ID: &str = "stp_01JQ8Z9M5T9WXK2H4BNPQ7RDSF";
+
+fn approval_trace() -> Trace {
+    Trace {
+        task_id: Some(TASK_ID.parse::<TaskId>().unwrap()),
+        step_id: Some(STEP_ID.parse::<StepId>().unwrap()),
+        ..Trace::default()
+    }
+}
+
+fn approval_payload(
+    kind: EventKind,
+    input: &str,
+) -> Result<ApprovalLifecyclePayloadV1, serea_protocol::ApprovalLifecyclePayloadError> {
+    ApprovalLifecyclePayloadV1::parse_event(
+        kind,
+        input,
+        Some(&TASK_ID.parse::<TaskId>().unwrap()),
+        Some(&approval_trace()),
+    )
+}
+
+#[test]
+fn approval_lifecycle_payload_accepts_all_outcomes_and_canonicalizes_routing_ids() {
+    let input = format!(
+        r#"{{ "task_id":"{TASK_ID}", "step_id":"{STEP_ID}", "approval_id":"{APPROVAL_ID}" }}"#
+    );
+    for kind in [
+        EventKind::ApprovalGranted,
+        EventKind::ApprovalDenied,
+        EventKind::ApprovalExpired,
+    ] {
+        let parsed = approval_payload(kind, &input).unwrap();
+        assert_eq!(parsed.approval_id().as_str(), APPROVAL_ID);
+        assert_eq!(parsed.task_id().as_str(), TASK_ID);
+        assert_eq!(parsed.step_id().as_str(), STEP_ID);
+        assert_eq!(
+            parsed.canonical_json(),
+            format!(
+                r#"{{"approval_id":"{APPROVAL_ID}","step_id":"{STEP_ID}","task_id":"{TASK_ID}"}}"#
+            )
+        );
+    }
+}
+
+#[test]
+fn approval_lifecycle_payload_rejects_invalid_shape_ids_kind_and_event_context() {
+    let valid =
+        format!(r#"{{"approval_id":"{APPROVAL_ID}","task_id":"{TASK_ID}","step_id":"{STEP_ID}"}}"#);
+    for input in [
+        r#"{}"#.to_owned(),
+        format!(r#"{{"approval_id":"bad","task_id":"{TASK_ID}","step_id":"{STEP_ID}"}}"#),
+        format!(r#"{{"approval_id":"{APPROVAL_ID}","task_id":"bad","step_id":"{STEP_ID}"}}"#),
+        format!(r#"{{"approval_id":"{APPROVAL_ID}","task_id":"{TASK_ID}","step_id":"bad"}}"#),
+        format!(
+            r#"{{"approval_id":"{APPROVAL_ID}","task_id":"{TASK_ID}","step_id":"{STEP_ID}","grant":{{}}}}"#
+        ),
+        format!(
+            r#"{{"approval_id":"{APPROVAL_ID}","approval_id":"{APPROVAL_ID}","task_id":"{TASK_ID}","step_id":"{STEP_ID}"}}"#
+        ),
+    ] {
+        assert!(approval_payload(EventKind::ApprovalGranted, &input).is_err());
+    }
+    assert!(approval_payload(EventKind::TaskCreated, &valid).is_err());
+
+    let other_task = TaskId::new("tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNB").unwrap();
+    let other_step = StepId::new("stp_01JQ8Z9M5T9WXK2H4BNPQ7RDSG").unwrap();
+    let correlation_mismatch = TaskId::new("tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNB").unwrap();
+    assert!(
+        ApprovalLifecyclePayloadV1::parse_event(
+            EventKind::ApprovalGranted,
+            &valid,
+            Some(&correlation_mismatch),
+            Some(&approval_trace()),
+        )
+        .is_err()
+    );
+    let mismatch_trace = Trace {
+        task_id: Some(other_task),
+        step_id: Some(other_step),
+        ..Trace::default()
+    };
+    assert!(
+        ApprovalLifecyclePayloadV1::parse_event(
+            EventKind::ApprovalGranted,
+            &valid,
+            Some(&TASK_ID.parse().unwrap()),
+            Some(&mismatch_trace),
+        )
+        .is_err()
+    );
+    assert!(
+        ApprovalLifecyclePayloadV1::parse_event(
+            EventKind::ApprovalGranted,
+            &valid,
+            Some(&TASK_ID.parse().unwrap()),
+            None,
+        )
+        .is_err()
+    );
+}
 
 #[test]
 fn device_connected_payload_is_closed_typed_and_canonical() {

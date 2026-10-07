@@ -288,8 +288,11 @@ Model Router closure. P5 remains outside P4.
   both workers raced to bootstrap the same fresh database before reaching the
   test's allocation barrier. The test now initializes its fixture before
   opening the two concurrent stores, so the barrier isolates the intended
-  sequence-allocation race. The focused test passed twice locally. Recovery
-  commit `01edf9ecd9b8919e80bd842e5eb5ae0d107f5049` had Fast, Linux stable,
-  MSRV, arm64 and both cross-open checks GREEN; Intel Full CI exposed this test
-  fixture issue and is being rerun after the correction. No production Storage
-  behavior or migration changed.
+  sequence-allocation race. The focused test passed twice locally. No
+  production Storage behavior or migration changed. Exact correction commit
+  `973ded29a1ef43160227c662b084fec813268a1f` Actions:
+  [Fast CI 37666894893](https://github.com/Yrika819/Serea/actions/runs/37666894893)
+  GREEN; [Full CI 37666894903](https://github.com/Yrika819/Serea/actions/runs/37666894903)
+  GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
+  [cross-architecture SQLite 37666894967](https://github.com/Yrika819/Serea/actions/runs/37666894967)
+  GREEN in both directions.

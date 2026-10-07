@@ -283,3 +283,13 @@ Model Router closure. P5 remains outside P4.
   [37664528729](https://github.com/Yrika819/Serea/actions/runs/37664528729)
   and cross-architecture SQLite
   [37664528650](https://github.com/Yrika819/Serea/actions/runs/37664528650).
+- CI review found an Intel-only failure in the existing
+  `two_store_connections_serialize_global_sequence_allocation` storage test:
+  both workers raced to bootstrap the same fresh database before reaching the
+  test's allocation barrier. The test now initializes its fixture before
+  opening the two concurrent stores, so the barrier isolates the intended
+  sequence-allocation race. The focused test passed twice locally. Recovery
+  commit `01edf9ecd9b8919e80bd842e5eb5ae0d107f5049` had Fast, Linux stable,
+  MSRV, arm64 and both cross-open checks GREEN; Intel Full CI exposed this test
+  fixture issue and is being rerun after the correction. No production Storage
+  behavior or migration changed.

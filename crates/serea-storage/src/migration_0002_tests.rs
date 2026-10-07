@@ -415,6 +415,10 @@ fn two_store_connections_serialize_global_sequence_allocation() {
     use std::sync::{Arc, Barrier};
 
     let temp = TempDb::new();
+    // Keep this test focused on sequence allocation across two already-openable
+    // stores. Fresh-database bootstrap has its own initialization contract and
+    // must not race both worker connections before the allocation barrier.
+    drop(Store::open(&temp.0, &FixedClock).unwrap());
     let barrier = Arc::new(Barrier::new(2));
     let mut workers = Vec::new();
     for id in [

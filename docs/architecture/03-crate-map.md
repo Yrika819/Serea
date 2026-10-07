@@ -5,10 +5,12 @@ Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract se
 This document fixes how the Serea Core Rust workspace is divided, which crate
 may depend on which, and which planned crates this architecture declines to
 create. The full tree is **planned runtime architecture**, not a claim that all
-crates exist. At P4A, Protocol, Storage, Event Bus, Task Engine, Scheduler, and
-testkit crates exist; `serea-model-router` and provider integration do not.
-Historical P0 creation/defer statements below describe planned decomposition,
-not the current Cargo workspace inventory.
+crates exist. At P4C, Protocol, Storage, Event Bus, Task Engine, Scheduler,
+testkit, and the pure routing slice of `serea-model-router` exist; external
+provider integrations do not. The P4C router currently depends only on
+`serea-protocol`; its later storage and event-bus dependencies are planned for
+durable dispatch slices. Historical P0 creation/defer statements below
+describe planned decomposition, not the current Cargo workspace inventory.
 
 ---
 

@@ -45,6 +45,9 @@ class VirtualManifestTests(unittest.TestCase):
         scheduler = getattr(smoke, "SCHEDULER", None)
         if scheduler is not None:
             names.append(scheduler)
+        model_router = getattr(smoke, "MODEL_ROUTER", None)
+        if model_router is not None:
+            names.append(model_router)
         names.append(smoke.TESTKIT)
         self.paths = {name: self.root / "crates" / name / "Cargo.toml" for name in names}
         members = ", ".join(f'"crates/{name}"' for name in names)
@@ -464,6 +467,11 @@ class VirtualManifestTests(unittest.TestCase):
         self.manifests[self.paths[smoke.STORAGE]] = '[package]\nname = "external"\n'
         self.assert_main(1, "required member has wrong package name")
 
+    def test_p4c_router_keeps_storage_and_event_bus_out_of_runtime_graph(self):
+        self.add(smoke.MODEL_ROUTER,
+                 '\n[dependencies]\nserea-protocol = "1"\nserea-storage = "1"\n')
+        self.assert_main(1, "serea-model-router has internal non-dev dependency serea-storage")
+
 
 class P2GroupOInvariantTests(unittest.TestCase):
     """Mechanical guards for the P2 non-negotiables in test matrix Group O."""
@@ -488,7 +496,7 @@ class P2GroupOInvariantTests(unittest.TestCase):
             self.assertIsNone(forbidden.search(source), str(path))
         root = smoke.load_manifest(self.root / "Cargo.toml")
         shared = root["workspace"]["dependencies"]
-        for member in ("serea-protocol", "serea-storage", "serea-task-engine"):
+        for member in ("serea-protocol", "serea-storage", "serea-task-engine", "serea-model-router"):
             manifest = smoke.load_manifest(self.root / "crates" / member / "Cargo.toml")
             for name, _, is_dev in smoke.dependency_tables(
                     manifest, shared, self.root / "crates" / member / "Cargo.toml"):
@@ -547,7 +555,7 @@ class P2GroupOInvariantTests(unittest.TestCase):
         self.assertNotRegex(source, r"pub fn (?:update|insert|delete|write)_task")
         self.assertNotRegex(source, r"(?i)\b(?:INSERT|UPDATE|DELETE|REPLACE)\s+(?:INTO\s+)?(?:tasks|task_steps|leases|task_journal)")
 
-    def test_o7_workspace_has_exactly_five_p3b_members(self):
+    def test_o7_workspace_has_exactly_p4c_members(self):
         root = smoke.load_manifest(self.root / "Cargo.toml")
         self.assertEqual(sorted(root["workspace"]["members"]), smoke.EXPECTED_MEMBERS)
 

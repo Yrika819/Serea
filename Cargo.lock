@@ -816,6 +816,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serea-model-router"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "serea-protocol",
+]
+
+[[package]]
 name = "serea-protocol"
 version = "0.1.0"
 dependencies = [

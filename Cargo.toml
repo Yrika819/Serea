@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-event-bus", "crates/serea-task-engine", "crates/serea-scheduler", "crates/serea-testkit"]
+members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-event-bus", "crates/serea-task-engine", "crates/serea-scheduler", "crates/serea-testkit", "crates/serea-model-router"]
 exclude = ["vendor/jsonschema-value", "vendor/serde_json"]
 
 [workspace.package]

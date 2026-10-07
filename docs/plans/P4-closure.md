@@ -108,5 +108,53 @@ is the first P4 runtime storage change; P4 is not complete.
 The accepted sequence remains P4C immutable roster/discovery/health and
 deterministic selection; P4D durable dispatch, response binding and ambiguity;
 P4E validation, repair, fallback and budget integration; then P4F integrated
-Model Router closure. This task stops after P4B. No P4C or P5 work is authorized
-by this record.
+Model Router closure. P5 remains outside P4.
+
+## P4C Evidence (in progress)
+
+- Base: exact P4B closure HEAD `e436e73937f8e0bf62f4a8fbe712e368f766fdc6`.
+- RED proof: before `src/lib.rs` existed, `cargo test -p serea-model-router
+  --test routing --offline` failed to compile because the router crate API was
+  absent (`unresolved import serea_model_router`).
+- Focused tests: `cargo test -p serea-model-router --offline` passes 12 tests
+  covering frozen chains/order, duplicate model/provider registration,
+  discovery omission and identity mismatch, capability narrowing, STRICT/ANY,
+  tools/context/output filters, PUBLIC/PERSONAL, PRIVATE/SECRET/CREDENTIAL
+  refusal, degraded health, one health read per provider, no dispatch, price
+  non-reordering, Codex exclusion, purpose/format, non-finite temperatures,
+  and vision input refusal.
+- Focused Clippy: `cargo clippy -p serea-model-router --all-targets
+  --all-features --offline -- -D warnings` passes.
+- Sequential review passes: (1) contract compliance; (2) crate graph is
+  protocol plus `serde_json` only at runtime; (3) P4C has no storage/event
+  transaction surface; (4) health/discovery snapshots are immutable and
+  health is read once per registered provider; (5) prepared content is not
+  logged or serialized and prompt-bearing prepared types do not implement
+  `Debug`; (6) capability, prompt, schema and output bounds are enforced; (7)
+  deterministic tests have no sleeps, wall clock, ignored cases, or platform
+  skips; (8) docs and claims were reconciled. A stale P3F smoke invariant was
+  updated, with a new router-layer edge guard.
+- The migration checksums remain exactly the P4B values: 0001
+  `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`, 0002
+  `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`, and
+  0003 `8f4c5c4e047a8829201ce834ff192d740ab6ca199ecc3d12dfe8e357cf82c2ec`.
+- Required local cloud validation passed on the P4C candidate: fmt, workspace
+  check, all-target tests, all-features tests, workspace Clippy, docs
+  validation, workspace smoke, all 76 smoke unit tests, Cargo metadata,
+  identity guard, and `git diff --check`. Cargo emitted only the existing
+  vendored `serde_json` deprecation warning for `usize::max_value`.
+- Runtime dependencies: `serea-protocol`, `serde_json`; no Storage, Event Bus,
+  Task Engine, Policy, Capability, or testkit runtime edge. Testkit is not
+  needed by P4C routing tests.
+- No `ModelProvider::generate` call exists in the routing slice. Provider
+  health is read once per registered ProviderId in a deterministic snapshot;
+  the current protocol method returns `ProviderHealth` directly, so adapters
+  must map a failed underlying health read to `DEGRADED`.
+- Prepared calls are a trusted in-process host boundary. Construction does not
+  prove redaction, and the type is not suitable for an untrusted device/API
+  surface. No caller-set redaction proof is present.
+- Fast and Full GitHub Actions remain pending on the exact P4C commit. Their
+  run IDs will be added only after they exist and complete; P4D does not begin
+  until both are GREEN.
+- Nonclaims: no provider dispatch, real model service, image transport,
+  structured validation, repair, fallback, or P5.

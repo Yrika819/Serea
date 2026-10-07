@@ -623,5 +623,14 @@ repair, fallback, dispatch gates, or P4E budgets.
   confirms parser-level nested/escaped duplicate checks and malformed input
   checks are deterministic; (8) docs review records the validator's exact
   dependency configuration and limits the P4E claims to this slice.
-- This is not a P4E closure and has no behavior commit or authoritative Actions
-  result yet. Migrations 0001, 0002 and 0003 are unchanged.
+- P4E structured-validation behavior commit `be429e6414d8605ec1ac03139cb4d8af008ede76`
+  passed exact-head Fast CI
+  [37687688591](https://github.com/Yrika819/Serea/actions/runs/37687688591),
+  Full CI
+  [37687688473](https://github.com/Yrika819/Serea/actions/runs/37687688473)
+  with Linux stable, MSRV 1.85, Intel x86_64, arm64, and release fault proof,
+  and cross-architecture SQLite
+  [37687688431](https://github.com/Yrika819/Serea/actions/runs/37687688431)
+  in both directions. The Linux, MSRV, Intel, and arm64 jobs are all GREEN.
+- This closes only the first P4E behavior slice; P4E remains in progress.
+  Migrations 0001, 0002 and 0003 are unchanged.

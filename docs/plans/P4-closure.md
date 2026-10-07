@@ -191,6 +191,18 @@ Model Router closure. P5 remains outside P4.
   GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
   [cross-architecture SQLite 37657974803](https://github.com/Yrika819/Serea/actions/runs/37657974803)
   GREEN in both directions.
+- Sixth P4D RED proof: the scripted dispatch test failed to compile because
+  `recover_completed_chat_text_response` was absent. The recovery reader now
+  rebuilds a CHAT/TEXT `ModelResponse` from the completed attempt's trusted
+  identity, host price/cost class, validated usage and accepted stored text.
+  The file-backed test closes and reopens the Store, recovers the same result,
+  verifies one usage and one durable completion event, and confirms provider
+  invocation count did not increase.
+- Sequential review limits this reader to completed CHAT operations with a
+  retained accepted response and matching host accounting facts. It does not
+  make a provider call, accept provider `structured` metadata, or add content
+  to events. Structured response reconstruction remains for P4E host
+  validation. Exact validation and Actions for this sub-slice are pending.
 - Second P4D RED proof: the post-routing request test initially failed to
   compile because `ModelRouterV1::build_request` did not exist. The constructor
   now binds to the same `RoutingSessionV1`, rechecks eligibility, and copies

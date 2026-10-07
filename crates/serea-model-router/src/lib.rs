@@ -23,8 +23,8 @@ use serea_protocol::{
     ProtocolError, ProviderHealth, ProviderId, ResponseFormat, TaskId, canonicalize,
 };
 use serea_storage::{
-    ModelAttemptRelationKind, ModelCallAttemptDraft, ModelCallCompletion, ModelFailureUsage,
-    ModelPriceSnapshot, ModelResponseStorage, Store, StoreError, UsdMicros,
+    ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft, ModelCallCompletion,
+    ModelFailureUsage, ModelPriceSnapshot, ModelResponseStorage, Store, StoreError, UsdMicros,
     calculate_cost_usd_micros,
 };
 
@@ -1050,6 +1050,67 @@ pub fn recover_unresolved_model_calls(
     Ok(recovered)
 }
 
+/// Rebuilds a completed CHAT/TEXT result after the original caller lost it.
+///
+/// This reads only a durable accepted response and trusted usage/identity facts;
+/// it never calls a provider. Missing, non-completed, or content-pruned requests
+/// return `Ok(None)`. A completed CHAT/TEXT row missing required durable facts
+/// is treated as storage corruption.
+pub fn recover_completed_chat_text_response(
+    store: &Store,
+    request_id: &serea_protocol::RequestId,
+) -> Result<Option<ModelResponse>, ModelRecoveryError> {
+    let Some(attempt) = store
+        .get_model_call_attempt(request_id)
+        .map_err(ModelRecoveryError::Storage)?
+    else {
+        return Ok(None);
+    };
+    if attempt.state != ModelAttemptState::Completed || attempt.purpose != ModelPurpose::Chat {
+        return Ok(None);
+    }
+    let Some(response_bytes) = store
+        .get_model_call_response(request_id)
+        .map_err(ModelRecoveryError::Storage)?
+    else {
+        return Ok(None);
+    };
+    let usage = store
+        .model_usage_for_request(request_id)
+        .map_err(ModelRecoveryError::Storage)?
+        .ok_or(ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    if usage.cost_class != attempt.price.cost_class() {
+        return Err(ModelRecoveryError::Storage(StoreError::CorruptRow));
+    }
+    let document: serde_json::Value = serde_json::from_slice(&response_bytes)
+        .map_err(|_| ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    let object = document
+        .as_object()
+        .filter(|object| object.len() == 1)
+        .ok_or(ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    let content = object
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    let latency_ms = u32::try_from(usage.latency_ms)
+        .map_err(|_| ModelRecoveryError::Storage(StoreError::CorruptRow))?;
+    Ok(Some(ModelResponse {
+        request_id: attempt.request_id,
+        model_id: attempt.model_id,
+        provider_id: attempt.provider_id,
+        content: content.to_owned(),
+        structured: None,
+        finish_reason: FinishReason::Stop,
+        usage: serea_protocol::ModelUsage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cost_class: usage.cost_class,
+        },
+        latency_ms,
+        repair_attempts: u32::from(usage.repair_attempts),
+    }))
+}
+
 /// Explicit deterministic preference chain for a purpose.
 pub fn preference_chain(purpose: ModelPurpose) -> &'static [&'static str] {
     match purpose {
@@ -1306,8 +1367,13 @@ mod tests {
     }
 
     #[test]
-    fn model_intent_and_called_event_commit_before_provider_dispatch() {
-        let store = Arc::new(Store::open_in_memory(&FixedClock).unwrap_or_else(|_| unreachable!()));
+    fn dispatch_commits_before_provider_and_recovers_caller_lost_response() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-dispatch-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
         let provider = Arc::new(DispatchFakeProvider {
             store: Arc::clone(&store),
             calls: AtomicUsize::new(0),
@@ -1374,6 +1440,10 @@ mod tests {
         assert_eq!(response.content, "hello");
         assert_eq!(response.structured, None);
         assert_eq!(response.repair_attempts, 0);
+        let recovered_response = recover_completed_chat_text_response(&store, &response.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(recovered_response, response);
         let attempt = store
             .get_model_call_attempt(&response.request_id)
             .unwrap_or_else(|_| unreachable!())
@@ -1466,6 +1536,37 @@ mod tests {
         let serialized_events =
             serde_json::to_string(&final_events.items).unwrap_or_else(|_| unreachable!());
         assert!(!serialized_events.contains("sensitive diagnostic text"));
+
+        let calls_before_reopen = provider.calls.load(Ordering::SeqCst);
+        drop(router);
+        drop(provider);
+        drop(context);
+        drop(wrong_price_context);
+        drop(no_spend_context);
+        drop(retry_context);
+        drop(store);
+        let reopened = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let recovered = recover_completed_chat_text_response(&reopened, &response.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(recovered, response);
+        assert_eq!(calls_before_reopen, 2);
+        assert_eq!(
+            reopened
+                .model_usage_for_request(&response.request_id)
+                .unwrap_or_else(|_| unreachable!())
+                .unwrap_or_else(|| unreachable!())
+                .cost_usd_micros
+                .get(),
+            5
+        );
+        let reopened_events =
+            EventBus::replay(&reopened, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert_eq!(reopened_events.items.len(), 4);
+        drop(reopened);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
 
     #[test]

@@ -110,7 +110,7 @@ deterministic selection; P4D durable dispatch, response binding and ambiguity;
 P4E validation, repair, fallback and budget integration; then P4F integrated
 Model Router closure. P5 remains outside P4.
 
-## P4C Evidence (in progress)
+## P4C Evidence (closed)
 
 - Base: exact P4B closure HEAD `e436e73937f8e0bf62f4a8fbe712e368f766fdc6`.
 - RED proof: before `src/lib.rs` existed, `cargo test -p serea-model-router
@@ -153,8 +153,12 @@ Model Router closure. P5 remains outside P4.
 - Prepared calls are a trusted in-process host boundary. Construction does not
   prove redaction, and the type is not suitable for an untrusted device/API
   surface. No caller-set redaction proof is present.
-- Fast and Full GitHub Actions remain pending on the exact P4C commit. Their
-  run IDs will be added only after they exist and complete; P4D does not begin
-  until both are GREEN.
+- Exact behavior commit CI: [Fast CI run 37655583453](https://github.com/Yrika819/Serea/actions/runs/37655583453)
+  GREEN; [Full CI run 37655583531](https://github.com/Yrika819/Serea/actions/runs/37655583531)
+  GREEN; [cross-architecture SQLite run 37655583318](https://github.com/Yrika819/Serea/actions/runs/37655583318)
+  GREEN. Full CI passed Linux stable, Linux MSRV 1.85, macOS Intel x86_64,
+  macOS arm64, and release fault-seam exclusion. Both SQLite directions passed.
+- P4C closed on exact behavior commit `3b509bde05547736d4355bd71e525fe62c760be6`.
+  No P4D work began before these authoritative results were GREEN.
 - Nonclaims: no provider dispatch, real model service, image transport,
   structured validation, repair, fallback, or P5.

@@ -1,10 +1,10 @@
 # Public-readiness audit
 
-**Status: PUBLIC_AND_CI_VALIDATED**
+**Status: HISTORICAL_PUBLIC_AND_CI_VALIDATION_SNAPSHOT**
 
 **Audit scope:** all locally reachable Git refs and the current working tree. The owner explicitly authorized a pre-public history rewrite to remove machine-specific home paths; that rewrite has completed locally and all phase refs were rewritten consistently.
 
-**P3:** NOT STARTED.
+**Historical scope note:** This audit records the initial public-readiness state before P3 began. Its P3 status, repository size, workflow inventory, and CI evidence are historical and do not describe the current candidate. Current P3 status and exact-SHA evidence are in [`P3 closure`](plans/P3-closure.md).
 
 This record is an audit log, not a license grant or legal opinion. Scanner scratch and metadata are ephemeral under ignored `target/public-readiness/` and `tmp/public-readiness/` paths; they are not publication artifacts.
 
@@ -188,7 +188,7 @@ The owner reviewed the known exact-name and near-name collisions and explicitly 
 
 ## README
 
-`README.md` now describes Serea as an offline-first Rust task-runtime foundation, identifies the four current crates and architecture, says P2 durable runtime is complete and P3 not started, lists build/test commands, and explicitly says planned Gmail, Calendar, Android, Event Bus, Scheduler, GoalLatch, Codex, credentials, and providers are not implemented.
+At this audit snapshot, `README.md` described Serea as an offline-first Rust task-runtime foundation, identified four crates, said P2 durable runtime was complete and P3 not started, and listed build/test commands. That README state was superseded when P3 was implemented on the candidate branch; provider, GoalLatch, Codex, and production credential nonclaims remain applicable.
 
 ## SECURITY
 

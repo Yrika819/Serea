@@ -2,7 +2,7 @@
 
 ## Supported development status
 
-Serea is an early-stage project. P2's durable task runtime is complete; P3 has not started. Production provider integrations, device integrations, and real credential handling are not implemented. Do not use Serea to protect production secrets or authorize real-world side effects.
+Serea is an early-stage project. P2's durable task runtime is complete, and P3's Event Bus and Scheduler are closed on the open `p3/event-bus-scheduler` branch; PR #1 has not been merged to `main`. Production provider integrations, device integrations, and real credential handling are not implemented. Do not use Serea to protect production secrets or authorize real-world side effects.
 
 ## Reporting a vulnerability
 

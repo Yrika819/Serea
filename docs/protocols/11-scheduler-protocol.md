@@ -355,8 +355,10 @@ requires explicit user action before any effecting task is created.
 
 ## 9. Phase boundary and invariants
 
-The contract is frozen in P0; implementation is deferred to P3. P0 and P1 must
-not connect an external scheduler or perform real scheduled effects.
+The contract was frozen in P0; the accepted P3 Scheduler runtime is closed on
+the `p3/event-bus-scheduler` candidate branch and PR #1 is not yet merged to
+`main`. P0 and P1 must not connect an external scheduler or perform real
+scheduled effects.
 
 | # | Invariant |
 | --- | --- |
@@ -368,7 +370,7 @@ not connect an external scheduler or perform real scheduled effects.
 | S6 | Missed occurrences follow the stored bounded policy and are never silently discarded. |
 | S7 | Approval waits release Scheduler leases; only future P6 Policy/Approval code applies an authoritative outcome to the same task. |
 | S8 | Proactive watcher execution remains read-only; proposals require a separate user action to cause effects. |
-| S9 | Scheduler implementation and real scheduled effects remain deferred to P3. |
+| S9 | Scheduler runtime behavior is bounded by this protocol; external provider effects remain outside P3 and require the later authority path. |
 
 ## 10. Changelog
 
@@ -386,3 +388,7 @@ not connect an external scheduler or perform real scheduled effects.
 - 2026-10-07: ADR-0030 defines approval lifecycle routing and durable wake
   handoff to future P6; Scheduler applies no Approval outcome. Architecture
   advances to `serea-arch/2.4.0`; wire surfaces remain unchanged.
+- 2026-10-07: P3 Scheduler runtime closes on the candidate branch. Calendar,
+  HOST_EVENT, device-session wake, and approval routing behavior follow this
+  protocol; external provider effects and P6 approval authority remain outside
+  P3. See the [P3 closure record](../plans/P3-closure.md).

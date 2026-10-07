@@ -11,6 +11,13 @@
 
 #[cfg(test)]
 mod crash_tests;
+mod structured;
+#[cfg(test)]
+mod structured_tests;
+
+pub use structured::{
+    StructuredValidationError, ValidationDiagnostic, validate_structured_response,
+};
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -35,6 +42,14 @@ use serea_storage::{
 pub const MAX_MODEL_PROMPT_BYTES: usize = 1_048_576;
 /// Maximum JSON Schema size accepted before routing.
 pub const MAX_MODEL_SCHEMA_BYTES: usize = 65_536;
+/// Maximum provider response bytes accepted by the host validator.
+pub const MAX_MODEL_RESPONSE_BYTES: usize = serea_storage::MAX_MODEL_RESPONSE_BYTES;
+/// Maximum nesting depth for model JSON input and host schemas.
+pub const MAX_MODEL_JSON_DEPTH: usize = 64;
+/// Maximum validation diagnostics retained for one response.
+pub const MAX_MODEL_VALIDATION_ERRORS: usize = 32;
+/// Maximum encoded validation diagnostic bytes retained for one response.
+pub const MAX_MODEL_VALIDATION_ERROR_BYTES: usize = 16_384;
 const AMBIGUOUS_PROVIDER_ERROR_KIND: &str = "AMBIGUOUS_DISPATCH";
 /// Default host bound for per-call output tokens.
 pub const DEFAULT_MAX_OUTPUT_TOKENS_PER_CALL: u32 = 2_048;
@@ -262,6 +277,7 @@ impl PreparedModelCallV1 {
             if serde_json::to_writer(&mut counter, schema).is_err() {
                 return Err(RouterError::SchemaTooLarge);
             }
+            structured::validate_json_schema(schema).map_err(|_| RouterError::InvalidJsonSchema)?;
         }
         let mut prompt_bytes = draft.system.as_ref().map_or(0, String::len);
         for message in &draft.messages {
@@ -399,6 +415,8 @@ pub enum RouterError {
     IllegalPurposeFormat,
     /// Temperature is NaN or infinite.
     NonFiniteTemperature,
+    /// A host-supplied JSON Schema is invalid or cannot be resolved offline.
+    InvalidJsonSchema,
     /// Per-call output limit exceeds the host bound or is zero.
     OutputLimitInvalid,
     /// Schema bytes exceed the frozen structural limit.

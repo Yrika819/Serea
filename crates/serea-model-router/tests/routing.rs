@@ -727,6 +727,47 @@ fn oversized_prompt_and_schema_fail_before_routing() {
     ));
 }
 
+#[test]
+fn invalid_host_schema_refuses_before_any_provider_operation() {
+    let health_reads = Arc::new(AtomicUsize::new(0));
+    let generate_calls = Arc::new(AtomicUsize::new(0));
+    let roster = ModelRosterV1::new(vec![entry(
+        "nemotron-3-nano-30b",
+        "provider",
+        ModelDeploymentClass::Cloud,
+        true,
+        capabilities(JsonSchemaMode::Strict, 1000, 1000),
+        CostClass::Paid,
+    )])
+    .unwrap();
+    let provider = provider_with_counts(
+        "provider",
+        vec![descriptor(
+            "nemotron-3-nano-30b",
+            "provider",
+            capabilities(JsonSchemaMode::Strict, 1000, 1000),
+        )],
+        ProviderHealth::Ready,
+        health_reads.clone(),
+        generate_calls.clone(),
+    );
+    let _router = ModelRouterV1::new(roster, vec![provider]).unwrap();
+    let invalid = call(
+        ModelPurpose::Analysis,
+        ResponseFormat::JsonSchema {
+            schema: serde_json::json!({"type":"not-a-json-schema-type"}),
+        },
+        DataClass::Public,
+        requirements(StructuredRequirementV1::Any),
+    );
+    assert!(matches!(
+        PreparedModelCallV1::from_host(invalid),
+        Err(RouterError::InvalidJsonSchema)
+    ));
+    assert_eq!(health_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(generate_calls.load(Ordering::SeqCst), 0);
+}
+
 fn class_purpose(_class: DataClass) -> ModelPurpose {
     ModelPurpose::Planning
 }

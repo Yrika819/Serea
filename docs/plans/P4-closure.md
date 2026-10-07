@@ -578,3 +578,50 @@ Model Router closure. P5 remains outside P4.
   and cross-architecture SQLite
   [37684405424](https://github.com/Yrika819/Serea/actions/runs/37684405424)
   in both directions.
+
+## P4E Progress
+
+P4E remains in progress. The first behavior slice adds the host-side structured
+JSON validation boundary; it does not yet implement response acceptance,
+repair, fallback, dispatch gates, or P4E budgets.
+
+- RED evidence: the first focused structured-validation test compile failed
+  because the validator module, response/depth/error bounds, and validation
+  entry point did not exist. After adding the minimal implementation, focused
+  tests exercise valid/invalid schema output, malformed JSON, top-level,
+  nested, and escaped duplicate keys, schema-local references, refused remote
+  references, response/schema depth and byte bounds, bounded diagnostic count
+  and bytes, and arbitrary-precision JSON numbers.
+- The host constructor now compiles JSON Schema before routing or any provider
+  health/generate operation. An integration spy test proves an invalid schema
+  returns `InvalidJsonSchema` with zero health and generation calls.
+- JSON parsing rejects duplicate keys while the parser still has the key
+  stream, before constructing `serde_json::Value`. Validation uses Draft
+  2020-12. Diagnostics contain a bounded instance path, keyword, and static
+  description only; the rejected instance value is never formatted.
+- Dependency review: `jsonschema` is pinned to 0.58.3 (MIT, MSRV 1.85) with
+  workspace `default-features = false`. Its HTTP, file, async resolver, and TLS
+  features are absent from the dependency feature tree. In-process `$defs`
+  references validate; remote `$ref` fails closed. No model/network service is
+  called.
+- Focused validation passes: 5 structured tests and 13 routing integration
+  tests; router check and Clippy pass. Workspace validation passes fmt,
+  check, all-target tests, all-feature tests, Clippy with denied warnings,
+  docs validation, workspace smoke, all 76 workspace smoke unit tests, Cargo
+  metadata, identity guard, and diff check. The existing vendored serde_json
+  deprecation warning remains non-fatal.
+- Sequential review: (1) contract review confirms only host JSON parsing,
+  Draft 2020-12 validation and frozen structural bounds are implemented;
+  (2) crate graph review confirms protocol/storage/event-bus dependencies are
+  unchanged and no Task Engine, Policy or Testkit runtime edge is added;
+  (3) transaction review confirms invalid schemas are rejected before route
+  selection/provider health and before dispatch; (4) recovery review confirms
+  this slice adds no state transition or retry path; (5) privacy review
+  confirms diagnostics never include rejected values, prompts or provider
+  fragments; (6) bounds review confirms schema/response bytes, JSON depth,
+  diagnostic count and encoded diagnostic bytes are bounded; (7) test review
+  confirms parser-level nested/escaped duplicate checks and malformed input
+  checks are deterministic; (8) docs review records the validator's exact
+  dependency configuration and limits the P4E claims to this slice.
+- This is not a P4E closure and has no behavior commit or authoritative Actions
+  result yet. Migrations 0001, 0002 and 0003 are unchanged.

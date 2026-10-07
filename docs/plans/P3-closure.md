@@ -301,7 +301,7 @@ semantically validated on GitHub-hosted macOS arm64, and vice versa. This does
 not claim live-WAL portability, universal hardware compatibility, or
 power-loss durability.
 
-## P3G — integrated crash and recovery closure (in progress)
+## P3G — integrated crash and recovery closure
 
 The P3G test suite integrates Event Bus retention and replay, calendar and
 HOST_EVENT occurrences, explicit device resume, approval wake handoff, Task
@@ -311,13 +311,36 @@ insert failure to prove that occurrence admission and next-due advancement
 roll back together. Device-wait registration's event-participant failure also
 proves Task state, journal, wait row, and Event sequence remain unchanged.
 
-Local Cloud validation is green on the uncommitted P3G candidate: workspace
-all-target tests, all-feature tests, check, Clippy `-D warnings`, fmt, docs
-validation, workspace smoke, 75 smoke unit tests, metadata, identity guard and
-its tests, diff check, focused Scheduler tests, and the release fault-seam
-exclusion test. Migration 0001/0002 checksums and `Store::verify_integrity`
-were checked. Exact P3G commit and final GitHub Actions runs are pending; P3 is
-not yet marked closed by this record.
+P3G closure commit is `89d726ab1af0b94b9fd2e865f8e6ba663e00998a`. Cloud
+validation passed on that exact commit: workspace check, all-target tests,
+all-feature tests, Clippy `-D warnings`, fmt, docs validation, workspace
+smoke, 75 smoke unit tests, metadata, identity guard and its tests, diff check,
+focused Scheduler tests, and the release fault-seam exclusion test. Migration
+0001/0002 checksums and `Store::verify_integrity` were checked. The integrated
+restart test verifies retention/range replay, HOST_EVENT materialization,
+device wake recovery, approval wake preservation, scheduled mappings, and a
+second recovery pass without duplicate Task events. Separate tests cover
+two-worker HOST_EVENT replay/dispatch and calendar enqueue rollback.
+
+Exact P3G commit Actions evidence:
+
+| Gate | Run/job | Result |
+|---|---:|---|
+| Fast CI | run `37627364065`, Linux fast job `112812473100` | PASS |
+| Full CI | run `37627364242` | PASS |
+| Linux stable and release fault-seam proof | job `112812475054` | PASS |
+| Linux MSRV 1.85.0 | job `112812474646` | PASS |
+| macOS Intel x86_64 | job `112812475071` | PASS |
+| macOS Apple Silicon arm64 | job `112812475322` | PASS |
+| Cross-architecture SQLite | run `37627364099` | PASS |
+| Intel producer / arm64 producer | jobs `112812472436` / `112812472942` | PASS |
+| arm64 artifact consumed on Intel / Intel artifact consumed on arm64 | jobs `112812915059` / `112813274415` | PASS |
+
+P3 is closed for the accepted Event Bus, Task Engine, and Scheduler contracts.
+Approval lifecycle wakes are durable, typed routing handoffs only; P6 owns
+approval authority and result application. Cross-architecture portability is
+limited to cleanly closed main-database fixtures. No `-shm` or live-WAL
+portability claim is made.
 
 ## Project nonclaims
 

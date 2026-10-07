@@ -189,7 +189,7 @@ Paired portability evidence: GitHub-hosted macOS Intel x86_64 CI passed.
 GitHub-hosted macOS arm64 CI passed. Both ran all-feature tests and the task
 engine crash suite. No cross-architecture database artifact was exchanged.
 
-## P3F contract — CalendarRecurrenceV1 (accepted; contract CI pending)
+## P3F contract — CalendarRecurrenceV1 (accepted; contract CI green)
 
 The owner selected the structured JSON grammar in ADR-0027. Its only kinds are
 ONCE, DAILY, and WEEKLY. V1 has exact kind-specific fields, a local civil minute
@@ -206,10 +206,21 @@ Protocol, Protocol Index, current architecture documents, decision index, crate
 map, and this closure record carry the contract. No runtime code or Jiff
 manifest dependency is included in this contract commit.
 
-The docs-only contract closure is pushed separately and awaits exact-SHA Fast
-CI, Full CI, Linux stable, MSRV, paired Intel/arm64, and release fault proof.
-P3F runtime implementation must not begin until those jobs pass. P3F runtime and
-P3G remain open; P3 remains partially complete.
+The docs-only contract closure passed exact-SHA Fast CI run `37542441358` and
+Full CI run `37542441329`. Linux stable/release proof, MSRV 1.85, macOS Intel,
+and macOS arm64 all passed on that contract commit. P3F runtime and P3G remain
+open; P3 remains partially complete.
+
+## P3F contracts — EventPredicateV1 and ScheduledTaskTemplateV1
+
+ADR-0028 accepts exact registered-EventKind matching, dedicated-wake and
+Scheduler-lifecycle exclusions, and cross-schedule Scheduler-causal-root
+suppression. It also accepts a closed title/intent-only scheduled template,
+host classification inheritance, `max_schedule_template_bytes = 32768`, and
+occurrence-pinned template digests for edit/restart stability. Architecture
+advances from `serea-arch/2.1.0` to `serea-arch/2.2.0`; event and Scheduler
+surfaces remain `/1`. Contract CI is pending exact commit evidence. No runtime
+or migration change is claimed by this contract record.
 
 ## Project nonclaims
 

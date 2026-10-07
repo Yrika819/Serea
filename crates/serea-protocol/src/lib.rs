@@ -72,6 +72,7 @@ pub mod clock;
 pub mod errors;
 pub mod ids;
 pub mod provider;
+pub mod scheduler_contracts;
 pub mod schema;
 pub mod types;
 
@@ -89,6 +90,10 @@ pub use ids::{
 pub use provider::{
     CancellationToken, CapabilityProvider, HostGoalProvider, ModelCallContext, ModelProvider,
     ProviderContext,
+};
+pub use scheduler_contracts::{
+    EventPredicateError, EventPredicateV1, MAX_SCHEDULE_TEMPLATE_BYTES, ScheduledTaskTemplateV1,
+    TemplateError, event_kind_is_host_event_eligible,
 };
 pub use schema::{MAX_INSTANCE_DEPTH, SchemaError, SchemaName, SchemaViolation};
 pub use types::{

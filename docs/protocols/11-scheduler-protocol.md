@@ -1,6 +1,6 @@
 # Scheduler Protocol
 
-Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.1.0`** · Implementation: **P3 in progress**
+Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.2.0`** · Implementation: **P3 in progress**
 
 This protocol defines durable schedules and event-driven wakeups that may create
 or resume Serea tasks. The scheduler is a trigger and persistence subsystem, not
@@ -22,8 +22,8 @@ contains at least:
 | `owner_device_id` | The paired device/user identity that created the schedule, or the host admin identity for a host-created schedule. |
 | `state` | `ACTIVE`, `PAUSED`, or `CANCELLED`. |
 | `revision` | Monotonically increasing generation changed by each committed definition or state mutation; claims compare the expected revision under the transaction fence. |
-| `trigger` | A validated event predicate or calendar recurrence, exactly one trigger form per schedule. |
-| `task_template` | Host-validated task intent and permitted arguments; a schedule does not persist model-authored authority. |
+| `trigger` | Exactly one validated `EventPredicateV1`, `CalendarRecurrenceV1`, or dedicated wake trigger form. |
+| `task_template` | A host-validated `ScheduledTaskTemplateV1` containing title and planning intent only; V1 has no permitted action arguments. |
 | `policy_class` | Fixed ceiling for spawned work; a scheduled task cannot raise it. |
 | `approval_policy` | The ordinary policy/approval requirements for each action. No approval is pre-granted by a schedule. |
 | `timezone` | IANA time-zone identifier for calendar recurrences; required when the recurrence is local-time based. |
@@ -66,6 +66,24 @@ Each wake carries its source identity from durable state (the source `EventId`,
 a request to evaluate the schedule/task; it does not bypass policy or grant
 approval.
 
+### 2.1 EventPredicateV1
+
+HOST_EVENT schedules store the closed SCJ-1 object
+`{"event_kind":"<registered EventKind>","version":"1"}`. These are its
+only fields. The host rejects unknown or missing fields, duplicate keys,
+unregistered kinds, and versions other than `"1"`. Persisted JSON is
+canonical; runtime decodes it to `EventPredicateV1` and never compares raw
+source text.
+
+The only positive match is exact EventKind equality. Payload fields, task/step
+IDs, actor, correlation/causation, data class, timestamps, and other JSON do
+not participate. HOST_EVENT excludes `DEVICE_CONNECTED`,
+`APPROVAL_GRANTED`, `APPROVAL_DENIED`, and `APPROVAL_EXPIRED`, which belong to
+dedicated wake paths. It also excludes every Scheduler lifecycle kind listed
+in Event Protocol §3. A Scheduler-rooted event is ineligible for every
+HOST_EVENT schedule. Scheduler derives that root from durable occurrence/task
+provenance, never from predicate data. V1 has no recursion override.
+
 ## 3. Persistence and recovery
 
 Schedule definitions, state, next due instant, timezone, occurrence-processing
@@ -75,6 +93,12 @@ occurrence key is the existing `ScheduleId` plus its canonical occurrence
 identity: for calendar recurrence, the intended local date/time and timezone;
 for `HOST_EVENT`, the source `EventId`; for resume/recovery wakeups, the existing
 `TaskId`. This is a storage uniqueness rule, not a new identifier format.
+
+Each occurrence captures the template digest and class current when it is
+durably resolved. A later schedule edit cannot change an existing occurrence's
+planning context. Given a mapped TaskId after restart, the occurrence mapping
+resolves the Schedule, occurrence, source EventId if any, and exact historical
+template version.
 
 Before dispatch, the scheduler durably records that an occurrence is being
 processed. Creating a scheduled task and recording the occurrence-to-task
@@ -98,6 +122,31 @@ and provider idempotency/reconciliation govern effect safety after task creation
 An ambiguous provider outcome blocks or reconciles under the Capability and Task
 Protocols; the scheduler never starts a replacement task to guess whether an
 effect happened.
+
+### 3.1 ScheduledTaskTemplateV1
+
+The exact template shape is the closed SCJ-1 object
+`{"intent":"<prose>","title":"<TaskTitle>","version":"1"}`. It has
+exactly these fields. `title` uses existing `TaskTitle` validation; `intent`
+uses existing prose validation and is planning context only, never trusted
+instruction, authority, policy, or executable code. V1 has no action
+arguments. Unknown fields, duplicate keys, malformed text, and unsupported
+versions are refused. Raw and canonical UTF-8 bytes are bounded by
+`max_schedule_template_bytes = 32768`.
+
+Template JSON cannot carry policy class, approval data, capability/provider,
+ActionRequest, TaskStep, Plan, idempotency key, receipt, credential handle,
+GoalLatch goal, model route, bound override, admin authorization, or arbitrary
+arguments. Schedule fields remain authoritative for policy ceiling, approval
+policy, owner, and trigger. Normal future Task planning and capability
+validation remain in force.
+
+The host classifies title and intent and stores their maximum class. CREDENTIAL
+is forbidden; SECRET is unsupported on this blob path; PRIVATE is accepted
+only through the existing protected-blob capability and otherwise fails
+closed. The digest provides content identity/integrity only. Schedule and
+occurrence rows pin blobs through durable references; cleanup releases them
+only after no existing task needs the historical intent.
 
 ## 4. Lease and concurrency
 
@@ -294,3 +343,7 @@ not connect an external scheduler or perform real scheduled effects.
 - 2026-10-06: ADR-0027 defines `CalendarRecurrenceV1` with ONCE, DAILY, and
   WEEKLY only; architecture advances to `serea-arch/2.1.0`. The Scheduler
   surface remains `serea.scheduler/1`.
+- 2026-10-07: ADR-0028 defines EventPredicateV1, ScheduledTaskTemplateV1,
+  Scheduler causal-loop exclusion, and `max_schedule_template_bytes = 32768`;
+  architecture advances to `serea-arch/2.2.0`. Event and Scheduler surfaces
+  remain `/1`.

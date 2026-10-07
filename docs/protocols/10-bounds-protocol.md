@@ -74,6 +74,7 @@ enforced anywhere else is a bug.
 | `max_events_per_transaction` | 16 | all event rows appended by one SQLite transaction, across fixed participants and composed operations | Refuse the operation before exceeding the cap and roll back the whole transaction; typed bound error; do not append an extra error event past the cap |
 | `max_event_replay_page` | 256 | returned device timeline events per replay request | Return at most 256 with an explicit continuation cursor; caller resumes from last returned seq; no row is skipped or silently truncated; zero disables replay and returns a typed bound error |
 | `max_scheduler_event_scan_page` | 256 | committed event rows examined by one Scheduler replay pass | Stop at page boundary, persist only the last fully handled cursor, and continue next pass; no filter-based skipping of unhandled rows |
+| `max_schedule_template_bytes` | 32768 | UTF-8 bytes of raw or canonical `ScheduledTaskTemplateV1` object | Refuse schedule create/update atomically before activation; no truncation or partial template |
 | `max_recovery_rows_per_batch` | 512 | durable task/schedule/occurrence rows examined by one recovery batch | Persist deterministic continuation position; resume in a later batch; never mark unexamined rows recovered |
 | `max_retention_delete_batch` | 512 | whole event records eligible for deletion in one retention transaction | Delete no more than the batch; continue later; never partially rewrite a row; retention deadline still applies |
 | `max_retained_events` | 1000000 | retained event content records per host, excluding any minimal sequence-integrity metadata selected by retention ADR | At capacity, prune only contract-eligible records; if capacity remains exhausted, refuse new event-producing transactions atomically with typed capacity error; no silent drop |
@@ -595,6 +596,7 @@ unexplained failure is indistinguishable from a bug.
 | B17 | Every exhausted task bound produces an event, a structured error or reason, and a durable task outcome — or it did not happen. |
 | B18 | Scheduler catch-up is capped per wake; remaining due occurrences stay durable and are processed by later bounded wakes. |
 | B19 | P3 schedule/event bounds refuse atomically, expose a typed error or bounded `BOUND_EXCEEDED` event when it fits, and never silently truncate/drop durable work. |
+| B20 | Oversized schedule templates never partially mutate schedule state or emit a lifecycle event. |
 ## 10. P2A clarification changelog
 
 - 2026-10-03: B3 operational/structural scope ratified by owner instruction,
@@ -605,3 +607,6 @@ unexplained failure is indistinguishable from a bug.
   existing catch-up=10, concurrent tasks=8 and lease=120 bounds are unchanged.
   Retained-content capacity enforcement follows Accepted ADR-0026 Option A;
   content capacity and minimal sequence metadata are bounded independently.
+- 2026-10-07: ADR-0028 adds `max_schedule_template_bytes = 32768` for raw and
+  canonical ScheduledTaskTemplateV1 bytes. Oversized create/update transactions
+  refuse atomically.

@@ -1,6 +1,6 @@
 # Serea Decision Index
 
-Current frozen architecture: `serea-arch/2.1.0`; P0/P1 baseline
+Current frozen architecture: `serea-arch/2.2.0`; P0/P1 baseline
 `serea-arch/0.2.0` remains historical. Owner ratification after three corrected
 documentation re-reviews GREEN accepts ADR-0018/19/20/23 within the scopes below.
 P2A slices are implemented. The coordinator owns final workspace/MSRV validation,
@@ -53,6 +53,7 @@ MSRV verification. A green wire-member gate does not accept full runtime fencing
 | --- | --- | --- |
 | [ADR-0026](ADR-0026-event-retention-and-global-sequence.md) | Minimal sequence ledger, independently expirable content, bounded range-aware replay | **Accepted**; Option A. Architecture `serea-arch/2.0.0`, replay response `serea.device/2`, event objects `serea.event/1`. |
 | [ADR-0027](ADR-0027-calendar-recurrence-grammar-v1.md) | Serea-owned structured calendar recurrence grammar V1 | **Accepted**; ONCE/DAILY/WEEKLY, architecture `serea-arch/2.1.0`; Scheduler surface unchanged. |
+| [ADR-0028](ADR-0028-scheduler-predicate-and-template-v1.md) | Exact EventPredicateV1 and ScheduledTaskTemplateV1 contracts | **Accepted**; architecture `serea-arch/2.2.0`; Event and Scheduler surfaces unchanged. |
 
 ### Numbering note
 

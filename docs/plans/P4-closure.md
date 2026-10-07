@@ -769,3 +769,43 @@ repair, fallback, dispatch gates, or P4E budgets.
   MSRV 1.85, Intel x86_64, arm64, and release fault proof; cross-architecture
   passed Intel-to-arm64 and arm64-to-Intel. The evidence-only closure head still
   requires its own Fast, Full, and cross-architecture Actions gates.
+
+### P4E slice: fresh dispatch gate
+
+- RED evidence: the new dispatch-gate test first failed to compile because the
+  snapshot type, resolver, and typed refusal outcomes did not exist. After the
+  seam was wired, the Personal cloud test exposed that the old deployment
+  filter ignored the prepared egress fact; it now rejects Personal cloud when
+  either initial or refreshed host egress permission is false.
+- Added a narrow `ModelDispatchGateSource` that receives only optional `TaskId`
+  and data class, and returns typed host-resolved cancellation, egress, and
+  deadline facts. Router does not evaluate policy or query Task Engine. It
+  checks cancellation and remaining deadline before allocating a request ID or
+  writing dispatch intent, intersects fresh egress with the prepared fact, and
+  only narrows the prepared deadline before passing it to the provider. It
+  rechecks the gate after intent COMMIT immediately before provider invocation;
+  if facts changed, one transaction marks the known-unsent attempt FAILED,
+  settles spend to zero without synthetic usage, and appends MODEL_FAILED.
+- Focused evidence: dispatch-gate cancellation/expiry/egress refusal test,
+  cancellation-before-intent provider/event assertion, cancellation-after-intent
+  failure/zero-settlement/provider assertion, Personal cloud egress routing
+  regression, full model-router unit/integration/doc tests, and existing dispatch
+  crash suite all pass. The call unit remains consumed; no provider invocation
+  occurs on either cancellation path.
+- Sequential review: (1) pre-intent refusal writes no intent; post-intent
+  refusal closes the known-unsent attempt before provider generate;
+  (2) the seam has no Policy, Task Engine, Storage callback, or Event Bus edge;
+  (3) intent and MODEL_CALLED retain their atomic composition, then the
+  post-intent failure/state/event and zero spend settlement share one
+  transaction; (4) no retry path exists yet and crash tests still pass;
+  (5) the seam receives no prompt or raw content and never widens egress;
+  (6) a refreshed deadline is min-bounded by the prepared deadline; (7) tests
+  are deterministic and assert no called event/provider operation on cancel;
+  (8) this section records the discovered egress filter correction and keeps
+  fallback/repair and complete budget claims open.
+- Local validation passed: fmt, workspace check, all-target tests, all-feature
+  tests, denied-warning Clippy, docs validation, workspace smoke, all 76 Python
+  smoke tests, Cargo metadata, identity guard, and diff check. The repository's
+  CI smoke entry point is `tests/workspace_smoke.py`; the task-named
+  `tools/workspace_smoke.py` does not exist in this checkout. Exact-head Fast,
+  Full, and cross-architecture Actions are pending for this behavior slice.

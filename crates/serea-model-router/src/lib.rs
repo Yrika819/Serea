@@ -200,6 +200,74 @@ impl ModelEgressPolicySnapshotV1 {
     }
 }
 
+/// Typed host facts re-resolved before each provider dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelDispatchGateSnapshotV1 {
+    cancelled: bool,
+    egress: ModelEgressPolicySnapshotV1,
+    effective_deadline_ms: u32,
+}
+
+/// Failure to read the host's already-resolved dispatch-gate facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelDispatchGateSourceError {
+    /// The host could not provide a current snapshot.
+    Unavailable,
+}
+
+impl ModelDispatchGateSnapshotV1 {
+    /// Constructs a snapshot from already-resolved host facts.
+    pub fn from_host(
+        cancelled: bool,
+        egress: ModelEgressPolicySnapshotV1,
+        effective_deadline_ms: u32,
+    ) -> Self {
+        Self {
+            cancelled,
+            egress,
+            effective_deadline_ms,
+        }
+    }
+}
+
+/// Narrow trusted host seam for refreshing cancellation, egress, and deadline
+/// facts before a dispatch. Implementations return resolved facts; Router does
+/// not evaluate policy or query Task Engine.
+pub trait ModelDispatchGateSource: Send + Sync {
+    /// Reads current facts for one task/data-class dispatch.
+    fn snapshot(
+        &self,
+        task_id: Option<&TaskId>,
+        data_class: DataClass,
+    ) -> Result<ModelDispatchGateSnapshotV1, ModelDispatchGateSourceError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResolvedDispatchGate {
+    deadline_ms: u32,
+}
+
+fn resolve_dispatch_gate(
+    call: &PreparedModelCallV1,
+    snapshot: ModelDispatchGateSnapshotV1,
+    deployment: ModelDeploymentClass,
+) -> Result<ResolvedDispatchGate, RouterError> {
+    if snapshot.cancelled {
+        return Err(RouterError::TaskCancelled);
+    }
+    let deadline_ms = call.deadline_ms.min(snapshot.effective_deadline_ms);
+    if deadline_ms == 0 {
+        return Err(RouterError::DeadlineExpired);
+    }
+    let egress = ModelEgressPolicySnapshotV1::from_host(
+        call.egress.private_cloud_egress_allowed && snapshot.egress.private_cloud_egress_allowed,
+    );
+    if !deployment_permitted(call.data_class, deployment, egress) {
+        return Err(RouterError::EgressRevoked);
+    }
+    Ok(ResolvedDispatchGate { deadline_ms })
+}
+
 /// Semantic inputs prepared by the host before routing.
 #[derive(Clone, PartialEq)]
 pub struct PreparedModelCallDraftV1 {
@@ -444,6 +512,14 @@ pub enum RouterError {
     ModelSelectionInvalid,
     /// The model price snapshot conflicts with host roster cost class.
     PriceConfigurationInvalid,
+    /// The trusted host dispatch-gate source could not provide current facts.
+    DispatchGateUnavailable,
+    /// The host reports that the task has been cancelled.
+    TaskCancelled,
+    /// No deadline eligibility remains for a new dispatch.
+    DeadlineExpired,
+    /// A fresh host egress snapshot revoked the selected deployment.
+    EgressRevoked,
 }
 
 // The retryable/terminal details are consumed by the P4E orchestration ladder.
@@ -491,6 +567,7 @@ struct ModelDispatchContext<'a> {
     price: ModelPriceSnapshot,
     max_daily_spend_usd_micros: UsdMicros,
     clock: &'a dyn Clock,
+    gate: &'a dyn ModelDispatchGateSource,
 }
 
 struct ModelFailureFacts<'a> {
@@ -776,6 +853,12 @@ impl ModelRouterV1 {
                 .ok_or(ModelDispatchFailure::Refused(
                     RouterError::ModelSelectionInvalid,
                 ))?;
+        let gate_snapshot = context
+            .gate
+            .snapshot(call.task_id.as_ref(), call.data_class)
+            .map_err(|_| ModelDispatchFailure::Refused(RouterError::DispatchGateUnavailable))?;
+        let gate = resolve_dispatch_gate(call, gate_snapshot, entry.deployment_class)
+            .map_err(ModelDispatchFailure::Refused)?;
         if price.cost_class() != entry.cost_class {
             return Err(ModelDispatchFailure::Refused(
                 RouterError::PriceConfigurationInvalid,
@@ -792,9 +875,10 @@ impl ModelRouterV1 {
         let request_id = events
             .mint_model_request_id()
             .map_err(ModelDispatchFailure::Storage)?;
-        let request = self
+        let mut request = self
             .build_request(call, session, &request_id, &selected)
             .map_err(ModelDispatchFailure::Refused)?;
+        request.deadline_ms = gate.deadline_ms;
         let provider = self
             .providers
             .get(entry.provider_id.as_str())
@@ -843,11 +927,37 @@ impl ModelRouterV1 {
             })
             .map_err(ModelDispatchFailure::Storage)?;
 
+        // The host state can change while the intent transaction commits. Read
+        // it once more immediately before crossing the provider boundary.
+        let before_provider = context
+            .gate
+            .snapshot(call.task_id.as_ref(), call.data_class)
+            .map_err(|_| RouterError::DispatchGateUnavailable)
+            .and_then(|snapshot| resolve_dispatch_gate(call, snapshot, entry.deployment_class));
+        let latest_gate = match before_provider {
+            Ok(gate) => gate,
+            Err(error) => {
+                let terminal_at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+                let error_kind = stable_model_error("HOST_DISPATCH_BLOCKED")?;
+                record_model_pre_dispatch_failure(
+                    store,
+                    events,
+                    &request_id,
+                    metadata,
+                    error_kind,
+                    terminal_at,
+                )?;
+                return Err(ModelDispatchFailure::Refused(error));
+            }
+        };
+        let effective_deadline_ms = gate.deadline_ms.min(latest_gate.deadline_ms);
+        request.deadline_ms = effective_deadline_ms;
+
         let response = match provider
             .generate(
                 &request,
                 &ModelCallContext {
-                    deadline_ms: call.deadline_ms,
+                    deadline_ms: effective_deadline_ms,
                 },
             )
             .await
@@ -1170,6 +1280,30 @@ fn record_model_failure(
         .map_err(ModelDispatchFailure::Storage)
 }
 
+fn record_model_pre_dispatch_failure(
+    store: &Store,
+    events: &EventBus,
+    request_id: &serea_protocol::RequestId,
+    metadata: ModelEventMetadataV1,
+    error_kind: ModelErrorCode,
+    terminal_at: serea_protocol::EpochMillis,
+) -> Result<(), ModelDispatchFailure> {
+    let failed = events
+        .draft_model_failed(ModelFailedEventV1 {
+            metadata,
+            error_kind: error_kind.clone(),
+            retryable: false,
+        })
+        .map_err(ModelDispatchFailure::Storage)?;
+    store
+        .transact(|tx| {
+            tx.fail_model_call_before_dispatch(request_id, error_kind.as_str(), terminal_at)?;
+            tx.append_event(failed.event, failed.retention_at)?;
+            Ok(())
+        })
+        .map_err(ModelDispatchFailure::Storage)
+}
+
 #[allow(dead_code)] // Used for typed adapter outcomes with uncertain processing.
 fn record_model_ambiguity(
     store: &Store,
@@ -1432,12 +1566,14 @@ fn validate_purpose_format(
 fn deployment_permitted(
     data_class: DataClass,
     deployment: ModelDeploymentClass,
-    _egress: ModelEgressPolicySnapshotV1,
+    egress: ModelEgressPolicySnapshotV1,
 ) -> bool {
     (match data_class {
         DataClass::Public => true,
-        // Prepared calls only enter through the trusted host seam.
-        DataClass::Personal => true,
+        // Personal cloud egress is permitted only by the trusted host fact.
+        DataClass::Personal => {
+            deployment == ModelDeploymentClass::Local || egress.private_cloud_egress_allowed
+        }
         DataClass::Private | DataClass::Secret | DataClass::Credential => false,
     }) && matches!(
         deployment,
@@ -1537,6 +1673,59 @@ mod tests {
         }
     }
 
+    struct OpenDispatchGate;
+
+    impl ModelDispatchGateSource for OpenDispatchGate {
+        fn snapshot(
+            &self,
+            _task_id: Option<&TaskId>,
+            _data_class: DataClass,
+        ) -> Result<ModelDispatchGateSnapshotV1, ModelDispatchGateSourceError> {
+            Ok(ModelDispatchGateSnapshotV1::from_host(
+                false,
+                ModelEgressPolicySnapshotV1::from_host(true),
+                997,
+            ))
+        }
+    }
+
+    static OPEN_DISPATCH_GATE: OpenDispatchGate = OpenDispatchGate;
+
+    struct CancelledDispatchGate;
+
+    impl ModelDispatchGateSource for CancelledDispatchGate {
+        fn snapshot(
+            &self,
+            _task_id: Option<&TaskId>,
+            _data_class: DataClass,
+        ) -> Result<ModelDispatchGateSnapshotV1, ModelDispatchGateSourceError> {
+            Ok(ModelDispatchGateSnapshotV1::from_host(
+                true,
+                ModelEgressPolicySnapshotV1::from_host(true),
+                1000,
+            ))
+        }
+    }
+
+    static CANCELLED_DISPATCH_GATE: CancelledDispatchGate = CancelledDispatchGate;
+
+    struct CancelAfterIntentGate(AtomicUsize);
+
+    impl ModelDispatchGateSource for CancelAfterIntentGate {
+        fn snapshot(
+            &self,
+            _task_id: Option<&TaskId>,
+            _data_class: DataClass,
+        ) -> Result<ModelDispatchGateSnapshotV1, ModelDispatchGateSourceError> {
+            let read = self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ModelDispatchGateSnapshotV1::from_host(
+                read > 0,
+                ModelEgressPolicySnapshotV1::from_host(true),
+                1000,
+            ))
+        }
+    }
+
     fn dispatch_context<'a>(
         store: &'a Store,
         events: &'a EventBus,
@@ -1549,6 +1738,7 @@ mod tests {
             price,
             max_daily_spend_usd_micros,
             clock: &FixedClock,
+            gate: &OPEN_DISPATCH_GATE,
         }
     }
 
@@ -1575,6 +1765,7 @@ mod tests {
         scripted_content: Mutex<String>,
         finish_next: Mutex<Option<FinishReason>>,
         last_request_id: Mutex<Option<serea_protocol::RequestId>>,
+        last_deadline_ms: Mutex<Option<u32>>,
     }
 
     #[async_trait]
@@ -1594,7 +1785,7 @@ mod tests {
         async fn generate(
             &self,
             request: &ModelRequest,
-            _ctx: &ModelCallContext,
+            ctx: &ModelCallContext,
         ) -> Result<ModelResponse, ModelError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let attempt = self
@@ -1613,6 +1804,10 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) =
                 Some(request.request_id.clone());
+            *self
+                .last_deadline_ms
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ctx.deadline_ms);
             if self.fail_next.swap(false, Ordering::SeqCst) {
                 return Err(ModelError {
                     kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE")
@@ -1707,6 +1902,7 @@ mod tests {
             scripted_content: Mutex::new("hello".into()),
             finish_next: Mutex::new(None),
             last_request_id: Mutex::new(None),
+            last_deadline_ms: Mutex::new(None),
         });
         let bus = EventBus::new(IncrementingIds(0));
         let roster = ModelRosterV1::new(vec![
@@ -1755,10 +1951,38 @@ mod tests {
             ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
             UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
         );
+        let cancelled_context = ModelDispatchContext {
+            gate: &CANCELLED_DISPATCH_GATE,
+            ..context
+        };
+        assert!(matches!(
+            block_on(router.dispatch_chat_text(&call, &session, &cancelled_context)),
+            Err(ModelDispatchFailure::Refused(RouterError::TaskCancelled))
+        ));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        let before_cancelled_dispatch =
+            EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert!(!before_cancelled_dispatch.items.iter().any(
+            |item| matches!(item, ReplayItem::Event { event } if event.kind == EventKind::ModelCalled)
+        ));
+
+        let context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
         let response = block_on(router.dispatch_chat_text(&call, &session, &context))
             .unwrap_or_else(|_| unreachable!());
 
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *provider
+                .last_deadline_ms
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            Some(997)
+        );
         assert!(
             provider
                 .called_event_visible_before_generate
@@ -2125,6 +2349,130 @@ mod tests {
     }
 
     #[test]
+    fn gate_is_rechecked_after_intent_before_provider_call() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-gate-race-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let provider = Arc::new(DispatchFakeProvider {
+            store: Arc::clone(&store),
+            calls: AtomicUsize::new(0),
+            called_event_visible_before_generate: AtomicBool::new(false),
+            fail_next: AtomicBool::new(false),
+            ambiguous_next: AtomicBool::new(false),
+            mismatched_identity_next: AtomicBool::new(false),
+            mismatched_request_id_next: AtomicBool::new(false),
+            mismatched_provider_id_next: AtomicBool::new(false),
+            wrong_cost_class_next: AtomicBool::new(false),
+            scripted_content: Mutex::new("hello".into()),
+            finish_next: Mutex::new(None),
+            last_request_id: Mutex::new(None),
+            last_deadline_ms: Mutex::new(None),
+        });
+        let provider_id = provider.provider_id();
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider_id,
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let router =
+            ModelRouterV1::new(roster, vec![provider.clone()]).unwrap_or_else(|_| unreachable!());
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: None,
+            purpose: ModelPurpose::Chat,
+            messages: Vec::new(),
+            system: None,
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 8,
+            temperature: 0.0,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let gate = CancelAfterIntentGate(AtomicUsize::new(0));
+        let context = ModelDispatchContext {
+            store: &store,
+            events: &bus,
+            price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            max_daily_spend_usd_micros: UsdMicros::new(10_000_000)
+                .unwrap_or_else(|_| unreachable!()),
+            clock: &FixedClock,
+            gate: &gate,
+        };
+
+        assert!(matches!(
+            block_on(router.dispatch_chat_text(&call, &session, &context)),
+            Err(ModelDispatchFailure::Refused(RouterError::TaskCancelled))
+        ));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        let page = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert_eq!(
+            page.items
+                .iter()
+                .filter(|item| matches!(item, ReplayItem::Event { event } if event.kind == EventKind::ModelCalled))
+                .count(),
+            1
+        );
+        let failed = page.items.iter().find_map(|item| match item {
+            ReplayItem::Event { event } if event.kind == EventKind::ModelFailed => Some(event),
+            _ => None,
+        });
+        let failed = failed.unwrap_or_else(|| unreachable!());
+        assert_eq!(failed.payload["error_kind"], "HOST_DISPATCH_BLOCKED");
+        assert_eq!(failed.payload["retryable"], false);
+        let request_id = serea_protocol::RequestId::new(
+            failed.payload["request_id"]
+                .as_str()
+                .unwrap_or_else(|| unreachable!()),
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let attempt = store
+            .get_model_call_attempt(&request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(attempt.state, ModelAttemptState::Failed);
+        assert_eq!(
+            attempt.actual_cost_usd_micros,
+            Some(UsdMicros::new(0).unwrap_or_else(|_| unreachable!()))
+        );
+        assert!(
+            store
+                .model_usage_for_request(&request_id)
+                .unwrap_or_else(|_| unreachable!())
+                .is_none()
+        );
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        drop(context);
+        drop(router);
+        drop(provider);
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
     fn structured_dispatch_returns_host_validated_value_and_persists_it() {
         let db_path = std::env::temp_dir().join(format!(
             "serea-router-structured-{}-{}.sqlite",
@@ -2145,6 +2493,7 @@ mod tests {
             scripted_content: Mutex::new(r#"{"count":7}"#.into()),
             finish_next: Mutex::new(None),
             last_request_id: Mutex::new(None),
+            last_deadline_ms: Mutex::new(None),
         });
         let bus = EventBus::new(IncrementingIds(0));
         let roster = ModelRosterV1::new(vec![
@@ -2417,6 +2766,62 @@ mod tests {
         assert_eq!(result.json_schema_mode, JsonSchemaMode::BestEffort);
         assert_eq!(result.max_context_tokens, 80);
         assert_eq!(result.max_output_tokens, 20);
+    }
+
+    #[test]
+    fn dispatch_gate_refuses_cancelled_expired_and_revoked_calls_before_intent() {
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: None,
+            purpose: ModelPurpose::Chat,
+            messages: Vec::new(),
+            system: None,
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 8,
+            temperature: 0.0,
+            deadline_ms: 100,
+            data_class: DataClass::Personal,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(true),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+
+        let cancelled = ModelDispatchGateSnapshotV1::from_host(
+            true,
+            ModelEgressPolicySnapshotV1::from_host(true),
+            100,
+        );
+        assert_eq!(
+            resolve_dispatch_gate(&call, cancelled, ModelDeploymentClass::Cloud),
+            Err(RouterError::TaskCancelled)
+        );
+
+        let expired = ModelDispatchGateSnapshotV1::from_host(
+            false,
+            ModelEgressPolicySnapshotV1::from_host(true),
+            0,
+        );
+        assert_eq!(
+            resolve_dispatch_gate(&call, expired, ModelDeploymentClass::Cloud),
+            Err(RouterError::DeadlineExpired)
+        );
+
+        let revoked = ModelDispatchGateSnapshotV1::from_host(
+            false,
+            ModelEgressPolicySnapshotV1::from_host(false),
+            50,
+        );
+        assert_eq!(
+            resolve_dispatch_gate(&call, revoked, ModelDeploymentClass::Cloud),
+            Err(RouterError::EgressRevoked)
+        );
     }
 
     fn caps(

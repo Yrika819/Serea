@@ -845,6 +845,17 @@ impl Store {
         self.transact(|tx| tx.fail_model_call(request_id, error_kind, terminal_at))
     }
 
+    /// Terminalizes a dispatch intent when the host proves no provider call
+    /// occurred, settling spend to zero without inventing provider usage.
+    pub fn fail_model_call_before_dispatch(
+        &self,
+        request_id: &RequestId,
+        error_kind: &str,
+        terminal_at: EpochMillis,
+    ) -> Result<ModelCallAttempt, StoreError> {
+        self.transact(|tx| tx.fail_model_call_before_dispatch(request_id, error_kind, terminal_at))
+    }
+
     /// Records a definite failure and settles only explicitly trustworthy usage.
     pub fn fail_model_call_with_usage(
         &self,
@@ -1178,6 +1189,38 @@ impl Tx<'_> {
             ModelAttemptState::Failed,
             None,
         )
+    }
+
+    /// Terminalizes an intent when the provider is known not to have been
+    /// invoked. No synthetic usage row is written and reserved spend settles
+    /// to zero.
+    pub fn fail_model_call_before_dispatch(
+        &mut self,
+        request_id: &RequestId,
+        error_kind: &str,
+        terminal_at: EpochMillis,
+    ) -> Result<ModelCallAttempt, StoreError> {
+        self.ensure_active()?;
+        if !valid_code(error_kind) {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let attempt =
+            read_attempt(&self.inner, request_id)?.ok_or(StoreError::ModelCallNotFound)?;
+        if attempt.state != ModelAttemptState::DispatchIntent {
+            return Err(StoreError::InvalidModelCallTransition);
+        }
+        let changed = self.inner.execute(
+            "UPDATE model_call_attempts SET state='FAILED',error_kind=?2,terminal_at_ms=?3,
+                                             actual_cost_usd_micros=0
+             WHERE request_id=?1 AND state='DISPATCH_INTENT'",
+            params![request_id.as_str(), error_kind, terminal_at.get()],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::InvalidModelCallTransition);
+        }
+        #[cfg(feature = "p2h-fault-injection")]
+        crate::fault::reach(crate::fault::Window::AfterModelAttemptTerminal)?;
+        read_attempt(&self.inner, request_id)?.ok_or(StoreError::CorruptRow)
     }
 
     /// Records metering facts with a definite failure without persisting content.

@@ -450,19 +450,29 @@ fn personal_cloud_is_eligible_only_through_the_trusted_prepared_boundary() {
         ProviderHealth::Ready,
     );
     let router = ModelRouterV1::new(roster, vec![provider]).unwrap();
-    let prepared = prepared(
+    let mut draft = call(
         ModelPurpose::Chat,
         ResponseFormat::Text,
         DataClass::Personal,
         requirements(StructuredRequirementV1::Any),
     );
+    draft.egress = ModelEgressPolicySnapshotV1::from_host(true);
+    let allowed = PreparedModelCallV1::from_host(draft).unwrap();
     assert_eq!(
-        block_on(router.route(&prepared))
+        block_on(router.route(&allowed))
             .unwrap()
             .decision()
             .map(|id| id.to_string()),
         Some("nemotron-3-nano-30b".into())
     );
+
+    let denied = prepared(
+        ModelPurpose::Chat,
+        ResponseFormat::Text,
+        DataClass::Personal,
+        requirements(StructuredRequirementV1::Any),
+    );
+    assert_eq!(block_on(router.route(&denied)).unwrap().decision(), None);
 }
 
 #[test]

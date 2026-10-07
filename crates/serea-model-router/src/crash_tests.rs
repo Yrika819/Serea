@@ -25,10 +25,11 @@ use serea_storage::fault::{Action, Window};
 use serea_storage::{ModelAttemptState, ModelPriceSnapshot, Store, StoreError, UsdMicros};
 
 use crate::{
-    ModelDispatchContext, ModelDispatchFailure, ModelEgressPolicySnapshotV1, ModelRosterEntryV1,
-    ModelRosterV1, ModelRouterV1, ModelRoutingRequirementsV1, PreparedModelCallDraftV1,
-    PreparedModelCallV1, StructuredRequirementV1, recover_completed_chat_text_response,
-    recover_unresolved_model_calls,
+    ModelDispatchContext, ModelDispatchFailure, ModelDispatchGateSnapshotV1,
+    ModelDispatchGateSource, ModelDispatchGateSourceError, ModelEgressPolicySnapshotV1,
+    ModelRosterEntryV1, ModelRosterV1, ModelRouterV1, ModelRoutingRequirementsV1,
+    PreparedModelCallDraftV1, PreparedModelCallV1, StructuredRequirementV1,
+    recover_completed_chat_text_response, recover_unresolved_model_calls,
 };
 
 const ROLE: &str = "SEREA_P4D_CRASH_ROLE";
@@ -38,6 +39,24 @@ const ACK: &str = "SEREA_P4D_CRASH_ACK";
 const CALLED: &str = "SEREA_P4D_CRASH_CALLED";
 const CHILD_TEST: &str = "crash_tests::model_dispatch_crash_child";
 const POLLS: usize = 4_000;
+
+struct OpenGate;
+
+impl ModelDispatchGateSource for OpenGate {
+    fn snapshot(
+        &self,
+        _task_id: Option<&serea_protocol::TaskId>,
+        _data_class: DataClass,
+    ) -> Result<ModelDispatchGateSnapshotV1, ModelDispatchGateSourceError> {
+        Ok(ModelDispatchGateSnapshotV1::from_host(
+            false,
+            ModelEgressPolicySnapshotV1::from_host(true),
+            1000,
+        ))
+    }
+}
+
+static OPEN_GATE: OpenGate = OpenGate;
 const TICK: Duration = Duration::from_millis(5);
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -210,6 +229,7 @@ fn model_dispatch_crash_child() {
         price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
         max_daily_spend_usd_micros: UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
         clock: &FixedClock,
+        gate: &OPEN_GATE,
     };
     match mode.as_str() {
         "intent" => Window::AfterCommit
@@ -311,6 +331,7 @@ fn intent_transaction_failure_rolls_back_event_and_never_calls_provider() {
         price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
         max_daily_spend_usd_micros: UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
         clock: &FixedClock,
+        gate: &OPEN_GATE,
     };
     Window::AfterModelAttemptInsert
         .arm(Action::Fail(StoreError::Sqlite))

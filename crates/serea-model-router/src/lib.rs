@@ -25,7 +25,8 @@ use std::sync::Arc;
 
 use serea_event_bus::{
     EventBus, ModelCompletedEventV1, ModelEventMetadataV1, ModelEventRelationV1,
-    ModelFailedEventV1, ModelOutputInvalidEventV1, ModelRepairedEventV1,
+    ModelFailedEventV1, ModelFallbackEventV1, ModelFallbackExhaustedEventV1,
+    ModelOutputInvalidEventV1, ModelRepairedEventV1,
 };
 use serea_protocol::provider::{ModelCallContext, ModelProvider};
 use serea_protocol::{
@@ -579,6 +580,35 @@ struct ModelFailureFacts<'a> {
     usage: Option<ModelFailureUsage>,
 }
 
+#[derive(Clone)]
+struct PendingFallback {
+    request_id: serea_protocol::RequestId,
+    error_kind: ModelErrorCode,
+    metadata: ModelEventMetadataV1,
+}
+
+struct DispatchLineage {
+    relation_kind: ModelAttemptRelationKind,
+    parent_request_id: Option<serea_protocol::RequestId>,
+    repair_attempts: u8,
+    fallback_from_model_id: Option<ModelId>,
+    pending_fallback: Option<PendingFallback>,
+    defer_retryable_failure: bool,
+}
+
+impl DispatchLineage {
+    fn normal() -> Self {
+        Self {
+            relation_kind: ModelAttemptRelationKind::None,
+            parent_request_id: None,
+            repair_attempts: 0,
+            fallback_from_model_id: None,
+            pending_fallback: None,
+            defer_retryable_failure: false,
+        }
+    }
+}
+
 /// Binds a provider response to the exact dispatch identity and removes fields
 /// that are host-owned or untrusted at provider ingress.
 ///
@@ -802,15 +832,180 @@ impl ModelRouterV1 {
                 RouterError::IllegalPurposeFormat,
             ));
         }
-        self.dispatch_prepared(
-            call,
-            session,
-            context,
-            ModelAttemptRelationKind::None,
-            None,
-            0,
-        )
-        .await
+        self.dispatch_prepared(call, session, context, DispatchLineage::normal())
+            .await
+    }
+
+    /// Runs a CHAT/TEXT call with exactly one normal fallback. The normal
+    /// health snapshot is reused, and the primary failure plus fallback intent
+    /// are committed in the same transaction.
+    #[allow(dead_code)]
+    pub(crate) async fn dispatch_chat_text_with_fallback(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        context: &ModelDispatchContext<'_>,
+    ) -> Result<ModelResponse, ModelDispatchFailure> {
+        if call.purpose != ModelPurpose::Chat
+            || !matches!(call.response_format, ResponseFormat::Text)
+        {
+            return Err(ModelDispatchFailure::Refused(
+                RouterError::IllegalPurposeFormat,
+            ));
+        }
+        let primary_model = session
+            .decision()
+            .cloned()
+            .ok_or(ModelDispatchFailure::NoEligibleModel)?;
+        let primary_result = self
+            .dispatch_prepared(
+                call,
+                session,
+                context,
+                DispatchLineage {
+                    defer_retryable_failure: true,
+                    ..DispatchLineage::normal()
+                },
+            )
+            .await;
+        let (primary_request_id, primary_error_kind) = match primary_result {
+            Ok(response) => return Ok(response),
+            Err(ModelDispatchFailure::DefiniteProvider {
+                request_id,
+                error_kind,
+                retryable: true,
+            }) => (request_id, error_kind),
+            Err(error) => return Err(error),
+        };
+
+        let primary_entry = self.roster.entries.get(primary_model.as_str()).ok_or(
+            ModelDispatchFailure::Refused(RouterError::ModelSelectionInvalid),
+        )?;
+        let failed_at = context
+            .clock
+            .now_ms()
+            .map_err(ModelDispatchFailure::Clock)?;
+        let pending = PendingFallback {
+            request_id: primary_request_id.clone(),
+            error_kind: primary_error_kind.clone(),
+            metadata: ModelEventMetadataV1 {
+                request_id: primary_request_id,
+                model_id: primary_model.clone(),
+                provider_id: primary_entry.provider_id.clone(),
+                task_id: call.task_id.clone(),
+                purpose: call.purpose,
+                relation: ModelEventRelationV1::Normal,
+                data_class: call.data_class,
+                occurred_at: failed_at,
+            },
+        };
+        let Some(fallback_model) = self.fallback_candidate(call, session, &primary_model) else {
+            persist_pending_primary_failure(context, &pending, failed_at)?;
+            return Err(ModelDispatchFailure::DefiniteProvider {
+                request_id: pending.request_id,
+                error_kind: pending.error_kind,
+                retryable: true,
+            });
+        };
+        let fallback_session = RoutingSessionV1 {
+            decision: Some(fallback_model),
+            health: session.health.clone(),
+        };
+        let fallback_model = fallback_session
+            .decision()
+            .cloned()
+            .ok_or(ModelDispatchFailure::NoEligibleModel)?;
+        let primary_request_id = pending.request_id.clone();
+        let result = self
+            .dispatch_prepared(
+                call,
+                &fallback_session,
+                context,
+                DispatchLineage {
+                    relation_kind: ModelAttemptRelationKind::Fallback,
+                    parent_request_id: Some(pending.request_id.clone()),
+                    fallback_from_model_id: Some(primary_model),
+                    pending_fallback: Some(pending.clone()),
+                    ..DispatchLineage::normal()
+                },
+            )
+            .await;
+        let fallback_committed = if result.is_err() {
+            let state = context
+                .store
+                .get_model_call_attempt(&primary_request_id)
+                .map_err(ModelDispatchFailure::Storage)?
+                .map(|attempt| attempt.state);
+            if state == Some(ModelAttemptState::DispatchIntent) {
+                let terminal_at = context
+                    .clock
+                    .now_ms()
+                    .map_err(ModelDispatchFailure::Clock)?;
+                persist_pending_primary_failure(context, &pending, terminal_at)?;
+                false
+            } else {
+                state == Some(ModelAttemptState::Failed)
+            }
+        } else {
+            false
+        };
+        if fallback_committed {
+            let occurred_at = context
+                .clock
+                .now_ms()
+                .map_err(ModelDispatchFailure::Clock)?;
+            let exhausted = context
+                .events
+                .draft_model_fallback_exhausted(ModelFallbackExhaustedEventV1 {
+                    metadata: ModelEventMetadataV1 {
+                        occurred_at,
+                        ..pending.metadata.clone()
+                    },
+                    fallback_model_id: fallback_model,
+                })
+                .map_err(ModelDispatchFailure::Storage)?;
+            context
+                .store
+                .transact(|tx| {
+                    tx.append_event(exhausted.event, exhausted.retention_at)?;
+                    Ok(())
+                })
+                .map_err(ModelDispatchFailure::Storage)?;
+        }
+        result
+    }
+
+    fn fallback_candidate(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        primary: &ModelId,
+    ) -> Option<ModelId> {
+        let mut after_primary = false;
+        preference_chain(call.purpose)
+            .iter()
+            .copied()
+            .find_map(|model| {
+                if !after_primary {
+                    if model == primary.as_str() {
+                        after_primary = true;
+                    }
+                    return None;
+                }
+                let entry = self.roster.entries.get(model)?;
+                let advertised = self.discovered.get(model)?;
+                let effective = intersect(entry.allowed_capabilities, advertised.capabilities);
+                (entry.enabled
+                    && session.health.health(&entry.provider_id) == ProviderHealth::Ready
+                    && deployment_permitted(call.data_class, entry.deployment_class, call.egress)
+                    && capabilities_satisfy(
+                        effective,
+                        call.requirements,
+                        matches!(call.response_format, ResponseFormat::JsonSchema { .. }),
+                    ))
+                .then(|| ModelId::new(model).ok())
+                .flatten()
+            })
     }
 
     #[allow(dead_code)] // The repair ladder will become its production caller in P4E.
@@ -827,15 +1022,8 @@ impl ModelRouterV1 {
                 RouterError::IllegalPurposeFormat,
             ));
         }
-        self.dispatch_prepared(
-            call,
-            session,
-            context,
-            ModelAttemptRelationKind::None,
-            None,
-            0,
-        )
-        .await
+        self.dispatch_prepared(call, session, context, DispatchLineage::normal())
+            .await
     }
 
     /// Runs a structured operation with the bounded P4 repair ladder. The
@@ -905,9 +1093,12 @@ impl ModelRouterV1 {
                     &repair_call,
                     &repair_session,
                     context,
-                    ModelAttemptRelationKind::Repair,
-                    Some(parent_request_id.clone()),
-                    ordinal,
+                    DispatchLineage {
+                        relation_kind: ModelAttemptRelationKind::Repair,
+                        parent_request_id: Some(parent_request_id.clone()),
+                        repair_attempts: ordinal,
+                        ..DispatchLineage::normal()
+                    },
                 )
                 .await
             {
@@ -981,10 +1172,16 @@ impl ModelRouterV1 {
         call: &PreparedModelCallV1,
         session: &RoutingSessionV1,
         context: &ModelDispatchContext<'_>,
-        relation_kind: ModelAttemptRelationKind,
-        parent_request_id: Option<serea_protocol::RequestId>,
-        repair_attempts: u8,
+        lineage: DispatchLineage,
     ) -> Result<ModelResponse, ModelDispatchFailure> {
+        let DispatchLineage {
+            relation_kind,
+            parent_request_id,
+            repair_attempts,
+            fallback_from_model_id,
+            pending_fallback,
+            defer_retryable_failure,
+        } = lineage;
         let store = context.store;
         let events = context.events;
         let price = &context.price;
@@ -1057,6 +1254,23 @@ impl ModelRouterV1 {
         let called = events
             .draft_model_called(metadata.clone())
             .map_err(ModelDispatchFailure::Storage)?;
+        let fallback_transition = pending_fallback
+            .as_ref()
+            .map(|pending| {
+                let failed = events.draft_model_failed(ModelFailedEventV1 {
+                    metadata: pending.metadata.clone(),
+                    error_kind: pending.error_kind.clone(),
+                    retryable: true,
+                })?;
+                let fallback = events.draft_model_fallback(ModelFallbackEventV1 {
+                    metadata: pending.metadata.clone(),
+                    fallback_request_id: request_id.clone(),
+                    fallback_model_id: selected.clone(),
+                })?;
+                Ok::<_, StoreError>((failed, fallback))
+            })
+            .transpose()
+            .map_err(ModelDispatchFailure::Storage)?;
         let attempt = ModelCallAttemptDraft {
             request_id: request_id.clone(),
             task_id: call.task_id.clone(),
@@ -1070,7 +1284,7 @@ impl ModelRouterV1 {
             data_class: call.data_class,
             relation_kind,
             parent_request_id,
-            fallback_from_model_id: None,
+            fallback_from_model_id,
             price: price.clone(),
             max_context_tokens: u64::from(effective.max_context_tokens),
             effective_max_output_tokens: u64::from(effective_max_output_tokens),
@@ -1078,6 +1292,22 @@ impl ModelRouterV1 {
         };
         store
             .transact(|tx| {
+                if let Some((failed, fallback)) = &fallback_transition {
+                    tx.fail_model_call(
+                        &pending_fallback
+                            .as_ref()
+                            .ok_or(StoreError::InvalidModelCall)?
+                            .request_id,
+                        pending_fallback
+                            .as_ref()
+                            .ok_or(StoreError::InvalidModelCall)?
+                            .error_kind
+                            .as_str(),
+                        dispatch_at,
+                    )?;
+                    tx.append_event(failed.event.clone(), failed.retention_at)?;
+                    tx.append_event(fallback.event.clone(), fallback.retention_at)?;
+                }
                 tx.reserve_model_call(attempt, max_daily_spend_usd_micros)?;
                 tx.append_event(called.event, called.retention_at)?;
                 Ok(())
@@ -1143,21 +1373,23 @@ impl ModelRouterV1 {
                         error_kind: error.kind,
                     });
                 }
-                record_model_failure(
-                    store,
-                    events,
-                    ModelFailureFacts {
-                        request_id: &request_id,
-                        metadata: ModelEventMetadataV1 {
-                            occurred_at: at,
-                            ..metadata
+                if !(defer_retryable_failure && error.retryable) {
+                    record_model_failure(
+                        store,
+                        events,
+                        ModelFailureFacts {
+                            request_id: &request_id,
+                            metadata: ModelEventMetadataV1 {
+                                occurred_at: at,
+                                ..metadata
+                            },
+                            error_kind: error.kind.clone(),
+                            retryable: error.retryable,
+                            terminal_at: at,
+                            usage: None,
                         },
-                        error_kind: error.kind.clone(),
-                        retryable: error.retryable,
-                        terminal_at: at,
-                        usage: None,
-                    },
-                )?;
+                    )?;
+                }
                 return Err(ModelDispatchFailure::DefiniteProvider {
                     request_id,
                     error_kind: error.kind,
@@ -1483,6 +1715,28 @@ fn build_repair_call(
 #[allow(dead_code)] // Used by dispatch error paths; exercised by P4D scripted failures.
 fn stable_model_error(value: &str) -> Result<ModelErrorCode, ModelDispatchFailure> {
     ModelErrorCode::new(value).map_err(ModelDispatchFailure::Protocol)
+}
+
+fn persist_pending_primary_failure(
+    context: &ModelDispatchContext<'_>,
+    pending: &PendingFallback,
+    terminal_at: serea_protocol::EpochMillis,
+) -> Result<(), ModelDispatchFailure> {
+    record_model_failure(
+        context.store,
+        context.events,
+        ModelFailureFacts {
+            request_id: &pending.request_id,
+            metadata: ModelEventMetadataV1 {
+                occurred_at: terminal_at,
+                ..pending.metadata.clone()
+            },
+            error_kind: pending.error_kind.clone(),
+            retryable: true,
+            terminal_at,
+            usage: None,
+        },
+    )
 }
 
 #[allow(dead_code)] // Used by dispatch error paths; exercised by P4D scripted failures.
@@ -3659,6 +3913,203 @@ mod tests {
             supports_streaming: false,
             supports_seeds: false,
         }
+    }
+
+    #[test]
+    fn retryable_primary_failure_uses_frozen_health_snapshot_and_fallback() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-fallback-red-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let provider = Arc::new(RepairFakeProvider::new(Vec::new()));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("private diagnostic")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: true,
+        }));
+        provider.push_script(RepairScript::Respond("fallback answer".into()));
+        provider.push_health(ProviderHealth::Ready);
+        provider.push_health(ProviderHealth::Degraded);
+        let provider_id = provider.provider_id();
+        let capabilities = caps(false, JsonSchemaMode::Strict, 1000, 1000);
+        let roster = ModelRosterV1::new(
+            ["nemotron-3-nano-30b", "gpt-oss-20b"]
+                .into_iter()
+                .map(|id| {
+                    ModelRosterEntryV1::new(
+                        ModelId::new(id).unwrap_or_else(|_| unreachable!()),
+                        provider_id.clone(),
+                        ModelDeploymentClass::Local,
+                        true,
+                        capabilities,
+                        CostClass::Paid,
+                    )
+                    .unwrap_or_else(|_| unreachable!())
+                })
+                .collect(),
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let router =
+            ModelRouterV1::new(roster, vec![provider.clone()]).unwrap_or_else(|_| unreachable!());
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: None,
+            purpose: ModelPurpose::Chat,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "hello".into(),
+            }],
+            system: None,
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 32,
+            temperature: 0.0,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(true),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+
+        let response = block_on(router.dispatch_chat_text_with_fallback(&call, &session, &context))
+            .unwrap_or_else(|_| unreachable!());
+        assert_eq!(response.content, "fallback answer");
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].model_id.as_str(), "nemotron-3-nano-30b");
+        assert_eq!(requests[1].model_id.as_str(), "gpt-oss-20b");
+        assert_ne!(requests[0].request_id, requests[1].request_id);
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 1);
+        let primary = store
+            .get_model_call_attempt(&requests[0].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let fallback = store
+            .get_model_call_attempt(&requests[1].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(primary.state, ModelAttemptState::Failed);
+        assert_eq!(fallback.state, ModelAttemptState::Completed);
+        assert_eq!(fallback.relation_kind, ModelAttemptRelationKind::Fallback);
+        assert_eq!(fallback.parent_request_id, Some(primary.request_id.clone()));
+        assert_eq!(
+            fallback.fallback_from_model_id,
+            Some(primary.model_id.clone())
+        );
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        let kinds = events
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ReplayItem::Event { event } => Some(event.kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                EventKind::ModelCalled,
+                EventKind::ModelFailed,
+                EventKind::ModelFallback,
+                EventKind::ModelCalled,
+                EventKind::ModelCompleted,
+            ]
+        );
+        provider.push_health(ProviderHealth::Ready);
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("private diagnostic two")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: true,
+        }));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("private diagnostic three")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: false,
+        }));
+        let _degraded_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let second_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        assert!(
+            block_on(router.dispatch_chat_text_with_fallback(&call, &second_session, &context))
+                .is_err()
+        );
+        assert_eq!(provider.requests().len(), 4);
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 3);
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        let kinds = events
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ReplayItem::Event { event } => Some(event.kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(kinds.ends_with(&[
+            EventKind::ModelCalled,
+            EventKind::ModelFailed,
+            EventKind::ModelFallback,
+            EventKind::ModelCalled,
+            EventKind::ModelFailed,
+            EventKind::ModelFallbackExhausted,
+        ]));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("nonretryable diagnostic")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: false,
+        }));
+        let third_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        assert!(
+            block_on(router.dispatch_chat_text_with_fallback(&call, &third_session, &context))
+                .is_err()
+        );
+        assert_eq!(provider.requests().len(), 5);
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new(AMBIGUOUS_PROVIDER_ERROR_KIND)
+                .unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("ambiguous diagnostic")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: true,
+        }));
+        let fourth_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        assert!(
+            block_on(router.dispatch_chat_text_with_fallback(&call, &fourth_session, &context))
+                .is_err()
+        );
+        assert_eq!(provider.requests().len(), 6);
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 5);
+        assert!(
+            !serde_json::to_string(&events.items)
+                .unwrap_or_else(|_| unreachable!())
+                .contains("private diagnostic")
+        );
+        assert!(
+            !serde_json::to_string(&events.items)
+                .unwrap_or_else(|_| unreachable!())
+                .contains("hello")
+        );
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
 
     fn block_on<F: std::future::Future>(future: F) -> F::Output {

@@ -144,6 +144,27 @@ pub struct ModelRepairedEventV1 {
     pub repair_attempts: u8,
 }
 
+/// Content-free host facts linking a failed primary model call to its fallback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFallbackEventV1 {
+    /// The failed primary attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// New RequestId reserved for the fallback attempt.
+    pub fallback_request_id: RequestId,
+    /// Host-selected next model in the frozen routing chain.
+    pub fallback_model_id: ModelId,
+}
+
+/// Content-free host facts that the single permitted fallback did not yield
+/// a usable result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFallbackExhaustedEventV1 {
+    /// The failed primary attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// Host-selected fallback model that was attempted.
+    pub fallback_model_id: ModelId,
+}
+
 struct ErasedUlidSource(Box<dyn UlidSource + Send>);
 
 impl UlidSource for ErasedUlidSource {
@@ -297,6 +318,52 @@ impl EventBus {
             Value::from(repaired.repair_attempts),
         );
         self.draft_model_event(repaired.metadata, EventKind::ModelRepaired, payload)
+    }
+
+    /// Builds a content-free fallback decision event. The caller commits it
+    /// with primary failure and the fallback dispatch intent.
+    pub fn draft_model_fallback(
+        &self,
+        fallback: ModelFallbackEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if fallback.metadata.relation != ModelEventRelationV1::Normal
+            || fallback.fallback_model_id == fallback.metadata.model_id
+            || fallback.fallback_request_id == fallback.metadata.request_id
+        {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&fallback.metadata);
+        payload.insert(
+            "fallback_request_id".into(),
+            Value::String(fallback.fallback_request_id.as_str().to_owned()),
+        );
+        payload.insert(
+            "fallback_model_id".into(),
+            Value::String(fallback.fallback_model_id.as_str().to_owned()),
+        );
+        self.draft_model_event(fallback.metadata, EventKind::ModelFallback, payload)
+    }
+
+    /// Builds the content-free event that closes the one-step fallback ladder.
+    pub fn draft_model_fallback_exhausted(
+        &self,
+        exhausted: ModelFallbackExhaustedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if exhausted.metadata.relation != ModelEventRelationV1::Normal
+            || exhausted.fallback_model_id == exhausted.metadata.model_id
+        {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&exhausted.metadata);
+        payload.insert(
+            "fallback_model_id".into(),
+            Value::String(exhausted.fallback_model_id.as_str().to_owned()),
+        );
+        self.draft_model_event(
+            exhausted.metadata,
+            EventKind::ModelFallbackExhausted,
+            payload,
+        )
     }
 
     fn draft_model_event(

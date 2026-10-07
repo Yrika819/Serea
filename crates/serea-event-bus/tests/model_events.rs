@@ -103,6 +103,45 @@ fn model_called_event_has_only_bounded_host_metadata() {
 }
 
 #[test]
+fn fallback_events_carry_only_bounded_host_identity_metadata() {
+    let bus = EventBus::new(FixedIds);
+    let metadata = ModelEventMetadataV1 {
+        request_id: RequestId::new("req_00000000000000000000000005").unwrap(),
+        model_id: ModelId::new("nemotron-3-nano-30b").unwrap(),
+        provider_id: ProviderId::new("provider").unwrap(),
+        task_id: None,
+        purpose: ModelPurpose::Chat,
+        relation: ModelEventRelationV1::Normal,
+        data_class: DataClass::Public,
+        occurred_at: EpochMillis::new(1_767_225_600_005).unwrap(),
+    };
+    let fallback = bus
+        .draft_model_fallback(serea_event_bus::ModelFallbackEventV1 {
+            metadata: metadata.clone(),
+            fallback_request_id: RequestId::new("req_00000000000000000000000006").unwrap(),
+            fallback_model_id: ModelId::new("gpt-oss-20b").unwrap(),
+        })
+        .unwrap();
+    assert_eq!(fallback.event.kind, EventKind::ModelFallback);
+    assert_eq!(fallback.event.payload.len(), 7);
+    assert_eq!(
+        fallback.event.payload["fallback_request_id"],
+        "req_00000000000000000000000006"
+    );
+    assert_eq!(fallback.event.payload["fallback_model_id"], "gpt-oss-20b");
+
+    let exhausted = bus
+        .draft_model_fallback_exhausted(serea_event_bus::ModelFallbackExhaustedEventV1 {
+            metadata,
+            fallback_model_id: ModelId::new("gpt-oss-20b").unwrap(),
+        })
+        .unwrap();
+    assert_eq!(exhausted.event.kind, EventKind::ModelFallbackExhausted);
+    assert_eq!(exhausted.event.payload.len(), 6);
+    assert_eq!(exhausted.event.payload["fallback_model_id"], "gpt-oss-20b");
+}
+
+#[test]
 fn model_output_invalid_event_contains_only_bounded_failure_metadata() {
     let bus = EventBus::new(FixedIds);
     let draft = bus

@@ -920,3 +920,49 @@ repair, fallback, dispatch gates, or P4E budgets.
   exclusion; cross-architecture passed Intel-to-arm64 and arm64-to-Intel.
   This closes the bounded structured-repair slice. Normal fallback, all budget
   integration, repair crash injection, and P4E as a whole remain open.
+
+## P4E slice: one-step normal fallback
+
+- RED proof: the scripted test first failed to compile because
+  `dispatch_chat_text_with_fallback` was absent. It exercises a retryable
+  primary `ModelError`, successful configured fallback, non-retryable primary
+  failure, ambiguous primary failure, a fallback provider failure, persisted
+  lineage, event order, privacy, and one health snapshot per logical operation.
+- Implemented a CHAT/TEXT fallback ladder using only the accepted frozen chain.
+  It advances to the first remaining candidate that passes the same prepared
+  call filters and the initial immutable health snapshot. Codex and all other
+  models outside the chain remain unreachable.
+- For eligible retryable primary failures, the Router constructs the fallback
+  request and events, then commits primary FAILED plus `MODEL_FAILED`,
+  `MODEL_FALLBACK`, the fallback call reservation, and `MODEL_CALLED` in one
+  Storage transaction. The fallback provider runs only after that commit.
+  The child attempt carries `FALLBACK`, the primary RequestId, and the primary
+  model ID. If fresh gate resolution or reservation prevents the fallback
+  transaction, no child survives and the primary failure is terminalized.
+- The fresh dispatch gate is read for the fallback before creating its intent
+  and once again before the provider call. No provider health read occurs after
+  the initial route snapshot. A fallback failure emits the content-free
+  `MODEL_FALLBACK_EXHAUSTED`; there is no third normal dispatch.
+- Focused tests prove successful fallback, distinct request IDs, stored
+  parent/source model, primary/fallback event sequence, one health read reused
+  despite scripted health changing on a subsequent read, exhausted fallback,
+  no fallback after a non-retryable error or ambiguity, and diagnostic privacy.
+- Sequential review: (1) only definite retryable adapter errors enter the
+  fallback path; (2) no dependency direction changed; (3) parent failure,
+  fallback decision, child reservation, and dispatch event share one
+  transaction; (4) the child is intent-committed before provider invocation
+  and the normal snapshot is reused; (5) event payloads contain no prompt,
+  provider diagnostic, or response content; (6) the child uses normal call
+  reservation and spend accounting and does not consume another turn; (7) the
+  test uses scripted outcomes and fixed time with SQLite persistence; (8)
+  no schema or migration changed. Structured fallback, fallback/repair
+  interaction, crash injection, and remaining P4E budget integration remain
+  open.
+- Initial denied-warning Clippy identified an iterator-style lint and an
+  oversized dispatch-helper signature. The scan now uses slice iteration and
+  per-attempt relation facts are grouped in a private `DispatchLineage`.
+  Final local validation passed fmt, workspace check, all-target tests,
+  all-feature tests, denied-warning Clippy, docs validation, workspace smoke,
+  76 Python smoke tests, Cargo metadata, identity guard, and diff check.
+- Actions status and exact commit are recorded after the pushed behavior
+  commit; this slice is not closed until exact-head Fast and Full CI pass.

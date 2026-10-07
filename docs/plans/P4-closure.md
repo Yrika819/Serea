@@ -849,3 +849,12 @@ repair, fallback, dispatch gates, or P4E budgets.
   [37700100740](https://github.com/Yrika819/Serea/actions/runs/37700100740), and cross-architecture SQLite
   [37700100744](https://github.com/Yrika819/Serea/actions/runs/37700100744), including Linux stable, MSRV 1.85,
   Intel x86_64, arm64, release fault proof, and both transfer directions.
+  The current evidence head `0ba1d8509b8839addfa0fd462ea3902aa56fc8b7` passed
+  Fast CI [37700566080](https://github.com/Yrika819/Serea/actions/runs/37700566080),
+  Full CI [37700566010](https://github.com/Yrika819/Serea/actions/runs/37700566010),
+  and cross-architecture SQLite
+  [37700565986](https://github.com/Yrika819/Serea/actions/runs/37700565986).
+  Full CI passed Linux stable, MSRV 1.85, Intel x86_64, arm64, and release
+  fault-seam exclusion; cross-architecture passed Intel-to-arm64 and
+  arm64-to-Intel. This closes validation for the fresh-dispatch-gate evidence
+  head. It does not close P4E repair, fallback, or remaining budget work.

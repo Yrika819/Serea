@@ -444,3 +444,12 @@ Model Router closure. P5 remains outside P4.
   and cross-architecture SQLite
   [37677814329](https://github.com/Yrika819/Serea/actions/runs/37677814329)
   in both directions.
+- Exact closure-document head `da038f7490eef1bcbb219707779fcee9ac201d52`
+  passed Fast CI
+  [37678476729](https://github.com/Yrika819/Serea/actions/runs/37678476729),
+  Full CI
+  [37678476699](https://github.com/Yrika819/Serea/actions/runs/37678476699)
+  including Linux stable, MSRV 1.85, Intel, arm64, and release fault proof,
+  and cross-architecture SQLite
+  [37678476768](https://github.com/Yrika819/Serea/actions/runs/37678476768)
+  in both directions.

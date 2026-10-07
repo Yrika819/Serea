@@ -244,9 +244,9 @@ Contract validation is green on exact commit
 `35e93a14f3e9ee9670f8563c738cd0d1e02a7e6e`: Fast CI run `37606284419` and
 Full CI run `37606291329`; Full CI jobs Linux stable/release proof
 `112742997443`, MSRV 1.85 `112742997733`, macOS arm64 `112742997778`, and
-macOS Intel `112742997819`. Runtime work is present only as an uncommitted,
-in-progress implementation; this contract evidence does not claim runtime
-completion or behavior-commit CI evidence.
+macOS Intel `112742997819`. The later runtime implementation is recorded below;
+these runs remain contract-only evidence and are not presented as runtime
+validation.
 
 ## P3F contract — approval lifecycle wake handoff (ADR-0030 accepted)
 
@@ -261,6 +261,63 @@ CI evidence: Fast CI run `37613362390` and Full CI run `37613362482`; Full CI
 Linux stable/release proof job `112765733101`, MSRV 1.85 job `112765732716`,
 macOS Intel job `112765733121`, and macOS arm64 job `112765733257`. Approval
 runtime remains a P3 routing-only handoff; no P6 behavior is claimed.
+
+## P3F — Scheduler runtime (behavior commit green)
+
+Behavior commit `e34e4b178c982054c721dd912859c57addeaa60c` implements
+`serea-scheduler`, deterministic ONCE/DAILY/WEEKLY recurrence using Jiff
+`0.2.38` with bundled `jiff-tzdb 0.1.9` / TZDB `2026e`, exact EventPredicateV1
+matching with Scheduler-causal suppression, ScheduledTaskTemplateV1 snapshot
+storage, and atomic scheduled Task + journal + lifecycle event + occurrence
+mapping. Calendar wakes, bounded SKIP/RUN_ONCE/RUN_EACH catch-up, RETRY_DUE,
+HOST_EVENT replay, explicit device resume waits, and routing-only approval
+wakes are included. Scheduler recovery preserves P6 approval wakes and resumes
+only explicitly registered device waits. Approval events do not mutate Tasks
+or apply approval authority.
+
+Migration 0001 remains byte-identical (SHA-256
+`d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`). The
+pre-release migration 0002 checksum is
+`4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`.
+
+Exact behavior-commit Actions evidence:
+
+| Gate | Run/job | Result |
+|---|---:|---|
+| Fast CI | run `37625296024`, Linux job `112805394146` | PASS |
+| Full CI | run `37625295706` | PASS |
+| Linux stable and release fault-seam proof | job `112805394360` | PASS |
+| Linux MSRV 1.85.0 | job `112805393968` | PASS |
+| macOS Intel x86_64 | job `112805394383` | PASS |
+| macOS Apple Silicon arm64 | job `112805394485` | PASS |
+| Cross-architecture SQLite | run `37625295910` | PASS |
+| Intel producer / arm64 producer | jobs `112805393495` / `112805393689` | PASS |
+| arm64 artifact consumed on Intel / Intel artifact consumed on arm64 | jobs `112805788922` / `112806213407` | PASS |
+
+The portability workflow transfers only cleanly closed main-database artifacts;
+it excludes `-shm` and `-wal`. The supported claim is limited to a closed Serea
+SQLite fixture produced on GitHub-hosted macOS Intel x86_64 being opened and
+semantically validated on GitHub-hosted macOS arm64, and vice versa. This does
+not claim live-WAL portability, universal hardware compatibility, or
+power-loss durability.
+
+## P3G — integrated crash and recovery closure (in progress)
+
+The P3G test suite integrates Event Bus retention and replay, calendar and
+HOST_EVENT occurrences, explicit device resume, approval wake handoff, Task
+Engine mapping, restart, and repeated recovery. It also runs two independent
+Scheduler workers against one replayed source EventId and injects an occurrence
+insert failure to prove that occurrence admission and next-due advancement
+roll back together. Device-wait registration's event-participant failure also
+proves Task state, journal, wait row, and Event sequence remain unchanged.
+
+Local Cloud validation is green on the uncommitted P3G candidate: workspace
+all-target tests, all-feature tests, check, Clippy `-D warnings`, fmt, docs
+validation, workspace smoke, 75 smoke unit tests, metadata, identity guard and
+its tests, diff check, focused Scheduler tests, and the release fault-seam
+exclusion test. Migration 0001/0002 checksums and `Store::verify_integrity`
+were checked. Exact P3G commit and final GitHub Actions runs are pending; P3 is
+not yet marked closed by this record.
 
 ## Project nonclaims
 

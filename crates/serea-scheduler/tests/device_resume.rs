@@ -509,6 +509,78 @@ fn event_before_wait_is_not_replayed_into_a_late_wait_but_a_later_event_is_eligi
 }
 
 #[test]
+fn device_wait_registration_failure_rolls_back_task_state_journal_and_wait_row() {
+    let db = path();
+    let timestamp = TimestampMs::new(1_700_050_000_000).unwrap();
+    let values = (1_u8..=2)
+        .map(|entropy| UlidValue::new(timestamp, [entropy; 10]))
+        .collect::<Vec<_>>();
+    let source = RepeatingFinalUlids {
+        values: VecDeque::from(values.clone()),
+        last: values[0].clone(),
+    };
+    let bus = EventBus::new(source);
+    let store = Store::open(&db, &Fixed).unwrap();
+    let mut engine = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus);
+    let (actor, version) = identities();
+    let context = TransitionContext {
+        actor_kind: ActorKind::Host,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    let id = task_id(59);
+    let device = device_id();
+    engine
+        .create_task(task_spec(id.clone(), None), &context)
+        .unwrap();
+    engine
+        .start_planning(id.clone(), TaskState::Received, 0, at(1), &context)
+        .unwrap();
+    let before = store.load_task(&id).unwrap();
+    let high_water_before = store
+        .replay_events(None, None, 32)
+        .unwrap()
+        .snapshot_high_water_seq
+        .get();
+
+    // The attempted BLOCKED event reuses the prior TASK_STARTED identifier.
+    // Its Event Bus participant rejects after the tentative state transition.
+    assert!(
+        engine
+            .block_for_device(
+                id.clone(),
+                device,
+                TaskState::Planning,
+                before.state_revision,
+                at(2),
+                &context,
+            )
+            .is_err()
+    );
+    let after = store.load_task(&id).unwrap();
+    assert_eq!(after.task.state, TaskState::Planning);
+    assert_eq!(after.state_revision, before.state_revision);
+    assert!(
+        store
+            .transact(|tx| tx.device_resume_wait(&id))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .replay_events(None, None, 32)
+            .unwrap()
+            .snapshot_high_water_seq
+            .get(),
+        high_water_before
+    );
+    store.verify_integrity().unwrap();
+    drop((engine, store));
+    std::fs::remove_file(db).unwrap();
+}
+
+#[test]
 fn generic_device_offline_block_is_refused_and_stale_wake_cannot_resurrect_cancelled_task() {
     let db = path();
     let device = device_id();

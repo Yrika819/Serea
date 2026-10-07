@@ -39,7 +39,7 @@ fn task_spec(task_id: TaskId, title: &str) -> NewTask {
         data_class: DataClass::Public,
         policy_class: RiskClass::Observe,
         attempt_budget: AttemptBudget {
-            max_model_calls: 1,
+            max_model_calls: 12,
             max_tool_calls: 1,
             max_attempts_per_step: 1,
             extensions: Default::default(),
@@ -83,11 +83,11 @@ fn custom_event(
     }
 }
 
-fn add_model_accounting_fixture(store: &Store) {
+fn add_model_accounting_fixture(store: &Store, task_id: &TaskId) {
     let price = ModelPriceSnapshot::new(CostClass::Free, "portable-free-1", 0, 0);
     let make_attempt = |request_id: &str| ModelCallAttemptDraft {
         request_id: RequestId::new(request_id).unwrap(),
-        task_id: None,
+        task_id: Some(task_id.clone()),
         purpose: ModelPurpose::Chat,
         model_id: ModelId::new("nemotron-3-nano-30b").unwrap(),
         provider_id: ProviderId::new("ollama").unwrap(),
@@ -233,6 +233,14 @@ fn produce(path: &std::path::Path) {
         .unwrap()
         .unwrap();
 
+    let model_task = TaskId::new("tsk_00000000000000000000000073").unwrap();
+    tasks
+        .create_task(
+            task_spec(model_task.clone(), "Model accounting task"),
+            &context,
+        )
+        .unwrap();
+
     let approval_task = TaskId::new("tsk_00000000000000000000000072").unwrap();
     tasks
         .create_task(
@@ -322,7 +330,9 @@ fn produce(path: &std::path::Path) {
         store.load_task(&scheduled_task).unwrap().task.kind,
         TaskKind::Scheduled
     );
-    add_model_accounting_fixture(&store);
+    add_model_accounting_fixture(&store, &model_task);
+    assert_eq!(store.task_model_call_count(&model_task).unwrap(), 2);
+    assert_eq!(store.task_model_turn_count(&model_task).unwrap(), 2);
     assert_eq!(store.schema_version().unwrap(), 3);
     store.verify_integrity().unwrap();
     drop(scheduler);
@@ -371,6 +381,9 @@ fn consume(path: &std::path::Path) {
         br#"{"intent":"Check portable state.","title":"Portable task","version":"1"}"#
     );
     assert_eq!(store.pending_approval_lifecycle_wakes(16).unwrap().len(), 1);
+    let model_task = TaskId::new("tsk_00000000000000000000000073").unwrap();
+    assert_eq!(store.task_model_call_count(&model_task).unwrap(), 2);
+    assert_eq!(store.task_model_turn_count(&model_task).unwrap(), 2);
     let ambiguous = RequestId::new("req_00000000000000000000000071").unwrap();
     assert_eq!(
         store

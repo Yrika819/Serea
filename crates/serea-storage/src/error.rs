@@ -122,6 +122,8 @@ pub enum StoreError {
     DailySpendExceeded,
     /// The durable model-call count has reached its configured maximum.
     ModelCallBudgetExceeded,
+    /// The durable top-level model-turn count has reached its fixed maximum.
+    ModelTurnBudgetExceeded,
     /// A model attempt is missing or cannot make the requested terminal transition.
     InvalidModelCallTransition,
     /// A model attempt was not found by RequestId.
@@ -208,6 +210,7 @@ impl StoreError {
             Self::ModelCallInFlight => "ModelCallInFlight",
             Self::DailySpendExceeded => "DailySpendExceeded",
             Self::ModelCallBudgetExceeded => "ModelCallBudgetExceeded",
+            Self::ModelTurnBudgetExceeded => "ModelTurnBudgetExceeded",
             Self::InvalidModelCallTransition => "InvalidModelCallTransition",
             Self::ModelCallNotFound => "ModelCallNotFound",
             Self::ModelAccountingOverflow => "ModelAccountingOverflow",

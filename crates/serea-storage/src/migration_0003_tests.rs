@@ -91,6 +91,10 @@ fn catalog_adds_0003_without_rewriting_prior_migrations() {
         Migrations::checksum(catalog[1].sql).as_str(),
         "sha256:4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67"
     );
+    assert_eq!(
+        Migrations::checksum(catalog[2].sql).as_str(),
+        "sha256:bd85c804c832e58a520c070ab6b1cf0d7ad15515f44d1f8c3a161366c3d9d078"
+    );
 }
 
 #[test]
@@ -127,6 +131,34 @@ fn existing_v2_store_upgrades_to_v3() {
     seed_v2(&path.0);
     let store = Store::open(&path.0, &FixedClock).unwrap();
     assert_eq!(store.schema_version().unwrap(), 3);
+}
+
+#[test]
+fn v2_task_turn_counter_defaults_to_zero_and_is_bounded() {
+    let path = TempDb::new();
+    seed_v2(&path.0);
+    let legacy = Connection::open(&path.0).unwrap();
+    seed_task(&legacy, "tsk_00000000000000000000000001");
+    drop(legacy);
+
+    let store = Store::open(&path.0, &FixedClock).unwrap();
+    let task_id = serea_protocol::TaskId::new("tsk_00000000000000000000000001").unwrap();
+    assert_eq!(store.task_model_turn_count(&task_id).unwrap(), 0);
+    let conn = store.conn.lock().unwrap();
+    assert!(
+        conn.execute(
+            "UPDATE tasks SET model_turn_count=-1 WHERE task_id=?1",
+            [task_id.as_str()]
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "UPDATE tasks SET model_turn_count=13 WHERE task_id=?1",
+            [task_id.as_str()]
+        )
+        .is_err()
+    );
 }
 
 #[test]

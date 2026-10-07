@@ -6,6 +6,11 @@
 ALTER TABLE tasks
   ADD COLUMN model_call_count INTEGER NOT NULL DEFAULT 0 CHECK (model_call_count BETWEEN 0 AND 12);
 
+-- Preserve top-level model-turn consumption after terminal attempt pruning.
+-- Fallback and repair attempts consume calls but do not add another turn.
+ALTER TABLE tasks
+  ADD COLUMN model_turn_count INTEGER NOT NULL DEFAULT 0 CHECK (model_turn_count BETWEEN 0 AND 12);
+
 CREATE TABLE model_call_attempts (
   request_id                         TEXT    PRIMARY KEY CHECK (length(request_id) = 30
                                                                AND substr(request_id, 1, 4) = 'req_'

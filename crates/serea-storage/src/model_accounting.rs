@@ -10,6 +10,8 @@ use crate::{BlobRef, Store, StoreError, Tx};
 
 /// Maximum durable model dispatch intents charged to one Task in P4 V1.
 pub const MAX_MODEL_CALLS_PER_TASK: u64 = 12;
+/// Maximum top-level logical model operations charged as Task turns in P4 V1.
+pub const MAX_MODEL_TURNS_PER_TASK: u64 = 12;
 /// Maximum accepted response document size in bytes from Bounds Protocol.
 pub const MAX_MODEL_RESPONSE_BYTES: usize = 262_144;
 /// Maximum number of model attempt rows removed in one retention transaction.
@@ -765,6 +767,20 @@ impl Store {
         u64::try_from(count.ok_or(StoreError::TaskNotFound)?).map_err(|_| StoreError::CorruptRow)
     }
 
+    /// Returns the durable count of primary top-level model operations.
+    /// Fallback and repair attempts do not increment this counter.
+    pub fn task_model_turn_count(&self, task_id: &TaskId) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::LockPoisoned)?;
+        let count: Option<i64> = conn
+            .query_row(
+                "SELECT model_turn_count FROM tasks WHERE task_id=?1",
+                [task_id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        u64::try_from(count.ok_or(StoreError::TaskNotFound)?).map_err(|_| StoreError::CorruptRow)
+    }
+
     /// Sums only trustworthy token counts durably returned in model_usage.
     pub fn task_model_token_usage(&self, task_id: &TaskId) -> Result<TokenCount, StoreError> {
         let conn = self.conn.lock().map_err(|_| StoreError::LockPoisoned)?;
@@ -947,18 +963,23 @@ impl Tx<'_> {
             if active != 0 {
                 return Err(StoreError::ModelCallInFlight);
             }
-            let task_limits: Option<(i64, i64)> = self
+            let task_limits: Option<(i64, i64, i64)> = self
                 .inner
                 .query_row(
-                    "SELECT max_model_calls,model_call_count FROM tasks WHERE task_id=?1",
+                    "SELECT max_model_calls,model_call_count,model_turn_count FROM tasks WHERE task_id=?1",
                     [task_id.as_str()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .optional()?;
-            let (max_calls, used) = task_limits.ok_or(StoreError::TaskNotFound)?;
+            let (max_calls, used, turns) = task_limits.ok_or(StoreError::TaskNotFound)?;
             let limit = max_calls.min(MAX_MODEL_CALLS_PER_TASK as i64);
             if used >= limit {
                 return Err(StoreError::ModelCallBudgetExceeded);
+            }
+            if draft.relation_kind == ModelAttemptRelationKind::None
+                && turns >= MAX_MODEL_TURNS_PER_TASK as i64
+            {
+                return Err(StoreError::ModelTurnBudgetExceeded);
             }
         }
         let day = UtcAccountingDay::from_epoch_millis(draft.dispatch_intent_at);
@@ -983,13 +1004,20 @@ impl Tx<'_> {
             return Err(StoreError::DailySpendExceeded);
         }
         if let Some(task_id) = &draft.task_id {
+            let is_primary_turn = i64::from(draft.relation_kind == ModelAttemptRelationKind::None);
             let changed = self.inner.execute(
-                "UPDATE tasks SET model_call_count=model_call_count+1
-                 WHERE task_id=?1 AND model_call_count<min(max_model_calls,12)",
-                [task_id.as_str()],
+                "UPDATE tasks SET model_call_count=model_call_count+1,
+                                  model_turn_count=model_turn_count+?2
+                 WHERE task_id=?1 AND model_call_count<min(max_model_calls,12)
+                   AND (?2=0 OR model_turn_count<12)",
+                params![task_id.as_str(), is_primary_turn],
             )?;
             if changed != 1 {
-                return Err(StoreError::ModelCallBudgetExceeded);
+                return Err(if is_primary_turn == 1 {
+                    StoreError::ModelTurnBudgetExceeded
+                } else {
+                    StoreError::ModelCallBudgetExceeded
+                });
             }
         }
         self.inner.execute(
@@ -1303,6 +1331,7 @@ pub(crate) fn validate_model_storage_integrity(conn: &Connection) -> Result<(), 
            +
            (SELECT count(*) FROM tasks t
              WHERE t.model_call_count>t.max_model_calls OR t.model_call_count>12
+                OR t.model_turn_count>12 OR t.model_turn_count>t.model_call_count
                 OR t.model_call_count<(SELECT count(*) FROM model_call_attempts a WHERE a.task_id=t.task_id))",
         [],
         |row| row.get(0),

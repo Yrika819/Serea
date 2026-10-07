@@ -131,6 +131,82 @@ fn reservation_is_atomic_with_call_budget_spend_and_active_task_gate() {
 }
 
 #[test]
+fn durable_turn_counter_counts_primary_only_and_survives_attempt_retention() {
+    let path = TempDb::new();
+    let store = Store::open(&path.0, &FixedClock).unwrap();
+    insert_task(&store);
+    let cap = UsdMicros::new(10_000_000).unwrap();
+
+    store
+        .reserve_model_call(draft(id(1), Some(task_id()), price(1, 1)), cap)
+        .unwrap();
+    assert_eq!(store.task_model_turn_count(&task_id()).unwrap(), 1);
+    store
+        .fail_model_call(&id(1), "UPSTREAM_UNAVAILABLE", EpochMillis::new(2).unwrap())
+        .unwrap();
+
+    let mut fallback = draft(id(2), Some(task_id()), price(1, 1));
+    fallback.relation_kind = ModelAttemptRelationKind::Fallback;
+    fallback.parent_request_id = Some(id(1));
+    fallback.model_id = ModelId::new("gpt-oss-20b").unwrap();
+    fallback.fallback_from_model_id = Some(ModelId::new("nemotron-3-nano-30b").unwrap());
+    store.reserve_model_call(fallback, cap).unwrap();
+    assert_eq!(store.task_model_turn_count(&task_id()).unwrap(), 1);
+    store
+        .fail_model_call(&id(2), "UPSTREAM_UNAVAILABLE", EpochMillis::new(3).unwrap())
+        .unwrap();
+
+    let mut repair = draft(id(3), Some(task_id()), price(1, 1));
+    repair.relation_kind = ModelAttemptRelationKind::Repair;
+    repair.parent_request_id = Some(id(2));
+    store.reserve_model_call(repair, cap).unwrap();
+    assert_eq!(store.task_model_turn_count(&task_id()).unwrap(), 1);
+    assert_eq!(store.task_model_call_count(&task_id()).unwrap(), 3);
+    store
+        .fail_model_call(&id(3), "MODEL_OUTPUT_INVALID", EpochMillis::new(4).unwrap())
+        .unwrap();
+
+    let retained_at = EpochMillis::new(1_767_225_600_000 + 31 * 24 * 60 * 60 * 1000).unwrap();
+    assert_eq!(
+        store.retain_model_call_attempts(retained_at, 512).unwrap(),
+        3
+    );
+    assert_eq!(store.task_model_turn_count(&task_id()).unwrap(), 1);
+    assert_eq!(store.task_model_call_count(&task_id()).unwrap(), 3);
+
+    drop(store);
+    let store = Store::open(&path.0, &FixedClock).unwrap();
+    assert_eq!(store.task_model_turn_count(&task_id()).unwrap(), 1);
+    assert_eq!(store.task_model_call_count(&task_id()).unwrap(), 3);
+
+    store
+        .reserve_model_call(draft(id(4), Some(task_id()), price(1, 1)), cap)
+        .unwrap();
+    assert_eq!(store.task_model_turn_count(&task_id()).unwrap(), 2);
+    assert_eq!(store.task_model_call_count(&task_id()).unwrap(), 4);
+}
+
+#[cfg(feature = "p2h-fault-injection")]
+#[test]
+fn failed_dispatch_intent_rolls_back_call_and_turn_counters_together() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    insert_task(&store);
+    crate::fault::Window::AfterModelAttemptInsert
+        .arm(crate::fault::Action::Fail(StoreError::Sqlite))
+        .unwrap();
+    assert_eq!(
+        store.reserve_model_call(
+            draft(id(1), Some(task_id()), price(1, 1)),
+            UsdMicros::new(10_000_000).unwrap(),
+        ),
+        Err(StoreError::Sqlite)
+    );
+    assert_eq!(store.task_model_call_count(&task_id()).unwrap(), 0);
+    assert_eq!(store.task_model_turn_count(&task_id()).unwrap(), 0);
+    assert!(store.get_model_call_attempt(&id(1)).unwrap().is_none());
+}
+
+#[test]
 fn spend_reservation_allows_exact_cap_and_refuses_cap_plus_one() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
     let cap = UsdMicros::new(5_120).unwrap();
@@ -548,6 +624,7 @@ fn two_independent_connections_cannot_reserve_same_task_or_overspend_day() {
         1
     );
     assert_eq!(first.task_model_call_count(&task_id()).unwrap(), 1);
+    assert_eq!(first.task_model_turn_count(&task_id()).unwrap(), 1);
     drop(first);
     drop(second);
 

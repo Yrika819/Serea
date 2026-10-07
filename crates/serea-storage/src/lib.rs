@@ -63,10 +63,11 @@ pub use lifecycle::{CancellationOutcome, DeletionOutcome};
 pub use migrate::{Migration, Migrations};
 pub use model_accounting::{
     MAX_MODEL_CALLS_PER_TASK, MAX_MODEL_RESPONSE_BYTES, MAX_MODEL_RETENTION_BATCH,
-    ModelAccountingError, ModelAttemptRelationKind, ModelAttemptState, ModelCallAttempt,
-    ModelCallAttemptDraft, ModelCallCompletion, ModelDeploymentClass, ModelFailureUsage,
-    ModelPriceSnapshot, ModelResponseStorage, ModelUsageRecord, UsdMicros, UtcAccountingDay,
-    calculate_cost_usd_micros, calculate_reservation_usd_micros, validate_price_snapshot,
+    MAX_MODEL_TURNS_PER_TASK, ModelAccountingError, ModelAttemptRelationKind, ModelAttemptState,
+    ModelCallAttempt, ModelCallAttemptDraft, ModelCallCompletion, ModelDeploymentClass,
+    ModelFailureUsage, ModelPriceSnapshot, ModelResponseStorage, ModelUsageRecord, UsdMicros,
+    UtcAccountingDay, calculate_cost_usd_micros, calculate_reservation_usd_micros,
+    validate_price_snapshot,
 };
 pub use recovery::{
     RecoveryAction, RecoveryApplied, RecoveryAuthority, RecoveryPass, RecoveryReceiptRepair,

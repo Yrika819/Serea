@@ -15,7 +15,7 @@ close P4 as a whole.
   `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`.
 - Migration 0002 SHA-256 unchanged:
   `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`.
-- Migration 0003 (`0003_model_accounting.sql`) SHA-256:
+- Migration 0003 (`0003_model_accounting.sql`) SHA-256 at P4 task start:
   `8f4c5c4e047a8829201ce834ff192d740ab6ca199ecc3d12dfe8e357cf82c2ec`.
 
 ### Test-first evidence
@@ -45,7 +45,9 @@ insert and terminal update.
   no prompt, output, content digest, device ID, conversation ID or task title.
 - `tasks.model_call_count` preserves the 12-call task ceiling after 30-day
   attempt detail pruning. Every committed dispatch intent increments it in the
-  same transaction as the attempt and reservation.
+  same transaction as the attempt and reservation. P4E adds
+  `tasks.model_turn_count`, which increments only for primary (`NONE`) attempts
+  and survives the same attempt-detail pruning.
 - Money uses non-negative SQLite-compatible integer micro-USD. Input and
   output components round up independently using checked integer arithmetic.
   FREE prices require both rates to be zero.
@@ -134,10 +136,11 @@ Model Router closure. P5 remains outside P4.
   deterministic tests have no sleeps, wall clock, ignored cases, or platform
   skips; (8) docs and claims were reconciled. A stale P3F smoke invariant was
   updated, with a new router-layer edge guard.
-- The migration checksums remain exactly the P4B values: 0001
+- At P4C closure, all three migration checksums still matched P4B: 0001
   `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`, 0002
   `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`, and
   0003 `8f4c5c4e047a8829201ce834ff192d740ab6ca199ecc3d12dfe8e357cf82c2ec`.
+  P4E later amended only unreleased migration 0003 as recorded below.
 - Required local cloud validation passed on the P4C candidate: fmt, workspace
   check, all-target tests, all-features tests, workspace Clippy, docs
   validation, workspace smoke, all 76 smoke unit tests, Cargo metadata,
@@ -721,3 +724,42 @@ repair, fallback, dispatch gates, or P4E budgets.
   and cross-architecture SQLite
   [37691539045](https://github.com/Yrika819/Serea/actions/runs/37691539045)
   in both directions.
+
+### P4E slice: durable model-turn accounting
+
+- RED evidence: the primary/fallback/repair test first failed to compile because
+  `Store::task_model_turn_count` did not exist. Migration v2 upgrade coverage
+  then pins that prior Tasks start at zero and rejects values outside 0..12.
+- Amendment to unreleased migration 0003: added durable
+  `tasks.model_turn_count INTEGER NOT NULL DEFAULT 0 CHECK (0..12)`. Schema
+  version remains 3; migrations 0001 and 0002 are unchanged. The 0003 checksum at task start was
+  `8f4c5c4e047a8829201ce834ff192d740ab6ca199ecc3d12dfe8e357cf82c2ec`; the
+  amended current checksum is
+  `bd85c804c832e58a520c070ab6b1cf0d7ad15515f44d1f8c3a161366c3d9d078`.
+- Every committed dispatch intent increments durable model-call count. Only
+  relation `NONE` increments durable model-turn count; `FALLBACK` and `REPAIR`
+  consume call units without consuming additional turns. Both counters persist
+  independently of terminal attempt pruning. The task-owned counter is removed
+  only with the Task itself.
+- Focused tests pass for primary/fallback/repair accounting, terminal attempt
+  pruning with durable counters retained, a second primary turn, v2-to-v3
+  default-zero upgrade, and SQL range constraints. The full P4B migration test
+  module passes with exact 0001/0002 and amended 0003 checksums.
+- P4B evidence is amended for an already-frozen P4 Bounds requirement, not a
+  new semantic decision. 0003 start/end checksums are recorded above; 0001 and
+  0002 remain unchanged. This amendment adds no fourth migration and leaves the
+  schema version at 3.
+- Sequential review: (1) the 12 turn bound and primary-only definition match
+  the supplied Bounds contract; (2) the field belongs to Storage's Task row
+  and adds no upward crate edge; (3) counter increment shares the dispatch
+  intent/call reservation transaction; (4) the counter survives close/reopen
+  and detail retention; (5) it stores no prompt or model content; (6) SQL
+  bounds, call/turn relation, and existing 12-call limit are checked; (7)
+  tests use deterministic terminal attempts and SQLite retention, not sleeps;
+  (8) P4B/P4E evidence and checksums are reconciled while schema remains v3.
+- Required local validation passes: fmt, workspace check, all-target tests,
+  all-feature tests, denied-warning Clippy, docs validation, workspace smoke,
+  all 76 smoke unit tests, Cargo metadata, identity guard, and diff check. The
+  local portability fixture produces and reopens v3 on this host with durable
+  call/turn counters. Exact-head Fast, Full, and cross-architecture Actions are
+  pending; cross-architecture is required after this migration change.

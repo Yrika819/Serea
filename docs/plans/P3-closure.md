@@ -348,3 +348,44 @@ P3 does not include Model Router, Capability Registry, Policy Engine, Approval
 runtime, Memory runtime, Gmail, Calendar, Android provider execution, GoalLatch,
 production credentials, or arbitrary exactly-once external effects. No claim of
 universal crash/power-loss durability is made.
+
+
+## Post-merge main validation
+
+PR #1 was merged with GitHub's merge-commit method after exact candidate
+revalidation. Main is merge commit
+`1d27a91c0d037b9b2cfe42456611f13556895793`, with first parent
+`cb580be8dd0057202c6b0f9c783391460bfc1875` and second parent the reviewed
+P3 head `e6d57c5fe50d25148cd7b16d7cd830bf5df9255b`. The P3 branch remains
+retained.
+
+All results below are for the exact merge commit above.
+
+| Gate | Run/job | Result |
+|---|---:|---|
+| Fast CI | run `37634050711`, Linux fast job `112835471115` | PASS |
+| Full CI | run `37634050501` | PASS |
+| Linux stable; identity guard; migration/workspace checks; release fault-seam proof | job `112835491548` | PASS |
+| Linux MSRV 1.85.0 | job `112835491326` | PASS |
+| macOS Intel x86_64 | job `112835491289` | PASS |
+| macOS Apple Silicon arm64 | job `112835491288` | PASS |
+| Release fault-seam exclusion | Linux stable job `112835491548` | PASS |
+| Cross-architecture SQLite | run `37634050459` | PASS |
+| Intel producer / arm64 producer | jobs `112835469344` / `112835469033` | PASS |
+| arm64 artifact consumed on Intel / Intel artifact consumed on arm64 | jobs `112835985826` / `112836626412` | PASS |
+
+Migration validation remains unchanged: migration 0001 checksum is
+`d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`;
+migration 0002 checksum is
+`4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`;
+migration 0003 is absent. The merged migration tests assert both checksums,
+fresh database migration 0001→0002, close/reopen, schema version 2, and Store
+integrity validation. Full CI passed those all-target/all-feature tests.
+Cross-architecture producers require a single closed main database file and
+consumers run semantic validation. No `-shm` or live-WAL portability claim is
+made.
+
+The passing Fast and Full CI runs include the workspace smoke and identity
+guards; Full CI also passed documentation, formatting, metadata, all-target
+and all-feature checks, and the release fault-seam proof. The P3 branch remains
+available for audit/reference.

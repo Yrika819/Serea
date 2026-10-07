@@ -260,3 +260,26 @@ Model Router closure. P5 remains outside P4.
   GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
   [cross-architecture SQLite 37664012627](https://github.com/Yrika819/Serea/actions/runs/37664012627)
   GREEN in both directions.
+- Fifth P4D RED proof: startup recovery test compilation failed because
+  `recover_unresolved_model_calls` was absent. The host startup seam now lists
+  prior unresolved intents and atomically marks each AMBIGUOUS with its stable,
+  content-free MODEL_FAILED event. It preserves the full reservation and writes
+  no usage. The focused file-backed test closes and reopens SQLite, verifies
+  AMBIGUOUS and unchanged reservation, and proves a second recovery pass adds
+  no duplicate event.
+- Sequential review confirms the state/event pair shares one Storage
+  transaction per attempt. If another terminal transition wins after the
+  recovery snapshot, the stale recovery transaction adds no event. The router
+  still has no task lifecycle ownership; recovery never redispatches. This
+  change adds no dependency edges or migration changes. Broader crash and
+  concurrent-recovery coverage remains open.
+- Local validation passes for the recovery slice: fmt; workspace check;
+  all-target and all-feature workspace tests; Clippy with denied warnings;
+  docs validation; workspace smoke and its 76 tests; Cargo metadata; identity
+  guard; and `git diff --check`. The exact preceding docs head
+  `69b562c634f0e37047129016d4b30d42b4e02104` is green on Fast CI
+  [37664528638](https://github.com/Yrika819/Serea/actions/runs/37664528638),
+  Full CI
+  [37664528729](https://github.com/Yrika819/Serea/actions/runs/37664528729)
+  and cross-architecture SQLite
+  [37664528650](https://github.com/Yrika819/Serea/actions/runs/37664528650).

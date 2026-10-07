@@ -443,6 +443,15 @@ enum ModelDispatchFailure {
     },
 }
 
+/// Failure while classifying unresolved dispatches during process startup.
+#[derive(Debug)]
+pub enum ModelRecoveryError {
+    /// Durable read, state mutation, or audit-event insertion failed.
+    Storage(StoreError),
+    /// Host recovery timestamp could not be read or encoded.
+    Protocol(ProtocolError),
+}
+
 struct ModelDispatchContext<'a> {
     store: &'a Store,
     events: &'a EventBus,
@@ -986,6 +995,61 @@ fn record_model_failure(
         .map_err(ModelDispatchFailure::Storage)
 }
 
+/// Conservatively marks every unresolved dispatch as ambiguous during startup.
+///
+/// Call this before serving new model operations. Each attempt's state change
+/// and content-free audit event commit in one Store transaction. Repeated or
+/// concurrent recovery passes do not append duplicate events.
+pub fn recover_unresolved_model_calls(
+    store: &Store,
+    events: &EventBus,
+    clock: &dyn Clock,
+) -> Result<usize, ModelRecoveryError> {
+    let attempts = store
+        .list_unfinished_model_call_attempts()
+        .map_err(ModelRecoveryError::Storage)?;
+    let error_kind =
+        ModelErrorCode::new("AMBIGUOUS_DISPATCH").map_err(ModelRecoveryError::Protocol)?;
+    let mut recovered = 0;
+    for attempt in attempts {
+        let occurred_at = clock.now_ms().map_err(ModelRecoveryError::Protocol)?;
+        let relation = match attempt.relation_kind {
+            ModelAttemptRelationKind::None => ModelEventRelationV1::Normal,
+            ModelAttemptRelationKind::Fallback => ModelEventRelationV1::Fallback,
+            ModelAttemptRelationKind::Repair => ModelEventRelationV1::Repair,
+        };
+        let failed = events
+            .draft_model_failed(ModelFailedEventV1 {
+                metadata: ModelEventMetadataV1 {
+                    request_id: attempt.request_id.clone(),
+                    model_id: attempt.model_id.clone(),
+                    provider_id: attempt.provider_id.clone(),
+                    task_id: attempt.task_id.clone(),
+                    purpose: attempt.purpose,
+                    relation,
+                    data_class: attempt.data_class,
+                    occurred_at,
+                },
+                error_kind: error_kind.clone(),
+                retryable: false,
+            })
+            .map_err(ModelRecoveryError::Storage)?;
+        let result = store.transact(|tx| {
+            tx.mark_model_call_ambiguous(&attempt.request_id, error_kind.as_str(), occurred_at)?;
+            tx.append_event(failed.event, failed.retention_at)?;
+            Ok(())
+        });
+        match result {
+            Ok(()) => recovered += 1,
+            // Another recovery worker or a concurrent terminal operation won.
+            // Its transaction owns the state/event pair.
+            Err(StoreError::InvalidModelCallTransition) => {}
+            Err(error) => return Err(ModelRecoveryError::Storage(error)),
+        }
+    }
+    Ok(recovered)
+}
+
 /// Explicit deterministic preference chain for a purpose.
 pub fn preference_chain(purpose: ModelPurpose) -> &'static [&'static str] {
     match purpose {
@@ -1131,7 +1195,11 @@ mod tests {
         ModelErrorCode, ModelMessage, ModelResponse, ModelUsage, ProtocolError, ProviderId,
         ResponseFormat, TimestampMs, TokenCount, UlidSource, UlidValue,
     };
-    use serea_storage::{ModelAttemptState, ModelPriceSnapshot, Store, StoreError, UsdMicros};
+    use serea_storage::{
+        ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft,
+        ModelDeploymentClass as StorageDeploymentClass, ModelPriceSnapshot, Store, StoreError,
+        UsdMicros,
+    };
 
     struct FixedClock;
 
@@ -1399,6 +1467,86 @@ mod tests {
             serde_json::to_string(&final_events.items).unwrap_or_else(|_| unreachable!());
         assert!(!serialized_events.contains("sensitive diagnostic text"));
     }
+
+    #[test]
+    fn startup_recovery_marks_intents_ambiguous_with_one_atomic_event() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-recovery-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(500));
+        let request_id = bus
+            .mint_model_request_id()
+            .unwrap_or_else(|_| unreachable!());
+        let price = ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000);
+        store
+            .reserve_model_call(
+                ModelCallAttemptDraft {
+                    request_id: request_id.clone(),
+                    task_id: None,
+                    purpose: ModelPurpose::Chat,
+                    model_id: ModelId::new("nemotron-3-nano-30b")
+                        .unwrap_or_else(|_| unreachable!()),
+                    provider_id: ProviderId::new("provider").unwrap_or_else(|_| unreachable!()),
+                    deployment_class: StorageDeploymentClass::Local,
+                    data_class: DataClass::Public,
+                    relation_kind: ModelAttemptRelationKind::None,
+                    parent_request_id: None,
+                    fallback_from_model_id: None,
+                    price,
+                    max_context_tokens: 1000,
+                    effective_max_output_tokens: 100,
+                    dispatch_intent_at: FixedClock.now_ms().unwrap_or_else(|_| unreachable!()),
+                },
+                UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+            )
+            .unwrap_or_else(|_| unreachable!());
+        let reserved = store
+            .get_model_call_attempt(&request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!())
+            .reserved_cost_usd_micros;
+
+        assert_eq!(
+            recover_unresolved_model_calls(&store, &bus, &FixedClock)
+                .unwrap_or_else(|_| unreachable!()),
+            1
+        );
+        drop(store);
+        let reopened = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let recovered = reopened
+            .get_model_call_attempt(&request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(recovered.state, ModelAttemptState::Ambiguous);
+        assert_eq!(recovered.reserved_cost_usd_micros, reserved);
+        assert_eq!(recovered.actual_cost_usd_micros, None);
+        assert!(
+            reopened
+                .model_usage_for_request(&request_id)
+                .unwrap_or_else(|_| unreachable!())
+                .is_none()
+        );
+        assert_eq!(
+            recover_unresolved_model_calls(&reopened, &bus, &FixedClock)
+                .unwrap_or_else(|_| unreachable!()),
+            0
+        );
+        let events = EventBus::replay(&reopened, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert!(
+            matches!(events.items.as_slice(), [ReplayItem::Event { event }] if event.kind == EventKind::ModelFailed
+            && event.payload["error_kind"] == "AMBIGUOUS_DISPATCH"
+            && event.payload["retryable"] == false)
+        );
+        drop(reopened);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    static NEXT_RECOVERY_TEST_DB: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
     fn chains_are_frozen_and_codex_is_absent() {

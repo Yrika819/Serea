@@ -1,6 +1,6 @@
 # Task Protocol
 
-Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current architecture `serea-arch/2.4.0`**
+Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current architecture `serea-arch/2.5.0`**
 
 The `AssistantTask` is Serea's unit of durable work. It is **not** GoalLatch's
 `Goal`. The two are different concepts with different lifecycles, different

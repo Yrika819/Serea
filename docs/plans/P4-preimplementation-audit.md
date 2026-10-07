@@ -1,10 +1,17 @@
 # P4 Preimplementation Audit — Model Router
 
-**Mode:** preimplementation architecture audit; no P4 runtime authorized  
-**Base:** `f6fe74cb68c643250e15dba4adbce3e2445d920a` (`serea-arch/2.4.0`)  
-**Audit branch:** `p4/preimplementation-audit`  
+**Mode:** preimplementation architecture audit and P4A contract closure; no P4 runtime authorized
+**Base:** `f6fe74cb68c643250e15dba4adbce3e2445d920a` (`serea-arch/2.4.0`)
+**Audit branch:** `p4/preimplementation-audit`
 **Audit date:** 2026-10-07  
-**Result:** `BLOCKED_PENDING_OWNER_DECISION`
+**Result:** `READY_FOR_P4_IMPLEMENTATION`
+
+**P4A closure:** Owner decisions 1–10 were accepted into ADR-0031 through
+ADR-0033 and the normative protocol/architecture docs on 2026-10-07. The
+findings below record the pre-closure audit state; this closure supersedes its
+PROPOSED/AMBIGUOUS/CONTRADICTORY dispositions. The final decision ledger is
+§14. This branch contains contract/documentation changes only: P4 runtime is
+not started, migration 0003 is not created, and no provider call exists.
 
 This is a docs-only audit. No router crate, provider, migration, dependency,
 real model call, P5 behavior, or P3 runtime change is included. P3 is closed at
@@ -522,41 +529,29 @@ scripted deterministic fake only. No action in this audit starts these slices.
   no content logging, bounds against huge schema/output, no model-controlled
   route or tool authority.
 
-## 14. Owner decisions required before P4 implementation
+## 14. Owner decision disposition
 
-1. **Typed routing contract:** define exact `required_capabilities` and
-   `task_constraints` types, vision/tool/strict-schema derivation, context and
-   output-limit participation, and purpose/response-format matrix.
-2. **Egress classification:** choose host-owned deployment class representation
-   and its trust/validation source; define roster version, duplicate rules,
-   deterministic ordering, reload/restart and provider discovery semantics.
-3. **Policy/redaction seam:** define immutable resolved
-   `cloud_model_private_egress` snapshot timing/revocation; define the trusted
-   prepared/redacted request boundary and proof/class derivation. Until then,
-   PRIVATE is denied and no ad-hoc redaction is allowed.
-4. **Deterministic chains and health:** ratify ordered chain for every purpose,
-   tie-break, fallback snapshot vs fresh health, degraded behavior, and exact
-   fallback trigger matrix.
-5. **External-call recovery:** define one RequestId per dispatch semantics,
-   ambiguous attempt recovery, automatic retry policy, caller-lost response
-   behavior, and event payload/transaction groups. Exactly-once is unavailable.
-6. **Usage and money:** choose fixed-point USD unit/rounding/overflow, price
-   table ownership/version/key/effective semantics and snapshot, unknown/FREE
-   pricing, daily accounting timezone, reservation/settlement/ambiguous charge,
-   and task token reservation semantics.
-7. **Durable schema/privacy:** approve attempt vs usage table fields, FK deletion,
-   retention, data class, indexes, accounting row strategy, event contents and
-   migration 0003 need. Do not retain prompt/output/content hashes by default.
-8. **SCJ-1:** confirm no ModelRequest digest/canonical persistence in P4, or
-   authorize a separate explicit encoding/future wire change; fractional f64
-   remains refused by SCJ-1.
-9. **Structured output/repair:** clarify provider raw-vs-structured response,
-   schema resource bounds, duplicate JSON key handling, validation error
-   bounding, repair retry/fallback/health, exact repair counter semantics, and
-   when invalid-output fresh fallback is permitted.
-10. **Integration ownership:** pin immutable Task Engine/Core context fields,
-    task concurrency/cancellation/deadline and mid-call policy change behavior;
-    preserve no Router→Task Engine edge.
+Each of the ten decisions required by the pre-closure audit is now **RESOLVED**
+by the accepted contract cited below. The ADRs are owner-authorized and
+normative. No architecture-level choice remains open.
 
-Until these decisions are incorporated into authoritative contracts, the safe
-result is to block P4 runtime work. They are not accepted by this audit.
+| # | Owner decision | Status | Accepted authority |
+| --- | --- | --- | --- |
+| 1 | Typed routing requirements, no arbitrary constraints, purpose/format matrix | **RESOLVED** | [ADR-0031](../decisions/ADR-0031-model-roster-routing-and-egress-v1.md), [Model Protocol §§3.1, 6](../protocols/03-model-protocol.md#31-response_format) |
+| 2 | Trusted deployment class, immutable roster, discovery, duplicates, ordering and restart semantics | **RESOLVED** | [ADR-0031](../decisions/ADR-0031-model-roster-routing-and-egress-v1.md), [Model Protocol §6](../protocols/03-model-protocol.md#6-model-routing) |
+| 3 | Prepared/redacted boundary, egress snapshots/revocation, PRIVATE dispatch limitation | **RESOLVED** | [ADR-0031](../decisions/ADR-0031-model-roster-routing-and-egress-v1.md), [Data Classification §5](../protocols/09-data-classification-protocol.md#5-egress-rules) |
+| 4 | Exact chains, tie-breaking, health snapshots, fallback triggers | **RESOLVED** | [ADR-0031](../decisions/ADR-0031-model-roster-routing-and-egress-v1.md), [ADR-0033](../decisions/ADR-0033-structured-validation-repair-and-fallback-v1.md) |
+| 5 | RequestId, durable states, ambiguity, transaction groups, event meanings | **RESOLVED** | [ADR-0032](../decisions/ADR-0032-model-dispatch-durability-and-accounting-v1.md), [Event Protocol §3.2](../protocols/06-event-protocol.md#32-model-activity) |
+| 6 | USD_MICROS, pricing, reservations, UTC day, unknown usage and token accounting | **RESOLVED** | [ADR-0032](../decisions/ADR-0032-model-dispatch-durability-and-accounting-v1.md), [Bounds Protocol §7](../protocols/10-bounds-protocol.md#7-cost-bounds) |
+| 7 | Migration 0003 conceptual schema, privacy, indexes and retention | **RESOLVED** | [ADR-0032](../decisions/ADR-0032-model-dispatch-durability-and-accounting-v1.md) |
+| 8 | No ModelRequest SCJ digest/canonical persistence or temperature encoding change | **RESOLVED** | [ADR-0031](../decisions/ADR-0031-model-roster-routing-and-egress-v1.md), [Model Protocol §3](../protocols/03-model-protocol.md#3-modelrequest) |
+| 9 | Host structured validation, duplicate keys, bounds, repair and fallback semantics | **RESOLVED** | [ADR-0033](../decisions/ADR-0033-structured-validation-repair-and-fallback-v1.md), [Bounds Protocol §2](../protocols/10-bounds-protocol.md#2-the-bound-set) |
+| 10 | Core/Task ownership, concurrency, cancellation, deadlines, policy revocation, no reverse dependency | **RESOLVED** | [ADR-0031](../decisions/ADR-0031-model-roster-routing-and-egress-v1.md), [ADR-0032](../decisions/ADR-0032-model-dispatch-durability-and-accounting-v1.md) |
+
+The owner-ratified P4 implementation sequence is P4B migration/durability;
+P4C immutable roster/routing; P4D intent, binding, and ambiguity; P4E
+validation, repair, fallback, and budget integration; P4F integrated closure.
+P4A remains contract closure only. **No runtime or P4B work is started by this
+record.**
+
+READY_FOR_P4_IMPLEMENTATION

@@ -1,6 +1,6 @@
 # Execution Pipeline
 
-Architecture version: `serea-arch/2.4.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
 
 This document traces one user request from utterance to durable outcome, stage
 by stage, with two worked examples: a read-only task that needs no approval, and
@@ -93,13 +93,16 @@ tasks already active, this one stays `RECEIVED` with a queue position and a
 `policy_class` is host-assigned from the *kind* of request, before any model
 call, and is the ceiling the whole plan must fit under.
 
-### Stage 3 — Planning
+### Stage 3 — Planning (P4 contract; runtime not started)
 
-`serea-task-engine` calls `serea-model-router.route(purpose: PLANNING,
-required_capabilities: [tools, structured_output: STRICT], data_class: PERSONAL)`.
-Routing is deterministic and selects `nemotron-3-nano-30b` first position.
-The prompt contains the redacted projection of the conversation and the rendered
-view of task state; the model cannot write either.
+Core/Task orchestration constructs an internal `PreparedModelCallV1` after
+classification, required redaction, purpose/format assignment, and typed
+`ModelRoutingRequirementsV1` construction. It supplies immutable host context
+to the router; the router does not depend on Task Engine. The fixed PLANNING
+chain starts with `nemotron-3-nano-30b`, followed by `gpt-oss-20b`. The host
+selects one model, then constructs the provider `ModelRequest` with that
+selected model ID. Request messages are text-only; no image transport is
+implied.
 
 ```json
 {
@@ -115,15 +118,21 @@ view of task state; the model cannot write either.
 }
 ```
 
-`MODEL_CALLED` is emitted before dispatch. The model returns `structured` with
-one action: `calendar.events.list` with `{"range": "tomorrow", "limit": 25}`.
+After a single transaction commits the dispatch intent, call reservation, and
+`MODEL_CALLED`, provider dispatch may begin. The event proves Serea's durable
+intent only; it does not prove provider receipt, inference, billing, or
+response. Provider `structured` content is not trusted as validation proof.
+The model returns raw `content` which the host parses with duplicate-key
+rejection and validates against the host schema before accepting one action:
+`calendar.events.list` with `{"range": "tomorrow", "limit": 25}`.
 
-**Repair ladder, if the first response fails validation:** one call to the
-configured structured-repair model (`gpt-oss-20b`) given only the schema, the
-invalid payload, and the validator's errors — never the conversation, never tool
-definitions. Second failure → one more call with the errors appended. Third
-failure → hard fail with `ActionErrorKind::VALIDATION`. `MODEL_OUTPUT_INVALID`
-and `MODEL_REPAIRED` record the attempt count. No partial acceptance, ever.
+**Repair ladder, if validation fails:** at most two separately accounted
+dispatches to `gpt-oss-20b`, with new RequestIds. Each receives only the schema,
+bounded invalid payload, and bounded sanitized errors. No normal fallback is
+started after validation failure; ambiguous dispatch is never automatically
+retried. Exhaustion is hard validation failure. `MODEL_OUTPUT_INVALID` means
+host validation failed; `MODEL_REPAIRED` means repair output passed host
+validation. No partial acceptance, ever.
 
 ### Stage 4 — Schema validation and `ActionRequest` construction
 

@@ -1,6 +1,6 @@
 # Event Protocol
 
-Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN for P0** · Architecture: `serea-arch/2.4.0`
+Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.5.0`
 
 Events are Serea's structured record of what it did and what it observed. They
 are the substrate for the Android Activity Timeline, the audit trail, and the
@@ -104,12 +104,13 @@ repurposing one is major.
 
 | Kind | When |
 | --- | --- |
-| `MODEL_CALLED` | Before dispatch, with `model_id`, `purpose`, token estimate |
+| `MODEL_CALLED` | After Serea commits a durable dispatch intent and before network dispatch; proves intent only, not provider receipt, inference, billing, or response |
 | `MODEL_COMPLETED` | After response, with usage and `finish_reason` |
 | `MODEL_FAILED` | Provider error, with `ModelError` kind |
 | `MODEL_OUTPUT_INVALID` | Structured output failed validation; `repair_attempts` recorded |
-| `MODEL_REPAIRED` | A repair call succeeded |
-| `MODEL_FALLBACK` | Routing advanced to a different model, with `fallback_from` and `reason` |
+| `MODEL_REPAIRED` | A repair call produced output that passed host validation |
+| `MODEL_FALLBACK` | Host deterministically advanced to the next configured normal model after a definite retryable failure; records source, destination, and stable typed reason |
+| `MODEL_FALLBACK_EXHAUSTED` | The single permitted normal fallback could not produce a successful result |
 
 ### 3.3 Capability activity
 
@@ -392,6 +393,7 @@ architecture version per [§4.1](00-protocol-index.md#41-semantics).
 | `serea-arch/2.0.0` | Accepted Option A: separates minimal sequence accountability from independently expirable complete content; replay distinguishes exact interior intentional-expiry ranges, compacted-prefix history expiry, and unexplained corruption. `serea.event/1` objects remain unchanged; replay response moves to `serea.device/2`. | Major architecture/replay semantics; event surface unchanged | [ADR-0026](../decisions/ADR-0026-event-retention-and-global-sequence.md) |
 | 2026-10-06 | Clarified that deletion work and `DELETION_CASCADE_COMPLETED` insert precede the one COMMIT inside the same transaction. This reconciles ADR-0017 wording with E3 and Data Classification §8.2; a post-commit append is forbidden. | Editorial clarification of accepted transaction semantics | Owner direction; E3; Data Classification §8.2 |
 | `serea-arch/2.4.0` | Defines closed approval lifecycle routing identity and requires correlation/trace consistency for Scheduler handoff. Event object shape and `serea.event/1` are unchanged; no Approval authority is conveyed. | Minor — backward-compatible kind-specific semantics | [ADR-0030](../decisions/ADR-0030-durable-approval-lifecycle-wake.md) |
+| `serea-arch/2.5.0` | Clarifies that `MODEL_CALLED` records a committed dispatch intent, not provider receipt, inference, billing, or response; defines fallback and repair event meanings without changing event kinds or payload wire shapes. | Minor — backward-compatible event semantics | [ADR-0032](../decisions/ADR-0032-model-dispatch-durability-and-accounting-v1.md) |
 
 ## 9. P2A validation changelog and deferred runtime seam
 

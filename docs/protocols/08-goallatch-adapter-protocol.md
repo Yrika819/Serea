@@ -1,6 +1,6 @@
 # GoalLatch Adapter Protocol
 
-Protocol ID: `PROTO-GOALLATCH` · Surface: `serea.goallatch/1` · Status: **FROZEN for P0**
+Protocol ID: `PROTO-GOALLATCH` · Surface: `serea.goallatch/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.5.0`
 
 This protocol defines the only sanctioned seam between Serea Core and GoalLatch /
 Local MCP. P0 freezes the contract only; no GoalLatch provider is implemented or
@@ -644,7 +644,7 @@ Three version axes apply, and this protocol does not collapse them
 
 | Axis | Value | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/2.4.0` | The current frozen contract set, including this document. |
+| Architecture version | `serea-arch/2.5.0` | The current frozen contract set, including this document. |
 | Capability version | `1.0.0` on all five `host.goal.*` descriptors | Each capability's input/output contract. |
 | Wire surface | `serea.goallatch/1` | The adapter-internal hop from `HostGoalProvider` to its backing GoalLatch transport. |
 

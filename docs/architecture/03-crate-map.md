@@ -1,13 +1,14 @@
 # Crate Map
 
-Architecture version: `serea-arch/2.4.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
 
 This document fixes how the Serea Core Rust workspace is divided, which crate
 may depend on which, and which planned crates this architecture declines to
 create. The full tree is **planned runtime architecture**, not a claim that all
-crates exist. At P2A only `serea-protocol` and `serea-testkit` exist; the historical
-P0 creation/defer statements below describe the planned decomposition, not the
-current Cargo workspace inventory.
+crates exist. At P4A, Protocol, Storage, Event Bus, Task Engine, Scheduler, and
+testkit crates exist; `serea-model-router` and provider integration do not.
+Historical P0 creation/defer statements below describe planned decomposition,
+not the current Cargo workspace inventory.
 
 ---
 
@@ -176,7 +177,7 @@ orchestration · **L4** composition · **PX** leaf provider · **TD** dev-only.
 | `serea-event-bus` | Transaction-scoped event append and, in P3D, bounded range-aware replay and retention | `EventBus` | `serea-protocol`, `serea-storage` | `serea-policy`, `serea-model-router`, `serea-capability`, `serea-memory`, `serea-task-engine`, `serea-scheduler`, `serea-core` | L1 |
 | `serea-credential-store` | macOS Keychain custody; mint, resolve, rotate; the only code permitted to call `Secret::expose` | `CredentialStore`, `CredentialStoreError`, `CredentialScope`, `RotationOutcome` | `serea-protocol` | all `providers/serea-provider-*` needing OAuth or API secrets; `serea-core` | L1 |
 | `serea-policy` | Deterministic rule evaluation in the frozen order; `RiskClass` decisions; `DenyReason`; `HandoffRequest`; audited rule mutation | `PolicyEngine`, `PolicyRule`, `PolicyContext`, `AutomationContext`, `RuleStore`, `PolicyChange` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-capability`, `serea-task-engine`, `serea-core` | L2 |
-| `serea-model-router` | Model selection, capability filtering, preference chains, bounded repair ladder, usage accounting, budget enforcement, Codex exclusion | `ModelRouter`, `Roster`, `PreferenceChain`, `UsageLedger`, `BudgetView`, `RoutingDecision` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-memory`, `serea-task-engine`, `serea-core`, `serea-provider-ollama` (types only) | L2 |
+| `serea-model-router` | Prepared-call routing, immutable host roster, capability filtering, preference chains, health snapshot, durable attempt/usage accounting, validation, bounded repair/fallback, Codex exclusion | `ModelRouter`, `ModelRosterV1`, `PreferenceChain`, `UsageLedger`, `BudgetView`, `RoutingDecision` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-memory`, `serea-task-engine`, `serea-core` | L2 |
 | `serea-capability` | Runtime registry, descriptor compilation, tool router, duplicate detection, repeated-action detection, approval ledger and grant consumption, provider invocation and enforcement | `CapabilityRegistry`, `CapabilityRouter`, `ToolRouter`, `DuplicateWindow`, `ApprovalLedger`, `GrantMatcher`, `ToolCall`, `ToolOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-policy` | `serea-task-engine`, `serea-core` | L2 |
 | `serea-memory` | Working, episodic, semantic and preference memory; extraction gating on `purpose: EXTRACTION`; provenance; supersession; deletion cascade with tombstones | `MemoryStore`, `MemoryItem`, `MemoryKind`, `Provenance`, `ExtractionOutcome`, `ForgetOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-model-router` | `serea-task-engine`, `serea-core` | L3 |
 | `serea-task-engine` | `AssistantTask` lifecycle, plan construction and revision, step sequencing, leases, recovery, cancellation, retention, attempt budgets | `TaskEngine`, `TaskRecord`, `StepRecord`, `Plan`, `PlanRevision`, `RecoveryReport`, `CancellationOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-policy`, `serea-model-router`, `serea-capability`, `serea-memory` | `serea-scheduler`, `serea-core` | L3 |

@@ -1,6 +1,6 @@
 # Approval Protocol
 
-Protocol ID: `PROTO-APPROVAL` · Surface: `serea.approval/1` · Status: **FROZEN for P0** · Architecture: `serea-arch/2.4.0`
+Protocol ID: `PROTO-APPROVAL` · Surface: `serea.approval/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.5.0`
 
 Approval is the point where Serea asks a human to lend authority it does not
 have. The design goal is the narrowest possible ask: specific capability,

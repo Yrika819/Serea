@@ -396,3 +396,12 @@ Model Router closure. P5 remains outside P4.
   fmt; workspace check; all-target and all-feature workspace tests; Clippy
   with denied warnings; docs validation; workspace smoke and all 76 smoke
   tests; Cargo metadata; identity guard; and `git diff --check`.
+- Exact behavior commit `2dfb912` (`test: cover model finish reason failures`)
+  passed Fast CI
+  [37675104356](https://github.com/Yrika819/Serea/actions/runs/37675104356),
+  Full CI
+  [37675104275](https://github.com/Yrika819/Serea/actions/runs/37675104275)
+  including Linux stable, MSRV 1.85, Intel, arm64, and release fault proof,
+  and cross-architecture SQLite
+  [37675104231](https://github.com/Yrika819/Serea/actions/runs/37675104231)
+  in both directions.

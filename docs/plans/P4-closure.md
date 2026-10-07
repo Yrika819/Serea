@@ -163,7 +163,7 @@ Model Router closure. P5 remains outside P4.
 - Nonclaims: no provider dispatch, real model service, image transport,
   structured validation, repair, fallback, or P5.
 
-## P4D Work in Progress
+## P4D Evidence (closed on branch)
 
 - First response-binding behavior slice RED proof: after adding the test for
   exact request/model/provider identity and clearing provider-controlled
@@ -538,4 +538,34 @@ Model Router closure. P5 remains outside P4.
   including Linux stable, MSRV 1.85, Intel, arm64, and release fault proof,
   and cross-architecture SQLite
   [37682848942](https://github.com/Yrika819/Serea/actions/runs/37682848942)
+  in both directions.
+- P4D closed on branch at behavior commit
+  `f36bd59b66d9bc67063e692b05aad7d0d5be38c5`. The accepted CHAT/TEXT path
+  atomically reserves and journals dispatch intent before the provider call,
+  binds provider response identity to the host-selected request/model/provider,
+  accepts only bounded STOP text, commits usage/cost/response/event together,
+  records definite failure and ambiguity without raw diagnostics, and recovers
+  unresolved prior-process attempts conservatively without redispatch. The
+  crash matrix covers reservation/event rollback, process loss before provider
+  entry, provider receipt, response-before-terminal-commit, durable completion
+  with caller loss, and response identity mismatch. P4E owns all retry,
+  structured validation, repair, fallback and budget orchestration; none is
+  exposed as an unsafe retry path from this slice.
+- P4D review passes all eight required sequential passes: frozen semantics;
+  permitted crate direction and no TaskEngine/Policy/Codex authority; atomic
+  Storage/Event Bus composition; real process-death recovery and repeated
+  recovery no-op; content-free events and no prompt persistence; validated
+  usage with host price and preserved ambiguity reservation; deterministic
+  crash/reopen tests without ignored cases or timing-based success; and
+  documentation/claims reconciled. No migration changed; 0001, 0002 and 0003
+  checksums remain the P4B values. No real provider network or credential is
+  present.
+- Exact P4D closure-document head
+  `59ca466ba2a217d82d16f24506a37a8e7933946f` passed Fast CI
+  [37683581338](https://github.com/Yrika819/Serea/actions/runs/37683581338),
+  Full CI
+  [37683581420](https://github.com/Yrika819/Serea/actions/runs/37683581420)
+  including Linux stable, MSRV 1.85, Intel, arm64, and release fault proof,
+  and cross-architecture SQLite
+  [37683581408](https://github.com/Yrika819/Serea/actions/runs/37683581408)
   in both directions.

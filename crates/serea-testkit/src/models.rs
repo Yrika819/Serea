@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use serea_protocol::provider::{ModelCallContext, ModelProvider};
-use serea_protocol::{ModelDescriptor, ModelError, ProviderHealth, ProviderId};
+use serea_protocol::{ModelDescriptor, ModelError, ModelRequest, ProviderHealth, ProviderId};
 
 /// One scripted outcome for a model call.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +50,9 @@ pub struct MockModelProvider {
     models: Vec<ModelDescriptor>,
     script: Mutex<VecDeque<ModelScript>>,
     calls: Mutex<u64>,
+    captured_requests: Mutex<Vec<ModelRequest>>,
+    health_script: Mutex<VecDeque<ProviderHealth>>,
+    health_calls: Mutex<u64>,
 }
 
 impl MockModelProvider {
@@ -60,6 +63,9 @@ impl MockModelProvider {
             models,
             script: Mutex::new(VecDeque::new()),
             calls: Mutex::new(0),
+            captured_requests: Mutex::new(Vec::new()),
+            health_script: Mutex::new(VecDeque::new()),
+            health_calls: Mutex::new(0),
         }
     }
 
@@ -82,10 +88,36 @@ impl MockModelProvider {
         self.push(ModelScript::Fail(error))
     }
 
+    /// Appends a provider-health result. The final scripted value repeats
+    /// after the queue is consumed, just like model outcomes.
+    pub fn push_health(&self, health: ProviderHealth) -> &Self {
+        self.health_script
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push_back(health);
+        self
+    }
+
     /// How many calls this provider has served.
     pub fn calls(&self) -> u64 {
         *self
             .calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Captured host requests, in the order `generate` received them.
+    pub fn captured_requests(&self) -> Vec<ModelRequest> {
+        self.captured_requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Number of provider-level health reads.
+    pub fn health_calls(&self) -> u64 {
+        *self
+            .health_calls
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -114,6 +146,20 @@ impl MockModelProvider {
         }
         script.pop_front()
     }
+
+    fn next_health(&self) -> Option<ProviderHealth> {
+        let mut health = self
+            .health_script
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if health.is_empty() {
+            return None;
+        }
+        if health.len() == 1 {
+            return health.front().copied();
+        }
+        health.pop_front()
+    }
 }
 
 #[async_trait]
@@ -128,13 +174,17 @@ impl ModelProvider for MockModelProvider {
 
     async fn generate(
         &self,
-        _request: &serea_protocol::ModelRequest,
+        request: &serea_protocol::ModelRequest,
         _ctx: &ModelCallContext,
     ) -> Result<serea_protocol::ModelResponse, ModelError> {
         *self
             .calls
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+        self.captured_requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(request.clone());
         match self.next_script() {
             Some(ModelScript::Respond(response)) => Ok(response),
             Some(ModelScript::Fail(error)) => Err(error),
@@ -152,7 +202,13 @@ impl ModelProvider for MockModelProvider {
     }
 
     async fn health(&self) -> ProviderHealth {
-        ProviderHealth::Ready
+        let mut calls = self
+            .health_calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *calls = calls.saturating_add(1);
+        drop(calls);
+        self.next_health().unwrap_or(ProviderHealth::Ready)
     }
 }
 

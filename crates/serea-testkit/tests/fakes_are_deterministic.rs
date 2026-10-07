@@ -504,6 +504,27 @@ fn the_model_double_replays_its_script_in_order() {
 }
 
 #[test]
+fn model_double_captures_requests_and_replays_provider_health() {
+    let provider = MockModelProvider::new(
+        ProviderId::new("ollama").expect("valid"),
+        synthetic_model_roster(),
+    );
+    let request = model_request();
+    provider.push_response(model_response(json!({"ok": true}), FinishReason::Stop));
+    provider
+        .push_health(ProviderHealth::Degraded)
+        .push_health(ProviderHealth::Ready);
+
+    let ctx = model_call_context();
+    let _ = block_on(provider.generate(&request, &ctx));
+    assert_eq!(provider.captured_requests(), vec![request]);
+    assert_eq!(block_on(provider.health()), ProviderHealth::Degraded);
+    assert_eq!(block_on(provider.health()), ProviderHealth::Ready);
+    assert_eq!(block_on(provider.health()), ProviderHealth::Ready);
+    assert_eq!(provider.health_calls(), 3);
+}
+
+#[test]
 fn the_model_double_repeats_its_last_entry_rather_than_panicking() {
     // An under-scripted test must stay deterministic instead of flaky.
     let provider = MockModelProvider::new(

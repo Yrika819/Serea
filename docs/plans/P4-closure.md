@@ -232,6 +232,28 @@ Model Router closure. P5 remains outside P4.
   GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
   [cross-architecture SQLite 37670534938](https://github.com/Yrika819/Serea/actions/runs/37670534938)
   GREEN in both directions.
+- Eighth P4D RED proof: the testkit scripted-model test failed to compile
+  because request capture and scripted health methods were absent. The
+  existing `MockModelProvider` now captures each exact `ModelRequest` and
+  scripts provider health readings in order, repeating its last reading like
+  model outcomes. Existing exact `ModelResponse` and `ModelError` scripts
+  already cover finish reasons, usage, latency and identity mismatches through
+  the real `ModelProvider` trait.
+- The fake remains in `serea-testkit`, with no router runtime or testkit
+  production dependency edge and no network access. Its focused test checks
+  captured request equality, DEGRADED then READY health, deterministic final
+  health repetition, and read count. Local validation passes: fmt; workspace
+  check; all-target and all-feature tests; Clippy with denied warnings; docs
+  validation; workspace smoke and its 76 tests; Cargo metadata; identity guard;
+  and `git diff --check`. The exact preceding docs head
+  `377a41089556b4a7fd6558e6820fd8465e744d39` passed Fast CI
+  [37671204419](https://github.com/Yrika819/Serea/actions/runs/37671204419),
+  Full CI
+  [37671203777](https://github.com/Yrika819/Serea/actions/runs/37671203777)
+  including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof, and
+  cross-architecture SQLite
+  [37671203755](https://github.com/Yrika819/Serea/actions/runs/37671203755)
+  in both directions. Exact testkit-slice Actions are pending.
 - Second P4D RED proof: the post-routing request test initially failed to
   compile because `ModelRouterV1::build_request` did not exist. The constructor
   now binds to the same `RoutingSessionV1`, rechecks eligibility, and copies

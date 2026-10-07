@@ -530,3 +530,12 @@ Model Router closure. P5 remains outside P4.
   validation; workspace smoke; all 76 workspace smoke tests; Cargo metadata;
   identity guard; and `git diff --check`. Existing vendored serde_json emits
   its prior `usize::max_value` deprecation warning; validation succeeds.
+- Exact behavior commit `f36bd59b66d9bc67063e692b05aad7d0d5be38c5`
+  passed Fast CI
+  [37682848836](https://github.com/Yrika819/Serea/actions/runs/37682848836),
+  Full CI
+  [37682848895](https://github.com/Yrika819/Serea/actions/runs/37682848895)
+  including Linux stable, MSRV 1.85, Intel, arm64, and release fault proof,
+  and cross-architecture SQLite
+  [37682848942](https://github.com/Yrika819/Serea/actions/runs/37682848942)
+  in both directions.

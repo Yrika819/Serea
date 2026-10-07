@@ -1,6 +1,6 @@
 # Model Protocol
 
-Protocol ID: `PROTO-MODEL` · Surface: `serea.model/1` · Status: **FROZEN for P0**
+Protocol ID: `PROTO-MODEL` · Surface: `serea.model/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.5.0`
 
 This protocol defines the seam between Serea and any language model. Its
 purpose is to make model choice a **configuration** decision rather than an
@@ -21,10 +21,9 @@ Consequences that hold everywhere in this protocol:
 - A model cannot choose its own tools, change its own risk class, or widen
   any scope.
 - A model failure never silently escalates to a more expensive or more
-  privileged model. `codex_allowed` is `false` by default and Codex is never a
-  `ModelRouter` candidate. Ordinary task routing and failures never activate
-  Codex; any future delegated use is a separate, explicitly gated GoalLatch
-  adapter concern.
+  privileged model. Codex is never a `ModelRouter` candidate. Ordinary task
+  routing and failures never activate Codex; any future delegated use is a
+  separate, explicitly gated GoalLatch adapter concern.
 - Model self-report of having performed an action is **never** evidence. Only
   provider receipts are.
 
@@ -47,8 +46,13 @@ pub trait ModelProvider: Send + Sync {
 ```
 
 Provider implementation details — HTTP clients, prompt templates, sampling
-quirks, provider-specific retry logic — are confined to the provider crate.
-The task engine sees only the types below.
+quirks, and provider-specific behavior — are confined to the provider crate.
+The Model Router and caller exchange the types below; the router has no
+`serea-task-engine` dependency.
+
+For P4 V1, `generate()` returns one completed `ModelResponse`. Streaming is
+out of scope; `supports_streaming` remains descriptive and does not define a
+token stream or partial UI/durability contract.
 
 ## 3. `ModelRequest`
 
@@ -75,19 +79,28 @@ The task engine sees only the types below.
 `purpose` drives routing and accounting. It is host-assigned from the task's
 phase and the step's role, never chosen by the model.
 
-`temperature` remains an f64 sampling parameter on model/1. P2A SCJ-1's
-integer-only domain does not change this model wire contract. A model document
-with fractional temperature is not canonicalisable by SCJ-1; future runtime
-digest/storage paths must refuse it until a separate fractional canonicalization
-range/encoding decision. Never truncate sampling parameters to manufacture a
-digest, and do not claim all MODEL_TURN inputs/blobs are automatically covered.
+`ModelRequest` is the provider-dispatch envelope after model selection. The host
+constructs it with the selected `model_id`; there is no placeholder model ID
+before routing. Its messages are text-only in P4 V1. `temperature` remains a
+finite host-selected `f64` under existing wire semantics. P4 rejects NaN and
+either infinity before dispatch. P4 does not digest raw ModelRequest, persist a
+canonical request blob, truncate/round/stringify temperature for a digest, or
+introduce a new numeric range where none is frozen. SCJ-1 does not apply to
+ModelRequest in P4; no model wire bump is required.
 
 ### 3.1 `response_format`
 
-| Type | Behaviour |
-| --- | --- |
-| `TEXT` | Free text for `CHAT` only. Its output is rendered to the user and is never parsed for authority. |
-| `JSON_SCHEMA` | Output must validate against `schema` or the call fails. Used for planning, extraction, and tool proposals. |
+| Purpose | Format | Structured requirement |
+| --- | --- | --- |
+| `CHAT` | `TEXT` only | `ANY` |
+| `PLANNING` | `JSON_SCHEMA` only | `STRICT` |
+| `EXTRACTION` | `JSON_SCHEMA` only | `STRICT` |
+| `ANALYSIS` | `JSON_SCHEMA` only | `ANY` |
+| `PROACTIVE` | `JSON_SCHEMA` only | `STRICT` |
+| `STRUCTURED_REPAIR` | `JSON_SCHEMA` only | `STRICT` |
+
+An illegal combination is refused before provider dispatch. `ANY` permits a
+BEST_EFFORT or STRICT provider; host JSON Schema validation remains mandatory.
 
 There is no third option. There is no "parse the prose and hope" path.
 
@@ -110,9 +123,13 @@ There is no third option. There is no "parse the prose and hope" path.
 `finish_reason` ∈ `STOP`, `LENGTH`, `CONTENT_FILTER`, `ERROR`,
 `STRUCTURE_INVALID`.
 
-`structured` is present only when `response_format.type == JSON_SCHEMA` and
-validation succeeded. It has **not** passed capability validation at this
-point — that is a separate, later, host-owned stage.
+Provider-supplied `structured` is untrusted and is never proof of validation.
+At untrusted ingress P4 ignores or clears it. For JSON_SCHEMA, provider
+`content` is the raw source; the host duplicate-key-rejecting parser and host
+JSON Schema validation produce the accepted/sanitized structured value.
+STRICT provider claims do not replace host validation. An accepted structured
+value has not passed capability validation — that is a separate, later,
+host-owned stage.
 
 ### 4.1 The trust boundary, stated precisely
 
@@ -154,8 +171,9 @@ Capabilities are **data**, never scattered `if provider == …` branches.
 `json_schema_mode` ∈ `STRICT` (provider guarantees schema conformance),
 `BEST_EFFORT` (provider is instructed but may deviate), `UNSUPPORTED`.
 
-Only `STRICT` models may be used for `PLANNING` and `EXTRACTION`. A
-`BEST_EFFORT` model may serve `CHAT` and `ANALYSIS` only.
+Eligibility follows the purpose matrix in §3.1. Effective capabilities are
+the intersection of the configured host capability ceiling and any narrower
+provider advertisement.
 
 ### 5.1 Initial model roster
 
@@ -163,37 +181,95 @@ Only `STRICT` models may be used for `PLANNING` and `EXTRACTION`. A
 | --- | --- | --- | --- | --- |
 | `nemotron-3-nano-30b` | default assistant; planning; email/calendar analysis; memory extraction; proactive watcher | text, tools, `STRUCTURED_OUTPUT: STRICT`, fast | Ollama Cloud | Primary for nearly all work |
 | `gpt-oss-20b` | strict structured-output fallback; JSON/tool-plan repair; alternate reasoning | text, tools, `STRUCTURED_OUTPUT: STRICT` | Ollama Cloud | Second position in the routing chain |
-| `gemma-4-31b` | vision / screenshot interpretation | text, **vision**, tools | Ollama Cloud | Reached only when an input is an image |
-| `codex` | GoalLatch-mediated local code work only | code_specialist | *(disabled in Serea)* | **Never a normal fallback** |
+| `gemma-4-31b` | vision | text, **vision**, tools | Host-configured | Eligible only for a future typed image-input request |
+| `codex` | known but disabled | code_specialist | *(disabled in Serea)* | Never routable by ModelRouter |
+
+This table names model roles only. Trusted host roster configuration supplies
+provider and deployment facts; provider discovery cannot widen or reorder it.
 
 `codex` is registered as *known but disabled*. See §8.
 
 ## 6. Model routing
 
-The `ModelRouter` selects a model for a call. Selection is deterministic given
-`(purpose, required_capabilities, data_class, task_constraints, health)`:
+The pre-routing host boundary is an internal `PreparedModelCallV1` (or
+equivalent): a host-prepared prompt after data classification, required
+redaction, purpose and format assignment, and routing-requirement construction.
+Raw user text is not accepted as trusted router input. Production construction
+uses a trusted host seam; a public caller-set `redaction_verified: bool` is not
+proof. P4 does not implement a general redaction engine.
 
-1. Filter the roster to healthy models.
-2. Filter by required capability flags. Vision work requires `vision: true`.
-3. Filter by data class. See [Data Classification §5](09-data-classification-protocol.md#5-egress-rules).
-4. Filter out disabled models and always exclude `codex`. Codex is never a
-   `ModelRouter` candidate, regardless of task kind or failure state.
-5. Order by the configured preference chain for that `purpose`.
-6. Take the first surviving model.
+The typed `ModelRoutingRequirementsV1` contains exactly
+`vision_required: bool`, `tools_required: bool`, `min_context_tokens: u32`,
+`min_output_tokens: u32`, and `structured_requirement: ANY | STRICT`. No
+arbitrary JSON, free-form constraint map, provider-specific field, or
+model-authored requirement exists. The complete routing inputs are purpose,
+these requirements, data class, an immutable host-resolved egress-policy
+snapshot, immutable configured roster snapshot, one health snapshot, and
+host-owned dispatch/budget/deadline gates. A budget or deadline may refuse a
+call but cannot reorder preference.
 
-No step consults the model about which model to use. No step uses provider
-identity as a branch.
+`ModelRosterV1` is immutable trusted host configuration loaded and validated
+at Core/process startup. There is no P4 V1 hot reload. Duplicate ModelId
+rejects startup; one ID identifies exactly one provider/model entry. Each
+entry contains host-owned model/provider IDs, `ModelDeploymentClass` (`CLOUD`
+or `LOCAL`), enabled state, allowed capability ceiling, and cost class.
+Deployment class is not inferred from IDs, hostname, provider discovery, or
+model output. Provider discovery can confirm existence, narrow capabilities,
+or make an entry unavailable; it cannot add models, add Codex, widen
+capabilities, alter order/deployment/cost class, or change preference.
+
+Normal ordered chains are `nemotron-3-nano-30b`, then `gpt-oss-20b` for CHAT,
+PLANNING, EXTRACTION, ANALYSIS, and PROACTIVE. STRUCTURED_REPAIR has only
+`gpt-oss-20b`. For `vision_required`, `gemma-4-31b` is the only initial
+eligible model, but only for a future request surface with typed image input.
+Current ModelRequest is text-only: a request needing actual image bytes is
+refused, and no hidden image channel exists. Text-only calls do not route to
+Gemma merely for vision. Codex is excluded from every chain and cannot become
+eligible through health, errors, or model output.
+
+Take exactly one logical health snapshot before route selection. Each
+configured provider/model candidate is READY or DEGRADED; a health-read
+failure is DEGRADED. Reuse the snapshot for initial selection and normal
+fallback. Repair takes a snapshot at the start of its ladder and reuses it for
+both repair attempts; degraded/unavailable repair model means no repair
+dispatch and validation failure. Filter candidates and take the first
+survivor of the explicit chain. No dynamic tie-breaking by latency, price,
+usage, randomness, health score beyond READY/DEGRADED eligibility, provider
+response, or model recommendation is allowed.
+
+Budgets/deadlines reject a call without silently reordering the chain.
+Fallback and repair are new dispatch attempts and require a fresh egress
+policy snapshot. `ModelEgressPolicySnapshotV1` is immutable host-resolved
+policy with at least `private_cloud_egress_allowed: bool`; it is not
+model/provider settable and P4 does not persist policy authority. Revocation
+prevents future dispatches but cannot undo an already sent request.
+
+The data-class matrix for P4 dispatch is PUBLIC → CLOUD/LOCAL; PERSONAL →
+CLOUD only from trusted prepared/redacted call and LOCAL permitted; PRIVATE →
+dispatch refused in P4 V1 even if cloud policy eligibility is true, because
+durable PRIVATE result protection is incomplete; SECRET and CREDENTIAL →
+refused. This is a P4 fail-closed implementation limit and does not alter the
+global matrix in [Data Classification §5](09-data-classification-protocol.md#5-egress-rules).
 
 ### 6.1 Routing is not escalation
 
-If the primary model fails with a *retryable* error, the router may advance to
-the next configured model in the preference chain. This is a **fallback**, and
+Fallback occurs only for a definite `ModelError` with `retryable = true` from
+the initially selected normal model. `retryable = true` means the adapter can
+declare a fresh attempt semantically safe; ambiguous outcomes use
+`retryable = false` and a stable kind such as `AMBIGUOUS_DISPATCH`. Control
+flow never parses free-text messages. Fallback advances to the next configured
+model in the preference chain. This is a **fallback**, and
 it is:
 
 - bounded by the task's `max_model_calls` budget,
 - recorded as a `MODEL_FALLBACK` event with the reason,
 - restricted to the configured chain, which never contains `codex`,
 - never triggered by the *content* of a model response.
+
+No fallback occurs for CONTENT_FILTER, LENGTH, finish_reason ERROR, schema
+validation failure, repair exhaustion, ambiguous dispatch, cancellation, or
+budget exhaustion. Fallback depth is 1 and chain length is 2. If fallback
+fails, record fallback exhaustion and stop.
 
 A model asking to be replaced with a more capable model has no effect.
 
@@ -204,11 +280,11 @@ Invalid model output is an expected, routine failure, not an exception path.
 ### 7.1 The repair ladder
 
 ```
-1. Validate against response_format.schema
+1. Parse provider `content` with duplicate-key rejection, then validate it
+   against response_format.schema (Draft 2020-12)
 2. FAIL → attempt repair
-     ├─ 1st failure: one repair call to the configured
-     │  structured-repair model (gpt-oss-20b), given only the
-     │  schema and the invalid payload. Never the full conversation.
+     ├─ 1st failure: one repair dispatch to gpt-oss-20b, given only the
+     │  schema, bounded invalid payload, and bounded sanitized validator errors.
      │  (repair_attempts = 1)
      ├─ 2nd failure: one more repair call, with the validation
      │  errors appended. (repair_attempts = 2)
@@ -218,8 +294,8 @@ Invalid model output is an expected, routine failure, not an exception path.
 
 ### 7.2 Hard constraints on repair
 
-1. **Bounded.** At most `max_repair_attempts` (default 2) repair calls per
-   step. The bound is host configuration, not model-tunable.
+1. **Bounded.** At most `max_repair_attempts` (default 2) repair dispatches per
+   structured operation. The bound is host configuration, not model-tunable.
 2. **Isolated.** A repair call receives the schema, the invalid payload, and
    the validator's error list. It does **not** receive the conversation, the
    user's personal data beyond what is inside the invalid payload, or any
@@ -235,15 +311,19 @@ Invalid model output is an expected, routine failure, not an exception path.
 
 ### 7.3 Failure is a first-class outcome
 
-A model that cannot produce valid structured output **fails the task's
-planning or extraction step** with `ActionErrorKind::VALIDATION`, emits
-`MODEL_OUTPUT_INVALID`, and — where the task permits — may fall back to a
-different configured model for a **fresh** attempt. It never proceeds with
-guessed content.
+A schema-invalid output enters the bounded repair ladder; exhaustion is hard
+validation failure and does not start a fresh original-request fallback.
+CONTENT_FILTER is terminal. LENGTH has no fallback and no repair of truncated
+structured output. A repair failure consumes an attempt; a second dispatch to
+the same repair model is allowed only after a definite failure and only when
+one repair attempt remains. Ambiguous repair dispatch stops immediately. Every
+repair has a new RequestId, is accounted as a model call, and obeys normal
+data-class egress restrictions. `MODEL_REPAIRED` means host validation passed,
+not that the model claimed success.
 
 ## 8. Codex exclusion
 
-`codex_allowed` defaults to `false` and is a **task-level** setting.
+Codex is known but disabled and is never routable by ModelRouter.
 
 1. Codex is never a `ModelRouter` candidate, and no routing chain for any
    `purpose` contains it.
@@ -256,17 +336,20 @@ guessed content.
    activated by ordinary task failure. P0 has no GoalLatch provider; P15 plans
    only the offline fake. A real adapter remains unscheduled and requires
    separate explicit authorization after the readiness gate.
-5. `codex_allowed` defaults to `false`; no normal task routing exception exists.
-   Any future change to delegated adapter eligibility requires a separate
-   explicit durable policy setting and audit event. It is not settable by model
-   output or from the Android client.
+5. P4 does not add `codex_allowed`. Any later GoalLatch/Codex work remains a
+   separate provider boundary with separate authorization.
 
 These are testable invariants with named tests, not prose intentions.
 
 ## 9. Usage accounting and budgets
 
-Every call records to `model_usage`: `task_id`, `model_id`, `purpose`, tokens
-in/out, latency, `cost_class`, `repair_attempts`, `fallback_from`, timestamp.
+Every successful call with trustworthy usage records to `model_usage`:
+`task_id`, `model_id`, `purpose`, tokens in/out, latency, host-owned
+`cost_usd_micros`, host-owned `cost_class`, repair relationship,
+`fallback_from`, and timestamp. Provider cost_class is not authoritative and
+no f64 money is durable. Each committed dispatch intent consumes call budget;
+unknown usage is not fabricated. See [ADR-0032](../decisions/ADR-0032-model-dispatch-durability-and-accounting-v1.md)
+for attempt durability, reservation, privacy and retention semantics.
 
 Budgets are per task, host-enforced, and cannot be raised by the model:
 
@@ -300,7 +383,19 @@ See [Bounds Protocol](10-bounds-protocol.md) for the full set.
 | M4 | Structured output repair is bounded, isolated, and ends in explicit failure. |
 | M5 | No routing chain, for any purpose, reaches `codex`. |
 | M6 | Model budget exhaustion fails the task explicitly; it never degrades to a privileged model. |
-| M7 | `codex_allowed` is task-level, host-owned, and not model- or device-settable. |
+| M7 | P4 has no `codex_allowed`; Codex remains outside every ModelRouter chain. |
 | M8 | Every model call is accounted with tokens, latency, purpose, and repair count. |
-| M9 | Only `STRICT` structured-output models may serve `PLANNING` or `EXTRACTION`. |
+| M9 | The purpose/format/structured-requirement matrix in §3.1 is enforced before dispatch. |
 | M10 | No test reaches a real model provider. |
+| M11 | Provider content is duplicate-key-rejected and host schema-validated; provider `structured` is not validation proof. |
+| M12 | One RequestId identifies one provider dispatch attempt; ambiguity is not automatically retried. |
+
+## 12. P4A contract closure
+
+The P4 V1 routing, dispatch, validation, repair, fallback, accounting, and
+durability contracts are recorded in Accepted [ADR-0031](../decisions/ADR-0031-model-roster-routing-and-egress-v1.md),
+[ADR-0032](../decisions/ADR-0032-model-dispatch-durability-and-accounting-v1.md),
+and [ADR-0033](../decisions/ADR-0033-structured-validation-repair-and-fallback-v1.md).
+They advance the architecture contract set to `serea-arch/2.5.0` without
+changing `serea.model/1`. Acceptance closes architecture decisions only; P4
+runtime remains unstarted.

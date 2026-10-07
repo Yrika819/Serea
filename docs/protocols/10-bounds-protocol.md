@@ -1,6 +1,6 @@
 # Bounds Protocol
 
-Protocol ID: `PROTO-BOUNDS` · Surface: `serea.bounds/1` · Status: **FROZEN for P0**
+Protocol ID: `PROTO-BOUNDS` · Surface: `serea.bounds/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.5.0`
 
 This protocol makes "bounded orchestration" concrete. It owns every bound the
 host enforces on models, tools, retries, tasks, approvals, and the device link.
@@ -47,6 +47,12 @@ enforced anywhere else is a bug.
 | Bound name | Default | Scope | Exhaustion behaviour |
 | --- | --- | --- | --- |
 | `max_model_calls_per_task` | 12 | per-task | Task → `FAILED`, reason `BOUND_EXCEEDED_MODEL_CALLS` |
+| `max_model_prompt_bytes` | 1048576 | per prepared model prompt | Fail closed before dispatch; no semantic truncation |
+| `max_model_schema_bytes` | 65536 | per JSON Schema | Host configuration/request failure before dispatch |
+| `max_model_response_bytes` | 262144 | per provider response | Validation failure; never silently truncate |
+| `max_model_json_depth` | 64 | model JSON parse/validation | Fail closed on deeper JSON |
+| `max_model_validation_errors` | 32 | per validation result | Diagnostic list is bounded |
+| `max_model_validation_error_bytes` | 16384 | diagnostics per validation result | Diagnostics bounded; never echo the full invalid payload |
 | `max_tool_calls_per_task` | 24 | per-task | Task → `FAILED`, reason `BOUND_EXCEEDED_TOOL_CALLS` |
 | `max_model_turns_per_task` | 12 | per-task | Task → `FAILED`, reason `BOUND_EXCEEDED_MODEL_TURNS` |
 | `max_output_tokens_per_call` | 2048 | per-call | Call truncated, `finish_reason: LENGTH`; the step then fails `VALIDATION`, never proceeds on partial structured output |
@@ -65,7 +71,7 @@ enforced anywhere else is a bug.
 | `max_events_per_minute_per_device` | 600 | per-device | Frame refused; device backs off; dependent tasks → `BLOCKED` |
 | `max_concurrent_device_sessions` | 4 | global | Refusal to open beyond the limit |
 | `max_task_total_tokens` | 128000 | per-task | Task → `FAILED`, reason `BOUND_EXCEEDED_TOKEN_BUDGET` |
-| `max_daily_spend_usd` | 5.00 | global (per calendar day) | Task → `FAILED`, reason `BOUND_EXCEEDED_DAILY_SPEND` |
+| `max_daily_spend_usd` | 5.00 USD (5,000,000 USD_MICROS) | global (per UTC calendar day) | Task → `FAILED`, reason `BOUND_EXCEEDED_DAILY_SPEND` |
 | `max_retained_tasks` | 500 | global | Oldest terminal tasks purged per retention; never non-terminal |
 | `max_scheduler_catch_up_per_wake` | 10 | per-schedule per wake | Remaining due occurrences stay durably queued for a `RETRY_DUE` wake; emit `SCHEDULE_CATCH_UP_DEFERRED`; no occurrence is silently dropped |
 | `max_active_schedules` | 256 | global active schedule records | Refuse create/reactivation at capacity; return bound error and emit `BOUND_EXCEEDED` when the error event itself fits the transaction/event-store limits; preserve existing rows |
@@ -79,6 +85,7 @@ enforced anywhere else is a bug.
 | `max_retention_delete_batch` | 512 | whole event records eligible for deletion in one retention transaction | Delete no more than the batch; continue later; never partially rewrite a row; retention deadline still applies |
 | `max_retained_events` | 1000000 | retained event content records per host, excluding any minimal sequence-integrity metadata selected by retention ADR | At capacity, prune only contract-eligible records; if capacity remains exhausted, refuse new event-producing transactions atomically with typed capacity error; no silent drop |
 | `max_event_store_bytes` | 536870912 | total SQLite bytes attributable to event content and sequence-integrity metadata, measured by the documented deterministic accounting method | At capacity, prune only contract-eligible records; if still full, refuse event-producing transactions atomically with typed capacity error; no silent drop |
+| `model_usage_retention_days` | 365 | detailed model usage accounting | Task reference is nulled on task deletion; non-identifying accounting is removed at expiry |
 
 For `max_event_store_bytes`, the deterministic logical accounting is the
 UTF-8 byte length of each retained canonical `SereaEvent` object, plus 8 bytes
@@ -443,58 +450,57 @@ no effect to reconcile, the call is simply retried under
 
 ## 7. Cost bounds
 
-### 7.1 Token budgets
+### 7.1 Model token and spend budgets
 
 | Bound | Default | Scope | Note |
 | --- | --- | --- | --- |
 | `max_output_tokens_per_call` | 2048 | per-call | Set on `ModelRequest.max_output_tokens` |
-| `max_task_total_tokens` | 128000 | per-task | Sum of input and output across all calls, including repair and fallback |
-| `max_daily_spend_usd` | 5.00 | global, per calendar day | Derived from `cost_class` and the provider price table |
+| `max_task_total_tokens` | 128000 | per-task | Trustworthy input/output counts across normal, fallback, and repair calls |
+| `max_daily_spend_usd` | 5.00 | global, per UTC calendar day | USD_MICROS, reserved transactionally before dispatch |
 
-Token accounting is not advisory. The counter increments inside the same
-transaction that records usage, so a crash cannot lose a call from the budget.
+One RequestId names one provider dispatch attempt. Each committed dispatch
+intent consumes a call budget unit even if the result is failed or ambiguous.
+Only trustworthy returned token counts enter task totals. Known task usage at
+or above the ceiling refuses a new intent; if a valid response reaches or
+exceeds the ceiling, persist it and return the explicit bound outcome. Never
+shorten prompt/output to fit a remaining budget.
 
-### 7.2 The `model_usage` table
+Money is non-negative integer USD_MICROS (one USD is 1,000,000 micros), with
+checked integer arithmetic and wider multiplication intermediates. Each input
+and output cost component rounds upward independently to one micro-USD. Trusted
+immutable host price entries are keyed by provider_id/model_id and snapshot
+cost_class, rates, and price_revision per attempt. FREE entries require both
+rates zero; unknown enabled-model price entries reject startup. Provider
+reported cost is not authoritative.
 
-Every model call writes one row, per
-[Model Protocol §9](03-model-protocol.md#9-usage-accounting-and-budgets). This
-is the data every cost bound is computed from.
+Before dispatch, reserve the maximum allowed charge using configured model
+context capacity, request max_output_tokens, and host rates. Reservation and
+DISPATCH_INTENT share one serialized SQLite transaction. The UTC-day query
+counts actual settled cost plus reservations for unresolved/ambiguous attempts.
+On valid usage, release unused reservation logically. With unknown usage keep
+the full reservation for that accounting day; never estimate tokens or refund
+it. Budgets may refuse a candidate/call but never reorder the explicit model
+preference chain.
 
-| Column | Type | Purpose |
-| --- | --- | --- |
-| `usage_id` | `EventId` | `evt_` + ULID; never reused |
-| `task_id` | `TaskId` | `null` for maintenance calls, which charge to the global budget only |
-| `model_id` | `ModelId` | Which model actually served the call |
-| `purpose` | enum | `PLANNING`, `CHAT`, `EXTRACTION`, `ANALYSIS`, `PROACTIVE`, `STRUCTURED_REPAIR` |
-| `input_tokens` | integer | Counted, not estimated |
-| `output_tokens` | integer | Counted, not estimated |
-| `cost_usd` | decimal | From the configured price table, not from provider billing |
-| `cost_class` | enum | `FREE`, `LOW`, `PAID` |
-| `latency_ms` | integer | Wall time of the call |
-| `repair_attempts` | integer | Repair calls on this step, for cost attribution |
-| `fallback_from` | `ModelId` | `null` unless this call was a fallback |
-| `recorded_at` | timestamp | Host clock |
+### 7.2 Durable usage semantics
 
-Rows are append-only and are retained past task deletion: the counters and
-non-identifying metrics survive where the task body does not
-([Task Protocol §8](02-task-protocol.md#8-task-retention-and-privacy)). A row
-references `task_id`; deleting the task nulls the reference and keeps the row.
+P4 migration 0003 is authorized but not created by this contract closure. Its
+`model_usage` table records trustworthy usage and host-computed
+`cost_usd_micros`, host cost_class, latency, purpose, repair/fallback
+relationship and timestamp. It has a nullable task_id with `ON DELETE SET
+NULL`; after deletion, non-identifying accounting remains until
+`model_usage_retention_days = 365`. No prompt/output content, content digest,
+conversation/device/user identifier, title, or intent is retained. Every
+attempt has separate durable state; unresolved/ambiguous attempts retain their
+spend reservation. See [ADR-0032](../decisions/ADR-0032-model-dispatch-durability-and-accounting-v1.md)
+for conceptual tables, indexes, privacy, and retention.
 
 ### 7.3 Exhaustion fails; it never silently degrades
 
-When a cost bound is reached, the task fails with `BOUND_EXCEEDED_TOKEN_BUDGET`
-or `BOUND_EXCEEDED_DAILY_SPEND`, and the run stops. It does **not**:
-
-- swap to a cheaper model to stretch the remaining budget;
-- shorten output and pretend the result is complete;
-- retry with a shorter prompt, which hides the fact that the budget was spent;
-- continue against a local model "for free" without asking.
-
-Silently changing the model would break the determinism guarantee in
-[Model Protocol §6](03-model-protocol.md#6-model-routing) — same durable state
-and same inputs must produce the same routing decision — and it would mean a
-task's capability and cost profile depended on a budget the user cannot see.
-Asking is cheap; an unannounced downgrade is not.
+When a token or spend bound refuses an operation, stop with an explicit typed
+outcome. Do not swap to a cheaper model, silently shorten output/prompt, retry
+with less context, or substitute a local model. Routing remains the explicit
+configured chain; a bound can reject dispatch but cannot reorder candidates.
 
 ---
 
@@ -610,3 +616,6 @@ unexplained failure is indistinguishable from a bug.
 - 2026-10-07: ADR-0028 adds `max_schedule_template_bytes = 32768` for raw and
   canonical ScheduledTaskTemplateV1 bytes. Oversized create/update transactions
   refuse atomically.
+- 2026-10-07: ADR-0032/0033 add bounded model prompt/schema/response/JSON and
+  diagnostic defaults, UTC USD_MICROS reservations, and 365-day usage detail
+  retention. Values are frozen contracts; runtime enforcement remains P4 work.

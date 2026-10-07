@@ -1,12 +1,12 @@
 # Serea Decision Index
 
-Current frozen architecture: `serea-arch/2.4.0`; P0/P1 baseline
+Current frozen architecture: `serea-arch/2.5.0`; P0/P1 baseline
 `serea-arch/0.2.0` remains historical. P2 is closed. P3 is closed on the open
-`p3/event-bus-scheduler` candidate branch; PR #1 is not yet merged to `main`.
-Current P3 validation results and scope limits belong in the
+`main` branch. Current P3 validation results and scope limits belong in the
 [P3 closure record](../plans/P3-closure.md). ADR-0021 remains Proposed as an
-architecture decision although its P3 event runtime is implemented on the
-candidate branch; ADR-0022/24 remain Proposed for their unclosed scopes.
+architecture decision; ADR-0022/24 remain Proposed for their unclosed scopes.
+P4A contract closure is accepted by ADR-0031 through ADR-0033; P4 runtime has
+not started.
 
 ## Accepted decisions
 
@@ -26,7 +26,10 @@ candidate branch; ADR-0022/24 remain Proposed for their unclosed scopes.
 | [ADR-0012](ADR-0012-capability-provider-protocol-boundary.md) | Capability/provider protocol is the sole effect boundary | Accepted |
 | [ADR-0016](ADR-0016-proactive-watcher-is-read-only.md) | Proactive watcher is read-only | Accepted |
 | [ADR-0017](ADR-0017-deletion-cascade-completed-event-kind.md) | `DELETION_CASCADE_COMPLETED` is a registered `EventKind` | Accepted |
-| [ADR-0025](ADR-0025-p3-event-participant-composition.md) | Fixed two-participant event/journal composition inside the Storage transaction | **Accepted**; implemented on the P3 candidate branch |
+| [ADR-0025](ADR-0025-p3-event-participant-composition.md) | Fixed two-participant event/journal composition inside the Storage transaction | **Accepted**; implemented in merged P3 |
+| [ADR-0031](ADR-0031-model-roster-routing-and-egress-v1.md) | Model roster, routing requirements, and egress V1 | **Accepted**; architecture `serea-arch/2.5.0`; model and bounds surfaces unchanged |
+| [ADR-0032](ADR-0032-model-dispatch-durability-and-accounting-v1.md) | Model dispatch durability, ambiguity, and accounting V1 | **Accepted**; migration 0003 concept only; event/model/bounds surfaces unchanged |
+| [ADR-0033](ADR-0033-structured-validation-repair-and-fallback-v1.md) | Structured validation, repair, and fallback V1 | **Accepted**; architecture `serea-arch/2.5.0`; model and bounds surfaces unchanged |
 
 ## P2 decision disposition
 
@@ -40,7 +43,7 @@ MSRV verification. A green wire-member gate does not accept full runtime fencing
 | [ADR-0018](ADR-0018-taskstep-lifecycle-and-field-presence.md) | Four Option conversions, seven unconditional fields, open wire status and lifecycle presence | **Accepted**, P2A wire and scoped P2F/P2G runtime lifecycle/recovery implemented; no claim beyond the closed P2 phase scope |
 | [ADR-0019](ADR-0019-canonical-json-and-idempotency-preimage.md) | Full SCJ-1/digest/IDK-1 primitives, sha2 0.11 no defaults | **Accepted**, full SCJ-1/digest/duplicate-aware parsing/IDK-1 implemented in P2A |
 | [ADR-0020](ADR-0020-bounds-b3-scope-clarification.md) | B3 operational versus structural semantic clarification | **Accepted**, semantic B3 clarification; architecture-minor in isolation, no resource bounds |
-| [ADR-0021](ADR-0021-p2-p3-event-atomicity-seam.md) | Shared-receiver immutable-successful-transition seam; E3 forward only, no backfill | **Proposed**; P3 event runtime is implemented on the candidate branch; the historical ADR has not been ratified |
+| [ADR-0021](ADR-0021-p2-p3-event-atomicity-seam.md) | Shared-receiver immutable-successful-transition seam; E3 forward only, no backfill | **Proposed**; P3 runtime is merged; the historical ADR has not been ratified |
 | [ADR-0022](ADR-0022-durable-private-data-at-rest.md) | Fail-closed PRIVATE at-rest dispatch | **Proposed**; P2D fail-closed blob dispatch implemented; real backend/key custody and ordinary-row PRIVATE representation outstanding |
 | [ADR-0023](ADR-0023-text-field-validation-categories.md) | Complete O/L/P validation, pinned whitespace, exact identifier subtraction | **Accepted**, complete O/L/P validation implemented in P2A |
 | [ADR-0024](ADR-0024-lease-fencing-and-commit-under-lease.md) | Authoritative unreleased lease fencing and revocation | **Proposed**; P2E authority, P2F outcome/engine integration and P2G recovery implemented; full architecture ratification remains outstanding |

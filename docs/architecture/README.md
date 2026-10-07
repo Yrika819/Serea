@@ -1,6 +1,6 @@
 # Serea Architecture
 
-Architecture version: `serea-arch/2.4.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
 
 This directory is the architecture package for Serea Core. It describes how the
 frozen protocols in [`docs/protocols/`](../protocols/00-protocol-index.md) are
@@ -56,9 +56,9 @@ Neither is allowed to quietly widen the other.
 
 **Three version axes, never collapsed** ([Protocol Index §4](../protocols/00-protocol-index.md#4-versioning)):
 
-| Axis | Current value at `serea-arch/2.4.0` | Governs |
+| Axis | Current value at `serea-arch/2.5.0` | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/2.4.0` | The whole contract set, including this package |
+| Architecture version | `serea-arch/2.5.0` | The whole contract set, including this package |
 | Capability version | Per-descriptor SemVer, e.g. `calendar.events.list` at `1.2.0` | One capability's input/output contract |
 | Wire protocol version | `serea.action/2`, `serea.task/2`; `serea.model/1`, `serea.policy/1`, `serea.approval/1`, `serea.event/1`, `serea.device/2`, `serea.goallatch/1`, `serea.data/1`, `serea.bounds/1`, `serea.scheduler/1` | One transport or serialization surface; envelope version stays 1 |
 
@@ -108,12 +108,21 @@ Accepted ADR-0029 defines `DeviceConnectedPayloadV1` and the explicit durable
 architecture advances to `serea-arch/2.3.0`; Event, Scheduler, and Task wire
 surfaces remain unchanged.
 
-### 3.6 Current architecture/2.4 contract
+### 3.6 Architecture/2.4 contract history
 
 Accepted ADR-0030 defines closed approval lifecycle routing identity and durable
 Scheduler handoff to future P6. Scheduler does not apply approval outcomes or
-transition tasks. The architecture advances to `serea-arch/2.4.0`; Event,
+transition tasks. This advanced the architecture to `serea-arch/2.4.0`; Event,
 Scheduler, Approval, and Task wire surfaces remain unchanged.
+
+### 3.7 Current architecture/2.5 contract
+
+Accepted ADR-0031 through ADR-0033 close P4 Model Router routing, egress,
+dispatch durability/accounting, structured validation, repair, and fallback
+contracts. This is an additive architecture contract closure; model, event,
+and bounds wire surfaces remain unchanged. The architecture advances to
+`serea-arch/2.5.0`. P4 runtime remains not started: no router crate, migration
+0003, provider network code, or model dispatch is included.
 
 ## 4. Identifier discipline in this package
 
@@ -179,7 +188,9 @@ reader of this package alone can orient:
 | P1 | `serea-protocol` shared IDs/types/schemas, empty ports, test doubles, CI skeleton. | No task engine, durable task store, real provider, or GoalLatch connection. |
 | P2 | SQLite storage and durable AssistantTask lifecycle/recovery. | Task state survives restart; no Gmail/Calendar integration. |
 | P3 | Structured event bus and event-driven scheduler. | Schedule and scheduler recovery contracts become executable. |
-| P4–P6 | Model router (P4), capability/tool router (P5), deterministic policy and approval (P6). | Authority chain is exercised against mocks; Codex remains disabled. |
+| P4A | Close Model Router contracts and accepted ADRs. | Architecture only; no router runtime or migration. |
+| P4B–P4F | Sequential Model Router implementation: durability; routing core; dispatch/recovery; validation/repair/fallback/budgets; integrated closure. | Scripted providers only; no real provider required. |
+| P5–P6 | Capability/tool router (P5), deterministic policy and approval (P6). | Authority chain is exercised against mocks; Codex remains disabled. |
 | P7–P8 | SQLite/FTS5 memory (P7) and synthetic provider journey (P8). | External data remains synthetic and no real credentials are needed. |
 | P9–P10 | Read-only Gmail (P9) and Calendar (P10). | Incremental sync with safe full-resync fallback. |
 | P11–P12 | Read-only proactive watcher (P11) and Android client foundation (P12). | Watcher is `OBSERVE`/`LOCAL_STATE` only; Pixel 7a/API 37 acceptance is primary. |

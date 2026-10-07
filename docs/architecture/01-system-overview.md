@@ -1,6 +1,6 @@
 # System Overview
 
-Architecture version: `serea-arch/2.4.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
 
 Serea is a personal-assistant system. This document states what it is, draws the
 system it is, names every component and its owner, and records what it
@@ -19,14 +19,14 @@ proposes actions, and — only when policy and a bounded human grant say so —
 changes that world. Everything is durable, everything is auditable, and the
 model has no authority whatsoever.
 
-| Dimension | Position at `serea-arch/2.4.0` |
+| Dimension | Position at `serea-arch/2.5.0` |
 | --- | --- |
 | Deployment | One Serea Core host process on the owner's Mac; one Pixel 7a Android client |
 | Concurrency | Single user, single host. `max_concurrent_tasks` is 8 by default, not a distributed-systems exercise |
 | Durability | Every task, step, receipt, grant, event and memory item is durable before the next transition ([Task Protocol §1](../protocols/02-task-protocol.md#1-model-conversation-history-is-not-task-state)) |
 | Authority | Vested entirely in the host. The model proposes; the host disposes |
-| Money | `cost_class: FREE` for the default model roster; cost bounds exist and are enforced regardless |
-| Privacy | Personal data stays on the host unless a redaction-and-egress rule permits transit ([Data Classification §5](../protocols/09-data-classification-protocol.md#5-egress-rules)) |
+| Money | Host-owned price snapshots and USD_MICROS accounting govern model cost; prices are configuration, not provider authority |
+| Privacy | Personal data stays on the host unless a trusted prepared/redacted call and egress rule permit transit; P4 V1 model dispatch refuses PRIVATE pending durable result protection ([Data Classification §5](../protocols/09-data-classification-protocol.md#5-egress-rules)) |
 
 ### 1.2 What Serea does
 
@@ -224,12 +224,13 @@ The full list of what it cannot do is in
 | --- | --- | --- |
 | `nemotron-3-nano-30b` | Default assistant; planning; email/calendar analysis; memory extraction; proactive watcher | First position of every normal purpose chain |
 | `gpt-oss-20b` | Strict structured-output fallback; JSON/tool-plan repair; alternate reasoning | Second position, and the configured structured-repair model |
-| `gemma-4-31b` | Vision and screenshot interpretation | Only when an input is an image and `vision: true` is required |
-| `codex` | Registered as **known and disabled** | Unreachable in every normal path; any future delegated path remains separate from ModelRouter fallback and requires an explicitly authorized adapter phase |
+| `gemma-4-31b` | Vision | Only a future typed image-input surface may route to it; current ModelRequest is text-only |
+| `codex` | Registered as **known and disabled** | Absent from every ModelRouter chain; any future GoalLatch path remains a separate boundary |
 
-Routing is deterministic given `(purpose, required_capabilities, data_class,
-task_constraints, health)`. No component asks the model which model to use, and
-no component branches on provider identity
+Routing is deterministic from the host purpose, typed `ModelRoutingRequirementsV1`,
+data class, immutable host egress/roster snapshots, and one health snapshot.
+There is no arbitrary task-constraint bag. No component asks the model which
+model to use, and no component branches on provider identity
 ([Model Protocol §6.1](../protocols/03-model-protocol.md#61-routing-is-not-escalation)).
 
 ---
@@ -239,7 +240,7 @@ no component branches on provider identity
 | Non-goal | Detail |
 | --- | --- |
 | **No GoalLatch provider at P0** | The `host.goal.*` contract is frozen but unavailable at P0; the offline fake is planned for P15. There is no network, filesystem, subprocess, or `local_mcp::*` edge. A real adapter is unscheduled and requires the six live verifications of [GoalLatch Adapter §9](../protocols/08-goallatch-adapter-protocol.md#9-real-adapter-readiness-gate) plus separate explicit phase authorization. |
-| **No Codex in normal paths** | `codex_allowed` defaults to `false` at task level, is not settable by model output, is not settable from the Android client, and appears in no routing chain for any purpose. See [Model Protocol §8](../protocols/03-model-protocol.md#8-codex-exclusion). |
+| **No Codex in normal paths** | P4 adds no `codex_allowed`; Codex is absent from every ModelRouter chain. See [Model Protocol §8](../protocols/03-model-protocol.md#8-codex-exclusion). |
 | **No root-first design** | Root is an optional backend for a small, enumerated `device.*` set, registered as a separate `implementation_id` under the same `CapabilityId`. Root absence yields `CAPABILITY_UNAVAILABLE`, never a crash, never degraded startup, and never a fallback to a laxer path. |
 | **No vector database** | Memory is SQLite plus a content-addressed blob store, with explicit provenance per item. Semantic recall is a ranking problem over durable rows, not an embedding-index problem, until an ADR says otherwise. |
 | **No multi-user or multi-host** | One user, one host. Concurrency bounds exist to bound cost and blast radius, not to scale a cluster. |

@@ -327,6 +327,18 @@ writers must fail closed before SQLite **even with a blob backend** until that
 design exists. [ADR-0022](../decisions/ADR-0022-durable-private-data-at-rest.md)
 remains **Proposed**; this annotation claims no runtime-test PASS.
 
+**P4 V1 model-dispatch limitation (ADR-0031).** The global matrix above is
+unchanged, but P4 V1 refuses all PRIVATE model dispatch, including locally
+configured models and CLOUD when `cloud_model_private_egress` is enabled.
+Production PRIVATE ordinary-row durable result protection is incomplete while
+P4 requires recoverable accepted results. A digest alone is not a durable
+result. PRIVATE policy eligibility may be evaluated, but dispatch stays
+fail-closed until separately accepted/implemented protection closes this gap.
+PERSONAL CLOUD calls require a trusted prepared/redacted call. Each network
+dispatch uses a fresh immutable host-resolved policy snapshot; a later
+fallback or repair obtains a new snapshot. This limit is specific to P4
+dispatch and does not revise the global data-classification matrix.
+
 ### 5.1 `cloud_model_private_egress`
 
 The default is `false`. It is a durable host setting, changed only from the

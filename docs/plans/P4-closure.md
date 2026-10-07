@@ -253,4 +253,10 @@ Model Router closure. P5 remains outside P4.
   warnings; docs validation; workspace smoke and its 76 tests; Cargo metadata;
   identity guard; and `git diff --check`. P4D remains open: recovery to
   AMBIGUOUS, caller-loss lookup, crash windows, and broader failure tests remain
-  to be implemented. No Actions result is claimed for this uncommitted slice.
+  to be implemented.
+- Exact behavior commit `02e177e5b721de337b28b002f951e16a102606df` Actions:
+  [Fast CI 37664012626](https://github.com/Yrika819/Serea/actions/runs/37664012626)
+  GREEN; [Full CI 37664012623](https://github.com/Yrika819/Serea/actions/runs/37664012623)
+  GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
+  [cross-architecture SQLite 37664012627](https://github.com/Yrika819/Serea/actions/runs/37664012627)
+  GREEN in both directions.

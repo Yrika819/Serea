@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use serea_event_bus::{
     EventBus, ModelCompletedEventV1, ModelEventMetadataV1, ModelEventRelationV1,
-    ModelFailedEventV1, ModelOutputInvalidEventV1,
+    ModelFailedEventV1, ModelOutputInvalidEventV1, ModelRepairedEventV1,
 };
 use serea_protocol::provider::{ModelCallContext, ModelProvider};
 use serea_protocol::{
@@ -802,7 +802,15 @@ impl ModelRouterV1 {
                 RouterError::IllegalPurposeFormat,
             ));
         }
-        self.dispatch_prepared(call, session, context).await
+        self.dispatch_prepared(
+            call,
+            session,
+            context,
+            ModelAttemptRelationKind::None,
+            None,
+            0,
+        )
+        .await
     }
 
     #[allow(dead_code)] // The repair ladder will become its production caller in P4E.
@@ -819,7 +827,153 @@ impl ModelRouterV1 {
                 RouterError::IllegalPurposeFormat,
             ));
         }
-        self.dispatch_prepared(call, session, context).await
+        self.dispatch_prepared(
+            call,
+            session,
+            context,
+            ModelAttemptRelationKind::None,
+            None,
+            0,
+        )
+        .await
+    }
+
+    /// Runs a structured operation with the bounded P4 repair ladder. The
+    /// original host call remains the authority; repair requests contain only
+    /// its schema, the bounded invalid response, and sanitized diagnostics.
+    #[allow(dead_code)] // The P4F host-call boundary will expose this closed orchestration.
+    pub(crate) async fn dispatch_structured_with_repair(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        context: &ModelDispatchContext<'_>,
+    ) -> Result<ModelResponse, ModelDispatchFailure> {
+        let schema = match &call.response_format {
+            ResponseFormat::JsonSchema { schema } if call.purpose != ModelPurpose::Chat => schema,
+            _ => {
+                return Err(ModelDispatchFailure::Refused(
+                    RouterError::IllegalPurposeFormat,
+                ));
+            }
+        };
+        let initial = match self.dispatch_structured(call, session, context).await {
+            Ok(response) => return Ok(response),
+            Err(error @ ModelDispatchFailure::StructuredOutputInvalid { .. }) => error,
+            Err(error) => return Err(error),
+        };
+
+        let ModelDispatchFailure::StructuredOutputInvalid {
+            request_id: original_request_id,
+            raw_response,
+            validation_error,
+        } = initial
+        else {
+            return Err(ModelDispatchFailure::Refused(
+                RouterError::ModelSelectionInvalid,
+            ));
+        };
+        if raw_response.len() > MAX_MODEL_RESPONSE_BYTES
+            || matches!(
+                validation_error,
+                StructuredValidationError::ResponseTooLarge
+            )
+        {
+            return Err(ModelDispatchFailure::StructuredOutputInvalid {
+                request_id: original_request_id,
+                raw_response,
+                validation_error,
+            });
+        }
+
+        let Some(repair_session) = self.repair_session(call).await else {
+            return Err(ModelDispatchFailure::StructuredOutputInvalid {
+                request_id: original_request_id,
+                raw_response,
+                validation_error,
+            });
+        };
+        let mut parent_request_id = original_request_id;
+        let mut current_raw = raw_response;
+        let mut current_validation_error = validation_error;
+
+        for ordinal in 1..=2u8 {
+            let repair_call =
+                build_repair_call(call, schema, &current_raw, &current_validation_error)
+                    .map_err(ModelDispatchFailure::Refused)?;
+            match self
+                .dispatch_prepared(
+                    &repair_call,
+                    &repair_session,
+                    context,
+                    ModelAttemptRelationKind::Repair,
+                    Some(parent_request_id.clone()),
+                    ordinal,
+                )
+                .await
+            {
+                Ok(response) => return Ok(response),
+                Err(ModelDispatchFailure::StructuredOutputInvalid {
+                    request_id,
+                    raw_response,
+                    validation_error,
+                }) if ordinal < 2
+                    && raw_response.len() <= MAX_MODEL_RESPONSE_BYTES
+                    && !matches!(
+                        validation_error,
+                        StructuredValidationError::ResponseTooLarge
+                    ) =>
+                {
+                    parent_request_id = request_id;
+                    current_raw = raw_response;
+                    current_validation_error = validation_error;
+                }
+                Err(ModelDispatchFailure::DefiniteProvider { request_id, .. }) if ordinal < 2 => {
+                    parent_request_id = request_id;
+                }
+                Err(ModelDispatchFailure::DefiniteProvider { request_id, .. }) => {
+                    return Err(ModelDispatchFailure::StructuredOutputInvalid {
+                        request_id,
+                        raw_response: current_raw,
+                        validation_error: current_validation_error,
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(ModelDispatchFailure::StructuredOutputInvalid {
+            request_id: parent_request_id,
+            raw_response: current_raw,
+            validation_error: current_validation_error,
+        })
+    }
+
+    #[allow(dead_code)] // Used by the P4E structured repair ladder.
+    async fn repair_session(&self, original: &PreparedModelCallV1) -> Option<RoutingSessionV1> {
+        let model_id = ModelId::new("gpt-oss-20b").ok()?;
+        let entry = self.roster.entries.get(model_id.as_str())?;
+        let advertised = self.discovered.get(model_id.as_str())?;
+        let provider = self.providers.get(entry.provider_id.as_str())?;
+        let health = provider.1.health().await;
+        let effective = intersect(entry.allowed_capabilities, advertised.capabilities);
+        let requirements = ModelRoutingRequirementsV1 {
+            vision_required: false,
+            tools_required: false,
+            min_context_tokens: 1,
+            min_output_tokens: 1,
+            structured_requirement: StructuredRequirementV1::Strict,
+        };
+        let permitted = entry.enabled
+            && provider.0 == entry.provider_id
+            && health == ProviderHealth::Ready
+            && deployment_permitted(original.data_class, entry.deployment_class, original.egress)
+            && capabilities_satisfy(effective, requirements, true);
+        let session = RoutingSessionV1 {
+            decision: permitted.then(|| model_id.clone()),
+            health: ProviderHealthSnapshotV1 {
+                health: BTreeMap::from([(entry.provider_id.as_str().to_owned(), health)]),
+            },
+        };
+        permitted.then_some(session)
     }
 
     async fn dispatch_prepared(
@@ -827,6 +981,9 @@ impl ModelRouterV1 {
         call: &PreparedModelCallV1,
         session: &RoutingSessionV1,
         context: &ModelDispatchContext<'_>,
+        relation_kind: ModelAttemptRelationKind,
+        parent_request_id: Option<serea_protocol::RequestId>,
+        repair_attempts: u8,
     ) -> Result<ModelResponse, ModelDispatchFailure> {
         let store = context.store;
         let events = context.events;
@@ -893,7 +1050,7 @@ impl ModelRouterV1 {
             provider_id: entry.provider_id.clone(),
             task_id: call.task_id.clone(),
             purpose: call.purpose,
-            relation: ModelEventRelationV1::Normal,
+            relation: event_relation(relation_kind),
             data_class: call.data_class,
             occurred_at: dispatch_at,
         };
@@ -911,8 +1068,8 @@ impl ModelRouterV1 {
                 ModelDeploymentClass::Local => serea_storage::ModelDeploymentClass::Local,
             },
             data_class: call.data_class,
-            relation_kind: ModelAttemptRelationKind::None,
-            parent_request_id: None,
+            relation_kind,
+            parent_request_id,
             fallback_from_model_id: None,
             price: price.clone(),
             max_context_tokens: u64::from(effective.max_context_tokens),
@@ -1062,7 +1219,9 @@ impl ModelRouterV1 {
                 error_kind,
             });
         }
-        if response.finish_reason != FinishReason::Stop {
+        if response.finish_reason != FinishReason::Stop
+            && !(is_structured && response.finish_reason == FinishReason::StructureInvalid)
+        {
             let at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
             let error_kind = stable_model_error(match response.finish_reason {
                 FinishReason::Length => "MODEL_FINISH_LENGTH",
@@ -1075,7 +1234,7 @@ impl ModelRouterV1 {
                 input_tokens: response.usage.input_tokens,
                 output_tokens: response.usage.output_tokens,
                 latency_ms: u64::from(response.latency_ms),
-                repair_attempts: 0,
+                repair_attempts,
                 recorded_at: at,
             };
             record_model_failure(
@@ -1125,7 +1284,7 @@ impl ModelRouterV1 {
                             cost_class: price.cost_class(),
                             cost_usd_micros: actual_cost.get(),
                             price_revision: price.price_revision().to_owned(),
-                            repair_attempts: 0,
+                            repair_attempts,
                         })
                         .map_err(ModelDispatchFailure::Storage)?;
                     let diagnostic_count = match &validation_error {
@@ -1138,7 +1297,7 @@ impl ModelRouterV1 {
                         .draft_model_output_invalid(ModelOutputInvalidEventV1 {
                             metadata: ModelEventMetadataV1 {
                                 occurred_at: invalid_at,
-                                ..metadata
+                                ..metadata.clone()
                             },
                             diagnostic_count,
                         })
@@ -1147,7 +1306,7 @@ impl ModelRouterV1 {
                         input_tokens: response.usage.input_tokens,
                         output_tokens: response.usage.output_tokens,
                         latency_ms: u64::from(response.latency_ms),
-                        repair_attempts: 0,
+                        repair_attempts,
                         recorded_at: invalid_at,
                     };
                     store
@@ -1185,7 +1344,7 @@ impl ModelRouterV1 {
             .draft_model_completed(ModelCompletedEventV1 {
                 metadata: ModelEventMetadataV1 {
                     occurred_at: completed_at,
-                    ..metadata
+                    ..metadata.clone()
                 },
                 finish_reason: response.finish_reason,
                 input_tokens: response.usage.input_tokens.get(),
@@ -1193,9 +1352,25 @@ impl ModelRouterV1 {
                 cost_class: price.cost_class(),
                 cost_usd_micros: actual_cost.get(),
                 price_revision: price.price_revision().to_owned(),
-                repair_attempts: 0,
+                repair_attempts,
             })
             .map_err(ModelDispatchFailure::Storage)?;
+        let repaired = if relation_kind == ModelAttemptRelationKind::Repair {
+            Some(
+                events
+                    .draft_model_repaired(ModelRepairedEventV1 {
+                        metadata: ModelEventMetadataV1 {
+                            occurred_at: completed_at,
+                            relation: ModelEventRelationV1::Repair,
+                            ..metadata.clone()
+                        },
+                        repair_attempts,
+                    })
+                    .map_err(ModelDispatchFailure::Storage)?,
+            )
+        } else {
+            None
+        };
         let response_json = if let Some(structured) = &structured {
             serde_json::json!({
                 "content": response.content.clone(),
@@ -1216,7 +1391,7 @@ impl ModelRouterV1 {
                         input_tokens: response.usage.input_tokens,
                         output_tokens: response.usage.output_tokens,
                         latency_ms: u64::from(response.latency_ms),
-                        repair_attempts: 0,
+                        repair_attempts,
                         finish_reason: response.finish_reason,
                         recorded_at: completed_at,
                         accepted_response: ModelResponseStorage {
@@ -1226,15 +1401,83 @@ impl ModelRouterV1 {
                     },
                 )?;
                 tx.append_event(completed.event, completed.retention_at)?;
+                if let Some(repaired) = repaired {
+                    tx.append_event(repaired.event, repaired.retention_at)?;
+                }
                 Ok(())
             })
             .map_err(ModelDispatchFailure::Storage)?;
         Ok(ModelResponse {
             structured,
-            repair_attempts: 0,
+            repair_attempts: u32::from(repair_attempts),
             ..response
         })
     }
+}
+
+fn event_relation(relation: ModelAttemptRelationKind) -> ModelEventRelationV1 {
+    match relation {
+        ModelAttemptRelationKind::None => ModelEventRelationV1::Normal,
+        ModelAttemptRelationKind::Fallback => ModelEventRelationV1::Fallback,
+        ModelAttemptRelationKind::Repair => ModelEventRelationV1::Repair,
+    }
+}
+
+#[allow(dead_code)] // Used by the P4E structured repair ladder.
+fn build_repair_call(
+    original: &PreparedModelCallV1,
+    schema: &serde_json::Value,
+    raw_response: &str,
+    validation_error: &StructuredValidationError,
+) -> Result<PreparedModelCallV1, RouterError> {
+    let diagnostics = match validation_error {
+        StructuredValidationError::InvalidOutput(diagnostics) => {
+            serde_json::to_value(diagnostics).map_err(|_| RouterError::InvalidJsonSchema)?
+        }
+        error => serde_json::json!({
+            "kind": match error {
+                StructuredValidationError::InvalidSchema => "INVALID_SCHEMA",
+                StructuredValidationError::ResponseTooLarge => "RESPONSE_TOO_LARGE",
+                StructuredValidationError::MalformedJson => "MALFORMED_JSON",
+                StructuredValidationError::DuplicateKey => "DUPLICATE_KEY",
+                StructuredValidationError::TooDeep => "JSON_TOO_DEEP",
+                StructuredValidationError::InvalidOutput(_) => "INVALID_OUTPUT",
+            }
+        }),
+    };
+    let prompt = serde_json::to_string(&serde_json::json!({
+        "schema": schema,
+        "invalid_response": raw_response,
+        "validation_errors": diagnostics,
+    }))
+    .map_err(|_| RouterError::InvalidJsonSchema)?;
+    PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+        task_id: original.task_id.clone(),
+        purpose: ModelPurpose::StructuredRepair,
+        messages: vec![ModelMessage {
+            role: serea_protocol::MessageRole::new("user")
+                .map_err(|_| RouterError::IllegalPurposeFormat)?,
+            content: prompt,
+        }],
+        system: None,
+        response_format: ResponseFormat::JsonSchema {
+            schema: schema.clone(),
+        },
+        tools: Vec::new(),
+        max_output_tokens: original.max_output_tokens,
+        temperature: original.temperature,
+        deadline_ms: original.deadline_ms,
+        data_class: original.data_class,
+        requirements: ModelRoutingRequirementsV1 {
+            vision_required: false,
+            tools_required: false,
+            min_context_tokens: 1,
+            min_output_tokens: 1,
+            structured_requirement: StructuredRequirementV1::Strict,
+        },
+        egress: original.egress,
+        host_max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS_PER_CALL,
+    })
 }
 
 #[allow(dead_code)] // Used by dispatch error paths; exercised by P4D scripted failures.
@@ -1647,6 +1890,7 @@ fn known_model_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::task::{Context, Poll, Waker};
@@ -1726,6 +1970,23 @@ mod tests {
         }
     }
 
+    struct CancelBeforeRepairGate(AtomicUsize);
+
+    impl ModelDispatchGateSource for CancelBeforeRepairGate {
+        fn snapshot(
+            &self,
+            _task_id: Option<&TaskId>,
+            _data_class: DataClass,
+        ) -> Result<ModelDispatchGateSnapshotV1, ModelDispatchGateSourceError> {
+            let read = self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ModelDispatchGateSnapshotV1::from_host(
+                read >= 2,
+                ModelEgressPolicySnapshotV1::from_host(true),
+                1000,
+            ))
+        }
+    }
+
     fn dispatch_context<'a>(
         store: &'a Store,
         events: &'a EventBus,
@@ -1766,6 +2027,128 @@ mod tests {
         finish_next: Mutex<Option<FinishReason>>,
         last_request_id: Mutex<Option<serea_protocol::RequestId>>,
         last_deadline_ms: Mutex<Option<u32>>,
+    }
+
+    struct RepairFakeProvider {
+        requests: Mutex<Vec<ModelRequest>>,
+        responses: Mutex<VecDeque<Result<String, ModelError>>>,
+        finishes: Mutex<VecDeque<FinishReason>>,
+        health_script: Mutex<VecDeque<ProviderHealth>>,
+        health_calls: AtomicUsize,
+    }
+
+    enum RepairScript {
+        Respond(String),
+        Fail(ModelError),
+    }
+
+    impl RepairFakeProvider {
+        fn new(responses: Vec<String>) -> Self {
+            Self {
+                requests: Mutex::new(Vec::new()),
+                responses: Mutex::new(responses.into_iter().map(Ok).collect()),
+                finishes: Mutex::new(VecDeque::new()),
+                health_script: Mutex::new(VecDeque::new()),
+                health_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn requests(&self) -> Vec<ModelRequest> {
+            self.requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        }
+
+        fn push_script(&self, script: RepairScript) {
+            let result = match script {
+                RepairScript::Respond(content) => Ok(content),
+                RepairScript::Fail(error) => Err(error),
+            };
+            self.responses
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push_back(result);
+        }
+
+        fn push_health(&self, health: ProviderHealth) {
+            self.health_script
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push_back(health);
+        }
+
+        fn push_finish(&self, finish: FinishReason) {
+            self.finishes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push_back(finish);
+        }
+    }
+
+    #[async_trait]
+    impl ModelProvider for RepairFakeProvider {
+        fn provider_id(&self) -> ProviderId {
+            ProviderId::new("provider").unwrap_or_else(|_| unreachable!())
+        }
+
+        fn models(&self) -> Vec<ModelDescriptor> {
+            ["nemotron-3-nano-30b", "gpt-oss-20b"]
+                .into_iter()
+                .map(|model_id| ModelDescriptor {
+                    model_id: ModelId::new(model_id).unwrap_or_else(|_| unreachable!()),
+                    provider_id: self.provider_id(),
+                    capabilities: caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                })
+                .collect()
+        }
+
+        async fn generate(
+            &self,
+            request: &ModelRequest,
+            _ctx: &ModelCallContext,
+        ) -> Result<ModelResponse, ModelError> {
+            self.requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.clone());
+            let outcome = self
+                .responses
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .pop_front()
+                .unwrap_or_else(|| Ok(String::new()))?;
+            let finish_reason = self
+                .finishes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .pop_front()
+                .unwrap_or(FinishReason::Stop);
+            Ok(ModelResponse {
+                request_id: request.request_id.clone(),
+                model_id: request.model_id.clone(),
+                provider_id: self.provider_id(),
+                content: outcome,
+                structured: Some(serde_json::json!({"provider_proposal": true})),
+                finish_reason,
+                usage: ModelUsage {
+                    input_tokens: TokenCount::new(3),
+                    output_tokens: TokenCount::new(2),
+                    cost_class: CostClass::Paid,
+                },
+                latency_ms: 7,
+                repair_attempts: 0,
+            })
+        }
+
+        async fn health(&self) -> ProviderHealth {
+            self.health_calls.fetch_add(1, Ordering::SeqCst);
+            self.health_script
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .pop_front()
+                .unwrap_or(ProviderHealth::Ready)
+        }
     }
 
     #[async_trait]
@@ -2641,6 +3024,438 @@ mod tests {
         let recovered = recover_completed_structured_response(&reopened, &response.request_id)
             .unwrap_or_else(|_| unreachable!())
             .unwrap_or_else(|| unreachable!());
+        assert_eq!(recovered, response);
+        drop(reopened);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn structured_invalid_output_repairs_with_minimal_context_and_host_lineage() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-repair-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let provider = Arc::new(RepairFakeProvider::new(vec![
+            r#"{"count":"private_fragment_marker"}"#.into(),
+            r#"{"count":7}"#.into(),
+        ]));
+        let bus = EventBus::new(IncrementingIds(0));
+        let caps = caps(false, JsonSchemaMode::Strict, 1000, 1000);
+        let provider_id = provider.provider_id();
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider_id.clone(),
+                ModelDeploymentClass::Local,
+                true,
+                caps,
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+            ModelRosterEntryV1::new(
+                ModelId::new("gpt-oss-20b").unwrap_or_else(|_| unreachable!()),
+                provider_id,
+                ModelDeploymentClass::Local,
+                true,
+                caps,
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let router =
+            ModelRouterV1::new(roster, vec![provider.clone()]).unwrap_or_else(|_| unreachable!());
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+            "additionalProperties": false
+        });
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: None,
+            purpose: ModelPurpose::Analysis,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "unrelated conversation marker".into(),
+            }],
+            system: Some("unrelated system marker".into()),
+            response_format: ResponseFormat::JsonSchema {
+                schema: schema.clone(),
+            },
+            tools: vec![serde_json::json!({"name":"unrelated-tool"})],
+            max_output_tokens: 128,
+            temperature: 0.25,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+
+        let response = block_on(router.dispatch_structured_with_repair(&call, &session, &context))
+            .unwrap_or_else(|_| unreachable!());
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 2);
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].model_id.as_str(), "nemotron-3-nano-30b");
+        assert_eq!(requests[1].model_id.as_str(), "gpt-oss-20b");
+        assert_eq!(requests[1].purpose, ModelPurpose::StructuredRepair);
+        assert_eq!(
+            requests[1].response_format,
+            ResponseFormat::JsonSchema {
+                schema: schema.clone()
+            }
+        );
+        assert!(requests[1].tools.is_empty());
+        assert!(requests[1].system.is_none());
+        assert_eq!(requests[1].messages.len(), 1);
+        assert!(
+            !requests[1].messages[0]
+                .content
+                .contains("unrelated conversation marker")
+        );
+        assert!(
+            !requests[1].messages[0]
+                .content
+                .contains("unrelated system marker")
+        );
+        assert!(!requests[1].messages[0].content.contains("unrelated-tool"));
+        assert!(
+            requests[1].messages[0]
+                .content
+                .contains("private_fragment_marker")
+        );
+        let repair_prompt: serde_json::Value =
+            serde_json::from_str(&requests[1].messages[0].content)
+                .unwrap_or_else(|_| unreachable!());
+        assert_eq!(repair_prompt.as_object().map(serde_json::Map::len), Some(3));
+        assert_eq!(repair_prompt["schema"], schema);
+        assert_eq!(
+            repair_prompt["invalid_response"],
+            r#"{"count":"private_fragment_marker"}"#
+        );
+        assert!(repair_prompt["validation_errors"].is_array());
+        assert!(
+            !repair_prompt["validation_errors"]
+                .to_string()
+                .contains("private_fragment_marker")
+        );
+        assert_eq!(response.model_id.as_str(), "gpt-oss-20b");
+        assert_eq!(response.structured, Some(serde_json::json!({"count": 7})));
+        assert_eq!(response.repair_attempts, 1);
+
+        let primary = store
+            .get_model_call_attempt(&requests[0].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let repair = store
+            .get_model_call_attempt(&requests[1].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(primary.state, ModelAttemptState::Failed);
+        assert_eq!(primary.response_blob, None);
+        assert_eq!(repair.state, ModelAttemptState::Completed);
+        assert_eq!(repair.relation_kind, ModelAttemptRelationKind::Repair);
+        assert_eq!(
+            repair.parent_request_id.as_ref(),
+            Some(&requests[0].request_id)
+        );
+
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        let kinds = events
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ReplayItem::Event { event } => Some(event.kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            [
+                EventKind::ModelCalled,
+                EventKind::ModelCompleted,
+                EventKind::ModelOutputInvalid,
+                EventKind::ModelCalled,
+                EventKind::ModelCompleted,
+                EventKind::ModelRepaired,
+            ]
+        );
+        let repair_completed = match &events.items[4] {
+            ReplayItem::Event { event } => event,
+            _ => unreachable!(),
+        };
+        assert_eq!(repair_completed.payload["repair_attempts"], 1);
+        let repaired_event = match &events.items[5] {
+            ReplayItem::Event { event } => event,
+            _ => unreachable!(),
+        };
+        assert_eq!(repaired_event.payload["relation_kind"], "REPAIR");
+        assert_eq!(repaired_event.payload["repair_attempts"], 1);
+        let event_json = serde_json::to_string(&events.items).unwrap_or_else(|_| unreachable!());
+        assert!(!event_json.contains("private_fragment_marker"));
+        assert!(!event_json.contains("unrelated conversation marker"));
+
+        provider.push_script(RepairScript::Respond(r#"{"count":"first-invalid"}"#.into()));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("private provider diagnostic")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: false,
+        }));
+        provider.push_script(RepairScript::Respond(r#"{"count":9}"#.into()));
+        let next_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let repaired_after_failure =
+            block_on(router.dispatch_structured_with_repair(&call, &next_session, &context))
+                .unwrap_or_else(|_| unreachable!());
+        assert_eq!(repaired_after_failure.repair_attempts, 2);
+        assert_eq!(
+            repaired_after_failure.structured,
+            Some(serde_json::json!({"count": 9}))
+        );
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 4);
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 5);
+        let repair_one = store
+            .get_model_call_attempt(&requests[3].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let repair_two = store
+            .get_model_call_attempt(&requests[4].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(repair_one.state, ModelAttemptState::Failed);
+        assert_eq!(repair_one.response_blob, None);
+        assert_eq!(repair_one.relation_kind, ModelAttemptRelationKind::Repair);
+        assert_eq!(
+            repair_one.parent_request_id.as_ref(),
+            Some(&requests[2].request_id)
+        );
+        assert_eq!(repair_two.state, ModelAttemptState::Completed);
+        assert_eq!(repair_two.relation_kind, ModelAttemptRelationKind::Repair);
+        assert_eq!(
+            repair_two.parent_request_id.as_ref(),
+            Some(&requests[3].request_id)
+        );
+        let final_usage = store
+            .model_usage_for_request(&requests[4].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(final_usage.repair_attempts, 2);
+
+        for invalid in [
+            r#"{"count":"primary-invalid"}"#,
+            r#"{"count":"repair-one-invalid"}"#,
+            r#"{"count":"repair-two-invalid"}"#,
+        ] {
+            provider.push_script(RepairScript::Respond(invalid.into()));
+        }
+        let exhausted_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let exhausted =
+            block_on(router.dispatch_structured_with_repair(&call, &exhausted_session, &context));
+        assert!(matches!(
+            exhausted,
+            Err(ModelDispatchFailure::StructuredOutputInvalid { .. })
+        ));
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 6);
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 8);
+        let first_repair = store
+            .get_model_call_attempt(&requests[6].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let second_repair = store
+            .get_model_call_attempt(&requests[7].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(
+            first_repair.parent_request_id.as_ref(),
+            Some(&requests[5].request_id)
+        );
+        assert_eq!(
+            second_repair.parent_request_id.as_ref(),
+            Some(&requests[6].request_id)
+        );
+        let events = EventBus::replay(&store, None, None, 32).unwrap_or_else(|_| unreachable!());
+        assert_eq!(
+            events
+                .items
+                .iter()
+                .filter(|item| matches!(item, ReplayItem::Event { event } if event.kind == EventKind::ModelRepaired))
+                .count(),
+            2
+        );
+
+        provider.push_script(RepairScript::Respond(
+            r#"{"count":"invalid-with-degraded-repair-model"}"#.into(),
+        ));
+        provider.push_health(ProviderHealth::Ready);
+        provider.push_health(ProviderHealth::Degraded);
+        let degraded_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let degraded =
+            block_on(router.dispatch_structured_with_repair(&call, &degraded_session, &context));
+        assert!(matches!(
+            degraded,
+            Err(ModelDispatchFailure::StructuredOutputInvalid { .. })
+        ));
+        assert_eq!(provider.requests().len(), 9);
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 8);
+
+        provider.push_script(RepairScript::Respond(
+            r#"{"count":"invalid-before-cancellation"}"#.into(),
+        ));
+        let cancellation_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let cancellation_gate = CancelBeforeRepairGate(AtomicUsize::new(0));
+        let cancellation_context = ModelDispatchContext {
+            store: &store,
+            events: &bus,
+            price: context.price.clone(),
+            max_daily_spend_usd_micros: context.max_daily_spend_usd_micros,
+            clock: &FixedClock,
+            gate: &cancellation_gate,
+        };
+        let cancelled = block_on(router.dispatch_structured_with_repair(
+            &call,
+            &cancellation_session,
+            &cancellation_context,
+        ));
+        assert!(matches!(
+            cancelled,
+            Err(ModelDispatchFailure::Refused(RouterError::TaskCancelled))
+        ));
+        assert_eq!(provider.requests().len(), 10);
+        assert_eq!(cancellation_gate.0.load(Ordering::SeqCst), 3);
+        let events = EventBus::replay(&store, None, None, 64).unwrap_or_else(|_| unreachable!());
+        assert_eq!(
+            events
+                .items
+                .iter()
+                .filter(|item| matches!(item, ReplayItem::Event { event } if event.kind == EventKind::ModelCalled))
+                .count(),
+            10
+        );
+
+        let oversized = format!("\"{}\"", "x".repeat(MAX_MODEL_RESPONSE_BYTES));
+        provider.push_script(RepairScript::Respond(oversized));
+        let oversized_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let oversized_result =
+            block_on(router.dispatch_structured_with_repair(&call, &oversized_session, &context));
+        assert!(matches!(
+            oversized_result,
+            Err(ModelDispatchFailure::StructuredOutputInvalid {
+                validation_error: StructuredValidationError::ResponseTooLarge,
+                ..
+            })
+        ));
+        assert_eq!(provider.requests().len(), 11);
+
+        provider.push_script(RepairScript::Respond(
+            r#"{"count":"invalid-before-ambiguous-repair"}"#.into(),
+        ));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new(AMBIGUOUS_PROVIDER_ERROR_KIND)
+                .unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("outcome may have been processed")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: true,
+        }));
+        let ambiguous_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let ambiguous =
+            block_on(router.dispatch_structured_with_repair(&call, &ambiguous_session, &context));
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 13);
+        let ambiguous_id = requests[12].request_id.clone();
+        assert!(matches!(
+            ambiguous,
+            Err(ModelDispatchFailure::AmbiguousProvider { request_id, .. })
+                if request_id == ambiguous_id
+        ));
+        let ambiguous_attempt = store
+            .get_model_call_attempt(&ambiguous_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(ambiguous_attempt.state, ModelAttemptState::Ambiguous);
+
+        provider.push_script(RepairScript::Respond(
+            r#"{"count":"invalid-before-two-failures"}"#.into(),
+        ));
+        for _ in 0..2 {
+            provider.push_script(RepairScript::Fail(ModelError {
+                kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE")
+                    .unwrap_or_else(|_| unreachable!()),
+                message: serea_protocol::ErrorMessage::new("private provider diagnostic")
+                    .unwrap_or_else(|_| unreachable!()),
+                retryable: false,
+            }));
+        }
+        let failed_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let failed_twice =
+            block_on(router.dispatch_structured_with_repair(&call, &failed_session, &context));
+        assert!(matches!(
+            failed_twice,
+            Err(ModelDispatchFailure::StructuredOutputInvalid { .. })
+        ));
+        assert_eq!(provider.requests().len(), 16);
+        let all_events =
+            EventBus::replay(&store, None, None, 64).unwrap_or_else(|_| unreachable!());
+        let all_event_json =
+            serde_json::to_string(&all_events.items).unwrap_or_else(|_| unreachable!());
+        assert!(!all_event_json.contains("private provider diagnostic"));
+        assert!(!all_event_json.contains("outcome may have been processed"));
+
+        provider.push_script(RepairScript::Respond(
+            r#"{"count":"provider-says-invalid"}"#.into(),
+        ));
+        provider.push_finish(FinishReason::StructureInvalid);
+        provider.push_script(RepairScript::Respond(r#"{"count":11}"#.into()));
+        let structure_invalid_session =
+            block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let structure_invalid = block_on(router.dispatch_structured_with_repair(
+            &call,
+            &structure_invalid_session,
+            &context,
+        ))
+        .unwrap_or_else(|_| unreachable!());
+        assert_eq!(
+            structure_invalid.structured,
+            Some(serde_json::json!({"count": 11}))
+        );
+        assert_eq!(structure_invalid.repair_attempts, 1);
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 18);
+        assert_eq!(requests[16].model_id.as_str(), "nemotron-3-nano-30b");
+        assert_eq!(requests[17].model_id.as_str(), "gpt-oss-20b");
+
+        let accepted_repair_request_id = provider.requests()[1].request_id.clone();
+        drop(cancellation_context);
+        drop(context);
+        drop(router);
+        drop(provider);
+        drop(store);
+        let reopened = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let recovered =
+            recover_completed_structured_response(&reopened, &accepted_repair_request_id)
+                .unwrap_or_else(|_| unreachable!())
+                .unwrap_or_else(|| unreachable!());
         assert_eq!(recovered, response);
         drop(reopened);
         let _ = std::fs::remove_file(&db_path);

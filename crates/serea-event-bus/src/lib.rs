@@ -135,6 +135,15 @@ pub struct ModelOutputInvalidEventV1 {
     pub diagnostic_count: u8,
 }
 
+/// Content-free host fact that a structured response was accepted after repair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRepairedEventV1 {
+    /// Common host-selected repair attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// Host-derived number of repair dispatches used by this result.
+    pub repair_attempts: u8,
+}
+
 struct ErasedUlidSource(Box<dyn UlidSource + Send>);
 
 impl UlidSource for ErasedUlidSource {
@@ -269,6 +278,25 @@ impl EventBus {
             Value::from(failure.diagnostic_count),
         );
         self.draft_model_event(failure.metadata, EventKind::ModelOutputInvalid, payload)
+    }
+
+    /// Builds the bounded, content-free `MODEL_REPAIRED` event for an accepted
+    /// host-validated repair result.
+    pub fn draft_model_repaired(
+        &self,
+        repaired: ModelRepairedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if !(1..=2).contains(&repaired.repair_attempts)
+            || repaired.metadata.relation != ModelEventRelationV1::Repair
+        {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&repaired.metadata);
+        payload.insert(
+            "repair_attempts".into(),
+            Value::from(repaired.repair_attempts),
+        );
+        self.draft_model_event(repaired.metadata, EventKind::ModelRepaired, payload)
     }
 
     fn draft_model_event(

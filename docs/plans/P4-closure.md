@@ -858,3 +858,59 @@ repair, fallback, dispatch gates, or P4E budgets.
   fault-seam exclusion; cross-architecture passed Intel-to-arm64 and
   arm64-to-Intel. This closes validation for the fresh-dispatch-gate evidence
   head. It does not close P4E repair, fallback, or remaining budget work.
+
+### P4E slice: bounded structured repair
+
+- RED evidence: the deterministic router test failed to compile because
+  `dispatch_structured_with_repair` did not exist. The failure isolated the
+  missing orchestration behavior; no production implementation was present.
+- Added a crate-private structured repair ladder. It uses only the configured
+  `gpt-oss-20b` candidate after one fresh provider-health read, and makes at
+  most two actual repair dispatches. Each dispatch gets a new request ID,
+  `REPAIR` relation and parent RequestId; every attempt passes fresh cancellation,
+  deadline and egress gates and uses the process price snapshot and normal call
+  and spend reservation path.
+- The repair request contains only the original validated schema, one bounded
+  invalid raw response, and bounded value-free validator diagnostics. It has
+  no conversation, system prompt, tools, or task history. The original schema
+  is re-applied to every repair result by the host. Provider `structured` and
+  repair-count fields remain untrusted.
+- Invalid and definite failed repair attempts consume a repair dispatch. A
+  definite failure may use the second attempt; ambiguity, cancellation,
+  deadline/egress refusal, content filter, LENGTH, budget failure, and
+  oversized invalid output stop the ladder. Oversized content is never
+  truncated to create a repair payload. Two invalid repair outputs stop after
+  the second attempt.
+- Provider `STRUCTURE_INVALID` is not treated as a schema verdict. Bounded
+  response content still goes through host parsing and validation before the
+  host decides whether to accept it or enter repair.
+- Added typed, content-free `MODEL_REPAIRED`. It is appended atomically with
+  accepted response completion. The event carries host metadata and the
+  host-derived repair count only. Attempt usage and the returned
+  `ModelResponse.repair_attempts` use the host ordinal; recovery reconstructs
+  the accepted repaired response from durable completion facts.
+- Focused evidence: the scripted provider test covers repaired success,
+  minimal repair context, provider diagnostic/content exclusion from events,
+  primary-to-repair lineage, definite first repair failure followed by second
+  repair success, two definite repair failures mapping to hard validation
+  failure, ambiguous repair stopping immediately, two invalid repair results
+  stopping at the maximum, one repair health read per ladder, degraded repair
+  health, cancellation before repair intent, oversized output refusal, and
+  reopen recovery of the accepted repaired result. Router and Event Bus test
+  suites pass.
+- Sequential review: (1) fixed model and strict schema capability check;
+  Codex remains unreachable; (2) no crate direction changed; (3) initial
+  invalid accounting and events stay atomic, and successful repair completion
+  plus `MODEL_COMPLETED`/`MODEL_REPAIRED` share one transaction; (4) retry
+  ordinals, parent links, fresh gates, and health snapshot are deterministic;
+  (5) invalid output appears only in the transient trusted repair request and
+  never in durable response, usage, or events; (6) every repair reserves and
+  settles through the existing accounting path, with a hard two-dispatch cap;
+  (7) tests use scripted trait providers, independent SQLite reopen, and no
+  wall-clock sleeps; (8) migration 0003 and its checksum are unchanged.
+- Local validation passed: fmt; workspace check; all-target and all-feature
+  tests; denied-warning Clippy; docs validation; workspace smoke; all 76 Python
+  smoke tests; Cargo metadata; identity guard; and diff check. Exact-head
+  Fast/Full/cross-architecture run IDs will be recorded after the behavior
+  commit. This slice does not close normal fallback, all budget integration,
+  repair crash injection, or P4E as a whole.

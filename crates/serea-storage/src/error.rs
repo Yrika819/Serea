@@ -58,6 +58,8 @@ pub enum StoreError {
     AuditRequired,
     /// The audit participant returned an invalid or empty record batch.
     AuditRejected,
+    /// A production task transition requires the fixed Event Bus participant.
+    EventParticipantRequired,
     /// A requested task is absent.
     TaskNotFound,
     /// A supplied task identity already exists.
@@ -84,6 +86,30 @@ pub enum StoreError {
     DuplicateIdempotencyKey,
     /// A task mutation supplies a backward or inconsistent timestamp.
     InvalidTimestamp,
+    /// Event payload exceeds the frozen 32 KiB canonical byte bound.
+    EventPayloadTooLarge,
+    /// One transaction attempted to append more than sixteen events.
+    EventTransactionLimit,
+    InvalidEventReplayPage,
+    InvalidRetentionDeleteBatch,
+    EventHistoryCorrupt,
+    /// Event history has no capacity after eligible retention pruning.
+    EventStoreCapacity,
+    /// Global event sequence cannot advance without overflowing SQLite's integer domain.
+    EventSequenceOverflow,
+    /// Event content declares a class that this Store cannot safely persist.
+    EventClassRefused,
+    ScheduleNotActive,
+    ScheduleRevisionConflict,
+    SchedulerLeaseFenced,
+    StaleSchedulerLease,
+    ScheduleOccurrenceNotClaimable,
+    ScheduleOccurrenceAlreadyMapped,
+    SchedulerLeaseGenerationOverflow,
+    ScheduleActiveLimit,
+    SchedulePendingOccurrenceLimit,
+    ScheduleCommandIdentityConflict,
+    InvalidSchedule,
     /// Recovery observation no longer matches durable facts, even within one Tx.
     RecoverySnapshotStale,
     /// Requested recovery action lacks validated durable evidence.
@@ -121,6 +147,7 @@ impl StoreError {
             Self::InvalidLeaseInterval => "InvalidLeaseInterval",
             Self::AuditRequired => "AuditRequired",
             Self::AuditRejected => "AuditRejected",
+            Self::EventParticipantRequired => "EventParticipantRequired",
             Self::TaskNotFound => "TaskNotFound",
             Self::TaskExists => "TaskExists",
             Self::CorruptRow => "CorruptRow",
@@ -134,6 +161,25 @@ impl StoreError {
             Self::DuplicateSequence => "DuplicateSequence",
             Self::DuplicateIdempotencyKey => "DuplicateIdempotencyKey",
             Self::InvalidTimestamp => "InvalidTimestamp",
+            Self::EventPayloadTooLarge => "EventPayloadTooLarge",
+            Self::EventTransactionLimit => "EventTransactionLimit",
+            Self::InvalidEventReplayPage => "InvalidEventReplayPage",
+            Self::InvalidRetentionDeleteBatch => "InvalidRetentionDeleteBatch",
+            Self::EventHistoryCorrupt => "EventHistoryCorrupt",
+            Self::EventStoreCapacity => "EventStoreCapacity",
+            Self::EventSequenceOverflow => "EventSequenceOverflow",
+            Self::EventClassRefused => "EventClassRefused",
+            Self::ScheduleNotActive => "ScheduleNotActive",
+            Self::ScheduleRevisionConflict => "ScheduleRevisionConflict",
+            Self::SchedulerLeaseFenced => "SchedulerLeaseFenced",
+            Self::StaleSchedulerLease => "StaleSchedulerLease",
+            Self::ScheduleOccurrenceNotClaimable => "ScheduleOccurrenceNotClaimable",
+            Self::ScheduleOccurrenceAlreadyMapped => "ScheduleOccurrenceAlreadyMapped",
+            Self::SchedulerLeaseGenerationOverflow => "SchedulerLeaseGenerationOverflow",
+            Self::ScheduleActiveLimit => "ScheduleActiveLimit",
+            Self::SchedulePendingOccurrenceLimit => "SchedulePendingOccurrenceLimit",
+            Self::ScheduleCommandIdentityConflict => "ScheduleCommandIdentityConflict",
+            Self::InvalidSchedule => "InvalidSchedule",
             Self::RecoverySnapshotStale => "RecoverySnapshotStale",
             Self::InvalidRecoveryAction => "InvalidRecoveryAction",
             Self::Clock(_) => "Clock",

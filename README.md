@@ -5,14 +5,14 @@ Serea is an offline-first Rust project for a tightly scoped, durable task-runtim
 ## Current status
 
 - **P2 durable runtime: complete.** The protocol, SQLite storage, task engine, and deterministic testkit are implemented and P2 closure evidence is recorded in [`docs/plans/P2-closure.md`](docs/plans/P2-closure.md).
-- **P3: not started.** No production P3 implementation or migration exists.
-- The workspace contains four crates: `serea-protocol`, `serea-storage`, `serea-task-engine`, and dev-only `serea-testkit`.
+- **P3 durable Event Bus and Scheduler: closed on `p3/event-bus-scheduler`.** PR #1 is open as a draft and has not been merged to `main`; see [`docs/plans/P3-closure.md`](docs/plans/P3-closure.md) for scope, evidence, and nonclaims.
+- The workspace contains six crates: `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-task-engine`, `serea-scheduler`, and dev-only `serea-testkit`.
 
-Not implemented: Gmail runtime, Calendar runtime, Android runtime, Event Bus, Scheduler, a real GoalLatch integration, a real Codex path, or real credentials/providers. Architecture and protocol documents may describe later-phase plans; those plans are not shipped functionality.
+Not implemented: Gmail runtime, Calendar provider, Android runtime, a real GoalLatch integration, a real Codex path, production credentials, or external providers. P3 Event Bus and Scheduler code is on the open branch and is not yet part of `main`.
 
 ## Architecture
 
-The runtime dependency direction is `serea-task-engine` → `serea-storage` → `serea-protocol`; the task engine also depends directly on the protocol crate. `serea-testkit` is for deterministic test doubles and is not a runtime dependency. Storage uses bundled SQLite. P2 provides durable task transitions, lease fencing, recovery, audit seams, and bounded process-crash/fault-injection evidence; it does not establish power-loss or production durability certification.
+The runtime dependency graph is acyclic: Event Bus depends on Storage and Protocol; Task Engine depends on Event Bus, Storage, and Protocol; Scheduler depends on Task Engine, Event Bus, Storage, and Protocol; Storage depends on Protocol. `serea-testkit` is for deterministic test doubles and is not a runtime dependency. Storage uses bundled SQLite. P2/P3 provide durable task transitions, lease fencing, recovery, event sequencing, and bounded process-crash/fault-injection evidence; they do not establish power-loss or production durability certification.
 
 ## Build and test
 

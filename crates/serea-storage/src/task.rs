@@ -19,6 +19,8 @@ const MAX_TASK_SCHEMA_STEPS: usize = 1024;
 pub struct TaskSnapshot {
     pub task: AssistantTask,
     pub plan_revision: u32,
+    /// Monotonic storage-owned revision for task state transitions. Not a wire field.
+    pub state_revision: u64,
     pub steps: Vec<StepSnapshot>,
 }
 
@@ -494,9 +496,9 @@ impl Tx<'_> {
 
 fn load(conn: &Connection, task_id: &TaskId) -> Result<TaskSnapshot, StoreError> {
     task_class(conn, task_id)?;
-    let (mut task,revision) = conn.query_row("SELECT task_id,kind,title,state,origin_kind,origin_device_id,origin_message_id,origin_extensions,
+    let (mut task,revision,state_revision) = conn.query_row("SELECT task_id,kind,title,state,origin_kind,origin_device_id,origin_message_id,origin_extensions,
         data_class_rank,policy_class_rank,created_at_ms,updated_at_ms,deadline_at_ms,blocked_reason,result_summary,cancelled_at_ms,
-        cancelled_by,failure_reason,max_model_calls,max_tool_calls,max_attempts_per_step,budget_extensions,extensions,plan_revision
+        cancelled_by,failure_reason,max_model_calls,max_tool_calls,max_attempts_per_step,budget_extensions,extensions,plan_revision,state_revision
         FROM tasks WHERE task_id=?1",[task_id.as_str()],|r|Ok(task_row(r))).optional()?.ok_or(StoreError::TaskNotFound)??;
     let history = load_history(conn, task_id, revision, task.data_class)?;
     let mut statement=conn.prepare("SELECT step_id,task_id,sequence,kind,status,attempt,plan_revision,provider_id,capability_id,capability_version,
@@ -589,6 +591,7 @@ fn load(conn: &Connection, task_id: &TaskId) -> Result<TaskSnapshot, StoreError>
     Ok(TaskSnapshot {
         task,
         plan_revision: revision,
+        state_revision,
         steps,
     })
 }
@@ -598,7 +601,7 @@ fn id_from_value(object: &Map<String, Value>) -> Result<&str, StoreError> {
         .and_then(Value::as_str)
         .ok_or(StoreError::CorruptRow)
 }
-fn task_row(r: &Row<'_>) -> Result<(AssistantTask, u32), StoreError> {
+fn task_row(r: &Row<'_>) -> Result<(AssistantTask, u32, u64), StoreError> {
     let mut m = Map::new();
     for (i, key) in [(0, "task_id"), (1, "kind"), (2, "title"), (3, "state")] {
         m.insert(key.into(), Value::String(g(r, i)?));
@@ -669,7 +672,11 @@ fn task_row(r: &Row<'_>) -> Result<(AssistantTask, u32), StoreError> {
     m.insert("steps".into(), Value::Array(vec![]));
     let task = decode(&Value::Object(m))?;
     valid_task(&task)?;
-    Ok((task, g(r, 23)?))
+    let state_revision = u64::try_from(g::<i64>(r, 24)?).map_err(|_| StoreError::CorruptRow)?;
+    if state_revision == 0 {
+        return Err(StoreError::CorruptRow);
+    }
+    Ok((task, g(r, 23)?, state_revision))
 }
 fn step_row(r: &Row<'_>) -> Result<(Value, u32), StoreError> {
     let mut m = Map::new();
@@ -932,7 +939,9 @@ pub(crate) fn sweep_blob_candidates(
         removed+=u64::try_from(conn.execute("DELETE FROM blobs WHERE digest=?1 AND data_class_rank=?2
             AND NOT EXISTS(SELECT 1 FROM task_blob_refs WHERE digest=?1 AND data_class_rank=?2)
             AND NOT EXISTS(SELECT 1 FROM step_blob_refs WHERE digest=?1 AND data_class_rank=?2)
-            AND NOT EXISTS(SELECT 1 FROM plan_revisions WHERE plan_digest=?1 AND data_class_rank=?2)",params![digest,rank])?)
+            AND NOT EXISTS(SELECT 1 FROM plan_revisions WHERE plan_digest=?1 AND data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM schedules WHERE template_digest=?1 AND template_data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM schedule_occurrences WHERE template_digest=?1 AND template_data_class_rank=?2)",params![digest,rank])?)
             .map_err(|_|StoreError::Sqlite)?;
     }
     Ok(removed)

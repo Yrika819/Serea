@@ -1,7 +1,7 @@
 # ADR-0020: Bounds `B3` Scope — Operational Bounds versus Structural Constraints
 
 - Status: **Accepted** — semantic B3 operational/structural clarification
-- Architecture version: `serea-arch/1.0.0` (current frozen contract set)
+- Architecture version: `serea-arch/1.0.0` at acceptance (superseded as current by ADR-0026 / `serea-arch/2.0.0`)
 - Decision date: 2026-10-03 — owner direction
 - Recorded by: P2 design preparation, from `007f038af19ae7855ad00b7e58389ce04d0fe727`
 - Feeds: [P2 contract gap analysis](../plans/P2-contract-gap-analysis.md) §5.5, §12

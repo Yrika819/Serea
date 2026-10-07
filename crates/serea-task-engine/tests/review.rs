@@ -4,6 +4,8 @@ use serea_protocol::*;
 use serea_storage::{Store, StoreError};
 use serea_task_engine::*;
 use std::sync::Mutex;
+mod support;
+use support::event_bus;
 
 fn at(n: i64) -> EpochMillis {
     EpochMillis::new(n).unwrap()
@@ -116,7 +118,7 @@ fn input(n: u32, kind: StepKind) -> PlanStep {
     }
 }
 fn engine() -> TaskEngine {
-    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap())
+    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap(), event_bus())
 }
 fn prepare(e: &mut TaskEngine, c: &Context, steps: Vec<PlanStep>) {
     e.create_task(spec(), &c.view()).unwrap();
@@ -191,7 +193,7 @@ impl FileFixture {
         }
     }
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap())
+        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
 }
 impl Drop for FileFixture {
@@ -1034,7 +1036,7 @@ fn t1_real_journal_receipt_success_has_complete_literal_batches_and_bound_facts(
     let r = receipt(&p.step);
     let created = created(&c);
     store
-        .transact_with_audit(&probe, |tx| {
+        .transact_with_participants(&probe, &event_bus(), |tx| {
             let g = audited_ready(tx, &created, &c, vec![p])?;
             tx.commit_step_outcome(
                 g,
@@ -1100,7 +1102,7 @@ fn t1_real_journal_known_final_failure_preserves_specific_cause_and_terminal_bat
     let action = HostAction::new("STOP").unwrap();
     let reason = FailureReason::new("KNOWN_FAILURE").unwrap();
     store
-        .transact_with_audit(&probe, |tx| {
+        .transact_with_participants(&probe, &event_bus(), |tx| {
             let g = audited_ready(tx, &created, &c, vec![input(1, StepKind::Notify)])?;
             tx.commit_step_outcome(
                 g,
@@ -1165,7 +1167,7 @@ fn t1_real_journal_verification_terminal_has_no_receipt_or_self_transition_dupli
     let probe = RealAuditProbe::new();
     let created = created(&c);
     store
-        .transact_with_audit(&probe, |tx| {
+        .transact_with_participants(&probe, &event_bus(), |tx| {
             let g = audited_ready(
                 tx,
                 &created,

@@ -425,7 +425,7 @@ fn injected_open_refuses_newer_schema_without_mutation_or_backend_calls() {
     let temp = TempStore::new();
     {
         let conn = seed(&temp.path);
-        conn.execute_batch("UPDATE schema_migrations SET version=2,name='0002_future'")
+        conn.execute_batch("UPDATE schema_migrations SET version=3,name='0003_future'")
             .unwrap();
     }
     assert_injected_refusal_unchanged(&temp.path, StoreError::SchemaTooNew);

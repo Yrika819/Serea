@@ -1,6 +1,6 @@
 # Execution Pipeline
 
-Architecture version: `serea-arch/1.0.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-03
+Architecture version: `serea-arch/2.4.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
 
 This document traces one user request from utterance to durable outcome, stage
 by stage, with two worked examples: a read-only task that needs no approval, and
@@ -42,7 +42,7 @@ The authority flow these stages implement is
 ```json
 {
   "envelope_version": "1",
-  "surface": "serea.device/1",
+  "surface": "serea.device/2",
   "message_id": "evt_01JQ8ZK5H4NQW9T2XR7BV3M8DF",
   "correlation_id": "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA",
   "causation_id": null,
@@ -225,7 +225,9 @@ evidence row, `CAPABILITY_COMPLETED` with `seq` assigned inside the transaction,
 and the task state `EXECUTING → VERIFYING`. `model_usage` already has its row
 from stage 3.
 
-The task moves to `COMPLETED`; `TASK_COMPLETED` commits with `result_summary`.
+The task moves to `COMPLETED`; `TASK_COMPLETED` commits with the available
+result digest. Task Engine lifecycle events do not copy result bodies into the
+event payload.
 
 ### Stage 10 — Delivery
 

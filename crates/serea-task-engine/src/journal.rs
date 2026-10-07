@@ -114,6 +114,7 @@ impl TaskAuditParticipant for TaskJournal {
             AuditOperation::Cancelled => vec![task(JournalKind::TaskCancelRequested)],
             AuditOperation::PlanningStarted
             | AuditOperation::Blocked
+            | AuditOperation::DeviceSessionResumed
             | AuditOperation::InvariantFailed
             | AuditOperation::RecoveryStateChanged => vec![],
             AuditOperation::RecoveryDecision => return Err(StoreError::AuditRejected),

@@ -1,9 +1,10 @@
 # Serea Protocol Index
 
-Status: **FROZEN current contract set** · Architecture version `serea-arch/1.0.0` · Ratified on 2026-10-03
+Status: **FROZEN current contract set** · Architecture version `serea-arch/2.4.0` · Ratified on 2026-10-07
 
 P0/P1 implementation baseline was `serea-arch/0.2.0`; the current frozen registry
-is architecture/1, task/2, action/2, event/1 and envelope version 1. Three corrected
+is architecture/2.4, task/2, action/2, device/2, event/1, scheduler/1 and
+envelope version 1. Three corrected
 independent subagent documentation gate reviews under the coordinator are GREEN;
 owner direction ratified the design contingent on GREEN. P2A slices are
 implemented. The coordinator records current final workspace/MSRV validation,
@@ -116,6 +117,22 @@ Three independent version axes. They are never collapsed into one number.
   state.
 - **Patch**: editorial only. No contract meaning changes.
 
+ADR-0028 adds backward-compatible closed Scheduler subordinate values and one
+structural template-size bound. It advances the architecture from
+`serea-arch/2.1.0` to `serea-arch/2.2.0`; `serea.event/1` and
+`serea.scheduler/1` remain unchanged.
+
+ADR-0029 adds the required `device_id` member to the closed
+`DEVICE_CONNECTED` kind-specific payload and an internal durable task-wait and
+resume-wake contract. It advances the architecture to `serea-arch/2.3.0`;
+`serea.event/1`, `serea.scheduler/1`, and `serea.task/2` remain unchanged.
+
+ADR-0030 defines the closed approval lifecycle routing payload and durable
+Scheduler handoff to future P6. Scheduler materializes and exposes the wake but
+does not evaluate approval authority or transition tasks. It advances the
+architecture to `serea-arch/2.4.0`; `serea.event/1`, `serea.scheduler/1`,
+`serea.approval/1`, and `serea.task/2` remain unchanged.
+
 ### 4.2 Compatibility rules
 
 1. A consumer must reject a payload whose major wire-protocol version it does
@@ -142,7 +159,8 @@ Three independent version axes. They are never collapsed into one number.
 | `serea.action` | 2 |
 | `serea.task` | 2 |
 | `serea.model`, `serea.policy`, `serea.approval`, `serea.event` | 1 |
-| `serea.device`, `serea.goallatch`, `serea.data`, `serea.bounds`, `serea.scheduler` | 1 |
+| `serea.device` | 2 |
+| `serea.goallatch`, `serea.data`, `serea.bounds`, `serea.scheduler` | 1 |
 
 Dispatch/version validation consults this registry per surface, not one global
 major value. Envelope version remains 1; `serea.envelope` is not a surface.
@@ -240,9 +258,17 @@ rejected at review.
 - Where each decision is recorded: [Decision Index](../decisions/README.md)
 ## 9. Changelog
 
-- 2026-10-03: ratified frozen current architecture/1, task/2 and action/2;
-  event/1 and envelope version 1 unchanged. ADR-0018/19/20/23 Accepted in their
+- 2026-10-07: ADR-0030 adds closed approval lifecycle routing identity and a
+  durable Scheduler-to-P6 wake handoff. Architecture advances to
+  `serea-arch/2.4.0`; Event, Scheduler, Approval, and Task wire surfaces are
+  unchanged.
+
+- 2026-10-06: accepted architecture/2 and device/2 replay semantics under ADR-0026;
+  task/2, action/2, event/1 and envelope version 1 remain unchanged. ADR-0018/19/20/23 Accepted in their
   stated architectural/wire/primitive/validation scopes; P2A slices implemented.
   Current validation, test counts, bounded regression review and integration
   status is coordinator-owned in the [closure record](../plans/P2A-review-and-closure.md).
   ADR-0021/22/24 runtime stays Proposed; 0024 wire generation only is implemented.
+- 2026-10-06: ADR-0027 accepts the Serea calendar recurrence grammar V1 and
+  advances the architecture to `serea-arch/2.1.0`; `serea.scheduler/1` and all
+  other wire surfaces are unchanged.

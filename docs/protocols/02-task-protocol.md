@@ -1,6 +1,6 @@
 # Task Protocol
 
-Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current contract**
+Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current architecture `serea-arch/2.4.0`**
 
 The `AssistantTask` is Serea's unit of durable work. It is **not** GoalLatch's
 `Goal`. The two are different concepts with different lifecycles, different
@@ -198,6 +198,29 @@ same step record without changing the contract.
 | `FAILED` | Terminal failure. |
 | `BLOCKED` | Cannot proceed without an external change (device offline, credential revoked, ambiguous effect). |
 | `CANCELLED` | Terminal, user- or system-initiated. |
+
+#### 4.1.1 DeviceResumeWaitV1
+
+`BLOCKED` with reason `DEVICE_OFFLINE` is resumable on a device session only
+when an explicit durable `DeviceResumeWaitV1` exists for the task. The wait is
+keyed by `TaskId` and contains one `DeviceId`, the task's blocked revision, the
+Event Bus committed high-water sequence captured when the wait is registered,
+and `created_at`. It means exactly that this task is blocked waiting for this
+specific device session.
+
+Task Engine's `block_for_device` transition atomically enters
+`BLOCKED/DEVICE_OFFLINE`, writes the task journal and lifecycle events, and
+registers the wait with the current Event Bus high-water. Generic `block` with
+`DEVICE_OFFLINE` is refused because it does not supply a device identity.
+Neither `TaskOrigin.device_id`, task kind/title, `WAITING_USER`, nor arbitrary
+`BLOCKED` state grants resume eligibility.
+
+The wait is valid only while the same task remains `BLOCKED/DEVICE_OFFLINE` at
+the recorded task revision. Any other task transition makes it stale; TaskId
+deletion removes it. A matching `DEVICE_CONNECTED` is considered only when
+its Event Bus sequence is strictly greater than the wait's registration
+high-water. Device reconnect moves the existing task from `BLOCKED` to
+`READY`; it creates no task, plan, capability request, or approval authority.
 
 Terminal states: `COMPLETED`, `FAILED`, `CANCELLED`.
 

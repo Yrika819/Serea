@@ -1,6 +1,6 @@
 # Scheduler Protocol
 
-Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN for P0** · Implementation: **Deferred to P3**
+Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.4.0`** · Implementation: **P3 in progress**
 
 This protocol defines durable schedules and event-driven wakeups that may create
 or resume Serea tasks. The scheduler is a trigger and persistence subsystem, not
@@ -21,11 +21,13 @@ contains at least:
 | `schedule_id` | Stable `ScheduleId`, never reused. |
 | `owner_device_id` | The paired device/user identity that created the schedule, or the host admin identity for a host-created schedule. |
 | `state` | `ACTIVE`, `PAUSED`, or `CANCELLED`. |
-| `trigger` | A validated event predicate or calendar recurrence, exactly one trigger form per schedule. |
-| `task_template` | Host-validated task intent and permitted arguments; a schedule does not persist model-authored authority. |
+| `revision` | Monotonically increasing generation changed by each committed definition or state mutation; claims compare the expected revision under the transaction fence. |
+| `trigger` | In P3 V1, exactly one validated `EventPredicateV1` or `CalendarRecurrenceV1`. Dedicated device and approval wakes are internal handoffs for existing task state, not schedule definitions. |
+| `task_template` | A host-validated `ScheduledTaskTemplateV1` containing title and planning intent only; V1 has no permitted action arguments. |
 | `policy_class` | Fixed ceiling for spawned work; a scheduled task cannot raise it. |
 | `approval_policy` | The ordinary policy/approval requirements for each action. No approval is pre-granted by a schedule. |
 | `timezone` | IANA time-zone identifier for calendar recurrences; required when the recurrence is local-time based. |
+| `event_predicate_after_seq` | Event Bus high-water captured when a HOST_EVENT predicate revision commits; events at or below it are not retroactively matched. |
 | `created_at`, `updated_at` | Host timestamps persisted with each record change. |
 | `next_due_at` | Next calculated due instant, persisted in UTC together with the recurrence's local-time interpretation. |
 | `missed_occurrence_policy` | One of `SKIP`, `RUN_ONCE`, `RUN_EACH`; validated with the schedule and constrained as below. |
@@ -33,8 +35,12 @@ contains at least:
 
 Creation, change, pause, resume, and cancellation require an authenticated user
 or host administrator action. Model output may propose a schedule but cannot
-create or mutate durable schedule state. Every mutation is persisted before its
-corresponding scheduler event is appended.
+create or mutate durable schedule state. Mutation and its corresponding
+scheduler event use one Storage transaction: execute the schedule/state SQL
+mutation, append the event and allocate its sequence inside that same uncommitted
+transaction, then COMMIT once. “Persisted before event appended” specifies SQL
+statement order within this transaction. It never means two transactions or a
+commit between the mutation and event.
 
 A schedule's policy ceiling and task template are immutable for already-created
 tasks. Editing a schedule affects future occurrences only. Raising its policy
@@ -51,8 +57,8 @@ Supported wake types are:
 | --- | --- | --- |
 | `CALENDAR_DUE` | Persisted calendar recurrence reaches its calculated due instant | Process the due occurrence according to its missed-occurrence policy. |
 | `HOST_EVENT` | A committed Serea event matches the schedule's validated event predicate | Process once for that source event; duplicate delivery is deduplicated. |
-| `DEVICE_SESSION_ESTABLISHED` | `DEVICE_CONNECTED` is committed for a paired device after a disconnect | Resume the eligible existing task; do not create a second task for the same occurrence. |
-| `APPROVAL_EVENT` | `APPROVAL_GRANTED`, `APPROVAL_DENIED`, or `APPROVAL_EXPIRED` is committed for the waiting task | Resume or terminate the already existing task according to Approval and Task Protocol; never mint another occurrence task. |
+| `DEVICE_SESSION_ESTABLISHED` | A valid `DEVICE_CONNECTED` event identifies the connected `DeviceId` | Materialize bounded durable resume wakes only for explicit `DeviceResumeWaitV1` rows matching that device with registration high-water below the event sequence; each wake resumes the existing task at most once. |
+| `APPROVAL_EVENT` | `APPROVAL_GRANTED`, `APPROVAL_DENIED`, or `APPROVAL_EXPIRED` is committed with a valid `ApprovalLifecyclePayloadV1` | Materialize one durable `ApprovalLifecycleWake` for future P6 handling; Scheduler does not apply the outcome or transition a task. |
 | `CORE_RECOVERY` | Core starts or recovers durable state | Recalculate due state and reconcile interrupted occurrence processing without duplicating a task or effect. |
 | `RETRY_DUE` | A bounded catch-up batch leaves due occurrences queued, or a retryable scheduler/provider operation reaches its durable retry time | Carry `ScheduleId`, due occurrence identity, and `not_before`; deduplicate by that tuple and process at most the remaining per-wake bound. Persist the next wake atomically with the deferred cursor.
 
@@ -60,6 +66,55 @@ Each wake carries its source identity from durable state (the source `EventId`,
 `ScheduleId` and due instant, or existing `TaskId` as applicable). A wake is only
 a request to evaluate the schedule/task; it does not bypass policy or grant
 approval.
+
+`DEVICE_SESSION_ESTABLISHED` and `APPROVAL_EVENT` are dedicated internal wake
+paths, not user schedule trigger definitions. A device wake resumes only a task
+with an explicit `DeviceResumeWaitV1`; an approval wake is retained for future
+P6 handling. Neither wake creates a new scheduled task.
+
+`DEVICE_CONNECTED` payload parsing uses the exact
+`DeviceConnectedPayloadV1` shape from Event Protocol §3.6. Event correlation,
+task origin, task title/kind, `WAITING_USER`, and generic `BLOCKED` state never
+select resume candidates. `DeviceResumeWaitV1` is the sole eligibility source;
+its registration Event Bus high-water must be strictly below the connection
+event sequence. Scheduler first materializes uniquely keyed internal
+`DeviceSessionResumeWake` rows in deterministic batches of at most
+`max_scheduler_event_scan_page` (256). It advances the source cursor only after
+all pre-existing eligible waits have been materialized or classified stale.
+The durable wakes survive source event retention and are recovered after
+restart. Intentionally expired content has no device identity and creates no
+wake.
+
+Approval lifecycle payloads are routing identity only. Scheduler validates the
+closed approval/task/step IDs and correlation/trace consistency, materializes
+the wake and cursor atomically, and leaves the wake pending until an explicit
+future P6 acknowledgement. It does not load or validate grants, decide outcome
+semantics, or call TaskEngine from an approval event. Duplicate source delivery
+maps to one wake. An intentional expired range creates no synthetic approval
+wake; unexplained replay corruption stops before cursor advancement. See
+[Approval Protocol §10](05-approval-protocol.md#10-p3-lifecycle-event-handoff-boundary)
+and [ADR-0030](../decisions/ADR-0030-durable-approval-lifecycle-wake.md).
+
+### 2.1 EventPredicateV1
+
+HOST_EVENT schedules store the closed SCJ-1 object
+`{"event_kind":"<registered EventKind>","version":"1"}`. These are its
+only fields. The host rejects unknown or missing fields, duplicate keys,
+unregistered kinds, and versions other than `"1"`. Persisted JSON is
+canonical; runtime decodes it to `EventPredicateV1` and never compares raw
+source text. Schedule creation and each predicate revision persist the
+Event Bus high-water observed in the same transaction; only later event
+sequences can match that revision, so delayed replay cannot retroactively
+trigger a newly created or edited schedule.
+
+The only positive match is exact EventKind equality. Payload fields, task/step
+IDs, actor, correlation/causation, data class, timestamps, and other JSON do
+not participate. HOST_EVENT excludes `DEVICE_CONNECTED`,
+`APPROVAL_GRANTED`, `APPROVAL_DENIED`, and `APPROVAL_EXPIRED`, which belong to
+dedicated wake paths. It also excludes every Scheduler lifecycle kind listed
+in Event Protocol §3. A Scheduler-rooted event is ineligible for every
+HOST_EVENT schedule. Scheduler derives that root from durable occurrence/task
+provenance, never from predicate data. V1 has no recursion override.
 
 ## 3. Persistence and recovery
 
@@ -70,6 +125,12 @@ occurrence key is the existing `ScheduleId` plus its canonical occurrence
 identity: for calendar recurrence, the intended local date/time and timezone;
 for `HOST_EVENT`, the source `EventId`; for resume/recovery wakeups, the existing
 `TaskId`. This is a storage uniqueness rule, not a new identifier format.
+
+Each occurrence captures the template digest and class current when it is
+durably resolved. A later schedule edit cannot change an existing occurrence's
+planning context. Given a mapped TaskId after restart, the occurrence mapping
+resolves the Schedule, occurrence, source EventId if any, and exact historical
+template version.
 
 Before dispatch, the scheduler durably records that an occurrence is being
 processed. Creating a scheduled task and recording the occurrence-to-task
@@ -94,6 +155,31 @@ An ambiguous provider outcome blocks or reconciles under the Capability and Task
 Protocols; the scheduler never starts a replacement task to guess whether an
 effect happened.
 
+### 3.1 ScheduledTaskTemplateV1
+
+The exact template shape is the closed SCJ-1 object
+`{"intent":"<prose>","title":"<TaskTitle>","version":"1"}`. It has
+exactly these fields. `title` uses existing `TaskTitle` validation; `intent`
+uses existing prose validation and is planning context only, never trusted
+instruction, authority, policy, or executable code. V1 has no action
+arguments. Unknown fields, duplicate keys, malformed text, and unsupported
+versions are refused. Raw and canonical UTF-8 bytes are bounded by
+`max_schedule_template_bytes = 32768`.
+
+Template JSON cannot carry policy class, approval data, capability/provider,
+ActionRequest, TaskStep, Plan, idempotency key, receipt, credential handle,
+GoalLatch goal, model route, bound override, admin authorization, or arbitrary
+arguments. Schedule fields remain authoritative for policy ceiling, approval
+policy, owner, and trigger. Normal future Task planning and capability
+validation remain in force.
+
+The host classifies title and intent and stores their maximum class. CREDENTIAL
+is forbidden; SECRET is unsupported on this blob path; PRIVATE is accepted
+only through the existing protected-blob capability and otherwise fails
+closed. The digest provides content identity/integrity only. Schedule and
+occurrence rows pin blobs through durable references; cleanup releases them
+only after no existing task needs the historical intent.
+
 ## 4. Lease and concurrency
 
 Only one scheduler lease holder may process a schedule occurrence at a time.
@@ -114,16 +200,78 @@ Task Protocol and does not undo completed effects.
 
 ## 5. Timezone, daylight-saving transitions, and missed occurrences
 
-Recurrence definitions use an IANA timezone and local calendar fields; due
-instants are computed and persisted in UTC. A timezone database update affects
-future calculations only; it never rewrites a processed occurrence or changes
-the UTC instant already assigned to a pending occurrence.
+### 5.1 Calendar recurrence grammar V1
+
+Calendar schedules use the closed `CalendarRecurrenceV1` JSON value defined by
+[ADR-0027](../decisions/ADR-0027-calendar-recurrence-grammar-v1.md). Serea owns
+its recurrence semantics; Jiff owns timezone and DST resolution only. The
+Schedule's existing `timezone` field is the authoritative IANA timezone and is
+not repeated in recurrence JSON.
+
+All values contain exactly `version`, `kind`, and `anchor_local`, plus the
+fields required by the selected kind. `version` is the string `"1"`.
+`anchor_local` is exactly `YYYY-MM-DDTHH:MM`: no offset, seconds, fractional
+part, or timezone suffix. It must name a real Gregorian date in the supported
+durable range 0000-01-01 through 9999-12-31 and a valid hour/minute.
+
+| Kind | Exact additional fields | Candidate rule |
+|---|---|---|
+| `ONCE` | None | Exactly the anchor local label; it has no next occurrence after durable processing. |
+| `DAILY` | Integer `interval` ≥ 1 | Candidate date is on or after the anchor date and its whole local-calendar-day difference modulo interval is zero. Preserve anchor HH:MM. |
+| `WEEKLY` | Integer `interval` ≥ 1; non-empty unique `weekdays` | ISO Monday-based week index from the anchor week is divisible by interval. Emit selected weekdays on or after the anchor date at anchor HH:MM. |
+
+There is no implicit interval default. Weekday tokens are `MO`, `TU`, `WE`,
+`TH`, `FR`, `SA`, and `SU`; storage and output order them canonically in that
+sequence. Reject unknown kinds or fields, missing fields, duplicate JSON keys,
+duplicate weekdays, non-integer numbers, interval zero, malformed local labels,
+impossible dates, invalid times, offsets, seconds, and timezone text embedded in
+`anchor_local`. V1 defines no `COUNT`, `UNTIL`, end date, exception dates,
+`BYSETPOS`, monthly, yearly, hourly, or smaller-unit recurrence.
+
+Persist recurrence as a closed compact SCJ-1 object with integer-only numeric
+fields, duplicate-key rejection, canonical object serialization, and weekday
+normalization. Equivalent semantic input is stored in one canonical form;
+runtime control flow uses the decoded value rather than raw JSON text.
+
+An occurrence identity is the owning `ScheduleId` plus the intended local label
+and the Schedule's IANA timezone. It is not the resolved UTC instant, TZDB
+version, lease, TaskId, or observed clock time. Encode the local label and zone
+deterministically as structured data; do not introduce a global identifier
+prefix. Persist the intended label, timezone, resolved UTC instant, evaluator
+version, and TZDB version. Schedule edits affect future unresolved candidates
+only. Existing resolved, pending, claimed, mapped, and processed rows keep
+their label and instant; a new recurrence resolving to the same ScheduleId,
+label, and timezone reuses the existing identity.
+
+An ONCE recurrence has no next occurrence after its single occurrence is durably
+processed; it never converts to DAILY and adds no Schedule lifecycle state.
+Recurring schedules stop through the existing `PAUSED` or `CANCELLED` lifecycle.
+
+Due instants are computed and persisted in UTC. A TZDB update affects future
+unresolved occurrences only; it never changes an instant assigned to a
+resolved occurrence.
+
+### 5.2 Timezone evaluator and DST
+
+P3 selects Jiff `=0.2.38` as the timezone conversion and gap/fold evaluator,
+with `default-features = false` and exactly the required `std` and
+`tzdb-bundle-always` features. This excludes
+`tzdb-zoneinfo` and `tzdb-concatenated`, so authoritative recurrence resolution
+cannot silently consult host OS TZDB. Jiff 0.2.38 resolves exact
+`jiff-tzdb =0.1.9`; its embedded IANA database reports version `2026e`.
+Crates.io metadata checked 2026-10-06 reports both packages as `Unlicense OR
+MIT`, each declaring Rust 1.70; both are compatible with the workspace's Rust
+1.85 MSRV. Pin the evaluator, bundled data crate, and TZDB data version and
+persist evaluator/TZDB versions per resolved occurrence. Since the bundled source
+is forced on every supported OS and host-database features are disabled, Linux,
+macOS Intel, and macOS arm64 share the same authoritative TZDB. Jiff does not
+own or expand Serea's recurrence grammar or occurrence policy.
 
 For a local time that does not exist during a daylight-saving gap, the occurrence
 is assigned to the first valid local instant after the gap. For a local time that
 occurs twice during a daylight-saving fold, it fires once, at the earlier UTC
-instant. The persisted occurrence identity prevents the repeated local label
-from creating two tasks.
+instant. The persisted intended-label occurrence identity prevents the repeated local
+label from creating two tasks.
 
 When Core is unavailable past a due instant, or a calendar fires late, apply the
 schedule's stored missed policy, subject to the following bounds:
@@ -155,6 +303,31 @@ Scheduler lifecycle events are owned by the [Event Protocol](06-event-protocol.m
 `SCHEDULE_TASK_CREATED`. They are committed in the same transaction as the
 schedule/occurrence state change they describe.
 
+For schedule cancellation and occurrence claim, each claim transaction
+revalidates that the schedule is `ACTIVE`, its expected revision/generation is
+current, the occurrence is unmapped and unprocessed, and the scheduler lease
+fence is current. If cancellation commits first, a later claim refuses. If the
+claim and task mapping commit first, that already-created task may continue
+under normal Task Protocol reconciliation; cancellation prevents future
+occurrences and does not silently cancel the task.
+
+Retries of an authenticated schedule command reuse the common authenticated
+envelope's stable `message_id` as the durable command-deduplication identity.
+The receipt binds that ID to the authenticated envelope/request digest and
+stored outcome; reusing an ID with different request content is refused. A new
+message ID is a new command. IDK-1 is not reused because its frozen task/action
+preimage fields and semantics do not match schedule lifecycle commands.
+
+P3 external generic subscribers are out of scope. The device timeline remains
+the frozen replay surface. The Scheduler is the sole internal durable Event Bus
+consumer and uses a Scheduler-specific singleton cursor/state row, not a generic
+subscriber registry. In-memory notifications are wake optimizations with zero
+authority. Startup order is: open/migrate Store; validate event metadata;
+recover Task Engine; reconcile Scheduler occurrences; replay Scheduler events
+from its durable cursor; enter live mode. Each replay pass snapshots committed
+high-water `seq` and processes only through that value. Events produced while
+handling the batch are processed on a later pass.
+
 ## 7. Approval interaction and authority
 
 A scheduled task follows exactly the same policy and approval evaluation as an
@@ -182,8 +355,10 @@ requires explicit user action before any effecting task is created.
 
 ## 9. Phase boundary and invariants
 
-The contract is frozen in P0; implementation is deferred to P3. P0 and P1 must
-not connect an external scheduler or perform real scheduled effects.
+The contract was frozen in P0; the accepted P3 Scheduler runtime is closed on
+the `p3/event-bus-scheduler` candidate branch and PR #1 is not yet merged to
+`main`. P0 and P1 must not connect an external scheduler or perform real
+scheduled effects.
 
 | # | Invariant |
 | --- | --- |
@@ -193,6 +368,27 @@ not connect an external scheduler or perform real scheduled effects.
 | S4 | Lease expiry permits reconciliation only; it never proves that no effect occurred. |
 | S5 | Timezone and DST resolution are deterministic and persisted per occurrence. |
 | S6 | Missed occurrences follow the stored bounded policy and are never silently discarded. |
-| S7 | Approval waits release scheduler leases and resume the same task. |
+| S7 | Approval waits release Scheduler leases; only future P6 Policy/Approval code applies an authoritative outcome to the same task. |
 | S8 | Proactive watcher execution remains read-only; proposals require a separate user action to cause effects. |
-| S9 | Scheduler implementation and real scheduled effects remain deferred to P3. |
+| S9 | Scheduler runtime behavior is bounded by this protocol; external provider effects remain outside P3 and require the later authority path. |
+
+## 10. Changelog
+
+- 2026-10-06: ADR-0027 defines `CalendarRecurrenceV1` with ONCE, DAILY, and
+  WEEKLY only; architecture advances to `serea-arch/2.1.0`. The Scheduler
+  surface remains `serea.scheduler/1`.
+- 2026-10-07: ADR-0028 defines EventPredicateV1, ScheduledTaskTemplateV1,
+  Scheduler causal-loop exclusion, and `max_schedule_template_bytes = 32768`;
+  architecture advances to `serea-arch/2.2.0`. Event and Scheduler surfaces
+  remain `/1`.
+- 2026-10-07: ADR-0029 defines `DeviceConnectedPayloadV1` and explicit durable
+  `DeviceResumeWaitV1` eligibility with sequence-fenced materialized wakes.
+  Architecture advances to `serea-arch/2.3.0`; Event, Scheduler, and Task
+  wire surfaces remain unchanged.
+- 2026-10-07: ADR-0030 defines approval lifecycle routing and durable wake
+  handoff to future P6; Scheduler applies no Approval outcome. Architecture
+  advances to `serea-arch/2.4.0`; wire surfaces remain unchanged.
+- 2026-10-07: P3 Scheduler runtime closes on the candidate branch. Calendar,
+  HOST_EVENT, device-session wake, and approval routing behavior follow this
+  protocol; external provider effects and P6 approval authority remain outside
+  P3. See the [P3 closure record](../plans/P3-closure.md).

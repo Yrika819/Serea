@@ -10,6 +10,8 @@ use serea_storage::{Store, TransitionContext};
 use serea_task_engine::{
     EngineError, NewTask, Plan, PlanStep, TaskEngine, legal_task_transition, task_transition_reason,
 };
+mod support;
+use support::event_bus;
 
 const TASK: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";
 const STEP: &str = "stp_01JQ8Z9M3R2CVN8H5FWK7PQDSF";
@@ -26,7 +28,7 @@ impl Clock for Fixed {
 }
 
 fn engine() -> TaskEngine {
-    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap())
+    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap(), event_bus())
 }
 
 fn context<'a>(actor: &'a ActorId, version: &'a SemVer) -> TransitionContext<'a> {

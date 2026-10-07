@@ -68,8 +68,10 @@
 pub struct Tx<'conn> {
     pub(crate) inner: rusqlite::Transaction<'conn>,
     pub(crate) audit: Option<&'conn dyn crate::audit::TaskAuditParticipant>,
+    pub(crate) events: Option<&'conn dyn crate::audit::EventParticipant>,
     pub(crate) protection: Option<std::sync::Arc<dyn crate::AtRestProtection>>,
     pub(crate) rollback_only: bool,
+    pub(crate) event_count: u8,
     // Capability provenance only; never a substitute for SQLite lease authority.
     pub(crate) origin: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -82,6 +84,7 @@ impl Tx<'_> {
         body: impl FnOnce(&mut Self) -> Result<T, crate::StoreError>,
     ) -> Result<T, crate::StoreError> {
         self.ensure_active()?;
+        let event_count_before = self.event_count;
         self.inner.execute_batch("SAVEPOINT serea_operation")?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(self)));
         match result {
@@ -105,6 +108,7 @@ impl Tx<'_> {
                 }
             }
             Ok(Err(error)) => {
+                self.event_count = event_count_before;
                 if self
                     .inner
                     .execute_batch("ROLLBACK TO serea_operation; RELEASE serea_operation")
@@ -116,6 +120,7 @@ impl Tx<'_> {
                 Err(error)
             }
             Err(panic) => {
+                self.event_count = event_count_before;
                 if self
                     .inner
                     .execute_batch("ROLLBACK TO serea_operation; RELEASE serea_operation")

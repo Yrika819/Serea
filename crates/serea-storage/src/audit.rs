@@ -4,7 +4,7 @@
 use rusqlite::named_params;
 use serea_protocol::{
     ActorId, ActorKind, DataClass, Digest, EpochMillis, EventId, ReasonCode, ReceiptId, SemVer,
-    StepId, StepStatus, TaskId, TaskState, canonicalize, digest_of,
+    SereaEvent, StepId, StepStatus, TaskId, TaskOriginKind, TaskState, canonicalize, digest_of,
 };
 
 use crate::{StoreError, TransitionContext, Tx};
@@ -21,6 +21,7 @@ pub enum AuditOperation {
     StepSucceeded,
     StepFailed,
     Blocked,
+    DeviceSessionResumed,
     InvariantFailed,
     Cancelled,
     RecoveryDecision,
@@ -67,6 +68,7 @@ pub struct DurableTransition {
     pub(crate) recovery_identity: Option<Digest>,
     pub(crate) recovery_observed_fingerprint: Option<Digest>,
     pub(crate) recovery_decision: Option<String>,
+    pub(crate) cancelled_by: Option<TaskOriginKind>,
 }
 
 impl DurableTransition {
@@ -103,6 +105,7 @@ impl DurableTransition {
             recovery_identity: None,
             recovery_observed_fingerprint: None,
             recovery_decision: None,
+            cancelled_by: None,
         }
     }
 
@@ -174,6 +177,9 @@ impl DurableTransition {
     pub fn causation_id(&self) -> Option<&EventId> {
         self.causation_id.as_ref()
     }
+    pub fn cancelled_by(&self) -> Option<&TaskOriginKind> {
+        self.cancelled_by.as_ref()
+    }
 }
 
 /// Journal vocabulary supported by the single audit port. No absent writer.
@@ -230,6 +236,19 @@ pub trait TaskAuditParticipant: Send + Sync {
     fn records(&self, facts: &DurableTransition) -> Result<JournalRecords, StoreError>;
 }
 
+/// The second and only other semantic participant in P3's fixed composition.
+/// It receives the same immutable successful-write facts as the journal mapper.
+pub trait EventParticipant: Send + Sync {
+    fn events(&self, facts: &DurableTransition) -> Result<Vec<EventDraft>, StoreError>;
+}
+
+/// A complete event object plus its independent retention deadline. The
+/// deadline is metadata outside `serea.event/1` and is not sent to consumers.
+pub struct EventDraft {
+    pub event: SereaEvent,
+    pub retention_at: Option<EpochMillis>,
+}
+
 impl Tx<'_> {
     pub(crate) fn require_audit(&self) -> Result<(), StoreError> {
         self.ensure_active()?;
@@ -250,6 +269,19 @@ impl Tx<'_> {
             .audit
             .ok_or(StoreError::AuditRequired)?
             .records(facts)?;
+        let event_drafts = match self.events {
+            Some(participant) => participant.events(facts)?,
+            None => {
+                #[cfg(test)]
+                {
+                    Vec::new()
+                }
+                #[cfg(not(test))]
+                {
+                    return Err(StoreError::EventParticipantRequired);
+                }
+            }
+        };
         if drafts.is_empty()
             || (facts.operation == AuditOperation::RecoveryDecision
                 && (drafts.len() != 1 || drafts[0].kind != JournalKind::RecoveryDecision))
@@ -338,6 +370,9 @@ impl Tx<'_> {
             if changed != 1 {
                 return Err(StoreError::ConstraintViolation);
             }
+        }
+        for draft in event_drafts {
+            self.append_event(draft.event, draft.retention_at)?;
         }
         Ok(())
     }
@@ -482,6 +517,7 @@ impl TaskAuditParticipant for TestAudit {
             AuditOperation::RecoveryDecision => vec![task(JournalKind::RecoveryDecision)],
             AuditOperation::PlanningStarted
             | AuditOperation::Blocked
+            | AuditOperation::DeviceSessionResumed
             | AuditOperation::InvariantFailed
             | AuditOperation::RecoveryStateChanged => vec![],
         };

@@ -71,7 +71,7 @@ impl TaskEngine {
         context: &TransitionContext<'_>,
     ) -> Result<RecoveryReport, EngineError> {
         self.store
-            .transact_with_audit(&TaskJournal, |tx| {
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
                 tx.recovery_pass(|tx| {
                     let mut report = RecoveryReport::default();
                     for task_id in tx.recovery_tasks()? {

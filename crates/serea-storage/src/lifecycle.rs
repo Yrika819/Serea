@@ -1,8 +1,8 @@
 //! Whole task lifecycle operations and task-scoped deletion. No raw state writer.
 use rusqlite::{OptionalExtension, params};
 use serea_protocol::{
-    BlockedReason, DataClass, EpochMillis, FailureReason, ReasonCode, TaskId, TaskOriginKind,
-    TaskState,
+    BlockedReason, DataClass, DeviceId, EpochMillis, FailureReason, ReasonCode, TaskId,
+    TaskOriginKind, TaskState,
 };
 
 use crate::audit::{AuditOperation, DurableTransition};
@@ -133,6 +133,9 @@ impl Tx<'_> {
         now: EpochMillis,
         context: &TransitionContext<'_>,
     ) -> Result<TaskSnapshot, StoreError> {
+        if reason.as_str() == "DEVICE_OFFLINE" {
+            return Err(StoreError::IllegalTaskTransition);
+        }
         self.operation_savepoint(|tx| {
             let before = lifecycle_row(tx, task_id)?.ok_or(StoreError::TaskNotFound)?;
             if before.state != expected_state
@@ -174,6 +177,74 @@ impl Tx<'_> {
                 Some(ReasonCode::new(reason.as_str()).map_err(|_| StoreError::CorruptRow)?);
             tx.record_transition(&facts)?;
             Ok(model)
+        })
+    }
+
+    /// Atomically blocks one task for one device and registers its explicit
+    /// sequence-fenced resume wait with the committed Event Bus high-water.
+    pub fn block_task_for_device(
+        &mut self,
+        task_id: &TaskId,
+        device_id: &DeviceId,
+        expected_state: TaskState,
+        expected_state_revision: u64,
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<TaskSnapshot, StoreError> {
+        self.operation_savepoint(|tx| {
+            let before = lifecycle_row(tx, task_id)?.ok_or(StoreError::TaskNotFound)?;
+            let before_snapshot = tx.load_task(task_id)?;
+            if before.state != expected_state
+                || !matches!(expected_state, TaskState::Planning | TaskState::Executing | TaskState::Verifying)
+                || before_snapshot.state_revision != expected_state_revision
+            {
+                return Err(StoreError::IllegalTaskTransition);
+            }
+            before.validate_time(now)?;
+            let high_water: i64 = tx.inner.query_row(
+                "SELECT last_allocated_seq FROM event_store_state WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )?;
+            if high_water < 0 {
+                return Err(StoreError::CorruptRow);
+            }
+            tx.require_audit()?;
+            one_task(tx.inner.execute(
+                "UPDATE tasks SET state='BLOCKED',blocked_reason='DEVICE_OFFLINE',failure_reason=NULL,
+                    cancelled_at_ms=NULL,cancelled_by=NULL,updated_at_ms=?1
+                 WHERE task_id=?2 AND state=?3 AND state_revision=?4
+                   AND created_at_ms=?5 AND updated_at_ms=?6 AND data_class_rank=?7",
+                params![now.get(),task_id.as_str(),expected_state.wire_name(),i64::try_from(expected_state_revision).map_err(|_| StoreError::CorruptRow)?,before.created,before.updated,before.class.rank()],
+            )?)?;
+            let blocked = tx.load_task(task_id)?;
+            // This explicit later Task transition supersedes any wake from an
+            // older device wait that became stale at the state revision edge.
+            tx.inner.execute(
+                "DELETE FROM device_session_resume_wakes WHERE task_id=?1",
+                [task_id.as_str()],
+            )?;
+            tx.inner.execute(
+                "DELETE FROM device_resume_waits WHERE task_id=?1",
+                [task_id.as_str()],
+            )?;
+            tx.inner.execute(
+                "INSERT INTO device_resume_waits(task_id,device_id,blocked_task_revision,
+                   registration_event_high_water_seq,created_at_ms) VALUES (?1,?2,?3,?4,?5)",
+                params![task_id.as_str(),device_id.as_str(),i64::try_from(blocked.state_revision).map_err(|_| StoreError::CorruptRow)?,high_water,now.get()],
+            )?;
+            let mut facts = DurableTransition::task(
+                AuditOperation::Blocked,
+                task_id,
+                Some(before.state),
+                TaskState::Blocked,
+                before.class,
+                now,
+                context,
+            );
+            facts.reason = Some(ReasonCode::new("DEVICE_OFFLINE").map_err(|_| StoreError::CorruptRow)?);
+            tx.record_transition(&facts)?;
+            tx.load_task(task_id)
         })
     }
 
@@ -262,7 +333,7 @@ impl Tx<'_> {
                     before.class.rank()
                 ],
             )?)?;
-            let facts = DurableTransition::task(
+            let mut facts = DurableTransition::task(
                 AuditOperation::Cancelled,
                 task_id,
                 Some(before.state),
@@ -271,6 +342,7 @@ impl Tx<'_> {
                 now,
                 context,
             );
+            facts.cancelled_by = Some(by.clone());
             tx.record_transition(&facts)?;
             Ok(CancellationOutcome {
                 changed: true,

@@ -43,7 +43,7 @@
 //! * `ApprovalRequest` and `ApprovalGrant` — owned by `serea-capability`
 //!   (Crate Map §3.1) and P6. P1 defines `ApprovalId` and `GrantId` (Protocol
 //!   Index §2) and nothing about a grant's semantics.
-//! * `DeviceLinkPort` — Crate Map §2.1 places the `serea.device/1` wire types
+//! * `DeviceLinkPort` — Crate Map §2.1 places the `serea.device/2` wire types
 //!   and the port here, but the link itself is `serea-core`'s and P12.
 //! * `Ids` — P1 provides [`ids::UlidSource`] and [`ids::IdMinter`] for minting
 //!   (Protocol Index §2 rule 1), under the frozen protocol names rather than
@@ -72,6 +72,7 @@ pub mod clock;
 pub mod errors;
 pub mod ids;
 pub mod provider;
+pub mod scheduler_contracts;
 pub mod schema;
 pub mod types;
 
@@ -89,6 +90,11 @@ pub use ids::{
 pub use provider::{
     CancellationToken, CapabilityProvider, HostGoalProvider, ModelCallContext, ModelProvider,
     ProviderContext,
+};
+pub use scheduler_contracts::{
+    ApprovalLifecyclePayloadError, ApprovalLifecyclePayloadV1, DeviceConnectedPayloadError,
+    DeviceConnectedPayloadV1, EventPredicateError, EventPredicateV1, MAX_SCHEDULE_TEMPLATE_BYTES,
+    ScheduledTaskTemplateV1, TemplateError, event_kind_is_host_event_eligible,
 };
 pub use schema::{MAX_INSTANCE_DEPTH, SchemaError, SchemaName, SchemaViolation};
 pub use types::{

@@ -812,7 +812,7 @@ fn private_noncanonical_recovered_plaintext_is_normalized_and_verified_for_dedup
 }
 
 #[test]
-fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_apis() {
+fn p3_public_method_inventory_exposes_only_the_fixed_participant_composition() {
     fn public_methods(source: &str) -> Vec<&str> {
         let mut methods: Vec<_> = source
             .lines()
@@ -833,6 +833,7 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
             "schema_version",
             "transact",
             "transact_with_audit",
+            "transact_with_participants",
             "verify_integrity"
         ]
     );
@@ -841,8 +842,9 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
         ["class", "digest", "get_blob", "new", "put_blob"]
     );
     assert!(public_methods(include_str!("tx.rs")).is_empty());
-    // P2E authority is unchanged. P2F adds audited whole operations, never
-    // independent parent/text/reference mutations or SQL escape capabilities.
+    // P2E authority is unchanged. P2F added audited whole operations and P3
+    // adds only the fixed audit+event composition, never an arbitrary
+    // participant collection or SQL escape capability.
     assert_eq!(
         public_methods(include_str!("lease.rs")),
         [
@@ -875,6 +877,7 @@ fn p2d_public_method_inventory_excludes_parent_text_reference_and_later_phase_ap
         public_methods(include_str!("lifecycle.rs")),
         [
             "block_task",
+            "block_task_for_device",
             "cancel_task",
             "delete_task",
             "fail_task_invariant"

@@ -1,8 +1,9 @@
 name: Full CI
 
 on:
+  pull_request:
   push:
-    branches: [main]
+    branches: [main, 'p3/**']
   workflow_dispatch:
 
 permissions:
@@ -21,6 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install stable Rust
@@ -42,6 +44,12 @@ jobs:
 
       - name: Workspace smoke regression tests (Group O)
         run: python3 -m unittest discover -s tests -p workspace_smoke_tests.py
+
+      - name: Commit identity guard
+        run: python3 tools/check_commit_identity.py
+
+      - name: Commit identity guard tests
+        run: python3 -m unittest discover -s tests -p commit_identity_tests.py
 
       - name: Validate documentation
         run: python3 tools/validate_docs.py docs

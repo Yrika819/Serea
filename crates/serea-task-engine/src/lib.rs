@@ -1,6 +1,8 @@
 //! Deterministic task lifecycle orchestration. IDs, time and attribution are supplied
 //! by the host; SQLite remains the lease, outcome and transaction authority.
-//! Recovery classifies durable facts; no execution, event runtime or ambient clock.
+//! Recovery classifies durable facts; task lifecycle events are recorded only
+//! inside the task write transaction. No execution runtime or ambient clock is
+//! part of Task Engine.
 //!
 //! Recovery is an explicit-time, deterministic lifecycle operation:
 //! ```

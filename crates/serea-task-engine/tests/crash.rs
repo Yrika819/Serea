@@ -38,6 +38,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+mod support;
+use support::event_bus;
 
 use rusqlite::{Connection, types::ValueRef};
 use serea_protocol::*;
@@ -139,7 +141,7 @@ impl Fixture {
     }
 
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap())
+        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
 
     fn sql(&self) -> Connection {
@@ -606,7 +608,7 @@ fn verify_durable(mode: &str, f: &Fixture) {
             // Before the first durable write: nothing exists and the schema is intact.
             assert_eq!(count("SELECT count(*) FROM tasks"), 0, "{mode}");
             assert_eq!(count("SELECT count(*) FROM task_journal"), 0, "{mode}");
-            assert_eq!(f.dump()["schema_migrations"].len(), 1, "{mode}");
+            assert_eq!(f.dump()["schema_migrations"].len(), 2, "{mode}");
         }
         "n4" => {
             // T4 holds in the conservative direction: nothing advanced.
@@ -1148,7 +1150,7 @@ fn a_savepoint_release_fault_makes_the_outer_transaction_rollback_only() {
     // The caller *catches* the operation error and asks to commit anyway.
     let task = assistant_task(1);
     let caught: Result<(), EngineError> = store
-        .transact_with_audit(&TaskJournal, |tx| {
+        .transact_with_participants(&TaskJournal, &event_bus(), |tx| {
             let _ = tx.insert_task(&task, &c.view());
             Ok(())
         })
@@ -1578,7 +1580,7 @@ fn p2h_fresh_verifier_entry() {
     let fixture = Fixture::child_inherited(Path::new(&std::env::var(DIR).unwrap()));
 
     let store = Store::open(&fixture.path, &Fixed).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 1);
+    assert_eq!(store.schema_version().unwrap(), 2);
     store.verify_integrity().unwrap();
     let conn = fixture.sql();
     let quick: String = conn

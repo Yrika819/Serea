@@ -9,10 +9,12 @@ publish.workspace = true
 [dependencies]
 serea-protocol.workspace = true
 serea-storage.workspace = true
+serea-event-bus.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
 rusqlite.workspace = true
+serea-testkit.workspace = true
 # P2H: enables storage's test-only crash/fault seam for this crate's crash
 # harness. This is the ONLY place the feature is requested anywhere in the
 # workspace, and it is a dev-dependency edge, so Cargo's resolver v2 unifies it

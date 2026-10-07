@@ -371,3 +371,28 @@ Model Router closure. P5 remains outside P4.
   GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
   [cross-architecture SQLite 37666894967](https://github.com/Yrika819/Serea/actions/runs/37666894967)
   GREEN in both directions.
+
+- Exact closure-document head `00be832ef0757e27010f8913e64627ae9732d193`
+  passed Fast CI `37673625809`, Full CI `37673625822` (Linux stable,
+  MSRV 1.85, Intel, arm64, and release fault proof), and cross-architecture
+  SQLite `37673625791` in both directions.
+- Finish-reason coverage sub-slice: expanded the file-backed scripted dispatch
+  test to exercise `CONTENT_FILTER`, `LENGTH`, `ERROR`, and
+  `STRUCTURE_INVALID`. Every response is terminal, persists no accepted
+  response blob, and records only validated usage and host-priced cost. No
+  provider output enters event payloads. The first focused run caught an
+  incorrect aggregate event-count expectation in the new test; correcting the
+  test oracle made the focused test pass. This slice adds coverage for the
+  existing P4D finish handling and does not change runtime behavior.
+- Sequential review: contract and authority checks confirmed finish reasons
+  do not trigger fallback or become a host schema verdict; transaction review
+  confirmed terminal failure and usage remain committed together; recovery
+  review confirmed no accepted truncated response; privacy review confirmed
+  event payloads remain content-free; accounting review confirmed input,
+  output, latency, and cost are retained only after provider metadata checks;
+  test review confirmed the reopened file-backed assertions; docs review keeps
+  P4D explicitly in progress. No migration or dependency change.
+- Local validation for this coverage slice passes: focused dispatch test;
+  fmt; workspace check; all-target and all-feature workspace tests; Clippy
+  with denied warnings; docs validation; workspace smoke and all 76 smoke
+  tests; Cargo metadata; identity guard; and `git diff --check`.

@@ -1357,6 +1357,7 @@ mod tests {
         ambiguous_next: AtomicBool,
         mismatched_identity_next: AtomicBool,
         wrong_cost_class_next: AtomicBool,
+        finish_next: Mutex<Option<FinishReason>>,
         last_request_id: Mutex<Option<serea_protocol::RequestId>>,
     }
 
@@ -1424,13 +1425,19 @@ mod tests {
             } else {
                 CostClass::Paid
             };
+            let finish_reason = self
+                .finish_next
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+                .unwrap_or(FinishReason::Stop);
             Ok(ModelResponse {
                 request_id: request.request_id.clone(),
                 model_id,
                 provider_id: self.provider_id(),
                 content: "hello".into(),
                 structured: Some(serde_json::json!({"untrusted": true})),
-                finish_reason: FinishReason::Stop,
+                finish_reason,
                 usage: ModelUsage {
                     input_tokens: TokenCount::new(3),
                     output_tokens: TokenCount::new(2),
@@ -1458,6 +1465,7 @@ mod tests {
             ambiguous_next: AtomicBool::new(false),
             mismatched_identity_next: AtomicBool::new(false),
             wrong_cost_class_next: AtomicBool::new(false),
+            finish_next: Mutex::new(None),
             last_request_id: Mutex::new(None),
         });
         let bus = EventBus::new(IncrementingIds(0));
@@ -1727,6 +1735,61 @@ mod tests {
                 .is_none()
         );
 
+        for (finish_reason, expected_kind) in [
+            (FinishReason::ContentFilter, "MODEL_CONTENT_FILTER"),
+            (FinishReason::Length, "MODEL_FINISH_LENGTH"),
+            (FinishReason::Error, "MODEL_FINISH_ERROR"),
+            (FinishReason::StructureInvalid, "MODEL_STRUCTURE_INVALID"),
+        ] {
+            *provider
+                .finish_next
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(finish_reason);
+            let finish_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+            let finish_context = dispatch_context(
+                &store,
+                &bus,
+                ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+                UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+            );
+            let finish_result =
+                block_on(router.dispatch_chat_text(&call, &finish_session, &finish_context));
+            assert!(matches!(
+                finish_result,
+                Err(ModelDispatchFailure::TerminalProvider { error_kind, .. })
+                    if error_kind.as_str() == expected_kind
+            ));
+            let finish_request = provider
+                .last_request_id
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+                .unwrap_or_else(|| unreachable!());
+            let finish_attempt = store
+                .get_model_call_attempt(&finish_request)
+                .unwrap_or_else(|_| unreachable!())
+                .unwrap_or_else(|| unreachable!());
+            assert_eq!(finish_attempt.state, ModelAttemptState::Failed);
+            assert_eq!(finish_attempt.response_blob, None);
+            let usage = store
+                .model_usage_for_request(&finish_request)
+                .unwrap_or_else(|_| unreachable!())
+                .unwrap_or_else(|| unreachable!());
+            assert_eq!(usage.input_tokens.get(), 3);
+            assert_eq!(usage.output_tokens.get(), 2);
+            assert_eq!(usage.cost_usd_micros.get(), 5);
+            let events =
+                EventBus::replay(&store, None, None, 32).unwrap_or_else(|_| unreachable!());
+            assert!(matches!(
+                events.items.last(),
+                Some(ReplayItem::Event { event })
+                    if event.kind == EventKind::ModelFailed
+                        && event.payload["error_kind"] == expected_kind
+                        && event.payload["retryable"] == false
+            ));
+            drop(finish_context);
+        }
+
         let calls_before_reopen = provider.calls.load(Ordering::SeqCst);
         drop(router);
         drop(provider);
@@ -1743,7 +1806,7 @@ mod tests {
             .unwrap_or_else(|_| unreachable!())
             .unwrap_or_else(|| unreachable!());
         assert_eq!(recovered, response);
-        assert_eq!(calls_before_reopen, 5);
+        assert_eq!(calls_before_reopen, 9);
         assert_eq!(
             reopened
                 .model_usage_for_request(&response.request_id)
@@ -1755,7 +1818,7 @@ mod tests {
         );
         let reopened_events =
             EventBus::replay(&reopened, None, None, 16).unwrap_or_else(|_| unreachable!());
-        assert_eq!(reopened_events.items.len(), 10);
+        assert_eq!(reopened_events.items.len(), 16);
         let serialized_reopened_events =
             serde_json::to_string(&reopened_events.items).unwrap_or_else(|_| unreachable!());
         assert!(!serialized_reopened_events.contains("hello"));

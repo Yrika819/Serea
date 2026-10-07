@@ -712,3 +712,12 @@ repair, fallback, dispatch gates, or P4E budgets.
   all 76 workspace smoke unit tests, Cargo metadata, identity guard, and diff
   check. Migrations 0001, 0002 and 0003 are unchanged. Exact-head Actions remain
   pending.
+- Exact structured-dispatch behavior commit
+  `49dc33ad5ed8a169104e10f18ad2aa51f093171b` passed Fast CI
+  [37691539096](https://github.com/Yrika819/Serea/actions/runs/37691539096),
+  Full CI
+  [37691539042](https://github.com/Yrika819/Serea/actions/runs/37691539042)
+  with Linux stable, MSRV 1.85, Intel x86_64, arm64, and release fault proof,
+  and cross-architecture SQLite
+  [37691539045](https://github.com/Yrika819/Serea/actions/runs/37691539045)
+  in both directions.

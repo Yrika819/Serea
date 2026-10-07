@@ -405,3 +405,24 @@ Model Router closure. P5 remains outside P4.
   and cross-architecture SQLite
   [37675104231](https://github.com/Yrika819/Serea/actions/runs/37675104231)
   in both directions.
+- Provider-response identity coverage sub-slice: the scripted dispatch fake
+  can independently return a mismatched RequestId or ProviderId. Both cases
+  are rejected as terminal `PROVIDER_PROTOCOL_FAILURE`; the durable attempt
+  fails with no accepted response blob and no usage, and the event contains the
+  stable non-retryable error. The reopened success remains unchanged. This
+  exercises the existing exact three-identity binding and changes no runtime
+  behavior. The first focused runs caught two test-fixture issues: the spoofed
+  provider token did not follow the protocol grammar, and the reopened replay
+  page limit hid newly added events. Using a valid alternate provider token
+  and a sufficient replay limit made the focused assertions pass.
+- Sequential review: contract checks confirmed all three response identities
+  are bound; authority checks confirmed spoofed response facts do not replace
+  the selected model/provider or durable RequestId; transaction checks
+  confirmed protocol failures terminalize the original attempt; recovery and
+  privacy checks confirmed no response content or usage is accepted; accounting
+  checks confirmed no untrusted usage is charged; test-quality review confirms
+  file reopen and stable event assertions; docs continue to mark P4D open.
+- Local validation for this identity-binding coverage passes: focused dispatch
+  test; fmt; workspace check; all-target and all-feature tests; Clippy with
+  denied warnings; docs validation; workspace smoke and all 76 smoke tests;
+  Cargo metadata; identity guard; and `git diff --check`.

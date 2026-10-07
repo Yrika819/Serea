@@ -1356,6 +1356,8 @@ mod tests {
         fail_next: AtomicBool,
         ambiguous_next: AtomicBool,
         mismatched_identity_next: AtomicBool,
+        mismatched_request_id_next: AtomicBool,
+        mismatched_provider_id_next: AtomicBool,
         wrong_cost_class_next: AtomicBool,
         finish_next: Mutex<Option<FinishReason>>,
         last_request_id: Mutex<Option<serea_protocol::RequestId>>,
@@ -1420,6 +1422,23 @@ mod tests {
             } else {
                 request.model_id.clone()
             };
+            let request_id = if self
+                .mismatched_request_id_next
+                .swap(false, Ordering::SeqCst)
+            {
+                serea_protocol::RequestId::new("req_00000000000000000000000001")
+                    .unwrap_or_else(|_| unreachable!())
+            } else {
+                request.request_id.clone()
+            };
+            let provider_id = if self
+                .mismatched_provider_id_next
+                .swap(false, Ordering::SeqCst)
+            {
+                ProviderId::new("other_provider").unwrap_or_else(|_| unreachable!())
+            } else {
+                self.provider_id()
+            };
             let cost_class = if self.wrong_cost_class_next.swap(false, Ordering::SeqCst) {
                 CostClass::Free
             } else {
@@ -1432,9 +1451,9 @@ mod tests {
                 .take()
                 .unwrap_or(FinishReason::Stop);
             Ok(ModelResponse {
-                request_id: request.request_id.clone(),
+                request_id,
                 model_id,
-                provider_id: self.provider_id(),
+                provider_id,
                 content: "hello".into(),
                 structured: Some(serde_json::json!({"untrusted": true})),
                 finish_reason,
@@ -1464,6 +1483,8 @@ mod tests {
             fail_next: AtomicBool::new(false),
             ambiguous_next: AtomicBool::new(false),
             mismatched_identity_next: AtomicBool::new(false),
+            mismatched_request_id_next: AtomicBool::new(false),
+            mismatched_provider_id_next: AtomicBool::new(false),
             wrong_cost_class_next: AtomicBool::new(false),
             finish_next: Mutex::new(None),
             last_request_id: Mutex::new(None),
@@ -1702,6 +1723,61 @@ mod tests {
                 .is_none()
         );
 
+        for (request_mismatch, expected_calls) in [(true, 5), (false, 6)] {
+            if request_mismatch {
+                provider
+                    .mismatched_request_id_next
+                    .store(true, Ordering::SeqCst);
+            } else {
+                provider
+                    .mismatched_provider_id_next
+                    .store(true, Ordering::SeqCst);
+            }
+            let identity_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+            let identity_context = dispatch_context(
+                &store,
+                &bus,
+                ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+                UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+            );
+            let identity_result =
+                block_on(router.dispatch_chat_text(&call, &identity_session, &identity_context));
+            assert!(matches!(
+                identity_result,
+                Err(ModelDispatchFailure::TerminalProvider { error_kind, .. })
+                    if error_kind.as_str() == "PROVIDER_PROTOCOL_FAILURE"
+            ));
+            let identity_request = provider
+                .last_request_id
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+                .unwrap_or_else(|| unreachable!());
+            let identity_attempt = store
+                .get_model_call_attempt(&identity_request)
+                .unwrap_or_else(|_| unreachable!())
+                .unwrap_or_else(|| unreachable!());
+            assert_eq!(identity_attempt.state, ModelAttemptState::Failed);
+            assert_eq!(identity_attempt.response_blob, None);
+            assert!(
+                store
+                    .model_usage_for_request(&identity_request)
+                    .unwrap_or_else(|_| unreachable!())
+                    .is_none()
+            );
+            let events =
+                EventBus::replay(&store, None, None, 32).unwrap_or_else(|_| unreachable!());
+            assert!(matches!(
+                events.items.last(),
+                Some(ReplayItem::Event { event })
+                    if event.kind == EventKind::ModelFailed
+                        && event.payload["error_kind"] == "PROVIDER_PROTOCOL_FAILURE"
+                        && event.payload["retryable"] == false
+            ));
+            assert_eq!(provider.calls.load(Ordering::SeqCst), expected_calls);
+            drop(identity_context);
+        }
+
         provider.wrong_cost_class_next.store(true, Ordering::SeqCst);
         let cost_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
         let cost_context = dispatch_context(
@@ -1806,7 +1882,7 @@ mod tests {
             .unwrap_or_else(|_| unreachable!())
             .unwrap_or_else(|| unreachable!());
         assert_eq!(recovered, response);
-        assert_eq!(calls_before_reopen, 9);
+        assert_eq!(calls_before_reopen, 11);
         assert_eq!(
             reopened
                 .model_usage_for_request(&response.request_id)
@@ -1817,8 +1893,8 @@ mod tests {
             5
         );
         let reopened_events =
-            EventBus::replay(&reopened, None, None, 16).unwrap_or_else(|_| unreachable!());
-        assert_eq!(reopened_events.items.len(), 16);
+            EventBus::replay(&reopened, None, None, 32).unwrap_or_else(|_| unreachable!());
+        assert_eq!(reopened_events.items.len(), 22);
         let serialized_reopened_events =
             serde_json::to_string(&reopened_events.items).unwrap_or_else(|_| unreachable!());
         assert!(!serialized_reopened_events.contains("hello"));

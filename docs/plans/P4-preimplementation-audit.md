@@ -535,6 +535,9 @@ Each of the ten decisions required by the pre-closure audit is now **RESOLVED**
 by the accepted contract cited below. The ADRs are owner-authorized and
 normative. No architecture-level choice remains open.
 
+P4A closure review used one main agent with sequential contract, consistency,
+validation, and final scope passes. No subagents were used.
+
 | # | Owner decision | Status | Accepted authority |
 | --- | --- | --- | --- |
 | 1 | Typed routing requirements, no arbitrary constraints, purpose/format matrix | **RESOLVED** | [ADR-0031](../decisions/ADR-0031-model-roster-routing-and-egress-v1.md), [Model Protocol §§3.1, 6](../protocols/03-model-protocol.md#31-response_format) |

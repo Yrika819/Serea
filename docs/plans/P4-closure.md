@@ -910,7 +910,13 @@ repair, fallback, dispatch gates, or P4E budgets.
   wall-clock sleeps; (8) migration 0003 and its checksum are unchanged.
 - Local validation passed: fmt; workspace check; all-target and all-feature
   tests; denied-warning Clippy; docs validation; workspace smoke; all 76 Python
-  smoke tests; Cargo metadata; identity guard; and diff check. Exact-head
-  Fast/Full/cross-architecture run IDs will be recorded after the behavior
-  commit. This slice does not close normal fallback, all budget integration,
-  repair crash injection, or P4E as a whole.
+  smoke tests; Cargo metadata; identity guard; and diff check. Behavior commit
+  `cfa507ce20d6f022f5a2b335e3c7775599debea8` passed Fast CI
+  [37702723229](https://github.com/Yrika819/Serea/actions/runs/37702723229), Full CI
+  [37702723064](https://github.com/Yrika819/Serea/actions/runs/37702723064), and
+  cross-architecture SQLite
+  [37702723224](https://github.com/Yrika819/Serea/actions/runs/37702723224).
+  Full CI passed Linux stable, MSRV 1.85, Intel, arm64, and release-fault
+  exclusion; cross-architecture passed Intel-to-arm64 and arm64-to-Intel.
+  This closes the bounded structured-repair slice. Normal fallback, all budget
+  integration, repair crash injection, and P4E as a whole remain open.

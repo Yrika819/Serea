@@ -222,6 +222,24 @@ advances from `serea-arch/2.1.0` to `serea-arch/2.2.0`; event and Scheduler
 surfaces remain `/1`. Contract CI is pending exact commit evidence. No runtime
 or migration change is claimed by this contract record.
 
+## P3F contract — device-session task resume waits (ADR-0029 accepted)
+
+`DEVICE_CONNECTED` now has the closed `DeviceConnectedPayloadV1` payload with
+exactly `device_id`. Only an explicit `DeviceResumeWaitV1` keyed by TaskId
+authorizes resumption; it records DeviceId, blocked task revision, Event Bus
+registration high-water, and creation time. A matching connection event is
+eligible only when its sequence is greater than that high-water. Scheduler
+materializes uniquely keyed internal wakes in bounded pages before advancing
+the source cursor. Task origin, task kind/title, `WAITING_USER`, generic
+`BLOCKED`, and event correlation never imply eligibility. Generic
+`DEVICE_OFFLINE` block is refused in favor of Task Engine's atomic
+`block_for_device` operation.
+
+ADR-0029 advances architecture from `serea-arch/2.2.0` to `serea-arch/2.3.0`;
+`serea.event/1`, `serea.scheduler/1`, and `serea.task/2` remain unchanged.
+Contract validation and exact-SHA CI evidence will be recorded after the
+contract commit. This entry does not claim runtime implementation.
+
 ## Project nonclaims
 
 P3 does not include Model Router, Capability Registry, Policy Engine, Approval

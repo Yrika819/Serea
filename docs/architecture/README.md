@@ -1,6 +1,6 @@
 # Serea Architecture
 
-Architecture version: `serea-arch/2.2.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.3.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
 
 This directory is the architecture package for Serea Core. It describes how the
 frozen protocols in [`docs/protocols/`](../protocols/00-protocol-index.md) are
@@ -56,9 +56,9 @@ Neither is allowed to quietly widen the other.
 
 **Three version axes, never collapsed** ([Protocol Index §4](../protocols/00-protocol-index.md#4-versioning)):
 
-| Axis | Current value at `serea-arch/2.2.0` | Governs |
+| Axis | Current value at `serea-arch/2.3.0` | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/2.2.0` | The whole contract set, including this package |
+| Architecture version | `serea-arch/2.3.0` | The whole contract set, including this package |
 | Capability version | Per-descriptor SemVer, e.g. `calendar.events.list` at `1.2.0` | One capability's input/output contract |
 | Wire protocol version | `serea.action/2`, `serea.task/2`; `serea.model/1`, `serea.policy/1`, `serea.approval/1`, `serea.event/1`, `serea.device/2`, `serea.goallatch/1`, `serea.data/1`, `serea.bounds/1`, `serea.scheduler/1` | One transport or serialization surface; envelope version stays 1 |
 
@@ -100,6 +100,13 @@ Accepted ADR-0028 defines exact EventPredicateV1 and ScheduledTaskTemplateV1
 values, excludes Scheduler-rooted events from HOST_EVENT matching, and adds the
 bounded template-size rule. The architecture advances to `serea-arch/2.2.0`;
 `serea.event/1` and `serea.scheduler/1` remain unchanged.
+
+### 3.5 Current architecture/2.3 contract
+
+Accepted ADR-0029 defines `DeviceConnectedPayloadV1` and the explicit durable
+`DeviceResumeWaitV1` task eligibility and sequence-fenced resume wake. The
+architecture advances to `serea-arch/2.3.0`; Event, Scheduler, and Task wire
+surfaces remain unchanged.
 
 ## 4. Identifier discipline in this package
 

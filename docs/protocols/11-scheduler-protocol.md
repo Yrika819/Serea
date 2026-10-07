@@ -1,6 +1,6 @@
 # Scheduler Protocol
 
-Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.2.0`** · Implementation: **P3 in progress**
+Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.3.0`** · Implementation: **P3 in progress**
 
 This protocol defines durable schedules and event-driven wakeups that may create
 or resume Serea tasks. The scheduler is a trigger and persistence subsystem, not
@@ -56,7 +56,7 @@ Supported wake types are:
 | --- | --- | --- |
 | `CALENDAR_DUE` | Persisted calendar recurrence reaches its calculated due instant | Process the due occurrence according to its missed-occurrence policy. |
 | `HOST_EVENT` | A committed Serea event matches the schedule's validated event predicate | Process once for that source event; duplicate delivery is deduplicated. |
-| `DEVICE_SESSION_ESTABLISHED` | `DEVICE_CONNECTED` is committed for a paired device after a disconnect | Resume the eligible existing task; do not create a second task for the same occurrence. |
+| `DEVICE_SESSION_ESTABLISHED` | A valid `DEVICE_CONNECTED` event identifies the connected `DeviceId` | Materialize bounded durable resume wakes only for explicit `DeviceResumeWaitV1` rows matching that device with registration high-water below the event sequence; each wake resumes the existing task at most once. |
 | `APPROVAL_EVENT` | `APPROVAL_GRANTED`, `APPROVAL_DENIED`, or `APPROVAL_EXPIRED` is committed for the waiting task | Resume or terminate the already existing task according to Approval and Task Protocol; never mint another occurrence task. |
 | `CORE_RECOVERY` | Core starts or recovers durable state | Recalculate due state and reconcile interrupted occurrence processing without duplicating a task or effect. |
 | `RETRY_DUE` | A bounded catch-up batch leaves due occurrences queued, or a retryable scheduler/provider operation reaches its durable retry time | Carry `ScheduleId`, due occurrence identity, and `not_before`; deduplicate by that tuple and process at most the remaining per-wake bound. Persist the next wake atomically with the deferred cursor.
@@ -65,6 +65,19 @@ Each wake carries its source identity from durable state (the source `EventId`,
 `ScheduleId` and due instant, or existing `TaskId` as applicable). A wake is only
 a request to evaluate the schedule/task; it does not bypass policy or grant
 approval.
+
+`DEVICE_CONNECTED` payload parsing uses the exact
+`DeviceConnectedPayloadV1` shape from Event Protocol §3.6. Event correlation,
+task origin, task title/kind, `WAITING_USER`, and generic `BLOCKED` state never
+select resume candidates. `DeviceResumeWaitV1` is the sole eligibility source;
+its registration Event Bus high-water must be strictly below the connection
+event sequence. Scheduler first materializes uniquely keyed internal
+`DeviceSessionResumeWake` rows in deterministic batches of at most
+`max_scheduler_event_scan_page` (256). It advances the source cursor only after
+all pre-existing eligible waits have been materialized or classified stale.
+The durable wakes survive source event retention and are recovered after
+restart. Intentionally expired content has no device identity and creates no
+wake.
 
 ### 2.1 EventPredicateV1
 
@@ -347,3 +360,7 @@ not connect an external scheduler or perform real scheduled effects.
   Scheduler causal-loop exclusion, and `max_schedule_template_bytes = 32768`;
   architecture advances to `serea-arch/2.2.0`. Event and Scheduler surfaces
   remain `/1`.
+- 2026-10-07: ADR-0029 defines `DeviceConnectedPayloadV1` and explicit durable
+  `DeviceResumeWaitV1` eligibility with sequence-fenced materialized wakes.
+  Architecture advances to `serea-arch/2.3.0`; Event, Scheduler, and Task
+  wire surfaces remain unchanged.

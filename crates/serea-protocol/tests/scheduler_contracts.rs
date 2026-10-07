@@ -1,7 +1,42 @@
 use serea_protocol::{
-    DataClass, EventKind, EventPredicateV1, MAX_SCHEDULE_TEMPLATE_BYTES, ScheduledTaskTemplateV1,
-    TaskTitle,
+    DataClass, DeviceConnectedPayloadV1, EventKind, EventPredicateV1, MAX_SCHEDULE_TEMPLATE_BYTES,
+    ScheduledTaskTemplateV1, TaskTitle,
 };
+
+#[test]
+fn device_connected_payload_is_closed_typed_and_canonical() {
+    let parsed = DeviceConnectedPayloadV1::parse_json(
+        r#"{ "device_id" : "dev_01JQ8ZC5N8TVG3K6MRQ2XW9JHF" }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        parsed.device_id().as_str(),
+        "dev_01JQ8ZC5N8TVG3K6MRQ2XW9JHF"
+    );
+    assert_eq!(
+        parsed.canonical_json(),
+        r#"{"device_id":"dev_01JQ8ZC5N8TVG3K6MRQ2XW9JHF"}"#
+    );
+    assert_eq!(
+        DeviceConnectedPayloadV1::parse_json(parsed.canonical_json()).unwrap(),
+        parsed
+    );
+}
+
+#[test]
+fn device_connected_payload_rejects_missing_invalid_unknown_and_duplicate_fields() {
+    for input in [
+        r#"{}"#,
+        r#"{"device_id":"not-a-device"}"#,
+        r#"{"device_id":"dev_01JQ8ZC5N8TVG3K6MRQ2XW9JHF","task_id":"tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA"}"#,
+        r#"{"device_id":"dev_01JQ8ZC5N8TVG3K6MRQ2XW9JHF","device_id":"dev_01JQ8ZC5N8TVG3K6MRQ2XW9JHF"}"#,
+    ] {
+        assert!(
+            DeviceConnectedPayloadV1::parse_json(input).is_err(),
+            "accepted {input}"
+        );
+    }
+}
 
 #[test]
 fn event_predicate_is_closed_duplicate_aware_and_exactly_canonical() {

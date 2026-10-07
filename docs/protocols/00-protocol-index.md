@@ -1,9 +1,9 @@
 # Serea Protocol Index
 
-Status: **FROZEN current contract set** · Architecture version `serea-arch/2.2.0` · Ratified on 2026-10-07
+Status: **FROZEN current contract set** · Architecture version `serea-arch/2.3.0` · Ratified on 2026-10-07
 
 P0/P1 implementation baseline was `serea-arch/0.2.0`; the current frozen registry
-is architecture/2.1, task/2, action/2, device/2, event/1, scheduler/1 and
+is architecture/2.3, task/2, action/2, device/2, event/1, scheduler/1 and
 envelope version 1. Three corrected
 independent subagent documentation gate reviews under the coordinator are GREEN;
 owner direction ratified the design contingent on GREEN. P2A slices are
@@ -121,6 +121,11 @@ ADR-0028 adds backward-compatible closed Scheduler subordinate values and one
 structural template-size bound. It advances the architecture from
 `serea-arch/2.1.0` to `serea-arch/2.2.0`; `serea.event/1` and
 `serea.scheduler/1` remain unchanged.
+
+ADR-0029 adds the required `device_id` member to the closed
+`DEVICE_CONNECTED` kind-specific payload and an internal durable task-wait and
+resume-wake contract. It advances the architecture to `serea-arch/2.3.0`;
+`serea.event/1`, `serea.scheduler/1`, and `serea.task/2` remain unchanged.
 
 ### 4.2 Compatibility rules
 

@@ -4,7 +4,79 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::{DataClass, EventKind, TaskTitle, TextCategory, canonicalize};
+use crate::{DataClass, DeviceId, EventKind, TaskTitle, TextCategory, canonicalize};
+
+/// Payload-free validation error for the kind-specific DEVICE_CONNECTED payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceConnectedPayloadError {
+    /// The payload is malformed, has unknown members, or contains an invalid DeviceId.
+    Invalid,
+}
+
+impl std::fmt::Display for DeviceConnectedPayloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("invalid DeviceConnectedPayloadV1")
+    }
+}
+
+impl std::error::Error for DeviceConnectedPayloadError {}
+
+/// The closed DEVICE_CONNECTED payload. It identifies a device session only;
+/// it does not identify or authorize a task to resume.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceConnectedPayloadV1 {
+    device_id: DeviceId,
+    canonical_json: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDeviceConnectedPayload {
+    device_id: DeviceId,
+}
+
+impl DeviceConnectedPayloadV1 {
+    /// Parses a duplicate-aware, exact one-member payload and canonicalizes it.
+    pub fn parse_json(input: &str) -> Result<Self, DeviceConnectedPayloadError> {
+        let canonical_input =
+            canonicalize(input).map_err(|_| DeviceConnectedPayloadError::Invalid)?;
+        let value: Value = serde_json::from_slice(&canonical_input)
+            .map_err(|_| DeviceConnectedPayloadError::Invalid)?;
+        let object = value
+            .as_object()
+            .ok_or(DeviceConnectedPayloadError::Invalid)?;
+        if object.len() != 1 || !object.contains_key("device_id") {
+            return Err(DeviceConnectedPayloadError::Invalid);
+        }
+        let raw: RawDeviceConnectedPayload =
+            serde_json::from_value(value).map_err(|_| DeviceConnectedPayloadError::Invalid)?;
+        let mut object = Map::new();
+        object.insert(
+            "device_id".into(),
+            Value::String(raw.device_id.as_str().into()),
+        );
+        let source = serde_json::to_string(&Value::Object(object))
+            .map_err(|_| DeviceConnectedPayloadError::Invalid)?;
+        let canonical_json = String::from_utf8(
+            canonicalize(&source).map_err(|_| DeviceConnectedPayloadError::Invalid)?,
+        )
+        .map_err(|_| DeviceConnectedPayloadError::Invalid)?;
+        Ok(Self {
+            device_id: raw.device_id,
+            canonical_json,
+        })
+    }
+
+    /// Identifies only the device whose session was established.
+    pub fn device_id(&self) -> &DeviceId {
+        &self.device_id
+    }
+
+    /// Returns canonical SCJ-1 JSON containing exactly `device_id`.
+    pub fn canonical_json(&self) -> &str {
+        &self.canonical_json
+    }
+}
 
 /// A payload-free validation error for EventPredicateV1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

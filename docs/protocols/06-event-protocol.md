@@ -1,6 +1,6 @@
 # Event Protocol
 
-Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN for P0** · Architecture: `serea-arch/2.2.0`
+Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN for P0** · Architecture: `serea-arch/2.3.0`
 
 Events are Serea's structured record of what it did and what it observed. They
 are the substrate for the Android Activity Timeline, the audit trail, and the
@@ -151,12 +151,23 @@ repurposing one is major.
 
 | Kind | When |
 | --- | --- |
-| `DEVICE_CONNECTED` | Device session established |
+| `DEVICE_CONNECTED` | Device session established; payload is the closed `DeviceConnectedPayloadV1` object `{"device_id":"<DeviceId>"}` |
 | `DEVICE_DISCONNECTED` | Session ended, with reason |
 | `DEVICE_PAIRED` | New device bound |
 | `DEVICE_UNPAIRED` | Device removed |
 | `DEVICE_CAPABILITIES_REPORTED` | Device reported its capability set |
 | `DEVICE_REVOKED` | Host revoked the device credential and sessions |
+
+`DEVICE_CONNECTED` uses the closed `DeviceConnectedPayloadV1` payload with
+exactly one required member, `device_id`, validated using the existing
+`DeviceId` grammar. The payload identifies only which device session became
+established; task eligibility comes only from `DeviceResumeWaitV1` under
+Scheduler Protocol. A host that uses this event for Scheduler work must reject
+missing, malformed, or unknown payload members and must not resume a task from
+event correlation or origin metadata. Clients that do not interpret this
+kind-specific payload continue to follow the ordinary unknown-payload and
+timeline rendering rules; the `SereaEvent` object and `serea.event/1` surface
+are unchanged.
 
 ### 3.7 Memory and proactive
 

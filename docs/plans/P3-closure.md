@@ -277,7 +277,7 @@ or apply approval authority.
 
 Migration 0001 remains byte-identical (SHA-256
 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`). The
-pre-release migration 0002 checksum is
+migration 0002 checksum is
 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`.
 
 Exact behavior-commit Actions evidence:

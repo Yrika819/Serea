@@ -829,3 +829,8 @@ repair, fallback, dispatch gates, or P4E budgets.
   [37697801437](https://github.com/Yrika819/Serea/actions/runs/37697801437), and cross-architecture SQLite
   [37697801320](https://github.com/Yrika819/Serea/actions/runs/37697801320), including Linux stable, MSRV 1.85,
   Intel x86_64, arm64, release fault proof, and both transfer directions.
+  The evidence-only head `87f7ef2eed18b082806f6143cc0c61eb1b505ced` passed Fast CI
+  [37698390427](https://github.com/Yrika819/Serea/actions/runs/37698390427), Full CI
+  [37698390122](https://github.com/Yrika819/Serea/actions/runs/37698390122), and cross-architecture SQLite
+  [37698390313](https://github.com/Yrika819/Serea/actions/runs/37698390313), including Linux stable, MSRV 1.85,
+  Intel x86_64, arm64, release fault proof, and both transfer directions.

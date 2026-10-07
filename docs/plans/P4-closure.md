@@ -761,5 +761,11 @@ repair, fallback, dispatch gates, or P4E budgets.
   all-feature tests, denied-warning Clippy, docs validation, workspace smoke,
   all 76 smoke unit tests, Cargo metadata, identity guard, and diff check. The
   local portability fixture produces and reopens v3 on this host with durable
-  call/turn counters. Exact-head Fast, Full, and cross-architecture Actions are
-  pending; cross-architecture is required after this migration change.
+  call/turn counters. Exact-head Actions are green on behavior commit
+  `f43b420d267d524b0b4fe7c2e0929f647dd37387`: Fast CI
+  [37693502078](https://github.com/Yrika819/Serea/actions/runs/37693502078), Full CI
+  [37693502077](https://github.com/Yrika819/Serea/actions/runs/37693502077), and cross-architecture SQLite
+  [37693502118](https://github.com/Yrika819/Serea/actions/runs/37693502118). Full CI passed Linux stable,
+  MSRV 1.85, Intel x86_64, arm64, and release fault proof; cross-architecture
+  passed Intel-to-arm64 and arm64-to-Intel. The evidence-only closure head still
+  requires its own Fast, Full, and cross-architecture Actions gates.

@@ -608,7 +608,7 @@ fn verify_durable(mode: &str, f: &Fixture) {
             // Before the first durable write: nothing exists and the schema is intact.
             assert_eq!(count("SELECT count(*) FROM tasks"), 0, "{mode}");
             assert_eq!(count("SELECT count(*) FROM task_journal"), 0, "{mode}");
-            assert_eq!(f.dump()["schema_migrations"].len(), 2, "{mode}");
+            assert_eq!(f.dump()["schema_migrations"].len(), 3, "{mode}");
         }
         "n4" => {
             // T4 holds in the conservative direction: nothing advanced.
@@ -1580,7 +1580,7 @@ fn p2h_fresh_verifier_entry() {
     let fixture = Fixture::child_inherited(Path::new(&std::env::var(DIR).unwrap()));
 
     let store = Store::open(&fixture.path, &Fixed).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), 3);
     store.verify_integrity().unwrap();
     let conn = fixture.sql();
     let quick: String = conn

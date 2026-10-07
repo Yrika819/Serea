@@ -2,7 +2,9 @@ use serea_event_bus::{EventBus, ReplayItem};
 use serea_protocol::*;
 use serea_scheduler::{ScheduleDefinition, Scheduler, occurrence_identity_key};
 use serea_storage::{
-    EventDraft, MissedOccurrencePolicy, ScheduleOwnerKind, ScheduleTriggerKind, Store,
+    EventDraft, MissedOccurrencePolicy, ModelAttemptState, ModelCallAttemptDraft,
+    ModelCallCompletion, ModelDeploymentClass, ModelPriceSnapshot, ModelResponseStorage,
+    ScheduleOwnerKind, ScheduleTriggerKind, Store, UsdMicros,
 };
 use serea_task_engine::{NewTask, TaskEngine, TransitionContext};
 use serea_testkit::DeterministicUlidSource;
@@ -79,6 +81,56 @@ fn custom_event(
         },
         retention_at,
     }
+}
+
+fn add_model_accounting_fixture(store: &Store) {
+    let price = ModelPriceSnapshot::new(CostClass::Free, "portable-free-1", 0, 0);
+    let make_attempt = |request_id: &str| ModelCallAttemptDraft {
+        request_id: RequestId::new(request_id).unwrap(),
+        task_id: None,
+        purpose: ModelPurpose::Chat,
+        model_id: ModelId::new("nemotron-3-nano-30b").unwrap(),
+        provider_id: ProviderId::new("ollama").unwrap(),
+        deployment_class: ModelDeploymentClass::Local,
+        data_class: DataClass::Public,
+        relation_kind: serea_storage::ModelAttemptRelationKind::None,
+        parent_request_id: None,
+        fallback_from_model_id: None,
+        price: price.clone(),
+        max_context_tokens: 4096,
+        effective_max_output_tokens: 1024,
+        dispatch_intent_at: at(1_700_000_000_030),
+    };
+    let cap = UsdMicros::new(0).unwrap();
+    let ambiguous_id = RequestId::new("req_00000000000000000000000071").unwrap();
+    store
+        .reserve_model_call(make_attempt(ambiguous_id.as_str()), cap)
+        .unwrap();
+    store
+        .mark_model_call_ambiguous(&ambiguous_id, "AMBIGUOUS_DISPATCH", at(1_700_000_000_031))
+        .unwrap();
+
+    let completed_id = RequestId::new("req_00000000000000000000000072").unwrap();
+    store
+        .reserve_model_call(make_attempt(completed_id.as_str()), cap)
+        .unwrap();
+    store
+        .complete_model_call(
+            &completed_id,
+            ModelCallCompletion {
+                input_tokens: TokenCount::new(10),
+                output_tokens: TokenCount::new(5),
+                latency_ms: 7,
+                repair_attempts: 0,
+                finish_reason: FinishReason::Stop,
+                recorded_at: at(1_700_000_000_032),
+                accepted_response: ModelResponseStorage {
+                    canonical_json: br#"{"result":"portable"}"#.to_vec(),
+                    data_class: DataClass::Public,
+                },
+            },
+        )
+        .unwrap();
 }
 
 fn portable_path() -> Option<PathBuf> {
@@ -270,7 +322,8 @@ fn produce(path: &std::path::Path) {
         store.load_task(&scheduled_task).unwrap().task.kind,
         TaskKind::Scheduled
     );
-    assert_eq!(store.schema_version().unwrap(), 2);
+    add_model_accounting_fixture(&store);
+    assert_eq!(store.schema_version().unwrap(), 3);
     store.verify_integrity().unwrap();
     drop(scheduler);
     drop(tasks);
@@ -290,7 +343,7 @@ fn produce(path: &std::path::Path) {
 
 fn consume(path: &std::path::Path) {
     let store = Store::open(path, &Fixed).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), 3);
     store.verify_integrity().unwrap();
     let device_wait = TaskId::new("tsk_00000000000000000000000071").unwrap();
     assert_eq!(
@@ -318,6 +371,36 @@ fn consume(path: &std::path::Path) {
         br#"{"intent":"Check portable state.","title":"Portable task","version":"1"}"#
     );
     assert_eq!(store.pending_approval_lifecycle_wakes(16).unwrap().len(), 1);
+    let ambiguous = RequestId::new("req_00000000000000000000000071").unwrap();
+    assert_eq!(
+        store
+            .get_model_call_attempt(&ambiguous)
+            .unwrap()
+            .unwrap()
+            .state,
+        ModelAttemptState::Ambiguous
+    );
+    let completed = RequestId::new("req_00000000000000000000000072").unwrap();
+    assert_eq!(
+        store
+            .get_model_call_attempt(&completed)
+            .unwrap()
+            .unwrap()
+            .state,
+        ModelAttemptState::Completed
+    );
+    assert_eq!(
+        store
+            .model_usage_for_request(&completed)
+            .unwrap()
+            .unwrap()
+            .output_tokens,
+        TokenCount::new(5)
+    );
+    assert_eq!(
+        store.get_model_call_response(&completed).unwrap().unwrap(),
+        br#"{"result":"portable"}"#
+    );
     let replay = store.replay_events(None, None, 256).unwrap();
     assert!(
         replay

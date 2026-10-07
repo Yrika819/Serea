@@ -927,7 +927,9 @@ pub(crate) fn task_blob_candidates(
 ) -> Result<Vec<BlobCandidate>, StoreError> {
     Ok(conn.prepare("SELECT digest,data_class_rank FROM task_blob_refs WHERE task_id=?1
         UNION SELECT r.digest,r.data_class_rank FROM step_blob_refs r JOIN task_steps s ON s.step_id=r.step_id WHERE s.task_id=?1
-        UNION SELECT plan_digest,data_class_rank FROM plan_revisions WHERE task_id=?1")?
+        UNION SELECT plan_digest,data_class_rank FROM plan_revisions WHERE task_id=?1
+        UNION SELECT response_blob_digest,response_data_class_rank FROM model_call_attempts
+          WHERE task_id=?1 AND response_blob_digest IS NOT NULL")?
         .query_map([task_id.as_str()],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?)
 }
 pub(crate) fn sweep_blob_candidates(
@@ -941,7 +943,8 @@ pub(crate) fn sweep_blob_candidates(
             AND NOT EXISTS(SELECT 1 FROM step_blob_refs WHERE digest=?1 AND data_class_rank=?2)
             AND NOT EXISTS(SELECT 1 FROM plan_revisions WHERE plan_digest=?1 AND data_class_rank=?2)
             AND NOT EXISTS(SELECT 1 FROM schedules WHERE template_digest=?1 AND template_data_class_rank=?2)
-            AND NOT EXISTS(SELECT 1 FROM schedule_occurrences WHERE template_digest=?1 AND template_data_class_rank=?2)",params![digest,rank])?)
+            AND NOT EXISTS(SELECT 1 FROM schedule_occurrences WHERE template_digest=?1 AND template_data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM model_call_attempts WHERE response_blob_digest=?1 AND response_data_class_rank=?2)",params![digest,rank])?)
             .map_err(|_|StoreError::Sqlite)?;
     }
     Ok(removed)

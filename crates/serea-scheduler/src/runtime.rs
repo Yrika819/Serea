@@ -7,7 +7,7 @@ use serea_protocol::{
     TaskTitle, canonicalize,
 };
 use serea_storage::{
-    ApprovalLifecycleOutcome, ApprovalLifecycleWake, MissedOccurrencePolicy,
+    ApprovalLifecycleOutcome, ApprovalLifecycleWake, Migrations, MissedOccurrencePolicy,
     ScheduleCommandOutcome, ScheduleDraft, ScheduleDueOccurrence, ScheduleOccurrenceDraft,
     ScheduleOccurrenceLease, ScheduleOwnerKind, ScheduleSnapshot, ScheduleTriggerKind,
     SchedulerConsumerLease, Store, StoreError, TransitionContext,
@@ -135,7 +135,7 @@ impl Scheduler {
             .store
             .schema_version()
             .map_err(ScheduleError::Storage)?
-            != 2
+            != Migrations::LATEST
         {
             return Err(ScheduleError::Invalid);
         }

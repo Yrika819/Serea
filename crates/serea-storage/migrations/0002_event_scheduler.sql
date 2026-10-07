@@ -3,6 +3,19 @@
 -- Migration 0001 is immutable. No native-endian or host-dependent encoding is
 -- used in durable fields.
 
+-- P3 task-state fencing is owned by TaskEngine/Storage. The trigger increments
+-- this revision for every durable state edge without changing Task wire shape.
+ALTER TABLE tasks ADD COLUMN state_revision INTEGER NOT NULL DEFAULT 1
+  CHECK (state_revision BETWEEN 1 AND 9223372036854775807);
+
+CREATE TRIGGER tasks_state_revision_advance
+AFTER UPDATE OF state,blocked_reason ON tasks
+WHEN NEW.state IS NOT OLD.state OR NEW.blocked_reason IS NOT OLD.blocked_reason
+BEGIN
+  UPDATE tasks SET state_revision=OLD.state_revision+1
+  WHERE task_id=NEW.task_id;
+END;
+
 CREATE TABLE event_store_state (
   singleton             INTEGER PRIMARY KEY CHECK (singleton = 1),
   last_allocated_seq    INTEGER NOT NULL DEFAULT 0
@@ -84,6 +97,7 @@ CREATE TABLE schedules (
                              (json_valid(recurrence_json) AND json_type(recurrence_json) = 'object')),
   event_predicate_json     TEXT    CHECK (event_predicate_json IS NULL OR
                              (json_valid(event_predicate_json) AND json_type(event_predicate_json) = 'object')),
+  event_predicate_after_seq INTEGER CHECK (event_predicate_after_seq BETWEEN 0 AND 9223372036854775807),
   template_digest          TEXT,
   template_data_class_rank INTEGER,
   policy_class_rank        INTEGER NOT NULL CHECK (policy_class_rank BETWEEN 0 AND 7),
@@ -103,9 +117,11 @@ CREATE TABLE schedules (
     REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT,
   CHECK (updated_at_ms >= created_at_ms),
   CHECK ((trigger_kind = 'CALENDAR') = (recurrence_json IS NOT NULL)),
-  CHECK ((trigger_kind <> 'CALENDAR') = (event_predicate_json IS NOT NULL)),
+  CHECK ((trigger_kind = 'HOST_EVENT') = (event_predicate_json IS NOT NULL)),
+  CHECK ((trigger_kind = 'HOST_EVENT') = (event_predicate_after_seq IS NOT NULL)),
   CHECK ((template_digest IS NULL) = (template_data_class_rank IS NULL)),
   CHECK (template_data_class_rank IS NULL OR template_data_class_rank BETWEEN 0 AND 2),
+  CHECK ((next_due_at_ms IS NULL) = (next_local_label IS NULL)),
   CHECK (trigger_kind = 'CALENDAR' OR
          (timezone IS NULL AND recurrence_evaluator IS NULL AND tzdb_version IS NULL
           AND next_due_at_ms IS NULL AND next_local_label IS NULL)),
@@ -126,6 +142,7 @@ CREATE TABLE schedule_occurrences (
                          ('CALENDAR','HOST_EVENT','DEVICE_SESSION_ESTABLISHED','APPROVAL_EVENT')),
   source_event_id      TEXT    CHECK (source_event_id IS NULL OR
                          (length(source_event_id) = 30 AND substr(source_event_id,1,4) = 'evt_')),
+  source_event_data_class_rank INTEGER CHECK (source_event_data_class_rank BETWEEN 0 AND 1),
   intended_local_label TEXT,
   timezone             TEXT,
   recurrence_evaluator TEXT,
@@ -138,6 +155,10 @@ CREATE TABLE schedule_occurrences (
   lease_expires_at_ms  INTEGER CHECK (lease_expires_at_ms BETWEEN -62167219200000 AND 253402300799999),
   mapped_task_id       TEXT    CHECK (mapped_task_id IS NULL OR
                          (length(mapped_task_id) = 30 AND substr(mapped_task_id,1,4) = 'tsk_')),
+  template_digest      TEXT    NOT NULL CHECK (length(template_digest) = 71
+                                                AND substr(template_digest,1,7) = 'sha256:'
+                                                AND substr(template_digest,8) NOT GLOB '*[^0-9a-f]*'),
+  template_data_class_rank INTEGER NOT NULL CHECK (template_data_class_rank BETWEEN 0 AND 2),
   outcome_code         TEXT,
   created_at_ms        INTEGER NOT NULL CHECK (created_at_ms BETWEEN -62167219200000 AND 253402300799999),
   updated_at_ms        INTEGER NOT NULL CHECK (updated_at_ms BETWEEN -62167219200000 AND 253402300799999),
@@ -150,9 +171,12 @@ CREATE TABLE schedule_occurrences (
   CHECK (state NOT IN ('MAPPED','SKIPPED','PROCESSED') OR processed_at_ms IS NOT NULL),
   CHECK (state IN ('MAPPED','SKIPPED','PROCESSED') OR processed_at_ms IS NULL),
   CHECK ((trigger_kind = 'CALENDAR') = (source_event_id IS NULL)),
+  CHECK ((source_event_id IS NULL) = (source_event_data_class_rank IS NULL)),
   CHECK (trigger_kind = 'CALENDAR' OR
          (intended_local_label IS NULL AND timezone IS NULL
-          AND recurrence_evaluator IS NULL AND tzdb_version IS NULL))
+          AND recurrence_evaluator IS NULL AND tzdb_version IS NULL)),
+  FOREIGN KEY (template_digest, template_data_class_rank)
+    REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT
 ) STRICT;
 
 CREATE UNIQUE INDEX schedule_occurrences_source_event
@@ -163,6 +187,9 @@ CREATE INDEX schedule_occurrences_claim
 CREATE INDEX schedule_occurrences_expired_lease
   ON schedule_occurrences(lease_expires_at_ms, schedule_id)
   WHERE state = 'CLAIMED';
+CREATE UNIQUE INDEX schedule_occurrences_mapped_task
+  ON schedule_occurrences(mapped_task_id)
+  WHERE mapped_task_id IS NOT NULL;
 
 CREATE TABLE schedule_command_receipts (
   message_id       TEXT    PRIMARY KEY CHECK (length(message_id) = 30
@@ -181,6 +208,71 @@ CREATE TABLE schedule_command_receipts (
 
 CREATE INDEX schedule_command_receipts_schedule
   ON schedule_command_receipts(schedule_id, committed_at_ms);
+
+-- A task's sole authority to resume after a device connection. Event sequence
+-- high-water makes registration order deterministic across clock skew/replay.
+CREATE TABLE device_resume_waits (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(task_id) ON DELETE CASCADE,
+  device_id TEXT NOT NULL CHECK (length(device_id)=30
+                                  AND substr(device_id,1,4)='dev_'),
+  blocked_task_revision INTEGER NOT NULL CHECK (blocked_task_revision BETWEEN 1 AND 9223372036854775807),
+  registration_event_high_water_seq INTEGER NOT NULL CHECK (registration_event_high_water_seq BETWEEN 0 AND 9223372036854775807),
+  created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN -62167219200000 AND 253402300799999)
+) STRICT;
+
+CREATE INDEX device_resume_waits_by_device_sequence
+  ON device_resume_waits(device_id, registration_event_high_water_seq, task_id);
+
+-- Any ordinary Task state edge other than entering the explicitly registered
+-- DEVICE_OFFLINE wait invalidates that wait in the same Task transaction.
+CREATE TRIGGER tasks_device_wait_invalidate
+AFTER UPDATE OF state,blocked_reason ON tasks
+WHEN (NEW.state IS NOT OLD.state OR NEW.blocked_reason IS NOT OLD.blocked_reason)
+  AND (NEW.state <> 'BLOCKED' OR NEW.blocked_reason <> 'DEVICE_OFFLINE')
+BEGIN
+  DELETE FROM device_resume_waits WHERE task_id=NEW.task_id;
+END;
+
+-- Materialized wakes intentionally do not reference event_content: retention
+-- may delete source payload after the Scheduler cursor has advanced.
+CREATE TABLE device_session_resume_wakes (
+  source_event_id TEXT NOT NULL CHECK (length(source_event_id)=30
+                                       AND substr(source_event_id,1,4)='evt_'),
+  source_seq INTEGER NOT NULL CHECK (source_seq BETWEEN 1 AND 9223372036854775807),
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+  device_id TEXT NOT NULL CHECK (length(device_id)=30
+                                 AND substr(device_id,1,4)='dev_'),
+  blocked_task_revision INTEGER NOT NULL CHECK (blocked_task_revision BETWEEN 1 AND 9223372036854775807),
+  created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN -62167219200000 AND 253402300799999),
+  PRIMARY KEY (source_event_id, task_id)
+) STRICT;
+
+CREATE INDEX device_session_resume_wakes_pending
+  ON device_session_resume_wakes(created_at_ms, source_event_id, task_id);
+CREATE INDEX device_session_resume_wakes_task
+  ON device_session_resume_wakes(task_id);
+
+-- Approval lifecycle events are routed to future P6 only. These durable rows
+-- contain identity and outcome kind, never grant or policy authority. Reads do
+-- not consume a row; explicit acknowledgement removes it. Task deletion cascades
+-- to avoid retaining a wake that targets a deleted Task.
+CREATE TABLE approval_lifecycle_wakes (
+  source_event_id TEXT PRIMARY KEY CHECK (length(source_event_id)=30
+                                           AND substr(source_event_id,1,4)='evt_'),
+  source_seq INTEGER NOT NULL UNIQUE CHECK (source_seq BETWEEN 1 AND 9223372036854775807),
+  approval_id TEXT NOT NULL CHECK (length(approval_id)=30
+                                   AND substr(approval_id,1,4)='apr_'),
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE
+                  CHECK (length(task_id)=30 AND substr(task_id,1,4)='tsk_'),
+  step_id TEXT NOT NULL CHECK (length(step_id)=30 AND substr(step_id,1,4)='stp_'),
+  outcome_kind TEXT NOT NULL CHECK (outcome_kind IN ('GRANTED','DENIED','EXPIRED')),
+  created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN -62167219200000 AND 253402300799999)
+) STRICT;
+
+CREATE INDEX approval_lifecycle_wakes_pending
+  ON approval_lifecycle_wakes(created_at_ms, source_seq, source_event_id);
+CREATE INDEX approval_lifecycle_wakes_task
+  ON approval_lifecycle_wakes(task_id);
 
 CREATE TABLE scheduler_consumer_state (
   singleton                INTEGER PRIMARY KEY CHECK (singleton = 1),

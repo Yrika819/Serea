@@ -42,6 +42,7 @@ P3 Scheduler does not validate grants, consume grants, evaluate approval
 authority, create tasks or occurrences, call providers, or transition tasks
 from `WAITING_APPROVAL` based on an event. It only validates routing identity,
 materializes, deduplicates, preserves, and exposes the durable handoff.
+`APPROVAL_EVENT` is an internal handoff path, not a schedule definition.
 
 ## Version impact
 

@@ -21,6 +21,7 @@ pub enum AuditOperation {
     StepSucceeded,
     StepFailed,
     Blocked,
+    DeviceSessionResumed,
     InvariantFailed,
     Cancelled,
     RecoveryDecision,
@@ -516,6 +517,7 @@ impl TaskAuditParticipant for TestAudit {
             AuditOperation::RecoveryDecision => vec![task(JournalKind::RecoveryDecision)],
             AuditOperation::PlanningStarted
             | AuditOperation::Blocked
+            | AuditOperation::DeviceSessionResumed
             | AuditOperation::InvariantFailed
             | AuditOperation::RecoveryStateChanged => vec![],
         };

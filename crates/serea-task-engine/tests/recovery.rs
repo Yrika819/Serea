@@ -1607,7 +1607,10 @@ fn m12_m13_mixed_pass_changes_once_then_all_durable_tables_are_byte_identical() 
     assert_eq!(
         before.keys().map(String::as_str).collect::<Vec<_>>(),
         vec![
+            "approval_lifecycle_wakes",
             "blobs",
+            "device_resume_waits",
+            "device_session_resume_wakes",
             "event_content",
             "event_expired_ranges",
             "event_sequence_ledger",

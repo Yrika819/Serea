@@ -22,11 +22,12 @@ contains at least:
 | `owner_device_id` | The paired device/user identity that created the schedule, or the host admin identity for a host-created schedule. |
 | `state` | `ACTIVE`, `PAUSED`, or `CANCELLED`. |
 | `revision` | Monotonically increasing generation changed by each committed definition or state mutation; claims compare the expected revision under the transaction fence. |
-| `trigger` | Exactly one validated `EventPredicateV1`, `CalendarRecurrenceV1`, or dedicated wake trigger form. |
+| `trigger` | In P3 V1, exactly one validated `EventPredicateV1` or `CalendarRecurrenceV1`. Dedicated device and approval wakes are internal handoffs for existing task state, not schedule definitions. |
 | `task_template` | A host-validated `ScheduledTaskTemplateV1` containing title and planning intent only; V1 has no permitted action arguments. |
 | `policy_class` | Fixed ceiling for spawned work; a scheduled task cannot raise it. |
 | `approval_policy` | The ordinary policy/approval requirements for each action. No approval is pre-granted by a schedule. |
 | `timezone` | IANA time-zone identifier for calendar recurrences; required when the recurrence is local-time based. |
+| `event_predicate_after_seq` | Event Bus high-water captured when a HOST_EVENT predicate revision commits; events at or below it are not retroactively matched. |
 | `created_at`, `updated_at` | Host timestamps persisted with each record change. |
 | `next_due_at` | Next calculated due instant, persisted in UTC together with the recurrence's local-time interpretation. |
 | `missed_occurrence_policy` | One of `SKIP`, `RUN_ONCE`, `RUN_EACH`; validated with the schedule and constrained as below. |
@@ -66,6 +67,11 @@ Each wake carries its source identity from durable state (the source `EventId`,
 a request to evaluate the schedule/task; it does not bypass policy or grant
 approval.
 
+`DEVICE_SESSION_ESTABLISHED` and `APPROVAL_EVENT` are dedicated internal wake
+paths, not user schedule trigger definitions. A device wake resumes only a task
+with an explicit `DeviceResumeWaitV1`; an approval wake is retained for future
+P6 handling. Neither wake creates a new scheduled task.
+
 `DEVICE_CONNECTED` payload parsing uses the exact
 `DeviceConnectedPayloadV1` shape from Event Protocol §3.6. Event correlation,
 task origin, task title/kind, `WAITING_USER`, and generic `BLOCKED` state never
@@ -96,7 +102,10 @@ HOST_EVENT schedules store the closed SCJ-1 object
 only fields. The host rejects unknown or missing fields, duplicate keys,
 unregistered kinds, and versions other than `"1"`. Persisted JSON is
 canonical; runtime decodes it to `EventPredicateV1` and never compares raw
-source text.
+source text. Schedule creation and each predicate revision persist the
+Event Bus high-water observed in the same transaction; only later event
+sequences can match that revision, so delayed replay cannot retroactively
+trigger a newly created or edited schedule.
 
 The only positive match is exact EventKind equality. Payload fields, task/step
 IDs, actor, correlation/causation, data class, timestamps, and other JSON do
@@ -357,7 +366,7 @@ not connect an external scheduler or perform real scheduled effects.
 | S4 | Lease expiry permits reconciliation only; it never proves that no effect occurred. |
 | S5 | Timezone and DST resolution are deterministic and persisted per occurrence. |
 | S6 | Missed occurrences follow the stored bounded policy and are never silently discarded. |
-| S7 | Approval waits release scheduler leases and resume the same task. |
+| S7 | Approval waits release Scheduler leases; only future P6 Policy/Approval code applies an authoritative outcome to the same task. |
 | S8 | Proactive watcher execution remains read-only; proposals require a separate user action to cause effects. |
 | S9 | Scheduler implementation and real scheduled effects remain deferred to P3. |
 

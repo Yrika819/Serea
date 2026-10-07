@@ -219,8 +219,8 @@ suppression. It also accepts a closed title/intent-only scheduled template,
 host classification inheritance, `max_schedule_template_bytes = 32768`, and
 occurrence-pinned template digests for edit/restart stability. Architecture
 advances from `serea-arch/2.1.0` to `serea-arch/2.2.0`; event and Scheduler
-surfaces remain `/1`. Contract CI is pending exact commit evidence. No runtime
-or migration change is claimed by this contract record. ADR-0028 was included
+surfaces remain `/1`. No runtime or migration change is claimed by this contract
+record. ADR-0028 was included
 in the follow-up contract commit `35e93a14f3e9ee9670f8563c738cd0d1e02a7e6e`;
 Fast CI run `37606284419` and Full CI run `37606291329` passed on that exact
 commit, including Linux stable/release proof, MSRV 1.85, Intel, and arm64.
@@ -245,7 +245,8 @@ Contract validation is green on exact commit
 Full CI run `37606291329`; Full CI jobs Linux stable/release proof
 `112742997443`, MSRV 1.85 `112742997733`, macOS arm64 `112742997778`, and
 macOS Intel `112742997819`. Runtime work is present only as an uncommitted,
-incomplete Cloud worktree; it has no authoritative behavior-commit CI evidence.
+in-progress implementation; this contract evidence does not claim runtime
+completion or behavior-commit CI evidence.
 
 ## P3F contract — approval lifecycle wake handoff (ADR-0030 accepted)
 
@@ -256,7 +257,10 @@ deduplicated Scheduler wake and to preserve it until explicit P6 acknowledgement
 It does not interpret approval authority, apply outcomes, or transition tasks.
 Architecture advances from `serea-arch/2.3.0` to `serea-arch/2.4.0`; Event,
 Scheduler, Approval, and Task surfaces remain unchanged. This contract commit's
-CI evidence is pending; no approval runtime or P6 implementation is claimed.
+CI evidence: Fast CI run `37613362390` and Full CI run `37613362482`; Full CI
+Linux stable/release proof job `112765733101`, MSRV 1.85 job `112765732716`,
+macOS Intel job `112765733121`, and macOS arm64 job `112765733257`. Approval
+runtime remains a P3 routing-only handoff; no P6 behavior is claimed.
 
 ## Project nonclaims
 

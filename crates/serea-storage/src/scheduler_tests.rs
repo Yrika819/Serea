@@ -22,14 +22,18 @@ fn at(value: i64) -> EpochMillis {
 fn seed_schedule(store: &Store) {
     store
         .transact(|tx| {
+            let template = tx.put_blob(
+                br#"{"version":"1","title":"Template","intent":"Do work"}"#,
+                DataClass::Public,
+            )?;
             tx.inner.execute(
                 "INSERT INTO schedules(
                    schedule_id,owner_kind,owner_id,state,revision,trigger_kind,
-                   recurrence_json,policy_class_rank,approval_policy_json,timezone,
+                   recurrence_json,template_digest,template_data_class_rank,policy_class_rank,approval_policy_json,timezone,
                    next_due_at_ms,next_local_label,missed_policy,created_at_ms,updated_at_ms
                  ) VALUES ('sch_00000000000000000000000001','HOST','host-test','ACTIVE',1,
-                   'CALENDAR','{}',0,'{}','Etc/UTC',0,'2026-01-01T00:00','SKIP',0,0)",
-                [],
+                   'CALENDAR','{}',?1,?2,0,'{}','Etc/UTC',0,'2026-01-01T00:00','SKIP',0,0)",
+                rusqlite::params![template.digest().as_str(), template.class().rank()],
             )?;
             Ok(())
         })
@@ -39,12 +43,17 @@ fn seed_schedule(store: &Store) {
 fn seed_occurrence(store: &Store, key: &str) {
     store
         .transact(|tx| {
+            let (digest, class_rank): (String, i64) = tx.inner.query_row(
+                "SELECT template_digest,template_data_class_rank FROM schedules WHERE schedule_id='sch_00000000000000000000000001'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
             tx.inner.execute(
                 "INSERT INTO schedule_occurrences(
                    schedule_id,occurrence_key,schedule_revision,trigger_kind,due_at_ms,
-                   state,created_at_ms,updated_at_ms
-                 ) VALUES ('sch_00000000000000000000000001',?1,1,'CALENDAR',0,'PENDING',0,0)",
-                [key],
+                   template_digest,template_data_class_rank,state,created_at_ms,updated_at_ms
+                 ) VALUES ('sch_00000000000000000000000001',?1,1,'CALENDAR',0,?2,?3,'PENDING',0,0)",
+                rusqlite::params![key, digest, class_rank],
             )?;
             Ok(())
         })
@@ -55,6 +64,105 @@ fn task_id() -> TaskId {
     TaskId::new("tsk_00000000000000000000000001").unwrap()
 }
 
+#[test]
+fn scheduler_bounded_queries_have_their_owner_indexes() {
+    let store = Store::open_in_memory(&Fixed).unwrap();
+    let connection = store.conn.lock().unwrap();
+    let plans = [
+        "EXPLAIN QUERY PLAN SELECT s.schedule_id FROM schedules s
+         WHERE s.state='ACTIVE' AND s.trigger_kind='CALENDAR'
+           AND (s.next_due_at_ms<=0 OR EXISTS(
+             SELECT 1 FROM schedule_occurrences o WHERE o.schedule_id=s.schedule_id
+               AND o.state='PENDING' AND o.due_at_ms<=0
+               AND (o.not_before_ms IS NULL OR o.not_before_ms<=0)))
+         ORDER BY min(s.next_due_at_ms,COALESCE((
+           SELECT min(o.due_at_ms) FROM schedule_occurrences o
+           WHERE o.schedule_id=s.schedule_id AND o.state='PENDING'
+             AND o.due_at_ms<=0 AND (o.not_before_ms IS NULL OR o.not_before_ms<=0)
+         ),s.next_due_at_ms)),s.schedule_id LIMIT 256",
+        "EXPLAIN QUERY PLAN SELECT occurrence_key FROM schedule_occurrences
+         WHERE schedule_id='sch_00000000000000000000000001' AND state='PENDING'
+           AND due_at_ms<=0 AND (not_before_ms IS NULL OR not_before_ms<=0)
+         ORDER BY due_at_ms,occurrence_key LIMIT 10",
+        "EXPLAIN QUERY PLAN SELECT o.schedule_id,o.occurrence_key
+         FROM schedule_occurrences o JOIN schedules s USING(schedule_id)
+         WHERE s.state='ACTIVE' AND o.trigger_kind='CALENDAR' AND o.due_at_ms<=0
+           AND (o.not_before_ms IS NULL OR o.not_before_ms<=0)
+           AND o.state='CLAIMED' AND o.lease_expires_at_ms<=0
+         ORDER BY o.due_at_ms,o.schedule_id,o.occurrence_key LIMIT 512",
+        "EXPLAIN QUERY PLAN SELECT task_id FROM device_resume_waits
+         WHERE device_id='dev_00000000000000000000000001'
+           AND registration_event_high_water_seq<100 ORDER BY task_id LIMIT 256",
+        "EXPLAIN QUERY PLAN SELECT source_event_id FROM approval_lifecycle_wakes
+         ORDER BY created_at_ms,source_seq,source_event_id LIMIT 256",
+        "EXPLAIN QUERY PLAN SELECT w.task_id FROM device_resume_waits w JOIN tasks t USING(task_id)
+         WHERE w.device_id='dev_00000000000000000000000001'
+           AND w.registration_event_high_water_seq<100
+           AND NOT EXISTS (SELECT 1 FROM device_session_resume_wakes d
+                           WHERE d.task_id=w.task_id
+                             AND d.blocked_task_revision=w.blocked_task_revision)
+         ORDER BY w.task_id LIMIT 256",
+        "EXPLAIN QUERY PLAN SELECT source_event_id FROM approval_lifecycle_wakes
+         WHERE task_id='tsk_00000000000000000000000001'",
+        "EXPLAIN QUERY PLAN SELECT o.schedule_id,o.occurrence_key
+         FROM schedule_occurrences o JOIN schedules s USING(schedule_id)
+         WHERE s.state='ACTIVE' AND s.trigger_kind='HOST_EVENT'
+           AND o.trigger_kind='HOST_EVENT' AND o.state='PENDING'
+           AND o.due_at_ms IS NULL AND (o.not_before_ms IS NULL OR o.not_before_ms<=0)
+         ORDER BY o.created_at_ms,o.schedule_id,o.occurrence_key LIMIT 256",
+    ];
+    let rows = plans
+        .iter()
+        .map(|query| {
+            let mut statement = connection.prepare(query).unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(3))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join(" | ")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        rows[0].contains("schedules_active_trigger") || rows[0].contains("schedules_active_due")
+    );
+    assert!(rows[0].contains("schedule_occurrences_claim"));
+    assert!(rows[1].contains("schedule_occurrences_claim"));
+    assert!(rows[2].contains("schedule_occurrences_expired_lease"));
+    assert!(rows[3].contains("device_resume_waits_by_device_sequence"));
+    assert!(rows[4].contains("approval_lifecycle_wakes_pending"));
+    assert!(rows[5].contains("device_session_resume_wakes_task"));
+    assert!(rows[6].contains("approval_lifecycle_wakes_task"));
+    assert!(rows[7].contains("schedules_active_trigger"));
+    assert!(rows[7].contains("schedule_occurrences_claim"));
+    // SQLite sorts this candidate set; the accepted 256 schedules x 256
+    // pending occurrences bound caps that temporary structure at 65,536 rows.
+    assert!(rows[7].contains("TEMP B-TREE FOR ORDER BY"));
+}
+
+#[test]
+fn scheduler_integrity_refuses_a_persisted_dedicated_wake_predicate() {
+    let store = Store::open_in_memory(&Fixed).unwrap();
+    seed_schedule(&store);
+    store.verify_integrity().unwrap();
+    store
+        .conn
+        .lock()
+        .unwrap()
+        .execute(
+            r#"UPDATE schedules SET trigger_kind='HOST_EVENT',recurrence_json=NULL,
+               timezone=NULL,next_due_at_ms=NULL,next_local_label=NULL,
+               event_predicate_json='{"event_kind":"DEVICE_CONNECTED","version":"1"}',
+               event_predicate_after_seq=0 WHERE schedule_id='sch_00000000000000000000000001'"#,
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        store.verify_integrity(),
+        Err(StoreError::IntegrityCheckFailed)
+    );
+}
+
 fn schedule_draft(n: u32) -> ScheduleDraft {
     ScheduleDraft {
         schedule_id: ScheduleId::new(format!("sch_{n:026}")).unwrap(),
@@ -63,8 +171,10 @@ fn schedule_draft(n: u32) -> ScheduleDraft {
         trigger_kind: ScheduleTriggerKind::Calendar,
         recurrence: Some(serde_json::json!({"frequency":"DAILY"})),
         event_predicate: None,
-        template_digest: None,
-        template_data_class_rank: None,
+        template_json:
+            br#"{"version":"1","title":"Scheduled task","intent":"Perform the scheduled work."}"#
+                .to_vec(),
+        template_data_class: DataClass::Public,
         policy_class_rank: 0,
         approval_policy: serde_json::json!({}),
         timezone: Some("Etc/UTC".into()),
@@ -83,6 +193,7 @@ fn occurrence_draft(schedule_id: ScheduleId, n: u32) -> ScheduleOccurrenceDraft 
         schedule_revision: 1,
         trigger_kind: ScheduleTriggerKind::Calendar,
         source_event_id: None,
+        source_event_data_class: None,
         intended_local_label: Some(format!("2026-01-{n:02}T00:00")),
         timezone: Some("Etc/UTC".into()),
         recurrence_evaluator: Some("jiff/0.2.38".into()),
@@ -176,6 +287,268 @@ fn schedule_creation_retry_reuses_command_result_and_one_lifecycle_event() {
         Err(StoreError::ScheduleCommandIdentityConflict)
     );
     assert_eq!(store.replay_events(None, None, 10).unwrap().items.len(), 1);
+}
+
+#[test]
+fn calendar_occurrence_admission_and_once_exhaustion_are_atomic() {
+    let store = Store::open_in_memory(&Fixed).unwrap();
+    seed_schedule(&store);
+    let schedule = ScheduleId::new("sch_00000000000000000000000001").unwrap();
+    let draft = occurrence_draft(schedule.clone(), 1);
+    let inserted = store
+        .transact(|tx| {
+            tx.enqueue_calendar_occurrence_and_advance(draft, "2026-01-01T00:00", None, None)
+        })
+        .unwrap();
+    assert!(inserted);
+    let snapshot = store.transact(|tx| tx.load_schedule(&schedule)).unwrap();
+    assert_eq!(snapshot.next_due_at, None);
+    assert_eq!(snapshot.next_local_label, None);
+    assert!(
+        store
+            .transact(|tx| tx.enqueue_calendar_occurrence_and_advance(
+                occurrence_draft(schedule.clone(), 1),
+                "2026-01-01T00:00",
+                None,
+                None,
+            ))
+            .is_err()
+    );
+    let pending: i64 = store
+        .transact(|tx| {
+            tx.inner
+                .query_row("SELECT count(*) FROM schedule_occurrences", [], |row| {
+                    row.get(0)
+                })
+                .map_err(StoreError::from)
+        })
+        .unwrap();
+    assert_eq!(pending, 1);
+}
+
+#[test]
+fn schedule_edit_keeps_resolved_occurrence_template_after_mapping() {
+    let store = Store::open_in_memory(&Fixed).unwrap();
+    let schedule = ScheduleId::new(format!("sch_{:026}", 1)).unwrap();
+    let create_id = EventId::new(format!("evt_{:026}", 720)).unwrap();
+    let request = Digest::new(format!("sha256:{}", "c".repeat(64))).unwrap();
+    let mut original = schedule_draft(1);
+    original.template_json =
+        br#"{"version":"1","title":"Template A","intent":"Original intent."}"#.to_vec();
+    store
+        .transact(|tx| {
+            tx.create_schedule_command(
+                &create_id,
+                &request,
+                original,
+                at(0),
+                lifecycle_event(EventKind::ScheduleCreated, 721, &create_id, &schedule),
+            )?;
+            tx.enqueue_schedule_occurrence(occurrence_draft(schedule.clone(), 1))?;
+            Ok(())
+        })
+        .unwrap();
+
+    let update_id = EventId::new(format!("evt_{:026}", 722)).unwrap();
+    let update_request = Digest::new(format!("sha256:{}", "d".repeat(64))).unwrap();
+    let mut revised = schedule_draft(1);
+    revised.template_json =
+        br#"{"version":"1","title":"Template B","intent":"Future intent."}"#.to_vec();
+    store
+        .transact(|tx| {
+            tx.update_schedule_command(
+                &update_id,
+                &update_request,
+                1,
+                revised,
+                at(1),
+                lifecycle_event(EventKind::ScheduleUpdated, 723, &update_id, &schedule),
+            )
+        })
+        .unwrap();
+
+    let lease = store
+        .transact(|tx| {
+            tx.claim_schedule_occurrence(
+                &schedule,
+                "2026-01-01T00:00[Etc/UTC]",
+                2,
+                "worker",
+                at(2),
+                at(50),
+            )
+        })
+        .unwrap();
+    store
+        .transact(|tx| tx.map_schedule_occurrence(&lease, &task_id(), at(3)))
+        .unwrap();
+    let historical = store.schedule_task_provenance(&task_id()).unwrap().unwrap();
+    let old_bytes = store
+        .transact(|tx| tx.get_blob(&historical.template))
+        .unwrap();
+    assert_eq!(
+        old_bytes,
+        br#"{"intent":"Original intent.","title":"Template A","version":"1"}"#
+    );
+    let current = store.transact(|tx| tx.load_schedule(&schedule)).unwrap();
+    let current_bytes = store
+        .transact(|tx| tx.get_blob(current.template.as_ref().unwrap()))
+        .unwrap();
+    assert_eq!(
+        current_bytes,
+        br#"{"intent":"Future intent.","title":"Template B","version":"1"}"#
+    );
+}
+
+#[test]
+fn malformed_template_and_dedicated_wakes_refuse_or_accept_without_fake_predicates() {
+    let store = Store::open_in_memory(&Fixed).unwrap();
+    let schedule = ScheduleId::new(format!("sch_{:026}", 102)).unwrap();
+    let command = EventId::new(format!("evt_{:026}", 820)).unwrap();
+    let digest = Digest::new(format!("sha256:{}", "b".repeat(64))).unwrap();
+    let mut invalid = schedule_draft(102);
+    invalid.template_json = br#"{"version":"1","title":"","intent":"bad"}"#.to_vec();
+    assert_eq!(
+        store.transact(|tx| tx.create_schedule_command(
+            &command,
+            &digest,
+            invalid,
+            at(0),
+            lifecycle_event(EventKind::ScheduleCreated, 821, &command, &schedule),
+        )),
+        Err(StoreError::InvalidSchedule)
+    );
+
+    let mut dedicated = schedule_draft(102);
+    dedicated.trigger_kind = ScheduleTriggerKind::DeviceSessionEstablished;
+    dedicated.recurrence = None;
+    dedicated.event_predicate = None;
+    dedicated.timezone = None;
+    dedicated.recurrence_evaluator = None;
+    dedicated.tzdb_version = None;
+    dedicated.next_due_at = None;
+    dedicated.next_local_label = None;
+    let outcome = store
+        .transact(|tx| {
+            tx.create_schedule_command(
+                &command,
+                &digest,
+                dedicated,
+                at(0),
+                lifecycle_event(EventKind::ScheduleCreated, 822, &command, &schedule),
+            )
+        })
+        .unwrap();
+    assert_eq!(outcome.revision, 1);
+    let predicate: Option<String> = store
+        .transact(|tx| {
+            Ok(tx.inner.query_row(
+                "SELECT event_predicate_json FROM schedules WHERE schedule_id=?1",
+                [schedule.as_str()],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(predicate, None);
+}
+
+#[test]
+fn occurrence_pins_the_template_version_across_definition_changes_and_restart_state() {
+    let store = Store::open_in_memory(&Fixed).unwrap();
+    let schedule = ScheduleId::new(format!("sch_{:026}", 101)).unwrap();
+    let command = EventId::new(format!("evt_{:026}", 810)).unwrap();
+    let digest = Digest::new(format!("sha256:{}", "a".repeat(64))).unwrap();
+    store
+        .transact(|tx| {
+            tx.create_schedule_command(
+                &command,
+                &digest,
+                schedule_draft(101),
+                at(0),
+                lifecycle_event(EventKind::ScheduleCreated, 811, &command, &schedule),
+            )
+        })
+        .unwrap();
+
+    let old_template = store
+        .transact(|tx| tx.load_schedule(&schedule).map(|s| s.template.unwrap()))
+        .unwrap();
+    assert_eq!(
+        store.transact(|tx| tx.get_blob(&old_template)).unwrap(),
+        br#"{"intent":"Perform the scheduled work.","title":"Scheduled task","version":"1"}"#
+    );
+    let mut first = occurrence_draft(schedule.clone(), 1);
+    assert!(
+        store
+            .transact(|tx| tx.enqueue_schedule_occurrence(first.clone()))
+            .unwrap()
+    );
+
+    let replacement =
+        br#"{"version":"1","title":"Updated task","intent":"Use the revised planning context."}"#;
+    store.transact(|tx| {
+        let blob = tx.put_blob(replacement, DataClass::Public)?;
+        tx.inner.execute(
+            "UPDATE schedules SET template_digest=?1,template_data_class_rank=?2,revision=2,updated_at_ms=1
+             WHERE schedule_id=?3",
+            rusqlite::params![blob.digest().as_str(), blob.class().rank(), schedule.as_str()],
+        )?;
+        Ok(())
+    }).unwrap();
+
+    let mut second = occurrence_draft(schedule.clone(), 2);
+    second.schedule_revision = 2;
+    second.created_at = at(1);
+    assert!(
+        store
+            .transact(|tx| tx.enqueue_schedule_occurrence(second))
+            .unwrap()
+    );
+    let new_template: (String, i64) = store
+        .transact(|tx| {
+            Ok(tx.inner.query_row(
+                "SELECT template_digest,template_data_class_rank FROM schedule_occurrences
+                 WHERE schedule_id=?1 AND occurrence_key='2026-01-02T00:00[Etc/UTC]'",
+                [schedule.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .transact(|tx| {
+                tx.get_blob(&crate::BlobRef::new(
+                    Digest::new(new_template.0).unwrap(),
+                    DataClass::Public,
+                ))
+            })
+            .unwrap(),
+        br#"{"intent":"Use the revised planning context.","title":"Updated task","version":"1"}"#
+    );
+
+    first.schedule_revision = 2;
+    first.created_at = at(1);
+    assert!(
+        !store
+            .transact(|tx| tx.enqueue_schedule_occurrence(first))
+            .unwrap()
+    );
+    assert_eq!(
+        store.transact(|tx| tx.get_blob(&old_template)).unwrap(),
+        br#"{"intent":"Perform the scheduled work.","title":"Scheduled task","version":"1"}"#
+    );
+    let captured: (String, i64) = store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT template_digest,template_data_class_rank FROM schedule_occurrences WHERE schedule_id=?1",
+        [schedule.as_str()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?)).unwrap();
+    assert_eq!(
+        captured,
+        (
+            old_template.digest().to_string(),
+            i64::from(old_template.class().rank())
+        )
+    );
 }
 
 #[test]
@@ -345,17 +718,26 @@ fn lifecycle_event_failure_rolls_schedule_and_command_receipt_back() {
         Err(StoreError::ConstraintViolation)
     );
     let conn = rusqlite::Connection::open(&path).unwrap();
-    let counts: (i64, i64, i64, i64) = conn
+    let counts: (i64, i64, i64, i64, i64) = conn
         .query_row(
             "SELECT (SELECT count(*) FROM schedules),
                     (SELECT count(*) FROM schedule_command_receipts),
                     (SELECT count(*) FROM event_content),
-                    (SELECT last_allocated_seq FROM event_store_state WHERE singleton=1)",
+                    (SELECT last_allocated_seq FROM event_store_state WHERE singleton=1),
+                    (SELECT count(*) FROM blobs)",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .unwrap();
-    assert_eq!(counts, (0, 0, 0, 0));
+    assert_eq!(counts, (0, 0, 0, 0, 0));
     drop(conn);
     drop(store);
     std::fs::remove_file(path).unwrap();
@@ -489,6 +871,7 @@ fn duplicate_source_event_id_cannot_create_a_second_occurrence() {
             schedule_revision: 1,
             trigger_kind: ScheduleTriggerKind::HostEvent,
             source_event_id: Some(source.clone()),
+            source_event_data_class: Some(DataClass::Public),
             intended_local_label: None,
             timezone: None,
             recurrence_evaluator: None,

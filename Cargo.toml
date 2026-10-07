@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-event-bus", "crates/serea-task-engine", "crates/serea-testkit"]
+members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-event-bus", "crates/serea-task-engine", "crates/serea-scheduler", "crates/serea-testkit"]
 exclude = ["vendor/jsonschema-value", "vendor/serde_json"]
 
 [workspace.package]
@@ -23,6 +23,7 @@ serea-protocol = { path = "crates/serea-protocol" }
 serea-storage = { path = "crates/serea-storage" }
 serea-event-bus = { path = "crates/serea-event-bus" }
 serea-task-engine = { path = "crates/serea-task-engine" }
+serea-scheduler = { path = "crates/serea-scheduler" }
 
 # P2C: synchronous SQLite foundation, compiled from the bundled amalgamation.
 # No default cache/wasm adapters or optional runtime features.
@@ -50,6 +51,8 @@ jsonschema = { version = "=0.58.3", default-features = false }
 # Crate Map §6.1 require (providers are registered as trait objects by
 # `serea-core`). This is a proc macro only; it introduces no async runtime.
 async-trait = "0.1"
+jiff = { version = "=0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jiff-tzdb = "=0.1.9"
 
 [patch.crates-io]
 jsonschema-value = { path = "vendor/jsonschema-value" }

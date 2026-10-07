@@ -1,0 +1,139 @@
+name: Cross-architecture SQLite portability
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'p3/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sqlite-portability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  produce-intel:
+    name: Produce closed DB on macOS Intel x86_64
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Require Intel runner and fetch locked dependencies
+        run: |
+          test "$(uname -m)" = x86_64
+          cargo +stable fetch --locked
+      - name: Produce representative Serea database
+        env:
+          SEREA_PORTABLE_MODE: produce
+          SEREA_PORTABLE_DB_PATH: ${{ runner.temp }}/portable.sqlite
+        run: cargo +stable test -p serea-scheduler --test sqlite_portability --locked --offline
+      - name: Require a single closed main database file
+        run: |
+          test -f "${{ runner.temp }}/portable.sqlite"
+          test ! -e "${{ runner.temp }}/portable.sqlite-shm"
+          test ! -e "${{ runner.temp }}/portable.sqlite-wal"
+      - name: Upload closed database
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: portable-db-intel
+          path: ${{ runner.temp }}/portable.sqlite
+          if-no-files-found: error
+          retention-days: 1
+
+  produce-arm64:
+    name: Produce closed DB on macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Require Apple Silicon runner and fetch locked dependencies
+        run: |
+          test "$(uname -m)" = arm64
+          cargo +stable fetch --locked
+      - name: Produce representative Serea database
+        env:
+          SEREA_PORTABLE_MODE: produce
+          SEREA_PORTABLE_DB_PATH: ${{ runner.temp }}/portable.sqlite
+        run: cargo +stable test -p serea-scheduler --test sqlite_portability --locked --offline
+      - name: Require a single closed main database file
+        run: |
+          test -f "${{ runner.temp }}/portable.sqlite"
+          test ! -e "${{ runner.temp }}/portable.sqlite-shm"
+          test ! -e "${{ runner.temp }}/portable.sqlite-wal"
+      - name: Upload closed database
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: portable-db-arm64
+          path: ${{ runner.temp }}/portable.sqlite
+          if-no-files-found: error
+          retention-days: 1
+
+  consume-arm64:
+    name: Open Intel DB on macOS arm64
+    needs: produce-intel
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Fetch locked dependencies
+        run: cargo +stable fetch --locked
+      - name: Download Intel database
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: portable-db-intel
+          path: ${{ runner.temp }}
+      - name: Validate Intel-produced database on arm64
+        env:
+          SEREA_PORTABLE_MODE: consume
+          SEREA_PORTABLE_DB_PATH: ${{ runner.temp }}/portable.sqlite
+        run: |
+          test "$(uname -m)" = arm64
+          test ! -e "${{ runner.temp }}/portable.sqlite-shm"
+          test ! -e "${{ runner.temp }}/portable.sqlite-wal"
+          cargo +stable test -p serea-scheduler --test sqlite_portability --locked --offline
+
+  consume-intel:
+    name: Open arm64 DB on macOS Intel x86_64
+    needs: produce-arm64
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Fetch locked dependencies
+        run: cargo +stable fetch --locked
+      - name: Download arm64 database
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: portable-db-arm64
+          path: ${{ runner.temp }}
+      - name: Validate arm64-produced database on Intel
+        env:
+          SEREA_PORTABLE_MODE: consume
+          SEREA_PORTABLE_DB_PATH: ${{ runner.temp }}/portable.sqlite
+        run: |
+          test "$(uname -m)" = x86_64
+          test ! -e "${{ runner.temp }}/portable.sqlite-shm"
+          test ! -e "${{ runner.temp }}/portable.sqlite-wal"
+          cargo +stable test -p serea-scheduler --test sqlite_portability --locked --offline

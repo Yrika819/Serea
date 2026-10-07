@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P3B workspace shape and crate dependency direction.
+"""P3F workspace shape and crate dependency direction.
 
 Python 3.9-compatible standard library only; no Cargo invocation or network.
 Checks ordinary, build, dev and target-specific dependencies, including aliases,
@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_MEMBERS = [
     "crates/serea-event-bus",
     "crates/serea-protocol",
+    "crates/serea-scheduler",
     "crates/serea-storage",
     "crates/serea-task-engine",
     "crates/serea-testkit",
@@ -31,6 +32,7 @@ PROTOCOL = "serea-protocol"
 STORAGE = "serea-storage"
 EVENT_BUS = "serea-event-bus"
 ENGINE = "serea-task-engine"
+SCHEDULER = "serea-scheduler"
 TESTKIT = "serea-testkit"
 DEPENDENCY_KINDS = ("dependencies", "build-dependencies", "dev-dependencies")
 
@@ -331,7 +333,7 @@ def main() -> int:
             raise ValueError("workspace.members must be an array of strings")
         if sorted(members) != EXPECTED_MEMBERS:
             failures.append(
-                f"expected exactly P3B members {EXPECTED_MEMBERS}, got {members}"
+                f"expected exactly P3F members {EXPECTED_MEMBERS}, got {members}"
             )
         for member in EXPECTED_MEMBERS:
             path = ROOT / member / "Cargo.toml"
@@ -358,6 +360,10 @@ def main() -> int:
                     failures.append(f"{STORAGE} depends on {ENGINE}; forbidden even in [dev-dependencies]")
                 if owner == STORAGE and name == EVENT_BUS:
                     failures.append(f"{STORAGE} depends on {EVENT_BUS}; forbidden even in [dev-dependencies]")
+                if owner == STORAGE and name == SCHEDULER:
+                    failures.append(f"{STORAGE} depends on {SCHEDULER}; forbidden even in [dev-dependencies]")
+                if owner == EVENT_BUS and name == SCHEDULER:
+                    failures.append(f"{EVENT_BUS} depends on {SCHEDULER}; forbidden even in [dev-dependencies]")
                 if owner == STORAGE and internal and not is_dev and name != PROTOCOL:
                     failures.append(
                         f"{STORAGE} has internal non-dev dependency {name}; only protocol is allowed"
@@ -365,6 +371,10 @@ def main() -> int:
                 if owner == EVENT_BUS and internal and not is_dev and name not in (PROTOCOL, STORAGE):
                     failures.append(
                         f"{EVENT_BUS} has internal non-dev dependency {name}; only protocol/storage are allowed"
+                    )
+                if owner == SCHEDULER and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS, ENGINE):
+                    failures.append(
+                        f"{SCHEDULER} has internal non-dev dependency {name}; only protocol/storage/event-bus/task-engine are allowed"
                     )
                 if name == TESTKIT and not is_dev:
                     failures.append(f"{owner} names {TESTKIT} outside [dev-dependencies]")
@@ -379,9 +389,9 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P3C protocol/storage/event-bus/task-engine/testkit workspace; "
-          "event-bus protocol/storage-only; task-engine protocol/storage/event-bus; storage protocol-only "
-          "with no Event Bus or task-engine edge; testkit dev-only")
+    print("OK: exact P3F protocol/storage/event-bus/task-engine/scheduler/testkit workspace; "
+          "event-bus protocol/storage-only; task-engine protocol/storage/event-bus; scheduler protocol/storage/event-bus/task-engine; "
+          "storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; testkit dev-only")
     return 0
 
 

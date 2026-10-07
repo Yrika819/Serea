@@ -56,7 +56,7 @@ fn migration_0001_is_immutable_and_catalog_adds_only_0002() {
     assert_eq!(catalog[0].sql, INITIAL_SQL);
     assert_eq!(
         Migrations::checksum(EVENT_SCHEDULER_SQL).as_str(),
-        "sha256:b6bfb19bcae23109418f06a8d788fc29734737a90e83cf837d86dc17be7c0468"
+        "sha256:4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67"
     );
     assert_eq!(
         (catalog[1].version, catalog[1].name),
@@ -95,6 +95,9 @@ fn fresh_database_applies_0001_then_0002_and_reopens_with_integrity() {
             "event_expired_ranges",
             "schedules",
             "schedule_occurrences",
+            "device_resume_waits",
+            "device_session_resume_wakes",
+            "approval_lifecycle_wakes",
             "scheduler_consumer_state",
         ] {
             assert!(table_exists(&conn, name), "missing migration object {name}");

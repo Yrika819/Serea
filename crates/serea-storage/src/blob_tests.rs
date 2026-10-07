@@ -877,6 +877,7 @@ fn p3_public_method_inventory_exposes_only_the_fixed_participant_composition() {
         public_methods(include_str!("lifecycle.rs")),
         [
             "block_task",
+            "block_task_for_device",
             "cancel_task",
             "delete_task",
             "fail_task_invariant"

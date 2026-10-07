@@ -467,10 +467,12 @@ class VirtualManifestTests(unittest.TestCase):
         self.manifests[self.paths[smoke.STORAGE]] = '[package]\nname = "external"\n'
         self.assert_main(1, "required member has wrong package name")
 
-    def test_p4c_router_keeps_storage_and_event_bus_out_of_runtime_graph(self):
+    def test_p4d_router_allows_only_protocol_storage_and_event_bus_runtime_edges(self):
         self.add(smoke.MODEL_ROUTER,
-                 '\n[dependencies]\nserea-protocol = "1"\nserea-storage = "1"\n')
-        self.assert_main(1, "serea-model-router has internal non-dev dependency serea-storage")
+                 '\n[dependencies]\nserea-protocol = "1"\nserea-storage = "1"\nserea-event-bus = "1"\n')
+        self.assert_main(0, "OK:")
+        self.manifests[self.paths[smoke.MODEL_ROUTER]] += '\nserea-task-engine = "1"\n'
+        self.assert_main(1, "P4 routing may depend only on protocol, storage, and event-bus")
 
 
 class P2GroupOInvariantTests(unittest.TestCase):
@@ -555,7 +557,7 @@ class P2GroupOInvariantTests(unittest.TestCase):
         self.assertNotRegex(source, r"pub fn (?:update|insert|delete|write)_task")
         self.assertNotRegex(source, r"(?i)\b(?:INSERT|UPDATE|DELETE|REPLACE)\s+(?:INTO\s+)?(?:tasks|task_steps|leases|task_journal)")
 
-    def test_o7_workspace_has_exactly_p4c_members(self):
+    def test_o7_workspace_has_exactly_p4d_members(self):
         root = smoke.load_manifest(self.root / "Cargo.toml")
         self.assertEqual(sorted(root["workspace"]["members"]), smoke.EXPECTED_MEMBERS)
 

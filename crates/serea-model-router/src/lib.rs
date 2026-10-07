@@ -13,10 +13,19 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 
-use serea_protocol::provider::ModelProvider;
+use serea_event_bus::{
+    EventBus, ModelCompletedEventV1, ModelEventMetadataV1, ModelEventRelationV1, ModelFailedEventV1,
+};
+use serea_protocol::provider::{ModelCallContext, ModelProvider};
 use serea_protocol::{
-    DataClass, JsonSchemaMode, ModelCapabilities, ModelDescriptor, ModelId, ModelMessage,
-    ModelPurpose, ModelRequest, ProviderHealth, ProviderId, ResponseFormat, TaskId,
+    Clock, DataClass, FinishReason, JsonSchemaMode, ModelCapabilities, ModelDescriptor,
+    ModelErrorCode, ModelId, ModelMessage, ModelPurpose, ModelRequest, ModelResponse,
+    ProtocolError, ProviderHealth, ProviderId, ResponseFormat, TaskId, canonicalize,
+};
+use serea_storage::{
+    ModelAttemptRelationKind, ModelCallAttemptDraft, ModelCallCompletion, ModelFailureUsage,
+    ModelPriceSnapshot, ModelResponseStorage, Store, StoreError, UsdMicros,
+    calculate_cost_usd_micros,
 };
 
 /// Maximum structural prompt size accepted before routing.
@@ -410,6 +419,45 @@ pub enum RouterError {
     ProviderProtocolFailure,
     /// The selected model is not the eligible result of the supplied session.
     ModelSelectionInvalid,
+    /// The model price snapshot conflicts with host roster cost class.
+    PriceConfigurationInvalid,
+}
+
+// The retryable/terminal details are consumed by the P4E orchestration ladder.
+#[allow(dead_code)]
+#[derive(Debug)]
+enum ModelDispatchFailure {
+    Refused(RouterError),
+    Storage(StoreError),
+    Clock(ProtocolError),
+    Protocol(ProtocolError),
+    NoEligibleModel,
+    DefiniteProvider {
+        request_id: serea_protocol::RequestId,
+        error_kind: ModelErrorCode,
+        retryable: bool,
+    },
+    TerminalProvider {
+        request_id: serea_protocol::RequestId,
+        error_kind: ModelErrorCode,
+    },
+}
+
+struct ModelDispatchContext<'a> {
+    store: &'a Store,
+    events: &'a EventBus,
+    price: ModelPriceSnapshot,
+    max_daily_spend_usd_micros: UsdMicros,
+    clock: &'a dyn Clock,
+}
+
+struct ModelFailureFacts<'a> {
+    request_id: &'a serea_protocol::RequestId,
+    metadata: ModelEventMetadataV1,
+    error_kind: ModelErrorCode,
+    retryable: bool,
+    terminal_at: serea_protocol::EpochMillis,
+    usage: Option<ModelFailureUsage>,
 }
 
 /// Binds a provider response to the exact dispatch identity and removes fields
@@ -619,6 +667,323 @@ impl ModelRouterV1 {
             data_class: call.data_class,
         })
     }
+
+    // Kept crate-private until P4E wraps all retries inside the router ladder.
+    #[allow(dead_code)]
+    pub(crate) async fn dispatch_chat_text(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        context: &ModelDispatchContext<'_>,
+    ) -> Result<ModelResponse, ModelDispatchFailure> {
+        let store = context.store;
+        let events = context.events;
+        let price = &context.price;
+        let max_daily_spend_usd_micros = context.max_daily_spend_usd_micros;
+        let clock = context.clock;
+        if call.purpose != ModelPurpose::Chat
+            || !matches!(call.response_format, ResponseFormat::Text)
+        {
+            return Err(ModelDispatchFailure::Refused(
+                RouterError::IllegalPurposeFormat,
+            ));
+        }
+        let selected = session
+            .decision()
+            .ok_or(ModelDispatchFailure::NoEligibleModel)?
+            .clone();
+        let entry =
+            self.roster
+                .entries
+                .get(selected.as_str())
+                .ok_or(ModelDispatchFailure::Refused(
+                    RouterError::ModelSelectionInvalid,
+                ))?;
+        if price.cost_class() != entry.cost_class {
+            return Err(ModelDispatchFailure::Refused(
+                RouterError::PriceConfigurationInvalid,
+            ));
+        }
+        let advertised =
+            self.discovered
+                .get(selected.as_str())
+                .ok_or(ModelDispatchFailure::Refused(
+                    RouterError::ModelSelectionInvalid,
+                ))?;
+        let effective = intersect(entry.allowed_capabilities, advertised.capabilities);
+        let effective_max_output_tokens = call.max_output_tokens.min(effective.max_output_tokens);
+        let request_id = events
+            .mint_model_request_id()
+            .map_err(ModelDispatchFailure::Storage)?;
+        let request = self
+            .build_request(call, session, &request_id, &selected)
+            .map_err(ModelDispatchFailure::Refused)?;
+        let provider = self
+            .providers
+            .get(entry.provider_id.as_str())
+            .map(|(_, provider)| Arc::clone(provider))
+            .ok_or(ModelDispatchFailure::Refused(
+                RouterError::ModelSelectionInvalid,
+            ))?;
+        let dispatch_at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+        let metadata = ModelEventMetadataV1 {
+            request_id: request_id.clone(),
+            model_id: selected.clone(),
+            provider_id: entry.provider_id.clone(),
+            task_id: call.task_id.clone(),
+            purpose: call.purpose,
+            relation: ModelEventRelationV1::Normal,
+            data_class: call.data_class,
+            occurred_at: dispatch_at,
+        };
+        let called = events
+            .draft_model_called(metadata.clone())
+            .map_err(ModelDispatchFailure::Storage)?;
+        let attempt = ModelCallAttemptDraft {
+            request_id: request_id.clone(),
+            task_id: call.task_id.clone(),
+            purpose: call.purpose,
+            model_id: selected.clone(),
+            provider_id: entry.provider_id.clone(),
+            deployment_class: match entry.deployment_class {
+                ModelDeploymentClass::Cloud => serea_storage::ModelDeploymentClass::Cloud,
+                ModelDeploymentClass::Local => serea_storage::ModelDeploymentClass::Local,
+            },
+            data_class: call.data_class,
+            relation_kind: ModelAttemptRelationKind::None,
+            parent_request_id: None,
+            fallback_from_model_id: None,
+            price: price.clone(),
+            max_context_tokens: u64::from(effective.max_context_tokens),
+            effective_max_output_tokens: u64::from(effective_max_output_tokens),
+            dispatch_intent_at: dispatch_at,
+        };
+        store
+            .transact(|tx| {
+                tx.reserve_model_call(attempt, max_daily_spend_usd_micros)?;
+                tx.append_event(called.event, called.retention_at)?;
+                Ok(())
+            })
+            .map_err(ModelDispatchFailure::Storage)?;
+
+        let response = match provider
+            .generate(
+                &request,
+                &ModelCallContext {
+                    deadline_ms: call.deadline_ms,
+                },
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                let at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+                record_model_failure(
+                    store,
+                    events,
+                    ModelFailureFacts {
+                        request_id: &request_id,
+                        metadata: ModelEventMetadataV1 {
+                            occurred_at: at,
+                            ..metadata
+                        },
+                        error_kind: error.kind.clone(),
+                        retryable: error.retryable,
+                        terminal_at: at,
+                        usage: None,
+                    },
+                )?;
+                return Err(ModelDispatchFailure::DefiniteProvider {
+                    request_id,
+                    error_kind: error.kind,
+                    retryable: error.retryable,
+                });
+            }
+        };
+        let response =
+            match bind_provider_response(&request_id, &selected, &entry.provider_id, response) {
+                Ok(response) => response,
+                Err(_) => {
+                    let at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+                    let error_kind = stable_model_error("PROVIDER_PROTOCOL_FAILURE")?;
+                    record_model_failure(
+                        store,
+                        events,
+                        ModelFailureFacts {
+                            request_id: &request_id,
+                            metadata: ModelEventMetadataV1 {
+                                occurred_at: at,
+                                ..metadata
+                            },
+                            error_kind: error_kind.clone(),
+                            retryable: false,
+                            terminal_at: at,
+                            usage: None,
+                        },
+                    )?;
+                    return Err(ModelDispatchFailure::TerminalProvider {
+                        request_id,
+                        error_kind,
+                    });
+                }
+            };
+        let usage_is_valid = response.usage.cost_class == price.cost_class()
+            && response.usage.input_tokens.get() <= u64::from(effective.max_context_tokens)
+            && response.usage.output_tokens.get() <= u64::from(effective_max_output_tokens)
+            && response.content.len() <= serea_storage::MAX_MODEL_RESPONSE_BYTES;
+        if !usage_is_valid {
+            let at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+            let error_kind = stable_model_error("PROVIDER_METADATA_INVALID")?;
+            record_model_failure(
+                store,
+                events,
+                ModelFailureFacts {
+                    request_id: &request_id,
+                    metadata: ModelEventMetadataV1 {
+                        occurred_at: at,
+                        ..metadata
+                    },
+                    error_kind: error_kind.clone(),
+                    retryable: false,
+                    terminal_at: at,
+                    usage: None,
+                },
+            )?;
+            return Err(ModelDispatchFailure::TerminalProvider {
+                request_id,
+                error_kind,
+            });
+        }
+        if response.finish_reason != FinishReason::Stop {
+            let at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+            let error_kind = stable_model_error(match response.finish_reason {
+                FinishReason::Length => "MODEL_FINISH_LENGTH",
+                FinishReason::ContentFilter => "MODEL_CONTENT_FILTER",
+                FinishReason::Error => "MODEL_FINISH_ERROR",
+                FinishReason::StructureInvalid => "MODEL_STRUCTURE_INVALID",
+                FinishReason::Stop => "MODEL_FINISH_STOP",
+            })?;
+            let usage = ModelFailureUsage {
+                input_tokens: response.usage.input_tokens,
+                output_tokens: response.usage.output_tokens,
+                latency_ms: u64::from(response.latency_ms),
+                repair_attempts: 0,
+                recorded_at: at,
+            };
+            record_model_failure(
+                store,
+                events,
+                ModelFailureFacts {
+                    request_id: &request_id,
+                    metadata: ModelEventMetadataV1 {
+                        occurred_at: at,
+                        ..metadata
+                    },
+                    error_kind: error_kind.clone(),
+                    retryable: false,
+                    terminal_at: at,
+                    usage: Some(usage),
+                },
+            )?;
+            return Err(ModelDispatchFailure::TerminalProvider {
+                request_id,
+                error_kind,
+            });
+        }
+        let actual_cost = calculate_cost_usd_micros(
+            response.usage.input_tokens.get(),
+            response.usage.output_tokens.get(),
+            price.input_rate_microusd_per_million_tokens(),
+            price.output_rate_microusd_per_million_tokens(),
+        )
+        .map_err(|_| ModelDispatchFailure::Refused(RouterError::ProviderProtocolFailure))?;
+        let completed_at = clock.now_ms().map_err(ModelDispatchFailure::Clock)?;
+        let completed = events
+            .draft_model_completed(ModelCompletedEventV1 {
+                metadata: ModelEventMetadataV1 {
+                    occurred_at: completed_at,
+                    ..metadata
+                },
+                finish_reason: response.finish_reason,
+                input_tokens: response.usage.input_tokens.get(),
+                output_tokens: response.usage.output_tokens.get(),
+                cost_class: price.cost_class(),
+                cost_usd_micros: actual_cost.get(),
+                price_revision: price.price_revision().to_owned(),
+                repair_attempts: 0,
+            })
+            .map_err(ModelDispatchFailure::Storage)?;
+        let response_json = serde_json::json!({"content": response.content.clone()});
+        let serialized = serde_json::to_string(&response_json)
+            .map_err(|_| ModelDispatchFailure::Refused(RouterError::ProviderProtocolFailure))?;
+        let accepted_json = canonicalize(&serialized)
+            .map_err(|_| ModelDispatchFailure::Refused(RouterError::ProviderProtocolFailure))?;
+        store
+            .transact(|tx| {
+                tx.complete_model_call(
+                    &request_id,
+                    ModelCallCompletion {
+                        input_tokens: response.usage.input_tokens,
+                        output_tokens: response.usage.output_tokens,
+                        latency_ms: u64::from(response.latency_ms),
+                        repair_attempts: 0,
+                        finish_reason: response.finish_reason,
+                        recorded_at: completed_at,
+                        accepted_response: ModelResponseStorage {
+                            canonical_json: accepted_json,
+                            data_class: call.data_class,
+                        },
+                    },
+                )?;
+                tx.append_event(completed.event, completed.retention_at)?;
+                Ok(())
+            })
+            .map_err(ModelDispatchFailure::Storage)?;
+        Ok(response)
+    }
+}
+
+#[allow(dead_code)] // Used by dispatch error paths; exercised by P4D scripted failures.
+fn stable_model_error(value: &str) -> Result<ModelErrorCode, ModelDispatchFailure> {
+    ModelErrorCode::new(value).map_err(ModelDispatchFailure::Protocol)
+}
+
+#[allow(dead_code)] // Used by dispatch error paths; exercised by P4D scripted failures.
+fn record_model_failure(
+    store: &Store,
+    events: &EventBus,
+    facts: ModelFailureFacts<'_>,
+) -> Result<(), ModelDispatchFailure> {
+    let failed = events
+        .draft_model_failed(ModelFailedEventV1 {
+            metadata: facts.metadata,
+            error_kind: facts.error_kind.clone(),
+            retryable: facts.retryable,
+        })
+        .map_err(ModelDispatchFailure::Storage)?;
+    store
+        .transact(|tx| {
+            match facts.usage {
+                Some(usage) => {
+                    tx.fail_model_call_with_usage(
+                        facts.request_id,
+                        facts.error_kind.as_str(),
+                        facts.terminal_at,
+                        usage,
+                    )?;
+                }
+                None => {
+                    tx.fail_model_call(
+                        facts.request_id,
+                        facts.error_kind.as_str(),
+                        facts.terminal_at,
+                    )?;
+                }
+            }
+            tx.append_event(failed.event, failed.retention_at)?;
+            Ok(())
+        })
+        .map_err(ModelDispatchFailure::Storage)
 }
 
 /// Explicit deterministic preference chain for a purpose.
@@ -754,6 +1119,286 @@ fn known_model_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::task::{Context, Poll, Waker};
+
+    use async_trait::async_trait;
+    use serea_event_bus::{EventBus, ReplayItem};
+    use serea_protocol::provider::ModelCallContext;
+    use serea_protocol::{
+        Clock, CostClass, DataClass, EpochMillis, EventKind, FinishReason, ModelError,
+        ModelErrorCode, ModelMessage, ModelResponse, ModelUsage, ProtocolError, ProviderId,
+        ResponseFormat, TimestampMs, TokenCount, UlidSource, UlidValue,
+    };
+    use serea_storage::{ModelAttemptState, ModelPriceSnapshot, Store, StoreError, UsdMicros};
+
+    struct FixedClock;
+
+    impl Clock for FixedClock {
+        fn now_ms(&self) -> Result<EpochMillis, ProtocolError> {
+            EpochMillis::new(1_767_225_600_000)
+        }
+    }
+
+    fn dispatch_context<'a>(
+        store: &'a Store,
+        events: &'a EventBus,
+        price: ModelPriceSnapshot,
+        max_daily_spend_usd_micros: UsdMicros,
+    ) -> ModelDispatchContext<'a> {
+        ModelDispatchContext {
+            store,
+            events,
+            price,
+            max_daily_spend_usd_micros,
+            clock: &FixedClock,
+        }
+    }
+
+    struct IncrementingIds(u64);
+
+    impl UlidSource for IncrementingIds {
+        fn next_ulid(&mut self) -> UlidValue {
+            self.0 += 1;
+            let timestamp = TimestampMs::new(self.0).unwrap_or_else(|_| unreachable!());
+            UlidValue::new(timestamp, [self.0 as u8; 10])
+        }
+    }
+
+    struct DispatchFakeProvider {
+        store: Arc<Store>,
+        calls: AtomicUsize,
+        called_event_visible_before_generate: AtomicBool,
+        fail_next: AtomicBool,
+        last_request_id: Mutex<Option<serea_protocol::RequestId>>,
+    }
+
+    #[async_trait]
+    impl ModelProvider for DispatchFakeProvider {
+        fn provider_id(&self) -> ProviderId {
+            ProviderId::new("provider").unwrap_or_else(|_| unreachable!())
+        }
+
+        fn models(&self) -> Vec<ModelDescriptor> {
+            vec![ModelDescriptor {
+                model_id: ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider_id: self.provider_id(),
+                capabilities: caps(false, JsonSchemaMode::Strict, 1000, 1000),
+            }]
+        }
+
+        async fn generate(
+            &self,
+            request: &ModelRequest,
+            _ctx: &ModelCallContext,
+        ) -> Result<ModelResponse, ModelError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let attempt = self
+                .store
+                .get_model_call_attempt(&request.request_id)
+                .unwrap_or_else(|_| unreachable!());
+            let page =
+                EventBus::replay(&self.store, None, None, 16).unwrap_or_else(|_| unreachable!());
+            let called = page.items.iter().any(|item| {
+                matches!(item, ReplayItem::Event { event } if event.kind == EventKind::ModelCalled)
+            });
+            self.called_event_visible_before_generate
+                .store(attempt.is_some() && called, Ordering::SeqCst);
+            *self
+                .last_request_id
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                Some(request.request_id.clone());
+            if self.fail_next.swap(false, Ordering::SeqCst) {
+                return Err(ModelError {
+                    kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE")
+                        .unwrap_or_else(|_| unreachable!()),
+                    message: serea_protocol::ErrorMessage::new("sensitive diagnostic text")
+                        .unwrap_or_else(|_| unreachable!()),
+                    retryable: true,
+                });
+            }
+            Ok(ModelResponse {
+                request_id: request.request_id.clone(),
+                model_id: request.model_id.clone(),
+                provider_id: self.provider_id(),
+                content: "hello".into(),
+                structured: Some(serde_json::json!({"untrusted": true})),
+                finish_reason: FinishReason::Stop,
+                usage: ModelUsage {
+                    input_tokens: TokenCount::new(3),
+                    output_tokens: TokenCount::new(2),
+                    cost_class: CostClass::Paid,
+                },
+                latency_ms: 7,
+                repair_attempts: 2,
+            })
+        }
+    }
+
+    #[test]
+    fn model_intent_and_called_event_commit_before_provider_dispatch() {
+        let store = Arc::new(Store::open_in_memory(&FixedClock).unwrap_or_else(|_| unreachable!()));
+        let provider = Arc::new(DispatchFakeProvider {
+            store: Arc::clone(&store),
+            calls: AtomicUsize::new(0),
+            called_event_visible_before_generate: AtomicBool::new(false),
+            fail_next: AtomicBool::new(false),
+            last_request_id: Mutex::new(None),
+        });
+        let bus = EventBus::new(IncrementingIds(0));
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let router =
+            ModelRouterV1::new(roster, vec![provider.clone()]).unwrap_or_else(|_| unreachable!());
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: None,
+            purpose: ModelPurpose::Chat,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "hi".into(),
+            }],
+            system: Some("system".into()),
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 128,
+            temperature: 0.25,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let response = block_on(router.dispatch_chat_text(&call, &session, &context))
+            .unwrap_or_else(|_| unreachable!());
+
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        assert!(
+            provider
+                .called_event_visible_before_generate
+                .load(Ordering::SeqCst)
+        );
+        assert_eq!(response.content, "hello");
+        assert_eq!(response.structured, None);
+        assert_eq!(response.repair_attempts, 0);
+        let attempt = store
+            .get_model_call_attempt(&response.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(attempt.state, ModelAttemptState::Completed);
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert!(matches!(events.items.as_slice(), [
+            ReplayItem::Event { event: called },
+            ReplayItem::Event { event: completed },
+        ] if called.kind == EventKind::ModelCalled && completed.kind == EventKind::ModelCompleted));
+
+        let wrong_price_context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Free, "price-2", 0, 0),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let wrong_price =
+            block_on(router.dispatch_chat_text(&call, &session, &wrong_price_context));
+        assert!(matches!(
+            wrong_price,
+            Err(ModelDispatchFailure::Refused(
+                RouterError::PriceConfigurationInvalid
+            ))
+        ));
+
+        let second_bus = EventBus::new(IncrementingIds(100));
+        let no_spend_context = dispatch_context(
+            &store,
+            &second_bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(0).unwrap_or_else(|_| unreachable!()),
+        );
+        let reservation_failure =
+            block_on(router.dispatch_chat_text(&call, &session, &no_spend_context));
+        assert!(matches!(
+            reservation_failure,
+            Err(ModelDispatchFailure::Storage(
+                StoreError::DailySpendExceeded
+            ))
+        ));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            EventBus::replay(&store, None, None, 16)
+                .unwrap_or_else(|_| unreachable!())
+                .items
+                .len(),
+            2
+        );
+
+        provider.fail_next.store(true, Ordering::SeqCst);
+        let retry_session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let retry_context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let failure = block_on(router.dispatch_chat_text(&call, &retry_session, &retry_context));
+        assert!(matches!(
+            failure,
+            Err(ModelDispatchFailure::DefiniteProvider {
+                error_kind,
+                retryable: true,
+                ..
+            }) if error_kind.as_str() == "UPSTREAM_UNAVAILABLE"
+        ));
+        let failed_request = provider
+            .last_request_id
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(
+            store
+                .get_model_call_attempt(&failed_request)
+                .unwrap_or_else(|_| unreachable!())
+                .unwrap_or_else(|| unreachable!())
+                .state,
+            ModelAttemptState::Failed
+        );
+        let final_events =
+            EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert!(matches!(
+            final_events.items.last(),
+            Some(ReplayItem::Event { event }) if event.kind == EventKind::ModelFailed
+                && event.payload["error_kind"] == "UPSTREAM_UNAVAILABLE"
+                && event.payload["retryable"] == true
+        ));
+        let serialized_events =
+            serde_json::to_string(&final_events.items).unwrap_or_else(|_| unreachable!());
+        assert!(!serialized_events.contains("sensitive diagnostic text"));
+    }
 
     #[test]
     fn chains_are_frozen_and_codex_is_absent() {
@@ -814,6 +1459,15 @@ mod tests {
             max_output_tokens,
             supports_streaming: false,
             supports_seeds: false,
+        }
+    }
+
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        let mut context = Context::from_waker(Waker::noop());
+        let mut future = std::pin::pin!(future);
+        match std::future::Future::poll(future.as_mut(), &mut context) {
+            Poll::Ready(value) => value,
+            Poll::Pending => unreachable!("model provider test future is immediately ready"),
         }
     }
 }

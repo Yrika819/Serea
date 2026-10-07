@@ -821,7 +821,9 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde_json",
+ "serea-event-bus",
  "serea-protocol",
+ "serea-storage",
 ]
 
 [[package]]

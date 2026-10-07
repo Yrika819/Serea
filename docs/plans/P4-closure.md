@@ -226,3 +226,31 @@ Model Router closure. P5 remains outside P4.
   confirms Storage remains independent of Event Bus and the new API has only
   typed metadata inputs; dispatch integration and event/state atomicity remain
   open.
+- Exact pushed commit `0b3e8f5259e38e0feb0b8d9a6b44dfff7ff187ef` Actions:
+  [Fast CI 37661630288](https://github.com/Yrika819/Serea/actions/runs/37661630288)
+  GREEN; [Full CI 37661630216](https://github.com/Yrika819/Serea/actions/runs/37661630216)
+  GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
+  [cross-architecture SQLite 37661630298](https://github.com/Yrika819/Serea/actions/runs/37661630298)
+  GREEN in both directions.
+- Fourth P4D RED proof: the scripted dispatch test initially failed to compile
+  because `dispatch_chat_text` was absent. The new crate-private CHAT/TEXT path
+  uses the `ModelProvider` trait and atomically commits the model-call
+  reservation/intent with `MODEL_CALLED` before `generate()`. The scripted
+  provider verifies both records are visible at invocation. Success commits
+  attempt, bounded usage/cost, response blob and `MODEL_COMPLETED` together;
+  definite `ModelError` commits FAILED with content-free `MODEL_FAILED` facts.
+  The test also proves a failed reservation does not call the provider or add
+  an event, and that response `structured`/repair fields are host-sanitized.
+- Sequential review findings/fixes: Clippy found oversized argument lists and
+  test `unwrap()` calls; a narrow context/facts struct and panic-free test
+  assertions resolved them. Review also removed an output-cap filter beyond
+  the frozen `min_output_tokens` rule, and tightened persisted/accepted output
+  usage to the effective selected-model ceiling. Router dependencies are now
+  limited to protocol, storage and Event Bus; Storage remains independent of
+  Event Bus. No prompt or provider diagnostic is stored in events.
+- Local validation for this dispatch sub-slice passes: fmt; workspace check;
+  all-target and all-feature workspace tests; workspace Clippy with denied
+  warnings; docs validation; workspace smoke and its 76 tests; Cargo metadata;
+  identity guard; and `git diff --check`. P4D remains open: recovery to
+  AMBIGUOUS, caller-loss lookup, crash windows, and broader failure tests remain
+  to be implemented. No Actions result is claimed for this uncommitted slice.

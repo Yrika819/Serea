@@ -379,9 +379,10 @@ def main() -> int:
                         f"{SCHEDULER} has internal non-dev dependency {name}; only protocol/storage/event-bus/task-engine are allowed"
                     )
                 if owner == MODEL_ROUTER and internal and not is_dev and name != PROTOCOL:
-                    failures.append(
-                        f"{MODEL_ROUTER} has internal non-dev dependency {name}; pure P4C routing is protocol-only"
-                    )
+                    if name not in {STORAGE, EVENT_BUS}:
+                        failures.append(
+                            f"{MODEL_ROUTER} has internal non-dev dependency {name}; P4 routing may depend only on protocol, storage, and event-bus"
+                        )
                 if name == TESTKIT and not is_dev:
                     failures.append(f"{owner} names {TESTKIT} outside [dev-dependencies]")
     except (OSError, UnicodeError, ValueError) as error:
@@ -395,9 +396,9 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P4C protocol/storage/event-bus/task-engine/scheduler/model-router/testkit workspace; "
+    print("OK: exact P4D protocol/storage/event-bus/task-engine/scheduler/model-router/testkit workspace; "
           "event-bus protocol/storage-only; task-engine protocol/storage/event-bus; scheduler protocol/storage/event-bus/task-engine; "
-          "storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; model-router protocol-only; testkit dev-only")
+          "storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; model-router protocol/storage/event-bus; testkit dev-only")
     return 0
 
 

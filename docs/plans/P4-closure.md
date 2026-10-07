@@ -205,5 +205,24 @@ Model Router closure. P5 remains outside P4.
 - Local validation for this request-construction slice passes: fmt, workspace
   check, all-target tests, all-feature tests, Clippy with denied warnings, docs
   validation, workspace smoke and its 76 tests, Cargo metadata, identity guard,
-  and `git diff --check`. The slice has not yet been committed or pushed; its
-  Fast/Full Actions runs remain pending.
+  and `git diff --check`.
+- Exact pushed commit `351ccd0c2109b6a769823e6cab5cf2a56ec58aff` Actions:
+  [Fast CI 37659651139](https://github.com/Yrika819/Serea/actions/runs/37659651139)
+  GREEN; [Full CI 37659650977](https://github.com/Yrika819/Serea/actions/runs/37659650977)
+  GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
+  [cross-architecture SQLite 37659650845](https://github.com/Yrika819/Serea/actions/runs/37659650845)
+  GREEN in both directions.
+- Third P4D RED proof: the Event Bus model-event test initially failed because
+  typed model metadata and the `MODEL_CALLED` event builder were absent. The
+  Event Bus now drafts `MODEL_CALLED`, `MODEL_COMPLETED`, and `MODEL_FAILED`
+  with bounded host metadata only, typed relation/error facts, and the frozen
+  model activity retention. Tests assert exact payload keys and no diagnostic
+  content. These drafts still must be committed atomically with model accounting
+  by the upcoming router dispatch path.
+- Local validation passes for the event-drafting slice: focused model-event
+  tests; fmt; workspace check; all-target and all-feature workspace tests;
+  Clippy; docs validation; workspace smoke and all 76 smoke tests; Cargo
+  metadata; commit identity guard; and `git diff --check`. Sequential review
+  confirms Storage remains independent of Event Bus and the new API has only
+  typed metadata inputs; dispatch integration and event/state atomicity remain
+  open.

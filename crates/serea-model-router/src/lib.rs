@@ -406,6 +406,32 @@ pub enum RouterError {
     ProviderIdentityMismatch,
     /// Provider discovery repeated a configured ModelId and is ambiguous.
     DuplicateDiscoveredModel,
+    /// A provider response did not match the host-selected dispatch identity.
+    ProviderProtocolFailure,
+}
+
+/// Binds a provider response to the exact dispatch identity and removes fields
+/// that are host-owned or untrusted at provider ingress.
+///
+/// The response content remains unvalidated. Callers must apply the purpose's
+/// finish-reason and response validation rules before persisting or returning
+/// it. In particular, provider-supplied `structured` and `repair_attempts`
+/// values are never authority.
+pub fn bind_provider_response(
+    expected_request_id: &serea_protocol::RequestId,
+    expected_model_id: &ModelId,
+    expected_provider_id: &ProviderId,
+    mut response: serea_protocol::ModelResponse,
+) -> Result<serea_protocol::ModelResponse, RouterError> {
+    if response.request_id != *expected_request_id
+        || response.model_id != *expected_model_id
+        || response.provider_id != *expected_provider_id
+    {
+        return Err(RouterError::ProviderProtocolFailure);
+    }
+    response.structured = None;
+    response.repair_attempts = 0;
+    Ok(response)
 }
 
 /// Immutable provider-health facts for one logical normal operation.

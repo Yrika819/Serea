@@ -162,3 +162,26 @@ Model Router closure. P5 remains outside P4.
   No P4D work began before these authoritative results were GREEN.
 - Nonclaims: no provider dispatch, real model service, image transport,
   structured validation, repair, fallback, or P5.
+
+## P4D Work in Progress
+
+- First response-binding behavior slice RED proof: after adding the test for
+  exact request/model/provider identity and clearing provider-controlled
+  `structured`/`repair_attempts`, `cargo test -p serea-model-router --test
+  routing --offline` failed to compile because `bind_provider_response` was
+  not implemented.
+- The narrow binding helper is now implemented and the focused routing test
+  passes, including request ID, model ID and provider ID spoof rejection.
+  This helper does not validate or persist content and does not dispatch.
+- Sequential review: the helper enforces exact host-selected identities,
+  strips the provider's `structured` proposal and repair count, adds no crate
+  edges or storage effects, and does not inspect response content. Tests cover
+  spoofed request/model/provider IDs and host-owned field sanitization. The
+  helper is explicitly documented as identity binding only, not validation.
+- Local validation passes: focused routing test; workspace check; all-target
+  workspace tests; all-feature workspace tests; workspace Clippy with denied
+  warnings; docs validation; workspace smoke and 76 smoke unit tests; Cargo
+  metadata; identity guard; and `git diff --check`.
+- This is an internal P4D behavior sub-slice. P4D remains open; durable intent,
+  `MODEL_CALLED`, provider dispatch, completion, failure and recovery are not
+  implemented yet. Actions validation is pending for its exact pushed commit.

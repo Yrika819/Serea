@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use serea_model_router::{
     ModelDeploymentClass, ModelEgressPolicySnapshotV1, ModelRosterEntryV1, ModelRosterV1,
     ModelRouterV1, ModelRoutingRequirementsV1, PreparedModelCallDraftV1, PreparedModelCallV1,
-    RouterError, StructuredRequirementV1, preference_chain, vision_candidate_chain,
+    RouterError, StructuredRequirementV1, bind_provider_response, preference_chain,
+    vision_candidate_chain,
 };
 use serea_protocol::provider::{ModelCallContext, ModelProvider};
 use serea_protocol::{
@@ -83,6 +84,76 @@ fn exact_chains_are_ordered_and_codex_is_impossible() {
         ),
         Err(RouterError::UnknownOrForbiddenModel)
     ));
+}
+
+#[test]
+fn provider_response_identity_is_bound_and_untrusted_fields_are_cleared() {
+    let request_id = serea_protocol::RequestId::new("req_00000000000000000000000001")
+        .unwrap_or_else(|_| unreachable!());
+    let expected_model = model_id("nemotron-3-nano-30b");
+    let expected_provider = provider_id("provider");
+    let response = ModelResponse {
+        request_id: request_id.clone(),
+        model_id: expected_model.clone(),
+        provider_id: expected_provider.clone(),
+        content: "hello".into(),
+        structured: Some(serde_json::json!({"untrusted": true})),
+        finish_reason: serea_protocol::FinishReason::Stop,
+        usage: serea_protocol::ModelUsage {
+            input_tokens: serea_protocol::TokenCount::new(2),
+            output_tokens: serea_protocol::TokenCount::new(1),
+            cost_class: CostClass::Paid,
+        },
+        latency_ms: 3,
+        repair_attempts: 2,
+    };
+    let accepted = bind_provider_response(
+        &request_id,
+        &expected_model,
+        &expected_provider,
+        response.clone(),
+    )
+    .expect("matching provider identity should bind");
+    assert_eq!(accepted.structured, None);
+    assert_eq!(accepted.repair_attempts, 0);
+
+    assert!(
+        bind_provider_response(
+            &request_id,
+            &expected_model,
+            &expected_provider,
+            ModelResponse {
+                request_id: serea_protocol::RequestId::new("req_00000000000000000000000002")
+                    .unwrap_or_else(|_| unreachable!()),
+                ..response.clone()
+            },
+        )
+        .is_err()
+    );
+    assert!(
+        bind_provider_response(
+            &request_id,
+            &expected_model,
+            &expected_provider,
+            ModelResponse {
+                model_id: model_id("gpt-oss-20b"),
+                ..response.clone()
+            },
+        )
+        .is_err()
+    );
+    assert!(
+        bind_provider_response(
+            &request_id,
+            &expected_model,
+            &expected_provider,
+            ModelResponse {
+                provider_id: provider_id("spoofed"),
+                ..response
+            },
+        )
+        .is_err()
+    );
 }
 
 #[test]

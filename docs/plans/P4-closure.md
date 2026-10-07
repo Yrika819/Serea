@@ -225,8 +225,13 @@ Model Router closure. P5 remains outside P4.
   caller-loss result remains recoverable without another provider call. Local
   validation passes: fmt; workspace check; all-target and all-feature tests;
   Clippy with denied warnings; docs validation; workspace smoke and its 76
-  tests; Cargo metadata; identity guard; and `git diff --check`. Exact Actions
-  for this sub-slice are pending.
+  tests; Cargo metadata; identity guard; and `git diff --check`. Exact behavior
+  commit `b2e25f561f5a546a0dde05deb9b99ece9a3d7cb0` Actions:
+  [Fast CI 37670535054](https://github.com/Yrika819/Serea/actions/runs/37670535054)
+  GREEN; [Full CI 37670534918](https://github.com/Yrika819/Serea/actions/runs/37670534918)
+  GREEN including Linux stable, MSRV 1.85, Intel, arm64 and release fault proof;
+  [cross-architecture SQLite 37670534938](https://github.com/Yrika819/Serea/actions/runs/37670534938)
+  GREEN in both directions.
 - Second P4D RED proof: the post-routing request test initially failed to
   compile because `ModelRouterV1::build_request` did not exist. The constructor
   now binds to the same `RoutingSessionV1`, rechecks eligibility, and copies

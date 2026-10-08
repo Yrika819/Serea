@@ -1175,3 +1175,61 @@ repair, fallback, dispatch gates, or P4E budgets.
   on Intel). No migration changed in this slice.
 - Nonclaims: P4F caller/TaskEngine integration, the full concurrency matrix,
   and whole-branch review remain open.
+
+## P4F slice: trusted host boundary and integrated concurrency (in progress)
+
+- RED proof: the host-boundary integration test was added before the public
+  process router and host context existed; it failed to compile on the missing
+  `ModelRouterHostContextV1` and `ModelRouterProcessV1::execute` API. The
+  initial event rollback test was also run with an injected pre-COMMIT failure
+  and failed until the deterministic Store fault seam was connected to the
+  dispatch-intent transaction. No test calls a live provider.
+- The production entry point now binds one immutable process router, provider
+  registry, per-model price snapshots, and daily spend ceiling. Its trusted
+  in-process host context supplies Store, Event Bus, Clock, and resolved
+  dispatch-gate facts. Router owns dispatch sequencing and typed outcomes;
+  TaskEngine/Core retains task lifecycle transitions. No Task Engine edge was
+  added. Process reconstruction is required to change the roster or prices;
+  tests show in-flight and later calls retain their respective process price
+  revisions.
+- Integrated evidence uses real persisted Task records and independent Store
+  connections. It covers TaskId accounting and one durable top-level turn,
+  cancellation before and after intent, deletion before dispatch, late
+  response accounting after cancellation, cancellation blocking fallback and
+  repair, same-Task active-call exclusion, distinct-Task concurrency, daily
+  spend reservation races, the final call/turn slot race, two-worker recovery,
+  and per-model fallback prices with one reused health snapshot. Existing
+  Storage race tests pin completion-versus-ambiguity linearization. Fault
+  tests prove event/intent rollback before provider invocation and terminal
+  response blob/usage rollback followed by conservative ambiguity recovery.
+- Sequential reviews: (1) contract: caller-visible failure types omit raw
+  provider output, and call, turn, Task lifecycle, cancellation, deadline,
+  price, and health behavior follow the frozen P4 contracts; (2) crate graph:
+  Router has no TaskEngine or Policy dependency, and Storage still has no Event
+  Bus edge; the workspace smoke check confirms the graph; (3) atomicity:
+  existing fixed Storage/Event Bus transaction composition is retained, and
+  fault tests inspect reopened durable state; (4) concurrency/recovery: all
+  newly added races use independent SQLite connections and channel/barrier
+  coordination, with no sleeps; Clippy's misleading non-`Drop` context drops
+  were removed; (5) privacy: event and error surfaces carry bounded metadata,
+  provider structured fields remain non-authoritative, and prompt content is
+  not persisted; (6) bounds/accounting: process prices are validated for every
+  roster entry, fallback resolves its own model price, committed calls and
+  turns are monotone, and daily spend remains reserved before dispatch; (7)
+  test quality: the new crash tests assert provider counts, attempts, events,
+  usage, response references, and recovery state; no ignored tests, sleeps,
+  wall-clock dependencies, or platform skips were introduced; (8) docs: this
+  section records the current P4F boundary and validation status. The only
+  review fixes so far were removing test-only explicit drops flagged by
+  denied-warning Clippy and a needless borrow; no contract or migration
+  changes were needed.
+- Local validation passed after these changes: `cargo fmt --all -- --check`,
+  offline workspace check, all-target workspace tests, all-feature workspace
+  tests, denied-warning Clippy, docs validation, workspace smoke, 76 Python
+  workspace-smoke tests, Cargo metadata, commit identity guard, and
+  `git diff --check`. The vendored serde_json deprecation warning remains
+  upstream; it does not fail these commands. Exact-head GitHub Actions has not
+  yet run for this P4F head.
+- Migration 0003 checksum is unchanged; 0001 and 0002 remain untouched. No
+  provider credentials or model network are used. P4F and whole-branch review
+  remain open pending final review and exact-head Actions.

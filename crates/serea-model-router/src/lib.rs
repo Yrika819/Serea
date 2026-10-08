@@ -39,7 +39,7 @@ use serea_storage::{
     MAX_MODEL_TURNS_PER_TASK, ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft,
     ModelCallCompletion, ModelFailureUsage, ModelPriceSnapshot, ModelResponseStorage, Store,
     StoreError, UsdMicros, UtcAccountingDay, calculate_cost_usd_micros,
-    calculate_reservation_usd_micros,
+    calculate_reservation_usd_micros, validate_price_snapshot,
 };
 
 /// Maximum structural prompt size accepted before routing.
@@ -527,8 +527,6 @@ pub enum RouterError {
     EgressRevoked,
 }
 
-// The retryable/terminal details are consumed by the P4E orchestration ladder.
-#[allow(dead_code)]
 enum ModelDispatchFailure {
     Refused(RouterError),
     Storage(StoreError),
@@ -570,6 +568,77 @@ enum ModelDispatchFailure {
     },
 }
 
+/// Sanitized typed failure returned across the trusted host-call boundary.
+///
+/// This intentionally has no raw provider content or prompt fields. Task
+/// lifecycle ownership remains with the host caller.
+#[derive(Debug)]
+pub enum ModelRouterCallFailureV1 {
+    /// Host-preparation or dispatch-gate refusal.
+    Refused(RouterError),
+    /// Durable storage or accounting failure.
+    Storage(StoreError),
+    /// Clock or protocol representation failure.
+    Protocol(ProtocolError),
+    /// No candidate survived the deterministic chain and filters.
+    NoEligibleModel,
+    /// Provider returned a definite failure; retryability is adapter supplied.
+    DefiniteProvider {
+        /// Durable dispatch identity.
+        request_id: serea_protocol::RequestId,
+        /// Stable typed error kind.
+        error_kind: ModelErrorCode,
+        /// Whether the adapter proved the call is retryable.
+        retryable: bool,
+    },
+    /// Provider outcome is ambiguous and must not be retried automatically.
+    AmbiguousProvider {
+        /// Durable dispatch identity.
+        request_id: serea_protocol::RequestId,
+        /// Stable typed error kind.
+        error_kind: ModelErrorCode,
+    },
+    /// Provider returned a terminal failure.
+    TerminalProvider {
+        /// Durable dispatch identity.
+        request_id: serea_protocol::RequestId,
+        /// Stable typed error kind.
+        error_kind: ModelErrorCode,
+    },
+    /// Host validation rejected structured output. Raw output is not exposed.
+    StructuredValidation {
+        /// Durable dispatch identity.
+        request_id: serea_protocol::RequestId,
+        /// Bounded host validation classification.
+        error: StructuredValidationError,
+    },
+    /// Per-task token or model-call budget refused the logical operation.
+    TaskBudgetExceeded {
+        /// Frozen bound kind.
+        bound: ModelBoundKindV1,
+        /// Configured maximum.
+        limit: u64,
+        /// Host-observed usage.
+        observed: u64,
+    },
+    /// Frozen model-call count bound was exhausted before dispatch.
+    ModelCallBudgetExceeded {
+        /// Configured maximum.
+        limit: u64,
+        /// Host-observed number of reserved calls.
+        observed: u64,
+    },
+    /// Generic host bounds outcome such as daily spend exhaustion.
+    BoundExceeded {
+        /// Frozen bound kind.
+        bound: ModelBoundKindV1,
+        /// Configured maximum.
+        limit: u64,
+        /// Host-observed usage.
+        observed: u64,
+    },
+}
+
 /// Failure while classifying unresolved dispatches during process startup.
 #[derive(Debug)]
 pub enum ModelRecoveryError {
@@ -583,9 +652,53 @@ struct ModelDispatchContext<'a> {
     store: &'a Store,
     events: &'a EventBus,
     price: ModelPriceSnapshot,
+    prices: Option<&'a BTreeMap<String, ModelPriceSnapshot>>,
     max_daily_spend_usd_micros: UsdMicros,
     clock: &'a dyn Clock,
     gate: &'a dyn ModelDispatchGateSource,
+}
+
+/// Trusted in-process host context for one logical model operation.
+///
+/// This context is not an Android or network API. The host supplies resolved
+/// storage, event, clock, and dispatch-gate handles. Immutable price and spend
+/// configuration belongs to `ModelRouterProcessV1`. Router does not evaluate
+/// policy or take ownership of Task lifecycle transitions.
+pub struct ModelRouterHostContextV1<'a> {
+    store: &'a Store,
+    events: &'a EventBus,
+    clock: &'a dyn Clock,
+    gate: &'a dyn ModelDispatchGateSource,
+}
+
+impl<'a> ModelRouterHostContextV1<'a> {
+    /// Binds the already-resolved host facts used by Router for this call.
+    pub fn new(
+        store: &'a Store,
+        events: &'a EventBus,
+        clock: &'a dyn Clock,
+        gate: &'a dyn ModelDispatchGateSource,
+    ) -> Self {
+        Self {
+            store,
+            events,
+            clock,
+            gate,
+        }
+    }
+}
+
+impl ModelDispatchContext<'_> {
+    fn price_for(&self, model_id: &ModelId) -> Result<&ModelPriceSnapshot, ModelDispatchFailure> {
+        match self.prices {
+            Some(prices) => prices
+                .get(model_id.as_str())
+                .ok_or(ModelDispatchFailure::Refused(
+                    RouterError::PriceConfigurationInvalid,
+                )),
+            None => Ok(&self.price),
+        }
+    }
 }
 
 struct ModelFailureFacts<'a> {
@@ -700,6 +813,99 @@ pub struct ModelRouterV1 {
     roster: ModelRosterV1,
     providers: BTreeMap<String, (ProviderId, Arc<dyn ModelProvider>)>,
     discovered: BTreeMap<String, ModelDescriptor>,
+}
+
+/// Immutable process-lifetime Router, provider, price, and daily-spend config.
+///
+/// Reconfiguration requires constructing a new process router. In-flight calls
+/// retain the exact per-model price snapshot used when their dispatch intents
+/// were committed.
+pub struct ModelRouterProcessV1 {
+    router: ModelRouterV1,
+    prices: BTreeMap<String, ModelPriceSnapshot>,
+    max_daily_spend_usd_micros: UsdMicros,
+}
+
+impl ModelRouterProcessV1 {
+    /// Constructs the immutable process config and validates every roster price.
+    pub fn new(
+        roster: ModelRosterV1,
+        providers: Vec<Arc<dyn ModelProvider>>,
+        prices: Vec<(ModelId, ModelPriceSnapshot)>,
+        max_daily_spend_usd_micros: UsdMicros,
+    ) -> Result<Self, RouterError> {
+        let mut price_map = BTreeMap::new();
+        for (model_id, price) in prices {
+            let Some(entry) = roster.entries.get(model_id.as_str()) else {
+                return Err(RouterError::PriceConfigurationInvalid);
+            };
+            if entry.cost_class != price.cost_class()
+                || validate_price_snapshot(&price).is_err()
+                || price_map
+                    .insert(model_id.as_str().to_owned(), price)
+                    .is_some()
+            {
+                return Err(RouterError::PriceConfigurationInvalid);
+            }
+        }
+        if roster
+            .entries
+            .keys()
+            .any(|model_id| !price_map.contains_key(model_id))
+        {
+            return Err(RouterError::PriceConfigurationInvalid);
+        }
+        let router = ModelRouterV1::new(roster, providers)?;
+        Ok(Self {
+            router,
+            prices: price_map,
+            max_daily_spend_usd_micros,
+        })
+    }
+
+    /// Executes one trusted host-prepared logical model operation.
+    ///
+    /// Selection, fallback, and structured repair remain inside Router. The
+    /// returned error omits raw provider content. This API is an in-process
+    /// host boundary and must not be exposed directly to Android or network
+    /// callers.
+    pub async fn execute(
+        &self,
+        call: &PreparedModelCallV1,
+        host: &ModelRouterHostContextV1<'_>,
+    ) -> Result<ModelResponse, ModelRouterCallFailureV1> {
+        let session = self
+            .router
+            .route(call)
+            .await
+            .map_err(ModelRouterCallFailureV1::Refused)?;
+        let Some(default_price) = self.prices.values().next().cloned() else {
+            return Err(ModelRouterCallFailureV1::Refused(
+                RouterError::PriceConfigurationInvalid,
+            ));
+        };
+        let dispatch = ModelDispatchContext {
+            store: host.store,
+            events: host.events,
+            price: default_price,
+            prices: Some(&self.prices),
+            max_daily_spend_usd_micros: self.max_daily_spend_usd_micros,
+            clock: host.clock,
+            gate: host.gate,
+        };
+        let result = if call.purpose == ModelPurpose::Chat
+            && matches!(call.response_format, ResponseFormat::Text)
+        {
+            self.router
+                .dispatch_chat_text_with_fallback(call, &session, &dispatch)
+                .await
+        } else {
+            self.router
+                .dispatch_structured_with_fallback_and_repair(call, &session, &dispatch)
+                .await
+        };
+        result.map_err(host_call_failure)
+    }
 }
 
 impl ModelRouterV1 {
@@ -842,8 +1048,8 @@ impl ModelRouterV1 {
         })
     }
 
-    // Kept crate-private until P4E wraps all retries inside the router ladder.
-    #[allow(dead_code)]
+    // Kept crate-private because callers must enter through execute().
+    #[cfg(test)]
     pub(crate) async fn dispatch_chat_text(
         &self,
         call: &PreparedModelCallV1,
@@ -864,7 +1070,6 @@ impl ModelRouterV1 {
     /// Runs a CHAT/TEXT call with exactly one normal fallback. The normal
     /// health snapshot is reused, and the primary failure plus fallback intent
     /// are committed in the same transaction.
-    #[allow(dead_code)]
     pub(crate) async fn dispatch_chat_text_with_fallback(
         &self,
         call: &PreparedModelCallV1,
@@ -1072,7 +1277,6 @@ impl ModelRouterV1 {
     /// Runs a structured operation with the bounded P4 repair ladder. The
     /// original host call remains the authority; repair requests contain only
     /// its schema, the bounded invalid response, and sanitized diagnostics.
-    #[allow(dead_code)] // The P4F host-call boundary will expose this closed orchestration.
     pub(crate) async fn dispatch_structured_with_repair(
         &self,
         call: &PreparedModelCallV1,
@@ -1183,7 +1387,6 @@ impl ModelRouterV1 {
 
     /// Runs a structured operation through its one-step fallback and bounded
     /// repair ladder.
-    #[allow(dead_code)]
     pub(crate) async fn dispatch_structured_with_fallback_and_repair(
         &self,
         call: &PreparedModelCallV1,
@@ -1240,7 +1443,6 @@ impl ModelRouterV1 {
         } = lineage;
         let store = context.store;
         let events = context.events;
-        let price = &context.price;
         let max_daily_spend_usd_micros = context.max_daily_spend_usd_micros;
         let clock = context.clock;
         let is_chat_text = call.purpose == ModelPurpose::Chat
@@ -1257,6 +1459,7 @@ impl ModelRouterV1 {
             .decision()
             .ok_or(ModelDispatchFailure::NoEligibleModel)?
             .clone();
+        let price = context.price_for(&selected)?;
         let entry =
             self.roster
                 .entries
@@ -1720,6 +1923,67 @@ impl ModelRouterV1 {
             repair_attempts: u32::from(repair_attempts),
             ..response
         })
+    }
+}
+
+fn host_call_failure(failure: ModelDispatchFailure) -> ModelRouterCallFailureV1 {
+    match failure {
+        ModelDispatchFailure::Refused(error) => ModelRouterCallFailureV1::Refused(error),
+        ModelDispatchFailure::Storage(error) => ModelRouterCallFailureV1::Storage(error),
+        ModelDispatchFailure::Clock(error) | ModelDispatchFailure::Protocol(error) => {
+            ModelRouterCallFailureV1::Protocol(error)
+        }
+        ModelDispatchFailure::NoEligibleModel => ModelRouterCallFailureV1::NoEligibleModel,
+        ModelDispatchFailure::DefiniteProvider {
+            request_id,
+            error_kind,
+            retryable,
+        } => ModelRouterCallFailureV1::DefiniteProvider {
+            request_id,
+            error_kind,
+            retryable,
+        },
+        ModelDispatchFailure::AmbiguousProvider {
+            request_id,
+            error_kind,
+        } => ModelRouterCallFailureV1::AmbiguousProvider {
+            request_id,
+            error_kind,
+        },
+        ModelDispatchFailure::TerminalProvider {
+            request_id,
+            error_kind,
+        } => ModelRouterCallFailureV1::TerminalProvider {
+            request_id,
+            error_kind,
+        },
+        ModelDispatchFailure::StructuredOutputInvalid {
+            request_id,
+            raw_response: _,
+            validation_error,
+        } => ModelRouterCallFailureV1::StructuredValidation {
+            request_id,
+            error: validation_error,
+        },
+        ModelDispatchFailure::TokenBudgetExceeded { limit, observed } => {
+            ModelRouterCallFailureV1::TaskBudgetExceeded {
+                bound: ModelBoundKindV1::TaskTotalTokens,
+                limit,
+                observed,
+            }
+        }
+        ModelDispatchFailure::ModelCallBudgetExceeded { limit, observed } => {
+            ModelRouterCallFailureV1::ModelCallBudgetExceeded { limit, observed }
+        }
+        ModelDispatchFailure::BoundExceeded {
+            bound,
+            limit,
+            observed,
+        } => ModelRouterCallFailureV1::BoundExceeded {
+            bound,
+            limit,
+            observed,
+        },
     }
 }
 
@@ -2376,7 +2640,9 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::mpsc::{self, Receiver, SyncSender};
     use std::task::{Context, Poll, Waker};
+    use std::time::Duration;
 
     use async_trait::async_trait;
     use serea_event_bus::{EventBus, ReplayItem};
@@ -2389,10 +2655,10 @@ mod tests {
         UlidValue,
     };
     use serea_storage::{
-        DurableTransition, EventDraft, EventParticipant, JournalKind, JournalRecord,
-        JournalRecords, ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft,
-        ModelDeploymentClass as StorageDeploymentClass, ModelFailureUsage, ModelPriceSnapshot,
-        Store, StoreError, TaskAuditParticipant, TransitionContext, UsdMicros,
+        AuditOperation, DurableTransition, EventDraft, EventParticipant, JournalKind,
+        JournalRecord, JournalRecords, ModelAttemptRelationKind, ModelAttemptState,
+        ModelCallAttemptDraft, ModelDeploymentClass as StorageDeploymentClass, ModelFailureUsage,
+        ModelPriceSnapshot, Store, StoreError, TaskAuditParticipant, TransitionContext, UsdMicros,
     };
 
     struct FixedClock;
@@ -2439,17 +2705,84 @@ mod tests {
 
     static CANCELLED_DISPATCH_GATE: CancelledDispatchGate = CancelledDispatchGate;
 
+    struct StoreTaskGate {
+        store: Arc<Store>,
+        cancel_on_snapshot: Option<usize>,
+        snapshots: AtomicUsize,
+        suffix: &'static str,
+    }
+
+    impl StoreTaskGate {
+        fn cancel_task(&self, task_id: &TaskId) -> Result<(), ModelDispatchGateSourceError> {
+            let actor = ActorId::new("host-boundary-test")
+                .map_err(|_| ModelDispatchGateSourceError::Unavailable)?;
+            let version = serea_protocol::SemVer::new("1.0.0")
+                .map_err(|_| ModelDispatchGateSourceError::Unavailable)?;
+            let cause = EventId::new(format!("evt_000000000000000000000000{}", self.suffix))
+                .map_err(|_| ModelDispatchGateSourceError::Unavailable)?;
+            let transition = TransitionContext {
+                actor_kind: ActorKind::Host,
+                actor_id: &actor,
+                actor_version: &version,
+                causation_id: Some(&cause),
+            };
+            self.store
+                .transact_with_participants(&TestTaskAudit, &TestTaskEvents, |tx| {
+                    tx.cancel_task(
+                        task_id,
+                        TaskOriginKind::new("HOST_TEST").map_err(|_| StoreError::CorruptRow)?,
+                        EpochMillis::new(1_767_225_600_000).map_err(|_| StoreError::CorruptRow)?,
+                        &transition,
+                    )
+                    .map(|_| ())
+                })
+                .map_err(|_| ModelDispatchGateSourceError::Unavailable)
+        }
+    }
+
+    impl ModelDispatchGateSource for StoreTaskGate {
+        fn snapshot(
+            &self,
+            task_id: Option<&TaskId>,
+            _data_class: DataClass,
+        ) -> Result<ModelDispatchGateSnapshotV1, ModelDispatchGateSourceError> {
+            let task_id = task_id.ok_or(ModelDispatchGateSourceError::Unavailable)?;
+            let read = self.snapshots.fetch_add(1, Ordering::SeqCst);
+            if self.cancel_on_snapshot == Some(read) {
+                self.cancel_task(task_id)?;
+            }
+            let task = self
+                .store
+                .load_task(task_id)
+                .map_err(|_| ModelDispatchGateSourceError::Unavailable)?;
+            Ok(ModelDispatchGateSnapshotV1::from_host(
+                task.task.state == TaskState::Cancelled,
+                ModelEgressPolicySnapshotV1::from_host(true),
+                1000,
+            ))
+        }
+    }
+
     struct TestTaskAudit;
 
     impl TaskAuditParticipant for TestTaskAudit {
-        fn records(&self, _facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
-            Ok(vec![JournalRecord {
-                kind: JournalKind::TaskInserted,
-                state_from: None,
-                state_to: Some("RECEIVED".into()),
-                reason: None,
+        fn records(&self, facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
+            let record = |kind| JournalRecord {
+                kind,
+                state_from: facts.task_from().map(|state| state.wire_name().to_owned()),
+                state_to: Some(facts.task_to().wire_name().to_owned()),
+                reason: facts.reason().cloned(),
                 payload_json: b"{}".to_vec(),
-            }])
+            };
+            match facts.operation() {
+                AuditOperation::TaskInserted => Ok(vec![record(JournalKind::TaskInserted)]),
+                AuditOperation::Cancelled => Ok(vec![
+                    record(JournalKind::TaskCancelRequested),
+                    record(JournalKind::TaskStateChanged),
+                    record(JournalKind::TaskTerminal),
+                ]),
+                _ => Err(StoreError::AuditRejected),
+            }
         }
     }
 
@@ -2513,6 +2846,112 @@ mod tests {
             .is_ok()
     }
 
+    fn seed_terminal_task_model_calls(store: &Store, task_id: &TaskId, count: u8) {
+        for sequence in 1..=count {
+            let request_id = serea_protocol::RequestId::new(format!(
+                "req_000000000000000000000000{sequence:02}"
+            ))
+            .unwrap_or_else(|_| unreachable!());
+            store
+                .reserve_model_call(
+                    ModelCallAttemptDraft {
+                        request_id: request_id.clone(),
+                        task_id: Some(task_id.clone()),
+                        purpose: ModelPurpose::Chat,
+                        model_id: ModelId::new("nemotron-3-nano-30b")
+                            .unwrap_or_else(|_| unreachable!()),
+                        provider_id: ProviderId::new("provider").unwrap_or_else(|_| unreachable!()),
+                        deployment_class: StorageDeploymentClass::Local,
+                        data_class: DataClass::Public,
+                        relation_kind: ModelAttemptRelationKind::None,
+                        parent_request_id: None,
+                        fallback_from_model_id: None,
+                        price: ModelPriceSnapshot::new(
+                            CostClass::Paid,
+                            "seed-price",
+                            1_000_000,
+                            1_000_000,
+                        ),
+                        max_context_tokens: 1000,
+                        effective_max_output_tokens: 16,
+                        dispatch_intent_at: FixedClock.now_ms().unwrap_or_else(|_| unreachable!()),
+                    },
+                    UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+                )
+                .unwrap_or_else(|_| unreachable!());
+            store
+                .fail_model_call(
+                    &request_id,
+                    "SCRIPTED_FAILURE",
+                    FixedClock.now_ms().unwrap_or_else(|_| unreachable!()),
+                )
+                .unwrap_or_else(|_| unreachable!());
+        }
+    }
+
+    fn prepared_chat_for_task(task_id: TaskId) -> PreparedModelCallV1 {
+        PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: Some(task_id),
+            purpose: ModelPurpose::Chat,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "host prepared task input".into(),
+            }],
+            system: None,
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 16,
+            temperature: 0.0,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!())
+    }
+
+    fn prepared_analysis_for_task(task_id: TaskId) -> PreparedModelCallV1 {
+        PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: Some(task_id),
+            purpose: ModelPurpose::Analysis,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "host prepared structured input".into(),
+            }],
+            system: Some("host system".into()),
+            response_format: ResponseFormat::JsonSchema {
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"count": {"type": "integer"}},
+                    "required": ["count"],
+                    "additionalProperties": false
+                }),
+            },
+            tools: Vec::new(),
+            max_output_tokens: 16,
+            temperature: 0.0,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!())
+    }
+
     struct CancelAfterIntentGate(AtomicUsize);
 
     impl ModelDispatchGateSource for CancelAfterIntentGate {
@@ -2557,10 +2996,46 @@ mod tests {
             store,
             events,
             price,
+            prices: None,
             max_daily_spend_usd_micros,
             clock: &FixedClock,
             gate: &OPEN_DISPATCH_GATE,
         }
+    }
+
+    fn blocking_process(
+        provider: Arc<BlockingProvider>,
+        daily_limit: UsdMicros,
+    ) -> ModelRouterProcessV1 {
+        one_model_process(provider, daily_limit)
+    }
+
+    fn one_model_process(
+        provider: Arc<dyn ModelProvider>,
+        daily_limit: UsdMicros,
+    ) -> ModelRouterProcessV1 {
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        ModelRouterProcessV1::new(
+            roster,
+            vec![provider],
+            vec![(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                ModelPriceSnapshot::new(CostClass::Paid, "blocking-price", 1_000_000, 1_000_000),
+            )],
+            daily_limit,
+        )
+        .unwrap_or_else(|_| unreachable!())
     }
 
     struct IncrementingIds(u64);
@@ -2595,6 +3070,12 @@ mod tests {
         finishes: Mutex<VecDeque<FinishReason>>,
         health_script: Mutex<VecDeque<ProviderHealth>>,
         health_calls: AtomicUsize,
+    }
+
+    struct BlockingProvider {
+        started: SyncSender<serea_protocol::RequestId>,
+        release: Mutex<Receiver<()>>,
+        calls: AtomicUsize,
     }
 
     enum RepairScript {
@@ -2708,6 +3189,68 @@ mod tests {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .pop_front()
                 .unwrap_or(ProviderHealth::Ready)
+        }
+    }
+
+    #[async_trait]
+    impl ModelProvider for BlockingProvider {
+        fn provider_id(&self) -> ProviderId {
+            ProviderId::new("blocking_provider").unwrap_or_else(|_| unreachable!())
+        }
+
+        fn models(&self) -> Vec<ModelDescriptor> {
+            vec![ModelDescriptor {
+                model_id: ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider_id: self.provider_id(),
+                capabilities: caps(false, JsonSchemaMode::Strict, 1000, 1000),
+            }]
+        }
+
+        async fn generate(
+            &self,
+            request: &ModelRequest,
+            _ctx: &ModelCallContext,
+        ) -> Result<ModelResponse, ModelError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.started
+                .send(request.request_id.clone())
+                .map_err(|_| ModelError {
+                    kind: ModelErrorCode::new("TEST_CHANNEL_CLOSED")
+                        .unwrap_or_else(|_| unreachable!()),
+                    message: serea_protocol::ErrorMessage::new("test channel closed")
+                        .unwrap_or_else(|_| unreachable!()),
+                    retryable: false,
+                })?;
+            self.release
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .recv()
+                .map_err(|_| ModelError {
+                    kind: ModelErrorCode::new("TEST_RELEASE_CLOSED")
+                        .unwrap_or_else(|_| unreachable!()),
+                    message: serea_protocol::ErrorMessage::new("test release closed")
+                        .unwrap_or_else(|_| unreachable!()),
+                    retryable: false,
+                })?;
+            Ok(ModelResponse {
+                request_id: request.request_id.clone(),
+                model_id: request.model_id.clone(),
+                provider_id: self.provider_id(),
+                content: "concurrent result".into(),
+                structured: None,
+                finish_reason: FinishReason::Stop,
+                usage: ModelUsage {
+                    input_tokens: TokenCount::new(1),
+                    output_tokens: TokenCount::new(1),
+                    cost_class: CostClass::Paid,
+                },
+                latency_ms: 1,
+                repair_attempts: 0,
+            })
+        }
+
+        async fn health(&self) -> ProviderHealth {
+            ProviderHealth::Ready
         }
     }
 
@@ -3360,6 +3903,7 @@ mod tests {
             store: &store,
             events: &bus,
             price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            prices: None,
             max_daily_spend_usd_micros: UsdMicros::new(10_000_000)
                 .unwrap_or_else(|_| unreachable!()),
             clock: &FixedClock,
@@ -3891,6 +4435,7 @@ mod tests {
             store: &store,
             events: &bus,
             price: context.price.clone(),
+            prices: None,
             max_daily_spend_usd_micros: context.max_daily_spend_usd_micros,
             clock: &FixedClock,
             gate: &cancellation_gate,
@@ -4910,6 +5455,1283 @@ mod tests {
         drop(router);
         drop(provider);
         drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn trusted_host_call_boundary_accounts_task_without_owning_lifecycle() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-host-boundary-red-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let task_id =
+            TaskId::new("tsk_00000000000000000000000050").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&store, task_id.clone(), "50"));
+        let provider = Arc::new(RepairFakeProvider::new(vec!["trusted result".into()]));
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let price = ModelPriceSnapshot::new(CostClass::Paid, "price-host", 1_000_000, 1_000_000);
+        let daily = UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!());
+        let router = ModelRouterProcessV1::new(
+            roster,
+            vec![provider.clone()],
+            vec![(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                price,
+            )],
+            daily,
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: Some(task_id.clone()),
+            purpose: ModelPurpose::Chat,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "host prepared input".into(),
+            }],
+            system: None,
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 16,
+            temperature: 0.0,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let host = ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &OPEN_DISPATCH_GATE);
+
+        let result = block_on(router.execute(&call, &host)).unwrap_or_else(|_| unreachable!());
+
+        assert_eq!(result.content, "trusted result");
+        assert_eq!(result.structured, None);
+        assert_eq!(provider.requests().len(), 1);
+        assert_eq!(provider.requests()[0].task_id.as_ref(), Some(&task_id));
+        assert_eq!(store.task_model_call_count(&task_id).ok(), Some(1));
+        assert_eq!(store.task_model_turn_count(&task_id).ok(), Some(1));
+        assert_eq!(
+            store.load_task(&task_id).ok().map(|task| task.task.state),
+            Some(TaskState::Received)
+        );
+        drop(router);
+        drop(provider);
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn host_gate_uses_real_task_cancellation_and_deletion_state() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-host-task-gate-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let cancelled_before =
+            TaskId::new("tsk_00000000000000000000000051").unwrap_or_else(|_| unreachable!());
+        let cancelled_after_intent =
+            TaskId::new("tsk_00000000000000000000000052").unwrap_or_else(|_| unreachable!());
+        let deleted_before =
+            TaskId::new("tsk_00000000000000000000000053").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&store, cancelled_before.clone(), "51"));
+        assert!(insert_budget_task(
+            &store,
+            cancelled_after_intent.clone(),
+            "52"
+        ));
+        assert!(insert_budget_task(&store, deleted_before.clone(), "53"));
+
+        let provider = Arc::new(RepairFakeProvider::new(vec!["must not dispatch".into()]));
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let price = ModelPriceSnapshot::new(CostClass::Paid, "price-host", 1_000_000, 1_000_000);
+        let daily = UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!());
+        let router = ModelRouterProcessV1::new(
+            roster,
+            vec![provider.clone()],
+            vec![(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                price,
+            )],
+            daily,
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+
+        let before_gate = StoreTaskGate {
+            store: store.clone(),
+            cancel_on_snapshot: None,
+            snapshots: AtomicUsize::new(0),
+            suffix: "54",
+        };
+        before_gate
+            .cancel_task(&cancelled_before)
+            .unwrap_or_else(|_| unreachable!());
+        let before_host = ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &before_gate);
+        assert!(matches!(
+            block_on(router.execute(
+                &prepared_chat_for_task(cancelled_before.clone()),
+                &before_host
+            )),
+            Err(ModelRouterCallFailureV1::Refused(
+                RouterError::TaskCancelled
+            ))
+        ));
+        assert_eq!(store.task_model_call_count(&cancelled_before).ok(), Some(0));
+        assert_eq!(
+            store
+                .load_task(&cancelled_before)
+                .ok()
+                .map(|task| task.task.state),
+            Some(TaskState::Cancelled)
+        );
+
+        let after_gate = StoreTaskGate {
+            store: store.clone(),
+            cancel_on_snapshot: Some(1),
+            snapshots: AtomicUsize::new(0),
+            suffix: "55",
+        };
+        let after_host = ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &after_gate);
+        assert!(matches!(
+            block_on(router.execute(
+                &prepared_chat_for_task(cancelled_after_intent.clone()),
+                &after_host
+            )),
+            Err(ModelRouterCallFailureV1::Refused(
+                RouterError::TaskCancelled
+            ))
+        ));
+        assert_eq!(
+            store.task_model_call_count(&cancelled_after_intent).ok(),
+            Some(1)
+        );
+        assert_eq!(
+            store.task_model_turn_count(&cancelled_after_intent).ok(),
+            Some(1)
+        );
+        assert_eq!(
+            store
+                .load_task(&cancelled_after_intent)
+                .ok()
+                .map(|task| task.task.state),
+            Some(TaskState::Cancelled)
+        );
+
+        store
+            .transact(|tx| tx.delete_task(&deleted_before).map(|_| ()))
+            .unwrap_or_else(|_| unreachable!());
+        let deleted_gate = StoreTaskGate {
+            store: store.clone(),
+            cancel_on_snapshot: None,
+            snapshots: AtomicUsize::new(0),
+            suffix: "56",
+        };
+        let deleted_host = ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &deleted_gate);
+        let deleted_result =
+            block_on(router.execute(&prepared_chat_for_task(deleted_before), &deleted_host));
+        assert!(
+            matches!(
+                &deleted_result,
+                Err(ModelRouterCallFailureV1::Storage(StoreError::TaskNotFound))
+            ),
+            "deleted task must fail closed: {deleted_result:?}"
+        );
+        assert!(provider.requests().is_empty());
+        assert_eq!(
+            store.task_model_call_count(&cancelled_after_intent).ok(),
+            Some(1)
+        );
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        let kinds = events
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ReplayItem::Event { event } => Some(event.kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(kinds, vec![EventKind::ModelCalled, EventKind::ModelFailed]);
+        drop(router);
+        drop(provider);
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn price_changes_apply_only_to_a_new_process_router_snapshot() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-price-snapshot-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let provider = Arc::new(RepairFakeProvider::new(vec![
+            "first result".into(),
+            "second result".into(),
+            "third result".into(),
+        ]));
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let model_id = ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!());
+        let daily = UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!());
+        let first_process = ModelRouterProcessV1::new(
+            roster.clone(),
+            vec![provider.clone()],
+            vec![(
+                model_id.clone(),
+                ModelPriceSnapshot::new(CostClass::Paid, "price-v1", 1_000_000, 1_000_000),
+            )],
+            daily,
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: None,
+            purpose: ModelPurpose::Chat,
+            messages: Vec::new(),
+            system: None,
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 16,
+            temperature: 0.0,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let host = ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &OPEN_DISPATCH_GATE);
+        let first =
+            block_on(first_process.execute(&call, &host)).unwrap_or_else(|_| unreachable!());
+        let second_process = ModelRouterProcessV1::new(
+            roster,
+            vec![provider.clone()],
+            vec![(
+                model_id.clone(),
+                ModelPriceSnapshot::new(CostClass::Paid, "price-v2", 2_000_000, 3_000_000),
+            )],
+            daily,
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let second =
+            block_on(second_process.execute(&call, &host)).unwrap_or_else(|_| unreachable!());
+        let third =
+            block_on(first_process.execute(&call, &host)).unwrap_or_else(|_| unreachable!());
+
+        let first_attempt = store
+            .get_model_call_attempt(&first.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let second_attempt = store
+            .get_model_call_attempt(&second.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let third_attempt = store
+            .get_model_call_attempt(&third.request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(first_attempt.price.price_revision(), "price-v1");
+        assert_eq!(second_attempt.price.price_revision(), "price-v2");
+        assert_eq!(
+            second_attempt
+                .price
+                .input_rate_microusd_per_million_tokens(),
+            2_000_000
+        );
+        assert_eq!(
+            second_attempt
+                .price
+                .output_rate_microusd_per_million_tokens(),
+            3_000_000
+        );
+        assert_eq!(third_attempt.price.price_revision(), "price-v1");
+        assert_eq!(first_attempt.model_id, model_id);
+        drop(second_process);
+        drop(first_process);
+        drop(provider);
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn fallback_uses_its_own_price_and_reuses_the_process_health_snapshot() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-fallback-price-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let provider = Arc::new(RepairFakeProvider::new(Vec::new()));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("scripted retryable failure")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: true,
+        }));
+        provider.push_script(RepairScript::Respond("fallback answer".into()));
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+            ModelRosterEntryV1::new(
+                ModelId::new("gpt-oss-20b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let price =
+            |revision| ModelPriceSnapshot::new(CostClass::Paid, revision, 1_000_000, 1_000_000);
+        let process = ModelRouterProcessV1::new(
+            roster,
+            vec![provider.clone()],
+            vec![
+                (
+                    ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                    price("primary-price"),
+                ),
+                (
+                    ModelId::new("gpt-oss-20b").unwrap_or_else(|_| unreachable!()),
+                    price("fallback-price"),
+                ),
+            ],
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let call = prepared_chat_for_task(
+            TaskId::new("tsk_00000000000000000000000057").unwrap_or_else(|_| unreachable!()),
+        );
+        assert!(insert_budget_task(
+            &store,
+            call.task_id().cloned().unwrap_or_else(|| unreachable!()),
+            "57"
+        ));
+        let bus = EventBus::new(IncrementingIds(0));
+        let host = ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &OPEN_DISPATCH_GATE);
+
+        let result = block_on(process.execute(&call, &host)).unwrap_or_else(|_| unreachable!());
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(result.model_id.as_str(), "gpt-oss-20b");
+        let primary = store
+            .get_model_call_attempt(&requests[0].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let fallback = store
+            .get_model_call_attempt(&requests[1].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(primary.price.price_revision(), "primary-price");
+        assert_eq!(fallback.price.price_revision(), "fallback-price");
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 1);
+        drop(process);
+        drop(provider);
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn fallback_daily_spend_exhaustion_creates_no_fallback_child() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-fallback-spend-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let task_id =
+            TaskId::new("tsk_00000000000000000000000073").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&store, task_id.clone(), "73"));
+        let provider = Arc::new(RepairFakeProvider::new(Vec::new()));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("retryable spend test failure")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: true,
+        }));
+        provider.push_script(RepairScript::Respond("must not dispatch fallback".into()));
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+            ModelRosterEntryV1::new(
+                ModelId::new("gpt-oss-20b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let process = ModelRouterProcessV1::new(
+            roster,
+            vec![provider.clone()],
+            vec![
+                (
+                    ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                    ModelPriceSnapshot::new(CostClass::Paid, "primary", 1_000_000, 1_000_000),
+                ),
+                (
+                    ModelId::new("gpt-oss-20b").unwrap_or_else(|_| unreachable!()),
+                    ModelPriceSnapshot::new(CostClass::Paid, "fallback", 1_000_000, 1_000_000),
+                ),
+            ],
+            UsdMicros::new(1_500).unwrap_or_else(|_| unreachable!()),
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let host = ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &OPEN_DISPATCH_GATE);
+
+        assert!(matches!(
+            block_on(process.execute(&prepared_chat_for_task(task_id.clone()), &host)),
+            Err(ModelRouterCallFailureV1::BoundExceeded {
+                bound: ModelBoundKindV1::DailySpendUsd,
+                limit: 1_500,
+                ..
+            })
+        ));
+        assert_eq!(provider.requests().len(), 1);
+        assert_eq!(store.task_model_call_count(&task_id).ok(), Some(1));
+        let primary_request = provider.requests()[0].request_id.clone();
+        let primary = store
+            .get_model_call_attempt(&primary_request)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(primary.state, ModelAttemptState::Failed);
+        assert_eq!(primary.relation_kind, ModelAttemptRelationKind::None);
+        assert!(
+            store
+                .list_unfinished_model_call_attempts()
+                .unwrap_or_else(|_| unreachable!())
+                .is_empty()
+        );
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        let kinds = events
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ReplayItem::Event { event } => Some(event.kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                EventKind::ModelCalled,
+                EventKind::BoundExceeded,
+                EventKind::ModelFailed
+            ]
+        );
+        drop(process);
+        drop(provider);
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn independent_store_calls_serialize_same_task_and_allow_distinct_tasks() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-task-concurrency-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let same_task =
+            TaskId::new("tsk_00000000000000000000000062").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&setup, same_task.clone(), "62"));
+        let distinct_a =
+            TaskId::new("tsk_00000000000000000000000063").unwrap_or_else(|_| unreachable!());
+        let distinct_b =
+            TaskId::new("tsk_00000000000000000000000064").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&setup, distinct_a.clone(), "63"));
+        assert!(insert_budget_task(&setup, distinct_b.clone(), "64"));
+        drop(setup);
+
+        let same_a =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let same_b =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let (started_tx, started_rx) = mpsc::sync_channel(2);
+        let (release_tx, release_rx) = mpsc::channel();
+        let provider = Arc::new(BlockingProvider {
+            started: started_tx,
+            release: Mutex::new(release_rx),
+            calls: AtomicUsize::new(0),
+        });
+        let process = Arc::new(blocking_process(
+            provider.clone(),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        ));
+        let same_bus_a = EventBus::new(IncrementingIds(0));
+        let same_bus_b = EventBus::new(IncrementingIds(100));
+        let same_host_a =
+            ModelRouterHostContextV1::new(&same_a, &same_bus_a, &FixedClock, &OPEN_DISPATCH_GATE);
+        let same_host_b =
+            ModelRouterHostContextV1::new(&same_b, &same_bus_b, &FixedClock, &OPEN_DISPATCH_GATE);
+        let same_call = prepared_chat_for_task(same_task.clone());
+        std::thread::scope(|scope| {
+            let first_process = process.clone();
+            let first_call = same_call.clone();
+            let first_host = &same_host_a;
+            let first =
+                scope.spawn(move || block_on(first_process.execute(&first_call, first_host)));
+            let first_request = started_rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| {
+                    unreachable!("first same-task dispatch never reached provider")
+                });
+
+            let second_process = process.clone();
+            let second_call = same_call.clone();
+            let second_host = &same_host_b;
+            let second =
+                scope.spawn(move || block_on(second_process.execute(&second_call, second_host)));
+            let second_result = second
+                .join()
+                .unwrap_or_else(|_| unreachable!("second same-task caller panicked"));
+            assert!(matches!(
+                second_result,
+                Err(ModelRouterCallFailureV1::Storage(
+                    StoreError::ModelCallInFlight
+                ))
+            ));
+            assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+            release_tx
+                .send(())
+                .unwrap_or_else(|_| unreachable!("provider release channel closed"));
+            let first_result = first
+                .join()
+                .unwrap_or_else(|_| unreachable!("first same-task caller panicked"))
+                .unwrap_or_else(|_| unreachable!("first same-task call failed"));
+            assert_eq!(first_result.request_id, first_request);
+        });
+        assert_eq!(same_a.task_model_call_count(&same_task).ok(), Some(1));
+        assert_eq!(same_a.task_model_turn_count(&same_task).ok(), Some(1));
+
+        let distinct_a_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let distinct_b_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let (entered_tx, entered_rx) = mpsc::sync_channel(2);
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let distinct_provider = Arc::new(BlockingProvider {
+            started: entered_tx,
+            release: Mutex::new(resume_rx),
+            calls: AtomicUsize::new(0),
+        });
+        let distinct_process = Arc::new(blocking_process(
+            distinct_provider.clone(),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        ));
+        let distinct_bus_a = EventBus::new(IncrementingIds(200));
+        let distinct_bus_b = EventBus::new(IncrementingIds(300));
+        let distinct_host_a = ModelRouterHostContextV1::new(
+            &distinct_a_store,
+            &distinct_bus_a,
+            &FixedClock,
+            &OPEN_DISPATCH_GATE,
+        );
+        let distinct_host_b = ModelRouterHostContextV1::new(
+            &distinct_b_store,
+            &distinct_bus_b,
+            &FixedClock,
+            &OPEN_DISPATCH_GATE,
+        );
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let distinct_results = std::thread::scope(|scope| {
+            let a_process = distinct_process.clone();
+            let a_call = prepared_chat_for_task(distinct_a.clone());
+            let a_barrier = barrier.clone();
+            let a_host = &distinct_host_a;
+            let a = scope.spawn(move || {
+                a_barrier.wait();
+                block_on(a_process.execute(&a_call, a_host))
+            });
+            let b_process = distinct_process.clone();
+            let b_call = prepared_chat_for_task(distinct_b.clone());
+            let b_barrier = barrier.clone();
+            let b_host = &distinct_host_b;
+            let b = scope.spawn(move || {
+                b_barrier.wait();
+                block_on(b_process.execute(&b_call, b_host))
+            });
+            barrier.wait();
+            let first_entered = entered_rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| unreachable!("first distinct task did not reach provider"));
+            let second_entered = entered_rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| unreachable!("second distinct task did not reach provider"));
+            assert_ne!(first_entered, second_entered);
+            resume_tx
+                .send(())
+                .unwrap_or_else(|_| unreachable!("first provider release channel closed"));
+            resume_tx
+                .send(())
+                .unwrap_or_else(|_| unreachable!("second provider release channel closed"));
+            [
+                a.join()
+                    .unwrap_or_else(|_| unreachable!("first distinct caller panicked")),
+                b.join()
+                    .unwrap_or_else(|_| unreachable!("second distinct caller panicked")),
+            ]
+        });
+        assert!(distinct_results.iter().all(Result::is_ok));
+        assert_eq!(distinct_provider.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            distinct_a_store.task_model_call_count(&distinct_a).ok(),
+            Some(1)
+        );
+        assert_eq!(
+            distinct_b_store.task_model_call_count(&distinct_b).ok(),
+            Some(1)
+        );
+        drop(distinct_process);
+        drop(distinct_provider);
+        drop(distinct_a_store);
+        drop(distinct_b_store);
+        drop(process);
+        drop(provider);
+        drop(same_a);
+        drop(same_b);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn daily_spend_reservation_race_refuses_second_task_before_provider() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-spend-race-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let first_task =
+            TaskId::new("tsk_00000000000000000000000065").unwrap_or_else(|_| unreachable!());
+        let second_task =
+            TaskId::new("tsk_00000000000000000000000066").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&setup, first_task.clone(), "65"));
+        assert!(insert_budget_task(&setup, second_task.clone(), "66"));
+        drop(setup);
+
+        let first_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let second_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let (started_tx, started_rx) = mpsc::sync_channel(2);
+        let (release_tx, release_rx) = mpsc::channel();
+        let provider = Arc::new(BlockingProvider {
+            started: started_tx,
+            release: Mutex::new(release_rx),
+            calls: AtomicUsize::new(0),
+        });
+        let process = Arc::new(blocking_process(
+            provider.clone(),
+            UsdMicros::new(1_500).unwrap_or_else(|_| unreachable!()),
+        ));
+        let first_bus = EventBus::new(IncrementingIds(0));
+        let second_bus = EventBus::new(IncrementingIds(100));
+        let first_host = ModelRouterHostContextV1::new(
+            &first_store,
+            &first_bus,
+            &FixedClock,
+            &OPEN_DISPATCH_GATE,
+        );
+        let second_host = ModelRouterHostContextV1::new(
+            &second_store,
+            &second_bus,
+            &FixedClock,
+            &OPEN_DISPATCH_GATE,
+        );
+        let first_call = prepared_chat_for_task(first_task.clone());
+        let second_call = prepared_chat_for_task(second_task.clone());
+        std::thread::scope(|scope| {
+            let first_process = process.clone();
+            let first_host_ref = &first_host;
+            let first =
+                scope.spawn(move || block_on(first_process.execute(&first_call, first_host_ref)));
+            let _first_request = started_rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| unreachable!("first spend reservation never dispatched"));
+
+            let second_process = process.clone();
+            let second_host_ref = &second_host;
+            let second = scope
+                .spawn(move || block_on(second_process.execute(&second_call, second_host_ref)));
+            let second_result = second
+                .join()
+                .unwrap_or_else(|_| unreachable!("second spend caller panicked"));
+            assert!(matches!(
+                second_result,
+                Err(ModelRouterCallFailureV1::BoundExceeded {
+                    bound: ModelBoundKindV1::DailySpendUsd,
+                    limit: 1_500,
+                    ..
+                })
+            ));
+            assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+            release_tx
+                .send(())
+                .unwrap_or_else(|_| unreachable!("provider release channel closed"));
+            first
+                .join()
+                .unwrap_or_else(|_| unreachable!("first spend caller panicked"))
+                .unwrap_or_else(|_| unreachable!("first spend call failed"));
+        });
+        assert_eq!(first_store.task_model_call_count(&first_task).ok(), Some(1));
+        assert_eq!(
+            second_store.task_model_call_count(&second_task).ok(),
+            Some(0)
+        );
+        let second_events =
+            EventBus::replay(&second_store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert!(second_events.items.iter().any(|item| matches!(
+            item,
+            ReplayItem::Event { event }
+                if event.kind == EventKind::BoundExceeded
+                    && event.payload["bound_name"] == "max_daily_spend_usd"
+        )));
+        drop(process);
+        drop(provider);
+        drop(first_store);
+        drop(second_store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn cancellation_stops_new_fallback_and_repair_dispatches_for_real_tasks() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-retry-cancel-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let fallback_task =
+            TaskId::new("tsk_00000000000000000000000067").unwrap_or_else(|_| unreachable!());
+        let repair_task =
+            TaskId::new("tsk_00000000000000000000000068").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&store, fallback_task.clone(), "67"));
+        assert!(insert_budget_task(&store, repair_task.clone(), "68"));
+
+        let provider = Arc::new(RepairFakeProvider::new(Vec::new()));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("retryable test failure")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: true,
+        }));
+        provider.push_script(RepairScript::Respond(r#"{"count":"invalid"}"#.into()));
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+            ModelRosterEntryV1::new(
+                ModelId::new("gpt-oss-20b").unwrap_or_else(|_| unreachable!()),
+                provider.provider_id(),
+                ModelDeploymentClass::Local,
+                true,
+                caps(false, JsonSchemaMode::Strict, 1000, 1000),
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let price =
+            |revision| ModelPriceSnapshot::new(CostClass::Paid, revision, 1_000_000, 1_000_000);
+        let process = ModelRouterProcessV1::new(
+            roster,
+            vec![provider.clone()],
+            vec![
+                (
+                    ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                    price("primary"),
+                ),
+                (
+                    ModelId::new("gpt-oss-20b").unwrap_or_else(|_| unreachable!()),
+                    price("alternate"),
+                ),
+            ],
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let fallback_gate = StoreTaskGate {
+            store: store.clone(),
+            cancel_on_snapshot: Some(2),
+            snapshots: AtomicUsize::new(0),
+            suffix: "69",
+        };
+        let fallback_host =
+            ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &fallback_gate);
+        assert!(matches!(
+            block_on(process.execute(
+                &prepared_chat_for_task(fallback_task.clone()),
+                &fallback_host
+            )),
+            Err(ModelRouterCallFailureV1::Refused(
+                RouterError::TaskCancelled
+            ))
+        ));
+        assert_eq!(store.task_model_call_count(&fallback_task).ok(), Some(1));
+        assert_eq!(
+            store
+                .load_task(&fallback_task)
+                .ok()
+                .map(|task| task.task.state),
+            Some(TaskState::Cancelled)
+        );
+
+        let repair_gate = StoreTaskGate {
+            store: store.clone(),
+            cancel_on_snapshot: Some(2),
+            snapshots: AtomicUsize::new(0),
+            suffix: "70",
+        };
+        let repair_host = ModelRouterHostContextV1::new(&store, &bus, &FixedClock, &repair_gate);
+        assert!(matches!(
+            block_on(process.execute(
+                &prepared_analysis_for_task(repair_task.clone()),
+                &repair_host
+            )),
+            Err(ModelRouterCallFailureV1::Refused(
+                RouterError::TaskCancelled
+            ))
+        ));
+        assert_eq!(store.task_model_call_count(&repair_task).ok(), Some(1));
+        assert_eq!(
+            store
+                .load_task(&repair_task)
+                .ok()
+                .map(|task| task.task.state),
+            Some(TaskState::Cancelled)
+        );
+        assert_eq!(provider.requests().len(), 2);
+        let attempts = provider
+            .requests()
+            .iter()
+            .map(|request| {
+                store
+                    .get_model_call_attempt(&request.request_id)
+                    .unwrap_or_else(|_| unreachable!())
+                    .unwrap_or_else(|| unreachable!())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            attempts
+                .iter()
+                .all(|attempt| attempt.relation_kind == ModelAttemptRelationKind::None)
+        );
+        drop(process);
+        drop(provider);
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn independent_recovery_workers_emit_one_ambiguity_transition() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-recovery-race-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let request_id = serea_protocol::RequestId::new("req_00000000000000000000000071")
+            .unwrap_or_else(|_| unreachable!());
+        setup
+            .reserve_model_call(
+                ModelCallAttemptDraft {
+                    request_id: request_id.clone(),
+                    task_id: None,
+                    purpose: ModelPurpose::Chat,
+                    model_id: ModelId::new("nemotron-3-nano-30b")
+                        .unwrap_or_else(|_| unreachable!()),
+                    provider_id: ProviderId::new("provider").unwrap_or_else(|_| unreachable!()),
+                    deployment_class: StorageDeploymentClass::Local,
+                    data_class: DataClass::Public,
+                    relation_kind: ModelAttemptRelationKind::None,
+                    parent_request_id: None,
+                    fallback_from_model_id: None,
+                    price: ModelPriceSnapshot::new(
+                        CostClass::Paid,
+                        "recovery-price",
+                        1_000_000,
+                        1_000_000,
+                    ),
+                    max_context_tokens: 1000,
+                    effective_max_output_tokens: 16,
+                    dispatch_intent_at: FixedClock.now_ms().unwrap_or_else(|_| unreachable!()),
+                },
+                UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+            )
+            .unwrap_or_else(|_| unreachable!());
+        drop(setup);
+
+        let first_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let second_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let results = std::thread::scope(|scope| {
+            let first_store = first_store.clone();
+            let first_barrier = barrier.clone();
+            let first = scope.spawn(move || {
+                first_barrier.wait();
+                recover_unresolved_model_calls(
+                    &first_store,
+                    &EventBus::new(IncrementingIds(700)),
+                    &FixedClock,
+                )
+            });
+            let second_store = second_store.clone();
+            let second_barrier = barrier.clone();
+            let second = scope.spawn(move || {
+                second_barrier.wait();
+                recover_unresolved_model_calls(
+                    &second_store,
+                    &EventBus::new(IncrementingIds(800)),
+                    &FixedClock,
+                )
+            });
+            barrier.wait();
+            [
+                first
+                    .join()
+                    .unwrap_or_else(|_| unreachable!("first recovery worker panicked")),
+                second
+                    .join()
+                    .unwrap_or_else(|_| unreachable!("second recovery worker panicked")),
+            ]
+        });
+        let recovered = results
+            .into_iter()
+            .map(|result| result.unwrap_or_else(|_| unreachable!()))
+            .sum::<usize>();
+        assert_eq!(recovered, 1);
+        let attempt = first_store
+            .get_model_call_attempt(&request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(attempt.state, ModelAttemptState::Ambiguous);
+        assert_eq!(attempt.actual_cost_usd_micros, None);
+        assert!(
+            first_store
+                .model_usage_for_request(&request_id)
+                .unwrap_or_else(|_| unreachable!())
+                .is_none()
+        );
+        let events =
+            EventBus::replay(&first_store, None, None, 8).unwrap_or_else(|_| unreachable!());
+        assert!(
+            matches!(events.items.as_slice(), [ReplayItem::Event { event }] if event.kind == EventKind::ModelFailed)
+        );
+        assert_eq!(
+            recover_unresolved_model_calls(
+                &first_store,
+                &EventBus::new(IncrementingIds(900)),
+                &FixedClock,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+            0
+        );
+
+        drop(first_store);
+        drop(second_store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn last_call_and_turn_slots_are_consumed_once_across_store_connections() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-last-budget-slot-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let task_id =
+            TaskId::new("tsk_00000000000000000000000072").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&setup, task_id.clone(), "72"));
+        seed_terminal_task_model_calls(&setup, &task_id, 11);
+        assert_eq!(setup.task_model_call_count(&task_id).ok(), Some(11));
+        assert_eq!(setup.task_model_turn_count(&task_id).ok(), Some(11));
+        drop(setup);
+
+        let first_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let second_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let provider = Arc::new(RepairFakeProvider::new(vec!["last slot result".into()]));
+        let process = Arc::new(one_model_process(
+            provider.clone(),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        ));
+        let first_bus = EventBus::new(IncrementingIds(0));
+        let second_bus = EventBus::new(IncrementingIds(100));
+        let first_host = ModelRouterHostContextV1::new(
+            &first_store,
+            &first_bus,
+            &FixedClock,
+            &OPEN_DISPATCH_GATE,
+        );
+        let second_host = ModelRouterHostContextV1::new(
+            &second_store,
+            &second_bus,
+            &FixedClock,
+            &OPEN_DISPATCH_GATE,
+        );
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let results = std::thread::scope(|scope| {
+            let first_process = process.clone();
+            let first_call = prepared_chat_for_task(task_id.clone());
+            let first_barrier = barrier.clone();
+            let first_host_ref = &first_host;
+            let first = scope.spawn(move || {
+                first_barrier.wait();
+                block_on(first_process.execute(&first_call, first_host_ref))
+            });
+            let second_process = process.clone();
+            let second_call = prepared_chat_for_task(task_id.clone());
+            let second_barrier = barrier.clone();
+            let second_host_ref = &second_host;
+            let second = scope.spawn(move || {
+                second_barrier.wait();
+                block_on(second_process.execute(&second_call, second_host_ref))
+            });
+            barrier.wait();
+            [
+                first
+                    .join()
+                    .unwrap_or_else(|_| unreachable!("first last-slot caller panicked")),
+                second
+                    .join()
+                    .unwrap_or_else(|_| unreachable!("second last-slot caller panicked")),
+            ]
+        });
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    Err(ModelRouterCallFailureV1::Storage(
+                        StoreError::ModelCallInFlight
+                    )) | Err(ModelRouterCallFailureV1::ModelCallBudgetExceeded {
+                        limit: 12,
+                        observed: 12
+                    })
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(provider.requests().len(), 1);
+        assert_eq!(first_store.task_model_call_count(&task_id).ok(), Some(12));
+        assert_eq!(first_store.task_model_turn_count(&task_id).ok(), Some(12));
+        drop(process);
+        drop(provider);
+        drop(first_store);
+        drop(second_store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn dispatched_late_response_is_accounted_after_real_task_cancellation() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-late-cancel-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let setup = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let task_id =
+            TaskId::new("tsk_00000000000000000000000074").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&setup, task_id.clone(), "74"));
+        drop(setup);
+
+        let dispatch_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let cancel_store =
+            Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::channel();
+        let provider = Arc::new(BlockingProvider {
+            started: started_tx,
+            release: Mutex::new(release_rx),
+            calls: AtomicUsize::new(0),
+        });
+        let process = Arc::new(blocking_process(
+            provider.clone(),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        ));
+        let dispatch_bus = EventBus::new(IncrementingIds(0));
+        let dispatch_gate = StoreTaskGate {
+            store: dispatch_store.clone(),
+            cancel_on_snapshot: None,
+            snapshots: AtomicUsize::new(0),
+            suffix: "75",
+        };
+        let cancel_gate = StoreTaskGate {
+            store: cancel_store.clone(),
+            cancel_on_snapshot: None,
+            snapshots: AtomicUsize::new(0),
+            suffix: "76",
+        };
+        let dispatch_host = ModelRouterHostContextV1::new(
+            &dispatch_store,
+            &dispatch_bus,
+            &FixedClock,
+            &dispatch_gate,
+        );
+        let call = prepared_chat_for_task(task_id.clone());
+        let response = std::thread::scope(|scope| {
+            let call_process = process.clone();
+            let call_ref = &call;
+            let host_ref = &dispatch_host;
+            let call_thread =
+                scope.spawn(move || block_on(call_process.execute(call_ref, host_ref)));
+            let request_id = started_rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| unreachable!("provider was not entered"));
+            cancel_gate
+                .cancel_task(&task_id)
+                .unwrap_or_else(|_| unreachable!("host cancellation failed"));
+            release_tx
+                .send(())
+                .unwrap_or_else(|_| unreachable!("provider release channel closed"));
+            let response = call_thread
+                .join()
+                .unwrap_or_else(|_| unreachable!("late provider call panicked"))
+                .unwrap_or_else(|_| unreachable!("late response was not accounted"));
+            (request_id, response)
+        });
+        assert_eq!(response.0, response.1.request_id);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            cancel_store
+                .load_task(&task_id)
+                .ok()
+                .map(|task| task.task.state),
+            Some(TaskState::Cancelled)
+        );
+        let attempt = cancel_store
+            .get_model_call_attempt(&response.0)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(attempt.state, ModelAttemptState::Completed);
+        assert!(
+            cancel_store
+                .model_usage_for_request(&response.0)
+                .unwrap_or_else(|_| unreachable!())
+                .is_some()
+        );
+        assert!(
+            cancel_store
+                .get_model_call_response(&response.0)
+                .unwrap_or_else(|_| unreachable!())
+                .is_some()
+        );
+        assert_eq!(cancel_store.task_model_call_count(&task_id).ok(), Some(1));
+        assert_eq!(cancel_store.task_model_turn_count(&task_id).ok(), Some(1));
+        let events =
+            EventBus::replay(&cancel_store, None, None, 8).unwrap_or_else(|_| unreachable!());
+        assert!(
+            matches!(events.items.as_slice(), [ReplayItem::Event { event: called }, ReplayItem::Event { event: completed }] if called.kind == EventKind::ModelCalled && completed.kind == EventKind::ModelCompleted)
+        );
+        drop(process);
+        drop(provider);
+        drop(dispatch_store);
+        drop(cancel_store);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));

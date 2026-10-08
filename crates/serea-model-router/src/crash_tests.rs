@@ -10,7 +10,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serea_event_bus::{EventBus, ReplayItem};
@@ -41,7 +40,6 @@ const ACK: &str = "SEREA_P4D_CRASH_ACK";
 const CALLED: &str = "SEREA_P4D_CRASH_CALLED";
 const CALL_COUNT: &str = "SEREA_P4D_CRASH_CALL_COUNT";
 const CHILD_TEST: &str = "crash_tests::model_dispatch_crash_child";
-const POLLS: usize = 4_000;
 
 struct OpenGate;
 
@@ -60,7 +58,6 @@ impl ModelDispatchGateSource for OpenGate {
 }
 
 static OPEN_GATE: OpenGate = OpenGate;
-const TICK: Duration = Duration::from_millis(5);
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -302,6 +299,7 @@ fn model_dispatch_crash_child() {
         store: &store,
         events: &bus,
         price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+        prices: None,
         max_daily_spend_usd_micros: UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
         clock: &FixedClock,
         gate: &OPEN_GATE,
@@ -344,16 +342,6 @@ fn model_dispatch_crash_child() {
     unreachable!("dispatch returned after a process-crash window")
 }
 
-fn wait_for(path: &Path) -> bool {
-    for _ in 0..POLLS {
-        if path.exists() {
-            return true;
-        }
-        std::thread::sleep(TICK);
-    }
-    path.exists()
-}
-
 fn kill_and_prove_death(mut child: Child, mode: &str) {
     child
         .kill()
@@ -393,13 +381,16 @@ fn run_crash_child(db: &Path, mode: &str) -> (PathBuf, PathBuf, PathBuf) {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap_or_else(|_| unreachable!("{mode}: child spawn failed"));
-    if !wait_for(&ack) {
-        let _ = child.kill();
-        let _ = child.wait();
+    while !ack.exists() {
+        let child_exited = child
+            .try_wait()
+            .unwrap_or_else(|_| unreachable!("{mode}: child status read failed"))
+            .is_some();
         assert!(
-            ack.exists(),
-            "{mode}: child missed the crash acknowledgement"
+            !child_exited,
+            "{mode}: child exited before crash acknowledgement"
         );
+        std::thread::yield_now();
     }
     kill_and_prove_death(child, mode);
     (ack, called, calls_file)
@@ -429,6 +420,7 @@ fn intent_transaction_failure_rolls_back_event_and_never_calls_provider() {
         store: &store,
         events: &bus,
         price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+        prices: None,
         max_daily_spend_usd_micros: UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
         clock: &FixedClock,
         gate: &OPEN_GATE,
@@ -680,5 +672,150 @@ fn fallback_and_repair_child_intents_recover_ambiguous_without_redispatch() {
         drop(store);
     }
 
+    fs::remove_dir_all(dir).unwrap_or_else(|_| unreachable!());
+}
+
+#[test]
+fn terminal_blob_stage_failure_rolls_back_response_and_usage_then_recovers_ambiguous() {
+    let id = NEXT.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!(
+        "serea-p4f-terminal-rollback-{}-{id}",
+        std::process::id()
+    ));
+    fs::create_dir(&dir).unwrap_or_else(|_| unreachable!());
+    let db = dir.join("blob-failure.sqlite");
+    let store = Store::open(&db, &FixedClock).unwrap_or_else(|_| unreachable!());
+    let bus = EventBus::new(IncrementingIds(10));
+    let provider = Arc::new(CrashProvider {
+        ack: dir.join("unused-ack"),
+        called: dir.join("called"),
+        calls_file: dir.join("calls"),
+        calls: AtomicUsize::new(0),
+        mode: "complete".into(),
+        block_in_generate: false,
+    });
+    let router = router(provider.clone());
+    let prepared = call();
+    let session = block_on(router.route(&prepared)).unwrap_or_else(|_| unreachable!());
+    let context = ModelDispatchContext {
+        store: &store,
+        events: &bus,
+        price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+        prices: None,
+        max_daily_spend_usd_micros: UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        clock: &FixedClock,
+        gate: &OPEN_GATE,
+    };
+    Window::AfterModelResponseBlob
+        .arm(Action::Fail(StoreError::Sqlite))
+        .unwrap_or_else(|_| unreachable!());
+
+    assert!(matches!(
+        block_on(router.dispatch_chat_text(&prepared, &session, &context)),
+        Err(ModelDispatchFailure::Storage(StoreError::Sqlite))
+    ));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    let request_id = serea_protocol::RequestId::new(
+        fs::read_to_string(dir.join("called")).unwrap_or_else(|_| unreachable!()),
+    )
+    .unwrap_or_else(|_| unreachable!());
+    let attempt = store
+        .get_model_call_attempt(&request_id)
+        .unwrap_or_else(|_| unreachable!())
+        .unwrap_or_else(|| unreachable!());
+    assert_eq!(attempt.state, ModelAttemptState::DispatchIntent);
+    assert!(attempt.response_blob.is_none());
+    assert!(
+        store
+            .model_usage_for_request(&request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .is_none()
+    );
+    assert!(
+        store
+            .get_model_call_response(&request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .is_none()
+    );
+    let before = EventBus::replay(&store, None, None, 8).unwrap_or_else(|_| unreachable!());
+    assert!(
+        matches!(before.items.as_slice(), [ReplayItem::Event { event }] if event.kind == EventKind::ModelCalled)
+    );
+    assert_eq!(
+        recover_unresolved_model_calls(&store, &bus, &FixedClock)
+            .unwrap_or_else(|_| unreachable!()),
+        1
+    );
+    let recovered = store
+        .get_model_call_attempt(&request_id)
+        .unwrap_or_else(|_| unreachable!())
+        .unwrap_or_else(|| unreachable!());
+    assert_eq!(recovered.state, ModelAttemptState::Ambiguous);
+    let after = EventBus::replay(&store, None, None, 8).unwrap_or_else(|_| unreachable!());
+    assert!(
+        matches!(after.items.as_slice(), [ReplayItem::Event { event: called }, ReplayItem::Event { event: failed }] if called.kind == EventKind::ModelCalled && failed.kind == EventKind::ModelFailed)
+    );
+
+    drop(context);
+    drop(router);
+    drop(provider);
+    drop(store);
+    fs::remove_dir_all(dir).unwrap_or_else(|_| unreachable!());
+}
+
+#[test]
+fn model_called_event_insert_commit_failure_rolls_back_intent_and_never_calls_provider() {
+    let id = NEXT.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!(
+        "serea-p4f-event-rollback-{}-{id}",
+        std::process::id()
+    ));
+    fs::create_dir(&dir).unwrap_or_else(|_| unreachable!());
+    let db = dir.join("event-failure.sqlite");
+    let store = Store::open(&db, &FixedClock).unwrap_or_else(|_| unreachable!());
+    let bus = EventBus::new(IncrementingIds(10));
+    let provider = Arc::new(CrashProvider {
+        ack: dir.join("unused-ack"),
+        called: dir.join("called"),
+        calls_file: dir.join("calls"),
+        calls: AtomicUsize::new(0),
+        mode: "rollback".into(),
+        block_in_generate: false,
+    });
+    let router = router(provider.clone());
+    let prepared = call();
+    let session = block_on(router.route(&prepared)).unwrap_or_else(|_| unreachable!());
+    let context = ModelDispatchContext {
+        store: &store,
+        events: &bus,
+        price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+        prices: None,
+        max_daily_spend_usd_micros: UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        clock: &FixedClock,
+        gate: &OPEN_GATE,
+    };
+    Window::BeforeCommit
+        .arm(Action::Fail(StoreError::Sqlite))
+        .unwrap_or_else(|_| unreachable!());
+
+    assert!(matches!(
+        block_on(router.dispatch_chat_text(&prepared, &session, &context)),
+        Err(ModelDispatchFailure::Storage(StoreError::Sqlite))
+    ));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    assert!(!dir.join("called").exists());
+    assert!(
+        store
+            .list_unfinished_model_call_attempts()
+            .unwrap_or_else(|_| unreachable!())
+            .is_empty()
+    );
+    let events = EventBus::replay(&store, None, None, 8).unwrap_or_else(|_| unreachable!());
+    assert!(events.items.is_empty());
+
+    drop(context);
+    drop(router);
+    drop(provider);
+    drop(store);
     fs::remove_dir_all(dir).unwrap_or_else(|_| unreachable!());
 }

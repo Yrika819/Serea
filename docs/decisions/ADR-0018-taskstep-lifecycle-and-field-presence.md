@@ -96,7 +96,7 @@ which refuses decimal/exponent spellings even when integer-valued.
 | `WAITING` | Suspended on a human, a grant, or a schedule. | No |
 | `SUCCEEDED` | Completed successfully. | Yes |
 | `FAILED` | Completed unsuccessfully. | Yes |
-| `RECONCILED_ABSENT` | Closed as confirmed-absent by read-back ([Bounds Protocol §6.3](../protocols/10-bounds-protocol.md#63-deadline-exceeded-on-an-effecting-capability-reconciles)). | Yes |
+| `RECONCILED_ABSENT` | Closed as confirmed-absent by future P8 reconciliation contract ([Bounds Protocol §6.3](../protocols/10-bounds-protocol.md#63-ambiguous-effect-and-reconciliation-future-p8-closure)). | Yes |
 
 The wire `StepStatus` stays an open code. `serea-task-engine` defines the closed
 lifecycle for its own state machine, mirroring how `AssistantTask.state` is a

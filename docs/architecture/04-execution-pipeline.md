@@ -1,12 +1,11 @@
 # Execution Pipeline
 
-Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.6.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-08
 
-This document traces one user request from utterance to durable outcome, stage
-by stage, with two worked examples: a read-only task that needs no approval, and
-an effecting task that does. It names the crate that owns each stage, the failure
-each stage can produce, and exactly where a crash is safe, needs an idempotency
-key, or needs reconciliation.
+This document describes the future end-to-end target flow. P5 stops after
+PreparedActionV1, P6 stops after authorization, and P8 is the first phase
+permitted to invoke providers. P8 result, receipt, evidence, and reconciliation
+details require contract closure before any provider invocation.
 
 The authority flow these stages implement is
 [Capability Protocol §1](../protocols/01-capability-protocol.md#1-core-principle).
@@ -15,6 +14,11 @@ The authority flow these stages implement is
 
 ## 1. The ten stages
 
+Stages 8–9 and detailed execution examples below are target-state illustrations
+only. Their ActionResult matrix, receipt timing, evidence persistence, and
+reconciliation rules are not frozen for provider invocation; P8 must close
+those details before its first invoke. They do not expand P5/P6 authority.
+
 > Persist before advancing. Every arrow below is a durable commit or a refusal.
 
 | # | Stage | Owning crate | Governing protocol | Can produce |
@@ -22,12 +26,12 @@ The authority flow these stages implement is
 | 1 | Ingest and authenticate the device frame | `serea-core` | [Device §4](../protocols/07-device-protocol.md#4-sessions-and-authentication), §5 | Session refusal; duplicate drop |
 | 2 | Create the task | `serea-task-engine` | [Task §2](../protocols/02-task-protocol.md#2-assistanttask) | `BOUND_EXCEEDED_CONCURRENCY` |
 | 3 | Plan | `serea-task-engine` + `serea-model-router` | [Model §7](../protocols/03-model-protocol.md#7-structured-output-validation-and-bounded-repair) | `MODEL_OUTPUT_INVALID`, `MODEL_BUDGET_EXHAUSTED` |
-| 4 | Validate structured output and build `ActionRequest` | `serea-task-engine` | [Model §4.1](../protocols/03-model-protocol.md#41-the-trust-boundary-stated-precisely), [Capability §4.2](../protocols/01-capability-protocol.md#42-host-resolved-fields) | `VALIDATION`, `MODEL_SCHEMA_VIOLATION` |
-| 5 | Resolve the capability | `serea-capability` | [Capability §10](../protocols/01-capability-protocol.md#10-capability-registry) | `UNKNOWN_CAPABILITY`, `CAPABILITY_UNAVAILABLE` |
-| 6 | Evaluate policy | `serea-policy` via `serea-capability` | [Policy §4.2](../protocols/04-policy-protocol.md#42-evaluation-order) | `POLICY_DENIED` |
-| 7 | Obtain approval, if required | `serea-capability` (ledger) + `serea-core` (delivery) | [Approval §2](../protocols/05-approval-protocol.md#2-approvalrequest), §4 | `APPROVAL_REQUIRED`, `APPROVAL_DENIED`, `APPROVAL_EXPIRED` |
-| 8 | Invoke the provider | `serea-capability` → `providers/*` | [Capability §9](../protocols/01-capability-protocol.md#9-provider-interface) | `PROVIDER_ERROR`, `PROVIDER_TIMEOUT`, `RATE_LIMITED`, `AUTH_EXPIRED`, `AMBIGUOUS` |
-| 9 | Receipt, evidence, event, durable commit | `serea-capability` + `serea-event-bus` + `serea-storage` | [Capability §5.1](../protocols/01-capability-protocol.md#51-receipt), [Event §5](../protocols/06-event-protocol.md#5-ordering-and-delivery) | Host invariant violation → `BLOCKED` |
+| 4 | Validate ToolCallProposalV1, registry/schema, classification; build PreparedActionV1 (P5) | `serea-capability` + `serea-task-engine` | [Model §4.1](../protocols/03-model-protocol.md#41-the-trust-boundary-stated-precisely), [ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md) | typed refusal, `MODEL_SCHEMA_VIOLATION` |
+| 5 | Resolve task-pinned registry binding and live availability (P5) | `serea-capability` | [Capability §10](../protocols/01-capability-protocol.md#10-capability-registry-and-p5p6p8-boundary) | `UNKNOWN_CAPABILITY`, `CAPABILITY_UNAVAILABLE` |
+| 6 | Evaluate policy (P6) | `serea-policy` | [Policy §4.2](../protocols/04-policy-protocol.md#42-evaluation-order) | `POLICY_DENIED` |
+| 7 | Obtain approval, if required (P6) | P6 authorization + `serea-core` delivery | [Approval §2](../protocols/05-approval-protocol.md#2-approvalrequest), §4 | `APPROVAL_REQUIRED`, `APPROVAL_DENIED`, `APPROVAL_EXPIRED` |
+| 8 | Recheck mutable host facts, commit dispatch intent, invoke provider (P8 only) | Future `serea-capability` → `providers/*` | [ADR-0036](../decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md) | Future provider errors and ambiguity outcomes |
+| 9 | Validate result, receipt/evidence, durable commit (P8 only; exact contract deferred) | Future `serea-capability` + Event Bus + Storage | P8 contract closure required before provider invocation | Future typed result/outcome |
 | 10 | Deliver to the device and advance the task | `serea-core` + `serea-event-bus` | [Device §8](../protocols/07-device-protocol.md#8-activity-timeline-feed) | Delivery deferred; task `BLOCKED` on `DEVICE_OFFLINE` |
 
 ---
@@ -134,13 +138,16 @@ retried. Exhaustion is hard validation failure. `MODEL_OUTPUT_INVALID` means
 host validation failed; `MODEL_REPAIRED` means repair output passed host
 validation. No partial acceptance, ever.
 
-### Stage 4 — Schema validation and `ActionRequest` construction
+### Stage 4 — Proposal validation and `PreparedActionV1` construction (P5)
 
-This is the mandatory non-bypassable stage between model output and anything
-else. The host resolves `capability_version`, `risk_class`, `side_effect_class`,
-`required_authorization`, `provider_id`, `arguments_digest`, `data_class` and
-`deadline_ms`. Any of these appearing in model output is dropped and recorded as
-`MODEL_SCHEMA_VIOLATION`.
+This is the mandatory host-only stage between model output and capability
+authorization. The exact ToolCallProposalV1 shape is `{version:"1",
+capability_id, arguments}`. Any unknown or authority-bearing field rejects the
+whole proposal and records sanitized `MODEL_SCHEMA_VIOLATION` metadata; no
+ActionRequest or PreparedAction is produced. The host resolves immutable
+PreparedActionV1 from the Task-pinned generation, trusted schema, and trusted
+argument classification. The example ActionRequest below is a future P8
+dispatch representation, not a P5 output.
 
 ```json
 {
@@ -197,13 +204,15 @@ assistant use produces zero approval prompts for read-only work.
 
 Skipped. `required_authorization` is `NONE` for `calendar.events.list`.
 
-### Stage 8 — Pre-invocation checks and provider invocation
+### Stage 8 — Pre-invocation checks and provider invocation (P8 only)
 
-After policy permits the call and any required approval has been granted, the
-host performs duplicate suppression, then the durable repeated-action check,
-then acquires the execution lease immediately before invocation. A suppressed
-duplicate returns the prior receipt without a new provider call; denied or
-pending actions do not consume the repeated-action count.
+After P6 authorization, future P8 rechecks Task cancellation, live capability
+enablement/removal, provider availability, deadline, and approval/grant
+validity. In one SQLite transaction it checks duplicate suppression, repeated-
+action and tool-call bounds, reserves applicable idempotency identity, and
+commits dispatch intent. Provider IO occurs only after commit. Duplicate and
+pre-dispatch refusals consume no tool-call unit; each committed invoke intent
+does, including retries and reconciliation invokes.
 
 `serea-capability` issues `CapabilityProvider::invoke` to
 `providers/serea-provider-calendar`. The provider resolves its `CredentialHandle`
@@ -474,15 +483,15 @@ one.
 | Deliberate second execution | A **new** `StepId`, therefore a new key. The host never reuses a key to mean "again" |
 | `CONDITIONAL` capability retried on a *retryable* failure | Re-issue the same durable step with the **same** key. Only after reconciliation confirms absence may the host close the old step and create a new `StepId` and key, subject to fresh policy/approval |
 
-### 6.3 Where reconciliation is required
+### 6.3 Reconciliation — future P8 contract closure required
 
 > Blunt retry on `AMBIGUOUS` is the single highest-severity anti-pattern in this
 > system, because it converts one uncertain effect into two certain ones.
 
 | Trigger | Reconciliation procedure | Outcomes |
 | --- | --- | --- |
-| `AMBIGUOUS` on `NON_REPLAYABLE` or `CONDITIONAL` | Read back through an `IDEMPOTENT` read-only capability, using the stored `provider_reference` or a natural-key lookup | **Occurred** → synthesize a receipt, `CAPABILITY_RECONCILED`, continue. **Absent** → retry is now safe only if `replay_safety` permits it. **Unknown** → `BLOCKED` with `AMBIGUOUS_EFFECT` |
-| `PROVIDER_TIMEOUT` on an effecting capability | Identical to the `AMBIGUOUS` path | Same three outcomes |
+| `AMBIGUOUS` on an effecting capability | Explicit host-reviewed reconciliation binding; details deferred to P8 ADR | Never blind-retry; no inferred target or synthesized receipt |
+| `PROVIDER_TIMEOUT` on an effecting capability | Same future P8 requirement | Exact outcomes deferred to P8 closure |
 | Crash between grant validation and grant consumption | Consumption is keyed to `step_id`; a repeat consumption is a no-op | Exactly one decrement, ever |
 | Crash between receipt persistence and task advance | Receipt present in durable state means the effect happened | Commit the state transition; the task proceeds |
 | Crash after `WAITING_APPROVAL` delivery, before any response | Approval row is `PENDING` | Re-render on reconnect; never auto-resolve |

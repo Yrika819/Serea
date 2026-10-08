@@ -1,6 +1,6 @@
 # Trust Boundaries
 
-Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.6.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-08
 
 This document is the **architecture** view of trust boundaries: where the
 structural seams are, what crosses each one, and which mechanism authenticates
@@ -96,9 +96,9 @@ The mandatory non-bypassable stage between this boundary and any effect is:
 ```text
 ModelResponse.structured
   -> schema validation against the host-defined response_format
-  -> envelope validation: host resolves capability_id, drops unknown fields,
-     records MODEL_SCHEMA_VIOLATION on any host-resolved field the model emitted
-  -> ActionRequest
+  -> closed ToolCallProposalV1 validation: any unknown/authority field rejects
+     the whole proposal and emits sanitized MODEL_SCHEMA_VIOLATION metadata
+  -> PreparedActionV1 after pinned registry/schema and trusted classification
 ```
 
 ### TB-3: Core to external service
@@ -108,11 +108,11 @@ ModelResponse.structured
 
 | Property | Value |
 | --- | --- |
-| What crosses | Validated `ActionRequest` inbound to a provider; provider credentials outbound (resolved inside `TB-4`); `ActionResult`, `Evidence`, `SideEffectReceipt`, `ActionError` inbound to the host |
+| What crosses | At P8 only, authorized pinned action inbound to a provider; provider credentials outbound (resolved inside `TB-4`); result/evidence/receipt inbound to the host |
 | Authentication | OAuth / API credentials held in the macOS Keychain, resolved to bytes inside `TB-4` and used for exactly one call |
 | Authorization | **None of it comes from the network.** The provider does not decide whether it may act; the policy engine and approval ledger already did, and the provider cannot read either |
-| Structured exclusion | `input_schema` is `additionalProperties: false` with an explicit property allowlist, compiled and checked at registration. An undeclared property is a `VALIDATION` error before the policy engine and before the provider |
-| Failure behaviour | A provider that cannot honour its descriptor marks itself `Degraded` and stops advertising the capability; the registry treats it `UNAVAILABLE`. It never returns loosely-shaped data |
+| Structured exclusion | Trusted runtime argument classification is primary; closed schemas and reviewed property allowlists are defense in depth. Unmanifested advertisements fail provider registration |
+| Failure behaviour | Provider health affects availability only. Descriptor authority is sampled at registry-generation construction; degraded/unavailable pinned providers return `CAPABILITY_UNAVAILABLE` without silent rebind |
 | Governing protocol | [Capability Protocol §9](../protocols/01-capability-protocol.md#9-provider-interface), §3.1 |
 | Architecture owner | Each `providers/serea-provider-*` crate; routing by `serea-capability` |
 | Invariants | C1, C2, C4, C7, C8 |
@@ -271,23 +271,23 @@ settings.
 
 ```mermaid
 flowchart TB
-    A["Model output - untrusted proposal"] --> B["Structured ActionRequest - host-resolved fields filled by host"]
-    B --> C{"Schema validation - fail closed"}
+    A["Model output - untrusted proposal"] --> B["Closed ToolCallProposalV1"]
+    B --> C{"P5 proposal and schema validation"}
     C -->|"invalid"| C1["VALIDATION - MODEL_SCHEMA_VIOLATION"]
     C -->|"valid"| D{"Capability Registry lookup"}
     D -->|"absent or version unsupported"| D1["UNKNOWN_CAPABILITY or CAPABILITY_UNAVAILABLE"]
-    D -->|"present and enabled"| F{"Policy Engine - deterministic"}
+    D -->|"present and live-enabled"| P["Immutable PreparedActionV1 (P5)"]
+    P --> F{"P6 Policy Engine - deterministic"}
     F -->|"Deny"| F1["POLICY_DENIED - absolute - no grant can override"]
     F -->|"RequireHandoff"| F2["CREDENTIAL class - human channel"]
-    F -->|"RequireApproval"| G{"Approval decision"}
-    G -->|"no valid task-bound grant"| G1["WAITING_APPROVAL - ApprovalRequest"]
+    F -->|"RequireApproval"| AP{"P6 Approval decision"}
+    AP -->|"no valid task-bound grant"| G1["WAITING_APPROVAL - ApprovalRequest"]
     G1 -->|"grant with six bounds; revalidate exact digest"| G2["Resume eligible step"]
-    G -->|"valid grant"| G2
-    F -->|"Allow"| E{"Duplicate suppression, then repeat bound"}
-    G2 --> E
+    AP -->|"valid grant"| G2
+    F -->|"Allow or grant satisfied"| E["P8 duplicate, repeat, budget and durable dispatch intent"]
     E -->|"duplicate"| E1["DUPLICATE_SUPPRESSED - prior receipt returned"]
     E -->|"repeat bound exceeded"| E2["BOUND_EXCEEDED_REPEATED_ACTION"]
-    E -->|"clear"| H["Acquire lease - one effecting step per task"]
+    E -->|"intent committed"| H["P8 provider invoke"]
     H --> I["Consume grant atomically if required, then invoke provider"]
     I -->|"AMBIGUOUS"| I1["Reconcile by read-back or BLOCKED - never blind retry"]
     I -->|"result"| J["Output schema validation - fail closed"]
@@ -324,16 +324,16 @@ discouraged.
 | # | A model cannot | Because | Protocol |
 | --- | --- | --- | --- |
 | 1 | Cause a side effect without schema validation, registry lookup, policy, and approval | The execution flow has no bypass edge | [Capability §1](../protocols/01-capability-protocol.md#1-core-principle), invariant C1 |
-| 2 | Grant itself capabilities, or enable a disabled one | The registry is built at startup from provider descriptors and has an admin-plane-only write path | [Capability §10](../protocols/01-capability-protocol.md#10-capability-registry) |
+| 2 | Grant itself capabilities, or enable a disabled one | The host manifest is authoritative; overlays are host-admin mutations | [Capability §10](../protocols/01-capability-protocol.md#10-capability-registry-and-p5p6p8-boundary) |
 | 3 | Register a capability at runtime | No dynamic registration from model output, plugin discovery, or user prompts | [Capability §1](../protocols/01-capability-protocol.md#1-core-principle) |
 | 4 | Select, suggest, lower, annotate or argue for its own `risk_class` | `ActionRequest` has no risk field; the field is host-resolved, and a model emitting one produces `MODEL_SCHEMA_VIOLATION` | [Policy §1](../protocols/04-policy-protocol.md#1-core-principle), [Capability §4.2](../protocols/01-capability-protocol.md#42-host-resolved-fields) |
 | 5 | Broaden a scope, widen a grant, extend an expiry, or raise `max_uses` | The six bounds are host-constructed; device-supplied ceilings are clamped to the request's own bounds | [Approval §3.1](../protocols/05-approval-protocol.md#31-the-six-bounds), [Device §5.2](../protocols/07-device-protocol.md#52-approval_response) |
-| 6 | Change a policy rule, a risk class default, or the disabled overlay | Policy mutation is reachable only from the local admin surface and is audited | [Policy §7](../protocols/04-policy-protocol.md#7-policy-changes-are-audited) |
+| 6 | Change a policy rule, risk class descriptor, or live capability overlay | Policy rules use `POLICY_CHANGED`; descriptor/overlay mutations use `CAPABILITY_REGISTRY_CHANGED`; both are host-admin mutations | [Policy §7](../protocols/04-policy-protocol.md#7-policy-changes-are-audited), [Capability §10](../protocols/01-capability-protocol.md#10-capability-registry-and-p5p6p8-boundary) |
 | 7 | Fabricate an approval or a grant | There is no `MODEL` value of `granted_by`; grants are minted only on an authenticated `APPROVAL_RESPONSE` | [Approval §3.3](../protocols/05-approval-protocol.md#33-granted_by) |
 | 8 | Fabricate success, a receipt, or evidence | Model self-report of having acted is never evidence; receipts are provider-produced and recorded only from an `ActionResult` | [Model §1](../protocols/03-model-protocol.md#1-core-principle), [GoalLatch §7](../protocols/08-goallatch-adapter-protocol.md#7-result-and-evidence-contract) |
 | 9 | Create a new root operation, or make root available | The `OPTIONAL_ROOT` set is enumerated in descriptors; root requires approval always and no rule can auto-grant it | [Policy §4.3](../protocols/04-policy-protocol.md#43-additional-standing-rules) |
 | 10 | Invoke arbitrary host, shell, or filesystem access | No `execute_arbitrary_shell` capability exists at any risk class for any model; there is no path-naming capability | [Capability §1](../protocols/01-capability-protocol.md#1-core-principle), invariant C2 |
-| 11 | Reach a credential | `Secret<T>` is not `Serialize`; capability `input_schema` is `additionalProperties: false` with an allowlist; `CREDENTIAL` output is impossible | [Data Classification §4](../protocols/09-data-classification-protocol.md#4-credential-exclusion), DC8 |
+| 11 | Reach a credential | `Secret<T>` is not `Serialize`; trusted runtime classification refuses CREDENTIAL/unknown arguments; closed schemas are defense in depth | [Data Classification §4](../protocols/09-data-classification-protocol.md#4-credential-exclusion-and-classified-capability-arguments), DC8 |
 | 12 | Ask for a more capable or more privileged model | Fallback is a configured, bounded, logged routing decision never triggered by response *content* | [Model §6.1](../protocols/03-model-protocol.md#61-routing-is-not-escalation) |
 | 13 | Reach `codex` under any input | It appears in no routing chain, and the only path to it is a `DELEGATED_HOST_GOAL` reaching `host.goal.*`, which has no provider at P0; the offline fake is planned for P15 | [Model §8](../protocols/03-model-protocol.md#8-codex-exclusion), [GoalLatch §5.1](../protocols/08-goallatch-adapter-protocol.md#51-codex_allowed) |
 | 14 | Self-terminate the loop, extend its own budget, or choose to retry | Termination is the host's; bounds are host-set, host-read-from-durable-state, and never disclosed to the model | [Bounds §1](../protocols/10-bounds-protocol.md#1-why-the-host-owns-the-loop) |

@@ -1,6 +1,6 @@
 # Serea Architecture
 
-Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.6.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-08
 
 This directory is the architecture package for Serea Core. It describes how the
 frozen protocols in [`docs/protocols/`](../protocols/00-protocol-index.md) are
@@ -56,9 +56,9 @@ Neither is allowed to quietly widen the other.
 
 **Three version axes, never collapsed** ([Protocol Index §4](../protocols/00-protocol-index.md#4-versioning)):
 
-| Axis | Current value at `serea-arch/2.5.0` | Governs |
+| Axis | Current value at `serea-arch/2.6.0` | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/2.5.0` | The whole contract set, including this package |
+| Architecture version | `serea-arch/2.6.0` | The whole contract set, including this package |
 | Capability version | Per-descriptor SemVer, e.g. `calendar.events.list` at `1.2.0` | One capability's input/output contract |
 | Wire protocol version | `serea.action/2`, `serea.task/2`; `serea.model/1`, `serea.policy/1`, `serea.approval/1`, `serea.event/1`, `serea.device/2`, `serea.goallatch/1`, `serea.data/1`, `serea.bounds/1`, `serea.scheduler/1` | One transport or serialization surface; envelope version stays 1 |
 
@@ -115,14 +115,22 @@ Scheduler handoff to future P6. Scheduler does not apply approval outcomes or
 transition tasks. This advanced the architecture to `serea-arch/2.4.0`; Event,
 Scheduler, Approval, and Task wire surfaces remain unchanged.
 
-### 3.7 Current architecture/2.5 contract
+### 3.7 Historical architecture/2.5 contract
 
 Accepted ADR-0031 through ADR-0033 close P4 Model Router routing, egress,
 dispatch durability/accounting, structured validation, repair, and fallback
-contracts. This is an additive architecture contract closure; model, event,
-and bounds wire surfaces remain unchanged. The architecture advances to
-`serea-arch/2.5.0`. P4 runtime remains not started: no router crate, migration
-0003, provider network code, or model dispatch is included.
+contracts. This was an additive architecture contract closure; model, event,
+and bounds wire surfaces remained unchanged at that version.
+
+### 3.8 Current architecture/2.6 contract
+
+Accepted ADR-0034 through ADR-0036 close P5 owner decisions: host manifest and
+immutable registry generations, closed tool proposal and trusted schema/
+classification, PreparedActionV1, and the P5/P6/P8 boundary. Architecture
+advances to `serea-arch/2.6.0`; `serea.action/2` and other wire majors remain
+unchanged. P5 runtime, migration 0004, and provider invocation have not started.
+P8 result/receipt/evidence/reconciliation details are deferred and are not P5
+blockers.
 
 ## 4. Identifier discipline in this package
 

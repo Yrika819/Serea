@@ -1,6 +1,6 @@
 # Event Protocol
 
-Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.5.0`
+Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.6.0`
 
 Events are Serea's structured record of what it did and what it observed. They
 are the substrate for the Android Activity Timeline, the audit trail, and the
@@ -116,14 +116,14 @@ repurposing one is major.
 
 | Kind | When |
 | --- | --- |
-| `CAPABILITY_REQUESTED` | An `ActionRequest` was constructed |
-| `CAPABILITY_COMPLETED` | A provider returned; status in payload |
-| `CAPABILITY_DENIED` | Policy returned `Deny` |
-| `CAPABILITY_UNAVAILABLE` | Backing condition absent |
+| `CAPABILITY_REQUESTED` | Future P8 dispatch intent was durably committed |
+| `CAPABILITY_COMPLETED` | Future P8 provider result was accepted and committed; status in payload |
+| `CAPABILITY_DENIED` | P6 policy/authorization returned a typed denial |
+| `CAPABILITY_UNAVAILABLE` | Typed P5 availability refusal or future P8 pre-dispatch unavailable condition |
 | `CAPABILITY_DUPLICATE_SUPPRESSED` | An equivalent action was already done; the prior result/receipt is returned and no provider invocation occurs |
 | `CAPABILITY_RECEIPT_RECORDED` | A `SideEffectReceipt` was persisted |
 | `CAPABILITY_RECONCILED` | An `AMBIGUOUS` result was resolved by read-back |
-| `MODEL_SCHEMA_VIOLATION` | Model-authored data included invalid host-resolved fields or attempted to supply authority fields |
+| `MODEL_SCHEMA_VIOLATION` | Whole ToolCallProposalV1 rejected for undeclared/authority fields; metadata may contain TaskId, optional StepId/model RequestId, stable violation code, offending field names, and count only |
 | `TOOL_DUPLICATE_WINDOW_BYPASSED` | A permitted `SYSTEM` resync bypassed duplicate suppression under Bounds Protocol §5.1 |
 
 ### 3.4 Approval activity
@@ -152,12 +152,21 @@ payload retain ordinary rendering behavior. The SereaEvent shape and
 
 | Kind | When |
 | --- | --- |
-| `POLICY_CHANGED` | Rules or the disabled overlay changed |
+| `POLICY_CHANGED` | Policy rules changed |
+| `CAPABILITY_REGISTRY_CHANGED` | Registry generation, live enabled/removal overlay, experimental opt-in/out, or manifest capability removal/reactivation changed; metadata only |
 | `BOUND_EXCEEDED` | A host bound was hit; payload includes `bound_name`, limit, and observed value. For repeated-action exhaustion, `bound_name` is `max_identical_action_repeats`. |
 | `BOUNDS_CHANGED` | An administrator raised a bound; includes before/after diff, actor, and reason |
 | `POLICY_VIOLATION_ATTEMPT` | A request tried something the policy forbids |
 | `MODEL_BUDGET_EXHAUSTED` | The model-call budget was exhausted |
 | `MODEL_FALLBACK_EXHAUSTED` | The configured fallback bound was exhausted |
+
+`CAPABILITY_REGISTRY_CHANGED` is metadata-only: allowed details include
+registry generation, optional CapabilityId, stable change kind, actor, and
+descriptor revision/digest when applicable. It never includes schema bytes,
+descriptions, arguments, or secrets. A durable registry/admin mutation and its
+event append commit in one SQLite transaction through fixed upper-layer
+composition; Storage does not depend on Event Bus. Registry event payloads
+follow the one-year admin/audit retention class.
 
 ### 3.6 Device activity
 
@@ -347,7 +356,7 @@ corresponding `APPROVAL_CONSUMED` event was never exercised.
 | Model activity | 30 days |
 | Provider sync | 7 days |
 | Device connect/disconnect | 30 days |
-| `POLICY_CHANGED`, `POLICY_VIOLATION_ATTEMPT`, `BOUNDS_CHANGED` | 1 year |
+| `POLICY_CHANGED`, `CAPABILITY_REGISTRY_CHANGED`, `POLICY_VIOLATION_ATTEMPT`, `BOUNDS_CHANGED` | 1 year |
 | Scheduler lifecycle and occurrence events | Schedule retention; an occurrence's task events follow task retention |
 | Event history and sequence-integrity events | 1 year |
 

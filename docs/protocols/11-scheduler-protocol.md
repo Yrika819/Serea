@@ -1,6 +1,6 @@
 # Scheduler Protocol
 
-Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.5.0`** · Implementation: **P3 closed and merged**
+Protocol ID: `PROTO-SCHED` · Surface: `serea.scheduler/1` · Status: **FROZEN, current architecture `serea-arch/2.6.0`** · Implementation: **P3 closed and merged**
 
 This protocol defines durable schedules and event-driven wakeups that may create
 or resume Serea tasks. The scheduler is a trigger and persistence subsystem, not

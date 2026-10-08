@@ -1,6 +1,6 @@
 # Bounds Protocol
 
-Protocol ID: `PROTO-BOUNDS` · Surface: `serea.bounds/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.5.0`
+Protocol ID: `PROTO-BOUNDS` · Surface: `serea.bounds/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.6.0`
 
 This protocol makes "bounded orchestration" concrete. It owns every bound the
 host enforces on models, tools, retries, tasks, approvals, and the device link.
@@ -176,6 +176,14 @@ before scheduling; they need no B3 table row. A structural constraint cannot be
 used as an undeclared operational bound. Never truncate/clamp/coerce input to fit.
 Anything counting work belongs in the authoritative table.
 
+`max_tool_calls_per_task` is consumed once per durably committed provider
+dispatch intent: each primary invoke, same-Step retry invoke, and
+reconciliation capability invoke consumes one unit. Proposal validation,
+PreparedAction creation, policy denial, approval pending/denial/expiry,
+duplicate suppression, pre-dispatch refusal, and provider-unavailable refusal
+consume none. A committed intent is never refunded. P5/P6 do not dispatch; P8
+implements the counter, and migration 0004 has no tool-call count column.
+
 Accepted ADR-0020 is a semantic architecture-minor clarification, not editorial
 patch. No resource-bound values are introduced; payload/blob/attachment bytes,
 object counts and decompression limits remain an open separate decision.
@@ -229,6 +237,11 @@ they were told about. Only a new task sees the new value.
 ---
 
 ## 4. Repeated-action detection
+
+This section freezes the future P8 execution rule. P5 and P6 do not implement
+repeated-action state or checks. P5 migration 0004 contains no repeat history.
+P8 performs this check only after P6 authorization and immediately before
+durable dispatch intent, in the order specified by ADR-0036.
 
 This is the mechanism behind `max_identical_action_repeats`, and it exists
 because a *loop* — not a single call — is how a model burns a budget.
@@ -322,6 +335,12 @@ protocol does not add a member to it.
 
 ## 5. Duplicate suppression
 
+This section freezes the future P8 execution rule. P5 does not implement
+duplicate reservations or dispatch state. The identity and 24-hour global
+window below remain unchanged; capability version is intentionally excluded
+from the duplicate key. Cross-version suppression is accepted. P8 must close
+transaction/recovery details before provider invocation.
+
 Duplicate suppression answers a different question from §4: not "is this task
 looping?" but "has this exact effect already happened?"
 
@@ -394,7 +413,7 @@ the model supplied ([Capability Protocol §4.2](01-capability-protocol.md#42-hos
 ```
 effective_deadline_ms = min(
     capability_descriptor.max_duration_ms,
-    model_call_deadline_ms,               // default 30000
+    any_stricter_host_or_caller_deadline,
     remaining_task_wall_clock_ms           // active time remaining (§6.2)
 )
 ```
@@ -403,6 +422,10 @@ A deadline never extends the remaining task budget, and a step's deadline never
 exceeds it. A task with 4 s of active time left issues no 15 s provider call; it
 fails with `BOUND_EXCEEDED_WALL_CLOCK` and records what it knew, per
 [Task Protocol §5](02-task-protocol.md#5-execution-rules).
+The deadline is host-resolved from the pinned descriptor maximum, remaining
+Task budget, and any stricter host/caller deadline. There is no
+`model_call_deadline_ms` in capability deadline calculation and no model-
+supplied deadline.
 
 ### 6.2 The wall-clock bound measures active time
 
@@ -420,31 +443,17 @@ the user for not being present. Waiting time is bounded separately, by the
 approval's own `expires_at`, and an approval that expires fails the step
 explicitly as `EXPIRED`, not `DENIED`.
 
-### 6.3 Deadline exceeded on an effecting capability reconciles
+### 6.3 Ambiguous effect and reconciliation — future P8 closure
 
-A `PROVIDER_TIMEOUT` on a capability whose `side_effect_class != "NONE"` means
-the provider may or may not have effected the change. The host therefore
-**reconciles rather than retries**:
-
-1. The call is abandoned; the step records `PROVIDER_TIMEOUT` evidence with the
-   descriptor's `max_duration_ms` and the elapsed time.
-2. The host attempts **read-back** through a read-only capability, using the
-   stored `provider_reference` or a natural-key lookup
-   ([Capability Protocol §6.2](01-capability-protocol.md#62-the-ambiguous-rule)).
-3. Confirmed occurred → synthesize a receipt and continue. Confirmed absent →
-   close the attempted step as `RECONCILED_ABSENT`; if `replay_safety` permits
-   another execution, create a new `StepId` and derive a new idempotency key.
-   The replacement step passes policy and any required approval again. Crash
-   replay of the same still-ambiguous step keeps its original key; it is never
-   a new attempt against an uncertain effect. Still unknown → task to `BLOCKED`
-   with `blocked_reason: AMBIGUOUS_EFFECT` and a human resolves it.
-4. Retrying blind would convert one uncertain effect into two certain ones. A
-   generous timeout never changes this; `max_attempts_per_step` counts the
-   reconciliation attempts, not the effect.
-
-A deadline on a `side_effect_class: NONE` capability is uninteresting: there is
-no effect to reconcile, the call is simply retried under
-`max_attempts_per_step`.
+P5 and P6 do not reconcile or invoke providers. Future P8 must never blindly
+retry an ambiguous effect. Reconciliation requires an explicit host-reviewed
+binding; no create/read name inference and no provider-selected target. A
+provider or read-back response cannot fabricate a host receipt. TaskEngine owns
+Task lifecycle transitions. Exact reconciliation representation, status
+matrix, result/receipt timing, persistence, and recovery state are deferred to
+P8 contract closure before the first provider invocation. The older detailed
+algorithm in prior revisions of this section is superseded by
+[ADR-0036](../decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md).
 
 ---
 
@@ -590,10 +599,10 @@ unexplained failure is indistinguishable from a bug.
 | B5 | Raising a bound is an audited admin action; lowering one is always permitted and immediate. |
 | B6 | A bound of `0` disables the dimension; a negative bound is a startup configuration error, never clamped. |
 | B7 | Repeated-action detection is keyed on `(capability_id, arguments_digest)`, scoped per task, and durable across restart. |
-| B8 | The validation order is shape/registry, policy, required approval, duplicate suppression, repeated-action bound, then provider; denied, pending, expired, or duplicate-suppressed requests do not consume the repeated-action execution count. |
+| B8 | Future P8 order is proposal validation, registry/schema, P6 policy, P6 approval, duplicate suppression, repeated-action bound, tool-call bound plus durable dispatch intent, provider invoke, then result/receipt/evidence/reconciliation. P5/P6 do not execute these dispatch checks. |
 | B9 | Exceeding `max_identical_action_repeats` refuses the call, fails the task with `BOUND_EXCEEDED_REPEATED_ACTION`, and emits `BOUND_EXCEEDED` with `bound_name: max_identical_action_repeats`. |
 | B10 | Bound exhaustion is a task-level failure reason; no `ActionErrorKind` is added, because that set is frozen. |
-| B11 | Identical `(capability_id, arguments_digest)` within the duplicate window produces at most one effect; a suppressed duplicate returns the prior result and preserves its receipt. |
+| B11 | Future P8 applies global duplicate suppression to effecting capabilities by `(CapabilityId, arguments_digest)` for 86,400,000 ms; version is excluded and a suppressed duplicate preserves the prior result/receipt. |
 | B12 | Suppression succeeds silently to the user and is explicit in the record; repeated-but-not-identical actions fail explicitly. |
 | B13 | Deadlines propagate host-resolved, never extend the task budget, and an exceeded deadline on an effecting capability reconciles rather than retries. |
 | B14 | The task wall-clock bound measures active time and pauses in waiting states, so waiting on a human is not a bound violation. |

@@ -91,7 +91,7 @@ Invariant prefixes map to documents as given in
 | **Entry point** | `CapabilityProvider::invoke` receiving a validated `ActionRequest` |
 | **Attacker controls** | Argument values, if they flow from model output or retrieved content. Capability choice, within what the task's `policy_class` permits |
 | **Host must guarantee** | Registry is a closed world; descriptors are immutable for a task's lifetime; `risk_class` is host-owned; a provider receives a `CredentialHandle` and no ambient authority; a provider that cannot honour its descriptor degrades to `UNAVAILABLE` rather than returning something laxer; a provider cannot reach another provider's credentials |
-| **Protocol + invariants** | [Capability Protocol §9](../protocols/01-capability-protocol.md#9-provider-interface), [§10](../protocols/01-capability-protocol.md#10-capability-registry), [§3.2](../protocols/01-capability-protocol.md#32-invariants) — `C1`, `C3`, `C7`, `C8`, `C10`; [Policy Protocol §4.2](../protocols/04-policy-protocol.md#42-evaluation-order) — `P3` |
+| **Protocol + invariants** | [Capability Protocol §9](../protocols/01-capability-protocol.md#9-provider-interface), [§10](../protocols/01-capability-protocol.md#10-capability-registry-and-p5p6p8-boundary), [§3.2](../protocols/01-capability-protocol.md#32-invariants) — `C1`, `C3`, `C7`, `C8`, `C10`; [Policy Protocol §4.2](../protocols/04-policy-protocol.md#42-evaluation-order) — `P3` |
 
 ### AS-3 — Approval prompt rendering and response
 

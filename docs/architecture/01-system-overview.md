@@ -1,6 +1,6 @@
 # System Overview
 
-Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.6.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-08
 
 Serea is a personal-assistant system. This document states what it is, draws the
 system it is, names every component and its owner, and records what it
@@ -19,7 +19,7 @@ proposes actions, and — only when policy and a bounded human grant say so —
 changes that world. Everything is durable, everything is auditable, and the
 model has no authority whatsoever.
 
-| Dimension | Position at `serea-arch/2.5.0` |
+| Dimension | Position at `serea-arch/2.6.0` |
 | --- | --- |
 | Deployment | One Serea Core host process on the owner's Mac; one Pixel 7a Android client |
 | Concurrency | Single user, single host. `max_concurrent_tasks` is 8 by default, not a distributed-systems exercise |
@@ -35,15 +35,16 @@ notification analysis; web research; GitHub status; long-term memory;
 scheduling; Android interaction; optional privileged Android capabilities; and —
 later, behind an adapter — delegation of local PC/code work to GoalLatch.
 
-The capability surface is **only** what is registered in the capability
-registry. There is no capability outside that set, at any risk class, for any
+The capability surface is **only** what is present in the host-reviewed
+manifest and active registry generation. Provider advertisement does not
+create authority. There is no capability outside that set, at any risk class, for any
 model ([Capability Protocol §1](../protocols/01-capability-protocol.md#1-core-principle)).
 
 ### 1.3 What Serea is not
 
 | Not this | Why it matters |
 | --- | --- |
-| Not an agent framework | No capability is added at runtime, by a model, by plugin discovery, or by a prompt. The registry is built at startup from provider-authored descriptors and persisted. |
+| Not an agent framework | Only a host-reviewed manifest authorizes capabilities. Provider discovery confirms availability; it never creates authority. |
 | Not a chat wrapper around a model API | Conversation history is context, not state. Deleting all history must not change any task outcome ([Task Protocol §1](../protocols/02-task-protocol.md#1-model-conversation-history-is-not-task-state)). |
 | Not a device-remote-control system | The Android app is a client and a human interface. Every device effect is a host-caused capability call ([Device Protocol §1](../protocols/07-device-protocol.md#1-role-of-the-device)). |
 | Not GoalLatch's front end | GoalLatch is a planned capability provider behind `host.goal.*`; P0 freezes its contract only. The offline fake is planned for P15 ([GoalLatch Adapter §6](../protocols/08-goallatch-adapter-protocol.md#6-fakegoallatchprovider-specification)). |
@@ -149,9 +150,9 @@ or reads a GoalLatch database file. See
 | Wire types and schema codegen | Frozen types, `CapabilityId`/`DataClass`/`RiskClass`/`ActionErrorKind` enums, ULID minting and parsing, canonical JSON, `Digest`, `Secret<T>`, `CredentialHandle`, JSON Schema 2020-12 codegen targets | `serea-protocol` | [Protocol Index](../protocols/00-protocol-index.md#5-serialization) §5–§6, [Data Classification §3.2](../protocols/09-data-classification-protocol.md#32-the-secrett-pattern) |
 | Task engine | `AssistantTask` lifecycle, `TaskStep` records, planning, sequencing, leases, recovery, cancellation, retention | `serea-task-engine` | [Task Protocol](../protocols/02-task-protocol.md#2-assistanttask) §2–§8 |
 | Model router | Model selection, `ModelCapabilities` filtering, preference chains, repair ladder, usage accounting, budget enforcement, Codex exclusion | `serea-model-router` | [Model Protocol](../protocols/03-model-protocol.md#6-model-routing) §5–§10 |
-| Capability registry | Startup registration, durable persistence, version pinning, disabled overlay, duplicate detection, per-step attempt ceilings | `serea-capability` | [Capability Protocol](../protocols/01-capability-protocol.md#10-capability-registry) §8, §10 |
+| Capability registry | Host manifest matching, immutable generations/revisions, deterministic projection, Task/Step pinning, classified proposal preparation | `serea-capability` | [Capability Protocol](../protocols/01-capability-protocol.md#10-capability-registry-and-p5p6p8-boundary) |
 | Policy engine | Deterministic rule evaluation in fixed order, `RiskClass` decisions, `DenyReason`, `HandoffRequest`, audited rule changes | `serea-policy` | [Policy Protocol](../protocols/04-policy-protocol.md#42-evaluation-order) §3–§7 |
-| Approval ledger | `ApprovalRequest` construction, grant minting, the six bounds, atomic consumption, expiry, denial, audit | `serea-capability` (ledger and evaluation); `serea-core` (device delivery) | [Approval Protocol](../protocols/05-approval-protocol.md#4-grant-evaluation) §2–§8 |
+| Approval ledger | P6 `ApprovalRequest` and grant lifecycle/authorization; device delivery | `serea-policy` (P6 authorization); `serea-core` (device delivery) | [Approval Protocol](../protocols/05-approval-protocol.md#4-grant-evaluation) §2–§8 |
 | Memory | Working, episodic, semantic and preference memory; extraction gating; provenance; supersession; right-to-delete cascade | `serea-memory` | [Data Classification §7–§8](../protocols/09-data-classification-protocol.md#7-classification-of-provider-data) |
 | Scheduler | Event-driven wake sources, durable schedules, leases, watch cycles, proactive proposals, concurrency limits | `serea-scheduler` | [Task Protocol §6](../protocols/02-task-protocol.md#6-recovery) wake semantics; [Bounds §2](../protocols/10-bounds-protocol.md#2-the-bound-set) |
 | Event bus | `SereaEvent` construction, gapless `seq` assignment at commit, append-only log, retention classes, device fan-out | `serea-event-bus` | [Event Protocol](../protocols/06-event-protocol.md#2-sereaevent) §2–§8 |
@@ -184,7 +185,7 @@ or reads a GoalLatch database file. See
 | Model routing and budgets | [Model Protocol §6](../protocols/03-model-protocol.md#6-model-routing) | Determinism of routing and the Codex exclusion both become unverifiable |
 | Policy evaluation | [Policy Protocol §4](../protocols/04-policy-protocol.md#42-evaluation-order) | `PolicyDecision` becomes a function of something outside the host |
 | Approval and grant evaluation | [Approval Protocol §4](../protocols/05-approval-protocol.md#4-grant-evaluation) | The six bounds stop being checkable |
-| Capability registry and version pinning | [Capability Protocol §10](../protocols/01-capability-protocol.md#10-capability-registry) | Descriptors stop being immutable for the life of a task |
+| Capability registry and version pinning | [Capability Protocol §10](../protocols/01-capability-protocol.md#10-capability-registry-and-p5p6p8-boundary) | Descriptors stop being immutable for the life of a task |
 | Memory extraction, provenance, retention, deletion | [Data Classification §7–§8](../protocols/09-data-classification-protocol.md#7-classification-of-provider-data) | "Forget this" loses the ability to cascade correctly |
 | Proactive watcher | [Policy Protocol §4.3](../protocols/04-policy-protocol.md#43-additional-standing-rules) | The read-only automation invariant becomes aspirational |
 | Device sessions, pairing, notification surfaces | [Device Protocol §3](../protocols/07-device-protocol.md#3-pairing), §7 | Revocation becomes a client decision |

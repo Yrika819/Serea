@@ -1,6 +1,6 @@
 # Task Protocol
 
-Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current architecture `serea-arch/2.5.0`**
+Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current architecture `serea-arch/2.6.0`**
 
 The `AssistantTask` is Serea's unit of durable work. It is **not** GoalLatch's
 `Goal`. The two are different concepts with different lifecycles, different
@@ -68,6 +68,14 @@ policy change may raise it. A step whose capability risk class exceeds the
 task's `policy_class` is rejected; if the user wants broader authority, an
 explicit new request creates a separate task with its own host-assigned ceiling.
 
+After P5 integration, every new Task pins exactly one immutable
+`CapabilityRegistryGeneration` at creation. Every new capability Step in that
+Task resolves against that generation, including replans and retries. A Task
+created before P5 may retain a null generation; it cannot add a capability Step
+and must fail closed with a typed unavailable/internal host outcome. It is never
+implicitly bound to the current generation. See
+[ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md).
+
 ### 2.1 Why `policy_class` is on the task
 
 It bounds blast radius at the task level, not merely per step. A task that has
@@ -80,6 +88,15 @@ task may at most send email", not "this task may do these eleven things".
 
 Every step carries enough information to be re-executed or verified after a
 hard restart.
+
+A capability Step receives an immutable durable binding before P6
+authorization: TaskId/StepId, Task-pinned generation, exact descriptor
+revision, provider, implementation, version, and schema identity needed for
+validation. The binding cannot change after policy or approval. A semantic
+change requires a new Step. A bound Step may retry/recover against its pinned
+revision after descriptor update or live removal; it never switches
+implementation automatically. Current disable/removal overlays block new
+bindings, including inside old Tasks.
 
 ```json
 {

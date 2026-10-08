@@ -1,6 +1,6 @@
 # Crate Map
 
-Architecture version: `serea-arch/2.5.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-07
+Architecture version: `serea-arch/2.6.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-08
 
 This document fixes how the Serea Core Rust workspace is divided, which crate
 may depend on which, and which planned crates this architecture declines to
@@ -143,6 +143,11 @@ flowchart TB
     KIT -.-> PGL
 ```
 
+`CAP --> POLICY` is only the later typed P6 authorization integration. P5
+preparation does not evaluate policy or approvals. Provider invocation,
+duplicate/repeat dispatch state, and result persistence are P8 work and are not
+implemented in the P5/P6 capability path.
+
 Reading the graph: edges point **downward** everywhere. `serea-core` is the only
 crate every other crate may be reached from, and no crate reaches `serea-core`.
 `serea-testkit` is drawn dashed because it is a `dev-dependency`: nothing in the
@@ -180,7 +185,7 @@ orchestration · **L4** composition · **PX** leaf provider · **TD** dev-only.
 | `serea-credential-store` | macOS Keychain custody; mint, resolve, rotate; the only code permitted to call `Secret::expose` | `CredentialStore`, `CredentialStoreError`, `CredentialScope`, `RotationOutcome` | `serea-protocol` | all `providers/serea-provider-*` needing OAuth or API secrets; `serea-core` | L1 |
 | `serea-policy` | Deterministic rule evaluation in the frozen order; `RiskClass` decisions; `DenyReason`; `HandoffRequest`; audited rule mutation | `PolicyEngine`, `PolicyRule`, `PolicyContext`, `AutomationContext`, `RuleStore`, `PolicyChange` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-capability`, `serea-task-engine`, `serea-core` | L2 |
 | `serea-model-router` | Prepared-call routing, immutable host roster, capability filtering, preference chains, health snapshot, durable attempt/usage accounting, validation, bounded repair/fallback, Codex exclusion | `ModelRouter`, `ModelRosterV1`, `PreferenceChain`, `UsageLedger`, `BudgetView`, `RoutingDecision` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-memory`, `serea-task-engine`, `serea-core` | L2 |
-| `serea-capability` | Runtime registry, descriptor compilation, tool router, duplicate detection, repeated-action detection, approval ledger and grant consumption, provider invocation and enforcement | `CapabilityRegistry`, `CapabilityRouter`, `ToolRouter`, `DuplicateWindow`, `ApprovalLedger`, `GrantMatcher`, `ToolCall`, `ToolOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-policy` | `serea-task-engine`, `serea-core` | L2 |
+| `serea-capability` | P5 registry generations, manifest matching, descriptor revisions, trusted schema compiler, deterministic tool projection, proposal validation, classified arguments, immutable PreparedActionV1, typed availability and P6 handoff. P5/P6 do not invoke providers; dispatch begins at P8. | `CapabilityRegistry`, `CapabilityManifestV1`, `CapabilitySchemaCatalogV1`, `ToolDefinitionV1`, `ToolCallProposalV1`, `PreparedActionV1`, `AvailabilityOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`; P6-only authorization handoff may depend on `serea-policy` | `serea-task-engine`, `serea-core` | L2 |
 | `serea-memory` | Working, episodic, semantic and preference memory; extraction gating on `purpose: EXTRACTION`; provenance; supersession; deletion cascade with tombstones | `MemoryStore`, `MemoryItem`, `MemoryKind`, `Provenance`, `ExtractionOutcome`, `ForgetOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-model-router` | `serea-task-engine`, `serea-core` | L3 |
 | `serea-task-engine` | `AssistantTask` lifecycle, plan construction and revision, step sequencing, leases, recovery, cancellation, retention, attempt budgets | `TaskEngine`, `TaskRecord`, `StepRecord`, `Plan`, `PlanRevision`, `RecoveryReport`, `CancellationOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-policy`, `serea-model-router`, `serea-capability`, `serea-memory` | `serea-scheduler`, `serea-core` | L3 |
 | `serea-scheduler` | Event-driven wake sources, durable schedules, recurrence evaluation, causal predicate matching, template persistence, watcher cycles, proposal generation, task admission against `max_concurrent_tasks` | `Scheduler`, `CalendarRecurrenceV1`, `CalendarRecurrenceKind`, `WakeSource`, `ScheduleRecord`, `WatcherCycle`, `ProposalDraft`, `AdmissionResult` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-task-engine` | `serea-core` | L3 |
@@ -203,11 +208,11 @@ implementations of a guarantee.
 | --- | --- | --- |
 | Identifier grammar, envelope, serialization, `Secret<T>` | `serea-protocol` | [Protocol Index §2](../protocols/00-protocol-index.md#2-identifier-grammar), §5, §6 |
 | `CapabilityProvider` trait declaration | `serea-protocol` | [Capability Protocol §9](../protocols/01-capability-protocol.md#9-provider-interface) |
-| Runtime registry, descriptor compilation, dedup, invocation and enforcement | `serea-capability` | [Capability Protocol §9](../protocols/01-capability-protocol.md#9-provider-interface), §10 |
+| P5 registry, manifest matching, schema compiler, proposal preparation and typed handoff | `serea-capability` | [Capability Protocol §10](../protocols/01-capability-protocol.md#10-capability-registry-and-p5p6p8-boundary) |
 | `AssistantTask`, `TaskStep`, state machine, recovery, cancellation | `serea-task-engine` | [Task Protocol §2](../protocols/02-task-protocol.md#2-assistanttask), §4, §6 |
 | `ModelProvider` routing, repair ladder, usage ledger, Codex exclusion | `serea-model-router` | [Model Protocol §6](../protocols/03-model-protocol.md#6-model-routing), §7, §8 |
 | `PolicyEngine`, `PolicyDecision`, rule store | `serea-policy` | [Policy Protocol §3](../protocols/04-policy-protocol.md#3-policydecision), §5 |
-| `ApprovalRequest`, `ApprovalGrant`, six bounds including exact argument digest, consumption | `serea-capability` | [Approval Protocol §2](../protocols/05-approval-protocol.md#2-approvalrequest), §3, §4 |
+| P6 policy and approval/grant lifecycle and authorization | `serea-policy` | [Policy Protocol §3](../protocols/04-policy-protocol.md#3-policydecision), [Approval Protocol](../protocols/05-approval-protocol.md) |
 | `SereaEvent`, `seq`, append-only log, retention classes | `serea-event-bus` | [Event Protocol §2](../protocols/06-event-protocol.md#2-sereaevent), §5, §8 |
 | Pairing, sessions, transport, device message set, device link | `serea-core` | [Device Protocol §3](../protocols/07-device-protocol.md#3-pairing), §4, §5 |
 | Bound configuration and global counters | `serea-core` | [Bounds Protocol §2](../protocols/10-bounds-protocol.md#2-the-bound-set) |
@@ -232,7 +237,7 @@ place to put a rule a compiler can enforce.
 | --- | --- |
 | `serea-protocol` | Every other crate could grow its own copy of `ActionRequest` with an extra field, and two crates would disagree about a wire contract |
 | `serea-policy` | A caller could evaluate a rule outside the fixed order, or add a permissive fallback |
-| `serea-capability` | A provider could be invoked without registry lookup, dedup, or approval evaluation |
+| `serea-capability` | A proposal could bypass host manifest matching, pinned schemas, trusted classification, or immutable PreparedAction construction |
 | `serea-model-router` | A caller could hard-code a model name or an `if provider == …` branch, breaking routing determinism |
 | `serea-task-engine` | Task state could be reconstructed from conversation history, breaking T1–T3 |
 | `serea-scheduler` | Wake sources could acquire leases and sequence steps, duplicating the engine |
@@ -381,7 +386,7 @@ version and records no runtime-test PASS.
 | 1 | A provider implements a trait declared in `serea-protocol` (`CapabilityProvider`, `ModelProvider`, `HostGoalProvider`) | Swapping Ollama for another model service is adding a crate, not editing callers |
 | 2 | A provider is constructed with values — config, `CredentialStore` handle, `Clock`, `ProviderContext` factory — and registered by `serea-core` through one `ProviderRegistration` entry | There is no `match provider_id { … }` anywhere outside `serea-core`'s registration list |
 | 3 | A provider names no other provider, no `CapabilityId` it does not own, and no `PolicyEngine` | Enforced by `TB-8` in [Trust Boundaries §2](02-trust-boundaries.md#tb-8-provider-to-provider) and by the fact that providers sit at layer PX, below control |
-| 4 | A provider's descriptors are self-consistent by construction: `id`'s first segment equals `provider_id`, or registration panics at startup, not warns | [Capability Protocol §3.1](../protocols/01-capability-protocol.md#31-field-semantics) |
+| 4 | A provider advertisement must match a host-manifest entry and its `id` first segment must equal `provider_id`; mismatch fails registration with a typed error | [Capability Protocol §3.1](../protocols/01-capability-protocol.md#31-field-semantics), [ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md) |
 | 5 | A provider that cannot honour a descriptor degrades itself and stops advertising, rather than relaxing its output | [Capability Protocol §9](../protocols/01-capability-protocol.md#9-provider-interface), invariant C7 |
 
 ### 6.2 What "swappable" concretely buys at `serea-arch/0.2.0`

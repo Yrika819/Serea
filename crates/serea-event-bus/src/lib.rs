@@ -165,6 +165,56 @@ pub struct ModelFallbackExhaustedEventV1 {
     pub fallback_model_id: ModelId,
 }
 
+/// Frozen generic host bound that may be exhausted by P4 model accounting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelBoundKindV1 {
+    /// Durable total trustworthy task tokens.
+    TaskTotalTokens,
+    /// Global daily spend reservation.
+    DailySpendUsd,
+}
+
+impl ModelBoundKindV1 {
+    const fn wire_name(self) -> &'static str {
+        match self {
+            Self::TaskTotalTokens => "max_task_total_tokens",
+            Self::DailySpendUsd => "max_daily_spend_usd",
+        }
+    }
+}
+
+/// Content-free generic bounds event for a model operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelBoundExceededEventV1 {
+    /// Task whose model operation encountered the bound.
+    pub task_id: Option<TaskId>,
+    /// Classification of the host-prepared operation.
+    pub data_class: DataClass,
+    /// Explicit host event timestamp.
+    pub occurred_at: EpochMillis,
+    /// Frozen bound identifier.
+    pub bound: ModelBoundKindV1,
+    /// Configured bound value.
+    pub limit: u64,
+    /// Durable or attempted observed value.
+    pub observed: u64,
+}
+
+/// Content-free per-task model call/turn budget exhaustion event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelBudgetExhaustedEventV1 {
+    /// Task whose budget was exhausted.
+    pub task_id: TaskId,
+    /// Classification of the host-prepared operation.
+    pub data_class: DataClass,
+    /// Explicit host event timestamp.
+    pub occurred_at: EpochMillis,
+    /// Bound limit.
+    pub limit: u64,
+    /// Current durable count.
+    pub observed: u64,
+}
+
 struct ErasedUlidSource(Box<dyn UlidSource + Send>);
 
 impl UlidSource for ErasedUlidSource {
@@ -364,6 +414,104 @@ impl EventBus {
             EventKind::ModelFallbackExhausted,
             payload,
         )
+    }
+
+    /// Builds a generic content-free `BOUND_EXCEEDED` event for model bounds.
+    pub fn draft_model_bound_exceeded(
+        &self,
+        bound: ModelBoundExceededEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if bound.observed < bound.limit || bound.limit == 0 {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = Map::new();
+        payload.insert(
+            "bound_name".into(),
+            Value::String(bound.bound.wire_name().into()),
+        );
+        payload.insert("limit".into(), Value::from(bound.limit));
+        payload.insert("observed".into(), Value::from(bound.observed));
+        self.draft_model_task_event(
+            bound.task_id,
+            bound.data_class,
+            bound.occurred_at,
+            EventKind::BoundExceeded,
+            payload,
+        )
+    }
+
+    /// Builds a content-free `MODEL_BUDGET_EXHAUSTED` event for task call/turn
+    /// exhaustion.
+    pub fn draft_model_budget_exhausted(
+        &self,
+        budget: ModelBudgetExhaustedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if budget.observed < budget.limit || budget.limit == 0 {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = Map::new();
+        payload.insert("limit".into(), Value::from(budget.limit));
+        payload.insert("observed".into(), Value::from(budget.observed));
+        self.draft_model_task_event(
+            Some(budget.task_id),
+            budget.data_class,
+            budget.occurred_at,
+            EventKind::ModelBudgetExhausted,
+            payload,
+        )
+    }
+
+    fn draft_model_task_event(
+        &self,
+        task_id: Option<TaskId>,
+        data_class: DataClass,
+        occurred_at: EpochMillis,
+        kind: EventKind,
+        payload: Map<String, Value>,
+    ) -> Result<EventDraft, StoreError> {
+        if !matches!(data_class, DataClass::Public | DataClass::Personal) {
+            return Err(StoreError::EventClassRefused);
+        }
+        let message_id = self
+            .ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?
+            .next_event_id();
+        let retention_at = occurred_at
+            .get()
+            .checked_add(MODEL_ACTIVITY_RETENTION_MS)
+            .and_then(|value| EpochMillis::new(value).ok())
+            .ok_or(StoreError::InvalidTimestamp)?;
+        Ok(EventDraft {
+            event: SereaEvent {
+                envelope_version: EnvelopeVersion::new("1")
+                    .map_err(|_| StoreError::AuditRejected)?,
+                surface: WireSurface::new(WireSurface::EVENT)
+                    .map_err(|_| StoreError::AuditRejected)?,
+                message_id,
+                seq: Seq::new(0),
+                kind,
+                occurred_at: Timestamp::from_epoch_millis(occurred_at),
+                correlation_id: task_id.clone(),
+                causation_id: None,
+                actor: Actor {
+                    kind: ActorKind::Host,
+                    id: ActorId::new("model-router").map_err(|_| StoreError::AuditRejected)?,
+                    version: SemVer::new("1.0.0").map_err(|_| StoreError::AuditRejected)?,
+                    extensions: Default::default(),
+                },
+                data_class,
+                trace: Some(Trace {
+                    task_id,
+                    step_id: None,
+                    attempt: None,
+                    extensions: Default::default(),
+                }),
+                payload,
+                extensions: Default::default(),
+            },
+            retention_at: Some(retention_at),
+        })
     }
 
     fn draft_model_event(

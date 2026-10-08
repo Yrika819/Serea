@@ -142,6 +142,44 @@ fn fallback_events_carry_only_bounded_host_identity_metadata() {
 }
 
 #[test]
+fn model_bound_events_are_content_free_and_use_frozen_kinds() {
+    let bus = EventBus::new(FixedIds);
+    let task_id = serea_protocol::TaskId::new("tsk_00000000000000000000000001").unwrap();
+    let exceeded = bus
+        .draft_model_bound_exceeded(serea_event_bus::ModelBoundExceededEventV1 {
+            task_id: Some(task_id.clone()),
+            data_class: DataClass::Public,
+            occurred_at: EpochMillis::new(1_767_225_600_006).unwrap(),
+            bound: serea_event_bus::ModelBoundKindV1::TaskTotalTokens,
+            limit: 128_000,
+            observed: 128_004,
+        })
+        .unwrap();
+    assert_eq!(exceeded.event.kind, EventKind::BoundExceeded);
+    assert_eq!(exceeded.event.payload.len(), 3);
+    assert_eq!(
+        exceeded.event.payload["bound_name"],
+        "max_task_total_tokens"
+    );
+    assert_eq!(exceeded.event.payload["limit"], 128_000);
+    assert_eq!(exceeded.event.payload["observed"], 128_004);
+    assert_eq!(exceeded.event.trace.unwrap().task_id, Some(task_id.clone()));
+
+    let budget = bus
+        .draft_model_budget_exhausted(serea_event_bus::ModelBudgetExhaustedEventV1 {
+            task_id,
+            data_class: DataClass::Personal,
+            occurred_at: EpochMillis::new(1_767_225_600_007).unwrap(),
+            limit: 12,
+            observed: 12,
+        })
+        .unwrap();
+    assert_eq!(budget.event.kind, EventKind::ModelBudgetExhausted);
+    assert_eq!(budget.event.payload["limit"], 12);
+    assert_eq!(budget.event.payload["observed"], 12);
+}
+
+#[test]
 fn model_output_invalid_event_contains_only_bounded_failure_metadata() {
     let bus = EventBus::new(FixedIds);
     let draft = bus

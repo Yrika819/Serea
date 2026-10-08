@@ -17,6 +17,12 @@ close P4 as a whole.
   `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`.
 - Migration 0003 (`0003_model_accounting.sql`) SHA-256 at P4 task start:
   `8f4c5c4e047a8829201ce834ff192d740ab6ca199ecc3d12dfe8e357cf82c2ec`.
+- Migration 0003 was amended on the still-unmerged P4 branch to add the
+  durable task token total required by Bounds Protocol. Its current SHA-256 is
+  `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`.
+  Migrations 0001 and 0002 remain unchanged. P4B evidence is reconciled here
+  because the required token bound must survive usage-detail retention; no
+  released migration or schema version changed.
 
 ### Test-first evidence
 
@@ -43,6 +49,11 @@ insert and terminal update.
   relationship domains, plus one active `DISPATCH_INTENT` per non-null TaskId.
 - `model_usage` stores integer token counts and micro-USD cost only. It contains
   no prompt, output, content digest, device ID, conversation ID or task title.
+- `tasks.model_token_count` accumulates only trustworthy settled usage in the
+  same transaction as usage persistence. The durable total survives 365-day
+  usage-detail retention, so cleanup cannot reset the frozen 128,000-token
+  task bound. Integrity checks require the durable total to cover all retained
+  usage detail.
 - `tasks.model_call_count` preserves the 12-call task ceiling after 30-day
   attempt detail pruning. Every committed dispatch intent increments it in the
   same transaction as the attempt and reservation. P4E adds
@@ -1025,3 +1036,39 @@ repair, fallback, dispatch gates, or P4E budgets.
   exclusion; both cross-architecture transfer directions passed. This closes
   structured fallback/repair composition; crash injection and remaining P4E
   budget integration remain open.
+
+## P4E slice: durable task token bound
+
+- RED proof: before adding the task-owned token total, the storage retention
+  test observed `TokenCount(0)` after the only `model_usage` row was pruned,
+  despite ten trustworthy tokens having been settled. The router test also
+  initially returned success after a completion crossed the 128,000-token
+  bound.
+- Migration 0003 adds `tasks.model_token_count`; storage increments it
+  atomically with trustworthy completed or definite-failure usage. The
+  `task_model_token_usage` API now reads the durable counter, and integrity
+  checking rejects a counter below retained usage detail. On a threshold
+  crossing, the router persists the provider result and accounting first,
+  emits content-free `BOUND_EXCEEDED`, then returns a typed token-bound
+  outcome. A later dispatch is refused before intent creation. The same check
+  applies after a provider finish reason with trustworthy usage.
+- Focused evidence: migration v2-to-v3 defaults the new counter to zero and
+  rejects negative values; storage proves the total remains ten after usage
+  pruning; router proves a response crossing the bound remains durably
+  completed with 128,000 accounted tokens and returns a bound outcome;
+  Event Bus verifies frozen bound event naming and content-free payload.
+- Sequential review: (1) threshold is the frozen 128,000 trustworthy total;
+  (2) the router still depends only on Storage, Event Bus and Protocol, with
+  no Task Engine or Policy dependency; (3) token count, usage and terminal
+  attempt commit atomically; the bound event follows that committed result;
+  (4) the counter survives retention and uses SQLite checked arithmetic;
+  (5) only numeric accounting metadata enters the event; (6) no provider
+  response is used as token authority outside validated usage; (7) tests
+  reopen and retain SQLite state without timing dependence; (8) migration
+  checksum and P4B evidence are reconciled above. Final Actions are pending.
+- Local validation passed: fmt, workspace check, all-target tests, all-feature
+  tests, denied-warning Clippy, docs validation, workspace smoke, 76 Python
+  smoke tests, Cargo metadata, identity guard and `git diff --check`. Cross-arch
+  and exact-head Actions are pending because migration 0003 changed.
+- Nonclaims: this slice does not close model-call/turn/daily-spend bound event
+  integration, P4E crash matrix, or P4E as a whole.

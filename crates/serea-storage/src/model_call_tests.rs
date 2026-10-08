@@ -290,6 +290,17 @@ fn definite_failure_counts_as_call_and_unknown_usage_keeps_reservation() {
             .unwrap(),
         UsdMicros::new(5_130).unwrap()
     );
+    assert_eq!(
+        store
+            .retain_model_usage(EpochMillis::new(USAGE_RETENTION_MS_TEST + 100).unwrap(), 10)
+            .unwrap(),
+        1
+    );
+    assert!(store.model_usage_for_request(&id(12)).unwrap().is_none());
+    assert_eq!(
+        store.task_model_token_usage(&task_id()).unwrap(),
+        TokenCount::new(10)
+    );
 }
 
 #[test]

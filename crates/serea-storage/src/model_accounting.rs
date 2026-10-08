@@ -781,24 +781,23 @@ impl Store {
         u64::try_from(count.ok_or(StoreError::TaskNotFound)?).map_err(|_| StoreError::CorruptRow)
     }
 
-    /// Sums only trustworthy token counts durably returned in model_usage.
+    /// Returns the durable task total of trustworthy token usage.
+    ///
+    /// Detailed usage rows can be pruned; the task counter survives that
+    /// retention so the frozen token bound cannot be reset by cleanup.
     pub fn task_model_token_usage(&self, task_id: &TaskId) -> Result<TokenCount, StoreError> {
         let conn = self.conn.lock().map_err(|_| StoreError::LockPoisoned)?;
-        let mut statement = conn.prepare(
-            "SELECT input_tokens,output_tokens FROM model_usage WHERE task_id=?1 ORDER BY usage_id",
-        )?;
-        let mut rows = statement.query([task_id.as_str()])?;
-        let mut total = 0_u64;
-        while let Some(row) = rows.next()? {
-            let input = u64::try_from(row.get::<_, i64>(0)?).map_err(|_| StoreError::CorruptRow)?;
-            let output =
-                u64::try_from(row.get::<_, i64>(1)?).map_err(|_| StoreError::CorruptRow)?;
-            total = total
-                .checked_add(input)
-                .and_then(|value| value.checked_add(output))
-                .ok_or(StoreError::ModelAccountingOverflow)?;
-        }
-        Ok(TokenCount::new(total))
+        let total: Option<i64> = conn
+            .query_row(
+                "SELECT model_token_count FROM tasks WHERE task_id=?1",
+                [task_id.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(TokenCount::new(
+            u64::try_from(total.ok_or(StoreError::TaskNotFound)?)
+                .map_err(|_| StoreError::CorruptRow)?,
+        ))
     }
 
     /// Reads trustworthy usage while the associated attempt detail is retained.
@@ -1150,6 +1149,11 @@ impl Tx<'_> {
                 completion.recorded_at.get(),
             ],
         )?;
+        self.add_task_model_tokens(
+            attempt.task_id.as_ref(),
+            completion.input_tokens.get(),
+            completion.output_tokens.get(),
+        )?;
         #[cfg(feature = "p2h-fault-injection")]
         crate::fault::reach(crate::fault::Window::AfterModelUsageInsert)?;
         let changed = self.inner.execute(
@@ -1319,6 +1323,11 @@ impl Tx<'_> {
                     usage.recorded_at.get(),
                 ],
             )?;
+            self.add_task_model_tokens(
+                attempt.task_id.as_ref(),
+                usage.input_tokens.get(),
+                usage.output_tokens.get(),
+            )?;
             Some(cost)
         } else {
             None
@@ -1352,6 +1361,30 @@ impl Tx<'_> {
         }
         read_attempt(&self.inner, request_id)?.ok_or(StoreError::CorruptRow)
     }
+
+    fn add_task_model_tokens(
+        &mut self,
+        task_id: Option<&TaskId>,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<(), StoreError> {
+        let Some(task_id) = task_id else {
+            return Ok(());
+        };
+        let delta = input_tokens
+            .checked_add(output_tokens)
+            .ok_or(StoreError::ModelAccountingOverflow)?;
+        let delta = i64::try_from(delta).map_err(|_| StoreError::ModelAccountingOverflow)?;
+        let changed = self.inner.execute(
+            "UPDATE tasks SET model_token_count=model_token_count+?2
+             WHERE task_id=?1 AND model_token_count<=9223372036854775807-?2",
+            params![task_id.as_str(), delta],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::ModelAccountingOverflow);
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn validate_model_storage_integrity(conn: &Connection) -> Result<(), StoreError> {
@@ -1375,7 +1408,9 @@ pub(crate) fn validate_model_storage_integrity(conn: &Connection) -> Result<(), 
            (SELECT count(*) FROM tasks t
              WHERE t.model_call_count>t.max_model_calls OR t.model_call_count>12
                 OR t.model_turn_count>12 OR t.model_turn_count>t.model_call_count
-                OR t.model_call_count<(SELECT count(*) FROM model_call_attempts a WHERE a.task_id=t.task_id))",
+                OR t.model_call_count<(SELECT count(*) FROM model_call_attempts a WHERE a.task_id=t.task_id)
+                OR t.model_token_count<(SELECT COALESCE(sum(u.input_tokens+u.output_tokens),0)
+                                         FROM model_usage u WHERE u.task_id=t.task_id))",
         [],
         |row| row.get(0),
     )?;

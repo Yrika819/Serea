@@ -11,6 +11,11 @@ ALTER TABLE tasks
 ALTER TABLE tasks
   ADD COLUMN model_turn_count INTEGER NOT NULL DEFAULT 0 CHECK (model_turn_count BETWEEN 0 AND 12);
 
+-- Preserve trustworthy task token totals after usage-row retention removes
+-- the detailed provider accounting records.
+ALTER TABLE tasks
+  ADD COLUMN model_token_count INTEGER NOT NULL DEFAULT 0 CHECK (model_token_count >= 0);
+
 CREATE TABLE model_call_attempts (
   request_id                         TEXT    PRIMARY KEY CHECK (length(request_id) = 30
                                                                AND substr(request_id, 1, 4) = 'req_'

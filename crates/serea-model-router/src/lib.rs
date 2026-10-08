@@ -24,9 +24,9 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use serea_event_bus::{
-    EventBus, ModelCompletedEventV1, ModelEventMetadataV1, ModelEventRelationV1,
-    ModelFailedEventV1, ModelFallbackEventV1, ModelFallbackExhaustedEventV1,
-    ModelOutputInvalidEventV1, ModelRepairedEventV1,
+    EventBus, ModelBoundExceededEventV1, ModelBoundKindV1, ModelCompletedEventV1,
+    ModelEventMetadataV1, ModelEventRelationV1, ModelFailedEventV1, ModelFallbackEventV1,
+    ModelFallbackExhaustedEventV1, ModelOutputInvalidEventV1, ModelRepairedEventV1,
 };
 use serea_protocol::provider::{ModelCallContext, ModelProvider};
 use serea_protocol::{
@@ -55,6 +55,8 @@ pub const MAX_MODEL_VALIDATION_ERROR_BYTES: usize = 16_384;
 const AMBIGUOUS_PROVIDER_ERROR_KIND: &str = "AMBIGUOUS_DISPATCH";
 /// Default host bound for per-call output tokens.
 pub const DEFAULT_MAX_OUTPUT_TOKENS_PER_CALL: u32 = 2_048;
+/// Frozen per-task total token bound from Bounds Protocol §2.1.
+pub const MAX_TASK_TOTAL_TOKENS: u64 = 128_000;
 
 /// Host deployment class. It is never inferred from provider or model names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -550,6 +552,10 @@ enum ModelDispatchFailure {
         #[allow(dead_code)]
         raw_response: String,
         validation_error: StructuredValidationError,
+    },
+    TokenBudgetExceeded {
+        limit: u64,
+        observed: u64,
     },
 }
 
@@ -1227,6 +1233,7 @@ impl ModelRouterV1 {
                 RouterError::IllegalPurposeFormat,
             ));
         }
+        enforce_task_token_bound(context, call)?;
         let selected = session
             .decision()
             .ok_or(ModelDispatchFailure::NoEligibleModel)?
@@ -1477,6 +1484,7 @@ impl ModelRouterV1 {
                     usage: None,
                 },
             )?;
+            enforce_task_token_bound(context, call)?;
             return Err(ModelDispatchFailure::TerminalProvider {
                 request_id,
                 error_kind,
@@ -1515,6 +1523,7 @@ impl ModelRouterV1 {
                     usage: Some(usage),
                 },
             )?;
+            enforce_task_token_bound(context, call)?;
             return Err(ModelDispatchFailure::TerminalProvider {
                 request_id,
                 error_kind,
@@ -1585,6 +1594,7 @@ impl ModelRouterV1 {
                             Ok(())
                         })
                         .map_err(ModelDispatchFailure::Storage)?;
+                    enforce_task_token_bound(context, call)?;
                     return Err(ModelDispatchFailure::StructuredOutputInvalid {
                         request_id,
                         raw_response: response.content.clone(),
@@ -1670,6 +1680,7 @@ impl ModelRouterV1 {
                 Ok(())
             })
             .map_err(ModelDispatchFailure::Storage)?;
+        enforce_task_token_bound(context, call)?;
         Ok(ModelResponse {
             structured,
             repair_attempts: u32::from(repair_attempts),
@@ -1746,6 +1757,49 @@ fn build_repair_call(
 #[allow(dead_code)] // Used by dispatch error paths; exercised by P4D scripted failures.
 fn stable_model_error(value: &str) -> Result<ModelErrorCode, ModelDispatchFailure> {
     ModelErrorCode::new(value).map_err(ModelDispatchFailure::Protocol)
+}
+
+fn enforce_task_token_bound(
+    context: &ModelDispatchContext<'_>,
+    call: &PreparedModelCallV1,
+) -> Result<(), ModelDispatchFailure> {
+    let Some(task_id) = call.task_id.as_ref() else {
+        return Ok(());
+    };
+    let observed = context
+        .store
+        .task_model_token_usage(task_id)
+        .map_err(ModelDispatchFailure::Storage)?
+        .get();
+    if observed < MAX_TASK_TOTAL_TOKENS {
+        return Ok(());
+    }
+    let occurred_at = context
+        .clock
+        .now_ms()
+        .map_err(ModelDispatchFailure::Clock)?;
+    let exceeded = context
+        .events
+        .draft_model_bound_exceeded(ModelBoundExceededEventV1 {
+            task_id: Some(task_id.clone()),
+            data_class: call.data_class,
+            occurred_at,
+            bound: ModelBoundKindV1::TaskTotalTokens,
+            limit: MAX_TASK_TOTAL_TOKENS,
+            observed,
+        })
+        .map_err(ModelDispatchFailure::Storage)?;
+    context
+        .store
+        .transact(|tx| {
+            tx.append_event(exceeded.event, exceeded.retention_at)?;
+            Ok(())
+        })
+        .map_err(ModelDispatchFailure::Storage)?;
+    Err(ModelDispatchFailure::TokenBudgetExceeded {
+        limit: MAX_TASK_TOTAL_TOKENS,
+        observed,
+    })
 }
 
 fn persist_pending_primary_failure(
@@ -2184,14 +2238,17 @@ mod tests {
     use serea_event_bus::{EventBus, ReplayItem};
     use serea_protocol::provider::ModelCallContext;
     use serea_protocol::{
-        Clock, CostClass, DataClass, EpochMillis, EventKind, FinishReason, ModelError,
-        ModelErrorCode, ModelMessage, ModelResponse, ModelUsage, ProtocolError, ProviderId,
-        ResponseFormat, TimestampMs, TokenCount, UlidSource, UlidValue,
+        ActorId, ActorKind, AssistantTask, AttemptBudget, Clock, CostClass, DataClass, EpochMillis,
+        EventId, EventKind, FinishReason, ModelError, ModelErrorCode, ModelMessage, ModelResponse,
+        ModelUsage, ProtocolError, ProviderId, ResponseFormat, RiskClass, TaskKind, TaskOrigin,
+        TaskOriginKind, TaskState, TaskTitle, Timestamp, TimestampMs, TokenCount, UlidSource,
+        UlidValue,
     };
     use serea_storage::{
-        ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft,
-        ModelDeploymentClass as StorageDeploymentClass, ModelPriceSnapshot, Store, StoreError,
-        UsdMicros,
+        DurableTransition, EventDraft, EventParticipant, JournalKind, JournalRecord,
+        JournalRecords, ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft,
+        ModelDeploymentClass as StorageDeploymentClass, ModelFailureUsage, ModelPriceSnapshot,
+        Store, StoreError, TaskAuditParticipant, TransitionContext, UsdMicros,
     };
 
     struct FixedClock;
@@ -2237,6 +2294,28 @@ mod tests {
     }
 
     static CANCELLED_DISPATCH_GATE: CancelledDispatchGate = CancelledDispatchGate;
+
+    struct TestTaskAudit;
+
+    impl TaskAuditParticipant for TestTaskAudit {
+        fn records(&self, _facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
+            Ok(vec![JournalRecord {
+                kind: JournalKind::TaskInserted,
+                state_from: None,
+                state_to: Some("RECEIVED".into()),
+                reason: None,
+                payload_json: b"{}".to_vec(),
+            }])
+        }
+    }
+
+    struct TestTaskEvents;
+
+    impl EventParticipant for TestTaskEvents {
+        fn events(&self, _facts: &DurableTransition) -> Result<Vec<EventDraft>, StoreError> {
+            Ok(Vec::new())
+        }
+    }
 
     struct CancelAfterIntentGate(AtomicUsize);
 
@@ -4315,6 +4394,204 @@ mod tests {
             .unwrap_or_else(|| unreachable!());
         assert_eq!(recovered, response);
         drop(reopened);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn task_token_bound_returns_after_persisting_the_threshold_crossing_response() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-token-bound-red-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let task_id =
+            TaskId::new("tsk_00000000000000000000000042").unwrap_or_else(|_| unreachable!());
+        let actor = ActorId::new("budget-test").unwrap_or_else(|_| unreachable!());
+        let version = serea_protocol::SemVer::new("1.0.0").unwrap_or_else(|_| unreachable!());
+        let cause =
+            EventId::new("evt_00000000000000000000000042").unwrap_or_else(|_| unreachable!());
+        let transition = TransitionContext {
+            actor_kind: ActorKind::Host,
+            actor_id: &actor,
+            actor_version: &version,
+            causation_id: Some(&cause),
+        };
+        let created =
+            Timestamp::from_epoch_millis(EpochMillis::new(1).unwrap_or_else(|_| unreachable!()));
+        let task = AssistantTask {
+            task_id: task_id.clone(),
+            kind: TaskKind::UserRequest,
+            title: TaskTitle::new("token budget fixture").unwrap_or_else(|_| unreachable!()),
+            state: TaskState::Received,
+            origin: TaskOrigin {
+                kind: TaskOriginKind::new("USER_MESSAGE").unwrap_or_else(|_| unreachable!()),
+                device_id: None,
+                message_id: None,
+                extensions: Default::default(),
+            },
+            data_class: DataClass::Public,
+            policy_class: RiskClass::Communication,
+            created_at: created.clone(),
+            updated_at: created,
+            deadline_at: Some(Timestamp::from_epoch_millis(
+                EpochMillis::new(1000).unwrap_or_else(|_| unreachable!()),
+            )),
+            attempt_budget: AttemptBudget {
+                max_model_calls: 12,
+                max_tool_calls: 0,
+                max_attempts_per_step: 0,
+                extensions: Default::default(),
+            },
+            steps: Vec::new(),
+            blocked_reason: None,
+            result_summary: None,
+            cancelled_at: None,
+            cancelled_by: None,
+            failure_reason: None,
+            extensions: Default::default(),
+        };
+        let inserted = store.transact_with_participants(&TestTaskAudit, &TestTaskEvents, |tx| {
+            tx.insert_task(&task, &transition).map(|_| ())
+        });
+        assert!(inserted.is_ok(), "test task insertion failed: {inserted:?}");
+        for sequence in 1..=11u8 {
+            let request_id = serea_protocol::RequestId::new(format!(
+                "req_000000000000000000000000{sequence:02}"
+            ))
+            .unwrap_or_else(|_| unreachable!());
+            store
+                .reserve_model_call(
+                    ModelCallAttemptDraft {
+                        request_id: request_id.clone(),
+                        task_id: Some(task_id.clone()),
+                        purpose: ModelPurpose::Chat,
+                        model_id: ModelId::new("nemotron-3-nano-30b")
+                            .unwrap_or_else(|_| unreachable!()),
+                        provider_id: ProviderId::new("provider").unwrap_or_else(|_| unreachable!()),
+                        deployment_class: StorageDeploymentClass::Local,
+                        data_class: DataClass::Public,
+                        relation_kind: ModelAttemptRelationKind::None,
+                        parent_request_id: None,
+                        fallback_from_model_id: None,
+                        price: ModelPriceSnapshot::new(CostClass::Paid, "price-1", 0, 0),
+                        max_context_tokens: 20_000,
+                        effective_max_output_tokens: 2_048,
+                        dispatch_intent_at: EpochMillis::new(2).unwrap_or_else(|_| unreachable!()),
+                    },
+                    UsdMicros::new(0).unwrap_or_else(|_| unreachable!()),
+                )
+                .unwrap_or_else(|_| unreachable!());
+            let input_tokens = if sequence == 11 { 11_645 } else { 11_635 };
+            store
+                .fail_model_call_with_usage(
+                    &request_id,
+                    "FIXTURE_FAILURE",
+                    EpochMillis::new(3).unwrap_or_else(|_| unreachable!()),
+                    ModelFailureUsage {
+                        input_tokens: TokenCount::new(input_tokens),
+                        output_tokens: TokenCount::new(0),
+                        latency_ms: 1,
+                        repair_attempts: 0,
+                        recorded_at: EpochMillis::new(3).unwrap_or_else(|_| unreachable!()),
+                    },
+                )
+                .unwrap_or_else(|_| unreachable!());
+        }
+        assert_eq!(
+            store.task_model_token_usage(&task_id).ok(),
+            Some(TokenCount::new(127_995))
+        );
+        let provider = Arc::new(RepairFakeProvider::new(vec!["reached token limit".into()]));
+        let provider_id = provider.provider_id();
+        let capabilities = caps(false, JsonSchemaMode::Strict, 20_000, 2_048);
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider_id.clone(),
+                ModelDeploymentClass::Local,
+                true,
+                capabilities,
+                CostClass::Paid,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let router =
+            ModelRouterV1::new(roster, vec![provider.clone()]).unwrap_or_else(|_| unreachable!());
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: Some(task_id.clone()),
+            purpose: ModelPurpose::Chat,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "hello".into(),
+            }],
+            system: None,
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 32,
+            temperature: 0.0,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(true),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        let result = block_on(router.dispatch_chat_text(&call, &session, &context));
+        assert!(result.is_err());
+        let request_id = provider
+            .requests()
+            .first()
+            .map(|request| request.request_id.clone())
+            .unwrap_or_else(|| unreachable!());
+        let attempt = store
+            .get_model_call_attempt(&request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(attempt.state, ModelAttemptState::Completed);
+        assert_eq!(
+            store.task_model_token_usage(&task_id).ok(),
+            Some(TokenCount::new(128_000))
+        );
+        assert!(
+            store
+                .model_usage_for_request(&request_id)
+                .ok()
+                .flatten()
+                .is_some()
+        );
+        assert!(
+            store
+                .get_model_call_response(&request_id)
+                .ok()
+                .flatten()
+                .is_some()
+        );
+        let events = EventBus::replay(&store, None, None, 32).unwrap_or_else(|_| unreachable!());
+        assert!(events.items.iter().any(|item| matches!(item,
+            ReplayItem::Event { event } if event.kind == EventKind::BoundExceeded
+        )));
+        drop(context);
+        drop(router);
+        drop(provider);
+        drop(store);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));

@@ -93,7 +93,7 @@ fn catalog_adds_0003_without_rewriting_prior_migrations() {
     );
     assert_eq!(
         Migrations::checksum(catalog[2].sql).as_str(),
-        "sha256:bd85c804c832e58a520c070ab6b1cf0d7ad15515f44d1f8c3a161366c3d9d078"
+        "sha256:530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80"
     );
 }
 
@@ -144,6 +144,10 @@ fn v2_task_turn_counter_defaults_to_zero_and_is_bounded() {
     let store = Store::open(&path.0, &FixedClock).unwrap();
     let task_id = serea_protocol::TaskId::new("tsk_00000000000000000000000001").unwrap();
     assert_eq!(store.task_model_turn_count(&task_id).unwrap(), 0);
+    assert_eq!(
+        store.task_model_token_usage(&task_id).unwrap(),
+        serea_protocol::TokenCount::new(0)
+    );
     let conn = store.conn.lock().unwrap();
     assert!(
         conn.execute(
@@ -155,6 +159,13 @@ fn v2_task_turn_counter_defaults_to_zero_and_is_bounded() {
     assert!(
         conn.execute(
             "UPDATE tasks SET model_turn_count=13 WHERE task_id=?1",
+            [task_id.as_str()]
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "UPDATE tasks SET model_token_count=-1 WHERE task_id=?1",
             [task_id.as_str()]
         )
         .is_err()

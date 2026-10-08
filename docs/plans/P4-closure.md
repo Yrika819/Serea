@@ -1260,6 +1260,10 @@ evidence head `558223aa8bef753fbb78a4ba7a84391974663634` passing Fast CI
   provider output in events/usage; and no external model dependency, credential,
   or network call. The host call context remains trusted in-process; Router
   does not depend on Policy or TaskEngine and does not change Task lifecycle.
-- P4F is closed on this branch. P4 final status remains subject to exact-head
-  validation of the evidence commit that records this closure. No local Mac or
-  Local MCP was used; no merge or P5 work occurred.
+- P4F is closed on this branch. The exact closure evidence head
+  `30fec93e5ef1077ff6c7075d96326fb677c5b13d` passed Fast CI `37714321233`,
+  Full CI `37714321119`, and cross-architecture SQLite `37714321114`. P4 is
+  `CLOSED_ON_BRANCH` at that validated head. This closure note is
+  documentation-only; PR Ready status is applied only after its exact head
+  also passes the required Actions. No local Mac or Local MCP was used; no
+  merge or P5 work occurred.

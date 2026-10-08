@@ -358,6 +358,20 @@ fn step_binding_persists_exact_revision_and_retries_reuse_it() {
                 )
                 .is_err()
         );
+        for sql in [
+            "UPDATE task_steps SET provider_id='other' WHERE step_id=?1",
+            "UPDATE task_steps SET capability_id='calendar.events.write' WHERE step_id=?1",
+            "UPDATE task_steps SET capability_version='2.0.0' WHERE step_id=?1",
+        ] {
+            assert!(
+                store
+                    .conn
+                    .lock()
+                    .unwrap()
+                    .execute(sql, [step_id.as_str()])
+                    .is_err()
+            );
+        }
         assert!(
             store
                 .conn
@@ -434,6 +448,40 @@ fn binding_refuses_unpinned_tasks_unmembered_revisions_and_wrong_task() {
         store.bind_step_capability(&other_task, &step_id, &digests[0]),
         Err(StoreError::RegistryBindingRefused)
     );
+}
+
+#[test]
+fn binding_refuses_step_capability_version_and_provider_mismatches() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    let (generation_id, digests) = activated_candidate_store(&store, &[("one", '1')]);
+    for (index, column, value) in [
+        (10, "capability_id", "calendar.events.write"),
+        (11, "capability_version", "2.0.0"),
+        (12, "provider_id", "other"),
+    ] {
+        let task_id = TaskId::new(format!("tsk_{index:026}")).unwrap();
+        let step_id = StepId::new(format!("stp_{index:026}")).unwrap();
+        task_and_step(
+            &store,
+            task_id.as_str(),
+            step_id.as_str(),
+            Some(generation_id),
+        );
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                &format!("UPDATE task_steps SET {column}=?1 WHERE step_id=?2"),
+                rusqlite::params![value, step_id.as_str()],
+            )
+            .unwrap();
+        assert_eq!(
+            store.bind_step_capability(&task_id, &step_id, &digests[0]),
+            Err(StoreError::RegistryBindingRefused),
+            "binding must refuse Step {column} mismatch",
+        );
+    }
 }
 
 #[test]

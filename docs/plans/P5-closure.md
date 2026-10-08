@@ -12,7 +12,7 @@
 ## P5B implementation checkpoint
 
 - Migration: `0004_capability_registry.sql`; schema version 4.
-- Migration checksums: 0001 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`; 0002 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`; 0003 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`; 0004 `140d25ba62c90b7406e59dcf5d4f146be9b62b9ff8b4bb9310eaefacf4d2932d`.
+- Migration checksums: 0001 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`; 0002 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`; 0003 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`; 0004 `b60000371f3c10d64adc7bb54b5e5144fd6ac6ec34246c072aaf68d77861d93a`.
 - `0001`, `0002`, and `0003` were not modified. Existing Tasks keep a NULL registry generation after upgrade.
 - `serea-capability` runtime dependencies are limited to protocol, storage, and event-bus. `serea-testkit` is dev-only. Storage has no Event Bus dependency.
 - Generation IDs use SQLite `INTEGER PRIMARY KEY AUTOINCREMENT` under the Store write transaction. Active authority is a singleton pointer, not `MAX(generation_id)`.
@@ -29,11 +29,12 @@ RED evidence captured before production support:
 - Migration tests: `cargo test -p serea-storage migration_0004_tests` first failed because schema version/latest migration were 3 and the catalog lacked 0004; v3 upgrade stayed at v3; interrupted 0004 and strict registry table tests failed while the migration was absent.
 - Event protocol test: `cargo test -p serea-protocol --test p5b_registry_event` failed because `CAPABILITY_REGISTRY_CHANGED` was absent from EventKind.
 - Registry API tests: `cargo test -p serea-storage capability_registry_tests` failed to compile because generation, descriptor revision, membership/default, and overlay types and operations did not exist.
+- Step identity regression: `cargo test -p serea-storage binding_refuses_step_capability_version_and_provider_mismatches` first returned a successful binding for a Step whose capability_id disagreed with the descriptor. The migration trigger now checks capability_id, version, and provider_id against the stored Step and preserves those identity fields after binding.
 
 Focused GREEN evidence after implementation:
 
 - `cargo test -p serea-storage migration_0004_tests` — 7 passed.
-- `cargo test -p serea-storage capability_registry_tests` — 9 passed.
+- `cargo test -p serea-storage capability_registry_tests` — 10 passed.
 - `cargo test -p serea-capability --test registry_transactions` — 10 passed, including independent Store connections, rollback injection, overlay conflict, and restart recovery.
 - `cargo test -p serea-protocol --test p5b_registry_event` — 1 passed.
 - `cargo test -p serea-protocol pro_event_3_event_kind_includes_the_sixty_one_frozen_values` — 1 passed.
@@ -44,7 +45,7 @@ Focused GREEN evidence after implementation:
 
 1. **Migration/schema:** one new STRICT migration, v3-to-v4 is nullable/no-backfill, interrupted migration rolls back, integrity and FK checks pass, earlier SQL checksums are fixed. No P5-only host namespace restriction is encoded in the schema.
 2. **Registry identity/immutability:** digest is the revision key; activated generation, revisions, membership/defaults, and bindings cannot be rewritten. Active pointer advances explicitly.
-3. **FK/pinning:** Task pin is RESTRICT and activated-only; binding validates the Task/Step pair, pin, generation member, and descriptor facts. Bound Step identity cannot change. No implicit generation fill is present.
+3. **FK/pinning:** Task pin is RESTRICT and activated-only; binding validates the Task/Step pair, pin, generation member, Step capability/version/provider, and descriptor facts. Bound Step identity cannot change. No implicit generation fill is present.
 4. **Transaction/event atomicity:** the capability facade composes Store and EventBus using the fixed transaction participant pattern. Injected append failure rolls back activation/overlay changes.
 5. **Concurrency/recovery:** independent connections serialize generation allocation/activation; overlay expected-revision conflicts do not overwrite state. Prepared and committed state are distinguished after reopen.
 6. **Crate graph/authority:** `serea-capability` has only protocol/storage/event-bus runtime edges; it does not depend on policy, task-engine, model-router, core, or testkit at runtime.

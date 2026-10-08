@@ -175,6 +175,9 @@ CREATE TRIGGER step_capability_binding_matches_task_step
 BEFORE INSERT ON step_capability_bindings
 WHEN (SELECT task_id FROM task_steps WHERE step_id=NEW.step_id) IS NOT NEW.task_id
   OR (SELECT kind FROM task_steps WHERE step_id=NEW.step_id) IS NOT 'CAPABILITY'
+  OR (SELECT capability_id FROM task_steps WHERE step_id=NEW.step_id) IS NOT NEW.capability_id
+  OR (SELECT capability_version FROM task_steps WHERE step_id=NEW.step_id) IS NOT NEW.capability_version
+  OR (SELECT provider_id FROM task_steps WHERE step_id=NEW.step_id) IS NOT NEW.provider_id
   OR (SELECT capability_registry_generation FROM tasks WHERE task_id=NEW.task_id) IS NOT NEW.generation_id
   OR (SELECT activated_at_ms FROM capability_registry_generations WHERE generation_id=NEW.generation_id) IS NULL
   OR NOT EXISTS (SELECT 1 FROM capability_generation_members AS m
@@ -193,9 +196,12 @@ BEFORE DELETE ON step_capability_bindings
 BEGIN SELECT RAISE(ABORT, 'step capability bindings are immutable'); END;
 
 CREATE TRIGGER bound_task_step_identity_immutable
-BEFORE UPDATE OF task_id,kind ON task_steps
+BEFORE UPDATE OF task_id,kind,capability_id,capability_version,provider_id ON task_steps
 WHEN EXISTS (SELECT 1 FROM step_capability_bindings WHERE step_id=OLD.step_id)
- AND (NEW.task_id IS NOT OLD.task_id OR NEW.kind IS NOT OLD.kind)
+ AND (NEW.task_id IS NOT OLD.task_id OR NEW.kind IS NOT OLD.kind
+      OR NEW.capability_id IS NOT OLD.capability_id
+      OR NEW.capability_version IS NOT OLD.capability_version
+      OR NEW.provider_id IS NOT OLD.provider_id)
 BEGIN SELECT RAISE(ABORT, 'bound capability step identity is immutable'); END;
 
 CREATE TRIGGER capability_registry_state_requires_activated_generation

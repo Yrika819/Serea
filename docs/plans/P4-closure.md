@@ -1267,3 +1267,15 @@ evidence head `558223aa8bef753fbb78a4ba7a84391974663634` passing Fast CI
   documentation-only; PR Ready status is applied only after its exact head
   also passes the required Actions. No local Mac or Local MCP was used; no
   merge or P5 work occurred.
+
+
+## Post-merge main validation
+
+- PR #3 was merged with a merge commit. Merge commit: `cab92ada2d7436daaa3f75a758e24af7996389ca`.
+- Merge parents: parent 1 `187fd57ea2c713facc47400ed64269c2d0388be2`; parent 2 `f733c626ced7ef9952ffe6e5cff1bbc12ef12b8c`. The merge commit is the `main` head for this validation. The `p4/model-router` branch remains retained.
+- Fast CI passed on the merge commit: run [37747758334](https://github.com/Yrika819/Serea/actions/runs/37747758334). Workspace smoke, documentation validation, identity guard and tests, formatting, Cargo metadata, and fast Rust checks all passed.
+- Full CI passed on the merge commit: run [37747758318](https://github.com/Yrika819/Serea/actions/runs/37747758318). Linux stable, Linux MSRV 1.85.0, macOS Intel x86_64, and macOS arm64 all passed. The Linux stable release fault-seam exclusion proof passed.
+- Cross-architecture SQLite portability passed on the merge commit: run [37747758279](https://github.com/Yrika819/Serea/actions/runs/37747758279). GitHub-hosted Intel produced a closed database opened on arm64, and GitHub-hosted arm64 produced a closed database opened on Intel. Both producer jobs verified there was only the closed database file, without `-shm` or `-wal` transfer; both consumers passed the portability validation. This supports only the cleanly closed Serea SQLite database portability claim between these GitHub-hosted macOS architectures.
+- Migration verification on merged main: 0001 SHA-256 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`; 0002 SHA-256 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`; migration 0003 is `0003_model_accounting.sql`, final SHA-256 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`. Schema version is 3; migration 0004 is absent. Migration tests cover fresh 0001→0002→0003, v2→v3, interrupted migration rollback, reopen, integrity and foreign-key checks, and model-accounting invariants.
+- The merged tree is the reviewed P4 tree. The workspace contains `serea-model-router` and no P5 runtime. P4 remains limited to its recorded routing, data-class, dispatch/recovery, validation, repair, fallback, accounting, retention, event, cancellation, and concurrency contracts. Codex routing, PRIVATE/SECRET/CREDENTIAL dispatch, external provider networking, real credentials, and P5 remain absent.
+- P4 is closed and merged on main after the merge-commit Actions above passed. P5 remains not started.

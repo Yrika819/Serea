@@ -8,8 +8,8 @@ publish.workspace = true
 
 [features]
 # P2H crash/fault seam. Deliberately empty and deliberately NOT a default
-# feature. The workspace requests it only from the task-engine dev-dependency
-# edge, so normal/default production builds exclude its window and arming API.
+# feature. The workspace requests it only from test-target dev-dependency
+# edges, so normal/default production builds exclude its window and arming API.
 # A build that explicitly opts into this feature contains the seam; the release
 # proof records that boundary in `docs/plans/P2H-review-and-closure.md`.
 p2h-fault-injection = []

@@ -84,6 +84,14 @@ pub enum Window {
     /// Inside `Store::transact_in`, after every write of the transaction and
     /// immediately before `COMMIT`.
     BeforeCommit,
+    /// After a model DISPATCH_INTENT row is inserted, before transaction commit.
+    AfterModelAttemptInsert,
+    /// After an accepted response blob is staged, before usage is written.
+    AfterModelResponseBlob,
+    /// After model_usage insertion, before the attempt terminal update.
+    AfterModelUsageInsert,
+    /// After a model attempt terminal update, before transaction commit.
+    AfterModelAttemptTerminal,
     /// Inside `Store::transact_in`, immediately after `COMMIT` returned `Ok`
     /// and before the caller can observe success.
     AfterCommit,

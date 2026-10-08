@@ -1616,6 +1616,8 @@ fn m12_m13_mixed_pass_changes_once_then_all_durable_tables_are_byte_identical() 
             "event_sequence_ledger",
             "event_store_state",
             "leases",
+            "model_call_attempts",
+            "model_usage",
             "plan_revisions",
             "schedule_command_receipts",
             "schedule_occurrences",

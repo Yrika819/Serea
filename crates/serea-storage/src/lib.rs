@@ -27,6 +27,13 @@ mod lifecycle;
 mod migrate;
 #[cfg(test)]
 mod migration_0002_tests;
+#[cfg(test)]
+mod migration_0003_tests;
+mod model_accounting;
+#[cfg(test)]
+mod model_call_tests;
+#[cfg(test)]
+mod model_cost_tests;
 mod recovery;
 mod scheduler;
 mod store;
@@ -35,7 +42,7 @@ mod tx;
 
 // P2H: the crash/fault seam is absent from the normal/default build. The
 // workspace requests its explicitly test-oriented feature only through the
-// task-engine dev-dependency edge; any build that opts into the feature is
+// test-target dev-dependency edges; any build that opts into the feature is
 // seam-bearing and is outside the default-production exclusion proof.
 #[cfg(feature = "p2h-fault-injection")]
 pub mod fault;
@@ -54,6 +61,14 @@ pub use event::{
 pub use lease::{LeaseGuard, StepCommit, StepFailure, StepOutcome, TransitionContext};
 pub use lifecycle::{CancellationOutcome, DeletionOutcome};
 pub use migrate::{Migration, Migrations};
+pub use model_accounting::{
+    MAX_MODEL_CALLS_PER_TASK, MAX_MODEL_RESPONSE_BYTES, MAX_MODEL_RETENTION_BATCH,
+    MAX_MODEL_TURNS_PER_TASK, ModelAccountingError, ModelAttemptRelationKind, ModelAttemptState,
+    ModelCallAttempt, ModelCallAttemptDraft, ModelCallCompletion, ModelDeploymentClass,
+    ModelFailureUsage, ModelPriceSnapshot, ModelResponseStorage, ModelUsageRecord, UsdMicros,
+    UtcAccountingDay, calculate_cost_usd_micros, calculate_reservation_usd_micros,
+    validate_price_snapshot,
+};
 pub use recovery::{
     RecoveryAction, RecoveryApplied, RecoveryAuthority, RecoveryPass, RecoveryReceiptRepair,
     RecoverySnapshot, RecoveryStep,

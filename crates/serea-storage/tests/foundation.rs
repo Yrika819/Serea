@@ -21,14 +21,14 @@ fn file_migration_reopen_and_retryable_checkpoint() {
     let path = dir.join("store.sqlite");
     {
         let store = Store::open(&path, &Fixed).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(store.schema_version().unwrap(), 3);
         assert_eq!(
             store.checkpoint_for_close().unwrap(),
             CheckpointOutcome::Complete
         );
     }
     let store = Store::open(&path, &Fixed).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), 3);
     store.verify_integrity().unwrap();
     store.transact(|_tx| Ok(())).unwrap();
     drop(store);
@@ -38,7 +38,7 @@ fn file_migration_reopen_and_retryable_checkpoint() {
 #[test]
 fn memory_profile_is_explicitly_not_durable() {
     let store = Store::open_in_memory(&Fixed).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), 3);
     assert_eq!(
         store.checkpoint_for_close().unwrap(),
         CheckpointOutcome::NotApplicable

@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
 use serea_protocol::{
-    Actor, ActorId, ActorKind, DataClass, EnvelopeVersion, EpochMillis, EventId, EventKind,
-    IdMinter, ScheduleId, SemVer, Seq, SereaEvent, TaskId, TaskState, Timestamp, Trace, UlidSource,
-    WireSurface,
+    Actor, ActorId, ActorKind, CostClass, DataClass, EnvelopeVersion, EpochMillis, EventId,
+    EventKind, FinishReason, IdMinter, ModelErrorCode, ModelId, ModelPurpose, ProviderId,
+    RequestId, ScheduleId, SemVer, Seq, SereaEvent, TaskId, TaskState, Timestamp, Trace,
+    UlidSource, WireSurface,
 };
 use serea_storage::{
     AuditOperation, DurableTransition, EventDraft, EventParticipant, Store, StoreError, Tx,
@@ -49,6 +50,170 @@ pub enum ScheduleLifecycle {
 }
 
 const TASK_LIFECYCLE_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+const MODEL_ACTIVITY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+
+/// Closed model-attempt relationship carried by content-free activity events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelEventRelationV1 {
+    /// A top-level normal operation.
+    Normal,
+    /// A deterministic fallback attempt.
+    Fallback,
+    /// A bounded structured repair attempt.
+    Repair,
+}
+
+impl ModelEventRelationV1 {
+    const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Normal => "NORMAL",
+            Self::Fallback => "FALLBACK",
+            Self::Repair => "REPAIR",
+        }
+    }
+}
+
+/// Host-owned identity and classification facts for one model activity event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelEventMetadataV1 {
+    /// One-dispatch request identity.
+    pub request_id: RequestId,
+    /// Host-selected configured model.
+    pub model_id: ModelId,
+    /// Registered provider identity.
+    pub provider_id: ProviderId,
+    /// Owning task, when present.
+    pub task_id: Option<TaskId>,
+    /// Host-assigned model purpose.
+    pub purpose: ModelPurpose,
+    /// Host-assigned relation to a prior model attempt.
+    pub relation: ModelEventRelationV1,
+    /// Classification of the prepared call.
+    pub data_class: DataClass,
+    /// Explicit host timestamp for this activity event.
+    pub occurred_at: EpochMillis,
+}
+
+/// Trusted accounting metadata for one completed provider response event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelCompletedEventV1 {
+    /// Common host-selected attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// Provider finish reason, bound by the host to this attempt.
+    pub finish_reason: FinishReason,
+    /// Validated provider input tokens.
+    pub input_tokens: u64,
+    /// Validated provider output tokens.
+    pub output_tokens: u64,
+    /// Cost class from the host price snapshot.
+    pub cost_class: CostClass,
+    /// Settled cost in integer micro-USD, computed by the host.
+    pub cost_usd_micros: u64,
+    /// Immutable price configuration revision.
+    pub price_revision: String,
+    /// Host-derived structured repair dispatch count.
+    pub repair_attempts: u8,
+}
+
+/// Stable provider failure facts for one model failure event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFailedEventV1 {
+    /// Common host-selected attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// Stable typed error code; free-text diagnostics are excluded.
+    pub error_kind: ModelErrorCode,
+    /// Whether the adapter proved the failure is retryable.
+    pub retryable: bool,
+}
+
+/// Content-free host validation failure facts for a structured provider response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelOutputInvalidEventV1 {
+    /// Common host-selected attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// Number of bounded host validation diagnostics, from zero through 32.
+    pub diagnostic_count: u8,
+}
+
+/// Content-free host fact that a structured response was accepted after repair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRepairedEventV1 {
+    /// Common host-selected repair attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// Host-derived number of repair dispatches used by this result.
+    pub repair_attempts: u8,
+}
+
+/// Content-free host facts linking a failed primary model call to its fallback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFallbackEventV1 {
+    /// The failed primary attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// New RequestId reserved for the fallback attempt.
+    pub fallback_request_id: RequestId,
+    /// Host-selected next model in the frozen routing chain.
+    pub fallback_model_id: ModelId,
+}
+
+/// Content-free host facts that the single permitted fallback did not yield
+/// a usable result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFallbackExhaustedEventV1 {
+    /// The failed primary attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// Host-selected fallback model that was attempted.
+    pub fallback_model_id: ModelId,
+}
+
+/// Frozen generic host bound that may be exhausted by P4 model accounting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelBoundKindV1 {
+    /// Durable total trustworthy task tokens.
+    TaskTotalTokens,
+    /// Global daily spend reservation.
+    DailySpendUsd,
+}
+
+impl ModelBoundKindV1 {
+    const fn wire_name(self) -> &'static str {
+        match self {
+            Self::TaskTotalTokens => "max_task_total_tokens",
+            Self::DailySpendUsd => "max_daily_spend_usd",
+        }
+    }
+}
+
+/// Content-free generic bounds event for a model operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelBoundExceededEventV1 {
+    /// Task whose model operation encountered the bound.
+    pub task_id: Option<TaskId>,
+    /// Classification of the host-prepared operation.
+    pub data_class: DataClass,
+    /// Explicit host event timestamp.
+    pub occurred_at: EpochMillis,
+    /// Frozen bound identifier.
+    pub bound: ModelBoundKindV1,
+    /// Configured bound value.
+    pub limit: u64,
+    /// Durable or attempted observed value.
+    pub observed: u64,
+}
+
+/// Content-free per-task model call/turn budget exhaustion event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelBudgetExhaustedEventV1 {
+    /// Task whose budget was exhausted.
+    pub task_id: TaskId,
+    /// Classification of the host-prepared operation.
+    pub data_class: DataClass,
+    /// Explicit host event timestamp.
+    pub occurred_at: EpochMillis,
+    /// Bound limit.
+    pub limit: u64,
+    /// Current durable count.
+    pub observed: u64,
+}
 
 struct ErasedUlidSource(Box<dyn UlidSource + Send>);
 
@@ -89,6 +254,317 @@ impl EventBus {
             .lock()
             .map_err(|_| StoreError::LockPoisoned)
             .map(|mut ids| ids.next_task_id())
+    }
+
+    /// Mints a host-owned request identity for exactly one model dispatch.
+    pub fn mint_model_request_id(&self) -> Result<RequestId, StoreError> {
+        self.ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)
+            .map(|mut ids| ids.next_request_id())
+    }
+
+    /// Builds the content-free `MODEL_CALLED` event draft. The caller must
+    /// append it in the same storage transaction that persists the matching
+    /// dispatch intent, before invoking a provider.
+    pub fn draft_model_called(
+        &self,
+        metadata: ModelEventMetadataV1,
+    ) -> Result<EventDraft, StoreError> {
+        let payload = model_metadata_payload(&metadata);
+        self.draft_model_event(metadata, EventKind::ModelCalled, payload)
+    }
+
+    /// Builds a content-free model completion event with validated usage and
+    /// host-owned price facts only.
+    pub fn draft_model_completed(
+        &self,
+        completion: ModelCompletedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if completion.repair_attempts > 2
+            || completion.price_revision.is_empty()
+            || completion.price_revision.len() > 128
+            || completion
+                .price_revision
+                .bytes()
+                .any(|byte| byte.is_ascii_control())
+        {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&completion.metadata);
+        payload.insert(
+            "finish_reason".into(),
+            Value::String(completion.finish_reason.wire_name().to_owned()),
+        );
+        payload.insert("input_tokens".into(), Value::from(completion.input_tokens));
+        payload.insert(
+            "output_tokens".into(),
+            Value::from(completion.output_tokens),
+        );
+        payload.insert(
+            "cost_class".into(),
+            Value::String(completion.cost_class.wire_name().to_owned()),
+        );
+        payload.insert(
+            "cost_usd_micros".into(),
+            Value::from(completion.cost_usd_micros),
+        );
+        payload.insert(
+            "price_revision".into(),
+            Value::String(completion.price_revision),
+        );
+        payload.insert(
+            "repair_attempts".into(),
+            Value::from(completion.repair_attempts),
+        );
+        self.draft_model_event(completion.metadata, EventKind::ModelCompleted, payload)
+    }
+
+    /// Builds a content-free model failure event. Diagnostic text and model
+    /// response content have no representation in this typed payload.
+    pub fn draft_model_failed(
+        &self,
+        failure: ModelFailedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        let mut payload = model_metadata_payload(&failure.metadata);
+        payload.insert(
+            "error_kind".into(),
+            Value::String(failure.error_kind.as_str().to_owned()),
+        );
+        payload.insert("retryable".into(), Value::Bool(failure.retryable));
+        self.draft_model_event(failure.metadata, EventKind::ModelFailed, payload)
+    }
+
+    /// Builds a bounded, content-free structured-output validation event.
+    pub fn draft_model_output_invalid(
+        &self,
+        failure: ModelOutputInvalidEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if failure.diagnostic_count > 32 {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&failure.metadata);
+        payload.insert(
+            "diagnostic_count".into(),
+            Value::from(failure.diagnostic_count),
+        );
+        self.draft_model_event(failure.metadata, EventKind::ModelOutputInvalid, payload)
+    }
+
+    /// Builds the bounded, content-free `MODEL_REPAIRED` event for an accepted
+    /// host-validated repair result.
+    pub fn draft_model_repaired(
+        &self,
+        repaired: ModelRepairedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if !(1..=2).contains(&repaired.repair_attempts)
+            || repaired.metadata.relation != ModelEventRelationV1::Repair
+        {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&repaired.metadata);
+        payload.insert(
+            "repair_attempts".into(),
+            Value::from(repaired.repair_attempts),
+        );
+        self.draft_model_event(repaired.metadata, EventKind::ModelRepaired, payload)
+    }
+
+    /// Builds a content-free fallback decision event. The caller commits it
+    /// with primary failure and the fallback dispatch intent.
+    pub fn draft_model_fallback(
+        &self,
+        fallback: ModelFallbackEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if fallback.metadata.relation != ModelEventRelationV1::Normal
+            || fallback.fallback_model_id == fallback.metadata.model_id
+            || fallback.fallback_request_id == fallback.metadata.request_id
+        {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&fallback.metadata);
+        payload.insert(
+            "fallback_request_id".into(),
+            Value::String(fallback.fallback_request_id.as_str().to_owned()),
+        );
+        payload.insert(
+            "fallback_model_id".into(),
+            Value::String(fallback.fallback_model_id.as_str().to_owned()),
+        );
+        self.draft_model_event(fallback.metadata, EventKind::ModelFallback, payload)
+    }
+
+    /// Builds the content-free event that closes the one-step fallback ladder.
+    pub fn draft_model_fallback_exhausted(
+        &self,
+        exhausted: ModelFallbackExhaustedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if exhausted.metadata.relation != ModelEventRelationV1::Normal
+            || exhausted.fallback_model_id == exhausted.metadata.model_id
+        {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = model_metadata_payload(&exhausted.metadata);
+        payload.insert(
+            "fallback_model_id".into(),
+            Value::String(exhausted.fallback_model_id.as_str().to_owned()),
+        );
+        self.draft_model_event(
+            exhausted.metadata,
+            EventKind::ModelFallbackExhausted,
+            payload,
+        )
+    }
+
+    /// Builds a generic content-free `BOUND_EXCEEDED` event for model bounds.
+    pub fn draft_model_bound_exceeded(
+        &self,
+        bound: ModelBoundExceededEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if bound.observed < bound.limit {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = Map::new();
+        payload.insert(
+            "bound_name".into(),
+            Value::String(bound.bound.wire_name().into()),
+        );
+        payload.insert("limit".into(), Value::from(bound.limit));
+        payload.insert("observed".into(), Value::from(bound.observed));
+        self.draft_model_task_event(
+            bound.task_id,
+            bound.data_class,
+            bound.occurred_at,
+            EventKind::BoundExceeded,
+            payload,
+        )
+    }
+
+    /// Builds a content-free `MODEL_BUDGET_EXHAUSTED` event for task call/turn
+    /// exhaustion.
+    pub fn draft_model_budget_exhausted(
+        &self,
+        budget: ModelBudgetExhaustedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if budget.observed < budget.limit || budget.limit == 0 {
+            return Err(StoreError::InvalidModelCall);
+        }
+        let mut payload = Map::new();
+        payload.insert("limit".into(), Value::from(budget.limit));
+        payload.insert("observed".into(), Value::from(budget.observed));
+        self.draft_model_task_event(
+            Some(budget.task_id),
+            budget.data_class,
+            budget.occurred_at,
+            EventKind::ModelBudgetExhausted,
+            payload,
+        )
+    }
+
+    fn draft_model_task_event(
+        &self,
+        task_id: Option<TaskId>,
+        data_class: DataClass,
+        occurred_at: EpochMillis,
+        kind: EventKind,
+        payload: Map<String, Value>,
+    ) -> Result<EventDraft, StoreError> {
+        if !matches!(data_class, DataClass::Public | DataClass::Personal) {
+            return Err(StoreError::EventClassRefused);
+        }
+        let message_id = self
+            .ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?
+            .next_event_id();
+        let retention_at = occurred_at
+            .get()
+            .checked_add(MODEL_ACTIVITY_RETENTION_MS)
+            .and_then(|value| EpochMillis::new(value).ok())
+            .ok_or(StoreError::InvalidTimestamp)?;
+        Ok(EventDraft {
+            event: SereaEvent {
+                envelope_version: EnvelopeVersion::new("1")
+                    .map_err(|_| StoreError::AuditRejected)?,
+                surface: WireSurface::new(WireSurface::EVENT)
+                    .map_err(|_| StoreError::AuditRejected)?,
+                message_id,
+                seq: Seq::new(0),
+                kind,
+                occurred_at: Timestamp::from_epoch_millis(occurred_at),
+                correlation_id: task_id.clone(),
+                causation_id: None,
+                actor: Actor {
+                    kind: ActorKind::Host,
+                    id: ActorId::new("model-router").map_err(|_| StoreError::AuditRejected)?,
+                    version: SemVer::new("1.0.0").map_err(|_| StoreError::AuditRejected)?,
+                    extensions: Default::default(),
+                },
+                data_class,
+                trace: Some(Trace {
+                    task_id,
+                    step_id: None,
+                    attempt: None,
+                    extensions: Default::default(),
+                }),
+                payload,
+                extensions: Default::default(),
+            },
+            retention_at: Some(retention_at),
+        })
+    }
+
+    fn draft_model_event(
+        &self,
+        metadata: ModelEventMetadataV1,
+        kind: EventKind,
+        payload: Map<String, Value>,
+    ) -> Result<EventDraft, StoreError> {
+        if !matches!(metadata.data_class, DataClass::Public | DataClass::Personal) {
+            return Err(StoreError::EventClassRefused);
+        }
+        let message_id = self
+            .ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?
+            .next_event_id();
+        let retention_at = metadata
+            .occurred_at
+            .get()
+            .checked_add(MODEL_ACTIVITY_RETENTION_MS)
+            .and_then(|value| EpochMillis::new(value).ok())
+            .ok_or(StoreError::InvalidTimestamp)?;
+        let task_id = metadata.task_id;
+        Ok(EventDraft {
+            event: SereaEvent {
+                envelope_version: EnvelopeVersion::new("1")
+                    .map_err(|_| StoreError::AuditRejected)?,
+                surface: WireSurface::new(WireSurface::EVENT)
+                    .map_err(|_| StoreError::AuditRejected)?,
+                message_id,
+                seq: Seq::new(0),
+                kind,
+                occurred_at: Timestamp::from_epoch_millis(metadata.occurred_at),
+                correlation_id: task_id.clone(),
+                causation_id: None,
+                actor: Actor {
+                    kind: ActorKind::Host,
+                    id: ActorId::new("model-router").map_err(|_| StoreError::AuditRejected)?,
+                    version: SemVer::new("1.0.0").map_err(|_| StoreError::AuditRejected)?,
+                    extensions: Default::default(),
+                },
+                data_class: metadata.data_class,
+                trace: Some(Trace {
+                    task_id,
+                    step_id: None,
+                    attempt: None,
+                    extensions: Default::default(),
+                }),
+                payload,
+                extensions: Default::default(),
+            },
+            retention_at: Some(retention_at),
+        })
     }
 
     /// Builds the fixed lifecycle fact emitted with a scheduled task mapping.
@@ -456,6 +932,31 @@ impl EventParticipant for EventBus {
             retention_at: Some(retention_at),
         }])
     }
+}
+
+fn model_metadata_payload(metadata: &ModelEventMetadataV1) -> Map<String, Value> {
+    let mut payload = Map::new();
+    payload.insert(
+        "request_id".into(),
+        Value::String(metadata.request_id.as_str().to_owned()),
+    );
+    payload.insert(
+        "model_id".into(),
+        Value::String(metadata.model_id.as_str().to_owned()),
+    );
+    payload.insert(
+        "provider_id".into(),
+        Value::String(metadata.provider_id.as_str().to_owned()),
+    );
+    payload.insert(
+        "purpose".into(),
+        Value::String(metadata.purpose.wire_name().to_owned()),
+    );
+    payload.insert(
+        "relation_kind".into(),
+        Value::String(metadata.relation.wire_name().to_owned()),
+    );
+    payload
 }
 
 fn task_event_kind(facts: &DurableTransition) -> Option<EventKind> {

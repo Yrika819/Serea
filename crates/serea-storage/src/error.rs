@@ -114,6 +114,30 @@ pub enum StoreError {
     RecoverySnapshotStale,
     /// Requested recovery action lacks validated durable evidence.
     InvalidRecoveryAction,
+    /// A model-call RequestId already identifies a committed provider attempt.
+    DuplicateModelRequestId,
+    /// A Task already has one in-flight DISPATCH_INTENT model attempt.
+    ModelCallInFlight,
+    /// The daily spend reservation would exceed the configured cap.
+    DailySpendExceeded,
+    /// The durable model-call count has reached its configured maximum.
+    ModelCallBudgetExceeded,
+    /// The durable top-level model-turn count has reached its fixed maximum.
+    ModelTurnBudgetExceeded,
+    /// A model attempt is missing or cannot make the requested terminal transition.
+    InvalidModelCallTransition,
+    /// A model attempt was not found by RequestId.
+    ModelCallNotFound,
+    /// Model accounting arithmetic exceeded SQLite's signed INTEGER range.
+    ModelAccountingOverflow,
+    /// Model attempt or accepted response data class is refused by P4B storage.
+    ModelDataClassRefused,
+    /// Trustworthy usage exceeds a snapshotted token bound or reservation.
+    ModelUsageExceedsBound,
+    /// Model attempt facts violate the P4B frozen storage contract.
+    InvalidModelCall,
+    /// Model usage retention arguments or deletion limits are invalid.
+    InvalidModelRetention,
     /// The injected clock refused its reading.
     Clock(ProtocolError),
 }
@@ -182,6 +206,18 @@ impl StoreError {
             Self::InvalidSchedule => "InvalidSchedule",
             Self::RecoverySnapshotStale => "RecoverySnapshotStale",
             Self::InvalidRecoveryAction => "InvalidRecoveryAction",
+            Self::DuplicateModelRequestId => "DuplicateModelRequestId",
+            Self::ModelCallInFlight => "ModelCallInFlight",
+            Self::DailySpendExceeded => "DailySpendExceeded",
+            Self::ModelCallBudgetExceeded => "ModelCallBudgetExceeded",
+            Self::ModelTurnBudgetExceeded => "ModelTurnBudgetExceeded",
+            Self::InvalidModelCallTransition => "InvalidModelCallTransition",
+            Self::ModelCallNotFound => "ModelCallNotFound",
+            Self::ModelAccountingOverflow => "ModelAccountingOverflow",
+            Self::ModelDataClassRefused => "ModelDataClassRefused",
+            Self::ModelUsageExceedsBound => "ModelUsageExceedsBound",
+            Self::InvalidModelCall => "InvalidModelCall",
+            Self::InvalidModelRetention => "InvalidModelRetention",
             Self::Clock(_) => "Clock",
         }
     }

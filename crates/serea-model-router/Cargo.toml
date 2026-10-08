@@ -1,0 +1,20 @@
+[package]
+name = "serea-model-router"
+description = "Deterministic host-owned model routing and durable dispatch."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serea-protocol = { workspace = true }
+serea-storage = { workspace = true }
+serea-event-bus = { workspace = true }
+jsonschema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+serea-storage = { workspace = true, features = ["p2h-fault-injection"] }

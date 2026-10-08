@@ -1,12 +1,13 @@
 # Serea Decision Index
 
-Current frozen architecture: `serea-arch/2.5.0`; P0/P1 baseline
+Current frozen architecture: `serea-arch/2.6.0`; P0/P1 baseline
 `serea-arch/0.2.0` remains historical. P2 is closed. P3 is closed on the open
 `main` branch. Current P3 validation results and scope limits belong in the
 [P3 closure record](../plans/P3-closure.md). ADR-0021 remains Proposed as an
 architecture decision; ADR-0022/24 remain Proposed for their unclosed scopes.
 P4A contract closure is accepted by ADR-0031 through ADR-0033; P4 runtime has
-not started.
+not started. P5A owner-decision closure is accepted by ADR-0034 through
+ADR-0036; P5 runtime has not started.
 
 ## Accepted decisions
 
@@ -30,6 +31,9 @@ not started.
 | [ADR-0031](ADR-0031-model-roster-routing-and-egress-v1.md) | Model roster, routing requirements, and egress V1 | **Accepted**; architecture `serea-arch/2.5.0`; model and bounds surfaces unchanged |
 | [ADR-0032](ADR-0032-model-dispatch-durability-and-accounting-v1.md) | Model dispatch durability, ambiguity, and accounting V1 | **Accepted**; migration 0003 concept only; event/model/bounds surfaces unchanged |
 | [ADR-0033](ADR-0033-structured-validation-repair-and-fallback-v1.md) | Structured validation, repair, and fallback V1 | **Accepted**; architecture `serea-arch/2.5.0`; model and bounds surfaces unchanged |
+| [ADR-0034](ADR-0034-capability-manifest-registry-and-pinning.md) | Host manifest, immutable registry generations, descriptor/implementation pinning and overlays | **Accepted**; architecture `serea-arch/2.6.0`; no wire-major change |
+| [ADR-0035](ADR-0035-tool-proposal-schema-and-prepared-action.md) | Closed tool proposal, trusted schema catalog, classification and PreparedActionV1 | **Accepted**; architecture `serea-arch/2.6.0`; action/2 unchanged |
+| [ADR-0036](ADR-0036-p5-p6-p8-authorization-and-dispatch.md) | P5/P6/P8 boundary, RequestId, accounting and execution deferral | **Accepted**; architecture `serea-arch/2.6.0`; P8 decisions are not P5 blockers |
 
 ## P2 decision disposition
 

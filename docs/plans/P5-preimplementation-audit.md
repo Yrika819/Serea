@@ -1,9 +1,15 @@
 # P5 Preimplementation Audit — Capability Registry and Tool Router
 
-Status: **Audit only; implementation blocked pending owner decisions**  
+Status: **Historical pre-closure audit; owner decisions closed by §17**
 Baseline: `528806b0117c6ff385a79a7baaed6ab508527fe6`  
 Architecture: `serea-arch/2.5.0` · SQLite schema: `3`  
 Branch: `p5/preimplementation-audit`
+
+> Sections 1–16 preserve the docs-only audit as it stood at the required
+> starting HEAD. Their unresolved decisions, proposed execution slices, and
+> conflicting proposal behavior are historical and superseded by the accepted
+> P5A closure in §17 and ADR-0034 through ADR-0036. The current owner decision
+> status is `READY_FOR_P5_IMPLEMENTATION`; P5B has not started.
 
 ## 1. Scope and method
 
@@ -657,3 +663,168 @@ event ownership and action-attempt identity.
 
 No architecture version is bumped here. No runtime, crate, migration or
 provider invocation is started.
+
+## 17. P5A owner-decision closure — 2026-10-08
+
+This section supersedes §§10–16 wherever they describe an open owner choice,
+P5 dispatch work, provider-authored registration authority, proposal-extra
+stripping, version selection, schema recursion, classification proof, registry
+events, or migration scope. Owner decisions are recorded as Accepted in
+[ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md),
+[ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md),
+and [ADR-0036](../decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md).
+Architecture advances `serea-arch/2.5.0` to `serea-arch/2.6.0`; `serea.action/2`
+does not change. P5 runtime remains unstarted; no crate or migration 0004 is
+created here.
+
+### 17.1 Frozen phase boundary
+
+P5 owns durable registry, host manifest matching, descriptor history/pinning,
+trusted local schemas/compiler, deterministic model-tool projection,
+ToolCallProposalV1 validation, classified arguments, PreparedActionV1, typed
+availability/refusal outcomes, and typed P6 handoff. P5 does not evaluate
+policy, approval/grant matching, duplicate suppression, repeated-action
+execution state, tool-call accounting, dispatch reservation, provider invoke,
+result acceptance, receipt/evidence commit, or ambiguity reconciliation.
+P6 owns deterministic policy, approval/grant lifecycle, and authorization of
+PreparedActionV1; P6 cannot invoke providers. P8 is first allowed to invoke
+CapabilityProvider, with deterministic mock external providers.
+
+P8 frozen order: proposal validation -> registry/schema -> P6 policy -> P6
+approval -> duplicate suppression -> repeat bound -> tool-call budget and
+durable dispatch intent -> provider invoke -> result/receipt/evidence ->
+reconciliation when required. No production shortcut exists.
+
+### 17.2 Registry, manifest, and binding decisions
+
+CapabilityManifestV1 is trusted host authority. Provider advertisement only
+confirms/withdraws availability; unmanifested descriptors fail that provider
+registration. Manifest entries identify CapabilityId, SemVer, ProviderId,
+optional ImplementationId, descriptor semantic digest, input/output catalog
+schema identity/digests, and candidate eligibility. Ordinary providers cannot
+register `host` or `host.*`; no P5 host builtin is registered. The host manifest
+allowlist is the shell exclusion proof.
+
+Logical identity is CapabilityId + SemVer + optional ImplementationId. None is
+legal only for one implementation per ID/version/generation; multiple variants
+each require distinct Some IDs. Duplicate exact identity rejects activation.
+Descriptor revisions are immutable and host-digested across authority-bearing
+facts and schema digests. A registry generation snapshots revisions, manifest
+defaults/priorities, and schema catalog revision. New Tasks pin one generation;
+pre-P5 NULL-generation Tasks cannot create capability Steps. Existing Steps
+pin revision/provider/implementation before P6; retries never switch.
+
+Live enabled/removed and experimental opt-in overlays are keyed by CapabilityId
+across versions and implementations. Current disable/removal blocks every new
+binding, including old Tasks; already-bound Steps can recover on pinned facts.
+Experimental requires durable local-admin opt-in; model/device cannot enable.
+Manifest explicitly selects one default version; no runtime latest/provider
+order/model selection. Prerelease only when that exact version is manifest
+default. Implementation selection is the first ordered manifest candidate
+eligible in one immutable host-availability and provider-health snapshot.
+Health changes availability only; a bound unavailable implementation returns
+CAPABILITY_UNAVAILABLE without failover.
+
+### 17.3 Proposal, schema, and classification decisions
+
+ToolCallProposalV1 has exactly `{version:"1", capability_id, arguments}` with
+object-root arguments. Any unknown or authority-bearing field rejects the
+whole proposal. No ActionRequest/PreparedAction results. MODEL_SCHEMA_VIOLATION
+metadata is limited to TaskId, optional StepId/model RequestId, stable code,
+offending field names, and count; never values, prompt, proposal, or arguments.
+
+ToolDefinitionV1 has exactly version, capability_id, title, description, and
+input_schema; sorted by CapabilityId UTF-8 bytes. It exposes no authority
+fields. Visibility uses task-pinned registry, current overlay, experimental
+opt-in, structural validity, and eligible READY implementation; policy and
+approval are not visibility filters.
+
+CapabilitySchemaCatalogV1 permits only exact `https://serea.local/schemas/`
+references, no network/filesystem/redirect/DNS/traversal, exact trusted
+catalog references and same-document pointers, Draft 2020-12. P5 V1 limits:
+65,536 canonical bytes, depth 64, 4,096 schema nodes, 256 properties/object;
+no cyclic refs, no open objects, no patternProperties, arrays require maxItems,
+strings require maxLength, and unprovably disjoint oneOf is refused. Overflow
+is typed fail-closed registration refusal; no truncation. Structural limits
+are not B3 counters.
+
+ClassifiedArgumentsV1 receives trusted provenance. Unknown is CREDENTIAL and
+refused. Model output inherits source class and projections never lower it.
+Direct USER/SCHEDULER/PROACTIVE_WATCHER/SYSTEM callers supply classified
+arguments. Descriptor data_class is a maximum; actual request class is exact
+and must not exceed it. Runtime classification is primary credential
+exclusion; names/schema are defense in depth. Output classification attaches
+at a trusted adapter boundary; unknown is CREDENTIAL and P8 closes the detail.
+
+PreparedActionV1 is immutable and carries Task/Step, pinned generation/revision,
+capability/version/provider/implementation, validated args/digest, IDK-1,
+trusted class, host requester, effective deadline and immutable descriptor
+facts. It has no RequestId or execution authority. P6 cannot mutate it. RequestId
+is minted per actual P8 dispatch intent; same-Step retry keeps IDK and facts but
+gets a new RequestId.
+
+### 17.4 Registry events, migration, and deferred P8 contracts
+
+`CAPABILITY_REGISTRY_CHANGED` covers generation, disabled/removal, experimental
+opt-in/out, removal/reactivation. It is metadata only and commits atomically
+with its durable mutation in one SQLite transaction through fixed upper-layer
+composition. `POLICY_CHANGED` is only policy-rule change.
+
+Migration 0004 later contains registry generations, descriptor revisions,
+membership/default/priority metadata, trusted schema reference metadata,
+admin overlays, nullable Task generation for legacy rows, and immutable Step
+bindings. It contains no policy, approval, tool_call_count, duplicate/repeat,
+dispatch, ActionResult, receipt, or reconciliation tables.
+
+Duplicate behavior remains global `(CapabilityId, arguments_digest)`, 24 hours,
+effecting capabilities only, version excluded; cross-version suppression is
+accepted. P8 consumes one tool-call unit at each durably committed provider
+dispatch intent, never refunds it, and does not count preparation, denied or
+pending requests, duplicates, or pre-dispatch refusals. NATIVE, EMULATED, and
+NONE idempotency implementation remains P8. P8 also closes ActionResult status
+matrix, result persistence, receipt/evidence timing/storage, explicit
+reconciliation bindings/execution, and dispatch attempt schema. These are not
+P5 blockers.
+
+### 17.5 P5 implementation slices after closure
+
+- **P5B:** migration 0004; registry generations, descriptor revisions,
+  overlays, Task generation and Step binding storage.
+- **P5C:** CapabilityManifestV1, schema catalog/compiler, deterministic
+  registry and availability snapshots.
+- **P5D:** ToolDefinitionV1, ToolCallProposalV1 validation,
+  MODEL_SCHEMA_VIOLATION, classified argument validation, PreparedActionV1.
+- **P5E:** TaskEngine generation pinning, step binding, restart/hot-update/
+  removal behavior.
+- **P5F:** concurrency/recovery/security/crash closure and typed P6 handoff.
+
+No P5 slice invokes providers or implements dispatch/duplicate execution.
+
+### 17.6 Future P5 RED-first test obligations
+
+- **Manifest:** reject unmanifested descriptors and digest mismatch; foreign
+  provider namespace; ordinary `host.*`; reversed provider vector order does
+  not change selection.
+- **Registry:** immutable generations; duplicate exact identity; multiple
+  variants and None rule; task pin; old Task/new Step after update; new Task
+  after update; removal blocks new binding; bound Step survives removal;
+  disable/re-enable; experimental opt-in/out.
+- **Version/implementation:** explicit default; prerelease never auto-selected;
+  model cannot select version; deterministic priority; root availability
+  change; retry cannot switch implementation.
+- **Schema:** exact local refs; no network/filesystem; byte limit 65,536; depth
+  64; nodes 4,096; properties 256; cyclic refs, open objects,
+  patternProperties, unbounded strings/arrays, and ambiguous oneOf rejected.
+- **Proposal:** exact V1; unknown field and every host authority injection
+  reject whole proposal; sanitized event; stable digest; exact IDK-1.
+- **Classification:** trusted PUBLIC/PERSONAL/PRIVATE; unknown -> CREDENTIAL;
+  CREDENTIAL refusal; above descriptor ceiling refused; model cannot set/lower
+  class.
+- **Pinning:** descriptor update, provider disappearance, disable after
+  binding, retry/recovery same revision, and no implementation switch.
+
+### 17.7 Closure disposition
+
+Owner decisions remaining for P5: **NONE**. P8 deferred result/receipt/
+evidence/reconciliation/dispatch contracts are **NOT P5 BLOCKERS**. Final
+status: `READY_FOR_P5_IMPLEMENTATION`. P5B, P6 runtime, and P8 have not started.

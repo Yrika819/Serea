@@ -1,9 +1,9 @@
 # Serea Protocol Index
 
-Status: **FROZEN current contract set** · Architecture version `serea-arch/2.5.0` · Ratified on 2026-10-07
+Status: **FROZEN current contract set** · Architecture version `serea-arch/2.6.0` · Ratified on 2026-10-08
 
 P0/P1 implementation baseline was `serea-arch/0.2.0`; the current frozen registry
-is architecture/2.5, task/2, action/2, device/2, event/1, scheduler/1 and
+is architecture/2.6, task/2, action/2, device/2, event/1, scheduler/1 and
 envelope version 1. Three corrected
 independent subagent documentation gate reviews under the coordinator are GREEN;
 owner direction ratified the design contingent on GREEN. P2A slices are
@@ -11,7 +11,9 @@ implemented. The coordinator records current final workspace/MSRV validation,
 test counts, bounded regression review and integration status in the
 [P2A closure record](../plans/P2A-review-and-closure.md); this index makes no
 separate final-count or closure claim.
-Architectural acceptance does not claim storage/engine/event runtime delivery.
+ADR-0034 through ADR-0036 close P5 owner decisions as architecture-minor
+semantics. P5 runtime has not started; P6 and P8 remain future phases.
+Architectural acceptance does not claim registry/runtime delivery.
 
 This document is the naming and versioning authority for every other Serea
 contract. When a type, field, or enum appears in more than one place in the
@@ -36,6 +38,16 @@ named here.
 | `PROTO-DATA` | [Data Classification Protocol](09-data-classification-protocol.md) | `DataClass`, egress rules, credential redaction |
 | `PROTO-BOUNDS` | [Bounds Protocol](10-bounds-protocol.md) | Every bound the host enforces on models, tools, retries, and tasks |
 | `PROTO-SCHED` | [Scheduler Protocol](11-scheduler-protocol.md) | Durable schedules, wake events, occurrence identity, recovery, and scheduling authority |
+
+P5 semantics also rely on accepted [ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md),
+[ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md),
+and [ADR-0036](../decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md).
+
+P5 capability semantics are specified by this index, the Capability, Task,
+Policy, Approval, Event, Data Classification, and Bounds Protocols, and accepted
+[ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md),
+[ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md),
+and [ADR-0036](../decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md).
 
 ---
 
@@ -94,6 +106,13 @@ Exactly three segments in V1. The split is mandatory:
   `notification`, `goal`).
 - `verb` is one of the frozen verb set in
   [Capability Protocol §2](01-capability-protocol.md#2-verb-set).
+- The `host` ProviderId and every `host.*` CapabilityId are reserved for
+  explicitly privileged first-party `HostBuiltin` registrations. Ordinary
+  CapabilityProvider registration must reject them. P5 registers none; only a
+  later reviewed host shim may claim `host.goal.*`.
+- Provider discovery never establishes capability authority. Only exact
+  membership in the host-reviewed CapabilityManifestV1 permits registration;
+  an unmanifested descriptor fails provider registration.
 
 Adding a verb is an architecture-version-visible change (see §7). Renaming a
 provider or resource is a breaking change and requires a new
@@ -133,13 +152,18 @@ does not evaluate approval authority or transition tasks. It advances the
 architecture to `serea-arch/2.4.0`; `serea.event/1`, `serea.scheduler/1`,
 `serea.approval/1`, and `serea.task/2` remain unchanged.
 
+ADR-0031 through ADR-0033 advance the architecture to `serea-arch/2.5.0`.
+ADR-0034 through ADR-0036 add accepted P5 owner decisions and advance it to
+`serea-arch/2.6.0`. They do not change `serea.action/2` or another wire major;
+ToolCallProposalV1 and PreparedActionV1 are internal handoff values.
+
 ### 4.2 Compatibility rules
 
 1. A consumer must reject a payload whose major wire-protocol version it does
    not implement. Silent downgrade is forbidden.
-2. A provider must accept any `CapabilityDescriptor` version it declares in
-   its `supported_capability_versions` set, and reject all others with
-   `ActionErrorKind::Validation`.
+2. Provider advertisement does not establish descriptor/version authority.
+   Provider descriptors must exactly match a host-reviewed manifest entry;
+   unsupported advertisements fail provider registration.
 3. On forward-compatible envelope surfaces, unknown fields are ignored for
    semantic processing and preserved in an opaque extension set for exact
    round-trip auditing. On security-sensitive closed schemas (including

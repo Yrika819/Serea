@@ -2,9 +2,9 @@
 
 Protocol ID: `PROTO-CAP` · Surface: `serea.action/2` · Status: **FROZEN current contract**
 
-This protocol defines how Serea describes a thing it can do, asks a provider
-to do it, and proves afterwards that it did. It is the boundary between
-*intent* (which may come from a model) and *effect* (which may not).
+This protocol defines capability authority and the future provider effect
+boundary. P5 prepares an immutable action; P6 authorizes it; P8 is the first
+phase permitted to invoke a provider.
 
 ---
 
@@ -15,15 +15,13 @@ to do it, and proves afterwards that it did. It is the boundary between
 The execution flow is fixed and has no bypass:
 
 ```
-Model output
-  -> Structured ActionRequest          (host-defined schema, model cannot widen)
-  -> Schema validation                  (fail closed)
-  -> Capability Registry lookup         (capability must exist and be enabled)
-  -> Policy Engine                      (deterministic; model has no vote)
-  -> Approval decision                  (human or scoped grant)
-  -> Provider invoke                    (the only place a side effect occurs)
-  -> Evidence / Receipt                 (proof, produced by the provider)
-  -> Durable state update               (persisted before advancing)
+ToolCallProposalV1 validation
+  -> Task-pinned registry/schema resolution and classified arguments (P5)
+  -> immutable PreparedActionV1 (P5)
+  -> deterministic policy and approval authorization (P6)
+  -> duplicate/repeat/tool-call checks and durable dispatch intent (P8)
+  -> provider invoke (P8 only)
+  -> result/receipt/evidence/reconciliation (P8 contract closure required)
 ```
 
 Every arrow is a place where the host can refuse. There is no path from model
@@ -65,10 +63,11 @@ verb or changing its replay semantics is architecture-major.
 
 ## 3. `CapabilityDescriptor`
 
-The complete, host-owned description of a capability. Descriptors are written
-by provider authors, reviewed as security-sensitive code, and registered in
-durable state at startup. Nothing in an `ActionRequest` can alter a descriptor
-at call time.
+The complete host-owned description of a capability. Providers may advertise
+descriptors, but only a trusted host-reviewed `CapabilityManifestV1` authorizes
+them. An advertisement must exactly match a manifest entry or that provider
+registration fails. Nothing in a model proposal or provider advertisement can
+alter descriptor authority. See [ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md).
 
 ```json
 {
@@ -95,11 +94,13 @@ at call time.
 ### 3.1 Field semantics
 
 **`id`** — grammar per [Protocol Index §3](00-protocol-index.md#3-capability-identifier-grammar).
-The `provider_id` field must equal the first segment. A mismatch is a
-registration-time panic, not a runtime warning.
+The `provider_id` field must equal the first segment. A mismatch is typed
+provider-registration failure, never a panic or runtime warning.
 
-**`version`** — SemVer of *this descriptor's* input/output contract. A caller
-pins a version; a provider serves any version it declares support for.
+**`version`** — SemVer of this descriptor's input/output contract. The host
+manifest explicitly selects the default version for new bindings. The model
+never selects a version; providers do not establish authority by declaring
+support.
 
 **`input_schema` / `output_schema`** — JSON Schema 2020-12. Validation is
 fail-closed on both directions. Output that fails its schema is a provider
@@ -110,16 +111,21 @@ Additional closed-world constraints beyond JSON Schema:
 - `additionalProperties: false` on every object.
 - No `patternProperties`, no `oneOf` with overlapping branches that would
   permit ambiguous interpretation.
-- No schema may be recursive without an explicit depth bound.
+- Cyclic `$ref` graphs are unsupported in P5 V1 and fail registration.
 - Every array has `maxItems`.
 - Every string has `maxLength`.
-- No schema may permit a `CREDENTIAL`-classified field. Credential shapes are
-  unreachable from model-authored input by construction — see
-  [Data Classification Protocol §4](09-data-classification-protocol.md#4-credential-exclusion).
+- Runtime trusted classification is the primary credential-exclusion control.
+  Closed schemas and reviewed property allowlists are defense in depth; a
+  property name cannot prove a value safe. Unknown/unclassified arguments are
+  `CREDENTIAL` and refused even when schema-valid. See
+  [Data Classification Protocol §4](09-data-classification-protocol.md#4-credential-exclusion-and-classified-capability-arguments).
 
-Schema length/count/object constraints above are **structural validation**, not
-operational work counters under B3 (Accepted ADR-0020). No resource-bound numeric
-values are added by this clarification; refuse invalid values, never truncate them.
+Schema structural limits under ADR-0020 are 65,536 canonical UTF-8 bytes per
+document, nesting depth 64, 4,096 schema nodes total, and 256 properties per
+object. Only exact trusted local catalog URIs are resolved; no network or
+filesystem resolver is permitted. Limits are structural, not B3 work counters;
+overflow is typed refusal, never truncation. See
+[ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md).
 
 Text fields use the exact categories and pinned Unicode White_Space set in
 [ADR-0023](../decisions/ADR-0023-text-field-validation-categories.md): O for
@@ -151,8 +157,8 @@ select, suggest, lower, or annotate it.
 **`replay_safety`** — one of `IDEMPOTENT`, `CONDITIONAL`, `NON_REPLAYABLE`,
 governing automatic retry. See §8.
 
-**`data_class`** — the highest class of data this capability *transits*, which
-bounds where its output may flow. See
+**`data_class`** — the maximum class this capability is reviewed to transit.
+Actual trusted argument class must be less than or equal to this ceiling. See
 [Data Classification Protocol](09-data-classification-protocol.md).
 
 **`root_requirement`** — `NOT_REQUIRED`, `OPTIONAL_ROOT`, `REQUIRES_ROOT`.
@@ -182,7 +188,11 @@ select a model.
 
 ## 4. `ActionRequest`
 
-`request_id` is a `RequestId` (`req_` + ULID; see [Protocol Index §2](00-protocol-index.md#2-identifier-grammar)). The same value is echoed by the corresponding `ActionResult` for request/result correlation.
+`ActionRequest` is not the model proposal and is not directly parsed from model
+JSON. P5 prepares immutable internal `PreparedActionV1`; P6 authorizes it.
+The final executable ActionRequest belongs to the future P8 dispatch boundary.
+
+`request_id` is a `RequestId` (`req_` + ULID; see [Protocol Index §2](00-protocol-index.md#2-identifier-grammar)). It is per actual provider dispatch attempt and is echoed by that dispatch's corresponding `ActionResult`. P5 PreparedActionV1 does not contain a RequestId; P8 mints a new one for every committed dispatch intent, including same-Step retry. The same Step retains IDK-1 and pinned facts.
 
 ```json
 {
@@ -220,8 +230,8 @@ approval as a `USER`-requested one.
 
 These are set by the host after validation and are **absent** from
 model-authored input. A model that emits them has produced an invalid
-request; the extras are dropped and a `MODEL_SCHEMA_VIOLATION` event is
-recorded.
+  request; the whole proposal is rejected and a sanitized
+  `MODEL_SCHEMA_VIOLATION` event is recorded. No action is prepared.
 
 `capability_version`, `risk_class`, `side_effect_class`,
 `required_authorization`, `provider_id`, `arguments_digest`, `data_class`,
@@ -236,6 +246,12 @@ duplicate detection and idempotency derivation. Two requests with the same
 regardless of who requested them.
 
 ## 5. `ActionResult`
+
+Provider-result status semantics, receipt timing, evidence persistence, and
+reconciliation execution are future P8 contract-closure work before the first
+provider invocation. The following existing definitions do not authorize P5 or
+P6 execution and must be reconciled by P8 closure; P5A freezes only the
+non-negotiable invariants in ADR-0036.
 
 The result echoes the originating request's `RequestId`.
 
@@ -322,21 +338,20 @@ one is valid only for `side_effect_class: LOCAL_STATE`.
 
 ### 6.2 The `AMBIGUOUS` rule
 
+This is a future P8 requirement. P5/P6 do not invoke or reconcile. Exact
+reconciliation binding, result statuses, receipt timing, evidence persistence,
+and recovery state are deferred to P8 contract closure before first provider
+invocation. There is no capability-name inference, provider-selected target,
+or synthesized host receipt. TaskEngine remains lifecycle owner.
+
 `AMBIGUOUS` is the most consequential kind in the protocol. It means the
 provider cannot determine whether the effect happened — a dropped connection
 after a write, a timeout with no response, an ambiguous provider status.
 
-**Rule:** the host must not automatically retry a `NON_REPLAYABLE` or
-`CONDITIONAL` capability that returned `AMBIGUOUS`. The host must attempt
-**reconciliation** (read-back through a read-only capability using the stored
-`provider_reference` or a lookup by natural key). Reconciliation yields one of:
-
-- **Confirmed occurred** — synthesize a receipt, continue.
-- **Confirmed absent** — the effect definitely did not happen; a retry is now
-  safe *only* if `replay_safety` permits it.
-- **Still unknown** — the task goes to `BLOCKED` with
-  `blocked_reason: AMBIGUOUS_EFFECT` and requires human resolution. The host
-  never guesses.
+**Rule:** an ambiguous effect is never blindly retried. P8 must define
+host-reviewed reconciliation bindings and typed occurred/absent/unknown results
+before invoking providers. A read-back cannot manufacture a provider receipt;
+unknown remains blocked for human resolution under the eventual P8 contract.
 
 Blunt retry on `AMBIGUOUS` is the single highest-severity anti-pattern in this
 system, because it converts one uncertain effect into two certain ones.
@@ -411,6 +426,12 @@ key to mean "again".
 
 ### 8.3 Duplicate detection
 
+This describes a future P8 execution gate; P5/P6 do not implement it. The
+duplicate key is global across Tasks and is exactly
+`(CapabilityId, arguments_digest)` for effecting capabilities during the
+86,400,000 ms window. Version is intentionally excluded, so cross-version
+suppression is accepted. See [ADR-0036](../decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md).
+
 Before invoking a provider, the host checks whether a step with the same
 `(capability_id, arguments_digest)` has already completed in this task, or in
 any task within the duplicate window. If so:
@@ -461,17 +482,28 @@ changed shape — fails closed: it marks itself `Degraded`, stops advertising
 the capability, and the registry treats it as `UNAVAILABLE`. It does not
 return loosely-shaped data and hope the schema check downstream is lenient.
 
-## 10. Capability registry
+## 10. Capability registry and P5/P6/P8 boundary
 
-The registry is the authoritative, durable set of enabled capabilities.
+The trusted host `CapabilityManifestV1`, not provider advertisement, is
+authoritative for capabilities that may exist. Provider advertisements must
+exactly match manifest entries; unmanifested descriptors fail registration.
+Registry generations, descriptor revisions, task snapshot semantics, live
+overlays, deterministic version/implementation selection, and
+`CAPABILITY_REGISTRY_CHANGED` are defined by [ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md).
 
-- Built at startup from every registered provider's descriptors.
-- Persisted so that a capability referenced by an in-flight step survives
-  restart even if the provider is temporarily absent — the step then resolves
-  to `CAPABILITY_UNAVAILABLE`, not "unknown capability".
-- An optional `disabled` overlay (durable, per capability) lets the user turn
-  off a capability without a rebuild. There is no enable-by-model path.
-- Registry writes are an admin-plane operation, audited as events.
+P5 validates closed `ToolCallProposalV1`, trusted schemas and classification,
+and produces immutable `PreparedActionV1`; it does not evaluate policy,
+approval, duplicate/repeat execution checks, tool-call accounting, reserve
+dispatch, invoke providers, accept results, or reconcile. P6 owns policy,
+approval/grant lifecycle, and typed authorization of PreparedActionV1; it also
+does not invoke providers. P8 is first permitted to invoke, after its result,
+receipt, evidence, dispatch, and reconciliation contract closure. See
+[ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md)
+and [ADR-0036](../decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md).
+
+P5 migration 0004 is registry/binding-only. It contains no policy, approval,
+tool-call count, duplicate/repeat reservation, provider dispatch, result,
+receipt, or reconciliation tables. `serea.action/2` remains unchanged.
 
 ## 11. Invariants summary
 

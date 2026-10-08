@@ -192,26 +192,53 @@ The contract each of those omissions buys:
 
 ---
 
-## 4. Credential exclusion
+## 4. Credential exclusion and classified capability arguments
 
-> A credential cannot be expressed as input, so it cannot be supplied as input.
-> This is structural, not editorial.
+Runtime trusted classification is the primary credential-exclusion control.
+Closed schemas and reviewed property allowlists are defense in depth; property
+names alone cannot establish a value's security class. Capability arguments
+cross an internal trusted boundary equivalent to
+`ClassifiedArgumentsV1 { arguments, data_class }`. The model-authored proposal
+cannot carry or lower `data_class`. Unknown/unclassified input is treated as
+`CREDENTIAL` and refused regardless of schema validity.
 
 A capability's `input_schema` is JSON Schema 2020-12
 ([Capability Protocol §3](01-capability-protocol.md#3-capabilitydescriptor)).
-The host compiles it against these constraints at registration time, and
-registration fails if the schema violates any of them:
+The host compiles it against these constraints at registry-generation
+construction, and registration fails if the schema violates them. These
+schema checks are defense in depth, not proof that values are safe based on
+field names:
 
 1. **`additionalProperties: false` on every object.** An undeclared property
    does not pass through unexamined; it is rejected. This is the structural
-   exclusion — an undeclared credential field is a `VALIDATION` error at the
-   schema gate, before the policy engine, before the provider.
+   closure — an undeclared property is rejected at the schema gate.
 2. **Every property is on an allowlist, declared explicitly.** There is no
    pattern-matched or inherited acceptance.
 3. **A forbidden-property denylist is applied in addition**, as defence in depth
    against a schema author who allowlists a credential-shaped field by mistake.
-4. **No `patternProperties`, no overlapping `oneOf`, no unbounded recursion**
-   ([Capability Protocol §3.1](01-capability-protocol.md#31-field-semantics)).
+4. **No `patternProperties`, no ambiguous `oneOf`, and no cyclic refs.** P5 V1
+   uses exact local catalog resolution only, Draft 2020-12, a 65,536-byte
+   canonical UTF-8 document limit, depth 64, 4,096 total schema nodes, and 256
+   properties per object. Every array has `maxItems`; every string has
+   `maxLength`. Overflow is typed refusal, never truncation. These are
+   structural limits under ADR-0020, not B3 work counters. See
+   [ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md).
+
+Model proposals inherit the trusted DataClass of accepted structured output or
+source context. A projection may retain or raise that class, never lower it.
+USER, SCHEDULER, PROACTIVE_WATCHER, and SYSTEM callers must supply trusted
+classified arguments; bare JSON is refused as CREDENTIAL. `RequestedBy` is
+independently host-provided. `CapabilityDescriptor.data_class` is a maximum
+reviewed transit class; actual argument class must be less than or equal to it.
+The eventual ActionRequest data_class is the exact trusted argument class. A
+higher class is a descriptor contract mismatch refused before P6.
+
+Provider output classification is not implemented in P5. At provider
+integration, a trusted host/provider adapter attaches output classification
+independently of arbitrary JSON. Unknown output class is CREDENTIAL and is
+refused. Accepted output class must be <= descriptor.data_class; a higher class
+is a provider contract violation and is not accepted downstream. P8 closes the
+adapter semantics before first invocation.
 
 ```json
 {
@@ -402,8 +429,9 @@ are from the same sender" — without learning the identity.
   timeline shows a user who asks where a fact came from.
 - **Redaction is not a substitute for exclusion.** `SECRET` and `CREDENTIAL`
   are denied from model and device egress by the matrix in §5; they are excluded,
-  not redacted for transit. `CREDENTIAL` is also excluded at the schema and
-  credential-store boundary (§3, §4). Redaction applies to `PERSONAL` and
+  not redacted for transit. Capability arguments are refused by trusted runtime
+  classification when CREDENTIAL or unknown; schema closure is defense in
+  depth (§3, §4). Redaction applies to `PERSONAL` and
   permitted `PRIVATE` data as specified by the destination-specific matrix in
   §5; redaction never authorizes a destination the matrix denies.
 
@@ -535,7 +563,7 @@ still wants.
 | DC5 | `CREDENTIAL` reaches no destination but the OS credential store; the egress matrix has no other permitted row for it. |
 | DC6 | Providers receive credentials only as opaque `CredentialHandle`s; secret bytes never leave the credential-store process boundary. |
 | DC7 | `Secret<T>` cannot be `Debug`-formatted, cloned, serialised, or dropped without being zeroized; secret bytes reach no log, error message, or prompt. |
-| DC8 | No capability `input_schema` can express a credential field: `additionalProperties: false` on every object plus an explicit property allowlist, with a forbidden-property denylist as defence in depth. |
+| DC8 | Trusted runtime argument classification is the primary credential exclusion. Closed schemas and reviewed property allowlists are defense in depth; names alone never prove values safe or lower their class. Unknown/unclassified arguments are CREDENTIAL and refused. |
 | DC9 | A consumer that computes a class higher than the producer declared treats the payload as the higher class. |
 | DC10 | Redaction is removal, not derivation: it lowers a projection's transit class, never the stored class of the original. |
 | DC11 | External email, calendar, and notification content arrives `PRIVATE`, stays in the provider cache, and becomes permanent memory only through an explicit `EXTRACTION` step with recorded provenance. |

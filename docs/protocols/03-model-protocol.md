@@ -1,6 +1,6 @@
 # Model Protocol
 
-Protocol ID: `PROTO-MODEL` · Surface: `serea.model/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.5.0`
+Protocol ID: `PROTO-MODEL` · Surface: `serea.model/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.6.0`
 
 This protocol defines the seam between Serea and any language model. Its
 purpose is to make model choice a **configuration** decision rather than an
@@ -131,21 +131,36 @@ STRICT provider claims do not replace host validation. An accepted structured
 value has not passed capability validation — that is a separate, later,
 host-owned stage.
 
+When tools are present, `tools` contains canonical internal ToolDefinitionV1
+projections sorted by CapabilityId UTF-8 byte order. Each definition exposes
+only version `"1"`, capability_id, title, description, and input_schema.
+Visibility uses the Task-pinned generation, current live overlay, experimental
+opt-in, structural validity, and at least one eligible READY implementation.
+It does not filter on policy or approval; visibility grants no authority.
+Provider-specific function-name conversion belongs to model adapters.
+
 ### 4.1 The trust boundary, stated precisely
 
-Between `ModelResponse.structured` and `ActionRequest` there is a mandatory,
-non-bypassable, host-only stage:
+Between `ModelResponse.structured` and capability preparation there is a
+mandatory, non-bypassable, host-only stage:
 
 ```
-structured ──> schema validation ──> envelope validation ──> ActionRequest
-                (already done)         (host-resolves capability_id,
-                                        drops unknown fields, records
-                                        MODEL_SCHEMA_VIOLATION)
+structured ──> schema validation ──> closed ToolCallProposalV1 validation
+                (already done)         (unknown/authority field rejects whole
+                                        proposal; sanitized violation metadata)
+         ──> pinned registry/schema + trusted classification
+         ──> PreparedActionV1 (P5)
 ```
 
-A model's structured output is a **proposal**. It becomes an `ActionRequest`
-only after the host has confirmed the capability exists, pinned its version
-and risk class, computed digests, and derived the idempotency key.
+A model's structured output is a **proposal**, not an ActionRequest. The exact
+internal ToolCallProposalV1 shape and PreparedActionV1 handoff are frozen by
+[ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md).
+Undeclared/authority-bearing fields reject the entire proposal; the earlier
+instruction to drop fields and continue is superseded. The host records only
+TaskId, optional StepId/model RequestId, stable code, offending field names,
+and count. It never records proposal values, arguments, prompt, or raw content.
+P5 produces immutable PreparedActionV1, not a final executable ActionRequest.
+P6 authorizes it; P8 is first permitted to invoke a provider.
 
 ## 5. `ModelCapabilities`
 

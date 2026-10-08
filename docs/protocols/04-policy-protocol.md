@@ -18,9 +18,9 @@ differently, the engine is wrong.
 > classification, and it has no vote in the outcome.
 
 The `risk_class` on a `CapabilityDescriptor` is host-authored and
-host-reviewed. `ActionRequest` contains no risk field. Any model output
-containing something resembling a risk level, an approval hint, or an urgency
-claim is discarded and logged as `MODEL_SCHEMA_VIOLATION`.
+host-reviewed. `ToolCallProposalV1` contains no risk field. Any undeclared or
+authority-bearing model field rejects the entire proposal and is logged as a
+sanitized `MODEL_SCHEMA_VIOLATION`.
 
 ## 2. Risk class
 
@@ -111,24 +111,19 @@ Concrete defaults the user specified:
 
 Rules are evaluated in a fixed, documented order, **most specific first**:
 
-1. **Capability-disabled overlay** — if the capability is durably disabled,
-   `Deny(CAPABILITY_DISABLED)`. This precedes everything, so no rule can
-   accidentally re-enable a user-disabled capability.
-2. **Version retirement** — if the requested capability version is retired,
-   `Deny(RETIRED_CAPABILITY_VERSION)`.
-3. **Task policy ceiling** — if `capability.risk_class > task.policy_class`,
+1. **Task policy ceiling** — if `capability.risk_class > task.policy_class`,
    `Deny(TASK_POLICY_CEILING_EXCEEDED)`. The task cannot exceed its ceiling by
    planning harder.
-4. **Context rules** — automation-context rules. The proactive watcher, for
+2. **Context rules** — automation-context rules. The proactive watcher, for
    example, is restricted to `OBSERVE` and `LOCAL_STATE`; anything else is
    `Deny(AUTOMATED_ACTION_FORBIDDEN)`. This rule family is what makes the
    read-only proactive invariant enforceable rather than aspirational.
-5. **Data-class rules** — whether the capability's data class may transit to
+3. **Data-class rules** — whether the capability's data class may transit to
    the models or destinations involved. See
    [Data Classification §5](09-data-classification-protocol.md#5-egress-rules).
-6. **Scope rules** — whether a previously granted scope covers this call.
-7. **Class default** — the §4.1 table.
-8. **Fallback** — `RequireApproval`. **There is no permissive default.** A
+4. **Scope rules** — whether a previously granted scope covers this call.
+5. **Class default** — the §4.1 table.
+6. **Fallback** — `RequireApproval`. **There is no permissive default.** A
    capability with no matching rule requires approval. Failing open is the
    failure mode this ordering exists to prevent.
 
@@ -183,10 +178,16 @@ coarse expiry check on grants; any network call; any randomness.
 
 ## 7. Policy changes are audited
 
-Any mutation of policy rules or the disabled overlay emits `POLICY_CHANGED`
+Any mutation of policy rules emits `POLICY_CHANGED`
 with a before/after diff, the actor, and the reason. Policy changes are not
 reachable from model output and not reachable from the Android client's
 ordinary settings screen — only from the host's local admin configuration.
+Capability enabled/disabled/removal and experimental opt-in/out are registry
+mutations and emit `CAPABILITY_REGISTRY_CHANGED`, not `POLICY_CHANGED`, as
+specified by [ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md).
+P5 does not evaluate policy. P6 owns `PolicyDecision` evaluation after receiving
+immutable `PreparedActionV1`; model visibility is not policy or approval
+filtering.
 
 ## 8. Testing obligations
 
@@ -197,7 +198,7 @@ ordinary settings screen — only from the host's local admin configuration.
 | Ceiling enforcement | A `COMMUNICATION` step in an `OBSERVE` task denies. |
 | Fail-closed | A capability with no matching rule requires approval. |
 | Proactive read-only | Every non-`OBSERVE` capability in `PROACTIVE` context denies. |
-| Disabled wins | A disabled capability denies even with a matching allow rule. |
+| Live overlay wins | Registry resolution blocks new bindings when disabled/removed; P8 rechecks before dispatch. The overlay is not a policy-rule mutation. |
 | No escalation | A task cannot raise its own `policy_class`. |
 | Root always approval | No rule set yields `Allow` for a root capability. |
 
@@ -212,5 +213,5 @@ ordinary settings screen — only from the host's local admin configuration.
 | P5 | Proactive/automated context permits only `OBSERVE` and `LOCAL_STATE`. |
 | P6 | `DESTRUCTIVE` requires explicit enablement *and* approval. |
 | P7 | Root operations always require approval; no rule can auto-grant them. |
-| P8 | Disabled capabilities deny ahead of all other rules. |
+| P8 | Registry enabled/removal overlay is checked for new binding and rechecked before P8 dispatch; policy rules cannot re-enable it. |
 | P9 | Policy changes are audited and unreachable from model or device input. |

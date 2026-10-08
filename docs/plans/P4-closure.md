@@ -1065,10 +1065,21 @@ repair, fallback, dispatch gates, or P4E budgets.
   (5) only numeric accounting metadata enters the event; (6) no provider
   response is used as token authority outside validated usage; (7) tests
   reopen and retain SQLite state without timing dependence; (8) migration
-  checksum and P4B evidence are reconciled above. Final Actions are pending.
+  checksum and P4B evidence are reconciled above.
 - Local validation passed: fmt, workspace check, all-target tests, all-feature
   tests, denied-warning Clippy, docs validation, workspace smoke, 76 Python
-  smoke tests, Cargo metadata, identity guard and `git diff --check`. Cross-arch
-  and exact-head Actions are pending because migration 0003 changed.
+  smoke tests, Cargo metadata, identity guard and `git diff --check`.
+- Behavior commit `8066062a2985909b6ca33a2e0c37a9957b41fa02` passed exact-head
+  Fast CI
+  [37707970712](https://github.com/Yrika819/Serea/actions/runs/37707970712),
+  Full CI
+  [37707970732](https://github.com/Yrika819/Serea/actions/runs/37707970732),
+  and cross-architecture SQLite
+  [37707970710](https://github.com/Yrika819/Serea/actions/runs/37707970710).
+  Full CI passed Linux stable, MSRV 1.85, Intel x86_64, arm64 and release
+  fault-seam exclusion. Cross-architecture database validation passed
+  Intel-to-arm64 and arm64-to-Intel. The v3 portability fixture transferred
+  only the closed database file; no `-shm` was transferred and no live-WAL
+  portability claim is made.
 - Nonclaims: this slice does not close model-call/turn/daily-spend bound event
   integration, P4E crash matrix, or P4E as a whole.

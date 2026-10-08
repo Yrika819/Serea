@@ -976,3 +976,42 @@ repair, fallback, dispatch gates, or P4E budgets.
   the CHAT/TEXT one-step fallback behavior slice; structured fallback,
   fallback/repair interaction, crash injection, and remaining P4E budgets stay
   open.
+
+## P4E slice: structured fallback into repair
+
+- RED proof: a scripted test initially failed to compile because
+  `dispatch_structured_with_fallback_and_repair` did not exist. The test scripts
+  a retryable primary error, invalid structured fallback content, then a
+  schema-valid repair response.
+- Structured normal calls now enter the same one-step fallback state machine
+  as CHAT/TEXT calls. If the fallback returns host-invalid structured content,
+  that attempt is usage-accounted and emits `MODEL_OUTPUT_INVALID`; the repair
+  ladder then starts with the fallback RequestId as parent. No second normal
+  fallback occurs during repair.
+- The initial normal health snapshot is reused for fallback. The repair ladder
+  obtains its own one-time health snapshot as defined by ADR-0033. The repair
+  request carries only the schema, bounded invalid fallback output, and
+  sanitized validator diagnostics; conversation, system text, and tools are
+  excluded. Provider content remains transient and does not enter response
+  storage or events.
+- Focused test evidence: scripted primary retryable failure, successful child
+  fallback intent, invalid fallback schema output with usage accounting and no
+  response blob, repair parent bound to the fallback RequestId, minimal repair
+  context, one normal snapshot plus one repair snapshot, content-free event
+  sequence including fallback exhaustion, and reopened recovery of the
+  accepted repaired response. The existing primary-invalid repair test remains
+  green and still dispatches repair without normal fallback.
+- Sequential review: (1) only the primary definite retryable adapter error
+  creates fallback; structured invalidity starts repair only; (2) no crate
+  direction or dependency changed; (3) the primary failure and fallback child
+  intent remain atomic, and response/usage/event terminal facts use existing
+  transactions; (4) normal and repair health snapshots are distinct and each
+  reused only for its defined ladder; (5) invalid fallback bytes are transient
+  repair input and absent from events/storage; (6) fallback and repair each
+  consume normal call/spend accounting while repair does not add a model turn;
+  (7) tests use scripted provider outcomes and reopen SQLite without sleeps;
+  (8) no schema or migration changed. The behavior slice remains open until
+  exact-head Fast and Full CI pass.
+- Local validation passed on this change: fmt, workspace check, all-target
+  tests, all-feature tests, denied-warning Clippy, docs validation, workspace
+  smoke, 76 Python smoke tests, Cargo metadata, identity guard, and diff check.

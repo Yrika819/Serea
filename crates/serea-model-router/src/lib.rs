@@ -853,6 +853,24 @@ impl ModelRouterV1 {
                 RouterError::IllegalPurposeFormat,
             ));
         }
+        self.dispatch_with_fallback(call, session, context).await
+    }
+
+    async fn dispatch_with_fallback(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        context: &ModelDispatchContext<'_>,
+    ) -> Result<ModelResponse, ModelDispatchFailure> {
+        let is_chat_text = call.purpose == ModelPurpose::Chat
+            && matches!(call.response_format, ResponseFormat::Text);
+        let is_structured = call.purpose != ModelPurpose::Chat
+            && matches!(call.response_format, ResponseFormat::JsonSchema { .. });
+        if !is_chat_text && !is_structured {
+            return Err(ModelDispatchFailure::Refused(
+                RouterError::IllegalPurposeFormat,
+            ));
+        }
         let primary_model = session
             .decision()
             .cloned()
@@ -1044,7 +1062,7 @@ impl ModelRouterV1 {
                 ));
             }
         };
-        let initial = match self.dispatch_structured(call, session, context).await {
+        let initial = match self.dispatch_with_fallback(call, session, context).await {
             Ok(response) => return Ok(response),
             Err(error @ ModelDispatchFailure::StructuredOutputInvalid { .. }) => error,
             Err(error) => return Err(error),
@@ -1136,6 +1154,19 @@ impl ModelRouterV1 {
             raw_response: current_raw,
             validation_error: current_validation_error,
         })
+    }
+
+    /// Runs a structured operation through its one-step fallback and bounded
+    /// repair ladder.
+    #[allow(dead_code)]
+    pub(crate) async fn dispatch_structured_with_fallback_and_repair(
+        &self,
+        call: &PreparedModelCallV1,
+        session: &RoutingSessionV1,
+        context: &ModelDispatchContext<'_>,
+    ) -> Result<ModelResponse, ModelDispatchFailure> {
+        self.dispatch_structured_with_repair(call, session, context)
+            .await
     }
 
     #[allow(dead_code)] // Used by the P4E structured repair ladder.
@@ -4107,6 +4138,183 @@ mod tests {
                 .unwrap_or_else(|_| unreachable!())
                 .contains("hello")
         );
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn structured_fallback_invalid_output_repairs_from_fallback_lineage() {
+        let db_path = std::env::temp_dir().join(format!(
+            "serea-router-structured-fallback-red-{}-{}.sqlite",
+            std::process::id(),
+            NEXT_RECOVERY_TEST_DB.fetch_add(1, Ordering::SeqCst)
+        ));
+        let store = Arc::new(Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!()));
+        let provider = Arc::new(RepairFakeProvider::new(Vec::new()));
+        provider.push_script(RepairScript::Fail(ModelError {
+            kind: ModelErrorCode::new("UPSTREAM_UNAVAILABLE").unwrap_or_else(|_| unreachable!()),
+            message: serea_protocol::ErrorMessage::new("private primary diagnostic")
+                .unwrap_or_else(|_| unreachable!()),
+            retryable: true,
+        }));
+        provider.push_script(RepairScript::Respond(
+            r#"{"count":"fallback_invalid_marker"}"#.into(),
+        ));
+        provider.push_script(RepairScript::Respond(r#"{"count":7}"#.into()));
+        let provider_id = provider.provider_id();
+        let capabilities = caps(false, JsonSchemaMode::Strict, 1000, 1000);
+        let roster = ModelRosterV1::new(
+            ["nemotron-3-nano-30b", "gpt-oss-20b"]
+                .into_iter()
+                .map(|id| {
+                    ModelRosterEntryV1::new(
+                        ModelId::new(id).unwrap_or_else(|_| unreachable!()),
+                        provider_id.clone(),
+                        ModelDeploymentClass::Local,
+                        true,
+                        capabilities,
+                        CostClass::Paid,
+                    )
+                    .unwrap_or_else(|_| unreachable!())
+                })
+                .collect(),
+        )
+        .unwrap_or_else(|_| unreachable!());
+        let router =
+            ModelRouterV1::new(roster, vec![provider.clone()]).unwrap_or_else(|_| unreachable!());
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+            "additionalProperties": false
+        });
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: None,
+            purpose: ModelPurpose::Analysis,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "conversation marker".into(),
+            }],
+            system: Some("system marker".into()),
+            response_format: ResponseFormat::JsonSchema {
+                schema: schema.clone(),
+            },
+            tools: vec![serde_json::json!({"name":"unrelated-tool"})],
+            max_output_tokens: 128,
+            temperature: 0.25,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(false),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
+            UsdMicros::new(10_000_000).unwrap_or_else(|_| unreachable!()),
+        );
+        let session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+
+        let response = block_on(
+            router.dispatch_structured_with_fallback_and_repair(&call, &session, &context),
+        )
+        .unwrap_or_else(|_| unreachable!());
+
+        assert_eq!(response.structured, Some(serde_json::json!({"count":7})));
+        assert_eq!(response.repair_attempts, 1);
+        assert_eq!(provider.health_calls.load(Ordering::SeqCst), 2);
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].model_id.as_str(), "nemotron-3-nano-30b");
+        assert_eq!(requests[1].model_id.as_str(), "gpt-oss-20b");
+        assert_eq!(requests[2].model_id.as_str(), "gpt-oss-20b");
+        assert_eq!(requests[2].purpose, ModelPurpose::StructuredRepair);
+        assert!(requests[2].tools.is_empty());
+        assert!(requests[2].system.is_none());
+        assert!(
+            requests[2].messages[0]
+                .content
+                .contains("fallback_invalid_marker")
+        );
+        assert!(
+            !requests[2].messages[0]
+                .content
+                .contains("conversation marker")
+        );
+        assert!(!requests[2].messages[0].content.contains("system marker"));
+        let primary = store
+            .get_model_call_attempt(&requests[0].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let fallback = store
+            .get_model_call_attempt(&requests[1].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        let repair = store
+            .get_model_call_attempt(&requests[2].request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(primary.state, ModelAttemptState::Failed);
+        assert_eq!(fallback.state, ModelAttemptState::Failed);
+        assert_eq!(fallback.response_blob, None);
+        assert!(
+            store
+                .model_usage_for_request(&fallback.request_id)
+                .unwrap_or_else(|_| unreachable!())
+                .is_some()
+        );
+        assert_eq!(fallback.relation_kind, ModelAttemptRelationKind::Fallback);
+        assert_eq!(fallback.parent_request_id, Some(primary.request_id.clone()));
+        assert_eq!(repair.relation_kind, ModelAttemptRelationKind::Repair);
+        assert_eq!(repair.parent_request_id, Some(fallback.request_id.clone()));
+        let events = EventBus::replay(&store, None, None, 32).unwrap_or_else(|_| unreachable!());
+        let event_kinds = events
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ReplayItem::Event { event } => Some(event.kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            event_kinds,
+            vec![
+                EventKind::ModelCalled,
+                EventKind::ModelFailed,
+                EventKind::ModelFallback,
+                EventKind::ModelCalled,
+                EventKind::ModelCompleted,
+                EventKind::ModelOutputInvalid,
+                EventKind::ModelFallbackExhausted,
+                EventKind::ModelCalled,
+                EventKind::ModelCompleted,
+                EventKind::ModelRepaired,
+            ]
+        );
+        let event_json = serde_json::to_string(&events.items).unwrap_or_else(|_| unreachable!());
+        assert!(!event_json.contains("fallback_invalid_marker"));
+        assert!(!event_json.contains("private primary diagnostic"));
+        let accepted_request_id = response.request_id.clone();
+        drop(context);
+        drop(router);
+        drop(provider);
+        drop(store);
+        let reopened = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let recovered = recover_completed_structured_response(&reopened, &accepted_request_id)
+            .unwrap_or_else(|_| unreachable!())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(recovered, response);
+        drop(reopened);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));

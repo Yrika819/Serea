@@ -4302,6 +4302,7 @@ mod tests {
 
         let requests = provider.requests();
         assert_eq!(requests.len(), 2);
+        let accepted_fallback_request_id = requests[1].request_id.clone();
         assert_eq!(requests[0].model_id.as_str(), "nemotron-3-nano-30b");
         assert_eq!(requests[1].model_id.as_str(), "gpt-oss-20b");
         assert_ne!(requests[0].request_id, requests[1].request_id);
@@ -4415,6 +4416,18 @@ mod tests {
                 .unwrap_or_else(|_| unreachable!())
                 .contains("hello")
         );
+        drop(context);
+        drop(router);
+        drop(provider);
+        drop(store);
+        let reopened = Store::open(&db_path, &FixedClock).unwrap_or_else(|_| unreachable!());
+        let recovered =
+            recover_completed_chat_text_response(&reopened, &accepted_fallback_request_id)
+                .unwrap_or_else(|_| unreachable!())
+                .unwrap_or_else(|| unreachable!());
+        assert_eq!(recovered.content, "fallback answer");
+        assert_eq!(recovered.request_id, accepted_fallback_request_id);
+        drop(reopened);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));

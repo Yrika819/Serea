@@ -1131,3 +1131,42 @@ repair, fallback, dispatch gates, or P4E budgets.
   fault-seam exclusion. Both database transfer directions passed. No migration
   changed in this slice.
 - Nonclaims: the integrated P4E crash matrix and P4E closure remain open.
+
+## P4E slice: fallback and repair crash windows
+
+- RED proof: the process-death parent test was added first for the fallback,
+  repair, and second-repair intent windows. It failed with
+  `child missed the crash acknowledgement` because the scripted child did not
+  yet expose these provider outcomes or transaction boundaries. The child
+  provider now scripts only deterministic protocol outcomes through the real
+  `ModelProvider` trait and parks at named storage COMMIT boundaries.
+- Process-death coverage now includes: (A) kill during the atomic primary
+  failure/fallback decision before COMMIT, then reopen and prove there is no
+  fallback child and recovery marks the primary ambiguous; (B) kill after the
+  atomic fallback child intent COMMIT but before its provider call, then prove
+  the fallback child becomes ambiguous; (C) invalid primary structured output,
+  repair intent COMMIT, and process loss before repair provider dispatch; and
+  (D) invalid first repair output, second repair intent COMMIT, and process loss
+  before that second provider dispatch. The call count records show no child
+  provider call after intent COMMIT and no third repair call. All cases reopen
+  SQLite, recover once, then recover again as a semantic no-op.
+- Existing completion recovery coverage now includes both structured repair
+  and successful CHAT/TEXT fallback results after dropping the caller result,
+  closing the Store, and reopening by the accepted child RequestId. Event
+  sequences are checked for each crash stage; prompts and raw invalid
+  structured output are absent.
+- Sequential review: (1) the tested stages match the frozen fallback and
+  repair contract; (2) no crate dependency or production behavior changed;
+  (3) the fallback decision is one transaction and child intents recover
+  conservatively; repair intent is durable before provider operation; (4)
+  tests kill real child processes at file-acknowledged transaction stages and
+  do not use sleeps as outcome authority; (5) event payload checks reject
+  prompt/output leakage; (6) no synthetic usage is created on recovery; (7)
+  reopened state and second recovery are asserted; (8) this is test/evidence
+  work only. Provider call-count files are asserted so a child provider call
+  after its intent COMMIT cannot be hidden. Local fmt, workspace check, both
+  workspace test commands, Clippy, docs validation, workspace smoke, Python
+  workspace tests, metadata, identity guard, and diff check passed. Exact-head
+  GitHub Actions validation is pending.
+- Nonclaims: P4F caller/TaskEngine integration, the full concurrency matrix,
+  and whole-branch review remain open.

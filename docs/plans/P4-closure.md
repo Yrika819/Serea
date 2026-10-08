@@ -593,11 +593,14 @@ Model Router closure. P5 remains outside P4.
   [37684405424](https://github.com/Yrika819/Serea/actions/runs/37684405424)
   in both directions.
 
-## P4E Progress
+## P4E Evidence (closed on branch)
 
-P4E remains in progress. The first behavior slice adds the host-side structured
-JSON validation boundary; it does not yet implement response acceptance,
-repair, fallback, dispatch gates, or P4E budgets.
+The following records the first P4E behavior slice and its then-current
+boundary; later sections record the remaining P4E slices. P4E closed on branch
+at behavior commit `6315f424bf18a967fdddeac8d5437af9e5842d38`, with closure
+evidence head `558223aa8bef753fbb78a4ba7a84391974663634` passing Fast CI
+`37710992048`, Full CI `37710992053`, and cross-architecture SQLite
+`37710992056`. The complete P4E behavior and crash evidence is recorded below.
 
 - RED evidence: the first focused structured-validation test compile failed
   because the validator module, response/depth/error bounds, and validation
@@ -646,8 +649,9 @@ repair, fallback, dispatch gates, or P4E budgets.
   and cross-architecture SQLite
   [37687688431](https://github.com/Yrika819/Serea/actions/runs/37687688431)
   in both directions. The Linux, MSRV, Intel, and arm64 jobs are all GREEN.
-- This closes only the first P4E behavior slice; P4E remains in progress.
-  Migrations 0001, 0002 and 0003 are unchanged.
+- This closes only the first P4E behavior slice. At that point migrations
+  0001, 0002 and 0003 were unchanged; later P4E amended unreleased migration
+  0003 for durable model-turn accounting and trustworthy task token totals.
 
 ### P4E slice: typed structured-output-invalid event
 
@@ -1229,8 +1233,8 @@ repair, fallback, dispatch gates, or P4E budgets.
   tests, denied-warning Clippy, docs validation, workspace smoke, 76 Python
   workspace-smoke tests, Cargo metadata, commit identity guard, and
   `git diff --check`. The vendored serde_json deprecation warning remains
-  upstream; it does not fail these commands. Exact-head GitHub Actions has not
-  yet run for this P4F head.
+  upstream; it does not fail these commands. Exact-head authoritative Actions
+  results for the P4F behavior commit follow.
 - Exact behavior commit `cb3d9e64721c6650e42f6f0ddb5168e01a87b0e3` passed Fast
   CI [37713666086](https://github.com/Yrika819/Serea/actions/runs/37713666086),
   Full CI

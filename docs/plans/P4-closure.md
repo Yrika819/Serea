@@ -1167,6 +1167,11 @@ repair, fallback, dispatch gates, or P4E budgets.
   after its intent COMMIT cannot be hidden. Local fmt, workspace check, both
   workspace test commands, Clippy, docs validation, workspace smoke, Python
   workspace tests, metadata, identity guard, and diff check passed. Exact-head
-  GitHub Actions validation is pending.
+  GitHub Actions passed for behavior commit
+  `6315f424bf18a967fdddeac8d5437af9e5842d38`: Fast run `37710481752` (Linux
+  fast checks), Full run `37710481746` (Linux stable, MSRV 1.85.0, Intel,
+  arm64, and release fault-seam exclusion), and cross-architecture run
+  `37710481790` (Intel-produced DB opened on arm64 and arm64-produced DB opened
+  on Intel). No migration changed in this slice.
 - Nonclaims: P4F caller/TaskEngine integration, the full concurrency matrix,
   and whole-branch review remain open.

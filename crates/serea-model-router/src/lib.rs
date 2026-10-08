@@ -24,9 +24,10 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use serea_event_bus::{
-    EventBus, ModelBoundExceededEventV1, ModelBoundKindV1, ModelCompletedEventV1,
-    ModelEventMetadataV1, ModelEventRelationV1, ModelFailedEventV1, ModelFallbackEventV1,
-    ModelFallbackExhaustedEventV1, ModelOutputInvalidEventV1, ModelRepairedEventV1,
+    EventBus, ModelBoundExceededEventV1, ModelBoundKindV1, ModelBudgetExhaustedEventV1,
+    ModelCompletedEventV1, ModelEventMetadataV1, ModelEventRelationV1, ModelFailedEventV1,
+    ModelFallbackEventV1, ModelFallbackExhaustedEventV1, ModelOutputInvalidEventV1,
+    ModelRepairedEventV1,
 };
 use serea_protocol::provider::{ModelCallContext, ModelProvider};
 use serea_protocol::{
@@ -35,9 +36,10 @@ use serea_protocol::{
     ProtocolError, ProviderHealth, ProviderId, ResponseFormat, TaskId, canonicalize,
 };
 use serea_storage::{
-    ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft, ModelCallCompletion,
-    ModelFailureUsage, ModelPriceSnapshot, ModelResponseStorage, Store, StoreError, UsdMicros,
-    calculate_cost_usd_micros,
+    MAX_MODEL_TURNS_PER_TASK, ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft,
+    ModelCallCompletion, ModelFailureUsage, ModelPriceSnapshot, ModelResponseStorage, Store,
+    StoreError, UsdMicros, UtcAccountingDay, calculate_cost_usd_micros,
+    calculate_reservation_usd_micros,
 };
 
 /// Maximum structural prompt size accepted before routing.
@@ -557,6 +559,15 @@ enum ModelDispatchFailure {
         limit: u64,
         observed: u64,
     },
+    ModelCallBudgetExceeded {
+        limit: u64,
+        observed: u64,
+    },
+    BoundExceeded {
+        bound: ModelBoundKindV1,
+        limit: u64,
+        observed: u64,
+    },
 }
 
 /// Failure while classifying unresolved dispatches during process startup.
@@ -600,6 +611,14 @@ struct DispatchLineage {
     fallback_from_model_id: Option<ModelId>,
     pending_fallback: Option<PendingFallback>,
     defer_retryable_failure: bool,
+}
+
+struct DispatchBudgetFacts<'a> {
+    price: &'a ModelPriceSnapshot,
+    daily_limit: UsdMicros,
+    max_context_tokens: u64,
+    max_output_tokens: u64,
+    dispatch_at: serea_protocol::EpochMillis,
 }
 
 impl DispatchLineage {
@@ -1328,29 +1347,44 @@ impl ModelRouterV1 {
             effective_max_output_tokens: u64::from(effective_max_output_tokens),
             dispatch_intent_at: dispatch_at,
         };
-        store
-            .transact(|tx| {
-                if let Some((failed, fallback)) = &fallback_transition {
-                    tx.fail_model_call(
-                        &pending_fallback
-                            .as_ref()
-                            .ok_or(StoreError::InvalidModelCall)?
-                            .request_id,
-                        pending_fallback
-                            .as_ref()
-                            .ok_or(StoreError::InvalidModelCall)?
-                            .error_kind
-                            .as_str(),
-                        dispatch_at,
-                    )?;
-                    tx.append_event(failed.event.clone(), failed.retention_at)?;
-                    tx.append_event(fallback.event.clone(), fallback.retention_at)?;
-                }
-                tx.reserve_model_call(attempt, max_daily_spend_usd_micros)?;
-                tx.append_event(called.event, called.retention_at)?;
-                Ok(())
-            })
-            .map_err(ModelDispatchFailure::Storage)?;
+        let intent_result = store.transact(|tx| {
+            if let Some((failed, fallback)) = &fallback_transition {
+                tx.fail_model_call(
+                    &pending_fallback
+                        .as_ref()
+                        .ok_or(StoreError::InvalidModelCall)?
+                        .request_id,
+                    pending_fallback
+                        .as_ref()
+                        .ok_or(StoreError::InvalidModelCall)?
+                        .error_kind
+                        .as_str(),
+                    dispatch_at,
+                )?;
+                tx.append_event(failed.event.clone(), failed.retention_at)?;
+                tx.append_event(fallback.event.clone(), fallback.retention_at)?;
+            }
+            tx.reserve_model_call(attempt, max_daily_spend_usd_micros)?;
+            tx.append_event(called.event, called.retention_at)?;
+            Ok(())
+        });
+        if let Err(error) = intent_result {
+            if let Some(failure) = record_dispatch_budget_refusal(
+                context,
+                call,
+                &error,
+                DispatchBudgetFacts {
+                    price,
+                    daily_limit: max_daily_spend_usd_micros,
+                    max_context_tokens: u64::from(effective.max_context_tokens),
+                    max_output_tokens: u64::from(effective_max_output_tokens),
+                    dispatch_at,
+                },
+            )? {
+                return Err(failure);
+            }
+            return Err(ModelDispatchFailure::Storage(error));
+        }
 
         // The host state can change while the intent transaction commits. Read
         // it once more immediately before crossing the provider boundary.
@@ -1800,6 +1834,116 @@ fn enforce_task_token_bound(
         limit: MAX_TASK_TOTAL_TOKENS,
         observed,
     })
+}
+
+fn record_dispatch_budget_refusal(
+    context: &ModelDispatchContext<'_>,
+    call: &PreparedModelCallV1,
+    error: &StoreError,
+    facts: DispatchBudgetFacts<'_>,
+) -> Result<Option<ModelDispatchFailure>, ModelDispatchFailure> {
+    let (task_id, limit, observed) = match error {
+        StoreError::ModelCallBudgetExceeded => {
+            let Some(task_id) = call.task_id.as_ref() else {
+                return Ok(None);
+            };
+            (
+                task_id.clone(),
+                context
+                    .store
+                    .task_model_call_limit(task_id)
+                    .map_err(ModelDispatchFailure::Storage)?,
+                context
+                    .store
+                    .task_model_call_count(task_id)
+                    .map_err(ModelDispatchFailure::Storage)?,
+            )
+        }
+        StoreError::ModelTurnBudgetExceeded => {
+            let Some(task_id) = call.task_id.as_ref() else {
+                return Ok(None);
+            };
+            (
+                task_id.clone(),
+                MAX_MODEL_TURNS_PER_TASK,
+                context
+                    .store
+                    .task_model_turn_count(task_id)
+                    .map_err(ModelDispatchFailure::Storage)?,
+            )
+        }
+        StoreError::DailySpendExceeded => {
+            let reservation = calculate_reservation_usd_micros(
+                facts.max_context_tokens,
+                facts.max_output_tokens,
+                facts.price.input_rate_microusd_per_million_tokens(),
+                facts.price.output_rate_microusd_per_million_tokens(),
+            )
+            .map_err(|_| ModelDispatchFailure::Refused(RouterError::ProviderProtocolFailure))?;
+            let day = UtcAccountingDay::from_epoch_millis(facts.dispatch_at);
+            let occupied = context
+                .store
+                .utc_day_spend_occupancy(day)
+                .map_err(ModelDispatchFailure::Storage)?;
+            let observed = occupied.get().checked_add(reservation.get()).ok_or(
+                ModelDispatchFailure::Refused(RouterError::ProviderProtocolFailure),
+            )?;
+            let limit = facts.daily_limit.get();
+            let occurred_at = context
+                .clock
+                .now_ms()
+                .map_err(ModelDispatchFailure::Clock)?;
+            let event = context
+                .events
+                .draft_model_bound_exceeded(ModelBoundExceededEventV1 {
+                    task_id: call.task_id.clone(),
+                    data_class: call.data_class,
+                    occurred_at,
+                    bound: ModelBoundKindV1::DailySpendUsd,
+                    limit,
+                    observed,
+                })
+                .map_err(ModelDispatchFailure::Storage)?;
+            context
+                .store
+                .transact(|tx| {
+                    tx.append_event(event.event, event.retention_at)?;
+                    Ok(())
+                })
+                .map_err(ModelDispatchFailure::Storage)?;
+            return Ok(Some(ModelDispatchFailure::BoundExceeded {
+                bound: ModelBoundKindV1::DailySpendUsd,
+                limit,
+                observed,
+            }));
+        }
+        _ => return Ok(None),
+    };
+    let occurred_at = context
+        .clock
+        .now_ms()
+        .map_err(ModelDispatchFailure::Clock)?;
+    let event = context
+        .events
+        .draft_model_budget_exhausted(ModelBudgetExhaustedEventV1 {
+            task_id,
+            data_class: call.data_class,
+            occurred_at,
+            limit,
+            observed,
+        })
+        .map_err(ModelDispatchFailure::Storage)?;
+    context
+        .store
+        .transact(|tx| {
+            tx.append_event(event.event, event.retention_at)?;
+            Ok(())
+        })
+        .map_err(ModelDispatchFailure::Storage)?;
+    Ok(Some(ModelDispatchFailure::ModelCallBudgetExceeded {
+        limit,
+        observed,
+    }))
 }
 
 fn persist_pending_primary_failure(
@@ -2317,6 +2461,58 @@ mod tests {
         }
     }
 
+    fn insert_budget_task(store: &Store, task_id: TaskId, suffix: &str) -> bool {
+        let actor = ActorId::new("budget-test").unwrap_or_else(|_| unreachable!());
+        let version = serea_protocol::SemVer::new("1.0.0").unwrap_or_else(|_| unreachable!());
+        let cause = EventId::new(format!("evt_000000000000000000000000{suffix}"))
+            .unwrap_or_else(|_| unreachable!());
+        let transition = TransitionContext {
+            actor_kind: ActorKind::Host,
+            actor_id: &actor,
+            actor_version: &version,
+            causation_id: Some(&cause),
+        };
+        let created =
+            Timestamp::from_epoch_millis(EpochMillis::new(1).unwrap_or_else(|_| unreachable!()));
+        let task = AssistantTask {
+            task_id,
+            kind: TaskKind::UserRequest,
+            title: TaskTitle::new("model budget fixture").unwrap_or_else(|_| unreachable!()),
+            state: TaskState::Received,
+            origin: TaskOrigin {
+                kind: TaskOriginKind::new("USER_MESSAGE").unwrap_or_else(|_| unreachable!()),
+                device_id: None,
+                message_id: None,
+                extensions: Default::default(),
+            },
+            data_class: DataClass::Public,
+            policy_class: RiskClass::Communication,
+            created_at: created.clone(),
+            updated_at: created,
+            deadline_at: Some(Timestamp::from_epoch_millis(
+                EpochMillis::new(1000).unwrap_or_else(|_| unreachable!()),
+            )),
+            attempt_budget: AttemptBudget {
+                max_model_calls: 12,
+                max_tool_calls: 0,
+                max_attempts_per_step: 0,
+                extensions: Default::default(),
+            },
+            steps: Vec::new(),
+            blocked_reason: None,
+            result_summary: None,
+            cancelled_at: None,
+            cancelled_by: None,
+            failure_reason: None,
+            extensions: Default::default(),
+        };
+        store
+            .transact_with_participants(&TestTaskAudit, &TestTaskEvents, |tx| {
+                tx.insert_task(&task, &transition).map(|_| ())
+            })
+            .is_ok()
+    }
+
     struct CancelAfterIntentGate(AtomicUsize);
 
     impl ModelDispatchGateSource for CancelAfterIntentGate {
@@ -2773,15 +2969,17 @@ mod tests {
             &store,
             &second_bus,
             ModelPriceSnapshot::new(CostClass::Paid, "price-1", 1_000_000, 1_000_000),
-            UsdMicros::new(0).unwrap_or_else(|_| unreachable!()),
+            UsdMicros::new(1).unwrap_or_else(|_| unreachable!()),
         );
         let reservation_failure =
             block_on(router.dispatch_chat_text(&call, &session, &no_spend_context));
         assert!(matches!(
             reservation_failure,
-            Err(ModelDispatchFailure::Storage(
-                StoreError::DailySpendExceeded
-            ))
+            Err(ModelDispatchFailure::BoundExceeded {
+                bound: ModelBoundKindV1::DailySpendUsd,
+                limit: 1,
+                observed,
+            }) if observed > 1
         ));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
         assert_eq!(
@@ -2789,7 +2987,7 @@ mod tests {
                 .unwrap_or_else(|_| unreachable!())
                 .items
                 .len(),
-            2
+            3
         );
 
         provider.fail_next.store(true, Ordering::SeqCst);
@@ -3084,7 +3282,7 @@ mod tests {
         );
         let reopened_events =
             EventBus::replay(&reopened, None, None, 32).unwrap_or_else(|_| unreachable!());
-        assert_eq!(reopened_events.items.len(), 22);
+        assert_eq!(reopened_events.items.len(), 23);
         let serialized_reopened_events =
             serde_json::to_string(&reopened_events.items).unwrap_or_else(|_| unreachable!());
         assert!(!serialized_reopened_events.contains("hello"));
@@ -4397,6 +4595,113 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
+    }
+
+    #[test]
+    fn task_call_budget_emits_model_budget_exhausted_without_dispatch() {
+        let store = Arc::new(Store::open_in_memory(&FixedClock).unwrap_or_else(|_| unreachable!()));
+        let task_id =
+            TaskId::new("tsk_00000000000000000000000043").unwrap_or_else(|_| unreachable!());
+        assert!(insert_budget_task(&store, task_id.clone(), "43"));
+        for sequence in 1..=12u8 {
+            let request_id = serea_protocol::RequestId::new(format!(
+                "req_000000000000000000000000{sequence:02}"
+            ))
+            .unwrap_or_else(|_| unreachable!());
+            store
+                .reserve_model_call(
+                    ModelCallAttemptDraft {
+                        request_id: request_id.clone(),
+                        task_id: Some(task_id.clone()),
+                        purpose: ModelPurpose::Chat,
+                        model_id: ModelId::new("nemotron-3-nano-30b")
+                            .unwrap_or_else(|_| unreachable!()),
+                        provider_id: ProviderId::new("provider").unwrap_or_else(|_| unreachable!()),
+                        deployment_class: StorageDeploymentClass::Local,
+                        data_class: DataClass::Public,
+                        relation_kind: ModelAttemptRelationKind::None,
+                        parent_request_id: None,
+                        fallback_from_model_id: None,
+                        price: ModelPriceSnapshot::new(CostClass::Free, "free-v1", 0, 0),
+                        max_context_tokens: 20_000,
+                        effective_max_output_tokens: 2_048,
+                        dispatch_intent_at: EpochMillis::new(2).unwrap_or_else(|_| unreachable!()),
+                    },
+                    UsdMicros::new(0).unwrap_or_else(|_| unreachable!()),
+                )
+                .unwrap_or_else(|_| unreachable!());
+            store
+                .fail_model_call(
+                    &request_id,
+                    "FIXTURE_FAILURE",
+                    EpochMillis::new(3).unwrap_or_else(|_| unreachable!()),
+                )
+                .unwrap_or_else(|_| unreachable!());
+        }
+        let provider = Arc::new(RepairFakeProvider::new(vec!["must not dispatch".into()]));
+        let provider_id = provider.provider_id();
+        let capabilities = caps(false, JsonSchemaMode::Strict, 20_000, 2_048);
+        let roster = ModelRosterV1::new(vec![
+            ModelRosterEntryV1::new(
+                ModelId::new("nemotron-3-nano-30b").unwrap_or_else(|_| unreachable!()),
+                provider_id,
+                ModelDeploymentClass::Local,
+                true,
+                capabilities,
+                CostClass::Free,
+            )
+            .unwrap_or_else(|_| unreachable!()),
+        ])
+        .unwrap_or_else(|_| unreachable!());
+        let router =
+            ModelRouterV1::new(roster, vec![provider.clone()]).unwrap_or_else(|_| unreachable!());
+        let call = PreparedModelCallV1::from_host(PreparedModelCallDraftV1 {
+            task_id: Some(task_id.clone()),
+            purpose: ModelPurpose::Chat,
+            messages: vec![ModelMessage {
+                role: serea_protocol::MessageRole::new("user").unwrap_or_else(|_| unreachable!()),
+                content: "budget check".into(),
+            }],
+            system: None,
+            response_format: ResponseFormat::Text,
+            tools: Vec::new(),
+            max_output_tokens: 32,
+            temperature: 0.0,
+            deadline_ms: 1000,
+            data_class: DataClass::Public,
+            requirements: ModelRoutingRequirementsV1 {
+                vision_required: false,
+                tools_required: false,
+                min_context_tokens: 1,
+                min_output_tokens: 1,
+                structured_requirement: StructuredRequirementV1::Any,
+            },
+            egress: ModelEgressPolicySnapshotV1::from_host(true),
+            host_max_output_tokens: 2048,
+        })
+        .unwrap_or_else(|_| unreachable!());
+        let bus = EventBus::new(IncrementingIds(0));
+        let context = dispatch_context(
+            &store,
+            &bus,
+            ModelPriceSnapshot::new(CostClass::Free, "free-v1", 0, 0),
+            UsdMicros::new(0).unwrap_or_else(|_| unreachable!()),
+        );
+        let session = block_on(router.route(&call)).unwrap_or_else(|_| unreachable!());
+        assert!(matches!(
+            block_on(router.dispatch_chat_text(&call, &session, &context)),
+            Err(ModelDispatchFailure::ModelCallBudgetExceeded {
+                limit: 12,
+                observed: 12,
+            })
+        ));
+        assert!(provider.requests().is_empty());
+        let events = EventBus::replay(&store, None, None, 16).unwrap_or_else(|_| unreachable!());
+        assert!(matches!(events.items.as_slice(), [
+            ReplayItem::Event { event }
+        ] if event.kind == EventKind::ModelBudgetExhausted
+            && event.payload["limit"] == 12
+            && event.payload["observed"] == 12));
     }
 
     #[test]

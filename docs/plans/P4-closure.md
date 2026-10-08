@@ -1083,3 +1083,42 @@ repair, fallback, dispatch gates, or P4E budgets.
   portability claim is made.
 - Nonclaims: this slice does not close model-call/turn/daily-spend bound event
   integration, P4E crash matrix, or P4E as a whole.
+
+## P4E slice: dispatch budget refusal events
+
+- RED proof: the daily-spend dispatch test first failed to compile because the
+  router had no typed generic `BoundExceeded` outcome. The call-budget test
+  was also run with storage-budget translation disabled and failed because
+  the router returned raw `StoreError::ModelCallBudgetExceeded` rather than a
+  typed host outcome and `MODEL_BUDGET_EXHAUSTED` event.
+- Daily reservation refusal now emits content-free `BOUND_EXCEEDED` with the
+  configured `max_daily_spend_usd` and the attempted total of current UTC-day
+  occupancy plus this dispatch reservation. It returns a typed generic bound
+  outcome and creates no dispatch intent or provider call. Per-task call
+  exhaustion emits `MODEL_BUDGET_EXHAUSTED` with the effective task call limit
+  and durable observed call count, then returns a typed budget outcome. The
+  task call limit lookup applies the frozen twelve-call ceiling to the
+  Task-owned configured limit.
+- Focused evidence: daily spend refusal leaves provider invocation count
+  unchanged and appends the bounded event; a task seeded with twelve failed
+  calls returns a typed call-budget outcome, emits exactly one
+  `MODEL_BUDGET_EXHAUSTED`, and never calls the scripted provider; Event Bus
+  checks frozen event kinds, payload bounds, and a configured zero daily-spend
+  limit; existing storage tests cover atomic call-count limits and races.
+- Sequential review: (1) call counts include every committed dispatch intent;
+  daily cost checks use the same host price snapshot and UTC-day occupancy as
+  reservation; (2) Store remains independent of Event Bus and the router adds
+  no Policy/Task Engine edge; (3) a failed intent transaction rolls back
+  before the bounded event is appended, leaving no half attempt; (4) the
+  monotone call count and spend occupancy support concurrent refusals; (5)
+  events carry only task/data-class and integer bound metadata; (6) call and
+  spend failures do not consume another provider dispatch; (7) tests use
+  deterministic provider doubles and no timing; (8) migration 0003 is
+  unchanged in this slice. Denied-warning Clippy flagged an overlong helper
+  parameter list; the immutable accounting inputs were grouped into a private
+  dispatch facts struct, with no behavior change.
+- Local validation passed: fmt, workspace check, all-target tests, all-feature
+  tests, denied-warning Clippy, docs validation, workspace smoke, 76 Python
+  smoke tests, Cargo metadata, identity guard and `git diff --check`.
+  Exact-head Fast, Full and cross-architecture Actions are pending.
+- Nonclaims: the integrated P4E crash matrix and P4E closure remain open.

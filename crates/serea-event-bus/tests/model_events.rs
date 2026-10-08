@@ -177,6 +177,23 @@ fn model_bound_events_are_content_free_and_use_frozen_kinds() {
     assert_eq!(budget.event.kind, EventKind::ModelBudgetExhausted);
     assert_eq!(budget.event.payload["limit"], 12);
     assert_eq!(budget.event.payload["observed"], 12);
+
+    let zero_daily_cap = bus
+        .draft_model_bound_exceeded(serea_event_bus::ModelBoundExceededEventV1 {
+            task_id: None,
+            data_class: DataClass::Public,
+            occurred_at: EpochMillis::new(1_767_225_600_008).unwrap(),
+            bound: serea_event_bus::ModelBoundKindV1::DailySpendUsd,
+            limit: 0,
+            observed: 1,
+        })
+        .unwrap();
+    assert_eq!(zero_daily_cap.event.kind, EventKind::BoundExceeded);
+    assert_eq!(
+        zero_daily_cap.event.payload["bound_name"],
+        "max_daily_spend_usd"
+    );
+    assert_eq!(zero_daily_cap.event.payload["limit"], 0);
 }
 
 #[test]

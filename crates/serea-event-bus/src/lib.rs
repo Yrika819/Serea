@@ -421,7 +421,7 @@ impl EventBus {
         &self,
         bound: ModelBoundExceededEventV1,
     ) -> Result<EventDraft, StoreError> {
-        if bound.observed < bound.limit || bound.limit == 0 {
+        if bound.observed < bound.limit {
             return Err(StoreError::InvalidModelCall);
         }
         let mut payload = Map::new();

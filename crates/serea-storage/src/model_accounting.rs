@@ -767,6 +767,20 @@ impl Store {
         u64::try_from(count.ok_or(StoreError::TaskNotFound)?).map_err(|_| StoreError::CorruptRow)
     }
 
+    /// Returns the effective per-task model call limit, including the frozen
+    /// P4 ceiling of twelve calls.
+    pub fn task_model_call_limit(&self, task_id: &TaskId) -> Result<u64, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::LockPoisoned)?;
+        let limit: Option<i64> = conn
+            .query_row(
+                "SELECT min(max_model_calls,?2) FROM tasks WHERE task_id=?1",
+                params![task_id.as_str(), MAX_MODEL_CALLS_PER_TASK as i64],
+                |row| row.get(0),
+            )
+            .optional()?;
+        u64::try_from(limit.ok_or(StoreError::TaskNotFound)?).map_err(|_| StoreError::CorruptRow)
+    }
+
     /// Returns the durable count of primary top-level model operations.
     /// Fallback and repair attempts do not increment this counter.
     pub fn task_model_turn_count(&self, task_id: &TaskId) -> Result<u64, StoreError> {

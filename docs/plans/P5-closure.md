@@ -7,10 +7,12 @@
 - Parent 1: `528806b0117c6ff385a79a7baaed6ab508527fe6`.
 - Parent 2: `dc39bbb92ee22b0c0504f5bf82a4f2990fafce56`.
 - The exact merge commit became `main` and passed Fast CI, Full CI (Linux stable, MSRV 1.85, Intel, arm64, release fault proof), identity guard, and cross-architecture SQLite portability.
-- P5B branch `p5/capability-registry` was based on that merge commit. Its draft PR is opened after the first implementation commit.
+- P5B branch `p5/capability-registry` was based on that merge commit. Draft PR #5, “P5: Capability Registry and Tool Router,” is open against `main`.
 
 ## P5B implementation checkpoint
 
+- Implementation commits: `e8fb8f78e6feec8a76b1e4a238c48aa74eb575a7` and `cb0b298f4d5f486df1bee4318924925f87376e64`.
+- Exact behavior commit `cb0b298f4d5f486df1bee4318924925f87376e64` passed the required GitHub Actions matrix; PR #5 remains draft/open.
 - Migration: `0004_capability_registry.sql`; schema version 4.
 - Migration checksums: 0001 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`; 0002 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`; 0003 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`; 0004 `b60000371f3c10d64adc7bb54b5e5144fd6ac6ec34246c072aaf68d77861d93a`.
 - `0001`, `0002`, and `0003` were not modified. Existing Tasks keep a NULL registry generation after upgrade.
@@ -20,7 +22,8 @@
 - Missing overlay rows mean `ENABLED`, experimental opt-in false, revision 0. Overlay changes use expected revisions. New bindings are blocked for disabled/removed capabilities and for experimental descriptors without opt-in.
 - Task generation pins remain nullable and are only set through an explicit storage operation. Step bindings preserve TaskId, StepId, generation, revision, capability, provider, and implementation and are immutable.
 - Registry activation and overlay state changes append metadata-only `CAPABILITY_REGISTRY_CHANGED` events inside the same SQLite transaction as the state change.
-- The cross-architecture fixture now carries active and prepared generations, descriptor revision, membership/default, overlay, pinned Task, binding, and representative existing scheduler/event/model state. Local producer-to-consumer round trip passed on this cloud Linux executor. Intel-to-arm64 and arm64-to-Intel jobs remain GitHub Actions validation.
+- The cross-architecture fixture carries active and prepared generations, descriptor revision, membership/default, overlay, pinned Task, binding, and representative existing scheduler/event/model state. Local producer-to-consumer round trip passed on cloud Linux. GitHub Actions passed Intel producer to arm64 consumer and arm64 producer to Intel consumer. No `-shm` transfer or live-WAL portability claim is made.
+- P5 does not implement registry-history garbage collection. Registry generations and revisions are retained; no TTL is claimed.
 
 ## TDD evidence
 
@@ -40,6 +43,7 @@ Focused GREEN evidence after implementation:
 - `cargo test -p serea-protocol pro_event_3_event_kind_includes_the_sixty_one_frozen_values` — 1 passed.
 - Query-plan checks cover active generation, revision lookup, membership/candidate order, default version, overlay, Task pin, and Step binding; only the membership priority index is additional to primary-key indexes.
 - Closed-file producer and consumer runs of `sqlite_portability` both passed locally. No `-shm` transfer or live-WAL portability claim is made.
+- Fault tests cover deterministic SQLite transaction failure and caller loss/reopen. No hardware power-loss claim is made.
 
 ## Sequential review record
 
@@ -55,8 +59,7 @@ Focused GREEN evidence after implementation:
 ## Validation and CI
 
 - Local validation completed on cloud Linux: `cargo fmt --all -- --check`; `cargo check --workspace --all-targets --all-features`; `cargo test --workspace --all-targets`; `cargo test --workspace --all-features`; `cargo clippy --workspace --all-targets --all-features -- -D warnings`; docs validation; workspace smoke; workspace smoke unit tests; Cargo metadata; commit identity guard; and `git diff --check`.
-- GitHub Actions for the P5B exact implementation commit: pending.
-- No P5B commit SHA is recorded until validation and commit complete.
+- GitHub Actions for exact behavior commit `cb0b298f4d5f486df1bee4318924925f87376e64`: Fast CI GREEN (run 127, including identity guard); Full CI GREEN (run 116); Linux stable GREEN; MSRV 1.85 GREEN; macOS Intel x86_64 GREEN; macOS arm64 GREEN; release fault proof GREEN; cross-architecture SQLite GREEN in both directions (run 94).
 
 ## Nonclaims
 

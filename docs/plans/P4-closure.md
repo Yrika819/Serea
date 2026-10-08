@@ -1176,7 +1176,7 @@ repair, fallback, dispatch gates, or P4E budgets.
 - Nonclaims: P4F caller/TaskEngine integration, the full concurrency matrix,
   and whole-branch review remain open.
 
-## P4F slice: trusted host boundary and integrated concurrency (in progress)
+## P4F CLOSED ON BRANCH: trusted host boundary and integrated concurrency
 
 - RED proof: the host-boundary integration test was added before the public
   process router and host context existed; it failed to compile on the missing
@@ -1220,9 +1220,10 @@ repair, fallback, dispatch gates, or P4E budgets.
   usage, response references, and recovery state; no ignored tests, sleeps,
   wall-clock dependencies, or platform skips were introduced; (8) docs: this
   section records the current P4F boundary and validation status. The only
-  review fixes so far were removing test-only explicit drops flagged by
-  denied-warning Clippy and a needless borrow; no contract or migration
-  changes were needed.
+  review fixes were removing test-only explicit drops flagged by denied-warning
+  Clippy and a needless borrow, and replacing the crash-test sleep poll with an
+  explicit durable file acknowledgement loop that checks child exit and yields
+  without a time threshold. No contract or migration changes were needed.
 - Local validation passed after these changes: `cargo fmt --all -- --check`,
   offline workspace check, all-target workspace tests, all-feature workspace
   tests, denied-warning Clippy, docs validation, workspace smoke, 76 Python
@@ -1230,6 +1231,31 @@ repair, fallback, dispatch gates, or P4E budgets.
   `git diff --check`. The vendored serde_json deprecation warning remains
   upstream; it does not fail these commands. Exact-head GitHub Actions has not
   yet run for this P4F head.
-- Migration 0003 checksum is unchanged; 0001 and 0002 remain untouched. No
-  provider credentials or model network are used. P4F and whole-branch review
-  remain open pending final review and exact-head Actions.
+- Exact behavior commit `cb3d9e64721c6650e42f6f0ddb5168e01a87b0e3` passed Fast
+  CI [37713666086](https://github.com/Yrika819/Serea/actions/runs/37713666086),
+  Full CI
+  [37713666097](https://github.com/Yrika819/Serea/actions/runs/37713666097),
+  and cross-architecture SQLite
+  [37713666106](https://github.com/Yrika819/Serea/actions/runs/37713666106).
+  Full CI passed Linux stable, MSRV 1.85, Intel x86_64, arm64, and release
+  fault-seam exclusion. Cross-architecture passed both Intel-to-arm64 and
+  arm64-to-Intel; the workflow transferred closed database fixtures, without
+  `-shm` or any live-WAL portability claim.
+- Whole-branch review of `origin/main...p4/model-router`: **BLOCKER 0, MAJOR
+  0, MINOR 0, NOTE 1**. The note is the pre-existing vendored serde_json
+  deprecation warning; denied-warning Clippy remains green. The audit found
+  only migration 0003 changed among migration files; its final checksum is
+  `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`.
+  Migrations 0001 and 0002 are unchanged. Workspace graph, release fault-seam
+  exclusion, all P4C–P4E slice evidence, and final source/docs claims were
+  reviewed together.
+- Final security review found no route to Codex, PRIVATE, SECRET, or CREDENTIAL
+  dispatch; no provider capability, identity, or cost widening; no model
+  self-selection or model-controlled fallback; no recursive repair or third
+  normal candidate; no remote schema resolution; no prompt persistence or raw
+  provider output in events/usage; and no external model dependency, credential,
+  or network call. The host call context remains trusted in-process; Router
+  does not depend on Policy or TaskEngine and does not change Task lifecycle.
+- P4F is closed on this branch. P4 final status remains subject to exact-head
+  validation of the evidence commit that records this closure. No local Mac or
+  Local MCP was used; no merge or P5 work occurred.

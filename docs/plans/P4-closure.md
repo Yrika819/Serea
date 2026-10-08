@@ -1120,5 +1120,14 @@ repair, fallback, dispatch gates, or P4E budgets.
 - Local validation passed: fmt, workspace check, all-target tests, all-feature
   tests, denied-warning Clippy, docs validation, workspace smoke, 76 Python
   smoke tests, Cargo metadata, identity guard and `git diff --check`.
-  Exact-head Fast, Full and cross-architecture Actions are pending.
+  Exact-head CI follows.
+- Behavior commit `63cd6d5bd084863c0905554b6d6effbfa630d3ae` passed Fast CI
+  [37709066254](https://github.com/Yrika819/Serea/actions/runs/37709066254),
+  Full CI
+  [37709066294](https://github.com/Yrika819/Serea/actions/runs/37709066294),
+  and cross-architecture SQLite
+  [37709066262](https://github.com/Yrika819/Serea/actions/runs/37709066262).
+  Full CI passed Linux stable, MSRV 1.85, Intel x86_64, arm64 and release
+  fault-seam exclusion. Both database transfer directions passed. No migration
+  changed in this slice.
 - Nonclaims: the integrated P4E crash matrix and P4E closure remain open.

@@ -99,6 +99,36 @@ pub enum StoreError {
     EventSequenceOverflow,
     /// Event content declares a class that this Store cannot safely persist.
     EventClassRefused,
+    /// A registry insert conflicts with immutable identity or snapshot state.
+    RegistryConflict,
+    /// The named registry generation does not exist.
+    RegistryGenerationNotFound,
+    /// A generation was already activated and cannot be activated again.
+    RegistryGenerationActivated,
+    /// A generation lacks members or an explicit default version.
+    RegistryGenerationIncomplete,
+    /// Activation would move the active pointer backward or repeat a generation.
+    RegistryGenerationOrder,
+    /// The named descriptor revision does not exist.
+    RegistryRevisionNotFound,
+    /// The same descriptor digest was supplied with different semantic facts.
+    RegistryRevisionConflict,
+    /// An overlay expected revision is stale.
+    RegistryOverlayConflict,
+    /// Task has already received an explicit registry generation pin.
+    RegistryTaskAlreadyPinned,
+    /// Task has no registry generation pin.
+    RegistryTaskUnpinned,
+    /// Task generation is not activated.
+    RegistryGenerationNotActive,
+    /// New binding is blocked by a disabled, removed, or non-opted-in overlay.
+    RegistryCapabilityUnavailable,
+    /// Binding conflicts with the Step, Task generation, or candidate facts.
+    RegistryBindingConflict,
+    /// Binding was refused by a Task, Step, generation, or membership invariant.
+    RegistryBindingRefused,
+    /// Registry event facts do not match the closed metadata-only event shape.
+    InvalidRegistryEvent,
     ScheduleNotActive,
     ScheduleRevisionConflict,
     SchedulerLeaseFenced,
@@ -193,6 +223,21 @@ impl StoreError {
             Self::EventStoreCapacity => "EventStoreCapacity",
             Self::EventSequenceOverflow => "EventSequenceOverflow",
             Self::EventClassRefused => "EventClassRefused",
+            Self::RegistryConflict => "RegistryConflict",
+            Self::RegistryGenerationNotFound => "RegistryGenerationNotFound",
+            Self::RegistryGenerationActivated => "RegistryGenerationActivated",
+            Self::RegistryGenerationIncomplete => "RegistryGenerationIncomplete",
+            Self::RegistryGenerationOrder => "RegistryGenerationOrder",
+            Self::RegistryRevisionNotFound => "RegistryRevisionNotFound",
+            Self::RegistryRevisionConflict => "RegistryRevisionConflict",
+            Self::RegistryOverlayConflict => "RegistryOverlayConflict",
+            Self::RegistryTaskAlreadyPinned => "RegistryTaskAlreadyPinned",
+            Self::RegistryTaskUnpinned => "RegistryTaskUnpinned",
+            Self::RegistryGenerationNotActive => "RegistryGenerationNotActive",
+            Self::RegistryCapabilityUnavailable => "RegistryCapabilityUnavailable",
+            Self::RegistryBindingConflict => "RegistryBindingConflict",
+            Self::RegistryBindingRefused => "RegistryBindingRefused",
+            Self::InvalidRegistryEvent => "InvalidRegistryEvent",
             Self::ScheduleNotActive => "ScheduleNotActive",
             Self::ScheduleRevisionConflict => "ScheduleRevisionConflict",
             Self::SchedulerLeaseFenced => "SchedulerLeaseFenced",

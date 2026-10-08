@@ -806,6 +806,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serea-capability"
+version = "0.1.0"
+dependencies = [
+ "serea-event-bus",
+ "serea-protocol",
+ "serea-storage",
+ "serea-testkit",
+]
+
+[[package]]
 name = "serea-event-bus"
 version = "0.1.0"
 dependencies = [
@@ -848,6 +858,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serea-capability",
  "serea-event-bus",
  "serea-protocol",
  "serea-storage",

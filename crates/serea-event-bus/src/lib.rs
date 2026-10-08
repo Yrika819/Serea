@@ -51,6 +51,44 @@ pub enum ScheduleLifecycle {
 
 const TASK_LIFECYCLE_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const MODEL_ACTIVITY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+const REGISTRY_ADMIN_RETENTION_MS: i64 = 365 * 24 * 60 * 60 * 1_000;
+
+/// Stable, content-free change kind for the P5 capability registry audit event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityRegistryChangeKindV1 {
+    GenerationActivated,
+    Disabled,
+    Enabled,
+    Removed,
+    Reactivated,
+    ExperimentalOptIn,
+    ExperimentalOptOut,
+}
+
+impl CapabilityRegistryChangeKindV1 {
+    const fn wire_name(self) -> &'static str {
+        match self {
+            Self::GenerationActivated => "GENERATION_ACTIVATED",
+            Self::Disabled => "DISABLED",
+            Self::Enabled => "ENABLED",
+            Self::Removed => "REMOVED",
+            Self::Reactivated => "REACTIVATED",
+            Self::ExperimentalOptIn => "EXPERIMENTAL_OPT_IN",
+            Self::ExperimentalOptOut => "EXPERIMENTAL_OPT_OUT",
+        }
+    }
+}
+
+/// Metadata-only facts for one registry or admin overlay change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityRegistryChangeV1 {
+    pub change_kind: CapabilityRegistryChangeKindV1,
+    pub generation_id: Option<i64>,
+    pub capability_id: Option<serea_protocol::CapabilityId>,
+    pub overlay_revision: Option<u64>,
+    pub manifest_digest: Option<serea_protocol::Digest>,
+    pub schema_catalog_digest: Option<serea_protocol::Digest>,
+}
 
 /// Closed model-attempt relationship carried by content-free activity events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,6 +284,100 @@ impl EventBus {
                 source,
             ))))),
         }
+    }
+
+    /// Appends `CAPABILITY_REGISTRY_CHANGED` inside the caller's Storage
+    /// transaction. The caller composes this with the registry mutation.
+    pub fn append_capability_registry_changed(
+        &self,
+        tx: &mut Tx<'_>,
+        change: CapabilityRegistryChangeV1,
+        occurred_at: EpochMillis,
+    ) -> Result<SereaEvent, StoreError> {
+        use serde_json::Value;
+        let generation = change.change_kind == CapabilityRegistryChangeKindV1::GenerationActivated;
+        if generation {
+            if change.generation_id.is_none()
+                || change.capability_id.is_some()
+                || change.overlay_revision.is_some()
+                || change.manifest_digest.is_none()
+                || change.schema_catalog_digest.is_none()
+            {
+                return Err(StoreError::InvalidRegistryEvent);
+            }
+        } else if change.generation_id.is_some()
+            || change.capability_id.is_none()
+            || change.overlay_revision.is_none()
+            || change.manifest_digest.is_some()
+            || change.schema_catalog_digest.is_some()
+        {
+            return Err(StoreError::InvalidRegistryEvent);
+        }
+        let mut payload = Map::new();
+        payload.insert(
+            "change_kind".into(),
+            Value::String(change.change_kind.wire_name().to_owned()),
+        );
+        if let Some(id) = change.generation_id {
+            if id <= 0 {
+                return Err(StoreError::InvalidRegistryEvent);
+            }
+            payload.insert("generation_id".into(), Value::from(id));
+        }
+        if let Some(id) = change.capability_id {
+            payload.insert("capability_id".into(), Value::String(id.to_string()));
+        }
+        if let Some(revision) = change.overlay_revision {
+            payload.insert("overlay_revision".into(), Value::from(revision));
+        }
+        if let Some(digest) = change.manifest_digest {
+            payload.insert("manifest_digest".into(), Value::String(digest.to_string()));
+        }
+        if let Some(digest) = change.schema_catalog_digest {
+            payload.insert(
+                "schema_catalog_digest".into(),
+                Value::String(digest.to_string()),
+            );
+        }
+        let message_id = self
+            .ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?
+            .next_event_id();
+        let retention_at = EpochMillis::new(
+            occurred_at
+                .get()
+                .checked_add(REGISTRY_ADMIN_RETENTION_MS)
+                .ok_or(StoreError::InvalidTimestamp)?,
+        )
+        .map_err(|_| StoreError::InvalidTimestamp)?;
+        EventBus::append(
+            tx,
+            SereaEvent {
+                envelope_version: EnvelopeVersion::new("1")
+                    .map_err(|_| StoreError::InvalidRegistryEvent)?,
+                surface: WireSurface::new(WireSurface::EVENT)
+                    .map_err(|_| StoreError::InvalidRegistryEvent)?,
+                message_id,
+                seq: Seq::new(0),
+                kind: EventKind::CapabilityRegistryChanged,
+                occurred_at: Timestamp::from_epoch_millis(occurred_at),
+                correlation_id: None,
+                causation_id: None,
+                actor: Actor {
+                    kind: ActorKind::Host,
+                    id: ActorId::new("capability-registry")
+                        .map_err(|_| StoreError::InvalidRegistryEvent)?,
+                    version: SemVer::new("1.0.0").map_err(|_| StoreError::InvalidRegistryEvent)?,
+                    extensions: Default::default(),
+                },
+                data_class: DataClass::Public,
+                trace: None,
+                payload,
+                extensions: Default::default(),
+            },
+            Some(retention_at),
+        )
     }
 
     /// Mints a host-owned TaskId from the injected identifier source.

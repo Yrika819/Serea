@@ -130,6 +130,9 @@ impl Tx<'_> {
             return Err(StoreError::EventStoreCapacity);
         }
 
+        #[cfg(feature = "p2h-fault-injection")]
+        crate::fault::reach(crate::fault::Window::BeforeEventAppend)?;
+
         self.inner.execute(
             "UPDATE event_store_state SET last_allocated_seq=?1,retained_count=retained_count+1,event_store_bytes=?2 WHERE singleton=1 AND last_allocated_seq=?3",
             rusqlite::params![seq, updated_bytes, last],

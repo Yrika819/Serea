@@ -41,7 +41,7 @@ class VirtualManifestTests(unittest.TestCase):
     def setUp(self):
         self.root = Path("/virtual/serea")
         self.root_path = self.root / "Cargo.toml"
-        names = [smoke.PROTOCOL, smoke.STORAGE, smoke.EVENT_BUS, ENGINE]
+        names = [smoke.PROTOCOL, smoke.STORAGE, smoke.EVENT_BUS, smoke.CAPABILITY, ENGINE]
         scheduler = getattr(smoke, "SCHEDULER", None)
         if scheduler is not None:
             names.append(scheduler)
@@ -56,6 +56,7 @@ class VirtualManifestTests(unittest.TestCase):
             **{path: f'[package]\nname = "{name}"\n' for name, path in self.paths.items()},
         }
         self.add(smoke.EVENT_BUS, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\n')
+        self.add(smoke.CAPABILITY, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\n[dev-dependencies]\nserea-testkit = { path = "../serea-testkit" }\n')
         self.add(ENGINE, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\n[dev-dependencies]\nserde_json = "1"\n')
         if scheduler is not None:
             self.add(scheduler, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-task-engine = { path = "../serea-task-engine" }\n[dev-dependencies]\nserea-testkit = { path = "../serea-testkit" }\n')
@@ -491,14 +492,14 @@ class P2GroupOInvariantTests(unittest.TestCase):
         return re.sub(r"//[^\n]*", "", source)
 
     def test_o1_no_network_symbols_or_network_runtime_dependencies(self):
-        sources = self.rust_files("serea-protocol", "serea-storage", "serea-task-engine")
+        sources = self.rust_files("serea-capability", "serea-protocol", "serea-storage", "serea-task-engine")
         forbidden = re.compile(r"(?:std::net|TcpStream|TcpListener|UdpSocket|reqwest|hyper::|ureq::|tokio::net|async_std::net)")
         for path in sources:
             source = self.without_rust_comments(path.read_text())
             self.assertIsNone(forbidden.search(source), str(path))
         root = smoke.load_manifest(self.root / "Cargo.toml")
         shared = root["workspace"]["dependencies"]
-        for member in ("serea-protocol", "serea-storage", "serea-task-engine", "serea-model-router"):
+        for member in ("serea-capability", "serea-protocol", "serea-storage", "serea-task-engine", "serea-model-router"):
             manifest = smoke.load_manifest(self.root / "crates" / member / "Cargo.toml")
             for name, _, is_dev in smoke.dependency_tables(
                     manifest, shared, self.root / "crates" / member / "Cargo.toml"):
@@ -509,7 +510,7 @@ class P2GroupOInvariantTests(unittest.TestCase):
 
     def test_o2_subprocesses_are_confined_to_the_p2h_integration_harness(self):
         forbidden = re.compile(r"std::process::Command|Command::new")
-        runtime = self.rust_files("serea-protocol", "serea-storage", "serea-task-engine")
+        runtime = self.rust_files("serea-capability", "serea-protocol", "serea-storage", "serea-task-engine")
         for path in runtime:
             self.assertIsNone(forbidden.search(path.read_text()), str(path))
         harness = self.root / "crates/serea-task-engine/tests/crash.rs"
@@ -540,7 +541,7 @@ class P2GroupOInvariantTests(unittest.TestCase):
     def test_o5_frozen_enum_cardinalities_are_unchanged(self):
         source = (self.root / "crates/serea-protocol/src/types.rs").read_text()
         expected = {"DataClass": 5, "RiskClass": 8, "TaskState": 11,
-                    "StepKind": 8, "ActionErrorKind": 13, "EventKind": 60}
+                    "StepKind": 8, "ActionErrorKind": 13, "EventKind": 61}
         for name, count in expected.items():
             pattern = re.compile(
                 rf"declare_enum!\(\s*(?:///[^\n]*\n\s*)*{name}\s*\{{(.*?)^\s*\}}\s*\);",

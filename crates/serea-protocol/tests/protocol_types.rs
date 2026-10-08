@@ -716,7 +716,7 @@ mod frozen_enum_sets {
     }
 
     #[test]
-    fn pro_event_3_event_kind_is_exactly_the_sixty_frozen_values() {
+    fn pro_event_3_event_kind_includes_the_sixty_one_frozen_values() {
         let frozen = [
             // §3.1 Task lifecycle
             "TASK_CREATED",
@@ -753,6 +753,7 @@ mod frozen_enum_sets {
             "APPROVAL_EXPIRED_UNUSED",
             // §3.5 Policy and bounds
             "POLICY_CHANGED",
+            "CAPABILITY_REGISTRY_CHANGED",
             "BOUND_EXCEEDED",
             "BOUNDS_CHANGED",
             "POLICY_VIOLATION_ATTEMPT",
@@ -789,7 +790,7 @@ mod frozen_enum_sets {
             "PROVIDER_SYNC_COMPLETED",
             "PROVIDER_SYNC_DEGRADED",
         ];
-        assert_eq!(frozen.len(), 60);
+        assert_eq!(frozen.len(), 61);
         assert_eq!(EventKind::WIRE_NAMES, frozen);
     }
 

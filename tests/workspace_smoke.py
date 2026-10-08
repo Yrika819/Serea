@@ -21,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_MEMBERS = [
+    "crates/serea-capability",
     "crates/serea-event-bus",
     "crates/serea-model-router",
     "crates/serea-protocol",
@@ -36,6 +37,7 @@ ENGINE = "serea-task-engine"
 SCHEDULER = "serea-scheduler"
 MODEL_ROUTER = "serea-model-router"
 TESTKIT = "serea-testkit"
+CAPABILITY = "serea-capability"
 DEPENDENCY_KINDS = ("dependencies", "build-dependencies", "dev-dependencies")
 
 
@@ -335,7 +337,7 @@ def main() -> int:
             raise ValueError("workspace.members must be an array of strings")
         if sorted(members) != EXPECTED_MEMBERS:
             failures.append(
-                f"expected exactly P4C members {EXPECTED_MEMBERS}, got {members}"
+                f"expected exactly workspace members {EXPECTED_MEMBERS}, got {members}"
             )
         for member in EXPECTED_MEMBERS:
             path = ROOT / member / "Cargo.toml"
@@ -358,6 +360,10 @@ def main() -> int:
                     )
                 if owner == ENGINE and name == "rusqlite" and not is_dev:
                     failures.append(f"{ENGINE} has non-dev dependency rusqlite; use storage instead")
+                if owner == CAPABILITY and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS):
+                    failures.append(
+                        f"{CAPABILITY} has internal non-dev dependency {name}; only protocol/storage/event-bus are allowed"
+                    )
                 if owner == STORAGE and name == ENGINE:
                     failures.append(f"{STORAGE} depends on {ENGINE}; forbidden even in [dev-dependencies]")
                 if owner == STORAGE and name == EVENT_BUS:
@@ -396,9 +402,10 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P4D protocol/storage/event-bus/task-engine/scheduler/model-router/testkit workspace; "
+    print("OK: exact P5B capability/protocol/storage/event-bus/task-engine/scheduler/model-router/testkit workspace; "
           "event-bus protocol/storage-only; task-engine protocol/storage/event-bus; scheduler protocol/storage/event-bus/task-engine; "
-          "storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; model-router protocol/storage/event-bus; testkit dev-only")
+          "capability protocol/storage/event-bus; storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; "
+          "model-router protocol/storage/event-bus; testkit dev-only")
     return 0
 
 

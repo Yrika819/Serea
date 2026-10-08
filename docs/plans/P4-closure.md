@@ -1010,8 +1010,18 @@ repair, fallback, dispatch gates, or P4E budgets.
   repair input and absent from events/storage; (6) fallback and repair each
   consume normal call/spend accounting while repair does not add a model turn;
   (7) tests use scripted provider outcomes and reopen SQLite without sleeps;
-  (8) no schema or migration changed. The behavior slice remains open until
-  exact-head Fast and Full CI pass.
+  (8) no schema or migration changed. The behavior slice closes only with the
+  exact-head Fast, Full, and cross-architecture results recorded below.
 - Local validation passed on this change: fmt, workspace check, all-target
   tests, all-feature tests, denied-warning Clippy, docs validation, workspace
   smoke, 76 Python smoke tests, Cargo metadata, identity guard, and diff check.
+- Behavior commit `0ca253814921728cfc65af66af339af52b64bde1` passed Fast CI
+  [37705935655](https://github.com/Yrika819/Serea/actions/runs/37705935655),
+  Full CI
+  [37705935661](https://github.com/Yrika819/Serea/actions/runs/37705935661),
+  and cross-architecture SQLite
+  [37705935651](https://github.com/Yrika819/Serea/actions/runs/37705935651).
+  Full CI passed Linux stable, MSRV 1.85, Intel, arm64, and release-fault
+  exclusion; both cross-architecture transfer directions passed. This closes
+  structured fallback/repair composition; crash injection and remaining P4E
+  budget integration remain open.

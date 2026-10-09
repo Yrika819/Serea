@@ -3,12 +3,12 @@ use serea_event_bus::{EventBus, ReplayItem};
 use serea_protocol::*;
 use serea_scheduler::{ScheduleDefinition, Scheduler, occurrence_identity_key};
 use serea_storage::{
-    CapabilityOverlayState, DescriptorRevisionDraft, EventDraft, GenerationMemberDraft,
-    MissedOccurrencePolicy, ModelAttemptState, ModelCallAttemptDraft, ModelCallCompletion,
-    ModelDeploymentClass, ModelPriceSnapshot, ModelResponseStorage, RegistryGenerationDraft,
-    ScheduleOwnerKind, ScheduleTriggerKind, Store, UsdMicros,
+    CapabilityOverlayState, CapabilityPlanBindingDraft, DescriptorRevisionDraft, EventDraft,
+    GenerationMemberDraft, MissedOccurrencePolicy, ModelAttemptState, ModelCallAttemptDraft,
+    ModelCallCompletion, ModelDeploymentClass, ModelPriceSnapshot, ModelResponseStorage, PlanWrite,
+    RegistryGenerationDraft, ScheduleOwnerKind, ScheduleTriggerKind, StepInput, Store, UsdMicros,
 };
-use serea_task_engine::{NewTask, Plan, PlanStep, TaskEngine, TransitionContext};
+use serea_task_engine::{NewTask, TaskEngine, TaskJournal, TransitionContext};
 use serea_testkit::DeterministicUlidSource;
 use std::path::PathBuf;
 
@@ -401,22 +401,26 @@ fn produce(path: &std::path::Path) {
         extensions: Default::default(),
     })
     .unwrap();
-    tasks
-        .persist_plan(
-            binding_task.clone(),
-            Plan {
-                revision: 1,
-                steps: vec![PlanStep {
-                    step: binding_step_value,
-                    input_json: binding_input,
-                }],
-            },
-            at(1_700_000_000_061),
-            &context,
-        )
-        .unwrap();
     let registry_revision = Digest::new(format!("sha256:{}", "1".repeat(64))).unwrap();
-    CapabilityRegistry::bind_step(&store, &binding_task, &binding_step, &registry_revision)
+    store
+        .transact_with_participants(&TaskJournal, &bus, |tx| {
+            tx.put_capability_plan_revision(
+                &binding_task,
+                PlanWrite {
+                    revision: 1,
+                    steps: vec![StepInput {
+                        step: binding_step_value,
+                        input_json: binding_input,
+                    }],
+                },
+                &[CapabilityPlanBindingDraft {
+                    step_id: binding_step.clone(),
+                    descriptor_digest: registry_revision,
+                }],
+                at(1_700_000_000_061),
+                &context,
+            )
+        })
         .unwrap();
 
     let approval_task = TaskId::new("tsk_00000000000000000000000072").unwrap();

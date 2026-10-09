@@ -903,9 +903,7 @@ fn json_pointer<'a>(root: &'a Value, pointer: &str) -> Option<&'a Value> {
     Some(current)
 }
 
-fn build_registry<'a>(
-    docs: &'a BTreeMap<String, CatalogDocument>,
-) -> Result<Registry<'a>, CatalogError> {
+fn build_registry(docs: &BTreeMap<String, CatalogDocument>) -> Result<Registry<'_>, CatalogError> {
     let mut registry = Registry::new();
     for doc in docs.values() {
         registry = registry

@@ -229,6 +229,14 @@ Focused GREEN evidence:
 - `cargo clippy -p serea-capability -p serea-event-bus --all-targets --all-features -- -D warnings`, the MSRV 1.85 workspace clippy with `--locked --offline`, `cargo fmt --all -- --check`, docs validation, workspace smoke, the commit identity guard and `git diff --check` all pass.
 - Zero-invoke is preserved: the scripted providers in every P5D test panic if invoked, and no production path in `serea-capability` calls `CapabilityProvider::invoke`.
 
+## P5D GitHub Actions validation
+
+- P5D behaviour commit: `99e74b4`.
+- Fast CI run 37908936160: GREEN, including the commit identity guard.
+- Full CI run 37908936109: GREEN — Linux stable full validation GREEN, MSRV 1.85.0 GREEN, macOS Intel x86_64 GREEN, macOS arm64 GREEN, with the P2H crash/fault suite, release fault-seam exclusion proof and identity guard all GREEN.
+- Cross-architecture SQLite portability run 37908936165: GREEN in both directions.
+- PR #5 remains OPEN, DRAFT and MERGEABLE, and is NOT merged.
+
 ## P5D nonclaims
 
 P5D does not implement TaskEngine generation pinning, Step creation integration, policy, approval or grants, duplicate suppression, repeated-action accounting, tool-call accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, Gmail, Calendar, an Android provider, Android standalone mode, or GoalLatch. Preparation is a P6 input, not an approval: no PolicyDecision, no approval state and no execution permission exists in P5.

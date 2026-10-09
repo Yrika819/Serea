@@ -10,8 +10,10 @@ use serea_scheduler::{ScheduleDefinition, Scheduler, occurrence_identity_key};
 use serea_storage::{MissedOccurrencePolicy, ScheduleOwnerKind, ScheduleTriggerKind, Store};
 use serea_task_engine::{NewTask, TaskEngine, TransitionContext};
 use serea_testkit::DeterministicUlidSource;
+mod support;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use support::seed_active_registry;
 
 static NEXT_DB: AtomicUsize = AtomicUsize::new(0);
 const BASE: i64 = 1_700_000_000_000;
@@ -140,6 +142,7 @@ fn restart_integrates_retention_host_replay_device_wake_approval_handoff_and_rec
     let db = path();
     let event_bus = bus(BASE + 10_000);
     let initial_store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&initial_store);
     let mut initial_tasks = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), event_bus.clone());
     let mut scheduler = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
@@ -462,6 +465,9 @@ fn restart_integrates_retention_host_replay_device_wake_approval_handoff_and_rec
 fn two_workers_replay_and_dispatch_one_host_event_occurrence_once() {
     let db = path();
     let event_bus = bus(BASE + 40_000);
+    let initial_store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&initial_store);
+    drop(initial_store);
     let mut setup = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
         TaskEngine::new(Store::open(&db, &Fixed).unwrap(), event_bus.clone()),
@@ -550,6 +556,7 @@ fn calendar_cursor_update_failure_rolls_back_admitted_occurrence_and_next_due() 
     let db = path();
     let event_bus = bus(BASE + 50_000);
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut scheduler = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
         TaskEngine::new(Store::open(&db, &Fixed).unwrap(), event_bus.clone()),

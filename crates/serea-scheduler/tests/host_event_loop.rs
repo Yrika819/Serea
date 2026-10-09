@@ -7,8 +7,10 @@ use serea_storage::{
 };
 use serea_task_engine::{NewTask, TaskEngine, TransitionContext};
 use serea_testkit::DeterministicUlidSource;
+mod support;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use support::seed_active_registry;
 
 static NEXT_DB: AtomicUsize = AtomicUsize::new(0);
 
@@ -60,6 +62,7 @@ fn host_event_predicates_use_exact_kind_and_reject_scheduler_causal_roots_across
     let path = temp_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_001_000_000).unwrap());
     let primary_store = Store::open(&path, &Fixed).unwrap();
+    seed_active_registry(&primary_store);
     let task_store = Store::open(&path, &Fixed).unwrap();
     let mut scheduler = Scheduler::new(
         primary_store,
@@ -245,6 +248,7 @@ fn committed_host_event_replay_atomically_creates_one_occurrence_and_advances_cu
     let path = temp_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_001_000_100).unwrap());
     let primary_store = Store::open(&path, &Fixed).unwrap();
+    seed_active_registry(&primary_store);
     let task_store = Store::open(&path, &Fixed).unwrap();
     let source_store = Store::open(&path, &Fixed).unwrap();
     let mut scheduler = Scheduler::new(
@@ -391,6 +395,7 @@ fn host_event_schedule_revisions_do_not_match_events_committed_before_the_revisi
     let path = temp_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_001_000_200).unwrap());
     let store = Store::open(&path, &Fixed).unwrap();
+    seed_active_registry(&store);
     let task_store = Store::open(&path, &Fixed).unwrap();
     let source_store = Store::open(&path, &Fixed).unwrap();
     let mut scheduler =
@@ -475,6 +480,7 @@ fn host_event_resume_excludes_events_committed_while_the_schedule_was_paused() {
     let path = temp_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_001_000_300).unwrap());
     let store = Store::open(&path, &Fixed).unwrap();
+    seed_active_registry(&store);
     let task_store = Store::open(&path, &Fixed).unwrap();
     let source_store = Store::open(&path, &Fixed).unwrap();
     let mut scheduler =

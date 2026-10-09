@@ -1,8 +1,15 @@
 use super::*;
 use crate::audit::{JournalRecords, TaskAuditParticipant, TestAudit};
+use crate::{
+    CapabilityPlanBindingDraft, DescriptorRevisionDraft, GenerationMemberDraft,
+    RegistryGenerationDraft,
+};
 use serea_protocol::{
-    ActorId, ActorKind, AttemptBudget, Clock, ProtocolError, RiskClass, SemVer, StepStatus,
-    TaskKind, TaskOrigin, TaskOriginKind, TaskTitle,
+    ActorId, ActorKind, AttemptBudget, Authorization, CapabilityDescriptor,
+    CapabilityDescriptorDraft, CapabilityId, Clock, CostClass, DataClass, DescriptorDescription,
+    DescriptorTitle, IdempotencySupport, JsonSchemaRef, ProtocolError, ProviderId, ReplaySafety,
+    RiskClass, RootRequirement, SemVer, SideEffectClass, StepStatus, TaskKind, TaskOrigin,
+    TaskOriginKind, TaskTitle,
 };
 
 const TASK: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";
@@ -715,6 +722,90 @@ fn complete_rows(s: &Store) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
     .to_vec()
 }
 
+fn prepare_bound_capability(s: &Store, step: StepInput, c: &TransitionContext<'_>) {
+    let descriptor = CapabilityDescriptor::new(CapabilityDescriptorDraft {
+        id: CapabilityId::new("calendar.events.create").unwrap(),
+        version: SemVer::new("1.0.0").unwrap(),
+        title: DescriptorTitle::new("Task fixture").unwrap(),
+        description: DescriptorDescription::new("Task fixture descriptor").unwrap(),
+        provider_id: ProviderId::new("calendar").unwrap(),
+        implementation_id: None,
+        input_schema: JsonSchemaRef::new("serea://task-fixture/input").unwrap(),
+        output_schema: JsonSchemaRef::new("serea://task-fixture/output").unwrap(),
+        side_effect_class: SideEffectClass::None,
+        risk_class: RiskClass::Observe,
+        required_authorization: Authorization::None,
+        replay_safety: ReplaySafety::Idempotent,
+        data_class: DataClass::Personal,
+        root_requirement: RootRequirement::NotRequired,
+        idempotency_support: IdempotencySupport::None,
+        max_duration_ms: 5_000,
+        cost_class: CostClass::Free,
+        experimental: false,
+    })
+    .unwrap();
+    let generation_id = s
+        .create_registry_generation(RegistryGenerationDraft {
+            manifest_digest: digest_of("\"task-fixture-manifest\"").unwrap(),
+            schema_catalog_digest: digest_of("\"task-fixture-catalog\"").unwrap(),
+        })
+        .unwrap()
+        .generation_id();
+    let descriptor_digest = digest_of("\"task-fixture-descriptor\"").unwrap();
+    let schema_digest = digest_of("\"task-fixture-schema\"").unwrap();
+    s.insert_descriptor_revision(DescriptorRevisionDraft {
+        descriptor_digest: descriptor_digest.clone(),
+        descriptor,
+        input_schema_digest: schema_digest.clone(),
+        output_schema_digest: schema_digest,
+    })
+    .unwrap();
+    s.add_generation_membership(GenerationMemberDraft {
+        generation_id,
+        descriptor_digest: descriptor_digest.clone(),
+        candidate_priority: 0,
+    })
+    .unwrap();
+    s.set_generation_default_version(
+        generation_id,
+        CapabilityId::new("calendar.events.create").unwrap(),
+        SemVer::new("1.0.0").unwrap(),
+    )
+    .unwrap();
+    s.transact(|tx| {
+        tx.activate_registry_generation(generation_id, at(1))
+            .map(|_| ())
+    })
+    .unwrap();
+    let binding = CapabilityPlanBindingDraft {
+        step_id: step.step.step_id.clone(),
+        descriptor_digest,
+    };
+    s.transact_with_audit(&TestAudit, |tx| {
+        tx.insert_task(&task(), c)?;
+        tx.pin_task_registry_generation(&TaskId::new(TASK).unwrap(), generation_id)?;
+        tx.start_planning(
+            &TaskId::new(TASK).unwrap(),
+            TaskState::Received,
+            0,
+            at(20),
+            c,
+        )?;
+        tx.put_capability_plan_revision(
+            &TaskId::new(TASK).unwrap(),
+            PlanWrite {
+                revision: 1,
+                steps: vec![step],
+            },
+            &[binding],
+            at(30),
+            c,
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+
 #[test]
 fn corrupt_receipt_tuple_is_refused_by_both_snapshot_read_paths() {
     use serea_protocol::{
@@ -723,7 +814,6 @@ fn corrupt_receipt_tuple_is_refused_by_both_snapshot_read_paths() {
     context(|c| {
         for field in ["capability_id", "idempotency_key"] {
             let s = store();
-            prepare(&s, c);
             let mut p = input(STEP, 10);
             let mut d = TaskStepDraft::from(p.step);
             d.kind = StepKind::Capability;
@@ -744,7 +834,7 @@ fn corrupt_receipt_tuple_is_refused_by_both_snapshot_read_paths() {
             d.capability_version = Some(version);
             p.step = TaskStep::new(d).unwrap();
             let planned = p.step.clone();
-            persist(&s, 1, vec![p], c).unwrap();
+            prepare_bound_capability(&s, p, c);
             let receipt = SideEffectReceipt {
                 receipt_id: ReceiptId::new("rcp_01JQ8Z9M3R2CVN8H5FWK7PQDSF").unwrap(),
                 capability_id: planned.capability_id.clone().unwrap(),

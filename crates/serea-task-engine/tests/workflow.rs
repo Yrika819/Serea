@@ -122,7 +122,7 @@ fn input(task: u32, step: u32, seq: u32, kind: StepKind) -> PlanStep {
     }
 }
 fn engine() -> TaskEngine {
-    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap(), event_bus())
+    support::post_p5_engine(Store::open_in_memory(&Fixed).unwrap(), event_bus())
 }
 
 #[derive(Clone)]
@@ -138,7 +138,7 @@ fn p3c_task_creation_commits_task_journal_event_and_sequence_together() {
     let path = std::env::temp_dir().join(format!("serea-p3c-{}.sqlite", std::process::id()));
     let context = Context::new();
     {
-        let mut engine = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), event_bus());
+        let mut engine = support::post_p5_engine(Store::open(&path, &Fixed).unwrap(), event_bus());
         engine
             .create_task(spec(91, DataClass::Personal), &context.view())
             .unwrap();
@@ -205,7 +205,7 @@ fn task_journal_insert_failure_rolls_back_task_event_and_sequence() {
              BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END;",
         )
         .unwrap();
-    let mut engine = TaskEngine::new(store, event_bus());
+    let mut engine = support::post_p5_engine(store, event_bus());
     assert_eq!(
         engine
             .create_task(spec(95, DataClass::Personal), &context.view())
@@ -235,7 +235,7 @@ fn task_transition_events_are_specific_and_step_lease_only_writes_emit_none() {
     let path = std::env::temp_dir().join(format!("serea-p3c-kinds-{}.sqlite", std::process::id()));
     let context = Context::new();
     {
-        let mut engine = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), event_bus());
+        let mut engine = support::post_p5_engine(Store::open(&path, &Fixed).unwrap(), event_bus());
         engine
             .create_task(spec(93, DataClass::Personal), &context.view())
             .unwrap();
@@ -297,7 +297,7 @@ fn duplicate_event_insert_rolls_back_transition_and_retry_does_not_duplicate() {
     ));
     let context = Context::new();
     let source = serea_testkit::DeterministicUlidSource::new().next_ulid();
-    let mut engine = TaskEngine::new(
+    let mut engine = support::post_p5_engine(
         Store::open(&path, &Fixed).unwrap(),
         serea_event_bus::EventBus::new(RepeatedUlid(source)),
     );
@@ -350,6 +350,35 @@ fn ready(e: &mut TaskEngine, c: &Context, kind: StepKind) {
         &c.view(),
     )
     .unwrap();
+}
+fn ready_capability(e: &mut TaskEngine, c: &Context, store: &Store) {
+    e.create_task(spec(1, DataClass::Personal), &c.view())
+        .unwrap();
+    e.start_planning(tid(1), TaskState::Received, 0, at(20), &c.view())
+        .unwrap();
+    let step = input(1, 1, 10, StepKind::Capability);
+    let binding = serea_storage::CapabilityPlanBindingDraft {
+        step_id: step.step.step_id.clone(),
+        descriptor_digest: support::fixture_descriptor_digest(),
+    };
+    store
+        .transact_with_participants(&TaskJournal, &event_bus(), |tx| {
+            tx.put_capability_plan_revision(
+                &tid(1),
+                serea_storage::PlanWrite {
+                    revision: 1,
+                    steps: vec![serea_storage::StepInput {
+                        step: step.step,
+                        input_json: step.input_json,
+                    }],
+                },
+                &[binding],
+                at(30),
+                &c.view(),
+            )
+            .map(|_| ())
+        })
+        .unwrap();
 }
 fn acquire(
     e: &mut TaskEngine,
@@ -619,9 +648,11 @@ fn cancellation_and_second_noop_do_not_change_steps_or_timestamp() {
 }
 #[test]
 fn receipt_success_cancellation_and_delete_counts_preserve_ordering() {
+    let f = FileFixture::new("receipt-delete");
     let c = Context::new();
-    let mut e = engine();
-    ready(&mut e, &c, StepKind::Capability);
+    let mut e = f.open();
+    let store = Store::open(&f.path, &Fixed).unwrap();
+    ready_capability(&mut e, &c, &store);
     let g = acquire(&mut e, &c, None, 40, 50).unwrap();
     e.begin_attempt(&g, at(41), &c.view()).unwrap();
     assert_eq!(e.load(tid(1)).unwrap().task.state, TaskState::Executing);
@@ -962,7 +993,7 @@ impl AtRestProtection for NeverProtection {
 fn private_blob_backend_does_not_authorize_ordinary_task_data() {
     let c = Context::new();
     for class in [DataClass::Private, DataClass::Secret, DataClass::Credential] {
-        let mut e = TaskEngine::new(
+        let mut e = support::post_p5_engine(
             Store::open_in_memory_with_protection(&Fixed, Arc::new(NeverProtection)).unwrap(),
             event_bus(),
         );
@@ -996,7 +1027,7 @@ fn two_tasks_share_input_blob_but_delete_never_sweeps_other_task_or_standalone()
     let standalone = store
         .transact(|tx| tx.put_blob(b"{\"standalone\":true}", DataClass::Public))
         .unwrap();
-    let mut e = TaskEngine::new(store, event_bus());
+    let mut e = support::post_p5_engine(store, event_bus());
     for n in [1, 2] {
         e.create_task(spec(n, DataClass::Personal), &c.view())
             .unwrap();
@@ -1041,7 +1072,7 @@ impl FileFixture {
         }
     }
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
+        support::post_p5_engine(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
 }
 impl Drop for FileFixture {
@@ -1129,7 +1160,8 @@ fn reopened_unstarted_inflight_terminal_and_cancelled_rows_keep_provenance() {
     let f = FileFixture::new("provenance");
     let c = Context::new();
     let mut e = f.open();
-    ready(&mut e, &c, StepKind::Capability);
+    let store = Store::open(&f.path, &Fixed).unwrap();
+    ready_capability(&mut e, &c, &store);
     let expected = e.load(tid(1)).unwrap().task;
     drop(e);
     let mut e = f.open();
@@ -1281,9 +1313,11 @@ fn no_recovery_execution_sql_or_upward_dependency_is_exposed() {
 
 #[test]
 fn persisted_task_wire_validates_against_checked_in_schema() {
+    let f = FileFixture::new("wire-capability");
     let c = Context::new();
-    let mut e = engine();
-    ready(&mut e, &c, StepKind::Capability);
+    let mut e = f.open();
+    let store = Store::open(&f.path, &Fixed).unwrap();
+    ready_capability(&mut e, &c, &store);
     let task = e.load(tid(1)).unwrap().task;
     let wire = serde_json::to_value(&task).unwrap();
     serea_protocol::schema::validate(serea_protocol::schema::SchemaName::AssistantTask, &wire)

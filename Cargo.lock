@@ -806,6 +806,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "serea-capability"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "jsonschema",
+ "serde",
+ "serde_json",
+ "serea-event-bus",
+ "serea-protocol",
+ "serea-storage",
+ "serea-testkit",
+ "sha2",
+]
+
+[[package]]
 name = "serea-event-bus"
 version = "0.1.0"
 dependencies = [
@@ -848,6 +863,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serea-capability",
  "serea-event-bus",
  "serea-protocol",
  "serea-storage",
@@ -870,8 +886,10 @@ dependencies = [
 name = "serea-task-engine"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "rusqlite",
  "serde_json",
+ "serea-capability",
  "serea-event-bus",
  "serea-protocol",
  "serea-storage",

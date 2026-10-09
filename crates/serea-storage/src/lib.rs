@@ -19,6 +19,9 @@
 
 mod audit;
 mod blob;
+mod capability_registry;
+#[cfg(test)]
+mod capability_registry_tests;
 mod classify;
 mod error;
 mod event;
@@ -29,6 +32,8 @@ mod migrate;
 mod migration_0002_tests;
 #[cfg(test)]
 mod migration_0003_tests;
+#[cfg(test)]
+mod migration_0004_tests;
 mod model_accounting;
 #[cfg(test)]
 mod model_call_tests;
@@ -52,6 +57,11 @@ pub use audit::{
     JournalRecords, TaskAuditParticipant,
 };
 pub use blob::BlobRef;
+pub use capability_registry::{
+    CapabilityOverlay, CapabilityOverlayState, CapabilityPlanBindingDraft, DescriptorRevision,
+    DescriptorRevisionDraft, GenerationMember, GenerationMemberDraft, RegistryGeneration,
+    RegistryGenerationDraft, StepCapabilityBinding,
+};
 pub use classify::{AtRestProtection, AtRestProtectionError};
 pub use error::StoreError;
 pub use event::{

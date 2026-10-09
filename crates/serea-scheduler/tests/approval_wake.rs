@@ -1,7 +1,10 @@
 use serea_event_bus::EventBus;
 use serea_protocol::*;
 use serea_scheduler::Scheduler;
-use serea_storage::{ApprovalLifecycleOutcome, Store};
+use serea_storage::{
+    ApprovalLifecycleOutcome, DescriptorRevisionDraft, GenerationMemberDraft,
+    RegistryGenerationDraft, Store,
+};
 use serea_task_engine::{NewTask, TaskEngine, TransitionContext};
 use serea_testkit::DeterministicUlidSource;
 use std::path::PathBuf;
@@ -53,6 +56,67 @@ fn task_spec(task_id: TaskId) -> NewTask {
     }
 }
 
+fn seed_active_registry(store: &Store) {
+    let descriptor = CapabilityDescriptor::new(CapabilityDescriptorDraft {
+        id: CapabilityId::new("calendar.events.create").unwrap(),
+        version: SemVer::new("1.0.0").unwrap(),
+        title: DescriptorTitle::new("Scheduler fixture").unwrap(),
+        description: DescriptorDescription::new("Scheduler fixture descriptor").unwrap(),
+        provider_id: ProviderId::new("calendar").unwrap(),
+        implementation_id: None,
+        input_schema: JsonSchemaRef::new("serea://scheduler/input").unwrap(),
+        output_schema: JsonSchemaRef::new("serea://scheduler/output").unwrap(),
+        side_effect_class: SideEffectClass::None,
+        risk_class: RiskClass::Observe,
+        required_authorization: Authorization::None,
+        replay_safety: ReplaySafety::Idempotent,
+        data_class: DataClass::Personal,
+        root_requirement: RootRequirement::NotRequired,
+        idempotency_support: IdempotencySupport::None,
+        max_duration_ms: 5_000,
+        cost_class: CostClass::Free,
+        experimental: false,
+    })
+    .unwrap();
+    let generation_id = store
+        .create_registry_generation(RegistryGenerationDraft {
+            manifest_digest: digest_of("\"scheduler-manifest\"").unwrap(),
+            schema_catalog_digest: digest_of("\"scheduler-catalog\"").unwrap(),
+        })
+        .unwrap()
+        .generation_id();
+    let descriptor_digest = digest_of("\"scheduler-descriptor\"").unwrap();
+    let schema_digest = digest_of("\"scheduler-schema\"").unwrap();
+    store
+        .insert_descriptor_revision(DescriptorRevisionDraft {
+            descriptor_digest: descriptor_digest.clone(),
+            descriptor,
+            input_schema_digest: schema_digest.clone(),
+            output_schema_digest: schema_digest,
+        })
+        .unwrap();
+    store
+        .add_generation_membership(GenerationMemberDraft {
+            generation_id,
+            descriptor_digest,
+            candidate_priority: 0,
+        })
+        .unwrap();
+    store
+        .set_generation_default_version(
+            generation_id,
+            CapabilityId::new("calendar.events.create").unwrap(),
+            SemVer::new("1.0.0").unwrap(),
+        )
+        .unwrap();
+    store
+        .transact(|tx| {
+            tx.activate_registry_generation(generation_id, at(0))
+                .map(|_| ())
+        })
+        .unwrap();
+}
+
 fn approval_event(
     kind: EventKind,
     event_id: EventId,
@@ -98,6 +162,7 @@ fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_a
     let path = db_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&path, &Fixed).unwrap();
+    seed_active_registry(&store);
     let task_id = TaskId::new("tsk_00000000000000000000000001").unwrap();
     let step_id = StepId::new("stp_00000000000000000000000001").unwrap();
     let mut tasks = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), bus.clone());
@@ -228,6 +293,7 @@ fn malformed_approval_event_does_not_materialize_or_advance_cursor() {
     let path = db_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_600_000_000).unwrap());
     let store = Store::open(&path, &Fixed).unwrap();
+    seed_active_registry(&store);
     let task_id = TaskId::new("tsk_00000000000000000000000002").unwrap();
     let step_id = StepId::new("stp_00000000000000000000000002").unwrap();
     let mut tasks = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), bus.clone());
@@ -289,6 +355,7 @@ fn failed_cursor_commit_rolls_back_approval_wake_materialization() {
     let path = db_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_700_000_000).unwrap());
     let store = Store::open(&path, &Fixed).unwrap();
+    seed_active_registry(&store);
     let task_id = TaskId::new("tsk_00000000000000000000000003").unwrap();
     let step_id = StepId::new("stp_00000000000000000000000003").unwrap();
     let mut tasks = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), bus.clone());

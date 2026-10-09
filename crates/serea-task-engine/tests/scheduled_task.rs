@@ -4,7 +4,7 @@ use serea_storage::{
     EventDraft, MissedOccurrencePolicy, ScheduleDraft, ScheduleOccurrenceDraft, ScheduleOwnerKind,
     ScheduleTriggerKind, Store,
 };
-use serea_task_engine::{NewTask, TaskEngine, TransitionContext};
+use serea_task_engine::{NewTask, TransitionContext};
 use serea_testkit::DeterministicUlidSource;
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier};
@@ -158,7 +158,70 @@ fn scheduled_task_and_occurrence_mapping_commit_once_and_retry_returns_same_task
         deadline_at: None,
         extensions: Default::default(),
     };
-    let mut engine = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), bus.clone());
+    let mut engine = support::engine(Store::open(&path, &Fixed).unwrap(), bus.clone());
+    let no_generation_event = bus
+        .draft_schedule_task_created(
+            &schedule,
+            occurrence_key,
+            &task_id,
+            None,
+            at(0),
+            DataClass::Public,
+        )
+        .unwrap();
+    assert!(matches!(
+        engine.create_scheduled_task(spec.clone(), &lease, at(0), no_generation_event, &context,),
+        Err(serea_task_engine::EngineError::NoActiveCapabilityGeneration)
+    ));
+    assert!(store.load_task(&task_id).is_err());
+    assert!(
+        store
+            .transact(|tx| tx.schedule_occurrence_task(&schedule, occurrence_key))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.replay_events(None, None, 10).unwrap().items.len(), 1);
+    support::seed_active_registry_generation(&store);
+    drop(engine);
+    let mut engine = support::engine(Store::open(&path, &Fixed).unwrap(), bus.clone());
+
+    // A pin failure after Task insertion must roll the Task, occurrence
+    // mapping, journal, and event back as one transaction.
+    let pin_fault = rusqlite::Connection::open(&path).unwrap();
+    pin_fault
+        .execute_batch(
+            "CREATE TRIGGER reject_scheduled_task_pin BEFORE UPDATE OF capability_registry_generation ON tasks
+             BEGIN SELECT RAISE(ABORT,'pin fault'); END;",
+        )
+        .unwrap();
+    let pin_failure_event = bus
+        .draft_schedule_task_created(
+            &schedule,
+            occurrence_key,
+            &task_id,
+            None,
+            at(0),
+            DataClass::Public,
+        )
+        .unwrap();
+    assert!(
+        engine
+            .create_scheduled_task(spec.clone(), &lease, at(0), pin_failure_event, &context,)
+            .is_err()
+    );
+    assert!(store.load_task(&task_id).is_err());
+    assert!(
+        store
+            .transact(|tx| tx.schedule_occurrence_task(&schedule, occurrence_key))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.replay_events(None, None, 10).unwrap().items.len(), 1);
+    pin_fault
+        .execute_batch("DROP TRIGGER reject_scheduled_task_pin")
+        .unwrap();
+    drop(pin_fault);
+
     let mut rejected_event = bus
         .draft_schedule_task_created(
             &schedule,
@@ -238,7 +301,7 @@ fn scheduled_task_and_occurrence_mapping_commit_once_and_retry_returns_same_task
             )
             .unwrap();
         workers.push(std::thread::spawn(move || {
-            let mut worker = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), bus);
+            let mut worker = support::post_p5_engine(Store::open(&path, &Fixed).unwrap(), bus);
             let actor = ActorId::new("scheduler").unwrap();
             let version = SemVer::new("1.0.0").unwrap();
             let context = TransitionContext {
@@ -285,7 +348,8 @@ fn scheduled_task_and_occurrence_mapping_commit_once_and_retry_returns_same_task
             DataClass::Public,
         )
         .unwrap();
-    let mut retry_engine = TaskEngine::new(Store::open(&path, &Fixed).unwrap(), bus.clone());
+    let mut retry_engine =
+        support::post_p5_engine(Store::open(&path, &Fixed).unwrap(), bus.clone());
     let retried = retry_engine
         .create_scheduled_task(spec, &lease, at(0), retry_event, &context)
         .unwrap();
@@ -296,3 +360,4 @@ fn scheduled_task_and_occurrence_mapping_commit_once_and_retry_returns_same_task
     drop(store);
     std::fs::remove_file(path).unwrap();
 }
+mod support;

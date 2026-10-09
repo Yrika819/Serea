@@ -1536,8 +1536,10 @@ declare_enum!(
         ApprovalConsumed => "APPROVAL_CONSUMED",
         /// A grant hit expiry with uses remaining.
         ApprovalExpiredUnused => "APPROVAL_EXPIRED_UNUSED",
-        /// Rules or the disabled overlay changed.
+        /// Policy rules changed.
         PolicyChanged => "POLICY_CHANGED",
+        /// Capability registry generation or admin overlay changed.
+        CapabilityRegistryChanged => "CAPABILITY_REGISTRY_CHANGED",
         /// A host bound was hit; the payload carries `bound_name`.
         BoundExceeded => "BOUND_EXCEEDED",
         /// An administrator raised a bound, with a before/after diff.

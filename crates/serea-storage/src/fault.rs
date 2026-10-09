@@ -92,6 +92,8 @@ pub enum Window {
     AfterModelUsageInsert,
     /// After a model attempt terminal update, before transaction commit.
     AfterModelAttemptTerminal,
+    /// After the registry mutation but before its appended EventBus record.
+    BeforeEventAppend,
     /// Inside `Store::transact_in`, immediately after `COMMIT` returned `Ok`
     /// and before the caller can observe success.
     AfterCommit,

@@ -54,16 +54,16 @@ pub struct PlanRevisionSnapshot {
 // current step refs. Removing a step must not erase its specification/history.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PlanDocument {
-    task_id: TaskId,
-    revision: u32,
-    steps: Vec<StoredInput>,
+pub(crate) struct PlanDocument {
+    pub(crate) task_id: TaskId,
+    pub(crate) revision: u32,
+    pub(crate) steps: Vec<StoredInput>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StoredInput {
-    step: TaskStep,
-    input_json: String,
+pub(crate) struct StoredInput {
+    pub(crate) step: TaskStep,
+    pub(crate) input_json: String,
 }
 
 const TASK_MEMBERS: &[&str] = &[
@@ -98,7 +98,7 @@ fn ordinary_class(class: DataClass) -> Result<(), StoreError> {
         DataClass::Secret | DataClass::Credential => Err(StoreError::ClassRefused),
     }
 }
-fn task_class(conn: &Connection, task_id: &TaskId) -> Result<DataClass, StoreError> {
+pub(crate) fn task_class(conn: &Connection, task_id: &TaskId) -> Result<DataClass, StoreError> {
     let rank: i64 = conn
         .query_row(
             "SELECT data_class_rank FROM tasks WHERE task_id=?1",
@@ -115,7 +115,7 @@ fn task_class(conn: &Connection, task_id: &TaskId) -> Result<DataClass, StoreErr
         _ => Err(StoreError::CorruptRow),
     }
 }
-fn json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
+pub(crate) fn json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
     let bytes = serde_json::to_vec(value).map_err(|_| StoreError::CanonicalJson)?;
     canonicalize(std::str::from_utf8(&bytes).map_err(|_| StoreError::CanonicalJson)?)
         .map_err(|_| StoreError::CanonicalJson)
@@ -144,7 +144,7 @@ fn optional_timestamp(value: Option<i64>) -> Result<Value, StoreError> {
         .transpose()
         .map(|v| v.unwrap_or(Value::Null))
 }
-fn one(changed: usize, error: StoreError) -> Result<(), StoreError> {
+pub(crate) fn one(changed: usize, error: StoreError) -> Result<(), StoreError> {
     if changed == 1 { Ok(()) } else { Err(error) }
 }
 fn valid_task(task: &AssistantTask) -> Result<(), StoreError> {
@@ -192,14 +192,18 @@ fn capability_shaped(kind: StepKind) -> bool {
         StepKind::Capability | StepKind::Delegate | StepKind::Verify
     )
 }
-fn input_role(kind: StepKind) -> &'static str {
+pub(crate) fn input_role(kind: StepKind) -> &'static str {
     if capability_shaped(kind) {
         "ARGUMENTS"
     } else {
         "INSTRUCTION"
     }
 }
-fn validate_input(task: &TaskId, step: &TaskStep, bytes: &[u8]) -> Result<String, StoreError> {
+pub(crate) fn validate_input(
+    task: &TaskId,
+    step: &TaskStep,
+    bytes: &[u8],
+) -> Result<String, StoreError> {
     TaskStep::new(TaskStepDraft::from(step.clone())).map_err(|_| StoreError::InvalidPlan)?;
     if &step.task_id != task || !known_status(step) {
         return Err(StoreError::InvalidPlan);
@@ -397,6 +401,32 @@ impl Tx<'_> {
         now: EpochMillis,
         context: &TransitionContext<'_>,
     ) -> Result<PlanRevisionSnapshot, StoreError> {
+        self.put_plan_revision_inner(task_id, plan, &[], now, context)
+            .map(|(snapshot, _)| snapshot)
+    }
+
+    /// Persists a complete plan using the ordinary history and lifecycle path,
+    /// then attaches every new capability Step to its immutable descriptor in
+    /// the same SQLite transaction.
+    pub fn put_capability_plan_revision(
+        &mut self,
+        task_id: &TaskId,
+        plan: PlanWrite,
+        bindings: &[crate::CapabilityPlanBindingDraft],
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<(PlanRevisionSnapshot, Vec<crate::StepCapabilityBinding>), StoreError> {
+        self.put_plan_revision_inner(task_id, plan, bindings, now, context)
+    }
+
+    fn put_plan_revision_inner(
+        &mut self,
+        task_id: &TaskId,
+        plan: PlanWrite,
+        bindings: &[crate::CapabilityPlanBindingDraft],
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<(PlanRevisionSnapshot, Vec<crate::StepCapabilityBinding>), StoreError> {
         self.operation_savepoint(|tx| {
             tx.require_audit()?;
             let class = task_class(&tx.inner, task_id)?;
@@ -431,6 +461,34 @@ impl Tx<'_> {
             let historical_ids: BTreeSet<&str> = history.iter().flat_map(|p|p.steps.iter().map(|s|s.step.step_id.as_str())).collect();
             let high_water = history.iter().flat_map(|p|p.steps.iter().map(|s|s.step.sequence)).max();
             let current: BTreeMap<&str,&StepSnapshot> = before.steps.iter().map(|s|(s.step.step_id.as_str(),s)).collect();
+            for (index, binding) in bindings.iter().enumerate() {
+                if bindings[..index].iter().any(|prior| prior.step_id == binding.step_id) {
+                    return Err(StoreError::InvalidPlan);
+                }
+            }
+            for input in &inputs {
+                let is_new = !current.contains_key(input.step.step_id.as_str());
+                let binding_count = bindings.iter().filter(|b| b.step_id == input.step.step_id).count();
+                if (is_new && input.step.kind == StepKind::Capability) != (binding_count == 1)
+                    || (!is_new && binding_count != 0)
+                {
+                    return Err(StoreError::RegistryBindingRefused);
+                }
+                if !is_new && input.step.kind == StepKind::Capability
+                    && tx.get_step_capability_binding(task_id, &input.step.step_id)?.is_none()
+                {
+                    return Err(StoreError::RegistryBindingRefused);
+                }
+            }
+            if bindings.iter().any(|binding| {
+                !inputs.iter().any(|input| {
+                    input.step.step_id == binding.step_id
+                        && input.step.kind == StepKind::Capability
+                        && !current.contains_key(input.step.step_id.as_str())
+                })
+            }) {
+                return Err(StoreError::RegistryBindingRefused);
+            }
             let wanted: BTreeSet<&str> = inputs.iter().map(|s|s.step.step_id.as_str()).collect();
             let mut removed = Vec::new();
             for old in &before.steps {
@@ -483,13 +541,21 @@ impl Tx<'_> {
                 one(tx.inner.execute("INSERT INTO step_blob_refs(step_id,role,digest,data_class_rank) VALUES(?1,?2,?3,?4)",
                     params![s.step_id.as_str(),input_role(s.kind),input_blob.digest().as_str(),class.rank()])?,StoreError::ConstraintViolation)?;
             }
+            let mut persisted_bindings = Vec::with_capacity(bindings.len());
+            for binding in bindings {
+                persisted_bindings.push(tx.bind_step_capability(
+                    task_id,
+                    &binding.step_id,
+                    &binding.descriptor_digest,
+                )?);
+            }
             sweep_blob_candidates(&tx.inner,&candidates)?;
             one(tx.inner.execute("UPDATE tasks SET plan_revision=?1,state='READY',updated_at_ms=?2,blocked_reason=NULL
                 WHERE task_id=?3 AND state='PLANNING' AND plan_revision=?4 AND updated_at_ms<=?2",
                 params![next,now.get(),task_id.as_str(),before.plan_revision])?,StoreError::PlanRevisionConflict)?;
             let mut facts = DurableTransition::task(AuditOperation::PlanPersisted,task_id,Some(TaskState::Planning),TaskState::Ready,class,now,context);
             facts.revision=Some(next); tx.record_transition(&facts)?;
-            Ok(PlanRevisionSnapshot {revision:next,blob,created_at:now,step_count})
+            Ok((PlanRevisionSnapshot {revision:next,blob,created_at:now,step_count}, persisted_bindings))
         })
     }
 }

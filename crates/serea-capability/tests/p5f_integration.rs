@@ -8,6 +8,7 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serea_capability::{
     CapabilityAvailabilitySnapshotV1, CapabilityManifestV1, CapabilitySchemaCatalogV1,
@@ -17,7 +18,7 @@ use serea_capability::{
 use serea_event_bus::EventBus;
 use serea_protocol::provider::CapabilityProvider;
 use serea_protocol::*;
-use serea_storage::Store;
+use serea_storage::{Store, StoreError};
 /// A deterministic event bus per thread, so parallel tests never share ULIDs.
 fn event_bus() -> EventBus {
     use std::sync::atomic::AtomicU64 as Counter;
@@ -60,6 +61,19 @@ impl TempDb {
     fn open(&self) -> Store {
         Store::open(&self.0, &Fixed).unwrap()
     }
+}
+
+fn open_during_concurrent_startup(path: &std::path::Path) -> Store {
+    for attempt in 0..1_000 {
+        match Store::open(path, &Fixed) {
+            Ok(store) => return store,
+            Err(StoreError::Busy) if attempt < 999 => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("concurrent startup store open failed: {error:?}"),
+        }
+    }
+    panic!("concurrent startup store open exceeded retry bound");
 }
 
 impl Drop for TempDb {
@@ -204,13 +218,16 @@ fn arguments() -> ClassifiedArgumentsV1 {
 #[test]
 fn concurrent_same_manifest_startup_yields_one_generation() {
     let temp = TempDb::new();
+    // Initialize the schema before racing registry installation. The behavior
+    // under test is concurrent activation, not concurrent first-open migration.
+    drop(temp.open());
     let manifest = manifest_for(vec![descriptor()]);
     let mut handles = Vec::new();
     for _ in 0..4 {
         let manifest = manifest.clone();
         let path = temp.0.clone();
         handles.push(std::thread::spawn(move || {
-            let store = Store::open(&path, &Fixed).unwrap();
+            let store = open_during_concurrent_startup(&path);
             let events = event_bus();
             let registry = ProviderRegistry::build(vec![provider(vec![descriptor()])]).unwrap();
             install(&store, &events, &manifest, &registry, at(50))

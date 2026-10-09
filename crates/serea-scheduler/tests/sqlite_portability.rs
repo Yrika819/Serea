@@ -350,7 +350,12 @@ fn produce(path: &std::path::Path) {
             &context,
         )
         .unwrap();
-    CapabilityRegistry::pin_task_generation(&store, &binding_task, registry_generation).unwrap();
+    // P5E: Task creation already pins the active generation in the same
+    // transaction, so this fixture asserts that pin rather than re-pinning it.
+    assert_eq!(
+        store.get_task_registry_generation(&binding_task).unwrap(),
+        Some(registry_generation)
+    );
     tasks
         .start_planning(
             binding_task.clone(),

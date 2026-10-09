@@ -262,6 +262,9 @@ fn produce(path: &std::path::Path) {
         actor_version: &version,
         causation_id: None,
     };
+    // Seed/activate registry state before any runtime Task creation, because
+    // every post-P5 Task pins the active durable generation atomically.
+    let (registry_generation, registry_capability) = add_registry_fixture(&store, &bus);
     let device_task = TaskId::new("tsk_00000000000000000000000071").unwrap();
     tasks
         .create_task(
@@ -342,7 +345,6 @@ fn produce(path: &std::path::Path) {
         )
         .unwrap();
 
-    let (registry_generation, registry_capability) = add_registry_fixture(&store, &bus);
     let binding_task = TaskId::new("tsk_00000000000000000000000074").unwrap();
     tasks
         .create_task(

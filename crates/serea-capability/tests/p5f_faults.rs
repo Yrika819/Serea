@@ -2,12 +2,15 @@
 //!
 //! Deterministic SQLite transaction failures are injected at the storage fault
 //! seam. No hardware power-loss claim is made.
+#[path = "common/mod.rs"]
+mod common;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serea_capability::{
-    CapabilityAvailabilitySnapshotV1, CapabilityManifestV1, CapabilitySchemaCatalogV1,
-    HostEligibility, ManifestEntryV1, ProviderRegistry, descriptor_semantic_digest, install,
+    CapabilityManifestV1, CapabilitySchemaCatalogV1, HostEligibility, ManifestEntryV1,
+    ProviderRegistry, descriptor_semantic_digest, install,
 };
 use serea_event_bus::EventBus;
 use serea_protocol::provider::CapabilityProvider;
@@ -261,14 +264,14 @@ fn availability_snapshot_is_independent_of_provider_health_timing() {
     );
     // Two snapshots over identical facts agree, so health sampling timing is not
     // an authority input.
-    let a = CapabilityAvailabilitySnapshotV1::build(
+    let a = common::build_snapshot(
         manifest.clone(),
         &registry,
         &store,
         HostEligibility::new(eligibility.clone()),
     )
     .unwrap();
-    let b = CapabilityAvailabilitySnapshotV1::build(
+    let b = common::build_snapshot(
         manifest,
         &registry,
         &store,

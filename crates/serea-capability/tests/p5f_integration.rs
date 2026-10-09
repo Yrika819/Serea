@@ -3,6 +3,9 @@
 //! Nothing here executes anything. Providers panic if invoked, and the
 //! PreparedAction handed to a future P6 is proven immutable.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -171,7 +174,7 @@ fn snapshot(
     for entry in manifest.entries() {
         eligibility.insert(entry.descriptor_digest.clone(), true);
     }
-    CapabilityAvailabilitySnapshotV1::build(
+    common::build_snapshot(
         manifest,
         &registry,
         store,
@@ -339,7 +342,7 @@ fn reopen_never_rebuilds_authority_from_provider_advertisement() {
     }
     // reopen with NO provider registered at all
     let store = temp.open();
-    let snap = CapabilityAvailabilitySnapshotV1::build(
+    let snap = common::build_snapshot(
         manifest.clone(),
         &ProviderRegistry::build(vec![]).unwrap(),
         &store,

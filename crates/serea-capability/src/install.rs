@@ -84,29 +84,7 @@ pub fn install(
         if current.manifest_digest() == manifest.digest()
             && current.schema_catalog_digest() == manifest.catalog_digest()
         {
-            // verify durable member facts agree with the manifest
-            let members = CapabilityRegistry::generation_members(store, current.generation_id())?;
-            if members.len() != manifest.entries().len() {
-                return Err(InstallError::Corruption(format!(
-                    "member count {} != manifest entries {}",
-                    members.len(),
-                    manifest.entries().len()
-                )));
-            }
-            for member in &members {
-                let matches = manifest.entries().iter().any(|e| {
-                    e.descriptor.id() == member.capability_id()
-                        && e.descriptor.version() == member.capability_version()
-                        && e.descriptor.implementation_id() == member.implementation_id()
-                        && e.descriptor_digest == *member.descriptor_digest()
-                });
-                if !matches {
-                    return Err(InstallError::Corruption(format!(
-                        "member {} does not match manifest descriptor",
-                        member.descriptor_digest().as_str()
-                    )));
-                }
-            }
+            verify_generation_matches_manifest(store, manifest, current.generation_id())?;
             return Ok(InstallOutcome {
                 generation_id: current.generation_id(),
                 activated: false,
@@ -148,14 +126,76 @@ pub fn install(
             version.clone(),
         )?;
     }
-    CapabilityRegistry::activate_generation(
+    let activation = CapabilityRegistry::activate_generation(
         store,
         events,
         generation.generation_id(),
         occurred_at,
-    )?;
+    );
+    if let Err(error) = activation {
+        // Two startup callers can prepare identical generations concurrently.
+        // A higher id may activate before the lower id reaches activation;
+        // in that case reuse the now-active generation only after rechecking
+        // its complete durable manifest facts.
+        if matches!(&error, StoreError::RegistryGenerationOrder) {
+            if let Some(current) = CapabilityRegistry::current_generation(store)? {
+                if current.manifest_digest() == manifest.digest()
+                    && current.schema_catalog_digest() == manifest.catalog_digest()
+                {
+                    verify_generation_matches_manifest(store, manifest, current.generation_id())?;
+                    return Ok(InstallOutcome {
+                        generation_id: current.generation_id(),
+                        activated: false,
+                    });
+                }
+            }
+        }
+        return Err(InstallError::Store(error));
+    }
     Ok(InstallOutcome {
         generation_id: generation.generation_id(),
         activated: true,
     })
+}
+
+fn verify_generation_matches_manifest(
+    store: &Store,
+    manifest: &CapabilityManifestV1,
+    generation_id: i64,
+) -> Result<(), InstallError> {
+    let members = CapabilityRegistry::generation_members(store, generation_id)?;
+    if members.len() != manifest.entries().len() {
+        return Err(InstallError::Corruption(format!(
+            "member count {} != manifest entries {}",
+            members.len(),
+            manifest.entries().len()
+        )));
+    }
+    for member in &members {
+        let matches = manifest.entries().iter().any(|entry| {
+            entry.descriptor.id() == member.capability_id()
+                && entry.descriptor.version() == member.capability_version()
+                && entry.descriptor.provider_id() == member.provider_id()
+                && entry.descriptor.implementation_id() == member.implementation_id()
+                && entry.descriptor_digest == *member.descriptor_digest()
+                && entry.candidate_priority == member.candidate_priority()
+        });
+        if !matches {
+            return Err(InstallError::Corruption(format!(
+                "member {} does not match manifest descriptor or priority",
+                member.descriptor_digest().as_str()
+            )));
+        }
+    }
+    for (id, version) in manifest.defaults() {
+        if CapabilityRegistry::default_version(store, generation_id, &id)?.as_ref()
+            != Some(&version)
+        {
+            return Err(InstallError::Corruption(format!(
+                "default version for {} does not match manifest",
+                id.as_str()
+            )));
+        }
+    }
+    Ok(())
 }

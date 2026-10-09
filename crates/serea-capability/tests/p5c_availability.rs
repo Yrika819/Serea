@@ -1,10 +1,13 @@
+#[path = "common/mod.rs"]
+mod common;
+
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serea_capability::{
-    CapabilityAvailabilitySnapshotV1, CapabilityManifestV1, CapabilitySchemaCatalogV1,
-    HostEligibility, ManifestEntryV1, ProviderRegistry, ResolveError, descriptor_semantic_digest,
+    CapabilityManifestV1, CapabilitySchemaCatalogV1, HostEligibility, ManifestEntryV1,
+    ProviderRegistry, ResolveError, descriptor_semantic_digest,
 };
 use serea_event_bus::EventBus;
 use serea_protocol::provider::{CapabilityProvider, ProviderContext};
@@ -26,6 +29,52 @@ struct ScriptedProvider {
     health_calls: AtomicUsize,
     caps_calls: AtomicUsize,
     invoke_calls: AtomicUsize,
+}
+
+struct WakingProvider {
+    id: ProviderId,
+    descriptors: Vec<CapabilityDescriptor>,
+    health_calls: AtomicUsize,
+    caps_calls: AtomicUsize,
+    ready: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl CapabilityProvider for WakingProvider {
+    fn provider_id(&self) -> ProviderId {
+        self.id.clone()
+    }
+    fn capabilities(&self) -> Vec<CapabilityDescriptor> {
+        self.caps_calls.fetch_add(1, Ordering::SeqCst);
+        self.descriptors.clone()
+    }
+    async fn invoke(
+        &self,
+        _request: &serea_protocol::ActionRequest,
+        _ctx: &ProviderContext,
+    ) -> Result<ActionResult, serea_protocol::ActionError> {
+        panic!("snapshot construction must never invoke a provider")
+    }
+    async fn health(&self) -> ProviderHealth {
+        self.health_calls.fetch_add(1, Ordering::SeqCst);
+        let mut pending_once = true;
+        std::future::poll_fn(|cx| {
+            if pending_once {
+                pending_once = false;
+                let waker = cx.waker().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    waker.wake();
+                });
+                std::task::Poll::Pending
+            } else if self.ready.load(Ordering::SeqCst) {
+                std::task::Poll::Ready(ProviderHealth::Ready)
+            } else {
+                std::task::Poll::Ready(ProviderHealth::Degraded)
+            }
+        })
+        .await
+    }
 }
 
 impl ScriptedProvider {
@@ -182,7 +231,7 @@ fn eligible_default_candidate_selected() {
     ));
     let registry = ProviderRegistry::build(vec![p]).unwrap();
     let elig = eligibility_for(&cal, &c, true);
-    let snap = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store(), elig).unwrap();
+    let snap = common::build_snapshot(m, &registry, &store(), elig).unwrap();
     let res = snap
         .resolve(&CapabilityId::new("calendar.events.read").unwrap())
         .unwrap();
@@ -209,9 +258,7 @@ fn first_candidate_ineligible_second_selected() {
     let mut elig = HashMap::new();
     elig.insert(descriptor_semantic_digest(&d_local, &c).unwrap(), false);
     elig.insert(descriptor_semantic_digest(&d_backup, &c).unwrap(), true);
-    let snap =
-        CapabilityAvailabilitySnapshotV1::build(m, &registry, &store(), HostEligibility::new(elig))
-            .unwrap();
+    let snap = common::build_snapshot(m, &registry, &store(), HostEligibility::new(elig)).unwrap();
     let res = snap
         .resolve(&CapabilityId::new("calendar.events.read").unwrap())
         .unwrap();
@@ -229,7 +276,7 @@ fn all_ineligible_unavailable() {
     ));
     let registry = ProviderRegistry::build(vec![p]).unwrap();
     let elig = eligibility_for(&cal, &c, false);
-    let snap = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store(), elig).unwrap();
+    let snap = common::build_snapshot(m, &registry, &store(), elig).unwrap();
     let err = snap
         .resolve(&CapabilityId::new("calendar.events.read").unwrap())
         .unwrap_err();
@@ -247,7 +294,7 @@ fn missing_eligibility_unavailable() {
     ));
     let registry = ProviderRegistry::build(vec![p]).unwrap();
     let elig = HostEligibility::new(HashMap::new());
-    let snap = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store(), elig).unwrap();
+    let snap = common::build_snapshot(m, &registry, &store(), elig).unwrap();
     let err = snap
         .resolve(&CapabilityId::new("calendar.events.read").unwrap())
         .unwrap_err();
@@ -263,13 +310,8 @@ fn unknown_capability() {
         ProviderHealth::Ready,
     ));
     let registry = ProviderRegistry::build(vec![p]).unwrap();
-    let snap = CapabilityAvailabilitySnapshotV1::build(
-        m,
-        &registry,
-        &store(),
-        HostEligibility::new(HashMap::new()),
-    )
-    .unwrap();
+    let snap = common::build_snapshot(m, &registry, &store(), HostEligibility::new(HashMap::new()))
+        .unwrap();
     let err = snap
         .resolve(&CapabilityId::new("calendar.events.delete").unwrap())
         .unwrap_err();
@@ -287,7 +329,7 @@ fn ready_available_degraded_unavailable() {
     ));
     let registry = ProviderRegistry::build(vec![p]).unwrap();
     let elig = eligibility_for(&cal, &c, true);
-    let snap = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store(), elig).unwrap();
+    let snap = common::build_snapshot(m, &registry, &store(), elig).unwrap();
     let err = snap
         .resolve(&CapabilityId::new("calendar.events.read").unwrap())
         .unwrap_err();
@@ -312,17 +354,46 @@ fn one_health_call_per_provider_per_snapshot() {
     let c1 = p1.clone();
     let c2 = p2.clone();
     let registry = ProviderRegistry::build(vec![p1, p2]).unwrap();
-    let _snap = CapabilityAvailabilitySnapshotV1::build(
-        m,
-        &registry,
-        &store(),
-        HostEligibility::new(HashMap::new()),
-    )
-    .unwrap();
+    let _snap =
+        common::build_snapshot(m, &registry, &store(), HostEligibility::new(HashMap::new()))
+            .unwrap();
     assert_eq!(c1.health_calls.load(Ordering::SeqCst), 1);
     assert_eq!(c2.health_calls.load(Ordering::SeqCst), 1);
     assert_eq!(c1.caps_calls.load(Ordering::SeqCst), 1);
     assert_eq!(c2.caps_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn pending_health_future_wakes_snapshot_builder_and_snapshot_stays_frozen() {
+    let (manifest, catalog) = manifest_two();
+    let cal = descriptor("calendar.events.read", "1.0.0", "calendar", None);
+    let provider = Arc::new(WakingProvider {
+        id: ProviderId::new("calendar").unwrap(),
+        descriptors: vec![cal.clone()],
+        health_calls: AtomicUsize::new(0),
+        caps_calls: AtomicUsize::new(0),
+        ready: std::sync::atomic::AtomicBool::new(true),
+    });
+    let registry = ProviderRegistry::build(vec![provider.clone()]).unwrap();
+    let eligibility = eligibility_for(&cal, &catalog, true);
+    let store = store();
+    let first = common::build_snapshot(manifest.clone(), &registry, &store, eligibility.clone())
+        .expect("woken health future completes");
+    let id = CapabilityId::new("calendar.events.read").unwrap();
+    assert!(first.resolve(&id).is_ok());
+    assert_eq!(provider.health_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.caps_calls.load(Ordering::SeqCst), 1);
+
+    provider.ready.store(false, Ordering::SeqCst);
+    assert!(first.resolve(&id).is_ok(), "existing snapshot is immutable");
+    let second = common::build_snapshot(manifest, &registry, &store, eligibility)
+        .expect("next snapshot samples changed health");
+    assert!(matches!(
+        second.resolve(&id),
+        Err(ResolveError::Unavailable { .. })
+    ));
+    assert_eq!(provider.health_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.caps_calls.load(Ordering::SeqCst), 2);
 }
 
 #[test]
@@ -337,15 +408,14 @@ fn health_change_between_snapshots() {
     let pc = p.clone();
     let registry = ProviderRegistry::build(vec![p]).unwrap();
     let elig = || eligibility_for(&cal, &c, true);
-    let snap1 =
-        CapabilityAvailabilitySnapshotV1::build(m.clone(), &registry, &store(), elig()).unwrap();
+    let snap1 = common::build_snapshot(m.clone(), &registry, &store(), elig()).unwrap();
     assert!(
         snap1
             .resolve(&CapabilityId::new("calendar.events.read").unwrap())
             .is_ok()
     );
     pc.set_health(ProviderHealth::Degraded);
-    let snap2 = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store(), elig()).unwrap();
+    let snap2 = common::build_snapshot(m, &registry, &store(), elig()).unwrap();
     assert!(matches!(
         snap2.resolve(&CapabilityId::new("calendar.events.read").unwrap()),
         Err(ResolveError::Unavailable { .. })
@@ -364,7 +434,7 @@ fn zero_invoke_across_availability() {
     let pc = p.clone();
     let registry = ProviderRegistry::build(vec![p]).unwrap();
     let elig = eligibility_for(&cal, &c, true);
-    let snap = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store(), elig).unwrap();
+    let snap = common::build_snapshot(m, &registry, &store(), elig).unwrap();
     let _ = snap.resolve(&CapabilityId::new("calendar.events.read").unwrap());
     assert_eq!(pc.invoke_calls.load(Ordering::SeqCst), 0);
 }
@@ -393,7 +463,7 @@ fn overlay_disabled_unavailable() {
     )
     .unwrap();
     let elig = eligibility_for(&cal, &c, true);
-    let snap = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store, elig).unwrap();
+    let snap = common::build_snapshot(m, &registry, &store, elig).unwrap();
     assert!(matches!(
         snap.resolve(&id),
         Err(ResolveError::Unavailable { .. })
@@ -424,7 +494,7 @@ fn overlay_removed_unavailable() {
     )
     .unwrap();
     let elig = eligibility_for(&cal, &c, true);
-    let snap = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store, elig).unwrap();
+    let snap = common::build_snapshot(m, &registry, &store, elig).unwrap();
     assert!(matches!(
         snap.resolve(&id),
         Err(ResolveError::Unavailable { .. })
@@ -473,13 +543,8 @@ fn optional_root_candidate_order_follows_manifest_not_name() {
         (descriptor_semantic_digest(&rootless, &c).unwrap(), true),
         (descriptor_semantic_digest(&rooted, &c).unwrap(), true),
     ]);
-    let snap = CapabilityAvailabilitySnapshotV1::build(
-        m.clone(),
-        &registry,
-        &store(),
-        HostEligibility::new(both),
-    )
-    .unwrap();
+    let snap =
+        common::build_snapshot(m.clone(), &registry, &store(), HostEligibility::new(both)).unwrap();
     let res = snap.resolve(rootless.id()).unwrap();
     assert_eq!(
         res.implementation_id.as_ref().unwrap().as_str(),
@@ -491,7 +556,7 @@ fn optional_root_candidate_order_follows_manifest_not_name() {
         (descriptor_semantic_digest(&rootless, &c).unwrap(), false),
         (descriptor_semantic_digest(&rooted, &c).unwrap(), true),
     ]);
-    let snap = CapabilityAvailabilitySnapshotV1::build(
+    let snap = common::build_snapshot(
         m.clone(),
         &registry,
         &store(),
@@ -508,13 +573,8 @@ fn optional_root_candidate_order_follows_manifest_not_name() {
         (descriptor_semantic_digest(&rootless, &c).unwrap(), false),
         (descriptor_semantic_digest(&rooted, &c).unwrap(), false),
     ]);
-    let snap = CapabilityAvailabilitySnapshotV1::build(
-        m,
-        &registry,
-        &store(),
-        HostEligibility::new(neither),
-    )
-    .unwrap();
+    let snap =
+        common::build_snapshot(m, &registry, &store(), HostEligibility::new(neither)).unwrap();
     assert!(matches!(
         snap.resolve(rootless.id()),
         Err(ResolveError::Unavailable { .. })
@@ -535,8 +595,7 @@ fn snapshot_is_immutable_when_overlay_changes_afterwards() {
     let events = EventBus::new(DeterministicUlidSource::new());
     let id = CapabilityId::new("calendar.events.read").unwrap();
     let elig = eligibility_for(&cal, &c, true);
-    let snap = CapabilityAvailabilitySnapshotV1::build(m.clone(), &registry, &store, elig.clone())
-        .unwrap();
+    let snap = common::build_snapshot(m.clone(), &registry, &store, elig.clone()).unwrap();
     assert!(snap.resolve(&id).is_ok());
     // disable after the snapshot: the frozen snapshot is unaffected
     serea_capability::CapabilityRegistry::set_overlay(
@@ -551,7 +610,7 @@ fn snapshot_is_immutable_when_overlay_changes_afterwards() {
     .unwrap();
     assert!(snap.resolve(&id).is_ok());
     // the next snapshot sees the new overlay
-    let next = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store, elig).unwrap();
+    let next = common::build_snapshot(m, &registry, &store, elig).unwrap();
     assert!(matches!(
         next.resolve(&id),
         Err(ResolveError::Unavailable { .. })
@@ -580,8 +639,7 @@ fn experimental_requires_opt_in() {
     let store = store();
     // no opt-in -> unavailable
     let elig = eligibility_for(&offer, &c, true);
-    let snap = CapabilityAvailabilitySnapshotV1::build(m.clone(), &registry, &store, elig.clone())
-        .unwrap();
+    let snap = common::build_snapshot(m.clone(), &registry, &store, elig.clone()).unwrap();
     assert!(matches!(
         snap.resolve(&offer.id().clone()),
         Err(ResolveError::Unavailable { .. })
@@ -598,6 +656,6 @@ fn experimental_requires_opt_in() {
         serea_protocol::EpochMillis::new(1_796_000_000_000).unwrap(),
     )
     .unwrap();
-    let snap2 = CapabilityAvailabilitySnapshotV1::build(m, &registry, &store, elig).unwrap();
+    let snap2 = common::build_snapshot(m, &registry, &store, elig).unwrap();
     assert!(snap2.resolve(&offer.id().clone()).is_ok());
 }

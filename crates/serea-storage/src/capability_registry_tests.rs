@@ -401,6 +401,104 @@ fn step_binding_persists_exact_revision_and_retries_reuse_it() {
 }
 
 #[test]
+fn binding_is_immutable_while_task_lives_and_cascades_with_task_deletion() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    let (generation_id, digests) = activated_candidate_store(&store, &[("one", '1')]);
+    let task_id = TaskId::new("tsk_00000000000000000000000001").unwrap();
+    let first_step = StepId::new("stp_00000000000000000000000001").unwrap();
+    let second_step = StepId::new("stp_00000000000000000000000002").unwrap();
+    task_and_step(
+        &store,
+        task_id.as_str(),
+        first_step.as_str(),
+        Some(generation_id),
+    );
+    store
+        .conn
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO task_steps(step_id,task_id,sequence,kind,status,provider_id,capability_id,capability_version,idempotency_key,input_digest)
+             VALUES (?1,?2,1,'CAPABILITY','PLANNED','calendar','calendar.events.read','1.0.0',?3,?4)",
+            rusqlite::params![
+                second_step.as_str(),
+                task_id.as_str(),
+                format!("idk_{}", "d".repeat(64)),
+                digest('f').as_str(),
+            ],
+        )
+        .unwrap();
+    store
+        .bind_step_capability(&task_id, &first_step, &digests[0])
+        .unwrap();
+    store
+        .bind_step_capability(&task_id, &second_step, &digests[0])
+        .unwrap();
+
+    let conn = store.conn.lock().unwrap();
+    assert!(
+        conn.execute(
+            "DELETE FROM step_capability_bindings WHERE task_id=?1 AND step_id=?2",
+            rusqlite::params![task_id.as_str(), first_step.as_str()],
+        )
+        .is_err()
+    );
+    assert!(conn
+        .execute(
+            "UPDATE step_capability_bindings SET descriptor_digest=?1 WHERE task_id=?2 AND step_id=?3",
+            rusqlite::params![digests[0].as_str(), task_id.as_str(), first_step.as_str()],
+        )
+        .is_err());
+    assert!(
+        conn.execute(
+            "DELETE FROM task_steps WHERE task_id=?1 AND step_id=?2",
+            rusqlite::params![task_id.as_str(), first_step.as_str()],
+        )
+        .is_err()
+    );
+    drop(conn);
+
+    store.transact(|tx| tx.delete_task(&task_id)).unwrap();
+    let conn = store.conn.lock().unwrap();
+    let remaining: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM step_capability_bindings WHERE task_id=?1",
+            [task_id.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let steps: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM task_steps WHERE task_id=?1",
+            [task_id.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let tasks: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM tasks WHERE task_id=?1",
+            [task_id.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let foreign_keys: Vec<(String, i64, String, i64)> = conn
+        .prepare("PRAGMA foreign_key_check")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let integrity: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!((remaining, steps, tasks), (0, 0, 0));
+    assert!(foreign_keys.is_empty());
+    assert_eq!(integrity, "ok");
+}
+
+#[test]
 fn binding_refuses_unpinned_tasks_unmembered_revisions_and_wrong_task() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
     let (generation_id, digests) = activated_candidate_store(&store, &[("one", '1')]);

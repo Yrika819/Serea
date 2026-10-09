@@ -137,13 +137,53 @@ fn planning(e: &mut TaskEngine, c: &Context, task: u32, ceiling: u32) {
     e.start_planning(tid(task), TaskState::Received, 0, at(20), &c.view())
         .unwrap();
 }
-fn ready(e: &mut TaskEngine, c: &Context, task: u32, ceiling: u32, steps: Vec<PlanStep>) {
-    planning(e, c, task, ceiling);
-    e.persist_plan(tid(task), Plan { revision: 1, steps }, at(30), &c.view())
+fn persist_fixture_plan(f: &FileFixture, c: &Context, task: u32, plan: Plan) {
+    let bindings: Vec<_> = plan
+        .steps
+        .iter()
+        .filter(|step| step.step.kind == StepKind::Capability)
+        .map(|step| serea_storage::CapabilityPlanBindingDraft {
+            step_id: step.step.step_id.clone(),
+            descriptor_digest: support::fixture_descriptor_digest(),
+        })
+        .collect();
+    let store = Store::open(&f.path, &Fixed).unwrap();
+    store
+        .transact_with_participants(&TaskJournal, &event_bus(), |tx| {
+            tx.put_capability_plan_revision(
+                &tid(task),
+                serea_storage::PlanWrite {
+                    revision: plan.revision,
+                    steps: plan
+                        .steps
+                        .into_iter()
+                        .map(|step| serea_storage::StepInput {
+                            step: step.step,
+                            input_json: step.input_json,
+                        })
+                        .collect(),
+                },
+                &bindings,
+                at(30),
+                &c.view(),
+            )
+            .map(|_| ())
+        })
         .unwrap();
 }
-fn single(e: &mut TaskEngine, c: &Context, kind: StepKind, ceiling: u32) {
-    ready(e, c, 1, ceiling, vec![input(1, 1, 10, kind)]);
+fn ready(
+    f: &FileFixture,
+    e: &mut TaskEngine,
+    c: &Context,
+    task: u32,
+    ceiling: u32,
+    steps: Vec<PlanStep>,
+) {
+    planning(e, c, task, ceiling);
+    persist_fixture_plan(f, c, task, Plan { revision: 1, steps });
+}
+fn single(f: &FileFixture, e: &mut TaskEngine, c: &Context, kind: StepKind, ceiling: u32) {
+    ready(f, e, c, 1, ceiling, vec![input(1, 1, 10, kind)]);
 }
 fn acquire(
     e: &mut TaskEngine,
@@ -164,8 +204,8 @@ fn acquire(
     )
     .unwrap()
 }
-fn inflight(e: &mut TaskEngine, c: &Context, ceiling: u32) -> LeaseGuard {
-    single(e, c, StepKind::Capability, ceiling);
+fn inflight(f: &FileFixture, e: &mut TaskEngine, c: &Context, ceiling: u32) -> LeaseGuard {
+    single(f, e, c, StepKind::Capability, ceiling);
     let guard = acquire(e, c, 1, None, 40, 50);
     e.begin_attempt(&guard, at(41), &c.view()).unwrap();
     guard
@@ -187,8 +227,8 @@ fn success() -> StepOutcome<'static> {
         receipt: None,
     }
 }
-fn committed_receipt(e: &mut TaskEngine, c: &Context) {
-    let guard = inflight(e, c, 3);
+fn committed_receipt(f: &FileFixture, e: &mut TaskEngine, c: &Context) {
+    let guard = inflight(f, e, c, 3);
     let receipt = receipt(&e.load(tid(1)).unwrap().steps[0].step);
     let committed = e
         .commit_step(
@@ -216,12 +256,14 @@ impl FileFixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir(&dir).unwrap();
-        Self {
+        let fixture = Self {
             path: dir.join("task.sqlite"),
-        }
+        };
+        support::seed_active_registry_generation(&Store::open(&fixture.path, &Fixed).unwrap());
+        fixture
     }
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
+        support::engine(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
     fn sql(&self) -> Connection {
         let conn = Connection::open(&self.path).unwrap();
@@ -497,7 +539,7 @@ fn residual_blocked_reason_is_journal_only(state: TaskState) {
     let c = Context::new();
     let mut e = f.open();
     if state == TaskState::Ready {
-        single(&mut e, &c, StepKind::Capability, 3);
+        single(&f, &mut e, &c, StepKind::Capability, 3);
     } else {
         e.create_task(spec(1, 3), &c.view()).unwrap();
     }
@@ -534,7 +576,7 @@ fn zero_attempt_planned_work_conservatively_refuses_the_atomic_pass() {
     let f = FileFixture::new("zero-attempt-planned");
     let c = Context::new();
     let mut e = f.open();
-    single(&mut e, &c, StepKind::Notify, 0);
+    single(&f, &mut e, &c, StepKind::Notify, 0);
     let before = f.dump();
     assert_eq!(
         e.recover(at(50), &c.view()).err(),
@@ -552,8 +594,15 @@ fn zero_attempt_recovery_refusal_rolls_back_earlier_task_repairs_in_the_pass() {
     let f = FileFixture::new("zero-attempt-mixed-atomic");
     let c = Context::new();
     let mut e = f.open();
-    committed_receipt(&mut e, &c);
-    ready(&mut e, &c, 2, 0, vec![input(2, 2, 10, StepKind::Notify)]);
+    committed_receipt(&f, &mut e, &c);
+    ready(
+        &f,
+        &mut e,
+        &c,
+        2,
+        0,
+        vec![input(2, 2, 10, StepKind::Notify)],
+    );
     f.execute("UPDATE tasks SET state='EXECUTING' WHERE task_id='tsk_00000000000000000000000001'");
     let before = f.dump();
     assert_eq!(
@@ -601,6 +650,7 @@ fn m1_terminal_completed_failed_and_cancelled_inflight_are_strict_noops() {
         match state {
             TaskState::Completed => {
                 ready(
+                    &f,
                     &mut e,
                     &c,
                     1,
@@ -622,7 +672,7 @@ fn m1_terminal_completed_failed_and_cancelled_inflight_are_strict_noops() {
                     .unwrap();
             }
             TaskState::Cancelled => {
-                let g = inflight(&mut e, &c, 3);
+                let g = inflight(&f, &mut e, &c, 3);
                 e.cancel(
                     tid(1),
                     TaskOriginKind::new("USER_MESSAGE").unwrap(),
@@ -664,7 +714,7 @@ fn m2_attributable_missing_input_provenance_is_not_silently_resumed() {
     let f = FileFixture::new("missing-input-ref");
     let c = Context::new();
     let mut e = f.open();
-    single(&mut e, &c, StepKind::Capability, 3);
+    single(&f, &mut e, &c, StepKind::Capability, 3);
     f.execute("DELETE FROM step_blob_refs WHERE role='ARGUMENTS'");
     let before = f.dump();
     let r = recover(&mut e, &c, 50);
@@ -764,7 +814,7 @@ fn m4_unexpired_leased_and_executing_authority_is_held_not_executed() {
         let f = FileFixture::new("held");
         let c = Context::new();
         let mut e = f.open();
-        single(&mut e, &c, StepKind::Capability, 1);
+        single(&f, &mut e, &c, StepKind::Capability, 1);
         let g = acquire(&mut e, &c, 1, None, 40, 100);
         if begun {
             e.begin_attempt(&g, at(41), &c.view()).unwrap();
@@ -796,7 +846,7 @@ fn m4_exact_expiry_revokes_leased_authority_then_resumes_without_begin() {
     let f = FileFixture::new("expiry-equality");
     let c = Context::new();
     let mut e = f.open();
-    single(&mut e, &c, StepKind::Capability, 3);
+    single(&f, &mut e, &c, StepKind::Capability, 3);
     let g = acquire(&mut e, &c, 1, None, 40, 50);
     let expected = e.load(tid(1)).unwrap();
     let before = f.dump();
@@ -845,7 +895,7 @@ fn m5_m15_m16_complete_receipt_audit_repairs_only_proven_stale_aggregate() {
     let f = FileFixture::new("stale-receipt-aggregate");
     let c = Context::new();
     let mut e = f.open();
-    committed_receipt(&mut e, &c);
+    committed_receipt(&f, &mut e, &c);
     assert_eq!(f.count("SELECT count(*) FROM task_journal WHERE journal_kind IN ('STEP_COMMITTED','RECEIPT_RECORDED','STEP_LEASE_RELEASED')"), 2);
     assert_eq!(f.count("SELECT count(*) FROM task_journal WHERE journal_kind='TASK_STATE_CHANGED' AND state_from='EXECUTING' AND state_to='VERIFYING'"), 1);
     assert_eq!(
@@ -887,7 +937,7 @@ fn m5_missing_outcome_audit_is_quarantined_not_reconstructed() {
     let f = FileFixture::new("receipt-missing-audit");
     let c = Context::new();
     let mut e = f.open();
-    committed_receipt(&mut e, &c);
+    committed_receipt(&f, &mut e, &c);
     // Preserve a contiguous journal but remove the corroborating receipt kind.
     f.execute("UPDATE task_journal SET journal_kind='RECOVERY_DECISION' WHERE journal_kind='RECEIPT_RECORDED'; UPDATE tasks SET state='EXECUTING' WHERE state='VERIFYING'");
     let before = f.dump();
@@ -916,7 +966,7 @@ fn m5_receipt_insert_for_nonsucceeded_step_is_refused_with_all_triggers_enabled(
     let f = FileFixture::new("receipt-trigger");
     let c = Context::new();
     let mut e = f.open();
-    let g = inflight(&mut e, &c, 3);
+    let g = inflight(&f, &mut e, &c, 3);
     let step = e.load(tid(1)).unwrap().steps.remove(0).step;
     let before = f.dump();
     let conn = f.sql();
@@ -938,7 +988,7 @@ fn m5_receipt_with_closed_absence_status_is_corruption_not_success() {
     let f = FileFixture::new("receipt-incompatible-status");
     let c = Context::new();
     let mut e = f.open();
-    committed_receipt(&mut e, &c);
+    committed_receipt(&f, &mut e, &c);
     // INSERT triggers stay enabled. They do not cover a later status UPDATE.
     // This schema-representable corruption is NOT an ordinary recovery window.
     f.execute("UPDATE task_steps SET status='RECONCILED_ABSENT'");
@@ -959,7 +1009,7 @@ fn m6_released_executing_without_outcome_needs_reconciliation_journal_only() {
     let f = FileFixture::new("released-inflight");
     let c = Context::new();
     let mut e = f.open();
-    let g = inflight(&mut e, &c, 3);
+    let g = inflight(&f, &mut e, &c, 3);
     e.release(g, at(42), &c.view()).unwrap();
     drop(e);
     let mut e = f.open();
@@ -979,7 +1029,7 @@ fn m6_released_executing_without_outcome_needs_reconciliation_journal_only() {
 // then the snapshot supplies WAITING and its legal aggregate, without pretending
 // this SQL is a production writer or inventing an approval/input delivery event.
 fn waiting(f: &FileFixture, e: &mut TaskEngine, c: &Context, kind: StepKind) {
-    single(e, c, kind, 3);
+    single(f, e, c, kind, 3);
     let g = acquire(e, c, 1, None, 40, 60);
     e.begin_attempt(&g, at(41), &c.view()).unwrap();
     e.release(g, at(42), &c.view()).unwrap();
@@ -1055,7 +1105,7 @@ fn m9_released_leased_step_resumes_ready_or_executing_without_resetting_runtime(
         let f = FileFixture::new("released-leased");
         let c = Context::new();
         let mut e = f.open();
-        single(&mut e, &c, StepKind::Capability, 3);
+        single(&f, &mut e, &c, StepKind::Capability, 3);
         let mut g = acquire(&mut e, &c, 1, None, 40, 50);
         if executing {
             e.begin_attempt(&g, at(41), &c.view()).unwrap();
@@ -1081,7 +1131,7 @@ fn m10_valid_committed_receipt_is_observed_without_repeat_outcome() {
     let f = FileFixture::new("committed-receipt");
     let c = Context::new();
     let mut e = f.open();
-    committed_receipt(&mut e, &c);
+    committed_receipt(&f, &mut e, &c);
     let before = f.dump();
     let seq = journal_count(&f);
     let r = recover(&mut e, &c, 50);
@@ -1105,7 +1155,7 @@ fn m10_verifying_without_verifier_never_invents_completed() {
     let f = FileFixture::new("no-verifier");
     let c = Context::new();
     let mut e = f.open();
-    single(&mut e, &c, StepKind::Notify, 3);
+    single(&f, &mut e, &c, StepKind::Notify, 3);
     let g = acquire(&mut e, &c, 1, None, 40, 50);
     e.begin_attempt(&g, at(41), &c.view()).unwrap();
     e.commit_step(g, success(), at(42), &c.view()).unwrap();
@@ -1127,6 +1177,7 @@ fn m10_verifier_suffix_is_eligible_only_after_real_ordinary_success() {
     let c = Context::new();
     let mut e = f.open();
     ready(
+        &f,
         &mut e,
         &c,
         1,
@@ -1147,8 +1198,9 @@ fn m10_verifier_suffix_is_eligible_only_after_real_ordinary_success() {
     stable(&f, &mut e, &c, 50, &r);
 }
 
-fn verifier_ready(e: &mut TaskEngine, c: &Context, ceiling: u32) {
+fn verifier_ready(f: &FileFixture, e: &mut TaskEngine, c: &Context, ceiling: u32) {
     ready(
+        f,
         e,
         c,
         1,
@@ -1187,7 +1239,7 @@ fn remediation_t3_verifier_receipt_repairs_stale_verifying_to_completed_then_ter
     let f = FileFixture::new("verifier-receipt-terminal-repair");
     let c = Context::new();
     let mut e = f.open();
-    verifier_ready(&mut e, &c, 3);
+    verifier_ready(&f, &mut e, &c, 3);
     let g = acquire(&mut e, &c, 2, None, 43, 60);
     e.begin_attempt(&g, at(44), &c.view()).unwrap();
     let seq_before_commit = journal_count(&f);
@@ -1279,7 +1331,7 @@ fn remediation_t4_held_verifier_leased_and_executing_preserve_even_exhausted_aut
         let f = FileFixture::new("held-verifier");
         let c = Context::new();
         let mut e = f.open();
-        verifier_ready(&mut e, &c, 1);
+        verifier_ready(&f, &mut e, &c, 1);
         let g = acquire(&mut e, &c, 2, None, 43, 50);
         if begun {
             e.begin_attempt(&g, at(44), &c.view()).unwrap();
@@ -1319,7 +1371,7 @@ fn remediation_t4_released_verifier_leased_resumes_but_executing_needs_reconcili
         let f = FileFixture::new("released-verifier");
         let c = Context::new();
         let mut e = f.open();
-        verifier_ready(&mut e, &c, 3);
+        verifier_ready(&f, &mut e, &c, 3);
         let g = acquire(&mut e, &c, 2, None, 43, 50);
         if begun {
             e.begin_attempt(&g, at(44), &c.view()).unwrap();
@@ -1352,7 +1404,7 @@ fn remediation_t4_released_exhausted_verifier_blocks_without_rewriting_runtime()
         let f = FileFixture::new("released-exhausted-verifier");
         let c = Context::new();
         let mut e = f.open();
-        verifier_ready(&mut e, &c, 1);
+        verifier_ready(&f, &mut e, &c, 1);
         let g = acquire(&mut e, &c, 2, None, 43, 50);
         if begun {
             e.begin_attempt(&g, at(44), &c.view()).unwrap();
@@ -1408,7 +1460,7 @@ fn remediation_t4_exact_expired_exhausted_verifier_blocks_without_provider_failu
         let f = FileFixture::new("expired-exhausted-verifier");
         let c = Context::new();
         let mut e = f.open();
-        verifier_ready(&mut e, &c, 1);
+        verifier_ready(&f, &mut e, &c, 1);
         let g = acquire(&mut e, &c, 2, None, 43, 50);
         if begun {
             e.begin_attempt(&g, at(44), &c.view()).unwrap();
@@ -1489,6 +1541,7 @@ fn m11_received_planning_and_ready_are_eligible_not_planned_or_executed() {
     e.create_task(spec(1, 3), &c.view()).unwrap();
     planning(&mut e, &c, 2, 3);
     ready(
+        &f,
         &mut e,
         &c,
         3,
@@ -1551,6 +1604,7 @@ fn m11_existing_closed_absence_is_not_a_successful_predecessor() {
     let c = Context::new();
     let mut e = f.open();
     ready(
+        &f,
         &mut e,
         &c,
         1,
@@ -1589,7 +1643,7 @@ fn m12_m13_mixed_pass_changes_once_then_all_durable_tables_are_byte_identical() 
     let f = FileFixture::new("mixed-identity");
     let c = Context::new();
     let mut e = f.open();
-    let g = inflight(&mut e, &c, 3);
+    let g = inflight(&f, &mut e, &c, 3);
     e.create_task(spec(2, 3), &c.view()).unwrap();
     planning(&mut e, &c, 3, 3);
     e.cancel(
@@ -1599,7 +1653,14 @@ fn m12_m13_mixed_pass_changes_once_then_all_durable_tables_are_byte_identical() 
         &c.view(),
     )
     .unwrap();
-    ready(&mut e, &c, 4, 3, vec![input(4, 4, 10, StepKind::Notify)]);
+    ready(
+        &f,
+        &mut e,
+        &c,
+        4,
+        3,
+        vec![input(4, 4, 10, StepKind::Notify)],
+    );
     drop(g);
     drop(e);
     let mut e = f.open();
@@ -1691,7 +1752,7 @@ fn m14_expired_inflight_revokes_and_needs_reconciliation_without_execution() {
     let f = FileFixture::new("expired-inflight");
     let c = Context::new();
     let mut e = f.open();
-    let g = inflight(&mut e, &c, 3);
+    let g = inflight(&f, &mut e, &c, 3);
     let expected = e.load(tid(1)).unwrap();
     let before = f.dump();
     let seq = journal_count(&f);
@@ -1722,7 +1783,7 @@ fn m14_crash_exhausted_ready_uses_real_reassessment_then_block_never_begin_or_fa
     let f = FileFixture::new("ready-crash-ceiling");
     let c = Context::new();
     let mut e = f.open();
-    single(&mut e, &c, StepKind::Capability, 1);
+    single(&f, &mut e, &c, StepKind::Capability, 1);
     let g = acquire(&mut e, &c, 1, None, 40, 50);
     drop(g); // Acquisition spent the sole attempt, but no attempt ever started.
     let expected = e.load(tid(1)).unwrap();
@@ -1765,7 +1826,7 @@ fn m14_crash_exhausted_executing_blocks_without_provider_failure() {
     let f = FileFixture::new("executing-crash-ceiling");
     let c = Context::new();
     let mut e = f.open();
-    let g = inflight(&mut e, &c, 1);
+    let g = inflight(&f, &mut e, &c, 1);
     drop(g);
     let before = f.dump();
     let seq = journal_count(&f);
@@ -1796,7 +1857,7 @@ fn m17_missing_or_mismatched_prior_authority_is_not_guessed_from_step_copy() {
         let f = FileFixture::new("authority-corruption");
         let c = Context::new();
         let mut e = f.open();
-        let g = inflight(&mut e, &c, 3);
+        let g = inflight(&f, &mut e, &c, 3);
         drop(g);
         f.execute(corruption);
         let before = f.dump();
@@ -1818,7 +1879,7 @@ fn m18_unknown_status_quarantines_with_exact_unrecognised_state_reason() {
     let f = FileFixture::new("unknown-status");
     let c = Context::new();
     let mut e = f.open();
-    let g = inflight(&mut e, &c, 3);
+    let g = inflight(&f, &mut e, &c, 3);
     e.release(g, at(42), &c.view()).unwrap();
     let inspection = Store::open(&f.path, &Fixed).unwrap();
     f.execute("PRAGMA ignore_check_constraints=ON; UPDATE task_steps SET status='FUTURE_STATUS'; PRAGMA ignore_check_constraints=OFF");
@@ -1910,7 +1971,7 @@ fn m12_materially_new_lease_generation_requires_new_decision_evidence() {
     let f = FileFixture::new("identity-generation");
     let c = Context::new();
     let mut e = f.open();
-    single(&mut e, &c, StepKind::Capability, 3);
+    single(&f, &mut e, &c, StepKind::Capability, 3);
     let g = acquire(&mut e, &c, 1, None, 40, 50);
     drop(g);
     let first = recover(&mut e, &c, 50);
@@ -1951,7 +2012,7 @@ fn m17_task_local_semantic_damage_does_not_skip_other_valid_tasks() {
     let f = FileFixture::new("local-continue");
     let c = Context::new();
     let mut e = f.open();
-    let g = inflight(&mut e, &c, 3);
+    let g = inflight(&f, &mut e, &c, 3);
     e.release(g, at(42), &c.view()).unwrap();
     e.create_task(spec(2, 3), &c.view()).unwrap();
     f.execute("UPDATE leases SET owner='mismatched-owner'");
@@ -1970,7 +2031,7 @@ fn race_outcome(order: Option<bool>) {
     let f = FileFixture::new("race-outcome");
     let c = Context::new();
     let mut worker = f.open();
-    let guard = inflight(&mut worker, &c, 3);
+    let guard = inflight(&f, &mut worker, &c, 3);
     let receipt = receipt(&worker.load(tid(1)).unwrap().steps[0].step);
     let mut recovery = f.open();
     let outcome = StepOutcome::Succeeded {
@@ -2095,7 +2156,7 @@ fn race_reclaim(order: Option<bool>) {
     let f = FileFixture::new("race-reclaim");
     let c = Context::new();
     let mut stale = f.open();
-    let old = inflight(&mut stale, &c, 3);
+    let old = inflight(&f, &mut stale, &c, 3);
     let mut recovery = f.open();
     let mut reclaimer = f.open();
     let (report, current) = match order {
@@ -2184,7 +2245,7 @@ fn race_recoveries(order: Option<bool>) {
     let f = FileFixture::new("race-two-recoveries");
     let c = Context::new();
     let mut seed = f.open();
-    let g = inflight(&mut seed, &c, 3);
+    let g = inflight(&f, &mut seed, &c, 3);
     drop(g);
     drop(seed);
     let mut a = f.open();
@@ -2561,8 +2622,8 @@ fn m21_explicit_now_is_the_only_recovery_clock_no_retained_or_ambient_clock() {
     let clock = OpenOnly {
         reads: AtomicU64::new(0),
     };
-    let mut e = TaskEngine::new(Store::open(&f.path, &clock).unwrap(), event_bus());
-    single(&mut e, &c, StepKind::Notify, 3);
+    let mut e = support::engine(Store::open(&f.path, &clock).unwrap(), event_bus());
+    single(&f, &mut e, &c, StepKind::Notify, 3);
     let g = acquire(&mut e, &c, 1, None, 40, 50);
     drop(g);
     let held = recover(&mut e, &c, 49);

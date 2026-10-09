@@ -28,7 +28,7 @@ impl Clock for Fixed {
 }
 
 fn engine() -> TaskEngine {
-    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap(), event_bus())
+    support::post_p5_engine(Store::open_in_memory(&Fixed).unwrap(), event_bus())
 }
 
 fn context<'a>(actor: &'a ActorId, version: &'a SemVer) -> TransitionContext<'a> {

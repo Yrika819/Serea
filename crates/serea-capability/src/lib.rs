@@ -40,7 +40,7 @@ pub use tool_definition::{
 pub use violation::{ModelSchemaViolation, record_schema_violation};
 
 pub use availability::{
-    CapabilityAvailabilitySnapshotV1, HostEligibility, Resolution, ResolveError,
+    AvailabilityError, CapabilityAvailabilitySnapshotV1, HostEligibility, Resolution, ResolveError,
 };
 pub use digests::{
     CATALOG_DOMAIN, DESCRIPTOR_DOMAIN, DigestError, MANIFEST_DOMAIN, ManifestEntryV1,

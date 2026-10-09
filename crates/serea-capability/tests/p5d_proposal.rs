@@ -11,6 +11,33 @@ fn valid_proposal_is_parsed() {
 }
 
 #[test]
+fn proposal_debug_redacts_argument_values() {
+    const SENTINEL: &str = "DO_NOT_LOG_THIS_VALUE_7a31";
+    let proposal = parse_tool_call_proposal(&format!(
+        r#"{{"version":"1","capability_id":"calendar.events.read","arguments":{{"x":"{SENTINEL}"}}}}"#
+    ))
+    .unwrap();
+    assert!(!format!("{proposal:?}").contains(SENTINEL));
+}
+
+#[test]
+fn rejection_debug_and_display_never_echo_raw_proposal_content() {
+    const SENTINEL: &str = "DO_NOT_LOG_THIS_VALUE_7a31";
+    for raw in [
+        format!(
+            r#"{{"version":"1","capability_id":"calendar.events.read","arguments":{{"calendar":"{SENTINEL}","calendar":"second"}}}}"#
+        ),
+        format!(
+            r#"{{"version":"1","capability_id":"calendar.events.read","arguments":{{"calendar":"{SENTINEL}"}},"risk_class":"SECRET"}}"#
+        ),
+    ] {
+        let rejection = parse_tool_call_proposal(&raw).unwrap_err();
+        assert!(!format!("{rejection:?}").contains(SENTINEL));
+        assert!(!rejection.to_string().contains(SENTINEL));
+    }
+}
+
+#[test]
 fn duplicate_root_key_rejected() {
     let err = parse_tool_call_proposal(
         r#"{"version":"1","capability_id":"calendar.events.read","capability_id":"gmail.messages.send","arguments":{}}"#,
@@ -39,16 +66,20 @@ fn wrong_version_rejected() {
 
 #[test]
 fn missing_field_rejected() {
-    for text in [
-        r#"{"version":"1","arguments":{}}"#,
-        r#"{"capability_id":"calendar.events.read","arguments":{}}"#,
-        r#"{"version":"1","capability_id":"calendar.events.read"}"#,
+    for (text, missing) in [
+        (r#"{"version":"1","arguments":{}}"#, "capability_id"),
+        (
+            r#"{"capability_id":"calendar.events.read","arguments":{}}"#,
+            "version",
+        ),
+        (
+            r#"{"version":"1","capability_id":"calendar.events.read"}"#,
+            "arguments",
+        ),
     ] {
         let err = parse_tool_call_proposal(text).unwrap_err();
-        assert!(
-            matches!(err, ProposalRejection::MissingField),
-            "{text} produced {err:?}"
-        );
+        assert!(matches!(err, ProposalRejection::MissingField { .. }));
+        assert_eq!(err.offending_field_names(), [missing]);
     }
 }
 

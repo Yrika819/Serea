@@ -193,6 +193,7 @@ BEFORE UPDATE ON step_capability_bindings
 BEGIN SELECT RAISE(ABORT, 'step capability bindings are immutable'); END;
 CREATE TRIGGER step_capability_binding_no_delete
 BEFORE DELETE ON step_capability_bindings
+WHEN EXISTS (SELECT 1 FROM tasks WHERE task_id=OLD.task_id)
 BEGIN SELECT RAISE(ABORT, 'step capability bindings are immutable'); END;
 
 CREATE TRIGGER bound_task_step_identity_immutable

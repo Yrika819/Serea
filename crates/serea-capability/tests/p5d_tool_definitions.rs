@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod common;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -121,13 +124,7 @@ fn snapshot(
         entries.insert(entry.descriptor_digest.clone(), eligible);
     }
     let store = serea_storage::Store::open_in_memory(&FixedClock).unwrap();
-    CapabilityAvailabilitySnapshotV1::build(
-        manifest,
-        &registry,
-        &store,
-        HostEligibility::new(entries),
-    )
-    .unwrap()
+    common::build_snapshot(manifest, &registry, &store, HostEligibility::new(entries)).unwrap()
 }
 
 #[test]

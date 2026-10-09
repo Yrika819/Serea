@@ -21,10 +21,19 @@ use crate::availability::{CapabilityAvailabilitySnapshotV1, ResolveError};
 ///
 /// The only constructor takes an explicit trusted class. There is no way to
 /// build one from model output, and no field-name heuristic can prove safety.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ClassifiedArgumentsV1 {
     arguments: Map<String, Value>,
     data_class: DataClass,
+}
+
+impl fmt::Debug for ClassifiedArgumentsV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClassifiedArgumentsV1")
+            .field("data_class", &self.data_class)
+            .field("argument_field_count", &self.arguments.len())
+            .finish()
+    }
 }
 
 impl ClassifiedArgumentsV1 {
@@ -107,11 +116,12 @@ impl fmt::Display for PreparationError {
 impl std::error::Error for PreparationError {}
 
 /// The immutable P5 output handed to P6.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct PreparedActionV1 {
     task_id: TaskId,
     step_id: StepId,
     generation_digest: Digest,
+    generation_id: i64,
     descriptor_digest: Digest,
     capability_id: CapabilityId,
     capability_version: SemVer,
@@ -132,6 +142,20 @@ pub struct PreparedActionV1 {
     cost_class: CostClass,
 }
 
+impl fmt::Debug for PreparedActionV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PreparedActionV1")
+            .field("task_id", &self.task_id)
+            .field("step_id", &self.step_id)
+            .field("generation_id", &self.generation_id)
+            .field("capability_id", &self.capability_id)
+            .field("data_class", &self.data_class)
+            .field("arguments_digest", &self.arguments_digest)
+            .field("argument_field_count", &self.arguments.len())
+            .finish()
+    }
+}
+
 impl PreparedActionV1 {
     pub fn task_id(&self) -> &TaskId {
         &self.task_id
@@ -142,6 +166,10 @@ impl PreparedActionV1 {
     /// The registry generation this preparation is pinned to.
     pub fn generation_digest(&self) -> &Digest {
         &self.generation_digest
+    }
+    /// Exact durable generation used for resolution and binding.
+    pub fn generation_id(&self) -> i64 {
+        self.generation_id
     }
     /// The exact descriptor revision this preparation is pinned to.
     pub fn descriptor_digest(&self) -> &Digest {
@@ -289,6 +317,7 @@ pub fn prepare_action(
         task_id,
         step_id,
         generation_digest: snapshot.manifest().digest().clone(),
+        generation_id: snapshot.generation_id(),
         descriptor_digest: resolution.descriptor_digest.clone(),
         capability_id: descriptor.id().clone(),
         capability_version: resolution.version.clone(),

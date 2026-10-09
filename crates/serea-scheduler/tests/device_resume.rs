@@ -4,10 +4,12 @@ use serea_scheduler::Scheduler;
 use serea_storage::Store;
 use serea_task_engine::{NewTask, TaskEngine, TransitionContext};
 use serea_testkit::DeterministicUlidSource;
+mod support;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
+use support::seed_active_registry;
 
 static NEXT_DB: AtomicUsize = AtomicUsize::new(0);
 
@@ -112,6 +114,7 @@ fn explicit_wait_resumes_once_and_origin_alone_does_not() {
     let device = device_id();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_100_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut engine = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone());
     let (actor, version) = identities();
     let ctx = TransitionContext {
@@ -283,6 +286,7 @@ fn independent_scheduler_workers_race_replay_and_resume_without_duplicate_task_e
     let device = device_id();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_150_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut tasks = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone());
     let (actor, version) = identities();
     let context = TransitionContext {
@@ -397,6 +401,7 @@ fn event_before_wait_is_not_replayed_into_a_late_wait_but_a_later_event_is_eligi
     let device = device_id();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_200_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut engine = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone());
     let (actor, version) = identities();
     let ctx = TransitionContext {
@@ -521,6 +526,7 @@ fn device_wait_registration_failure_rolls_back_task_state_journal_and_wait_row()
     };
     let bus = EventBus::new(source);
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut engine = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus);
     let (actor, version) = identities();
     let context = TransitionContext {
@@ -586,6 +592,7 @@ fn generic_device_offline_block_is_refused_and_stale_wake_cannot_resurrect_cance
     let device = device_id();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut engine = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone());
     let (actor, version) = identities();
     let ctx = TransitionContext {
@@ -690,6 +697,7 @@ fn failed_resume_event_participant_rolls_back_task_wait_and_wake_consumption() {
     };
     let bus = EventBus::new(source);
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut engine = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone());
     let (actor, version) = identities();
     let context = TransitionContext {
@@ -763,6 +771,7 @@ fn device_connection_fanout_is_bounded_cursor_fenced_and_replay_safe_above_256_w
     let device = device_id();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_400_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut engine = TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone());
     let (actor, version) = identities();
     let ctx = TransitionContext {

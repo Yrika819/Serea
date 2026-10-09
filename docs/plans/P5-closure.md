@@ -382,3 +382,51 @@ Final validation on exact behaviour commit `9c2c48a`:
 Migrations: schema version 4. 0001 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`, 0002 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`, 0003 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`, 0004 `b60000371f3c10d64adc7bb54b5e5144fd6ac6ec34246c072aaf68d77861d93a`. No migration 0005 exists.
 
 P5 status: **CLOSED_ON_BRANCH**. PR #5 stays open on `p5/capability-registry` and is NOT merged; `main` is unchanged pending a separate integration gate.
+
+## P5 independent-audit repair (supersedes the closure above)
+
+The `4079e16` `CLOSED_ON_BRANCH` conclusion above was superseded after an independent source audit reopened P5. PR #5 remains open and unmerged. The record is retained as historical evidence; it is not the current closure conclusion.
+
+### Findings and RED evidence
+
+- **Generation identity was semantic-only.** TaskEngine accepted an externally supplied availability snapshot without proving it represented the Task's durable generation. RED coverage now proves refusal for a Task pinned to generation A with a generation B snapshot, including same-descriptor generations. Additional tests cover historical defaults, candidate priority, identical manifest digests with distinct generation IDs, missing historical material, and PreparedAction generation identity.
+- **Argument provenance and requester provenance were lost.** The old generic path reconstructed DataClass from the descriptor ceiling and hard-coded `RequestedBy::Model`. RED cases cover trusted PUBLIC/PERSONAL/PRIVATE/CREDENTIAL classifications, descriptor and Task containment, Model/Scheduler provenance, and canonical persisted arguments.
+- **New Task creation could leave a NULL generation.** Ordinary and scheduled creation now require an active generation and pin it in the same transaction. Failure injection after Task insert proves Task, journal, and event rollback; scheduled failure proves the Task and occurrence map roll back. Initial fixture setup seeds registry state explicitly; engine reopen/recovery constructors are pure.
+- **Capability plan persistence was a second partial writer.** The old append path did not preserve complete plan membership, current-plan reference replacement, or the full ordinary revision history path. A multi-capability RED/reopen regression now covers the shared writer, argument bytes, both bindings, current PLAN count, revision history, and live-Task bound-Step removal refusal. A journal trigger proves plan, Steps, and bindings roll back together.
+- **Migration 0004 contradicted Task deletion semantics.** The old unconditional binding `BEFORE DELETE` trigger rejected Task-owned cascade deletion despite `ON DELETE CASCADE`. A lifecycle RED test confirmed normal deletion failed under the old SQL.
+- **Availability health sampling could spin forever.** The synchronous noop-waker polling loop was removed. Snapshot building is async and awaits each provider health future once; a Pending/wakeup regression proves completion and snapshot immutability.
+- **Diagnostics could expose argument content through Debug.** Argument-bearing values now use redacted Debug output. Sentinel tests cover proposal, classified arguments, prepared actions, preparation/proposal errors, `MODEL_SCHEMA_VIOLATION`, and event payloads. Missing-field metadata names the actual absent field(s).
+
+### Migration 0004 amendment
+
+The old development checksum `b60000371f3c10d64adc7bb54b5e5144fd6ac6ec34246c072aaf68d77861d93a` is historical pre-repair evidence. Migration 0004 had not been merged to `main` or released, so the owner authorized an in-place amendment; no upgrade path for a deployed v4 database is required.
+
+The binding delete trigger now rejects deletion only while its owning Task row exists. Tests prove direct binding deletion and bound Step deletion while the Task lives are refused, while normal Task deletion cascades all owned bindings and Steps. The same regression checks zero dangling bindings, zero `foreign_key_check` rows, and `integrity_check = ok`.
+
+New 0004 SHA-256: `06b22fa682564290b71a26825a777f7a295220bd02f4c6c614d234b73001685f`. Schema version remains 4; 0001–0003 are unchanged; 0005 is absent.
+
+### Repair implementation and verification
+
+- PASS A binds `CapabilityAvailabilitySnapshotV1` to an exact caller-supplied durable generation and verifies durable manifest, catalog, member, priority, and default facts. Task generation must equal snapshot generation. PreparedAction carries both the semantic manifest digest and exact durable generation ID.
+- PASS B accepts one trusted `ClassifiedArgumentsV1` and trusted `RequestedBy` per capability Step. It refuses CREDENTIAL and any class above either the descriptor ceiling or Task container class. Canonical JSON is derived from the prepared trusted arguments and is the plan/blob persistence source.
+- PASS C makes ordinary and scheduled runtime creation strict. Both pin the active generation atomically; scheduled creation also commits its occurrence mapping, journal and event atomically. NULL is preserved only for explicit historical fixtures/migrated Tasks.
+- PASS D routes ordinary and capability plans through one full-plan writer. It shares validation, membership, immutable-Step checks, historical StepId and sequence high-water, current PLAN replacement, PLAN_REVISION retention, state/revision update, journal evidence, and blob cleanup. Every new capability Step binding is written before the same transaction commits.
+- PASS E removed the production executor and noop-waker loop. `build_for_generation` awaits `provider.health()` exactly once per provider for each snapshot.
+- PASS F redacts argument-bearing Debug implementations and keeps violation errors/events to stable codes and bounded safe names/counts.
+- Production `.invoke(` search in `serea-capability` and `serea-task-engine`: zero. The model-router `insert_task` occurrences are under `#[cfg(test)]`; production runtime creation goes through TaskEngine or the scheduler's strict scheduled-task path.
+
+### Reclosure evidence status
+
+The repair is not closed by the historical `CLOSED_ON_BRANCH` line above. Exact repaired behavior HEAD, final local validation, fresh whole-P5 review, behavior commits, CI run IDs, and final evidence HEAD will be recorded here only after those gates complete. PR #5 must remain **OPEN / READY FOR REVIEW / UNMERGED**. P6 and P8 remain **NOT STARTED**.
+
+### Local repair verification update (2026-10-09)
+
+The repaired worktree remains based on `4079e16ca4e6eb4884aaab1bf579c28a3deec9e6`; no repair commit has yet been created at the time of this validation update.
+
+- PASS A/B/C/D/E/F focused evidence is recorded above and in the named regression targets. Latest full runs: capability 154 integration tests; TaskEngine 153 integration tests plus 3 doctests; storage 434 unit tests, 2 integration tests, and 37 doctests; scheduler 45 integration tests. The multi-capability reopen, journal-failure rollback, Task deletion cascade, Pending/wakeup health, and privacy sentinel tests passed.
+- Static/local checks passed: `cargo fmt --all -- --check`; four-crate `cargo check`; four-crate all-target/all-feature Clippy with `-D warnings`; docs validator (100 Markdown files); workspace smoke; 76 Python workspace tests; Cargo metadata; commit identity; and `git diff --check`.
+- Fresh whole-P5 review: migration/FK deletion semantics — no blocker or major; schema/catalog security — no blocker or major; manifest/provider authority — no blocker or major; exact generation/pinning — no blocker or major; classification/provenance — no blocker or major; Task creation paths — no runtime bypass found; plan/history/binding invariants — no blocker or major; crash/recovery/concurrency — no blocker or major; privacy/debug/events — no blocker or major; provider invocation/P6 boundary — no blocker or major, production invocation count zero.
+- Review note: private Task storage remains subject to the existing P2 at-rest protection contract; no private Task acceptance is claimed where that contract refuses storage.
+- Branch source audit: runtime Task creation is through `TaskEngine::create_task` and `TaskEngine::create_scheduled_task` (scheduler delegates to the latter). The model-router direct `insert_task` occurrences are under test-only code. Storage direct inserts are test/setup/recovery fixtures.
+- Final local migration hashes: 0001 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`; 0002 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`; 0003 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`; amended 0004 `06b22fa682564290b71a26825a777f7a295220bd02f4c6c614d234b73001685f`; schema version 4; 0005 absent.
+- External GitHub state and required Fast/Full/cross-architecture CI are pending. The GitHub CLI query for PR #5 could not connect to `api.github.com`; no CI IDs are available yet. P5 remains **NOT CLOSED** until the repaired behavior and final evidence heads have the required exact-head CI results.

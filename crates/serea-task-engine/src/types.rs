@@ -1,6 +1,6 @@
 use serea_protocol::{
-    AssistantTask, AttemptBudget, DataClass, EpochMillis, Extensions, RiskClass, TaskId, TaskKind,
-    TaskOrigin, TaskStep, TaskTitle,
+    AssistantTask, AttemptBudget, CapabilityId, DataClass, EpochMillis, Extensions, RequestedBy,
+    RiskClass, StepId, TaskId, TaskKind, TaskOrigin, TaskStep, TaskTitle,
 };
 use serea_storage::{PlanRevisionSnapshot, TaskSnapshot};
 
@@ -43,6 +43,15 @@ pub struct Plan {
 pub struct PlanStep {
     pub step: TaskStep,
     pub input_json: Vec<u8>,
+}
+
+/// One trusted capability proposal included in a complete capability plan.
+pub struct CapabilityPlanStep {
+    pub step_id: StepId,
+    pub sequence: u32,
+    pub capability_id: CapabilityId,
+    pub arguments: serea_capability::ClassifiedArgumentsV1,
+    pub requested_by: RequestedBy,
 }
 
 pub type PlanRevision = PlanRevisionSnapshot;

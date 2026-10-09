@@ -58,9 +58,9 @@ pub use audit::{
 };
 pub use blob::BlobRef;
 pub use capability_registry::{
-    CapabilityOverlay, CapabilityOverlayState, DescriptorRevision, DescriptorRevisionDraft,
-    GenerationMember, GenerationMemberDraft, RegistryGeneration, RegistryGenerationDraft,
-    StepCapabilityBinding,
+    CapabilityOverlay, CapabilityOverlayState, CapabilityPlanBindingDraft, DescriptorRevision,
+    DescriptorRevisionDraft, GenerationMember, GenerationMemberDraft, RegistryGeneration,
+    RegistryGenerationDraft, StepCapabilityBinding,
 };
 pub use classify::{AtRestProtection, AtRestProtectionError};
 pub use error::StoreError;

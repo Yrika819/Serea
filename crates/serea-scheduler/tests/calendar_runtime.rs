@@ -1,7 +1,10 @@
 use serea_event_bus::EventBus;
 use serea_protocol::*;
 use serea_scheduler::{ScheduleDefinition, Scheduler, occurrence_identity_key};
-use serea_storage::{MissedOccurrencePolicy, ScheduleOwnerKind, ScheduleTriggerKind, Store};
+use serea_storage::{
+    DescriptorRevisionDraft, GenerationMemberDraft, MissedOccurrencePolicy,
+    RegistryGenerationDraft, ScheduleOwnerKind, ScheduleTriggerKind, Store,
+};
 use serea_task_engine::TaskEngine;
 use serea_testkit::DeterministicUlidSource;
 use std::path::PathBuf;
@@ -23,6 +26,67 @@ fn path() -> PathBuf {
         std::process::id(),
         NEXT_DB.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+fn seed_active_registry(store: &Store) {
+    let descriptor = CapabilityDescriptor::new(CapabilityDescriptorDraft {
+        id: CapabilityId::new("calendar.events.create").unwrap(),
+        version: SemVer::new("1.0.0").unwrap(),
+        title: DescriptorTitle::new("Scheduler fixture").unwrap(),
+        description: DescriptorDescription::new("Scheduler fixture descriptor").unwrap(),
+        provider_id: ProviderId::new("calendar").unwrap(),
+        implementation_id: None,
+        input_schema: JsonSchemaRef::new("serea://scheduler/input").unwrap(),
+        output_schema: JsonSchemaRef::new("serea://scheduler/output").unwrap(),
+        side_effect_class: SideEffectClass::None,
+        risk_class: RiskClass::Observe,
+        required_authorization: Authorization::None,
+        replay_safety: ReplaySafety::Idempotent,
+        data_class: DataClass::Personal,
+        root_requirement: RootRequirement::NotRequired,
+        idempotency_support: IdempotencySupport::None,
+        max_duration_ms: 5_000,
+        cost_class: CostClass::Free,
+        experimental: false,
+    })
+    .unwrap();
+    let generation_id = store
+        .create_registry_generation(RegistryGenerationDraft {
+            manifest_digest: digest_of("\"scheduler-manifest\"").unwrap(),
+            schema_catalog_digest: digest_of("\"scheduler-catalog\"").unwrap(),
+        })
+        .unwrap()
+        .generation_id();
+    let descriptor_digest = digest_of("\"scheduler-descriptor\"").unwrap();
+    let schema_digest = digest_of("\"scheduler-schema\"").unwrap();
+    store
+        .insert_descriptor_revision(DescriptorRevisionDraft {
+            descriptor_digest: descriptor_digest.clone(),
+            descriptor,
+            input_schema_digest: schema_digest.clone(),
+            output_schema_digest: schema_digest,
+        })
+        .unwrap();
+    store
+        .add_generation_membership(GenerationMemberDraft {
+            generation_id,
+            descriptor_digest,
+            candidate_priority: 0,
+        })
+        .unwrap();
+    store
+        .set_generation_default_version(
+            generation_id,
+            CapabilityId::new("calendar.events.create").unwrap(),
+            SemVer::new("1.0.0").unwrap(),
+        )
+        .unwrap();
+    store
+        .transact(|tx| {
+            tx.activate_registry_generation(generation_id, at(0))
+                .map(|_| ())
+        })
+        .unwrap();
 }
 
 fn daily_schedule(
@@ -82,6 +146,7 @@ fn calendar_due_admission_is_atomic_and_once_exhausts_after_mapping() {
     let db = path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut scheduler = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
         TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone()),
@@ -164,6 +229,7 @@ fn run_each_is_bounded_to_ten_and_retry_processes_durable_remainder() {
     let db = path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut scheduler = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
         TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone()),
@@ -240,6 +306,7 @@ fn run_each_catch_up_boundaries_cover_zero_one_nine_ten_and_eleven_due() {
     let db = path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut scheduler = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
         TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone()),
@@ -301,6 +368,7 @@ fn run_once_maps_only_latest_missed_identity_and_skip_creates_no_tasks() {
     let db = path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut scheduler = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
         TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone()),
@@ -368,6 +436,7 @@ fn ordered_scheduler_recovery_twice_reuses_the_committed_once_mapping() {
     let db = path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut scheduler = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
         TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone()),
@@ -432,6 +501,7 @@ fn recovery_reclaims_only_expired_claim_and_keeps_mapping_idempotent() {
     let db = path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&db, &Fixed).unwrap();
+    seed_active_registry(&store);
     let mut scheduler = Scheduler::new(
         Store::open(&db, &Fixed).unwrap(),
         TaskEngine::new(Store::open(&db, &Fixed).unwrap(), bus.clone()),

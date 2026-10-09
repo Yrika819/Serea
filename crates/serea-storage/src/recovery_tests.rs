@@ -1,8 +1,9 @@
 use super::*;
 use crate::audit::TestAudit;
 use crate::{
-    JournalKind, JournalRecord, JournalRecords, PlanWrite, StepInput, StepOutcome, Store,
-    TaskAuditParticipant,
+    CapabilityPlanBindingDraft, DescriptorRevisionDraft, GenerationMemberDraft, JournalKind,
+    JournalRecord, JournalRecords, PlanWrite, RegistryGenerationDraft, StepInput, StepOutcome,
+    Store, TaskAuditParticipant,
 };
 use serea_protocol::*;
 
@@ -108,11 +109,84 @@ fn fixture(ceiling: u32, c: &TransitionContext<'_>) -> Store {
 }
 fn fixture_steps(ceiling: u32, steps: Vec<StepInput>, c: &TransitionContext<'_>) -> Store {
     let store = Store::open_in_memory(&Fixed).unwrap();
+    let descriptor = CapabilityDescriptor::new(CapabilityDescriptorDraft {
+        id: CapabilityId::new("calendar.events.create").unwrap(),
+        version: SemVer::new("1.0.0").unwrap(),
+        title: DescriptorTitle::new("Recovery fixture").unwrap(),
+        description: DescriptorDescription::new("Recovery fixture descriptor").unwrap(),
+        provider_id: ProviderId::new("calendar").unwrap(),
+        implementation_id: None,
+        input_schema: JsonSchemaRef::new("serea://recovery/input").unwrap(),
+        output_schema: JsonSchemaRef::new("serea://recovery/output").unwrap(),
+        side_effect_class: SideEffectClass::None,
+        risk_class: RiskClass::Observe,
+        required_authorization: Authorization::None,
+        replay_safety: ReplaySafety::Idempotent,
+        data_class: DataClass::Personal,
+        root_requirement: RootRequirement::NotRequired,
+        idempotency_support: IdempotencySupport::None,
+        max_duration_ms: 5_000,
+        cost_class: CostClass::Free,
+        experimental: false,
+    })
+    .unwrap();
+    let generation_id = store
+        .create_registry_generation(RegistryGenerationDraft {
+            manifest_digest: digest_of("\"recovery-manifest\"").unwrap(),
+            schema_catalog_digest: digest_of("\"recovery-catalog\"").unwrap(),
+        })
+        .unwrap()
+        .generation_id();
+    let descriptor_digest = digest_of("\"recovery-descriptor\"").unwrap();
+    let schema_digest = digest_of("\"recovery-schema\"").unwrap();
+    store
+        .insert_descriptor_revision(DescriptorRevisionDraft {
+            descriptor_digest: descriptor_digest.clone(),
+            descriptor,
+            input_schema_digest: schema_digest.clone(),
+            output_schema_digest: schema_digest,
+        })
+        .unwrap();
+    store
+        .add_generation_membership(GenerationMemberDraft {
+            generation_id,
+            descriptor_digest: descriptor_digest.clone(),
+            candidate_priority: 0,
+        })
+        .unwrap();
+    store
+        .set_generation_default_version(
+            generation_id,
+            CapabilityId::new("calendar.events.create").unwrap(),
+            SemVer::new("1.0.0").unwrap(),
+        )
+        .unwrap();
+    store
+        .transact(|tx| {
+            tx.activate_registry_generation(generation_id, at(1))
+                .map(|_| ())
+        })
+        .unwrap();
+    let bindings = steps
+        .iter()
+        .filter(|step| step.step.kind == StepKind::Capability)
+        .map(|step| CapabilityPlanBindingDraft {
+            step_id: step.step.step_id.clone(),
+            descriptor_digest: descriptor_digest.clone(),
+        })
+        .collect::<Vec<_>>();
     store
         .transact_with_audit(&TestAudit, |tx| {
             tx.insert_task(&task(ceiling), c)?;
+            tx.pin_task_registry_generation(&tid(), generation_id)?;
             tx.start_planning(&tid(), TaskState::Received, 0, at(20), c)?;
-            tx.put_plan_revision(&tid(), PlanWrite { revision: 1, steps }, at(30), c)?;
+            tx.put_capability_plan_revision(
+                &tid(),
+                PlanWrite { revision: 1, steps },
+                &bindings,
+                at(30),
+                c,
+            )?;
             Ok(())
         })
         .unwrap();

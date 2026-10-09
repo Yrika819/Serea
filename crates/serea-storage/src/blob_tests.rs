@@ -869,6 +869,7 @@ fn p3_public_method_inventory_exposes_only_the_fixed_participant_composition() {
             "insert_task",
             "load_task",
             "load_task",
+            "put_capability_plan_revision",
             "put_plan_revision",
             "start_planning"
         ]

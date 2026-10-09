@@ -115,11 +115,15 @@ impl Fixture {
                 .join(format!("serea-p2h-{label}-{identity}-{pid}-{counter}"));
             match fs::create_dir(&dir) {
                 Ok(()) => {
-                    return Self {
+                    let fixture = Self {
                         path: dir.join("store.sqlite"),
                         dir,
                         owns_dir: true,
                     };
+                    support::seed_active_registry_generation(
+                        &Store::open(&fixture.path, &Fixed).unwrap(),
+                    );
+                    return fixture;
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => panic!("cannot create fixture directory: {error}"),
@@ -141,7 +145,7 @@ impl Fixture {
     }
 
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
+        support::engine(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
 
     fn sql(&self) -> Connection {
@@ -405,7 +409,33 @@ fn setup(fixture: &Fixture, stage: &str) {
     } else {
         vec![input(1, 1, 10, StepKind::Capability)]
     };
-    e.persist_plan(tid(1), Plan { revision: 1, steps }, at(30), &c.view())
+    let store = Store::open(&fixture.path, &Fixed).unwrap();
+    let plan = Plan { revision: 1, steps };
+    let bindings = [serea_storage::CapabilityPlanBindingDraft {
+        step_id: sid(1),
+        descriptor_digest: support::fixture_descriptor_digest(),
+    }];
+    store
+        .transact_with_participants(&TaskJournal, &event_bus(), |tx| {
+            tx.put_capability_plan_revision(
+                &tid(1),
+                serea_storage::PlanWrite {
+                    revision: plan.revision,
+                    steps: plan
+                        .steps
+                        .into_iter()
+                        .map(|step| serea_storage::StepInput {
+                            step: step.step,
+                            input_json: step.input_json,
+                        })
+                        .collect(),
+                },
+                &bindings,
+                at(30),
+                &c.view(),
+            )
+            .map(|_| ())
+        })
         .unwrap();
     if stage == "terminal" {
         let first = e
@@ -1365,11 +1395,13 @@ impl Fixture {
     /// Like [`Fixture::child_inherited`] but for a location whose database the
     /// parent has not created yet. The parent still owns the directory.
     fn parent_owned(dir: &Path) -> Self {
-        Self {
+        let fixture = Self {
             dir: dir.to_path_buf(),
             path: dir.join("store.sqlite"),
             owns_dir: true,
-        }
+        };
+        support::seed_active_registry_generation(&Store::open(&fixture.path, &Fixed).unwrap());
+        fixture
     }
 }
 

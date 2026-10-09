@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod common;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -120,7 +123,7 @@ fn snapshot() -> CapabilityAvailabilitySnapshotV1 {
     let mut eligibility = std::collections::HashMap::new();
     eligibility.insert(digest, true);
     let store = Store::open_in_memory(&FixedClock).unwrap();
-    CapabilityAvailabilitySnapshotV1::build(
+    common::build_snapshot(
         manifest,
         &registry,
         &store,
@@ -217,6 +220,43 @@ fn violation_names_are_sorted_and_bounded() {
     let rendered: Vec<&str> = names.iter().filter_map(|v| v.as_str()).collect();
     assert_eq!(rendered, ["data_class", "provider_id", "risk_class"]);
     assert_eq!(payloads[0]["offending_field_count"].as_u64(), Some(3));
+}
+
+#[test]
+fn missing_field_event_names_only_the_actual_missing_member() {
+    let store = store();
+    let events = events();
+    let rejection =
+        parse_tool_call_proposal(r#"{"version":"1","capability_id":"calendar.events.read"}"#)
+            .unwrap_err();
+    record_schema_violation(&store, &events, metadata(), None, &rejection).unwrap();
+    let payloads = violation_events(&store);
+    assert_eq!(payloads.len(), 1);
+    assert_eq!(
+        payloads[0]["offending_field_names"],
+        serde_json::json!(["arguments"])
+    );
+    assert_eq!(payloads[0]["offending_field_count"].as_u64(), Some(1));
+}
+
+#[test]
+fn schema_violation_debug_and_event_metadata_never_echo_argument_values() {
+    const SENTINEL: &str = "DO_NOT_LOG_THIS_VALUE_7a31";
+    let store = store();
+    let events = events();
+    let rejection = parse_tool_call_proposal(&format!(
+        r#"{{"version":"1","capability_id":"calendar.events.read","arguments":{{"calendar":"{SENTINEL}"}},"risk_class":"SECRET"}}"#
+    ))
+    .unwrap_err();
+    let violation = ModelSchemaViolation::from(&rejection);
+    assert!(!format!("{rejection:?}").contains(SENTINEL));
+    assert!(!rejection.to_string().contains(SENTINEL));
+    assert!(!format!("{violation:?}").contains(SENTINEL));
+    assert!(!violation.to_string().contains(SENTINEL));
+    record_schema_violation(&store, &events, metadata(), None, &rejection).unwrap();
+    let payloads = violation_events(&store);
+    assert_eq!(payloads.len(), 1);
+    assert!(!payloads[0].to_string().contains(SENTINEL));
 }
 
 #[test]

@@ -38,4 +38,6 @@ pub use serea_storage::{
     TransitionContext,
 };
 pub use transition::{TaskTransitionReason, legal_task_transition, task_transition_reason};
-pub use types::{NewTask, Plan, PlanRevision, PlanStep, StepRecord, TaskRecord};
+pub use types::{
+    CapabilityPlanStep, NewTask, Plan, PlanRevision, PlanStep, StepRecord, TaskRecord,
+};

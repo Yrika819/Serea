@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod common;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -121,7 +124,7 @@ fn snapshot_for(descriptor: &CapabilityDescriptor) -> CapabilityAvailabilitySnap
         true,
     );
     let store = serea_storage::Store::open_in_memory(&FixedClock).unwrap();
-    CapabilityAvailabilitySnapshotV1::build(
+    common::build_snapshot(
         manifest,
         &registry,
         &store,
@@ -145,6 +148,54 @@ fn arguments(class: DataClass) -> ClassifiedArgumentsV1 {
         serde_json::Value::String("work".to_string()),
     );
     ClassifiedArgumentsV1::new_trusted(map, class)
+}
+
+#[test]
+fn argument_bearing_debug_output_redacts_values() {
+    const SENTINEL: &str = "DO_NOT_LOG_THIS_VALUE_7a31";
+    let descriptor = descriptor(RiskClass::Observe, DataClass::Personal);
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "calendar".into(),
+        serde_json::Value::String(SENTINEL.into()),
+    );
+    let classified = ClassifiedArgumentsV1::new_trusted(map, DataClass::Public);
+    assert!(!format!("{classified:?}").contains(SENTINEL));
+
+    let snap = snapshot_for(&descriptor);
+    let prepared = prepare_action(
+        &snap,
+        descriptor.id(),
+        task(),
+        step(),
+        &classified,
+        RequestedBy::Scheduler,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(!format!("{prepared:?}").contains(SENTINEL));
+    assert_eq!(prepared.requested_by(), RequestedBy::Scheduler);
+
+    let mut invalid = serde_json::Map::new();
+    invalid.insert(
+        "calendar".into(),
+        serde_json::Value::String(SENTINEL.into()),
+    );
+    invalid.insert("extra".into(), serde_json::Value::String(SENTINEL.into()));
+    let error = prepare_action(
+        &snap,
+        descriptor.id(),
+        task(),
+        step(),
+        &ClassifiedArgumentsV1::new_trusted(invalid, DataClass::Public),
+        RequestedBy::Model,
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(!format!("{error:?}").contains(SENTINEL));
+    assert!(!error.to_string().contains(SENTINEL));
 }
 
 #[test]
@@ -178,6 +229,7 @@ fn prepared_action_pins_every_host_fact() {
     assert_eq!(prepared.cost_class(), CostClass::Free);
     assert_eq!(prepared.requested_by(), RequestedBy::Model);
     assert_eq!(prepared.data_class(), DataClass::Personal);
+    assert_eq!(prepared.generation_id(), snap.generation_id());
     assert_eq!(prepared.generation_digest(), snap.manifest().digest());
 }
 
@@ -501,7 +553,7 @@ fn unavailable_capability_is_refused() {
     let manifest = manifest_with(&descriptor);
     let registry = ProviderRegistry::build(vec![]).unwrap();
     let store = serea_storage::Store::open_in_memory(&FixedClock).unwrap();
-    let snap = CapabilityAvailabilitySnapshotV1::build(
+    let snap = common::build_snapshot(
         manifest,
         &registry,
         &store,

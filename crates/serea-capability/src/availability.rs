@@ -38,6 +38,7 @@ impl HostEligibility {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AvailabilityError {
     ProviderContractViolation,
+    RegistryGenerationMismatch,
 }
 
 impl fmt::Display for AvailabilityError {
@@ -82,6 +83,7 @@ pub struct Resolution {
 /// The one immutable per-operation freeze of live facts.
 #[derive(Debug, Clone)]
 pub struct CapabilityAvailabilitySnapshotV1 {
+    generation_id: i64,
     manifest: CapabilityManifestV1,
     health: HashMap<ProviderId, ProviderHealth>,
     advertised: HashMap<ProviderId, Vec<CapabilityDescriptor>>,
@@ -94,12 +96,50 @@ impl CapabilityAvailabilitySnapshotV1 {
     /// advertisement revalidation rejects mismatched or unmanifested
     /// advertisements with a typed contract error and freezes no invalid
     /// state.
-    pub fn build(
+    pub async fn build_for_generation(
         manifest: CapabilityManifestV1,
+        generation_id: i64,
         registry: &ProviderRegistry,
         store: &Store,
         eligibility: HostEligibility,
     ) -> Result<Self, AvailabilityError> {
+        // A digest identifies manifest semantics, not a durable generation.
+        // Verify the caller-supplied identity and every persisted selection
+        // fact; never substitute the active generation or infer an id.
+        let generation = store
+            .get_registry_generation(generation_id)
+            .map_err(|_| AvailabilityError::RegistryGenerationMismatch)?
+            .ok_or(AvailabilityError::RegistryGenerationMismatch)?;
+        if generation.manifest_digest() != manifest.digest()
+            || generation.schema_catalog_digest() != manifest.catalog_digest()
+        {
+            return Err(AvailabilityError::RegistryGenerationMismatch);
+        }
+        let members = store
+            .list_generation_members(generation_id)
+            .map_err(|_| AvailabilityError::RegistryGenerationMismatch)?;
+        if members.len() != manifest.entries().len()
+            || !manifest.entries().iter().all(|entry| {
+                members.iter().any(|member| {
+                    member.descriptor_digest() == &entry.descriptor_digest
+                        && member.capability_id() == entry.descriptor.id()
+                        && member.capability_version() == entry.descriptor.version()
+                        && member.provider_id() == entry.descriptor.provider_id()
+                        && member.implementation_id() == entry.descriptor.implementation_id()
+                        && member.candidate_priority() == entry.candidate_priority
+                })
+            })
+        {
+            return Err(AvailabilityError::RegistryGenerationMismatch);
+        }
+        for member in &members {
+            let durable_default = store
+                .get_generation_default_version(generation_id, member.capability_id())
+                .map_err(|_| AvailabilityError::RegistryGenerationMismatch)?;
+            if durable_default.as_ref() != manifest.default_version(member.capability_id()) {
+                return Err(AvailabilityError::RegistryGenerationMismatch);
+            }
+        }
         let mut health = HashMap::new();
         let mut advertised: HashMap<ProviderId, Vec<CapabilityDescriptor>> = HashMap::new();
         for provider in registry.providers() {
@@ -128,7 +168,7 @@ impl CapabilityAvailabilitySnapshotV1 {
                 }
             }
             advertised.insert(provider_id.clone(), caps);
-            health.insert(provider_id.clone(), block_on(provider.health()));
+            health.insert(provider_id.clone(), provider.health().await);
         }
         let mut overlays = HashMap::new();
         let mut seen = HashMap::new();
@@ -144,6 +184,7 @@ impl CapabilityAvailabilitySnapshotV1 {
             );
         }
         Ok(Self {
+            generation_id,
             manifest,
             health,
             advertised,
@@ -175,6 +216,11 @@ impl CapabilityAvailabilitySnapshotV1 {
     /// The frozen manifest this snapshot was built from.
     pub fn manifest(&self) -> &CapabilityManifestV1 {
         &self.manifest
+    }
+
+    /// Exact durable generation represented by this frozen snapshot.
+    pub fn generation_id(&self) -> i64 {
+        self.generation_id
     }
 
     /// A compiled validator for one trusted catalog document, or `None` when
@@ -259,23 +305,5 @@ impl CapabilityAvailabilitySnapshotV1 {
         Err(ResolveError::Unavailable {
             capability_id: capability_id.clone(),
         })
-    }
-}
-
-/// Polls one provider future to completion on the calling thread.
-///
-/// Serea providers answer `health()` without provider IO, so this never
-/// introduces an async runtime or blocks on external work; it exists only so
-/// the frozen async port can be sampled synchronously.
-fn block_on<F: std::future::Future>(fut: F) -> F::Output {
-    use std::task::{Context, Poll, Waker};
-
-    let mut context = Context::from_waker(Waker::noop());
-    let mut fut = Box::pin(fut);
-    loop {
-        match fut.as_mut().poll(&mut context) {
-            Poll::Ready(out) => return out,
-            Poll::Pending => std::thread::yield_now(),
-        }
     }
 }

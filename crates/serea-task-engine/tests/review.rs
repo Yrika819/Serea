@@ -118,13 +118,48 @@ fn input(n: u32, kind: StepKind) -> PlanStep {
     }
 }
 fn engine() -> TaskEngine {
-    TaskEngine::new(Store::open_in_memory(&Fixed).unwrap(), event_bus())
+    support::post_p5_engine(Store::open_in_memory(&Fixed).unwrap(), event_bus())
 }
 fn prepare(e: &mut TaskEngine, c: &Context, steps: Vec<PlanStep>) {
     e.create_task(spec(), &c.view()).unwrap();
     e.start_planning(tid(), TaskState::Received, 0, at(20), &c.view())
         .unwrap();
     e.persist_plan(tid(), Plan { revision: 1, steps }, at(30), &c.view())
+        .unwrap();
+}
+fn prepare_file_fixture(f: &FileFixture, e: &mut TaskEngine, c: &Context, steps: Vec<PlanStep>) {
+    e.create_task(spec(), &c.view()).unwrap();
+    e.start_planning(tid(), TaskState::Received, 0, at(20), &c.view())
+        .unwrap();
+    let bindings: Vec<_> = steps
+        .iter()
+        .filter(|step| step.step.kind == StepKind::Capability)
+        .map(|step| serea_storage::CapabilityPlanBindingDraft {
+            step_id: step.step.step_id.clone(),
+            descriptor_digest: support::fixture_descriptor_digest(),
+        })
+        .collect();
+    let store = Store::open(&f.path, &Fixed).unwrap();
+    store
+        .transact_with_participants(&TaskJournal, &event_bus(), |tx| {
+            tx.put_capability_plan_revision(
+                &tid(),
+                serea_storage::PlanWrite {
+                    revision: 1,
+                    steps: steps
+                        .into_iter()
+                        .map(|step| serea_storage::StepInput {
+                            step: step.step,
+                            input_json: step.input_json,
+                        })
+                        .collect(),
+                },
+                &bindings,
+                at(30),
+                &c.view(),
+            )
+            .map(|_| ())
+        })
         .unwrap();
 }
 fn acquire(e: &mut TaskEngine, c: &Context, n: u32, now: i64) -> LeaseGuard {
@@ -193,7 +228,7 @@ impl FileFixture {
         }
     }
     fn open(&self) -> TaskEngine {
-        TaskEngine::new(Store::open(&self.path, &Fixed).unwrap(), event_bus())
+        support::post_p5_engine(Store::open(&self.path, &Fixed).unwrap(), event_bus())
     }
 }
 impl Drop for FileFixture {
@@ -538,7 +573,8 @@ fn t3_succeeded_capability_prefix_keeps_runtime_and_original_revision_across_app
     let f = FileFixture::new("succeeded-revisions");
     let c = Context::new();
     let mut e = f.open();
-    prepare(
+    prepare_file_fixture(
+        &f,
         &mut e,
         &c,
         vec![input(1, StepKind::Capability), input(2, StepKind::Notify)],
@@ -970,8 +1006,20 @@ fn audited_ready(
     steps: Vec<PlanStep>,
 ) -> Result<LeaseGuard, StoreError> {
     tx.insert_task(created, &c.view())?;
+    let generation = tx
+        .current_registry_generation()?
+        .ok_or(StoreError::RegistryGenerationNotFound)?;
+    tx.pin_task_registry_generation(&tid(), generation.generation_id())?;
     tx.start_planning(&tid(), TaskState::Received, 0, at(20), &c.view())?;
-    tx.put_plan_revision(
+    let bindings: Vec<_> = steps
+        .iter()
+        .filter(|step| step.step.kind == StepKind::Capability)
+        .map(|step| serea_storage::CapabilityPlanBindingDraft {
+            step_id: step.step.step_id.clone(),
+            descriptor_digest: support::fixture_descriptor_digest(),
+        })
+        .collect();
+    tx.put_capability_plan_revision(
         &tid(),
         serea_storage::PlanWrite {
             revision: 1,
@@ -983,6 +1031,7 @@ fn audited_ready(
                 })
                 .collect(),
         },
+        &bindings,
         at(30),
         &c.view(),
     )?;
@@ -1031,6 +1080,7 @@ fn t1_real_journal_receipt_success_has_complete_literal_batches_and_bound_facts(
     use serea_storage::{AuditOperation as O, JournalKind as K};
     let c = Context::new();
     let store = Store::open_in_memory(&Fixed).unwrap();
+    support::seed_active_registry_generation(&store);
     let probe = RealAuditProbe::new();
     let p = input(1, StepKind::Capability);
     let r = receipt(&p.step);
@@ -1095,6 +1145,7 @@ fn t1_real_journal_known_final_failure_preserves_specific_cause_and_terminal_bat
     use serea_storage::{AuditOperation as O, JournalKind as K};
     let c = Context::new();
     let store = Store::open_in_memory(&Fixed).unwrap();
+    support::seed_active_registry_generation(&store);
     let probe = RealAuditProbe::new();
     let created = created(&c);
     let code = ErrorCode::new("KNOWN_FAILURE").unwrap();
@@ -1164,6 +1215,7 @@ fn t1_real_journal_verification_terminal_has_no_receipt_or_self_transition_dupli
     use serea_storage::{AuditOperation as O, JournalKind as K};
     let c = Context::new();
     let store = Store::open_in_memory(&Fixed).unwrap();
+    support::seed_active_registry_generation(&store);
     let probe = RealAuditProbe::new();
     let created = created(&c);
     store

@@ -59,7 +59,7 @@ fn seed_task(conn: &Connection, task_id: &str) {
 }
 
 #[test]
-fn migration_catalog_adds_0004_without_rewriting_existing_migrations() {
+fn migration_catalog_preserves_v1_to_v3_and_records_amended_v4() {
     let catalog = Migrations::embedded();
     assert_eq!(Migrations::LATEST, 4);
     assert_eq!(catalog.len(), 4);
@@ -78,6 +78,10 @@ fn migration_catalog_adds_0004_without_rewriting_existing_migrations() {
     assert_eq!(
         Migrations::checksum(catalog[2].sql).as_str(),
         "sha256:530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80"
+    );
+    assert_eq!(
+        Migrations::checksum(catalog[3].sql).as_str(),
+        "sha256:06b22fa682564290b71a26825a777f7a295220bd02f4c6c614d234b73001685f"
     );
 }
 

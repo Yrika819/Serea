@@ -29,10 +29,19 @@ const ARGUMENTS: &str = "arguments";
 const DECLARED_MEMBERS: [&str; 3] = [VERSION, CAPABILITY_ID, ARGUMENTS];
 
 /// A structurally valid, closed model-authored tool call proposal.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ToolCallProposalV1 {
     capability_id: CapabilityId,
     arguments: Map<String, Value>,
+}
+
+impl fmt::Debug for ToolCallProposalV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToolCallProposalV1")
+            .field("capability_id", &self.capability_id)
+            .field("argument_field_count", &self.arguments.len())
+            .finish()
+    }
 }
 
 impl ToolCallProposalV1 {
@@ -62,7 +71,7 @@ pub enum ProposalRejection {
     /// An object member name repeats at any depth.
     DuplicateMemberName,
     /// A declared member is absent.
-    MissingField,
+    MissingField { names: Vec<String> },
     /// A member outside the frozen shape is present, with its names.
     UndeclaredMember {
         /// Offending member names only; never values.
@@ -89,7 +98,7 @@ impl ProposalRejection {
             Self::MalformedJson => "MALFORMED_JSON",
             Self::RootNotObject => "ROOT_NOT_OBJECT",
             Self::DuplicateMemberName => "DUPLICATE_MEMBER_NAME",
-            Self::MissingField => "MISSING_FIELD",
+            Self::MissingField { .. } => "MISSING_FIELD",
             Self::UndeclaredMember { .. } => "UNDECLARED_MEMBER",
             Self::UnsupportedVersion => "UNSUPPORTED_VERSION",
             Self::MalformedCapabilityId => "MALFORMED_CAPABILITY_ID",
@@ -101,7 +110,7 @@ impl ProposalRejection {
     /// members. Never values, never the rejected text.
     pub fn offending_field_names(&self) -> Vec<&str> {
         match self {
-            Self::MissingField => DECLARED_MEMBERS.to_vec(),
+            Self::MissingField { names } => names.iter().map(String::as_str).collect(),
             Self::UndeclaredMember { names } => names.iter().map(String::as_str).collect(),
             _ => Vec::new(),
         }
@@ -159,13 +168,25 @@ pub fn parse_tool_call_proposal(text: &str) -> Result<ToolCallProposalV1, Propos
             });
         }
     }
-    let version = object.get(VERSION).ok_or(ProposalRejection::MissingField)?;
-    if version.as_str() != Some(TOOL_CALL_PROPOSAL_VERSION) {
+    if object
+        .get(VERSION)
+        .is_some_and(|version| version.as_str() != Some(TOOL_CALL_PROPOSAL_VERSION))
+    {
         return Err(ProposalRejection::UnsupportedVersion);
     }
+    let missing = DECLARED_MEMBERS
+        .iter()
+        .filter(|name| !object.contains_key(**name))
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(ProposalRejection::MissingField { names: missing });
+    }
+    let version = object.get(VERSION).expect("required member checked above");
+    debug_assert_eq!(version.as_str(), Some(TOOL_CALL_PROPOSAL_VERSION));
     let capability_id = object
         .get(CAPABILITY_ID)
-        .ok_or(ProposalRejection::MissingField)?;
+        .expect("required member checked above");
     let raw_id = capability_id
         .as_str()
         .ok_or(ProposalRejection::MalformedCapabilityId)?;
@@ -176,7 +197,7 @@ pub fn parse_tool_call_proposal(text: &str) -> Result<ToolCallProposalV1, Propos
     })?;
     let arguments = object
         .get(ARGUMENTS)
-        .ok_or(ProposalRejection::MissingField)?;
+        .expect("required member checked above");
     let arguments = match arguments {
         Value::Object(map) => map.clone(),
         _ => return Err(ProposalRejection::ArgumentsNotObject),

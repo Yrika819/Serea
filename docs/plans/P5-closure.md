@@ -367,3 +367,18 @@ Focused GREEN evidence:
 P5 does not implement policy, approvals or grants, duplicate suppression, repeated-action accounting, tool-call dispatch accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, credentials, Gmail, Calendar, an Android provider, Android standalone mode, Android-only memory, GoalLatch, or any real external effect. P6 has not started. P8 has not started. No P5 code path invokes a provider, and no hardware power-loss claim, `-shm` transfer claim or live-WAL portability claim is made.
 
 P5 registers no `host.goal.*` capability, adds no execution domain or origin-node concept, and introduces no assumption that a Mac is the only possible execution node.
+
+## P5 final CI and closure status
+
+Behaviour commits in phase order: P5C `c98cb62` (with the MSRV clippy fix `0cbbf05`), P5D `99e74b4`, P5E `e18fd00` (with the portability fixture fix `ac0dc00`), P5F `9c2c48a`.
+
+Final validation on exact behaviour commit `9c2c48a`:
+
+- Fast CI run 37917523509: GREEN, including the commit identity guard.
+- Full CI run 37917523691: GREEN — Linux stable full validation GREEN, MSRV 1.85.0 GREEN, macOS Intel x86_64 GREEN, macOS arm64 GREEN, every step green including the P2H crash/fault suite, the release fault-seam exclusion proof and the identity guard.
+- Cross-architecture SQLite portability run 37917523536: GREEN in both directions, Intel producer to arm64 consumer and arm64 producer to Intel consumer.
+- Intermediate slices were also green on their own exact commits: P5C runs 37864342530 / 37864342745 / 37864342695, P5D runs 37908936160 / 37908936109 / 37908936165, P5E runs 37915553099 / 37915553131 / 37915553104.
+
+Migrations: schema version 4. 0001 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`, 0002 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`, 0003 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`, 0004 `b60000371f3c10d64adc7bb54b5e5144fd6ac6ec34246c072aaf68d77861d93a`. No migration 0005 exists.
+
+P5 status: **CLOSED_ON_BRANCH**. PR #5 stays open on `p5/capability-registry` and is NOT merged; `main` is unchanged pending a separate integration gate.

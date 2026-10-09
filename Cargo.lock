@@ -809,10 +809,15 @@ dependencies = [
 name = "serea-capability"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "jsonschema",
+ "serde",
+ "serde_json",
  "serea-event-bus",
  "serea-protocol",
  "serea-storage",
  "serea-testkit",
+ "sha2",
 ]
 
 [[package]]

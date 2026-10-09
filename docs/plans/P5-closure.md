@@ -64,3 +64,97 @@ Focused GREEN evidence after implementation:
 ## Nonclaims
 
 P5B does not implement manifest matching, schema compilation or URI resolution, model tool projection, ToolCallProposal parsing, PreparedAction construction, policy, approval, duplicate suppression execution, tool-call execution accounting, provider invocation, ActionResult processing, receipts/evidence processing, reconciliation, a real external provider, or Android standalone mode. P5 is not closed by this record. P5C, P6, and P8 have not started.
+
+## P5C implementation checkpoint
+
+- Starting P5B HEAD: `2067cd367e8dd79dd9f75455c1fc36d13ab51245`.
+- Migration: unchanged. Schema version remains 4. Migration checksums are unchanged: 0001 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`; 0002 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`; 0003 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`; 0004 `b60000371f3c10d64adc7bb54b5e5144fd6ac6ec34246c072aaf68d77861d93a`. No migration 0005 exists.
+- Architecture: `serea-arch/2.6.0`; ADR-0034, ADR-0035 and ADR-0036 unchanged.
+- New P5C source: `schema_catalog.rs`, `digests.rs`, `manifest.rs`, `provider.rs`, `availability.rs`, `install.rs`.
+- `serea-capability` runtime dependencies are protocol, storage, event-bus, serde, serde_json, sha2 and jsonschema (`0.58.3`, `default-features = false`, so no HTTP, file or async resolver). `serea-testkit` and `async-trait` remain dev-only. No runtime async runtime is added: provider health is sampled with a noop-waker poll helper that adds no reactor and performs no provider IO.
+
+### Schema catalog
+
+- `CapabilitySchemaCatalogV1` is host-owned and immutable after successful construction. It accepts only exact document URIs under `https://serea.local/schemas/`; query strings, fragments, userinfo, alternate schemes or hosts, backslashes, percent-encoded forms and parent traversal are refused. Nothing is fetched to decide whether a URI is valid.
+- `$ref` accepts a same-document JSON Pointer, an exact catalog URI, or an exact catalog URI plus a JSON Pointer fragment. `http://`, foreign hosts, `file://`, filesystem paths, relative paths and unknown catalog documents are refused as external or unknown references.
+- Documents are parsed once with a duplicate-name-rejecting deserializer, so a repeated object member cannot silently change which value is digested or compiled.
+- Canonical bytes: parse once, recursively sort object keys by UTF-8 byte order, serialize compact UTF-8. Identical bytes for any input whitespace or key order, and JSON number syntax is preserved rather than restricted to the SCJ-1 integer domain. Those bytes are the input to the byte limit and to the schema digest.
+- Structural limits (ADR-0035): canonical bytes per document `<= 65_536`; nesting depth `<= 64`; schema nodes per document `<= 4_096`; properties per object `<= 256`. Overflow is a typed refusal with no truncation.
+- Object schemas must carry `additionalProperties: false`; `patternProperties` is refused anywhere; string-capable schemas require a finite `maxLength`; array-capable schemas require a finite `maxItems`. Checks apply through `properties`, `items`, `$defs`, `definitions`, `dependentSchemas`, `prefixItems`, `contains`, `not`, `if`/`then`/`else` and the combinators. Ambiguity fails closed: a node is treated as object-, string- or array-capable from its `type` when present, otherwise from the keywords that imply that shape.
+- Reference graphs are explicit. Same-document cycles are detected over ref-site containment, cross-document cycles over the document graph, and both are refused at catalog construction. Acyclic repeated references are accepted.
+- `oneOf` is accepted only when every branch pair is mechanically provably disjoint: disjoint JSON types, or a common required discriminator property with pairwise distinct `const` values, after resolving `$ref`. Unprovable overlap is refused, and a branch reachable only through `$ref` is still checked.
+- Every document is compiled with `jsonschema` Draft 2020-12 against an in-memory registry of catalog bytes only. A document can pass JSON Schema syntax and still be refused by the stricter Serea's structural compiler.
+- `validator(uri)` exposes a narrow compiled-catalog handle for P5D argument validation. It is not a ToolCallProposal parser.
+
+### Digests
+
+- Schema digest: `sha256:` + 64 lowercase hex over the canonical schema bytes, host-computed.
+- Catalog digest: domain-separated projection `{"kind":"serea.capability-schema-catalog/1","documents":[{"uri":…,"digest":…}]}` with documents sorted by URI UTF-8 byte order, hashed the same way. Independent of insertion order and of map iteration.
+- Descriptor semantic digest: domain-separated projection `serea.capability-descriptor/1` over every authority-bearing fact — CapabilityId, SemVer, ProviderId, optional ImplementationId, title, description, input schema URI and computed input schema digest, output schema URI and computed output schema digest, SideEffectClass, RiskClass, Authorization, ReplaySafety, DataClass, RootRequirement, IdempotencySupport, `max_duration_ms`, CostClass and experimental. Candidate priority is generation metadata and is deliberately excluded. Debug output, memory layout and unordered maps are never hashed, and a provider-supplied digest is never trusted.
+- Manifest digest: `serea.capability-manifest/1` over the catalog digest, entries sorted by CapabilityId, SemVer exact text, implementation presence then value, ProviderId and candidate priority, and defaults sorted by CapabilityId. Entry permutation, provider order and descriptor order do not affect it.
+- Golden vector: the `calendar.events.read` descriptor digest is pinned in `tests/p5c_digests.rs` as `sha256:00feb5c8aaf595afa8115dfeda9b7501b6191687c1001899351e20c84bfa66d5`.
+
+### Manifest
+
+- `CapabilityManifestV1` is built in Rust only; no deserializer or wire constructor exists, so neither model output nor provider advertisement can construct one.
+- Construction is atomic and fails closed for duplicate logical identity, duplicate candidate priority in one capability/version, `ImplementationId = None` mixed with a named implementation, more than one `None` implementation, a default version not represented by an entry, duplicate default, provider namespace mismatch, ProviderId `host`, a CapabilityId beginning `host.`, a descriptor semantic digest mismatch, a schema URI absent from the catalog, an input or output schema digest mismatch, and any uncompiled schema.
+- The manifest records the schema catalog digest so a generation can prove which schemas it was built against.
+
+### Provider matching
+
+- `ProviderRegistry` owns `Arc<dyn CapabilityProvider>` values, sorted by ProviderId, with unique ProviderId and no ordinary `host` provider.
+- `validate_advertisements` requires each advertised descriptor's ProviderId to match the advertising provider, its identity to exist in the manifest, and its full descriptor facts to equal the manifest entry. An unmanifested advertisement is refused, a same-identity fact change is refused, an entry a provider does not advertise only makes that candidate unavailable, and an entirely absent provider is allowed.
+- The manifest wins every semantic comparison. A provider cannot add a revision, select a version, priority or implementation, replace a schema, change risk, authorization, data-class ceiling or replay safety, or enable experimental.
+
+### Availability and resolution
+
+- `CapabilityAvailabilitySnapshotV1` is one immutable per-operation freeze: exactly one `health()` read and at most one `capabilities()` read per registered provider, the live durable overlay for every manifest capability, and the caller-supplied `HostEligibility`.
+- Advertisements are revalidated against the frozen manifest while the snapshot is built; a mismatch or unmanifested advertisement fails the operation with a typed provider-contract error and freezes nothing. Durable descriptor semantics are never updated from an advertisement.
+- `HostEligibility` is a trusted caller-supplied map keyed by descriptor digest. A missing entry is not eligible. P5C does not probe root, device capability or platform, and never infers eligibility from an implementation name.
+- Resolution uses the exact persisted manifest default version, never max SemVer, latest, provider order or a model choice. Candidates are ordered by candidate priority with a deterministic descriptor tie-break as corruption defence. The first candidate satisfying live overlay enabled, experimental opt-in where required, provider `READY`, exact current advertisement and host eligibility wins. Otherwise the outcome is typed: `Unknown` for a CapabilityId absent from the generation, `Unavailable` for a known capability with no usable implementation, and `ContractFailure` for corrupt persisted facts or a violated invariant. No fallback to another version exists.
+- Overlay `DISABLED` and `REMOVED`, and experimental descriptors without opt-in, all yield unavailable. The overlay is read once per snapshot and never mutated during resolution; a later overlay change does not affect a frozen snapshot, and the next snapshot observes it.
+- `install` validates the catalog and manifest first, then provider advertisements, and only then prepares and activates a new generation through the existing P5B transaction and `CAPABILITY_REGISTRY_CHANGED` event path. A validation failure writes nothing. A same-manifest restart reuses the active generation and emits no second activation event. A changed manifest creates a new generation while the old one stays readable. Prepared-but-inactive generations are never authoritative: the active pointer is the only authority, never `MAX(generation_id)`. If the active generation claims the manifest digests but its member facts disagree, install fails closed with a typed corruption error instead of rebuilding or repairing authority.
+
+### Zero-invoke proof
+
+No production path in `serea-capability` calls `CapabilityProvider::invoke`; a search of the crate's production source for `invoke` returns nothing. `tests/p5c_availability.rs` asserts the scripted provider's invocation counter is zero across manifest validation, generation installation, advertisement matching, health sampling and availability resolution, and the scripted provider panics if invoked. P8 remains the first phase permitted to invoke a provider.
+
+## P5C TDD evidence
+
+RED evidence captured before each subsystem existed:
+
+- `cargo test -p serea-capability --test p5c_schema_catalog` first failed to compile because `CapabilitySchemaCatalogV1` and `CatalogError` did not exist.
+- `cargo test -p serea-capability --test p5c_oneof` failed to compile with the same unresolved imports before the oneOf proof existed.
+- `cargo test -p serea-capability --test p5c_digests` failed to compile because the descriptor and manifest digest functions did not exist.
+- `cargo test -p serea-capability --test p5c_manifest` failed to compile because `CapabilityManifestV1` and `ManifestError` did not exist.
+- `cargo test -p serea-capability --test p5c_provider` failed to compile because `ProviderRegistry` and `ProviderError` did not exist.
+- `cargo test -p serea-capability --test p5c_install` failed to compile because the install entry point did not exist.
+- Defects found by the first GREEN run and fixed: cross-document `$ref` cycles were not detected until a document-level graph was added; a same-document cycle was invisible because containment edges must relate a ref site to the ref sites inside its target; the ref-site containment pass was quadratic in document size and slowed the catalog suite to 46 s, and now runs over ref sites only at 0.04 s; the `oneOf` root node was refused as an open object until object-, string- and array-capability were derived from implying keywords when `type` is absent; and a `serde_json` parse would have kept the last of two identical member names, so a duplicate-name-rejecting deserializer was added.
+
+Focused GREEN evidence:
+
+- `cargo test -p serea-capability --test p5c_schema_catalog` — 22 passed, including the 65,536-byte boundary, the depth boundary, the 4,096-node boundary, the 256-property boundary, cycle refusal, ref-form refusals, closed-object, bounded-string and bounded-array refusals, and duplicate member name refusal.
+- `cargo test -p serea-capability --test p5c_oneof` — 6 passed, including the branch hidden only behind `$ref`.
+- `cargo test -p serea-capability --test p5c_digests` — 10 passed, including the golden vector and one changed field per authority fact.
+- `cargo test -p serea-capability --test p5c_manifest` — 14 passed.
+- `cargo test -p serea-capability --test p5c_provider` — 12 passed.
+- `cargo test -p serea-capability --test p5c_availability` — 14 passed, including one health read per provider per snapshot, health change between snapshots, degraded unavailability, rootless/rooted candidate ordering driven by host eligibility, overlay disabled/removed, experimental opt-in, snapshot immutability, and the zero-invoke counter.
+- `cargo test -p serea-capability --test p5c_install` — 7 passed, including fresh install, reopen, same-manifest restart with no second event, changed manifest with a new generation, a prepared generation that never becomes authoritative, a validation failure that writes nothing, and a corruption refusal.
+- `cargo test -p serea-capability` — 95 passed in total, including the 10 pre-existing P5B registry transaction tests.
+- `cargo fmt --all -- --check`, `cargo check -p serea-capability`, and `cargo clippy -p serea-capability --all-targets --all-features -- -D warnings` pass.
+- `python3 tools/validate_docs.py docs`, `python3 tests/workspace_smoke.py`, `python3 tools/check_commit_identity.py` and `git diff --check` pass.
+
+## P5C sequential review record
+
+1. **Catalog/ref security:** only trusted-namespace exact URIs resolve; every forbidden ref form is refused by tests; no HTTP, file, redirect, DNS or arbitrary URL resolution exists and no resolver feature of `jsonschema` is enabled; duplicate member names cannot change a digest identity.
+2. **Structural compiler:** limits are enforced over the whole document, closed objects, bounded strings and arrays are required wherever the shape can produce them, cyclic references are refused before instance validation, and `oneOf` fails closed on unprovable overlap.
+3. **Digest determinism:** schema, catalog, descriptor and manifest digests are domain-separated, order-independent permutations are tested, the golden descriptor vector is pinned, and priority is shown not to affect the descriptor digest while it does affect the manifest digest.
+4. **Manifest authority/matching:** the manifest is Rust-constructed only, refuses every listed inconsistency, and provider advertisement can only confirm or withdraw.
+5. **Provider health/advertisement snapshots:** one health read and at most one advertisement read per provider per snapshot, advertisements revalidated against the frozen manifest, health able to affect availability only.
+6. **Version/implementation selection:** exact persisted default version, priority-ordered candidates, eligibility supplied by the trusted caller, and no provider-order or model influence.
+7. **Restart/corruption/failure:** same-manifest restart is idempotent with no second event, changed manifests create a new generation, prepared generations are never authoritative, and disagreeing persisted member facts fail closed.
+8. **Crate graph/privacy/nonclaims/tests:** runtime edges are protocol, storage, event-bus, serde, serde_json, sha2 and jsonschema only; the crate depends on no policy, task-engine, model-router, core or testkit at runtime; nothing P5C persists contains arguments, prompts, credentials or schema bytes; no provider is invoked.
+
+## P5C nonclaims
+
+P5C does not implement ToolDefinitionV1 projection, ToolCallProposalV1 parsing, the MODEL_SCHEMA_VIOLATION runtime path, ClassifiedArgumentsV1, PreparedActionV1, TaskEngine generation pinning, Step creation integration, policy, approval, duplicate suppression, repeated-action accounting, tool-call accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, Gmail, Calendar, an Android provider, Android standalone mode, or GoalLatch.

@@ -10,7 +10,12 @@ publish.workspace = true
 serea-protocol.workspace = true
 serea-storage.workspace = true
 serea-event-bus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+jsonschema.workspace = true
 
 [dev-dependencies]
 serea-testkit.workspace = true
 serea-storage = { workspace = true, features = ["p2h-fault-injection"] }
+async-trait.workspace = true

@@ -1,12 +1,39 @@
-//! P5B durable registry preparation and fixed registry/event composition.
-//! Manifest matching, schema resolution, tool projection and execution are
-//! later phases.
+//! P5B durable registry preparation plus the P5C host-owned capability
+//! manifest, trusted schema catalog, provider matching, availability snapshot
+//! and deterministic resolution.
+//!
+//! The manifest is the sole authority for which capabilities may exist
+//! (ADR-0034). Providers may confirm, withdraw, or report health; they never
+//! create authority. Schema resolution is in-memory only under
+//! `https://serea.local/schemas/` (ADR-0035). No provider is ever invoked
+//! here: P8 is the first phase permitted to call `CapabilityProvider::invoke`,
+//! and tool projection/preparation is P5D.
 
 #![forbid(unsafe_code)]
 
 use serea_event_bus::{CapabilityRegistryChangeKindV1, CapabilityRegistryChangeV1, EventBus};
 use serea_protocol::{CapabilityId, Digest, EpochMillis, SemVer};
 use serea_storage::{Store, StoreError, Tx};
+
+pub mod availability;
+pub mod digests;
+pub mod install;
+pub mod manifest;
+pub mod provider;
+pub mod schema_catalog;
+
+pub use install::{InstallError, InstallOutcome, install};
+
+pub use availability::{
+    CapabilityAvailabilitySnapshotV1, HostEligibility, Resolution, ResolveError,
+};
+pub use digests::{
+    CATALOG_DOMAIN, DESCRIPTOR_DOMAIN, DigestError, MANIFEST_DOMAIN, ManifestEntryV1,
+    descriptor_semantic_digest, manifest_digest,
+};
+pub use manifest::{CapabilityManifestV1, ManifestError};
+pub use provider::{ProviderError, ProviderRegistry};
+pub use schema_catalog::{CapabilitySchemaCatalogV1, CatalogError};
 
 pub use serea_storage::{
     CapabilityOverlay, CapabilityOverlayState, DescriptorRevision, DescriptorRevisionDraft,

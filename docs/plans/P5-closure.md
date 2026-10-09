@@ -291,3 +291,79 @@ Focused GREEN evidence:
 ## P5E nonclaims
 
 P5E does not implement policy, approval or grants, duplicate suppression, repeated-action accounting, tool-call accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, Gmail, Calendar, an Android provider, Android standalone mode, or GoalLatch. Binding a Step is not approval and not execution authority.
+
+## P5F implementation checkpoint
+
+P5F adds no new runtime behaviour. It closes the phase: concurrency, crash and recovery coverage across the P5 surfaces, the typed P6 handoff boundary, and the whole-phase review.
+
+### Concurrency
+
+- Four independent Store connections installing the same manifest concurrently produce exactly one activation; the rest observe the already-active generation. The activation is serialized by SQLite, not by an in-memory mutex.
+- Concurrent installations racing after an activation leave the active pointer on an activated generation whose digests match the validated manifest. The pointer never moves to a prepared generation.
+- Availability snapshots over identical facts resolve to the same descriptor digest, so provider health sampling timing is not an authority input.
+
+### Crash and recovery
+
+- An injected deterministic failure at `BeforeCommit` during a second installation leaves the previously activated generation authoritative after reopen, with its manifest digest intact.
+- An injected failure at `BeforeBegin`, before any preparation, writes nothing: no generation row exists afterwards.
+- A caller that loses its response after a successful activation reopens to the activated generation with its members, manifest digest and catalog digest intact.
+- Reopening with no provider registered at all never rebuilds authority from an advertisement: resolution fails closed while the durable generation stays readable.
+- These are deterministic SQLite transaction failures at the storage fault seam. No hardware power-loss claim is made, and no `-shm` transfer or live-WAL portability claim is made.
+
+### P6 handoff boundary
+
+- `PreparedActionV1` is the P5 endpoint delivered to a future P6. Preparing the same inputs twice yields equal values, so a consumer cannot observe authority drift across the boundary.
+- The type exposes accessors for exactly the frozen pinned facts and none for a RequestId, an approval state, a PolicyDecision, an execution permission or a credential. A test renders every accessor and asserts none of those concepts appear.
+- P6 receives an immutable value and has no mutator for the descriptor revision, arguments, digest, IDK, provider, implementation, classification, requester, deadline, risk or authorization.
+- P5 implements no policy, approval or grant logic at all. That is P6's work.
+
+## Whole-P5 TDD evidence
+
+RED evidence captured before the phase integration existed:
+
+- `cargo test -p serea-capability --test p5f_integration` failed to compile before the P5F suite existed; the first GREEN run then surfaced and fixed the test-harness errors listed below.
+- The P5F fault suite was written against the existing storage fault seam and passed on its first run, so it records no RED for the seam itself.
+
+Defects found by the first GREEN runs and fixed:
+
+- The concurrency harness initially shared one in-memory Store, which cannot express independent connections; the fixtures now use file-backed databases so each thread opens its own connection.
+- The cross-architecture SQLite fixture re-pinned a Task generation that P5E now pins automatically, which failed on both architectures; the fixture now asserts the automatic pin, making it a stronger portability check.
+
+Focused GREEN evidence:
+
+- `cargo test -p serea-capability --test p5f_integration` — 8 passed.
+- `cargo test -p serea-capability --test p5f_faults` — 4 passed.
+- `cargo test -p serea-capability` — 148 passed, covering P5B, P5C, P5D and P5F.
+- `cargo test -p serea-task-engine` — 147 passed, covering P5E and every pre-existing suite.
+- `cargo test -p serea-storage` — 472 passed. `cargo test -p serea-scheduler` — 45 passed. `cargo test -p serea-event-bus` — 13 passed. `cargo test -p serea-protocol` — 197 passed across its suites. `cargo test -p serea-model-router` and `cargo test -p serea-testkit` pass with no failures.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`, the MSRV 1.85 workspace clippy with `--locked --offline`, `cargo fmt --all -- --check`, docs validation, workspace smoke and its 76 unit tests, the commit identity guard and `git diff --check` all pass.
+
+## Whole-P5 source search gates
+
+- `.invoke(` in P5 production source: no occurrences in `serea-capability`, `serea-task-engine`, `serea-storage` or `serea-event-bus`. Every P5 provider double panics if invoked.
+- `reqwest`, `Command::` and `std::process::Command` in `serea-capability` production source: none.
+- `host.goal` in `serea-capability` production source: none.
+- Test fixtures and negative test strings may still contain such text; no runtime path was introduced.
+
+## Whole-P5 security review
+
+1. **Model authority injection.** Refused. `ToolCallProposalV1` accepts exactly three member names; twenty-four host-resolved field names each have an explicit negative test and refuse the whole proposal. Duplicate member names refuse at any depth.
+2. **Provider authority widening.** Refused. Advertisements are revalidated against the frozen manifest; an unmanifested or altered descriptor fails the operation, and a provider cannot add a revision, choose a version, priority or implementation, replace a schema, or change risk, authorization, data-class ceiling or replay safety.
+3. **Arbitrary shell or `host.*` registration.** None. Ordinary registration refuses ProviderId `host` and any CapabilityId beginning `host.`; the manifest is the allowlist and is Rust-constructed with no deserializer.
+4. **Schema SSRF and filesystem access.** No path. Resolution is in-memory only under `https://serea.local/schemas/`, and `jsonschema` is built with `default-features = false`, so no HTTP, file or async resolver exists in the dependency.
+5. **Malformed or hostile JSON Schema.** Refused. Duplicate member names, non-2020-12 drafts, open objects, `patternProperties`, unbounded strings and arrays, cyclic refs, unprovable `oneOf` overlap and every limit overflow are typed refusals with no truncation.
+6. **Classification lowering.** Refused. The class is a trusted constructor argument, CREDENTIAL is refused at the boundary, a class above the descriptor ceiling is refused, and the prepared action records the exact trusted class rather than the ceiling.
+7. **CREDENTIAL reachability.** Refused. `DataClass::Credential` cannot cross the classification boundary or the preparation boundary.
+8. **Hot-update and restart authority switching.** Refused. A Task keeps its pinned generation for life; a new generation affects only Tasks created after it; a same-manifest restart reuses the active generation without a second activation event.
+9. **Root implementation switching.** None. Host eligibility is a trusted caller-supplied map keyed by descriptor digest, a missing entry is ineligible, and nothing infers eligibility from an implementation name.
+10. **Nondeterministic ordering.** Refused. Every user-visible ordering is an explicit sort or a B-tree key; permutation tests cover catalog, descriptor, manifest, provider registry, candidates, tool definitions and candidates-by-priority.
+11. **Sensitive diagnostics and events.** Refused. Rejections carry stable codes, member names and counts; the event bus re-bounds those names; model activity events refuse any class above PERSONAL; no prompt, argument or model content is persisted.
+12. **Accidental provider invocation.** None. Verified by source search and by provider doubles that panic on invocation.
+13. **Crate and dependency inversion.** One new direction, `task-engine -> capability`, frozen in both the workspace smoke test and the M20 closure test; the reverse edge is forbidden by both.
+14. **Legacy Task accidental rebinding.** Refused. A NULL-pinned Task fails closed on a capability Step, and storage independently refuses the bind.
+
+## P5 final nonclaims
+
+P5 does not implement policy, approvals or grants, duplicate suppression, repeated-action accounting, tool-call dispatch accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, credentials, Gmail, Calendar, an Android provider, Android standalone mode, Android-only memory, GoalLatch, or any real external effect. P6 has not started. P8 has not started. No P5 code path invokes a provider, and no hardware power-loss claim, `-shm` transfer claim or live-WAL portability claim is made.
+
+P5 registers no `host.goal.*` capability, adds no execution domain or origin-node concept, and introduces no assumption that a Mac is the only possible execution node.

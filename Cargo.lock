@@ -886,8 +886,10 @@ dependencies = [
 name = "serea-task-engine"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "rusqlite",
  "serde_json",
+ "serea-capability",
  "serea-event-bus",
  "serea-protocol",
  "serea-storage",

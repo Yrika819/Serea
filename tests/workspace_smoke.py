@@ -354,9 +354,16 @@ def main() -> int:
             for name, internal, is_dev in dependency_tables(manifest, shared, manifest_path):
                 if owner == PROTOCOL and internal:
                     failures.append(f"{PROTOCOL} depends on internal {name}; protocol is a leaf")
-                if owner == ENGINE and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS):
+                # P5E freezes one new direction, `task-engine -> capability`,
+                # so a Task can pin a registry generation and bind a capability
+                # Step. The reverse edge stays forbidden below.
+                if owner == ENGINE and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS, CAPABILITY):
                     failures.append(
-                        f"{ENGINE} has internal non-dev dependency {name}; only protocol/storage/event-bus are allowed"
+                        f"{ENGINE} has internal non-dev dependency {name}; only protocol/storage/event-bus/capability are allowed"
+                    )
+                if owner == CAPABILITY and name == ENGINE:
+                    failures.append(
+                        f"{CAPABILITY} depends on {ENGINE}; capability must never reach upward into the Task Engine"
                     )
                 if owner == ENGINE and name == "rusqlite" and not is_dev:
                     failures.append(f"{ENGINE} has non-dev dependency rusqlite; use storage instead")
@@ -402,9 +409,11 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P5B capability/protocol/storage/event-bus/task-engine/scheduler/model-router/testkit workspace; "
-          "event-bus protocol/storage-only; task-engine protocol/storage/event-bus; scheduler protocol/storage/event-bus/task-engine; "
-          "capability protocol/storage/event-bus; storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; "
+    print("OK: exact P5 capability/protocol/storage/event-bus/task-engine/scheduler/model-router/testkit workspace; "
+          "event-bus protocol/storage-only; task-engine protocol/storage/event-bus/capability; "
+          "scheduler protocol/storage/event-bus/task-engine; "
+          "capability protocol/storage/event-bus with no edge to the Task Engine; "
+          "storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; "
           "model-router protocol/storage/event-bus; testkit dev-only")
     return 0
 

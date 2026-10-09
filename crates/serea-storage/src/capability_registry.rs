@@ -5,10 +5,11 @@ use rusqlite::{OptionalExtension, params};
 use serea_protocol::{
     CapabilityDescriptor, CapabilityDescriptorDraft, CapabilityId, DescriptorDescription,
     DescriptorTitle, Digest, EpochMillis, ImplementationId, JsonSchemaRef, ProviderId, SemVer,
-    StepId, TaskId,
+    StepId, StepKind, TaskId, TaskState, TaskStep,
 };
 
-use crate::{Store, StoreError, Tx};
+use crate::task::one;
+use crate::{Store, StoreError, TransitionContext, Tx};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegistryGenerationDraft {
@@ -731,6 +732,186 @@ impl Tx<'_> {
             return Err(StoreError::RegistryTaskAlreadyPinned);
         }
         Ok(())
+    }
+
+    /// Whether any registry generation row has ever existed.
+    ///
+    /// This distinguishes a pre-P5 database, where a NULL Task pin is the
+    /// accepted legacy state, from a post-P5 database whose active generation
+    /// is missing, which must fail closed.
+    pub fn has_registry_generations(&mut self) -> Result<bool, StoreError> {
+        self.ensure_active()?;
+        self.inner
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM capability_registry_generations)",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|error| error.into())
+    }
+
+    /// Appends one capability Step row and binds it to `descriptor_digest` in
+    /// the caller's transaction, so no half-created capability Step is ever
+    /// observable.
+    ///
+    /// This is a narrow, typed operation, not a generic SQL seam: it takes one
+    /// Step and one already-resolved descriptor digest, reuses the ordinary
+    /// plan input validation, writes the input blob and step row through the
+    /// existing blob path, and refuses a Step that already exists. The caller
+    /// resolves the candidate; this method re-checks the pinned generation, the
+    /// descriptor revision, the live overlay and any existing binding exactly
+    /// as `bind_step_capability` does.
+    pub fn append_capability_step(
+        &mut self,
+        task_id: &TaskId,
+        step: &TaskStep,
+        input_json: &[u8],
+        descriptor_digest: &Digest,
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<StepCapabilityBinding, StoreError> {
+        let class = crate::task::task_class(&self.inner, task_id)?;
+        let state: String = self.inner.query_row(
+            "SELECT state FROM tasks WHERE task_id=?1",
+            [task_id.as_str()],
+            |r| r.get(0),
+        )?;
+        if state != TaskState::Planning.wire_name() {
+            return Err(StoreError::IllegalTaskTransition);
+        }
+        let before = self.load_task(task_id)?;
+        let next = before
+            .plan_revision
+            .checked_add(1)
+            .ok_or(StoreError::PlanRevisionOverflow)?;
+        if now < before.task.updated_at.to_epoch_millis() {
+            return Err(StoreError::InvalidTimestamp);
+        }
+        if &step.task_id != task_id {
+            return Err(StoreError::InvalidPlan);
+        }
+        // A Step already present durably, or already bound, is never rewritten.
+        let occupied: bool = self.inner.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_steps WHERE step_id=?1)",
+            [step.step_id.as_str()],
+            |r| r.get(0),
+        )?;
+        if occupied
+            || self
+                .get_step_capability_binding(task_id, &step.step_id)?
+                .is_some()
+        {
+            return Err(StoreError::InvalidPlan);
+        }
+        let sequence_taken: bool = self.inner.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_steps WHERE task_id=?1 AND sequence=?2)",
+            rusqlite::params![task_id.as_str(), step.sequence],
+            |r| r.get(0),
+        )?;
+        if sequence_taken {
+            return Err(StoreError::DuplicateSequence);
+        }
+        // Validate everything that needs no write before any write happens.
+        // validate_input canonicalises; the blob and the plan document then
+        // store that exact text, so they agree byte for byte.
+        let stored_input = crate::task::validate_input(task_id, step, input_json)?;
+        let revision = self
+            .get_descriptor_revision(descriptor_digest)?
+            .ok_or(StoreError::RegistryRevisionNotFound)?;
+        let descriptor = revision.descriptor().clone();
+        // The overlay, the pinned generation and the candidate facts are
+        // re-checked before the step row exists, so a refused binding leaves no
+        // step row behind.
+        let overlay = self.get_capability_overlay(descriptor.id())?;
+        if overlay.state != CapabilityOverlayState::Enabled
+            || (descriptor.experimental() && !overlay.experimental_opt_in)
+        {
+            return Err(StoreError::RegistryCapabilityUnavailable);
+        }
+        if step.kind != StepKind::Capability
+            || step.capability_id.as_ref() != Some(descriptor.id())
+            || step.capability_version.as_ref() != Some(descriptor.version())
+            || step.provider_id.as_ref() != Some(descriptor.provider_id())
+        {
+            return Err(StoreError::RegistryBindingRefused);
+        }
+        let input_blob = self.put_blob(stored_input.as_bytes(), class)?;
+        let changed = self.inner.execute(
+            "INSERT INTO task_steps(step_id,task_id,sequence,kind,status,attempt,plan_revision,
+                provider_id,capability_id,capability_version,idempotency_key,input_digest)
+                VALUES(?1,?2,?3,?4,'PLANNED',0,?5,?6,?7,?8,?9,?10)",
+            rusqlite::params![
+                step.step_id.as_str(),
+                task_id.as_str(),
+                step.sequence,
+                step.kind.wire_name(),
+                next,
+                step.provider_id.as_ref().map(|v| v.as_str()),
+                step.capability_id.as_ref().map(|v| v.as_str()),
+                step.capability_version.as_ref().map(|v| v.as_str()),
+                step.idempotency_key.as_ref().map(|v| v.as_str()),
+                step.input_digest.as_str()
+            ],
+        )?;
+        one(changed, StoreError::InvalidPlan)?;
+        self.inner.execute(
+            "INSERT INTO step_blob_refs(step_id,role,digest,data_class_rank) VALUES(?1,?2,?3,?4)",
+            rusqlite::params![
+                step.step_id.as_str(),
+                crate::task::input_role(step.kind),
+                input_blob.digest().as_str(),
+                class.rank()
+            ],
+        )?;
+        let updated = self.inner.execute(
+            "UPDATE tasks SET plan_revision=?1,updated_at_ms=?2 WHERE task_id=?3 AND state='PLANNING' AND plan_revision=?4",
+            rusqlite::params![next, now.get(), task_id.as_str(), before.plan_revision],
+        )?;
+        one(updated, StoreError::PlanRevisionConflict)?;
+        // The plan revision row is what keeps `plan_revision` and history
+        // consistent: an appended Step is a new plan revision, so its document
+        // records the steps this revision introduces alongside the ones it
+        // retains.
+        let document = crate::task::PlanDocument {
+            task_id: task_id.clone(),
+            revision: next,
+            steps: vec![crate::task::StoredInput {
+                step: step.clone(),
+                input_json: stored_input,
+            }],
+        };
+        let plan_json = crate::task::json_bytes(&document)?;
+        let blob = self.put_blob(&plan_json, class)?;
+        one(
+            self.inner.execute(
+                "INSERT INTO plan_revisions(task_id,plan_revision,created_at_ms,plan_digest,data_class_rank,step_count)
+                 VALUES(?1,?2,?3,?4,?5,?6)",
+                rusqlite::params![
+                    task_id.as_str(),
+                    next,
+                    now.get(),
+                    blob.digest().as_str(),
+                    class.rank(),
+                    u32::try_from(document.steps.len()).map_err(|_| StoreError::PlanRevisionOverflow)?
+                ],
+            )?,
+            StoreError::PlanRevisionConflict,
+        )?;
+        for role in ["PLAN", "PLAN_REVISION"] {
+            self.inner.execute(
+                "INSERT INTO task_blob_refs(task_id,role,digest,data_class_rank) VALUES(?1,?2,?3,?4)",
+                rusqlite::params![
+                    task_id.as_str(),
+                    role,
+                    blob.digest().as_str(),
+                    class.rank()
+                ],
+            )?;
+        }
+        // The step row now exists, so the binding trigger can verify it.
+        let binding = self.bind_step_capability(task_id, &step.step_id, descriptor_digest)?;
+        let _ = context;
+        Ok(binding)
     }
 
     pub fn get_step_capability_binding(

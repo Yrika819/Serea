@@ -4,11 +4,12 @@ use crate::{
 };
 use serea_event_bus::EventBus;
 use serea_protocol::{
-    AssistantTask, BlockedReason, DeviceId, EpochMillis, LeaseOwner, StepId, TaskId, TaskKind,
-    TaskOriginKind, TaskState, Timestamp,
+    AssistantTask, BlockedReason, DeviceId, EpochMillis, LeaseOwner, StepId, StepKind, StepStatus,
+    TaskId, TaskKind, TaskOriginKind, TaskState, TaskStep, TaskStepDraft, Timestamp,
 };
 use serea_storage::{
     DeviceSessionResumeWake, EventDraft, PlanWrite, ScheduleOccurrenceLease, StepInput, Store,
+    StoreError,
 };
 
 /// Owns lifecycle orchestration, not identifier entropy, clocks or effect execution.
@@ -23,6 +24,17 @@ impl TaskEngine {
         Self { store, event_bus }
     }
 
+    /// Creates a Task, pinning the active capability registry generation in the
+    /// same transaction as the Task row.
+    ///
+    /// Three durable cases, distinguished by what the database already holds:
+    ///
+    /// * a post-P5 database with an active generation pins that generation, so
+    ///   the Task is never transiently usable for capability planning without
+    ///   one and can never be silently attached to a later "current" value;
+    /// * a post-P5 database whose active generation is missing fails closed;
+    /// * a genuinely pre-P5 database that has never held a generation keeps the
+    ///   accepted legacy NULL pin.
     pub fn create_task(
         &mut self,
         spec: NewTask,
@@ -31,15 +43,180 @@ impl TaskEngine {
         let task = task_from_spec(spec);
         self.store
             .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
-                tx.insert_task(&task, context)
+                let active = if tx.has_registry_generations()? {
+                    Some(
+                        tx.current_registry_generation()?
+                            .ok_or(StoreError::RegistryGenerationNotFound)?,
+                    )
+                } else {
+                    None
+                };
+                let snapshot = tx.insert_task(&task, context)?;
+                if let Some(active) = active {
+                    tx.pin_task_registry_generation(&task.task_id, active.generation_id())?;
+                }
+                Ok(snapshot)
             })
             .map(TaskRecord::from)
-            .map_err(EngineError::from)
+            .map_err(|error| match error {
+                StoreError::RegistryGenerationNotFound => EngineError::NoActiveCapabilityGeneration,
+                other => EngineError::from(other),
+            })
+    }
+
+    /// Creates a post-P5 Task and pins the active capability registry
+    /// generation in the same transaction as the Task row.
+    ///
+    /// The pin and the Task become durable together or not at all, so a Task is
+    /// never transiently usable for capability planning without a generation.
+    /// When no generation is active this fails closed: the Task is never created
+    /// unpinned and is never silently attached to a later "current" generation.
+    pub fn create_task_with_capability_pinning(
+        &mut self,
+        spec: NewTask,
+        expected_active_generation: Option<i64>,
+        context: &TransitionContext<'_>,
+    ) -> Result<TaskRecord, EngineError> {
+        let task = task_from_spec(spec);
+        self.store
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
+                // Storage has no dedicated "no active generation" code, so the
+                // condition travels as its nearest typed refusal and is mapped
+                // back to the specific engine outcome below.
+                let active = tx
+                    .current_registry_generation()?
+                    .ok_or(StoreError::RegistryGenerationNotFound)?;
+                if let Some(expected) = expected_active_generation {
+                    if expected != active.generation_id() {
+                        return Err(StoreError::RegistryGenerationNotFound);
+                    }
+                }
+                let snapshot = tx.insert_task(&task, context)?;
+                tx.pin_task_registry_generation(&task.task_id, active.generation_id())?;
+                Ok(snapshot)
+            })
+            .map(TaskRecord::from)
+            .map_err(|error| match error {
+                StoreError::RegistryGenerationNotFound => EngineError::NoActiveCapabilityGeneration,
+                other => EngineError::from(other),
+            })
+    }
+
+    /// Creates one capability Step for an existing Task and binds it, in one
+    /// durable operation.
+    ///
+    /// The Task's pinned generation selects the descriptor: an unpinned legacy
+    /// Task fails closed rather than borrowing the current generation. The
+    /// candidate comes from the frozen availability snapshot, so overlay,
+    /// experimental opt-in, provider health, exact advertisement and host
+    /// eligibility all gate the NEW binding, while an already-bound Step keeps
+    /// its exact revision regardless of later changes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_capability_step(
+        &mut self,
+        snapshot: &serea_capability::CapabilityAvailabilitySnapshotV1,
+        task_id: TaskId,
+        step_id: StepId,
+        sequence: u32,
+        capability_id: &serea_protocol::CapabilityId,
+        input_json: &[u8],
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<serea_storage::StepCapabilityBinding, EngineError> {
+        use serde_json::Value;
+        // The host resolves the pinned descriptor before any row is written.
+        let resolution =
+            snapshot
+                .resolve(capability_id)
+                .map_err(|_| EngineError::CapabilityUnavailable {
+                    capability_id: capability_id.clone(),
+                })?;
+        let pinned = self
+            .store
+            .get_task_registry_generation(&task_id)
+            .map_err(EngineError::from)?
+            .ok_or(EngineError::UnpinnedTaskCannotBindCapability)?;
+        let raw = std::str::from_utf8(input_json).map_err(|_| EngineError::InvalidPlan)?;
+        let arguments: Value = serde_json::from_str(raw).map_err(|_| EngineError::InvalidPlan)?;
+        let arguments = arguments
+            .as_object()
+            .ok_or(EngineError::InvalidPlan)?
+            .clone();
+        let classified = serea_capability::ClassifiedArgumentsV1::new_trusted(
+            arguments,
+            resolution.descriptor.data_class(),
+        );
+        // Preparation proves the arguments against the resolved descriptor and
+        // yields the exact pinned facts; it grants no execution authority.
+        let prepared = serea_capability::prepare_action(
+            snapshot,
+            capability_id,
+            task_id.clone(),
+            step_id.clone(),
+            &classified,
+            serea_protocol::RequestedBy::Model,
+            None,
+            None,
+        )
+        .map_err(|_| EngineError::CapabilityUnavailable {
+            capability_id: capability_id.clone(),
+        })?;
+        let _ = pinned;
+        let step = TaskStep::new(TaskStepDraft {
+            task_id: task_id.clone(),
+            step_id: step_id.clone(),
+            sequence,
+            kind: StepKind::Capability,
+            status: StepStatus::new("PLANNED").map_err(|_| EngineError::InvalidPlan)?,
+            attempt: 0,
+            idempotency_key: Some(prepared.idempotency_key().clone()),
+            provider_id: Some(prepared.provider_id().clone()),
+            capability_id: Some(capability_id.clone()),
+            capability_version: Some(prepared.capability_version().clone()),
+            input_digest: prepared.arguments_digest().clone(),
+            result_digest: None,
+            side_effect_receipt: None,
+            started_at: None,
+            completed_at: None,
+            lease_owner: None,
+            lease_expires_at: None,
+            lease_generation: None,
+            error: None,
+            extensions: [].into(),
+        })
+        .map_err(|_| EngineError::InvalidPlan)?;
+        self.store
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
+                // The binding and the Step row commit together or not at all, so
+                // no half-created capability Step is ever observable.
+                tx.append_capability_step(
+                    &task_id,
+                    &step,
+                    input_json,
+                    &resolution.descriptor_digest,
+                    now,
+                    context,
+                )
+                .map_err(|error| match error {
+                    serea_storage::StoreError::RegistryCapabilityUnavailable => {
+                        StoreError::RegistryBindingRefused
+                    }
+                    serea_storage::StoreError::RegistryTaskUnpinned => {
+                        StoreError::RegistryTaskUnpinned
+                    }
+                    other => other,
+                })
+            })
+            .map_err(|error| match error {
+                StoreError::RegistryBindingRefused => EngineError::CapabilityUnavailable {
+                    capability_id: capability_id.clone(),
+                },
+                StoreError::RegistryTaskUnpinned => EngineError::UnpinnedTaskCannotBindCapability,
+                other => EngineError::from(other),
+            })
     }
 
     /// Creates a scheduled task and commits its occurrence mapping with the
-    /// ordinary task journal and lifecycle Event participant. A retry after a
-    /// lost commit response returns the mapped task instead of inserting again.
     pub fn create_scheduled_task(
         &mut self,
         spec: NewTask,

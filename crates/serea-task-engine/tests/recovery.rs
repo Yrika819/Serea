@@ -2019,7 +2019,7 @@ fn race_outcome(order: Option<bool>) {
             );
         }
         Some(true) => assert_eq!(
-            committed.as_ref().err().copied(),
+            committed.as_ref().err().cloned(),
             Some(EngineError::Store(StoreError::LeaseFenced)),
             "forced recovery-first must fence the old outcome"
         ),
@@ -2481,17 +2481,34 @@ fn m20_recovery_dependency_and_source_closure_has_no_execution_or_upward_runtime
     ] {
         let manifest = std::fs::read_to_string(root.join(relative)).unwrap();
         let production = manifest.split("[dev-dependencies]").next().unwrap();
-        for forbidden in [
-            "serea-capability",
-            "serea-model-router",
-            "serea-provider",
-            "serea-core",
-            "serea-scheduler",
-            "serea-device",
-            "reqwest",
-            "tokio",
-            "serea-testkit",
-        ] {
+        // P5E freezes the direction `task-engine -> capability` so a Task can
+        // pin a generation and bind a Step. Every other upward edge stays
+        // forbidden, and no crate may point back at the Task Engine.
+        let forbidden: &[&str] = if relative == "Cargo.toml" {
+            &[
+                "serea-model-router",
+                "serea-provider",
+                "serea-core",
+                "serea-scheduler",
+                "serea-device",
+                "reqwest",
+                "tokio",
+                "serea-testkit",
+            ]
+        } else {
+            &[
+                "serea-capability",
+                "serea-model-router",
+                "serea-provider",
+                "serea-core",
+                "serea-scheduler",
+                "serea-device",
+                "reqwest",
+                "tokio",
+                "serea-testkit",
+            ]
+        };
+        for forbidden in forbidden {
             assert!(
                 !production.contains(forbidden),
                 "upward/runtime dependency {forbidden} in {relative}"
@@ -2504,6 +2521,14 @@ fn m20_recovery_dependency_and_source_closure_has_no_execution_or_upward_runtime
             );
         }
     }
+    // The P5E direction is one-way: the capability crate must never name the
+    // Task Engine, so P6/P8 dispatch cannot be reached from registry authority.
+    let capability_manifest =
+        std::fs::read_to_string(root.join("../serea-capability/Cargo.toml")).unwrap();
+    assert!(
+        !capability_manifest.contains("serea-task-engine"),
+        "capability must never depend on the Task Engine"
+    );
     let production = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     assert!(
         production

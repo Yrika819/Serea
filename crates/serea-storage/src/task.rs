@@ -54,16 +54,16 @@ pub struct PlanRevisionSnapshot {
 // current step refs. Removing a step must not erase its specification/history.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PlanDocument {
-    task_id: TaskId,
-    revision: u32,
-    steps: Vec<StoredInput>,
+pub(crate) struct PlanDocument {
+    pub(crate) task_id: TaskId,
+    pub(crate) revision: u32,
+    pub(crate) steps: Vec<StoredInput>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StoredInput {
-    step: TaskStep,
-    input_json: String,
+pub(crate) struct StoredInput {
+    pub(crate) step: TaskStep,
+    pub(crate) input_json: String,
 }
 
 const TASK_MEMBERS: &[&str] = &[
@@ -98,7 +98,7 @@ fn ordinary_class(class: DataClass) -> Result<(), StoreError> {
         DataClass::Secret | DataClass::Credential => Err(StoreError::ClassRefused),
     }
 }
-fn task_class(conn: &Connection, task_id: &TaskId) -> Result<DataClass, StoreError> {
+pub(crate) fn task_class(conn: &Connection, task_id: &TaskId) -> Result<DataClass, StoreError> {
     let rank: i64 = conn
         .query_row(
             "SELECT data_class_rank FROM tasks WHERE task_id=?1",
@@ -115,7 +115,7 @@ fn task_class(conn: &Connection, task_id: &TaskId) -> Result<DataClass, StoreErr
         _ => Err(StoreError::CorruptRow),
     }
 }
-fn json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
+pub(crate) fn json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
     let bytes = serde_json::to_vec(value).map_err(|_| StoreError::CanonicalJson)?;
     canonicalize(std::str::from_utf8(&bytes).map_err(|_| StoreError::CanonicalJson)?)
         .map_err(|_| StoreError::CanonicalJson)
@@ -144,7 +144,7 @@ fn optional_timestamp(value: Option<i64>) -> Result<Value, StoreError> {
         .transpose()
         .map(|v| v.unwrap_or(Value::Null))
 }
-fn one(changed: usize, error: StoreError) -> Result<(), StoreError> {
+pub(crate) fn one(changed: usize, error: StoreError) -> Result<(), StoreError> {
     if changed == 1 { Ok(()) } else { Err(error) }
 }
 fn valid_task(task: &AssistantTask) -> Result<(), StoreError> {
@@ -192,14 +192,18 @@ fn capability_shaped(kind: StepKind) -> bool {
         StepKind::Capability | StepKind::Delegate | StepKind::Verify
     )
 }
-fn input_role(kind: StepKind) -> &'static str {
+pub(crate) fn input_role(kind: StepKind) -> &'static str {
     if capability_shaped(kind) {
         "ARGUMENTS"
     } else {
         "INSTRUCTION"
     }
 }
-fn validate_input(task: &TaskId, step: &TaskStep, bytes: &[u8]) -> Result<String, StoreError> {
+pub(crate) fn validate_input(
+    task: &TaskId,
+    step: &TaskStep,
+    bytes: &[u8],
+) -> Result<String, StoreError> {
     TaskStep::new(TaskStepDraft::from(step.clone())).map_err(|_| StoreError::InvalidPlan)?;
     if &step.task_id != task || !known_status(step) {
         return Err(StoreError::InvalidPlan);

@@ -240,3 +240,54 @@ Focused GREEN evidence:
 ## P5D nonclaims
 
 P5D does not implement TaskEngine generation pinning, Step creation integration, policy, approval or grants, duplicate suppression, repeated-action accounting, tool-call accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, Gmail, Calendar, an Android provider, Android standalone mode, or GoalLatch. Preparation is a P6 input, not an approval: no PolicyDecision, no approval state and no execution permission exists in P5.
+
+## P5E implementation checkpoint
+
+- New P5E source: `serea-task-engine` gains `create_task_with_capability_pinning` and `create_capability_step`. `serea-storage` gains one narrow typed operation, `Tx::append_capability_step`, plus a `has_registry_generations` read.
+- No new migration. Schema version remains 4 with the same four checksums.
+- Crate direction: P5E freezes the single new edge `serea-task-engine -> serea-capability`. The reverse edge is now forbidden by both the workspace smoke test and the M20 closure test, which were updated from the pre-P5 rule that forbade any such edge.
+
+### Generation pinning
+
+- `create_task` pins the active generation in the same transaction as the Task row, and distinguishes three durable cases: a post-P5 database with an active generation pins it; a post-P5 database whose active generation is missing fails closed with `NoActiveCapabilityGeneration`; a genuinely pre-P5 database that has never held a generation keeps the accepted legacy NULL pin.
+- `create_task_with_capability_pinning` is the strict constructor: it always requires an active generation and can assert the caller's expected one.
+- The pin and the Task row become durable together or not at all, so a Task is never transiently usable for capability planning without a generation and is never silently attached to a later "current" value.
+- A legacy NULL-pinned Task may continue non-capability work but fails closed with a typed outcome when a capability Step is attempted; storage independently refuses the bind with `RegistryTaskUnpinned`.
+
+### Capability Step creation and binding
+
+- `create_capability_step` resolves the capability through the frozen availability snapshot, prepares the arguments through the P5D trusted path, and writes the Step row and its immutable binding in one storage transaction. A half-created capability Step is therefore not observable.
+- The narrow storage operation re-checks the pinned generation, the descriptor revision, the live overlay and the experimental opt-in before writing, refuses a Step that already exists or is already bound, writes the input blob and plan-revision document through the existing blob path, and then binds. The P5B trigger still independently verifies that the binding facts match the Step row, the Task pin and the generation membership.
+- A duplicate Step is refused and never rebound; the existing binding is unchanged.
+- Disable or remove after binding leaves the binding intact: an already-bound Step keeps its exact revision through every later change. Disable, remove, degraded provider and ineligible host each refuse only NEW bindings.
+- Hot update: a Task created before a new generation activates stays on its own generation, and a Task created after uses the new one.
+
+### Storage boundary judgment
+
+Making the Step row and the binding atomic needed one new storage method. `put_plan_revision` is the only pre-existing step-write path and requires the caller to supply the entire plan, while `StepSnapshot` does not carry `input_json`, so an append could not be expressed through it without either losing existing inputs or rewriting the plan. The added operation is narrow and typed — one Step plus one already-resolved descriptor digest, reusing the existing plan input validation, blob and revision machinery — and is not a generic SQL seam, a mutable descriptor update or a registry delete. No schema change was involved.
+
+## P5E TDD evidence
+
+RED evidence captured before the integration existed:
+
+- `cargo test -p serea-task-engine --test p5e_capability_binding` failed to compile because neither engine operation, the new engine errors nor the store handle for an independent connection existed.
+
+Defects found by the first GREEN runs and fixed:
+
+- The first binding attempt inserted the binding before the Step row, which the P5B trigger correctly refused; the operation now writes the Step row first and binds after, while still validating every gate before any write.
+- The first append advanced `plan_revision` without a `plan_revisions` row, which `load_history` correctly detects as corruption; the operation now writes the plan-revision document and blob references through the ordinary path.
+- `EngineError` could no longer derive `Copy` once it carried a `CapabilityId`, so one existing recovery test that used `.copied()` was updated to `.cloned()`.
+- The M20 closure test and the workspace smoke test both encoded the pre-P5 rule that the Task Engine may not depend on the capability crate; both were updated to the frozen P5E direction while keeping the reverse edge forbidden.
+
+Focused GREEN evidence:
+
+- `cargo test -p serea-task-engine --test p5e_capability_binding` — 11 passed, covering pinning at creation, fail-closed creation without an active generation, restart persistence, a legacy NULL-pinned Task, exact binding to the pinned generation descriptor, disable-before-binding, remove-before-binding, provider degraded before binding, an existing binding surviving a later disable, hot update across two generations, duplicate-step refusal, and the zero-invoke proof.
+- `cargo test -p serea-task-engine` — 147 passed across all suites.
+- `cargo test -p serea-storage` — 472 passed.
+- `cargo test -p serea-scheduler` — 45 passed, so scheduler Task creation is unaffected.
+- Clippy for capability, task-engine and storage with `--all-targets --all-features -D warnings`, the MSRV 1.85 workspace clippy with `--locked --offline`, `cargo fmt --all -- --check`, docs validation, workspace smoke and its 76 unit tests, the commit identity guard and `git diff --check` all pass.
+- Zero-invoke holds: every P5E provider panics if invoked, and no P5 production path calls `CapabilityProvider::invoke`.
+
+## P5E nonclaims
+
+P5E does not implement policy, approval or grants, duplicate suppression, repeated-action accounting, tool-call accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, Gmail, Calendar, an Android provider, Android standalone mode, or GoalLatch. Binding a Step is not approval and not execution authority.

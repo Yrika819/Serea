@@ -452,3 +452,22 @@ The fixture now initializes its schema before the concurrent install race and re
 The follow-up is commit `134084d16f10676ea5220cb6956658e4c225e60b`. Its local focused concurrency test, full capability suite (154 integration tests), strict capability Clippy, format check, docs validator, commit identity check, and diff check pass. Exact behavior-head CI is green: Fast run `37952129955`; Full run `37952129987` (Linux stable, Linux MSRV 1.85, macOS Intel x86_64, macOS arm64, release fault proof, and identity guard); cross-architecture SQLite run `37952129851` (Intel producer to arm64 consumer and arm64 producer to Intel consumer).
 
 Final closure evidence commit `a1e1f48e8004e76d6d068ea737545af74e193b4f` was also fully green on its exact head: Fast run `37953123095`; Full run `37953123018` (Linux stable, Linux MSRV 1.85, macOS Intel x86_64, macOS arm64, release fault proof, and identity guard); cross-architecture SQLite run `37953122921`, both transfer directions. The PR remains open, ready for review, and unmerged. P5 repair is **CLOSED_ON_BRANCH**; P6 and P8 remain **NOT STARTED**. This closure document update is followed by one last exact-final-head validation; its result is in the final repair report.
+
+## Post-merge main validation
+
+PR #5 was merged with a merge commit on 2026-10-09. Merge commit: `2b196e1f952d5514f89ee00738241a761003c70c`.
+
+Parents (verified from the merge commit):
+
+- First parent (`main` before merge): `86ef2f47993bd59921470dbabe8a42d8702aec6a`.
+- Second parent (final P5 branch HEAD): `d446ae20b4c156d288210ea9a7a3fc92787b6ce4`.
+
+Migration checksums on the merged P5 tree: 0001 `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea`; 0002 `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67`; 0003 `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80`; amended 0004 `06b22fa682564290b71a26825a777f7a295220bd02f4c6c614d234b73001685f`. Schema version is 4; migration 0005 is absent.
+
+On exact merge HEAD `2b196e1f952d5514f89ee00738241a761003c70c`, all authoritative GitHub Actions checks passed:
+
+- Fast CI: run `37960491517` — GREEN.
+- Full CI: run `37960491429` — GREEN: Linux stable, Linux MSRV 1.85, macOS Intel x86_64, macOS arm64, release fault proof, and identity guard.
+- Cross-architecture SQLite: run `37960491547` — GREEN in both directions (Intel producer to arm64 consumer; arm64 producer to Intel consumer).
+
+No `-shm`, live-WAL portability, or hardware power-loss claim is made. The `p5/capability-registry` branch is retained. This merge-head validation is distinct from the final-main validation that must run after this evidence commit becomes main HEAD.

@@ -167,3 +167,68 @@ Focused GREEN evidence:
 ## P5C nonclaims
 
 P5C does not implement ToolDefinitionV1 projection, ToolCallProposalV1 parsing, the MODEL_SCHEMA_VIOLATION runtime path, ClassifiedArgumentsV1, PreparedActionV1, TaskEngine generation pinning, Step creation integration, policy, approval, duplicate suppression, repeated-action accounting, tool-call accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, Gmail, Calendar, an Android provider, Android standalone mode, or GoalLatch.
+
+## P5D implementation checkpoint
+
+- New P5D source: `strict_json.rs`, `proposal.rs`, `tool_definition.rs`, `preparation.rs`, `violation.rs`. `serea-event-bus` gains one content-free event draft, `draft_model_schema_violation`.
+- No new migration. Schema version remains 4 with the same four checksums. No architecture change beyond ADR-0034/0035/0036.
+- `serea-capability` runtime dependencies are unchanged: protocol, storage, event-bus, serde, serde_json, sha2, jsonschema. `serea-testkit`, `async-trait` and `serde_json` (test ergonomics) are dev-only.
+
+### Tool definition projection
+
+- `ToolDefinitionV1` carries exactly `version`, `capability_id`, `title`, `description` and `input_schema`. Provider, implementation, capability version, risk, side effect, authorization, replay safety, root, idempotency, credential and policy facts are absent by construction, and a test asserts the rendered projection never contains them.
+- Definitions sort by CapabilityId UTF-8 byte order.
+- Visibility requires a resolvable candidate in the frozen snapshot, which already applies the current live overlay, experimental opt-in, provider health, exact advertisement and host eligibility. Policy and approval are deliberately not consulted: visibility grants no authority. A capability with no usable candidate is simply not projected rather than being an error.
+
+### Tool call proposal
+
+- `ToolCallProposalV1` parses exactly `version: "1"`, `capability_id` and an object-root `arguments`. The parser is a duplicate-name-rejecting deserializer, so a repeated member name at any depth refuses the whole proposal.
+- Any member outside the three declared names refuses the whole proposal. Nothing is stripped and parsing never continues with a partial result. Every host-resolved field named by Capability Protocol §4.2 and ADR-0035 has an explicit negative test: request_id, task_id, step_id, capability_version, provider_id, implementation_id, risk_class, side_effect_class, required_authorization, replay_safety, arguments_digest, idempotency_key, data_class, requested_by, deadline_ms, approval, policy, credential_handle, descriptor_digest, descriptor, generation_id, risk and authorization.
+- `ActionRequest` is never deserialized from model JSON. The proposal type exposes only the three declared facts.
+- Rejections are whole-proposal refusals carrying a stable code, the offending member NAMES and a count. Values, arguments, the raw proposal and prompts never appear in a rejection or an event.
+
+### MODEL_SCHEMA_VIOLATION
+
+- The frozen `EventKind::ModelSchemaViolation` now has a content-free draft. The payload carries the common model attempt metadata, the optional StepId, the stable violation code, the offending member names and their count, and nothing else.
+- Names are bounded and filtered twice: once when the rejection is built, and again in the event bus, which is the last point where model-derived text could reach a durable record. A hostile 500-byte member name is dropped rather than echoed.
+- Model activity events still refuse any class above PERSONAL, so a higher-class proposal cannot be recorded as an activity event at all. If the append fails, the proposal still produces no prepared action.
+
+### Classification and preparation
+
+- `ClassifiedArgumentsV1` wraps arguments with the trusted class of their source. The only constructor takes that class explicitly; there is no model-derived path and no field-name heuristic that could prove safety. Unknown provenance is expressed as `CREDENTIAL`, the fail-closed default.
+- `prepare_action` resolves the capability through the frozen snapshot, refuses `CREDENTIAL` arguments, refuses an argument class above the descriptor's reviewed ceiling, validates arguments against the descriptor's trusted input schema, canonicalizes with SCJ-1, derives the arguments digest and the exact IDK-1, computes the effective deadline, and pins every authority fact.
+- The effective deadline is the minimum of the descriptor's `max_duration_ms`, any stricter caller deadline and the remaining Task budget. A zero result is refused; nothing overflows and no model input participates.
+- Arguments that cannot be represented canonically fail closed. A fractional number inside the schema's accepted domain is refused as `ARGUMENTS_NOT_CANONICAL` rather than rounded or reformatted.
+- `PreparedActionV1` carries TaskId, StepId, generation digest, descriptor revision digest, capability, version, provider, optional implementation, validated arguments, arguments digest, IDK-1, the exact trusted argument class, RequestedBy, the effective deadline, and the pinned side-effect, risk, authorization, replay, root, idempotency and cost facts. It has no RequestId, no approval state, no PolicyDecision and no execution permission: the type offers no accessor for any of them.
+- The argument class recorded is the exact trusted class, never the ceiling by coincidence and never lowered. `RequestedBy` is provenance and does not change the logical idempotency meaning: the same task, step and arguments derive the same IDK-1 regardless of requester.
+
+## P5D TDD evidence
+
+RED evidence captured before each subsystem existed:
+
+- `cargo test -p serea-capability --test p5d_tool_definitions` failed to compile because `ToolDefinitionV1` and `provider_tools` did not exist.
+- `cargo test -p serea-capability --test p5d_proposal` failed to compile because `ToolCallProposalV1`, `ProposalRejection` and `parse_tool_call_proposal` did not exist.
+- `cargo test -p serea-capability --test p5d_preparation` failed to compile because `ClassifiedArgumentsV1`, `PreparedActionV1`, `PreparationError` and `prepare_action` did not exist.
+- `cargo test -p serea-capability --test p5d_violation` failed to compile because `ModelSchemaViolation` and `record_schema_violation` did not exist.
+
+Defects found by the first GREEN runs and fixed:
+
+- The tool projection originally failed the whole projection when one capability had no candidate; a hidden or unavailable capability must simply not be projected.
+- The shared strict parser was first written privately inside the catalog module; the proposal path needs the same duplicate-name rejection, so it became `strict_json.rs` and both paths now use one implementation.
+- The first preparation signature tried to recover the capability from the arguments wrapper, which is not where a proposal's capability lives; the host-resolved CapabilityId is now an explicit argument.
+- `SCJ-1` refusal was originally mapped to a generic error; it is now its own typed `ArgumentsNotCanonical` outcome so a non-representable argument set can never be confused with a schema violation.
+
+Focused GREEN evidence:
+
+- `cargo test -p serea-capability --test p5d_tool_definitions` — 7 passed.
+- `cargo test -p serea-capability --test p5d_proposal` — 13 passed, including 24 authority-field injections and the sanitization of rejection diagnostics.
+- `cargo test -p serea-capability --test p5d_preparation` — 14 passed.
+- `cargo test -p serea-capability --test p5d_violation` — 7 passed.
+- `cargo test -p serea-capability` — 126 passed in total, covering P5B, P5C and P5D.
+- `cargo test -p serea-event-bus` — 13 passed.
+- `cargo clippy -p serea-capability -p serea-event-bus --all-targets --all-features -- -D warnings`, the MSRV 1.85 workspace clippy with `--locked --offline`, `cargo fmt --all -- --check`, docs validation, workspace smoke, the commit identity guard and `git diff --check` all pass.
+- Zero-invoke is preserved: the scripted providers in every P5D test panic if invoked, and no production path in `serea-capability` calls `CapabilityProvider::invoke`.
+
+## P5D nonclaims
+
+P5D does not implement TaskEngine generation pinning, Step creation integration, policy, approval or grants, duplicate suppression, repeated-action accounting, tool-call accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, Gmail, Calendar, an Android provider, Android standalone mode, or GoalLatch. Preparation is a P6 input, not an approval: no PolicyDecision, no approval state and no execution permission exists in P5.

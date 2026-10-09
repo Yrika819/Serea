@@ -5,9 +5,11 @@
 //! The manifest is the sole authority for which capabilities may exist
 //! (ADR-0034). Providers may confirm, withdraw, or report health; they never
 //! create authority. Schema resolution is in-memory only under
-//! `https://serea.local/schemas/` (ADR-0035). No provider is ever invoked
-//! here: P8 is the first phase permitted to call `CapabilityProvider::invoke`,
-//! and tool projection/preparation is P5D.
+//! `https://serea.local/schemas/`. Model-authored proposals are parsed as a
+//! closed three-field shape, classified across a trusted boundary, and
+//! prepared into an immutable `PreparedActionV1` (ADR-0035). No provider is
+//! ever invoked here: P8 is the first phase permitted to call
+//! `CapabilityProvider::invoke`.
 
 #![forbid(unsafe_code)]
 
@@ -19,10 +21,23 @@ pub mod availability;
 pub mod digests;
 pub mod install;
 pub mod manifest;
+pub mod preparation;
+pub mod proposal;
 pub mod provider;
 pub mod schema_catalog;
+pub mod strict_json;
+pub mod tool_definition;
+pub mod violation;
 
 pub use install::{InstallError, InstallOutcome, install};
+pub use preparation::{ClassifiedArgumentsV1, PreparationError, PreparedActionV1, prepare_action};
+pub use proposal::{
+    ProposalRejection, TOOL_CALL_PROPOSAL_VERSION, ToolCallProposalV1, parse_tool_call_proposal,
+};
+pub use tool_definition::{
+    TOOL_DEFINITION_VERSION, ToolDefinitionV1, ToolProjectionError, provider_tools,
+};
+pub use violation::{ModelSchemaViolation, record_schema_violation};
 
 pub use availability::{
     CapabilityAvailabilitySnapshotV1, HostEligibility, Resolution, ResolveError,

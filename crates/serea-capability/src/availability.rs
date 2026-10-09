@@ -152,6 +152,38 @@ impl CapabilityAvailabilitySnapshotV1 {
         })
     }
 
+    /// Every CapabilityId the frozen manifest knows, ordered by UTF-8 byte
+    /// order so projections over it are deterministic.
+    pub fn manifest_capability_ids(&self) -> Vec<CapabilityId> {
+        let mut ids: Vec<CapabilityId> = Vec::new();
+        for entry in self.manifest.entries() {
+            if !ids.iter().any(|id| id == entry.descriptor.id()) {
+                ids.push(entry.descriptor.id().clone());
+            }
+        }
+        ids.sort_by(|a, b| a.as_str().as_bytes().cmp(b.as_str().as_bytes()));
+        ids
+    }
+
+    /// The parsed trusted schema document for `uri`, or `None` when the frozen
+    /// catalog does not hold it. Callers receive catalog bytes only; nothing
+    /// here resolves a URI outside the catalog.
+    pub fn catalog_schema(&self, uri: &str) -> Option<serde_json::Value> {
+        self.manifest.catalog().document(uri).cloned()
+    }
+
+    /// The frozen manifest this snapshot was built from.
+    pub fn manifest(&self) -> &CapabilityManifestV1 {
+        &self.manifest
+    }
+
+    /// A compiled validator for one trusted catalog document, or `None` when
+    /// the catalog does not hold it or it does not compile. Resolution is
+    /// in-memory only; nothing here reads a URI outside the catalog.
+    pub fn input_schema_validator(&self, uri: &str) -> Option<jsonschema::Validator> {
+        self.manifest.catalog().validator(uri)
+    }
+
     /// Version from manifest default; implementation from candidate_priority
     /// ordering. Never falls back to another version.
     pub fn resolve(&self, capability_id: &CapabilityId) -> Result<Resolution, ResolveError> {

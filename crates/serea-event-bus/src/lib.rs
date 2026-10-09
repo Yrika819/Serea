@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use serea_protocol::{
     Actor, ActorId, ActorKind, CostClass, DataClass, EnvelopeVersion, EpochMillis, EventId,
     EventKind, FinishReason, IdMinter, ModelErrorCode, ModelId, ModelPurpose, ProviderId,
-    RequestId, ScheduleId, SemVer, Seq, SereaEvent, TaskId, TaskState, Timestamp, Trace,
+    RequestId, ScheduleId, SemVer, Seq, SereaEvent, StepId, TaskId, TaskState, Timestamp, Trace,
     UlidSource, WireSurface,
 };
 use serea_storage::{
@@ -171,6 +171,26 @@ pub struct ModelOutputInvalidEventV1 {
     pub metadata: ModelEventMetadataV1,
     /// Number of bounded host validation diagnostics, from zero through 32.
     pub diagnostic_count: u8,
+}
+
+/// Content-free facts for one refused model-authored tool-call proposal
+/// (`MODEL_SCHEMA_VIOLATION`, ADR-0035).
+///
+/// The payload carries the stable violation code, the offending member NAMES
+/// and their count, and nothing else. It never carries the offending values,
+/// the arguments, the raw proposal, the prompt or any model content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSchemaViolationEventV1 {
+    /// Common host-selected attempt facts.
+    pub metadata: ModelEventMetadataV1,
+    /// The step the refused proposal belonged to, when one was bound.
+    pub step_id: Option<StepId>,
+    /// Stable content-free violation code.
+    pub violation_code: String,
+    /// Offending member names only, bounded by the caller.
+    pub offending_field_names: Vec<String>,
+    /// How many names are listed, when more were found than are listed.
+    pub offending_field_count: u32,
 }
 
 /// Content-free host fact that a structured response was accepted after repair.
@@ -481,6 +501,69 @@ impl EventBus {
             Value::from(failure.diagnostic_count),
         );
         self.draft_model_event(failure.metadata, EventKind::ModelOutputInvalid, payload)
+    }
+
+    /// Builds the sanitized `MODEL_SCHEMA_VIOLATION` event for one refused
+    /// model-authored tool-call proposal.
+    ///
+    /// The caller's names are bounded again here: this is the last place model-
+    /// derived text could enter a durable record, so it re-checks shape, length
+    /// and count rather than trusting the caller's filtering.
+    pub fn draft_model_schema_violation(
+        &self,
+        violation: ModelSchemaViolationEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        const MAX_NAMES: usize = 8;
+        const MAX_NAME_BYTES: usize = 64;
+        if violation.offending_field_count as usize > 64 {
+            return Err(StoreError::InvalidModelCall);
+        }
+        if violation.offending_field_names.len() > MAX_NAMES {
+            return Err(StoreError::InvalidModelCall);
+        }
+        if violation.violation_code.is_empty() || violation.violation_code.len() > MAX_NAME_BYTES {
+            return Err(StoreError::InvalidModelCall);
+        }
+        if !violation
+            .violation_code
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte == b'_')
+        {
+            return Err(StoreError::InvalidModelCall);
+        }
+        for name in &violation.offending_field_names {
+            if name.is_empty()
+                || name.len() > MAX_NAME_BYTES
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            {
+                return Err(StoreError::InvalidModelCall);
+            }
+        }
+        let mut payload = model_metadata_payload(&violation.metadata);
+        payload.insert(
+            "violation_code".into(),
+            Value::String(violation.violation_code),
+        );
+        payload.insert(
+            "offending_field_names".into(),
+            Value::Array(
+                violation
+                    .offending_field_names
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+        payload.insert(
+            "offending_field_count".into(),
+            Value::from(violation.offending_field_count),
+        );
+        if let Some(step_id) = violation.step_id {
+            payload.insert("step_id".into(), Value::String(step_id.as_str().to_owned()));
+        }
+        self.draft_model_event(violation.metadata, EventKind::ModelSchemaViolation, payload)
     }
 
     /// Builds the bounded, content-free `MODEL_REPAIRED` event for an accepted

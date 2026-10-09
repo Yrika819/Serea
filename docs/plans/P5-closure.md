@@ -155,6 +155,15 @@ Focused GREEN evidence:
 7. **Restart/corruption/failure:** same-manifest restart is idempotent with no second event, changed manifests create a new generation, prepared generations are never authoritative, and disagreeing persisted member facts fail closed.
 8. **Crate graph/privacy/nonclaims/tests:** runtime edges are protocol, storage, event-bus, serde, serde_json, sha2 and jsonschema only; the crate depends on no policy, task-engine, model-router, core or testkit at runtime; nothing P5C persists contains arguments, prompts, credentials or schema bytes; no provider is invoked.
 
+## P5C GitHub Actions validation
+
+- P5C behaviour commit: `c98cb62`. MSRV clippy fix commit: `0cbbf05`.
+- Fast CI run 37864342530: GREEN on `0cbbf05`, including the commit identity guard.
+- Full CI run 37864342745: GREEN on `0cbbf05` — Linux stable full validation GREEN, MSRV 1.85.0 GREEN, macOS Intel x86_64 GREEN, macOS arm64 GREEN, P2H crash/fault suite GREEN on both macOS jobs, release fault-seam exclusion proof GREEN, commit identity guard and guard tests GREEN.
+- Cross-architecture SQLite portability run 37864342695: GREEN on `0cbbf05`, Intel producer to arm64 consumer and arm64 producer to Intel consumer. No `-shm` transfer and no live-WAL portability claim is made.
+- An earlier Full CI run on `c98cb62` failed only on MSRV clippy, which flagged an elidable lifetime in `schema_catalog.rs` under the 1.85 lint set. `0cbbf05` fixes it; no behaviour changed.
+- PR #5 remains OPEN, DRAFT and MERGEABLE, and is NOT merged.
+
 ## P5C nonclaims
 
 P5C does not implement ToolDefinitionV1 projection, ToolCallProposalV1 parsing, the MODEL_SCHEMA_VIOLATION runtime path, ClassifiedArgumentsV1, PreparedActionV1, TaskEngine generation pinning, Step creation integration, policy, approval, duplicate suppression, repeated-action accounting, tool-call accounting, provider invocation, ActionResult processing, receipt or evidence processing, reconciliation, Gmail, Calendar, an Android provider, Android standalone mode, or GoalLatch.

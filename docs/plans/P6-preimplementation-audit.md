@@ -151,3 +151,95 @@ At every slice, `CapabilityProvider::invoke` remains absent. P8 starts only afte
 ## Audit conclusion
 
 The high-level P5 → Policy → Approval → typed outcome → STOP boundary is accepted and unambiguous. However D1–D20 include behavior and authority choices not uniquely dictated by accepted contracts; several current prose clauses also conflict (notably fallback defaults, rule specificity/priority, and approval type ownership). Per the no-guessing gate, P6 implementation is **BLOCKED_PENDING_OWNER_DECISION**. This audit does not implement P6.
+
+---
+
+# Decision reduction and dependency analysis
+
+Added 2026-10-10 at `318f15523cb94ff13e0c94da3d40788aaf2a1b6d`. This section does not
+rewrite the audit above; the original D1–D20 record and its conclusions stand as written.
+It records the analytical pass that reduced the twenty questions to six clusters, and the
+companion [P6 owner decision package](P6-owner-decision-package.md) carries the reasoning.
+Nothing here is owner-approved.
+
+## Method
+
+Each decision was re-derived against the currently accepted contract set and placed in
+exactly one disposition. Two reductions rest on mechanically enforced facts rather than on
+reading prose, and those do most of the work:
+
+1. `tests/workspace_smoke.py:370` fails the build if `serea-capability` depends on
+   `serea-policy`, so the `CAP --> POLICY` edge in
+   `docs/architecture/03-crate-map.md:108` is not an available design. The audit's preferred
+   TaskEngine orchestration additionally needs a smoke-test row for the new
+   `task-engine -> policy` edge.
+2. `crates/serea-storage/src/task.rs:92` returns `AtRestProtectionUnavailable` for
+   `DataClass::Private` ordinary rows, and ADR-0022 remains Proposed. A PRIVATE
+   `plain_summary` column in an approval table fails at runtime today.
+
+## Disposition map
+
+| Decision | Cluster | Disposition |
+| --- | --- | --- |
+| D1 fallback | A | `CLOSED_BY_EXISTING_CONTRACT` |
+| D2 precedence | A | `CLOSED_BY_EXISTING_CONTRACT` |
+| D3 deny-override | A | `RECOMMENDED_OWNER_CHOICE` |
+| D4 `PolicyInputV1` | F | `IMPLEMENTATION_DETAIL_NOT_OWNER_CHOICE` |
+| D5 provenance | A | `CLOSED_BY_EXISTING_CONTRACT` |
+| D6 revision identity | B | `RECOMMENDED_OWNER_CHOICE` |
+| D7 hot update | B | `CLOSED_BY_EXISTING_CONTRACT` |
+| D8 approval binding | C | `CLOSED_BY_EXISTING_CONTRACT` |
+| D9 scope and uses | C | `CLOSED_BY_EXISTING_CONTRACT` |
+| D10 expiry | C | `CLOSED_BY_EXISTING_CONTRACT` |
+| D11 consume/dispatch | D | `DEFER_TO_P8` |
+| D12 revocation | D | `RECOMMENDED_OWNER_CHOICE` |
+| D13 duplicate responses | D | `CLOSED_BY_EXISTING_CONTRACT` |
+| D14 summary and request transaction | D | `RECOMMENDED_OWNER_CHOICE` |
+| D15 response seam | D | `IMPLEMENTATION_DETAIL_NOT_OWNER_CHOICE` |
+| D16 cancellation and deadline | D | `IMPLEMENTATION_DETAIL_NOT_OWNER_CHOICE` |
+| D17 retention and deletion | E | `CLOSED_BY_EXISTING_CONTRACT` |
+| D18 bounds | E | `RECOMMENDED_OWNER_CHOICE` |
+| D19 source of truth | B | `CLOSED_BY_EXISTING_CONTRACT` |
+| D20 crate ownership | F | `RECOMMENDED_OWNER_CHOICE` |
+
+Counts: 10 closed by existing contract, 1 deferred to P8, 3 implementation detail, 6 genuine
+owner clusters.
+
+## Why each was closed
+
+| Decision | Existing contract that settles it |
+| --- | --- |
+| D1 | Policy §4.1 defines the class-default table and §4.2 step 7 places it before the fallback. Approval §7 measures success as zero prompts for read-only work, which forbids MODEL B. The table is therefore a fixed code constant, not rule data |
+| D2 | Policy §5 states `priority` descending then `rule_id` ascending. That is a total, mechanically testable ordering. The "most specific first" wording in §4.2 is the family order of evaluation stages, a different mechanism |
+| D5 | Capability §4.1 states `requested_by` records provenance and never grants authority, and ADR-0016 fixes the proactive restriction. The one genuine residual is that `SYSTEM` gets a narrower posture, which is a Cluster A recommendation rather than a separate question |
+| D7 | Approval §4.1 requires the current policy decision before resuming; ADR-0036 requires P8 to recheck; Policy §8 requires the live overlay to win. Direction is frozen. Only the transaction boundary is open, and that is P8's |
+| D8 | Task Protocol §3 makes the Step binding immutable before P6 authorization, and migration 0004 enforces it with no-update and no-delete triggers. Generation and descriptor digest are therefore already bound by construction; provider and implementation are transparency only |
+| D9 | Approval §3.2 freezes structural exact scope with no wildcards, and §3.1 plus §7.1 freeze `max_uses` with a batch example of 3. `max_uses` is already in the contract, so deferring multi-use would build the table twice |
+| D10 | `approval_request_expiry_ms = 1800000` is already a named bound with scope and exhaustion behaviour in Bounds §2, governed by Bounds §3 |
+| D13 | Device Protocol §5.2 already states that a response whose `approval_id` is not `PENDING` is dropped, that a duplicate is idempotent, and that a second `GRANT` never consumes two uses. AS-3 repeats it. The matrix in the decision package is a restatement with typed codes |
+| D17 | Event Protocol §8 already assigns approval events to task retention and policy events to one year, and states that policy history outliving its task is intentional. ADR-0026 forbids event-to-task foreign keys. Task Protocol §8 already cascades derived data. Migration 0004's `ON DELETE CASCADE` on `task_id` is the established shape |
+| D19 | Policy §5 makes rules durable data, §7 makes the host admin surface the only mutation path, and migration 0004 already implements the admin-to-immutable-generation-to-singleton-pointer pattern for the registry. SQLite as sole authority is precedent, not preference |
+
+## Why each is deferred or is an implementation detail
+
+| Decision | Reason |
+| --- | --- |
+| D11 | The P6 contract is that a use is consumed atomically and idempotently per `(grant_id, step_id)`. Whether that consumption shares a transaction with the dispatch intent is a property of the intent, which is P8's object. P6 only needs an operation that can join a caller's transaction |
+| D4 | `PolicyInputV1` is an internal Rust type. Whether policy receives raw arguments is answered mechanically: Policy §6 forbids model output, and a rule language over raw arguments is an interpreter. Digest and typed facts only, no `now` |
+| D15 | The seam's contents are fully determined by Device §5.2, Approval §5, AS-3 and Data Classification §3. It is a design fact with no preference left in it |
+| D16 | Task cancellation is already terminal from any non-terminal state, the task wall clock is paused in `WAITING_APPROVAL` per Bounds §6.2, and P8 re-checks. P6 needs no cancellation path at all |
+
+## Remaining genuine owner clusters
+
+1. **Cluster A — policy semantics** (D1, D2, D3, D5). Class-default model, precedence, deny-override, provenance mapping.
+2. **Cluster B — policy revision and source of truth** (D6, D7, D19). Revision identity, hot update, SQLite authority.
+3. **Cluster C — approval identity and scope** (D8, D9, D10). Exact binding, scope projection, expiry bounds.
+4. **Cluster D — lifecycle, response and privacy** (D11, D12, D13, D14, D15, D16). State machine, duplicate matrix, revocation, summary ceiling, seam.
+5. **Cluster E — storage, retention and bounds** (D17, D18). Table shape, cascade, four new bounds.
+6. **Cluster F — crate ownership, API and P8 seam** (D20, D4). DESIGN A, no capability-to-policy edge, `PolicyInputV1` and `AuthorizationEvidenceV1`.
+
+## Owner response
+
+The decision package is written so that one sentence ratifies the whole recommended design.
+That sentence has not been said. Six numeric or product values still need an explicit answer
+and are listed in the package; each has a recommended default already applied.

@@ -7,7 +7,21 @@ Current frozen architecture: `serea-arch/2.6.0`; P0/P1 baseline
 architecture decision; ADR-0022/24 remain Proposed for their unclosed scopes.
 P4A contract closure is accepted by ADR-0031 through ADR-0033; P4 runtime has
 not started. P5A owner-decision closure is accepted by ADR-0034 through
-ADR-0036; P5 runtime has not started.
+ADR-0036; P5 runtime has not started. P6 owner decisions are **not** closed:
+ADR-0037 through ADR-0040 are Proposed only, and P6 runtime has not started.
+
+## Proposed P6 decisions (not ratified)
+
+Prepared for owner ratification; see the
+[P6 owner decision package](../plans/P6-owner-decision-package.md). None of these is
+Accepted, and none authorizes runtime work.
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [ADR-0037](ADR-0037-policy-semantics-and-revision-authority.md) | Class defaults as a fixed code constant; `priority DESC, rule_id ASC` precedence; `DENY` overrides `ALLOW`; closed match dimensions; monotonic revision plus digest; SQLite as sole authority | **Proposed** |
+| [ADR-0038](ADR-0038-approval-identity-lifecycle-and-authenticated-response.md) | Grant binds generation and descriptor digest; provider and implementation are transparency only; `max_uses` from day one; two-variable state machine; typed duplicate-response matrix; grant-only revocation with a Proposed `APPROVAL_REVOKED` event; authenticated response seam with clamping; `PERSONAL` persisted ceiling | **Proposed** |
+| [ADR-0039](ADR-0039-p6-p8-revalidation-and-grant-consumption-boundary.md) | Grant consumption joins the P8 dispatch-intent transaction, reclassified from a P6 blocker to a P8 contract decision | **Proposed** |
+| [ADR-0040](ADR-0040-p6-storage-retention-bounds-and-crate-ownership.md) | `serea-policy` owns policy and approval types; no `serea-capability -> serea-policy` edge; `PolicyInputV1` with no raw arguments and no `now`; `AuthorizationEvidenceV1`; six-table migration 0005 concept; four new bounds | **Proposed** |
 
 ## Accepted decisions
 

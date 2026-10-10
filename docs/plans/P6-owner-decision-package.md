@@ -21,9 +21,22 @@ That phrase has **not** been said. Until it is, every entry in this document is 
 proposal.
 
 The package is deliberately built so one sentence ratifies the whole recommended
-design. Six values are numeric or product preferences that one sentence does not
-settle; they are listed in §14 and each carries a recommended default. Overriding one
-of them is a one-line reply, not a re-opening of the design.
+design. That one sentence **selects all six clusters R1–R6 and every published default
+value in them**, including the six numeric or product defaults listed in §14.2. It is
+not a partial acceptance: `approval_grant_max_uses = 8`, `max_active_policy_rules = 512`,
+`max_retained_policy_revisions = 64`, `approval_grant_expiry_ms = 1800000`, multi-use
+grants in P6 V1 = yes, and the `PERSONAL` persisted-summary ceiling are all adopted by
+the single phrase.
+
+An explicit owner override supersedes **only the named value**. If the owner were to reply
+`ACCEPT P6 RECOMMENDED PACKAGE with approval_grant_max_uses = 3`, that reply would ratify
+R1–R6 and change that one number; nothing else would move, and no other value would be
+reopened. Overriding one of them is a one-line reply, not a re-opening of the design.
+
+Earlier drafts of this section said the six values were "not settled" by the one
+sentence. That reading was a drafting inconsistency and is corrected here: the sentence
+adopts the published defaults, and an override is the only way to move one. §14.2 now
+states the same rule in the same words. **No ratification is recorded here.**
 
 ---
 
@@ -49,11 +62,14 @@ because they do most of the work.
    describes is therefore not a design option but a workspace-gate violation, and the
    audit's preferred TaskEngine orchestration needs one smoke-test amendment, described
    in Cluster F.
-2. **`serea-storage` refuses PRIVATE ordinary rows.** `crates/serea-storage/src/task.rs:92`
+2. **`serea-storage` refuses PRIVATE ordinary rows.** `crates/serea-storage/src/task.rs:94-99`
    returns `AtRestProtectionUnavailable` for `DataClass::Private`, and
    [ADR-0022](../decisions/ADR-0022-durable-private-data-at-rest.md) remains Proposed. A
    PRIVATE `plain_summary` column in `approval_requests` is therefore blocked today by
    code, not by preference. Cluster D recommends the design that does not need it.
+   The refusal lives in the per-domain writer helper (`ordinary_class`), duplicated at
+   `task.rs:94` and `outcome.rs:166`; there is no store-wide gate, so P6B's approval
+   writer must apply the same check itself.
 
 ---
 
@@ -139,7 +155,7 @@ re-runs the same pure function on current durable state.
 Rejected. It makes [Policy Protocol §4.1](../protocols/04-policy-protocol.md) dead text,
 and it makes the "ordinary day produces zero prompts for read-only work" measure in
 Approval §7 impossible, because every `gmail.messages.list` call would prompt. It also
-contradicts Policy §4.2 step 7, which is a class default *followed by* a fallback.
+contradicts Policy §4.2 steps 5 and 6, which are a class default *followed by* a fallback.
 
 **MODEL C — class defaults as synthetic rules with deterministic priority.**
 Superficially like A, but it makes the default table mutable data, so an error in rule
@@ -421,7 +437,7 @@ Two independent state variables, deliberately not merged:
 
 | Object | States |
 | --- | --- |
-| Approval request | `PENDING` → `APPROVED` / `DENIED` / `EXPIRED` / `REVOKED` |
+| Approval request | `PENDING` → `APPROVED` / `DENIED` / `EXPIRED` |
 | Approval grant | `ACTIVE` → `EXHAUSTED` / `EXPIRED` / `REVOKED` |
 
 No new wire enum is invented. `PENDING`, `APPROVED`, `DENIED`, `EXPIRED` are the protocol's
@@ -429,6 +445,12 @@ existing request statuses. `ACTIVE`, `EXHAUSTED`, `EXPIRED`, `REVOKED` are inter
 states on a type that never crosses a wire, so they require no protocol change.
 
 `PARTIALLY_CONSUMED` is not a state. It is `uses_remaining < max_uses`, a counter read.
+
+A request `REVOKED` state was previously listed here. It is removed, because §7.4 places
+revocation on the grant only: under that recommendation a request is never `REVOKED`, so
+the state is unreachable rather than merely unused, and the §7.3 matrix is keyed on the
+grant's state instead. The `approval_requests.status` column in §8.4 keeps the value so the
+stored domain is not narrowed, but no P6 transition may write it.
 
 ### 7.3 Duplicate response matrix
 
@@ -439,11 +461,11 @@ the current request state. A response whose target is not `PENDING` is dropped.
 | Current request state | Incoming `GRANT` | Incoming `DENY` |
 | --- | --- | --- |
 | `PENDING` | Commit `APPROVED`, mint at most one grant | Commit `DENIED`, no grant |
-| `APPROVED` (unused) | **Idempotent success.** Return the existing grant identity; no second grant | **Typed refusal.** `APPROVAL_RESPONSE_CONFLICT` |
-| `APPROVED` (exhausted) | **Idempotent success** with the same terminal reason | **Typed refusal.** `APPROVAL_RESPONSE_CONFLICT` |
+| `APPROVED`, grant unused | **Idempotent success.** Return the existing grant identity; no second grant | **Typed refusal.** `APPROVAL_RESPONSE_CONFLICT` |
+| `APPROVED`, grant exhausted | **Idempotent success** with the same terminal reason | **Typed refusal.** `APPROVAL_RESPONSE_CONFLICT` |
+| `APPROVED`, grant `REVOKED` | **Typed refusal.** `APPROVAL_REVOKED` | **Typed refusal.** `APPROVAL_REVOKED` |
 | `DENIED` | **Typed refusal.** `APPROVAL_RESPONSE_CONFLICT` | **Idempotent success.** Return the existing denial |
 | `EXPIRED` | **Typed refusal.** `APPROVAL_REQUEST_EXPIRED` | **Typed refusal.** `APPROVAL_REQUEST_EXPIRED` |
-| `REVOKED` | **Typed refusal.** `APPROVAL_REVOKED` | **Typed refusal.** `APPROVAL_REVOKED` |
 | Task `CANCELLED` | **Typed refusal.** `TASK_NOT_APPROVABLE` | **Typed refusal.** `TASK_NOT_APPROVABLE` |
 | Task `FAILED` | **Typed refusal.** `TASK_NOT_APPROVABLE` | **Typed refusal.** `TASK_NOT_APPROVABLE` |
 
@@ -455,6 +477,12 @@ second grant. The Device Protocol §5.2 rules ("a response whose `approval_id` i
 Idempotency is by durable state, not by message identity: a replayed frame and a
 re-submitted response produce the same result because the request row already says so.
 
+The `APPROVED`, grant `REVOKED` row was previously missing and is the reason this matrix
+must be keyed on the grant as well as the request. Revocation is grant-only (§7.4), so a
+revoked consent leaves the request in `APPROVED`. Without this row a repeated `GRANT` would
+take the "`APPROVED` (unused)" idempotent-success path and hand back the identity of a grant
+that has been withdrawn. The row is required to make §7.4 implementable as written.
+
 ### 7.4 Revocation
 
 Recommended: revocation is an explicit, durable, terminal transition on the **grant**, not
@@ -462,6 +490,17 @@ on the request.
 
 - **Who may revoke:** the authenticated user or admin, through the same trusted response
   seam as an approval response, plus the local admin surface.
+
+  **Unresolved seam gap, recorded rather than designed around.** The seam type in §7.7
+  carries `decision: ResponseDecision` with only `GRANT | DENY`, and the device wire type
+  in Device Protocol §5.2 carries only `GRANT | DENY | DEFER`. Neither can express a
+  revocation, so "through the same trusted response seam" is not currently realizable:
+  there is no value a caller could put in that field to mean *revoke*. P6A must settle
+  this by either (a) adding a `REVOKE` variant to the internal `ResponseDecision` and
+  stating that the device surface is added later as its own change, or (b) narrowing the
+  recommendation to "the local admin surface only in P6 V1, with device revocation
+  deferred". The design point that revocation is grant-only, human-initiated, durable and
+  terminal is unaffected either way; only the transport is open.
 - **Task cancellation does not revoke.** A cancelled task makes its grants unusable — P8
   refuses a cancelled task — but the grant row keeps its `ACTIVE` state and is removed by
   the task-deletion cascade. Conflating the two would make "revoked" mean both "a human
@@ -526,10 +565,14 @@ user cannot evaluate. Silence never becomes consent.
 
 `CREDENTIAL` never appears anywhere. This is not a convention: `serea-storage` refuses
 `SECRET`/`CREDENTIAL` (`ClassRefused`) and refuses `PRIVATE` ordinary rows
-(`AtRestProtectionUnavailable`, `crates/serea-storage/src/task.rs:92`). That refusal is why
+(`AtRestProtectionUnavailable`, `crates/serea-storage/src/task.rs:94-99`). That refusal is why
 the persisted summary ceiling is `PERSONAL` — a PRIVATE column would fail at runtime today
 and would silently become permitted the day ADR-0022 ships, which is a security-relevant
 change made by an unrelated ADR.
+
+The `CREDENTIAL`/`SECRET`/`PRIVATE` refusals are per-domain writer checks
+(`ordinary_class` at `task.rs:94` and `outcome.rs:166`; event refusals at `event.rs:90-96`),
+not a store-wide gate. P6B's approval writer must apply them itself.
 
 ### 7.7 Authenticated response seam
 
@@ -628,10 +671,16 @@ Four new bounds are proposed, because each one guards a resource no existing bou
 Two further values are **not** proposed as bounds and should not be added:
 
 - **A per-evaluation candidate cap.** `max_active_policy_rules` already bounds it.
-- **A summary byte cap.** `max_event_payload_bytes` already bounds the event, and the
-  summary is bounded by `PlainSummary`'s `Label` category validation, which refuses control
-  characters and multi-line content. A separate byte bound would be a second ceiling with
-  no resource behind it.
+- **A summary byte cap.** `max_event_payload_bytes` already bounds the event, and
+  `PlainSummary`'s `Label` category refuses control characters and multi-line content.
+  Stated precisely: `PlainSummary` has **no length ceiling at all** — P1's
+  `MAX_VALUE_LENGTH = 4096` was retracted by owner decision and never replaced
+  (`docs/plans/P1-closure.md`, ADR-0020, ADR-0023). A summary longer than
+  `max_event_payload_bytes` is therefore persistable and fails only at event append,
+  where `event.rs:101-103` returns `EventPayloadTooLarge` and the whole request
+  transaction rolls back. That is fail-closed but opaque to the user. A byte bound is
+  not recommended here because there is no measured resource behind a number, but P6A must
+  state this explicitly rather than imply that `Label` validation bounds size.
 
 If the owner wants different numbers, each is a one-line override.
 
@@ -669,11 +718,20 @@ policy_rules (
   UNIQUE (revision_id, priority, rule_id)
 )
 
--- Singleton current pointer. This is the only live authority.
+-- Singleton current pointer. This is the only live authority. Mirroring migration
+-- 0004's capability_registry_state requires more than the FK: 0004 also carries a
+-- no-delete trigger (0004:21), an advances-only trigger (0004:214), and a
+-- requires-activated-generation trigger (0004:208). The conceptual shape below omits
+-- them on purpose -- the triggers ARE the "pointer only advances" guarantee that 16.3
+-- tests, and without them a direct SQL edit of active_revision_id succeeds.
 policy_state (
   singleton           INTEGER PRIMARY KEY CHECK (singleton = 1),
   active_revision_id  INTEGER REFERENCES policy_revisions(revision_id) ON DELETE RESTRICT
 )
+-- P6B must also add: policy_state_no_delete, policy_state_advances_only, and
+-- policy_state_requires_activated_revision, each a BEFORE UPDATE/DELETE trigger
+-- modelled on the 0004 lines cited above, plus a STRICT table type and a
+-- sha256-shape CHECK on rules_digest as 0004:6-11 already does for registry digests.
 
 -- Durable approval request. Metadata only; no raw arguments.
 approval_requests (
@@ -735,8 +793,20 @@ approval_grant_uses (
   task_id       TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
   consumed_at_ms INTEGER NOT NULL,
   PRIMARY KEY (grant_id, step_id),
-  UNIQUE (step_id)                                      -- one use per Step per grant
+  UNIQUE (step_id)
 )
+-- NOTE ON THE TWO CONSTRAINTS. The PRIMARY KEY (grant_id, step_id) is the ADR-0039
+-- invariant: at most one use row per (grant, step). The UNIQUE (step_id) is strictly
+-- stronger -- it makes a step consumable by at most one grant, ever, across all
+-- grants. The original comment said "one use per Step per grant", which describes the
+-- PRIMARY KEY and not the UNIQUE. That stronger constraint is offered as
+-- defence-in-depth (a step cannot be authorised twice), but it must be confirmed in
+-- P6A: it also blocks the legitimate re-approval flow in which a first grant for a
+-- step is invalidated and a second grant for the same step_id is later consumed.
+-- If re-approval must be possible, keep the PRIMARY KEY and drop the UNIQUE.
+-- step_id has no REFERENCES task_steps(step_id) here, unlike grant_id and task_id;
+-- P6B should add it, matching migration 0004's step_capability_bindings shape, or
+-- PRAGMA foreign_key_check will not notice a step that does not exist.
 ```
 
 Deliberately **absent** from migration 0005: dispatch intents, `RequestId`, provider
@@ -750,6 +820,18 @@ One integrity guard the schema needs and does not yet have: `approval_requests.a
 must be checked for the `apr_` prefix and 26-character Crockford ULID body, exactly as
 `tasks.task_id` is in migration 0001. Same for `grt_` on grants. Noted for P6B.
 
+Three further P6B schema obligations implied by the code above:
+
+- `approval_requests.step_id` and `approval_grants.step_id` carry no
+  `REFERENCES task_steps(step_id)`, so an orphaned step reference is possible and the
+  task-delete cascade does not reach it.
+- `approval_grants` carries no `plan_revision`, although §6.2 makes `plan_revision`
+  `MUST_BIND` and §9.9 has P8 re-check it. P8 can read it through `approval_id`, but the
+  join is implicit and undocumented.
+- No table is `STRICT` and no digest column carries the `sha256:` shape `CHECK` that
+  migration 0004 lines 6–11 apply to registry digests, so `rules_digest` and
+  `descriptor_digest` are unvalidated text in the conceptual shape.
+
 ### 8.5 Atomicity
 
 State and event commit together, above Storage, with no `serea-storage` → Event Bus edge
@@ -761,9 +843,18 @@ State and event commit together, above Storage, with no `serea-storage` → Even
 | Request raised | `APPROVAL_REQUIRED` |
 | Grant minted | `APPROVAL_GRANTED` |
 | Denial committed | `APPROVAL_DENIED` |
-| Expiry committed | `APPROVAL_EXPIRED` |
+| Request expired unused | `APPROVAL_EXPIRED` |
+| Grant reached expiry with uses remaining | `APPROVAL_EXPIRED_UNUSED` — an existing kind this table originally omitted |
 | Revocation committed | `APPROVAL_REVOKED` (Proposed) |
 | Use consumed | `APPROVAL_CONSUMED` |
+
+Two mappings are still unspecified and must be settled in P6A. `EXHAUSTED` is a grant
+state with no existing event kind of its own, and Approval Protocol §8's audit table has
+no row for it; either it emits `APPROVAL_CONSUMED` for the final use and nothing further,
+or it needs a new kind. `EXPIRED` is likewise ambiguous between the two existing kinds
+(`APPROVAL_EXPIRED` = "request expired unused", `APPROVAL_EXPIRED_UNUSED` = "grant hit
+expiry with uses remaining"), so the transition must name which object expired, not just
+that something did.
 
 ---
 
@@ -1085,33 +1176,38 @@ Architecture version: `serea-arch/2.7.0` if accepted. No wire major.
 | --- | --- | --- |
 | **R1 — POLICY** | MODEL A class defaults; `priority DESC, rule_id ASC` precedence; DENY overrides ALLOW; closed match dimensions; five `RequestedBy` values mapped to five contexts with `SYSTEM` narrowed | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
 | **R2 — APPROVAL IDENTITY** | Six frozen bounds plus generation ID and descriptor digest; provider and implementation are transparency only; structural scope projection; `max_uses` from day one; 30-minute grant and request expiry | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
-| **R3 — LIFECYCLE / CONCURRENCY** | Two-variable state machine; the seven-row duplicate-response matrix; grant-only revocation with a Proposed event kind; authenticated response seam with clamping; no P6 cancellation path | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
+| **R3 — LIFECYCLE / CONCURRENCY** | Two-variable state machine; the eight-row duplicate-response matrix; grant-only revocation with a Proposed event kind; authenticated response seam with clamping; no P6 cancellation path | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
 | **R4 — STORAGE / RETENTION** | Six tables; task cascade for approval rows and no cascade for policy tables; `PERSONAL` ceiling on persisted summaries; raw arguments never stored | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
 | **R5 — CRATE / API** | DESIGN A; no `capability → policy` edge; `PolicyInputV1` without raw arguments and without `now`; `AuthorizationEvidenceV1` with no boolean and no `RequestId` | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
 | **R6 — BOUNDS** | Four new named bounds with the values in §8.3 | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
 
-### 14.2 Overrides that still need an explicit answer
+### 14.2 The six defaults carried by the same sentence
 
-One sentence — `ACCEPT P6 RECOMMENDED PACKAGE` — settles R1 through R6. The six values below
-are numeric or product preferences that the sentence does not settle. Each has a recommended
-default already applied above.
+`ACCEPT P6 RECOMMENDED PACKAGE` — the one sentence in §0 — **settles R1 through R6 and adopts
+every default below.** The six are listed here so an override can name one, not because the
+sentence leaves them open. Each carries a recommended default that is already applied above.
 
-1. `approval_grant_max_uses` — recommended `8`. A choice about how much batch breadth the
+1. `approval_grant_max_uses` — adopted default `8`. A choice about how much batch breadth the
    owner wants to permit in one prompt. Purely a product number.
-2. `max_active_policy_rules` — recommended `512`. A capacity guard; any value the owner
+2. `max_active_policy_rules` — adopted default `512`. A capacity guard; any value the owner
    prefers is safe.
-3. `max_retained_policy_revisions` — recommended `64`. A storage-audit trade-off.
-4. `approval_grant_expiry_ms` — recommended `1800000` (equal to the request). This is the
+3. `max_retained_policy_revisions` — adopted default `64`. A storage-audit trade-off.
+4. `approval_grant_expiry_ms` — adopted default `1800000` (equal to the request). This is the
    only one with a security consequence: a longer grant horizon means a longer window in
    which a grant remains usable.
-5. Multi-use grants in P6 V1 at all — recommended `yes`. If the owner prefers one-use V1,
+5. Multi-use grants in P6 V1 at all — adopted default `yes`. If the owner prefers one-use V1,
    the schema is unchanged and a later phase widens `max_uses`.
-6. The `PERSONAL` ceiling on persisted summaries — recommended `yes`. This is the only
+6. The `PERSONAL` ceiling on persisted summaries — adopted default `yes`. This is the only
    override that changes what a user can be shown: a PRIVATE summary would not be persistable
    today, and permitting it is gated on ADR-0022.
 
+An explicit override supersedes **only the value it names**: for example, if the owner were to
+send `ACCEPT P6 RECOMMENDED PACKAGE with approval_grant_max_uses = 3`, that reply would
+ratify R1–R6 and change that one number. No other value would be reopened, and no ADR would
+be accepted by the phrase.
+
 All other D1–D20 items are closed, deferred, or implementation detail, and do not need an
-answer.
+answer. **Nothing in this section is a ratification.**
 
 ---
 
@@ -1160,7 +1256,16 @@ THEN the decision is Allow
 ```text
 GIVEN a capability with RiskClass OBSERVE and automation_context PROACTIVE
 WHEN policy evaluates
-THEN the decision is Deny(AUTOMATED_ACTION_FORBIDDEN)
+THEN the decision is Allow, because OBSERVE is inside the PROACTIVE allowance
+  and the OBSERVE class default applies; only a non-OBSERVE/non-LOCAL_STATE
+  capability denies in PROACTIVE (Policy Protocol 4.2 step 2, 4.3, 8; ADR-0016)
+```
+
+```text
+GIVEN a capability with RiskClass EXTERNAL_WRITE and automation_context PROACTIVE
+WHEN policy evaluates
+THEN the decision is Deny(AUTOMATED_ACTION_FORBIDDEN), because EXTERNAL_WRITE is
+  outside the OBSERVE/LOCAL_STATE allowance
 ```
 
 ```text
@@ -1173,7 +1278,8 @@ THEN the decision is Deny, and the reason code names rule A
 ```text
 GIVEN two matching ALLOW rules at priority 40 with rule_ids pol_0007 and pol_0003
 WHEN policy evaluates
-THEN rule pol_0007 wins, because priority DESC precedes rule_id ASC
+THEN rule pol_0003 wins, because the priorities tie and rule_id ASC breaks the tie
+  (pol_0003 sorts before pol_0007); priority DESC alone does not decide a tie
 ```
 
 ```text
@@ -1205,7 +1311,15 @@ THEN both decisions are identical
 ```text
 GIVEN RequestedBy SCHEDULER on a SCHEDULED task at RiskClass EXTERNAL_WRITE
 WHEN policy evaluates
-THEN the decision is RequireApproval, not Allow
+THEN the decision is RequireApproval, not Allow, because the EXTERNAL_WRITE class
+  default applies unchanged and SCHEDULED adds no automatic allowance
+```
+
+```text
+GIVEN a SCHEDULED task being created with a policy_class above LOCAL_STATE
+WHEN no explicit durable rule allows it
+THEN task creation is refused; 4.5's task-kind restriction is a creation-time
+  check, not an evaluation-time one
 ```
 
 ```text
@@ -1219,6 +1333,12 @@ GIVEN a caller that reports RequestedBy USER while the Task kind is PROACTIVE
 WHEN the context is derived
 THEN the derived context is PROACTIVE, and non-OBSERVE/LOCAL_STATE denies
 ```
+
+Note: the last example asserts the Task-kind-restricts reading of 4.5's final
+paragraph. 4.5's table is keyed on `RequestedBy` alone ("one row per variant"),
+so the same passage can be read as a pure `RequestedBy` mapping, under which this
+case derives `INTERACTIVE`. Which input dominates is an open P6A question and is
+recorded as a finding rather than settled here.
 
 ### 16.3 Revision identity and activation
 
@@ -1245,6 +1365,11 @@ GIVEN a Python edit of policy_state to point at revision 2
 WHEN activation is attempted
 THEN it is refused, because the pointer only advances
 ```
+
+Note: this example is only satisfiable if migration 0005 carries the three
+`policy_state` triggers listed under §8.4. A conceptual schema with the FK and the
+singleton check alone lets the Python edit succeed, so the trigger is what the test
+proves, not the pointer column.
 
 ### 16.4 Approval identity and binding
 
@@ -1336,13 +1461,28 @@ WHEN a GRANT arrives for its pending request
 THEN the result is typed refusal TASK_NOT_APPROVABLE
 ```
 
+```text
+GIVEN a request in state APPROVED whose grant has been revoked
+WHEN a GRANT arrives again
+THEN the result is typed refusal APPROVAL_REVOKED, not idempotent success, and no
+  revoked grant identity is returned to any caller
+```
+
+This last cell is the one the grant-only revocation rule in §7.4 forces into the matrix.
+The request stays `APPROVED` after a grant is revoked, so a matrix keyed on the request
+alone would take the idempotent-success path and hand back a withdrawn grant.
+
 ### 16.7 Revocation
 
 ```text
 GIVEN an ACTIVE grant with uses_remaining 2
-WHEN an authenticated principal revokes it
+WHEN an authenticated principal revokes it through the P6A-resolved revoke path
 THEN the grant is REVOKED, APPROVAL_REVOKED commits in the same transaction, and the task does not fail
 ```
+
+The path itself is not yet fixed: §7.4 records that neither the internal seam in §7.7 nor
+Device Protocol §5.2 can carry a REVOKE, so P6A must choose between widening the internal
+`ResponseDecision` and narrowing the recommendation to the local admin surface.
 
 ```text
 GIVEN a REVOKED grant
@@ -1378,9 +1518,15 @@ THEN it is a no-op with no second decrement
 
 ```text
 GIVEN a grant consumed by Step A
-WHEN Step B attempts to consume
-THEN it is refused, because UNIQUE (step_id) and one use per Step per grant
+WHEN Step B attempts to consume the same grant
+THEN it is refused, because PRIMARY KEY (grant_id, step_id) admits no second Step row
+  and uses_remaining is decremented inside the same transaction
 ```
+
+The original wording cited `UNIQUE (step_id)` for this case. That constraint is
+stronger than the case needs and is the one whose retention is an open P6A question
+(§8.4). Under it, a *different* grant for Step A is also refused, which is the
+re-approval flow that must be confirmed or excluded in P6A.
 
 ### 16.9 Privacy
 

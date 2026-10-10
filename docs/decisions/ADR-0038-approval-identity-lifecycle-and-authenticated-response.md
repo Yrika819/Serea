@@ -43,6 +43,14 @@ keep consistent while adding no protection. The generation and descriptor digest
 different: without them, a registry change between approval and dispatch could ride on an old
 grant.
 
+`approval_grant_uses` carries a `PRIMARY KEY (grant_id, step_id)`, which is the atomicity
+invariant [ADR-0039](ADR-0039-p6-p8-revalidation-and-grant-consumption-boundary.md) requires.
+The conceptual schema also carries `UNIQUE (step_id)`, which is strictly stronger — it makes
+a step consumable by at most one grant across the host's lifetime. That is offered as
+defence-in-depth but must be confirmed in P6A: it also forbids the re-approval flow in which
+a first grant for a step is invalidated and a second grant for the same `step_id` is later
+consumed.
+
 ### Scope and uses
 
 Scope is a capability-defined, structurally exact projection, per §3.2. Wildcards are
@@ -53,9 +61,15 @@ of `N > 1` over `N = 1` is one integer and a uniqueness constraint on
 
 ### State machine
 
-Two independent state variables. Requests: `PENDING` → `APPROVED` / `DENIED` / `EXPIRED` /
-`REVOKED`. Grants: `ACTIVE` → `EXHAUSTED` / `EXPIRED` / `REVOKED`. `PARTIALLY_CONSUMED` is
+Two independent state variables. Requests: `PENDING` → `APPROVED` / `DENIED` / `EXPIRED`.
+Grants: `ACTIVE` → `EXHAUSTED` / `EXPIRED` / `REVOKED`. `PARTIALLY_CONSUMED` is
 not a state; it is `uses_remaining < max_uses`. No new wire enum is introduced.
+
+Revocation is grant-only (below), so a request is never `REVOKED`. A request `REVOKED`
+state was recorded in earlier drafts and is removed here: it is unreachable rather than
+merely unused, and the duplicate-response matrix below is therefore keyed on the grant's
+state as well as the request's. The stored `approval_requests.status` domain keeps the
+value so the schema is not narrowed, but no transition may write it.
 
 ### Duplicate response matrix
 
@@ -66,19 +80,34 @@ free-text outcome and no second grant in any cell.
 | Request state | `GRANT` | `DENY` |
 | --- | --- | --- |
 | `PENDING` | commit `APPROVED`; at most one grant | commit `DENIED`; no grant |
-| `APPROVED`, unused | idempotent success with the existing grant identity | typed refusal `APPROVAL_RESPONSE_CONFLICT` |
-| `APPROVED`, exhausted | idempotent success with the same terminal reason | typed refusal `APPROVAL_RESPONSE_CONFLICT` |
+| `APPROVED`, grant unused | idempotent success with the existing grant identity | typed refusal `APPROVAL_RESPONSE_CONFLICT` |
+| `APPROVED`, grant exhausted | idempotent success with the same terminal reason | typed refusal `APPROVAL_RESPONSE_CONFLICT` |
+| `APPROVED`, grant `REVOKED` | typed refusal `APPROVAL_REVOKED` | typed refusal `APPROVAL_REVOKED` |
 | `DENIED` | typed refusal `APPROVAL_RESPONSE_CONFLICT` | idempotent success with the existing denial |
 | `EXPIRED` | typed refusal `APPROVAL_REQUEST_EXPIRED` | typed refusal `APPROVAL_REQUEST_EXPIRED` |
-| `REVOKED` | typed refusal `APPROVAL_REVOKED` | typed refusal `APPROVAL_REVOKED` |
 | Task `CANCELLED` | typed refusal `TASK_NOT_APPROVABLE` | typed refusal `TASK_NOT_APPROVABLE` |
 | Task `FAILED` | typed refusal `TASK_NOT_APPROVABLE` | typed refusal `TASK_NOT_APPROVABLE` |
+
+The `APPROVED`, grant `REVOKED` row is required by the grant-only revocation rule below.
+Without it a repeated `GRANT` would take the idempotent-success path and return the identity
+of a grant whose consent has been withdrawn. Earlier drafts keyed the whole matrix on the
+request only and had a bare `REVOKED` request row; both are replaced by the grant-keyed row
+above.
 
 ### Revocation
 
 Revocation is an explicit, durable, terminal transition on the **grant**, performed by an
 authenticated user or admin through the same seam as an approval response, or from the local
 admin surface.
+
+**Unresolved seam gap.** The `AuthenticatedApprovalResponseV1` seam below carries
+`decision: ResponseDecision` with `GRANT | DENY` only, and
+[Device Protocol §5.2](../protocols/07-device-protocol.md) carries `GRANT | DENY | DEFER`
+only. Neither can express a revocation, so "through the same seam as an approval response"
+is not realizable as written. P6A must either widen `ResponseDecision` with a `REVOKE`
+variant — with the device surface added later as its own change — or narrow this
+recommendation to the local admin surface in P6 V1. The grant-only, human-initiated,
+durable, terminal semantics are unaffected either way.
 
 Task cancellation does **not** revoke. A cancelled task makes its grants unusable — P8
 refuses a cancelled task — but the grant row keeps its `ACTIVE` state and is removed by the
@@ -150,7 +179,8 @@ security-relevant change through an unrelated ADR.
 
 ## Verification obligations (future P6D)
 
-- The full duplicate matrix, including concurrent connections.
+- The full duplicate matrix, including concurrent connections, and including the
+  `APPROVED`-with-revoked-grant cell — no cell may return a revoked grant identity.
 - Expiry boundary at `expires_at - 1`, `expires_at`, and `expires_at + 1`.
 - Clamping tests for proposed `max_uses` and `expires_at`.
 - Digest re-derivation against changed arguments.

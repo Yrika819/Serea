@@ -36,7 +36,7 @@ Accidental privilege is structurally hard: there is no way to write a rule that 
 **B — explicit rules only, unmatched becomes `RequireApproval`.** Rejected. It makes §4.1
 dead text and makes [Approval Protocol §7](../protocols/05-approval-protocol.md)'s success
 measure — zero prompts for read-only work — unattainable, since every `gmail.messages.list`
-call would prompt. It also contradicts §4.2's own step 7.
+call would prompt. It also contradicts §4.2's own steps 5 and 6.
 
 **C — class defaults as synthetic rules with priority ordering.** Rejected. It makes the
 default table mutable data, so a priority error could promote `CREDENTIAL` above an explicit

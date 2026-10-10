@@ -173,8 +173,11 @@ reading prose, and those do most of the work:
    `docs/architecture/03-crate-map.md:108` is not an available design. The audit's preferred
    TaskEngine orchestration additionally needs a smoke-test row for the new
    `task-engine -> policy` edge.
-2. `crates/serea-storage/src/task.rs:92` returns `AtRestProtectionUnavailable` for
-   `DataClass::Private` ordinary rows, and ADR-0022 remains Proposed. A PRIVATE
+2. `ordinary_class` at `crates/serea-storage/src/task.rs:94-99` returns
+   `AtRestProtectionUnavailable` for
+   `DataClass::Private` ordinary rows (the same helper is duplicated at
+   `crates/serea-storage/src/outcome.rs:166`; neither is a store-wide gate), and ADR-0022
+   remains Proposed. A PRIVATE
    `plain_summary` column in an approval table fails at runtime today.
 
 ## Disposition map
@@ -209,7 +212,7 @@ owner clusters.
 
 | Decision | Existing contract that settles it |
 | --- | --- |
-| D1 | Policy §4.1 defines the class-default table and §4.2 step 7 places it before the fallback. Approval §7 measures success as zero prompts for read-only work, which forbids MODEL B. The table is therefore a fixed code constant, not rule data |
+| D1 | Policy §4.1 defines the class-default table and §4.2 steps 5 and 6 place it before the fallback. Approval §7 measures success as zero prompts for read-only work, which forbids MODEL B. The table is therefore a fixed code constant, not rule data |
 | D2 | Policy §5 states `priority` descending then `rule_id` ascending. That is a total, mechanically testable ordering. The "most specific first" wording in §4.2 is the family order of evaluation stages, a different mechanism |
 | D5 | Capability §4.1 states `requested_by` records provenance and never grants authority, and ADR-0016 fixes the proactive restriction. The one genuine residual is that `SYSTEM` gets a narrower posture, which is a Cluster A recommendation rather than a separate question |
 | D7 | Approval §4.1 requires the current policy decision before resuming; ADR-0036 requires P8 to recheck; Policy §8 requires the live overlay to win. Direction is frozen. Only the transaction boundary is open, and that is P8's |
@@ -240,6 +243,8 @@ owner clusters.
 
 ## Owner response
 
-The decision package is written so that one sentence ratifies the whole recommended design.
-That sentence has not been said. Six numeric or product values still need an explicit answer
-and are listed in the package; each has a recommended default already applied.
+The decision package is written so that one sentence — `ACCEPT P6 RECOMMENDED PACKAGE` —
+ratifies the whole recommended design, including the six numeric and product defaults that
+the package publishes. That sentence has not been said. An explicit owner override supersedes
+only the value it names; nothing else is reopened by it. Six values are listed in the package
+so an override can name one, and each has a recommended default already applied.

@@ -1,6 +1,6 @@
 # P6 owner decision package — Policy and Approval
 
-Status: **PROPOSED, NOT OWNER-RATIFIED** · Audit baseline: `318f15523cb94ff13e0c94da3d40788aaf2a1b6d` · Architecture: `serea-arch/2.6.0`
+Status: **OWNER-RATIFIED 2026-10-10 · P6A FEASIBILITY GATE BLOCKED** · Audit baseline: `318f15523cb94ff13e0c94da3d40788aaf2a1b6d` · Architecture: `serea-arch/2.6.0`
 
 **No recommendation in this document is owner-approved until explicitly ratified.**
 
@@ -37,6 +37,132 @@ Earlier drafts of this section said the six values were "not settled" by the one
 sentence. That reading was a drafting inconsistency and is corrected here: the sentence
 adopts the published defaults, and an override is the only way to move one. §14.2 now
 states the same rule in the same words. **No ratification is recorded here.**
+
+---
+
+## 0a. Owner ratification record — 2026-10-10
+
+On 2026-10-10 the owner replied **"承認します。"** ("I approve.") to the full acceptance
+offer of this package. That reply is treated as actual owner ratification, not as an
+example or a hypothetical. It ratifies:
+
+**The six recommended clusters R1–R6, in full.**
+
+| ID | Contents | Status |
+| --- | --- | --- |
+| **R1 — POLICY** | MODEL A class defaults; `priority DESC, rule_id ASC` precedence; DENY overrides ALLOW; closed match dimensions; five `RequestedBy` values mapped to five contexts with `SYSTEM` narrowed | **RATIFIED 2026-10-10** |
+| **R2 — APPROVAL IDENTITY** | Six frozen bounds plus generation ID and descriptor digest; provider and implementation are transparency only; structural scope projection; `max_uses` from day one; 30-minute grant and request expiry | **RATIFIED 2026-10-10**, subject to the P6A feasibility gate |
+| **R3 — LIFECYCLE / CONCURRENCY** | Two-variable state machine; the eight-row duplicate-response matrix; grant-only revocation with a Proposed event kind; authenticated response seam with clamping; no P6 cancellation path | **RATIFIED 2026-10-10** |
+| **R4 — STORAGE / RETENTION** | Six tables; task cascade for approval rows and no cascade for policy tables; `PERSONAL` ceiling on persisted summaries; raw arguments never stored | **RATIFIED 2026-10-10**, subject to the P6A feasibility gate |
+| **R5 — CRATE / API** | DESIGN A; no `capability → policy` edge; `PolicyInputV1` without raw arguments and without `now`; `AuthorizationEvidenceV1` with no boolean and no `RequestId` | **RATIFIED 2026-10-10** |
+| **R6 — BOUNDS** | Four new named bounds with the values in §8.3 | **RATIFIED 2026-10-10** |
+
+**The six default and product values, verbatim.**
+
+| Parameter | Ratified value |
+| --- | --- |
+| `approval_grant_max_uses` | `8` |
+| `max_active_policy_rules` | `512` |
+| `max_retained_policy_revisions` | `64` |
+| `approval_grant_expiry_ms` | `1800000` |
+| P6 V1 multi-use grants | **YES** |
+| Persisted approval summary `DataClass` ceiling | `PERSONAL` |
+
+The existing `approval_request_expiry_ms = 1800000` remains governed by its established
+bound. No credential data is approved for ordinary storage.
+
+**Four explicit owner decisions.**
+
+- **DC-1 — Consume uniqueness.** `UNIQUE(step_id)` and `PRIMARY KEY(grant_id, step_id)` are
+  both retained in `approval_grant_uses`. The intended guarantee is that a Step must never
+  acquire a second independent consumption that could authorize another external effect. An
+  unused grant whose state is EXPIRED, REVOKED or DENIED must not by itself prevent
+  legitimate reapproval for the same Step; a Step that has already been consumed must not be
+  authorized again by consuming a second grant. P8 will eventually reconcile dispatch intent
+  and idempotency state; P6 does not implement that mechanism.
+- **DC-2 — AutomationContext.** The effective context is derived from **both** the trusted
+  Task kind and the trusted `RequestedBy` provenance. A restrictive Task kind cannot be
+  relaxed by a different `RequestedBy` value: PROACTIVE restrictions remain enforceable even
+  if `RequestedBy` reports `USER` or `MODEL`; `SYSTEM` is not god mode; `SCHEDULER` cannot
+  self-upgrade; untrusted caller-supplied context never overrides durable Task facts. The
+  derivation must be an explicit, finite, mechanically testable function that expresses
+  context-specific hard restrictions, not a numeric privilege hierarchy over enum values. An
+  invalid combination is rejected or frozen into restrictive semantics, never silently
+  promoted.
+- **DC-3 — Grant revocation.** Revocation is a separate authenticated, trusted internal
+  operation. GRANT/DENY response handling is not overloaded with an undocumented REVOKE
+  value. P6 defines the internal authenticated revocation port, the actor requirements, the
+  durable lifecycle transition and the event behaviour. Android transport and UI integration
+  are deferred. A model-authored JSON object is never a trusted revocation request.
+- **DC-4 — Closed Policy match language.** Exact `CapabilityId` matching and closed, typed
+  match dimensions only. No glob, regex, open-ended expression, wildcard authority or
+  implicitly expanded family. Obsolete protocol examples that show otherwise are corrected
+  through P6A.
+
+**The Root mandatory-approval rule.**
+
+Root operations always require explicit approval, even when a matching Policy rule says
+ALLOW. A Policy ALLOW never bypasses mandatory Root approval. All existing stricter
+requirements are preserved, including trusted-device confirmation where required. P6 does
+not implement Root execution; optional Root capabilities belong to a later phase.
+
+**What the ratification does not settle.** The P6A feasibility gate
+([P6A-feasibility-gate.md](P6A-feasibility-gate.md)) proves that R2's intended properties
+cannot coexist with the ratified multi-use requirement and the frozen Approval Protocol §4
+and §7.1 without a new authority design. The ratification is therefore recorded in full, and
+the affected ADRs are not marked Accepted. The specific owner question this leaves open is
+stated in §6 of the gate document.
+
+---
+
+## 0b. Owner decision R2 — enumerated multi-action grant · 2026-10-10
+
+On 2026-10-10, in response to the P6A feasibility gate BLOCKER, the owner made an
+additional design decision and approved it formally:
+
+> **OWNER DECISION: APPROVE R2 — Enumerated Multi-Action Grant.**
+
+This decision preserves the multi-use requirement of the existing P6 recommended package
+while restricting the approved scope strictly to a set of individually approved actions. It
+is recorded here as an additional owner decision, not as an interpretation of the earlier
+one.
+
+### 0b.1 Ratified invariants
+
+| # | Invariant |
+| --- | --- |
+| 1 | One approval grant may bind an explicitly enumerated set of **1 to 8** Steps within one Task. |
+| 2 | Each Step is validated with its own `StepId`, canonical `arguments_digest`, exact capability and version, plan revision, and the P5 pinned identity facts it requires. |
+| 3 | The approved Step set is fully determinate before approval. Addition, substitution and authority expansion after approval are forbidden. |
+| 4 | Only the individual actions a human actually approved are covered. Scope-only or digest-only matching must never add authorization for a new Step. |
+| 5 | A durable authority binding of the exact Step set is permitted for **both** the request and the grant. P6B may add a dedicated membership table. |
+| 6 | Each Step consumes at most once. The existing `approval_grant_uses.UNIQUE(step_id)` is retained. |
+| 7 | `max_uses` is at most the number of actually approved individual Steps, and is unusable against any Step that is not enumerated. |
+| 8 | The normalization, ordering, duplicate rejection, digest, persistence, validation and immutability of the approved Step set are explicitly defined. |
+| 9 | Cross-task replay, plan-revision mismatch, Step substitution, argument change, and use after grant expiry are all refused. |
+| 10 | Mixing Steps whose grant-level shared authority conditions — the same capability and version, and the rest — are incompatible is refused. Ambiguous authority merging is forbidden. |
+| 11 | Where a partial-approval design is adopted, the approved subset is recorded explicitly and immutably, and unapproved Steps receive no authority at all. |
+| 12 | More than 8 operations are split into another bounded approval unit or refused. Automatic authority expansion is forbidden. |
+
+### 0b.2 Ratified security boundary
+
+- Exact arguments consent is not weakened.
+- No approval authority is given to a model or a provider.
+- `UNIQUE(step_id)` is not removed.
+- The atomic join of grant consumption with dispatch intent remains P8's responsibility.
+- P6 performs no `RequestId` generation and no provider invocation.
+- Approval-screen summaries remain host-authored, under the existing `PERSONAL` ceiling and
+  the existing credential protections.
+
+### 0b.3 What R2 changed and what it did not
+
+R2 resolves the P6A feasibility gate BLOCKER and nothing else. The frozen Policy semantics,
+the SQLite revision authority, the retention and bounds decisions, the crate-ownership
+decision, the duplicate-response matrix, the grant-only revocation rule and the P6/P8
+revalidation boundary are all unchanged from the ratified package. What R2 adds is the
+authority identity of a multi-action grant: a grant binds an enumerated set of exactly
+approved actions instead of one action, and the exact Step set becomes durable, normalized,
+digested and immutable for both the request and the grant.
 
 ---
 
@@ -1174,12 +1300,12 @@ Architecture version: `serea-arch/2.7.0` if accepted. No wire major.
 
 | ID | Contents | Status |
 | --- | --- | --- |
-| **R1 — POLICY** | MODEL A class defaults; `priority DESC, rule_id ASC` precedence; DENY overrides ALLOW; closed match dimensions; five `RequestedBy` values mapped to five contexts with `SYSTEM` narrowed | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
-| **R2 — APPROVAL IDENTITY** | Six frozen bounds plus generation ID and descriptor digest; provider and implementation are transparency only; structural scope projection; `max_uses` from day one; 30-minute grant and request expiry | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
-| **R3 — LIFECYCLE / CONCURRENCY** | Two-variable state machine; the eight-row duplicate-response matrix; grant-only revocation with a Proposed event kind; authenticated response seam with clamping; no P6 cancellation path | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
-| **R4 — STORAGE / RETENTION** | Six tables; task cascade for approval rows and no cascade for policy tables; `PERSONAL` ceiling on persisted summaries; raw arguments never stored | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
-| **R5 — CRATE / API** | DESIGN A; no `capability → policy` edge; `PolicyInputV1` without raw arguments and without `now`; `AuthorizationEvidenceV1` with no boolean and no `RequestId` | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
-| **R6 — BOUNDS** | Four new named bounds with the values in §8.3 | `RECOMMENDED`, `NOT OWNER-RATIFIED` |
+| **R1 — POLICY** | MODEL A class defaults; `priority DESC, rule_id ASC` precedence; DENY overrides ALLOW; closed match dimensions; five `RequestedBy` values mapped to five contexts with `SYSTEM` narrowed | `RATIFIED 2026-10-10` |
+| **R2 — APPROVAL IDENTITY** | Six frozen bounds plus generation ID and descriptor digest; provider and implementation are transparency only; structural scope projection; `max_uses` from day one; 30-minute grant and request expiry | `RATIFIED 2026-10-10` |
+| **R3 — LIFECYCLE / CONCURRENCY** | Two-variable state machine; the eight-row duplicate-response matrix; grant-only revocation with a Proposed event kind; authenticated response seam with clamping; no P6 cancellation path | `RATIFIED 2026-10-10` |
+| **R4 — STORAGE / RETENTION** | Six tables; task cascade for approval rows and no cascade for policy tables; `PERSONAL` ceiling on persisted summaries; raw arguments never stored | `RATIFIED 2026-10-10` |
+| **R5 — CRATE / API** | DESIGN A; no `capability → policy` edge; `PolicyInputV1` without raw arguments and without `now`; `AuthorizationEvidenceV1` with no boolean and no `RequestId` | `RATIFIED 2026-10-10` |
+| **R6 — BOUNDS** | Four new named bounds with the values in §8.3 | `RATIFIED 2026-10-10` |
 
 ### 14.2 The six defaults carried by the same sentence
 
@@ -1207,7 +1333,7 @@ ratify R1–R6 and change that one number. No other value would be reopened, and
 be accepted by the phrase.
 
 All other D1–D20 items are closed, deferred, or implementation detail, and do not need an
-answer. **Nothing in this section is a ratification.**
+answer. **This section was ratified on 2026-10-10; the ratification record is §0a.**
 
 ---
 
@@ -1583,6 +1709,12 @@ THEN it exposes no approved boolean and no RequestId
 ---
 
 ## 17. Future P6 slices
+
+**P6B through P6F are authorized.** The P6A feasibility gate
+([P6A-feasibility-gate.md](P6A-feasibility-gate.md)) passed on re-run under owner decision R2,
+so migration 0005 and the `serea-policy` crate are next in line. The rows below are the
+implementation plan; nothing in them is started until this P6A slice is committed, pushed and
+verified at exact-head CI.
 
 | Slice | Contents | Production files likely touched | Migration | Closure gate | Remains prohibited |
 | --- | --- | --- | --- | --- | --- |

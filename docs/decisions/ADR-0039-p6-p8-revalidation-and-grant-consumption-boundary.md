@@ -1,6 +1,6 @@
 # ADR-0039: P6/P8 revalidation and grant-consumption boundary
 
-Status: **Proposed** · Date: 2026-10-10 · Architecture: `serea-arch/2.6.0`
+Status: **Accepted** · Date: 2026-10-10 (ratified) · Architecture: `serea-arch/2.7.0`
 
 Surfaces affected: none directly. This ADR records the boundary between P6 and P8 for a
 question the P6 audit recorded as D11.
@@ -36,8 +36,8 @@ is real.
 
 ## Decision
 
-**Proposed: Option B, subject to owner ratification, and reclassified as a P8 contract
-decision rather than a P6 blocker.**
+**Option B, ratified on 2026-10-10, and reclassified as a P8 contract decision rather than a
+P6 blocker.**
 
 P6 must expose a consume operation that a caller can join to an existing transaction. P6 does
 not decide when that happens. The invariant P6 must provide, and must test on its own, is:
@@ -49,6 +49,13 @@ That is enforced by a primary key on `(grant_id, step_id)` plus a uniqueness con
 `step_id`, checked inside the same transaction as the decrement. P6 tests it with independent
 Store connections. Whether the surrounding transaction also contains a dispatch intent is
 P8's concern.
+
+Owner decision R2 extends the invariant without changing it. Under R2 a grant may bind up to
+eight enumerated Steps, so the invariant gains a precondition: a `(grant_id, step_id)` use row
+may only be created when `step_id` is a member of that grant's enumerated action set. The
+uniqueness guarantee is unchanged — at most one use row per `(grant_id, step_id)`, at most one
+per `step_id` across all grants, and at most one decrement per Step — and it now also covers
+the multi-action case that a single-Step grant could never reach.
 
 ## Consequences
 
@@ -62,6 +69,24 @@ P8's concern.
 P6 proves the invariant on its own, with independent connections and with fault injection at
 the transaction boundary. P8 proves the composition when it exists.
 
+## Owner ratification and P6A gate status
+
+The owner ratified this decision on **2026-10-10** together with the rest of the P6
+recommended package (recorded in §0a of the
+[P6 owner decision package](../plans/P6-owner-decision-package.md)).
+
+The P6A feasibility gate has nevertheless **not** passed for this ADR's subject matter:
+[P6A feasibility gate](../plans/P6A-feasibility-gate.md) proves that the ratified approval identity — `TaskId`, `StepId` and one exact
+`arguments_digest` on a grant — cannot coexist with the ratified multi-use requirement and
+the frozen Approval Protocol §4 point 2 and §7.1 batch example, and that every escape
+route is either prohibited by the execution mandate or is a new authority design
+requiring owner ratification. Migration 0005 therefore does not exist and no
+`serea-policy` runtime is written.
+
+This ADR is **owner-ratified in content and remains Proposed**. It is not marked Accepted,
+because the P6A closure gate requires all four P6 ADRs to be Accepted together after the
+feasibility and contradiction gates pass, and the feasibility gate did not pass.
+
 ## Status
 
-**Proposed. Not accepted. P8 is not started.**
+**Accepted** on 2026-10-10. P8 is not started.

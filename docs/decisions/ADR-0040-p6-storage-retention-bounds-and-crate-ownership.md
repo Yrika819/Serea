@@ -1,6 +1,6 @@
 # ADR-0040: P6 durable storage, retention, bounds, and crate ownership
 
-Status: **Proposed** · Date: 2026-10-10 · Architecture: `serea-arch/2.6.0` → `2.7.0` if accepted
+Status: **Accepted** · Date: 2026-10-10 (ratified; R2 membership tables added 2026-10-10) · Architecture: `serea-arch/2.7.0`
 
 Surfaces affected: `serea.bounds/1` gains four proposed bounds; architecture
 `docs/architecture/03-crate-map.md` and a `serea-protocol` module comment are corrected.
@@ -45,7 +45,7 @@ and wrong in principle, since ADR-0035 exists to keep authority out of the capab
 
 ## Decision
 
-**Proposed: Option A, with no `serea-capability -> serea-policy` edge.**
+**Option A, ratified on 2026-10-10, with no `serea-capability -> serea-policy` edge.**
 
 Resulting dependency shape:
 
@@ -86,17 +86,44 @@ independently.
 
 ## Storage and retention
 
-Migration **0005 is not created here.** The proposed conceptual shape is six tables:
-`policy_revisions`, `policy_rules`, `policy_state`, `approval_requests`, `approval_grants`,
+Migration **0005 is not created here.** The proposed conceptual shape is eight tables:
+`policy_revisions`, `policy_rules`, `policy_state`, `approval_requests`,
+`approval_request_actions`, `approval_grants`, `approval_grant_members` and
 `approval_grant_uses`. `policy_state` is a singleton whose pointer only advances, mirroring
 `capability_registry_state` in migration 0004.
+
+The two membership tables are the durable authority binding of the exact approved Step set,
+for the request side and for the grant side respectively. They exist because of owner decision
+R2: a grant may bind 1 to 8 enumerated actions, each with its own `step_id` and its own exact
+`arguments_digest`, and that set has to be durable, normalized, digested and immutable.
+
+| Table | Key shape | Notes |
+| --- | --- | --- |
+| `approval_requests` | `approval_id` PK | Shared conditions plus `action_set_digest`, expiry, status. No single `step_id`: the leading member is derived, not stored |
+| `approval_request_actions` | PK `(approval_id, position)`, UNIQUE `(approval_id, step_id)` | `step_id`, `arguments_digest`, `scope`, `scope_digest`. `position` is the normalized `step_id`-ascending order |
+| `approval_grants` | `grant_id` PK, UNIQUE `(approval_id, task_id)` | Shared conditions plus `action_set_digest`, `max_uses`, `uses_remaining`, expiry, actor, status |
+| `approval_grant_members` | PK `(grant_id, position)`, UNIQUE `(grant_id, step_id)` | The granted subset. FK to `approval_request_actions` so a member is always an action the human actually saw |
+| `approval_grant_uses` | PK `(grant_id, step_id)`, UNIQUE `(step_id)` | One row per consuming Step, per DC-1 |
+
+Both membership tables carry no-update, no-delete and no-late-insert triggers mirroring
+migration 0004, so the set is fully determinate before approval and immutable afterwards.
+`approval_grant_members.step_id` references `task_steps(step_id)` and carries a
+`matches_task_step` trigger asserting the Step belongs to the grant's `task_id` and is a
+`CAPABILITY` step whose pinned capability, version, generation, descriptor digest and plan
+revision match the grant's shared conditions. That is the composite integrity the earlier
+conceptual DDL lacked, and it is why `PRAGMA foreign_key_check` is not sufficient here.
+
+`max_uses` equals the granted member count and is bounded by `approval_grant_max_uses`; an
+unlisted Step can never consume, because membership rather than the counter is what authorizes
+it.
 
 Deliberately absent: dispatch intents, `RequestId`, provider attempts, duplicate suppression,
 repeated-action counters, `ActionResult`, receipts, reconciliation state, and a
 `policy_evaluations` table. An evaluation log would duplicate what the immutable revision and
 the request row already prove.
 
-Deletion: approval tables cascade with the Task; policy tables never cascade, matching
+Deletion: the five approval tables cascade with the Task; the two policy tables and the
+`policy_state` pointer never cascade, matching
 [Event Protocol §8](../protocols/06-event-protocol.md), which already gives policy events one
 year and states that policy history outliving its task is intentional.
 
@@ -116,9 +143,36 @@ Existing bounds are reused rather than duplicated: `max_pending_approvals_per_ta
 `approval_request_expiry_ms = 1800000`, `max_event_payload_bytes = 32768`,
 `max_events_per_transaction = 16`, `task_retention_days = 30`.
 
-No summary byte bound and no per-evaluation candidate bound are proposed. The first is
-already bounded by `max_event_payload_bytes` and by `PlainSummary`'s `Label` category
-validation; the second is bounded by `max_active_policy_rules`.
+No summary byte bound and no per-evaluation candidate bound are proposed. The
+correct reason matters, because an earlier draft of this ADR justified the first
+one wrongly. It does **not** rest on `PlainSummary`'s `Label` category validation:
+`PlainSummary` has **no length ceiling at all**. `Label` refuses control
+characters and multi-line content and nothing more, and the older
+`MAX_VALUE_LENGTH = 4096` value was retracted by owner decision and never
+replaced. A summary longer than `max_event_payload_bytes` is therefore
+persistable as an ordinary row and fails only at event append, where the event is
+refused and the whole request transaction rolls back. That is fail-closed but
+opaque to the user, and this ADR records it as a known consequence rather than
+implying that some validation already bounds summary size. The per-evaluation
+candidate set is bounded by `max_active_policy_rules`, so no separate candidate
+bound is added.
+
+`max_retained_policy_revisions` is the only one of these bounds whose exhaustion
+deletes data, so its definition carries three constraints rather than one number:
+pruning never removes the active revision, never removes a revision a durable row
+still references, and never moves the activation pointer backwards. The first is
+already mechanical through `ON DELETE RESTRICT` on the `policy_state` pointer. The
+second is a P6B obligation, because no durable P6 row references
+`policy_revisions` in the current conceptual shape; if P6B adds such a reference to
+a grant or to evidence, pruning must refuse a referenced revision.
+
+`approval_grant_max_uses = 8` caps `max_uses`. The fixed point this bound does not
+settle is how many Steps one grant may bind: the
+[P6A feasibility gate](../plans/P6A-feasibility-gate.md) proves that a
+single-Step grant with one exact `arguments_digest` makes every use above the
+first unreachable, and that making `max_uses > 1` real requires either a new
+authority binding or an unratified reduction to one use. The bound's *value* is
+ratified either way; the *meaning* of a use is what the gate leaves open.
 
 ## Consequences
 
@@ -136,6 +190,14 @@ validation; the second is bounded by `max_active_policy_rules`.
 - Rollback, reopen, foreign-key and integrity tests on migration 0005.
 - No `invoke(` in `serea-policy`, `serea-capability` or `serea-task-engine`.
 
+## Owner ratification and P6A gate status
+
+The owner ratified this decision on **2026-10-10** together with the rest of the P6
+recommended package, and then ratified owner decision **R2 — enumerated multi-action grant**
+the same day, which is why the storage shape carries two membership tables in addition to the
+six originally proposed.
+
 ## Status
 
-**Proposed. Not accepted. No `serea-policy` crate, no migration 0005, and no runtime exists.**
+**Accepted** on 2026-10-10. No `serea-policy` crate, no migration 0005, and no runtime exists
+yet; P6B creates them from the shape this ADR specifies.

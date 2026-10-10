@@ -1,6 +1,6 @@
 # ADR-0038: Approval identity, lifecycle, and authenticated response
 
-Status: **Proposed** · Date: 2026-10-10 · Architecture: `serea-arch/2.6.0` → `2.7.0` if accepted
+Status: **Accepted** · Date: 2026-10-10 (ratified; R2 added 2026-10-10) · Architecture: `serea-arch/2.7.0`
 
 Surfaces affected: `serea.approval/1` semantics (prose only), `serea.event/1` gains one
 Proposed kind. No wire-major change.
@@ -43,13 +43,68 @@ keep consistent while adding no protection. The generation and descriptor digest
 different: without them, a registry change between approval and dispatch could ride on an old
 grant.
 
+#### The enumerated multi-action grant (owner decision R2, 2026-10-10)
+
+The frozen six bounds bind a **task**, not a Step, and carry exactly one `arguments_digest`.
+Read literally with §4 point 2 and §4.2, that makes every use above the first unreachable: one
+Step consumes a grant once, and a repeat consumption for the same Step is a no-op. The
+[P6A feasibility gate](../plans/P6A-feasibility-gate.md) proves the resulting contradiction
+and the owner resolved it with R2.
+
+**Decision: a grant binds an explicitly enumerated set of 1 to 8 actions.**
+
+- **Shared conditions**, carried once and identical for every member: `task_id`,
+  `capability_id`, `capability_version`, `generation_id`, `descriptor_digest`,
+  `plan_revision`, `expires_at`, `granted_by`, `auth_strength`. A member whose durable facts
+  differ from these makes the unit invalid, with `APPROVAL_ACTION_SET_INCONSISTENT`.
+- **Per-action properties**: `step_id`, that Step's exact `arguments_digest`, and the `scope`
+  shown for it.
+- **Normalization**: members ordered by `step_id` ascending, byte-wise.
+- **`action_set_digest`**: SHA-256 over the canonical JSON of the ordered member array. It
+  is the commitment to which actions were approved, and it is stored on both the request row
+  and the grant row.
+- **Bounds and refusals**: a duplicate `step_id` is refused with
+  `APPROVAL_ACTION_SET_DUPLICATE`; a count outside 1..=8 is refused with
+  `APPROVAL_ACTION_SET_BOUND_EXCEEDED`; more than 8 operations are split into another bounded
+  unit or refused, never merged or expanded.
+- **Immutability**: the set is fully determinate before approval and immutable afterwards,
+  with no-update, no-delete and no-late-insert triggers on both membership tables, mirroring
+  migration 0004.
+- **Partial approval**: a `GRANT` response may cover a proper subset; the granted subset is
+  written and frozen, and unapproved Steps receive no authority at all.
+- **`max_uses`** equals the granted member count and never exceeds it. An unlisted Step can
+  never consume, because membership — not the counter — is what authorizes it.
+- **Consumption** requires membership, then validates the durable Step against the shared
+  conditions and the member's digest recomputed from `task_steps.input_digest`, then inserts
+  `(grant_id, step_id)` and decrements, in one transaction. There is no scope-only match and
+  no digest-only match.
+- **Event routing** uses the leading member — the smallest `step_id` under the ordering — as
+  `ApprovalLifecyclePayloadV1.step_id`. That value is routing identity only.
+
+This widens nothing a human did not see and narrows nothing the frozen text allowed. It costs
+one authority-bearing membership table per side, which is exactly why it needed an owner
+decision rather than an engineering inference.
+
 `approval_grant_uses` carries a `PRIMARY KEY (grant_id, step_id)`, which is the atomicity
 invariant [ADR-0039](ADR-0039-p6-p8-revalidation-and-grant-consumption-boundary.md) requires.
 The conceptual schema also carries `UNIQUE (step_id)`, which is strictly stronger — it makes
 a step consumable by at most one grant across the host's lifetime. That is offered as
 defence-in-depth but must be confirmed in P6A: it also forbids the re-approval flow in which
 a first grant for a step is invalidated and a second grant for the same `step_id` is later
-consumed.
+consumed. **Owner decision DC-1 settled it: both `UNIQUE (step_id)` and
+`PRIMARY KEY (grant_id, step_id)` are retained.** An unused grant whose state is EXPIRED,
+REVOKED or DENIED must not by itself block reapproval for the same Step, because no use row
+exists for that Step; a Step that has already been consumed must not be authorizable again
+by a second grant, because the use row blocks it. P8 will eventually reconcile dispatch
+intent and idempotency state, and P6 does not implement that mechanism.
+
+**How the contradiction was resolved.** The frozen grant example carries no `step_id`, so the
+six bounds bind a **task**, not a Step; the owner package's §6.2 identity table and §8.4
+conceptual DDL instead bound a single `StepId`. Those readings are not compatible, and the
+difference decides whether `max_uses > 1` is reachable authority at all. The proof is in
+[P6A-feasibility-gate.md](../plans/P6A-feasibility-gate.md) §2–§3; the owner resolved it with
+decision R2, above, and the grant therefore binds an enumerated set of Steps rather than one
+Step or none.
 
 ### Scope and uses
 
@@ -186,7 +241,27 @@ security-relevant change through an unrelated ADR.
 - Digest re-derivation against changed arguments.
 - Cancellation-is-not-revocation, asserted on the grant row itself.
 
+## Owner ratification and P6A gate status
+
+The owner ratified this decision on **2026-10-10** together with the rest of the P6
+recommended package (recorded in §0a of the
+[P6 owner decision package](../plans/P6-owner-decision-package.md)).
+
+The P6A feasibility gate has nevertheless **not** passed for this ADR's subject matter:
+[P6A feasibility gate](../plans/P6A-feasibility-gate.md) proves that the ratified approval identity — `TaskId`, `StepId` and one exact
+`arguments_digest` on a grant — cannot coexist with the ratified multi-use requirement and
+the frozen Approval Protocol §4 point 2 and §7.1 batch example, and that every escape
+route is either prohibited by the execution mandate or is a new authority design
+requiring owner ratification. Migration 0005 therefore does not exist and no
+`serea-policy` runtime is written.
+
+This ADR is **owner-ratified in content and remains Proposed**. It is not marked Accepted,
+because the P6A closure gate requires all four P6 ADRs to be Accepted together after the
+feasibility and contradiction gates pass, and the feasibility gate did not pass.
+
 ## Status
 
-**Proposed. Not accepted.** The `APPROVAL_REVOKED` event kind, the two grant states, and the
-`PERSONAL` persisted ceiling are proposals. No P6 runtime exists.
+**Accepted** on 2026-10-10, following owner ratification of the P6 package and the additional
+owner decision R2. The `APPROVAL_REVOKED` event kind, the two grant states, the `PERSONAL`
+persisted ceiling and the enumerated multi-action grant identity are all ratified. No P6
+runtime exists yet; P6B builds the schema this ADR specifies.

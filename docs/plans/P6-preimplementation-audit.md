@@ -17,6 +17,34 @@ PreparedActionV1 + trusted Task/policy context
   -> STOP (P8 alone revalidates mutable state and dispatches)
 ```
 
+## P6A closure status — 2026-10-10
+
+The owner ratified the full recommended package on 2026-10-10
+([§0a of the owner decision package](P6-owner-decision-package.md)). The P6A feasibility
+gate then ran and reported a **BLOCKER** on its first pass:
+[P6A-feasibility-gate.md](P6A-feasibility-gate.md) proved that the ratified approval identity
+(`TaskId` + `StepId` + one exact `arguments_digest` on a grant) cannot coexist with the
+ratified multi-use requirement and the frozen Approval Protocol §4 point 2 and §7.1 batch
+example, and that every escape route was either prohibited by the execution mandate or a new
+authority design requiring owner ratification.
+
+On the same day the owner made the additional decision **R2 — enumerated multi-action grant**
+([§0b of the owner decision package](P6-owner-decision-package.md)), which resolves the
+contradiction by carrying `arguments_digest` and `scope` **per enumerated member** rather
+than once per grant, over a bounded immutable set of 1 to 8 individually approved Steps. The
+gate re-ran and **passed**. ADR-0037 through ADR-0040 are **Accepted**.
+
+P6A closure state:
+
+- Migration 0005 does **not** exist. No `serea-policy` crate exists. No evaluator, no
+  approval runtime, no TaskEngine runtime modification.
+- P6B starts only after this P6A slice is committed, pushed and verified at exact-head CI.
+
+The separable contract closure has been performed: owner ratification, DC-1 through DC-4, the
+Root mandatory-approval rule, the four new bounds, the `APPROVAL_REVOKED` event kind, the
+request-state correction, the `PlainSummary` rationale correction, the crate ownership
+corrections, and the finite `AutomationContext` derivation function.
+
 ## Current contract and Rust inventory
 
 | Classification | Current fact | Source / owner / enforcement | Durability and tests | Owner decision? |
@@ -248,3 +276,69 @@ ratifies the whole recommended design, including the six numeric and product def
 the package publishes. That sentence has not been said. An explicit owner override supersedes
 only the value it names; nothing else is reopened by it. Six values are listed in the package
 so an override can name one, and each has a recommended default already applied.
+
+## 2026-10-10 — the response arrived, and what it did not settle
+
+The owner replied **"承認します。"** on 2026-10-10. That ratified all six clusters, all six
+defaults and product values, and the four explicit decisions DC-1 through DC-4, plus the Root
+mandatory-approval rule. The ratification record is §0a of the
+[P6 owner decision package](P6-owner-decision-package.md).
+
+Ratification did not close P6, because the P6A feasibility gate then ran and found a
+contradiction inside the ratified design itself. The short form:
+
+- One capability Step is exactly one `PreparedActionV1` with one `arguments_digest`
+  (`preparation.rs` takes one capability and one Step). A plan with three
+  `calendar.event.create` calls is three Steps with three distinct digests.
+- Approval Protocol §4 point 2 requires each executing Step's canonical `arguments_digest`
+  to equal the digest in the approved request and in the grant. §3 carries exactly one such
+  digest.
+- Approval Protocol §7.1 — frozen contract text — endorses one grant with `max_uses: 3`
+  covering three calls presented as one prompt.
+- DC-1 ratifies `UNIQUE(step_id)` and `PRIMARY KEY(grant_id, step_id)`, and §4.2 makes a
+  repeat consumption for the same Step a no-op, so one Step consumes a grant at most once.
+
+The owner then resolved it the same day with **decision R2**, which is recorded in §0b of the
+owner decision package and specified in §7 of
+[P6A-feasibility-gate.md](P6A-feasibility-gate.md). The specific owner question the gate asked
+was:
+
+> **Does one approval grant bind exactly one Step, or may it bind a bounded, explicitly
+> enumerated set of Steps each with its own exact `arguments_digest`?**
+
+The owner answered with the second option and added twelve ratified invariants and a ratified
+security boundary. P6A is therefore closed and P6B through P6F are authorized to proceed.
+
+## 2026-10-10 — RED-first test obligations added by R2
+
+Owner invariant 4 of R2 — only the individual actions a human actually approved are covered,
+and scope-only or digest-only matching must never add authorization for a new Step — introduces
+attack paths the earlier R-test plan did not cover. Each of the following is a RED-first
+obligation for P6B through P6D. Every one must fail for the intended reason before the
+implementation that satisfies it is written.
+
+| # | Attack path | RED assertion | Enforcement point |
+| --- | --- | --- | --- |
+| RT1 | A Step **not enumerated** in the grant, with arguments identical to an enumerated member, attempts to consume | refused with `APPROVAL_ACTION_NOT_ENUMERATED`; no use row, no decrement | membership lookup before the decrement |
+| RT2 | A Step not enumerated, sitting inside an approved `scope`, attempts to consume | refused; scope never authorizes | membership lookup, not the scope matcher |
+| RT3 | A member row is inserted after the grant is committed | insert refused by trigger and by the Rust writer | no-late-insert trigger plus a typed writer check |
+| RT4 | A member row is updated or deleted after the grant is committed | both refused by trigger | no-update, no-delete triggers |
+| RT5 | A request unit enumerates the same `step_id` twice | refused with `APPROVAL_ACTION_SET_DUPLICATE` | request builder |
+| RT6 | A request unit enumerates 9 Steps | refused with `APPROVAL_ACTION_SET_BOUND_EXCEEDED`; not silently split | request builder, against `approval_grant_max_uses` |
+| RT7 | A unit mixes Steps with different `capability_id`, `version`, `generation`, `descriptor_digest` or `plan_revision` | refused with `APPROVAL_ACTION_SET_INCONSISTENT` | request builder, against `step_capability_bindings` |
+| RT8 | `action_set_digest` does not match the canonicalized ordered member array | the grant is refused and an evaluation against it is refused | digest recomputation at write and at read |
+| RT9 | A member's stored `arguments_digest` differs from the durable `task_steps.input_digest` | the request is refused before it is ever shown to a human | request builder, reading durable state |
+| RT10 | A `GRANT` response grants a proper subset and a caller then tries to widen it | widening refused; only the frozen subset has authority | no-update trigger plus the Rust writer |
+| RT11 | An unapproved Step of a partially granted unit attempts to consume | refused; it is not a member | membership lookup |
+| RT12 | A member Step consumes, then a second grant for the same Step is offered | refused by `UNIQUE(step_id)`; no second independent consumption | use-table uniqueness |
+| RT13 | A Step whose earlier grant was revoked **unused** is re-approved and consumes | allowed; no use row existed | DC-1 first limb |
+| RT14 | An enrolled member's durable `plan_revision` advances between approval and consumption | refused; `plan_revision` is a shared condition | pre-consume revalidation |
+| RT15 | A cross-task replay of an enumerated `step_id` | refused; `task_id` is a shared condition and the Step belongs to another task | membership and shared-condition check |
+| RT16 | `max_uses` exceeds the granted member count, or a response proposes more than 8 | refused; `max_uses` equals the member count | grant minting, with clamping to the ratified bound |
+| RT17 | A member Step is replaced by a new `step_id` with identical arguments | refused; the new Step is not enumerated | membership lookup |
+| RT18 | Concurrent consumption by two enumerated members of a two-member grant | exactly two use rows, exactly two decrements, no third | one transaction per consume, independent connections |
+| RT19 | A nondeterministic member ordering produces two different `action_set_digest` values for the same set | refused; ordering is `step_id` ascending byte-wise | normalization test, plus a restart determinism test |
+| RT20 | Approval lifecycle events for a multi-action unit | exactly one event per transition, routed on the leading member, `max_events_per_transaction` respected | event composition, no per-member fan-out |
+
+RT1, RT2 and RT11 are the ones R2 exists to make true, and RT3, RT4, RT10 and RT12 are the
+ones that would silently reintroduce the "approved: bool" architecture if they were skipped.

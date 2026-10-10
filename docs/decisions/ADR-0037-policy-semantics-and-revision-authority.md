@@ -1,6 +1,6 @@
 # ADR-0037: Deterministic policy semantics and revision authority
 
-Status: **Proposed** · Date: 2026-10-10 · Architecture: `serea-arch/2.6.0` → `2.7.0` if accepted
+Status: **Accepted** · Date: 2026-10-10 (ratified) · Architecture: `serea-arch/2.7.0`
 
 Surfaces affected: `serea.policy/1` semantics (prose only), `serea.event/1` unchanged,
 `serea.task/2` unchanged. No wire-major change.
@@ -44,7 +44,7 @@ deny, and an admin revision could change the meaning of every capability at once
 
 ## Decision
 
-**Proposed: Option A.**
+**Option A, ratified by the owner on 2026-10-10.**
 
 1. The §4.1 class-default table is a fixed, code-level, versioned constant. It is not rule
    data and cannot be edited by an admin revision.
@@ -91,7 +91,18 @@ deny, and an admin revision could change the meaning of every capability at once
 - Restart determinism over a 1000-rule revision.
 - Pointer-advances-only tests, including a direct SQL edit attempt.
 
+## Owner ratification and P6A gate status
+
+The owner ratified this decision on **2026-10-10** together with the rest of the P6
+recommended package, recorded in §0a of the
+[P6 owner decision package](../plans/P6-owner-decision-package.md).
+
+This ADR is unaffected by the multi-action question that
+[P6A-feasibility-gate.md](../plans/P6A-feasibility-gate.md) raised and that the owner resolved
+with decision R2: the class-default model, the precedence rule, the deny-override rule and the
+context derivation are all independent of how many Steps one grant binds.
+
 ## Status
 
-**Proposed. Not accepted. P6 runtime is not started and this ADR authorizes no
-implementation.**
+**Accepted** on 2026-10-10. P6 runtime is not started by this ADR; P6C builds the
+evaluator it specifies.

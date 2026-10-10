@@ -96,7 +96,49 @@ account identically on Linux, Intel macOS, and arm64 macOS; it is not a claim
 about physical database-file size.
 | `duplicate_window_ms` | 86400000 (24 h) | global | Not an exhaustion; a match returns `DUPLICATE_SUPPRESSED` (§5) |
 | `approval_request_expiry_ms` | 1800000 (30 min) | per-approval | Approval → `EXPIRED`, never a grant |
+| `approval_grant_expiry_ms` | 1800000 (30 min) | per-grant | Grant → `EXPIRED`; never outlives the request it came from, so the two horizons are equal by construction |
+| `approval_grant_max_uses` | 8 | per-approval-unit action set | Refuse a unit enumerating more actions, and refuse a response proposing a higher ceiling; `max_uses` equals the granted action count, so a unit never carries authority for more than 8 individually approved Steps |
+| `max_active_policy_rules` | 512 | per-policy-revision | Refuse the revision at write time; a capacity guard, not a design target |
+| `max_retained_policy_revisions` | 64 | global policy history | Prune the oldest superseded revisions; never the active revision, never a revision a durable row references, and never below the active pointer |
 | `task_retention_days` | 30 | per-task | Task body deleted; counters survive |
+
+### P6 bounds (owner ratified 2026-10-10)
+
+The five P6 rows above are ratified defaults. Two of them need a scope
+clarification, because each guards a resource no existing bound names:
+
+- `approval_grant_expiry_ms` is equal to `approval_request_expiry_ms` on purpose.
+  A grant must never outlive the request it came from, and making the horizons
+  equal makes that structural rather than a check someone has to remember to
+  write. Grant validity remains the strict `now < expires_at` test.
+- `approval_grant_max_uses = 8` is a ceiling on the size of an approval unit's
+  action set, not a promise that 8 will be used. The protocol's own batch example
+  is 3. Under owner decision R2 it is enforced twice: an approval unit that
+  enumerates more than 8 actions is refused rather than split or merged, and
+  `max_uses` equals the granted action count, so no grant carries authority for
+  more Steps than a human individually approved. A device's `requested_max_uses` is
+  a ceiling proposal and is clamped to the request's own bounds; a response
+  proposing more is refused, not silently truncated.
+
+`max_retained_policy_revisions = 64` keeps enough policy history to serve the
+one-year `POLICY_CHANGED` audit class while bounding growth of `policy_revisions`
+and `policy_rules`. Pruning is constrained three ways: it never removes the
+active revision, it never removes a revision a durable row still references, and
+it never moves the activation pointer backwards. This is the only bound in this
+protocol whose exhaustion deletes data, so those three constraints are part of
+the bound's definition rather than an implementation detail.
+
+**Explicitly not a bound: a summary byte cap.** No approval-summary length bound
+is published, and the reason must be stated precisely rather than implied. A
+summary is a `PlainSummary`, whose `Label` category refuses control characters
+and multi-line content but imposes **no length ceiling at all** — the older
+`MAX_VALUE_LENGTH = 4096` value was retracted by owner decision and never
+replaced. A summary that fits `max_event_payload_bytes` is therefore persistable
+and fails only at event append, where the event is refused and the whole request
+transaction rolls back. That is fail-closed but opaque to the user, and it is
+recorded here as a known consequence of not publishing a number for a resource
+nobody has measured. `max_active_policy_rules` likewise serves as the
+per-evaluation candidate cap, so no separate candidate bound exists.
 
 ### P3 event and Scheduler bounds (owner direction)
 

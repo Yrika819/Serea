@@ -37,12 +37,23 @@
 //!   `HostGoalProvider` port and no adapter, so there is nothing for them to
 //!   travel in yet.
 //! * `PolicyDecision` and `DenyReason` — owned by `serea-policy` (Crate Map
-//!   §3.1) and P2. The types P1 does define for the same axis are
+//!   §3.1) and P6. The types P1 does define for the same axis are
 //!   [`types::RiskClass`] and [`types::Authorization`], which Policy Protocol §2
 //!   and Capability Protocol §3.1 actually specify.
-//! * `ApprovalRequest` and `ApprovalGrant` — owned by `serea-capability`
-//!   (Crate Map §3.1) and P6. P1 defines `ApprovalId` and `GrantId` (Protocol
+//! * `ApprovalRequest` and `ApprovalGrant` — owned by `serea-policy` (Crate Map
+//!   §3.1) and P6. P1 defines `ApprovalId` and `GrantId` (Protocol
 //!   Index §2) and nothing about a grant's semantics.
+//!
+//! **Correction, 2026-10-10.** An earlier version of this comment placed
+//! `ApprovalRequest` and `ApprovalGrant` in `serea-capability`. That graph is
+//! impossible: `tests/workspace_smoke.py` fails the build on a
+//! `serea-capability -> serea-policy` edge, so a capability crate can reach
+//! neither the approval types nor the evaluator that produces them. All of
+//! `PolicyRule`, `PolicyDecision`, `DenyReason`, `HandoffRequest`,
+//! `PolicyInputV1`, `ApprovalRequest`, `ApprovalGrant`, `ApprovalGrantUse`,
+//! `AuthenticatedApprovalResponseV1` and `AuthorizationEvidenceV1` live in
+//! `serea-policy`. `ApprovalLifecyclePayloadV1` stays here, unchanged, because
+//! it is routing identity and not authority.
 //! * `DeviceLinkPort` — Crate Map §2.1 places the `serea.device/2` wire types
 //!   and the port here, but the link itself is `serea-core`'s and P12.
 //! * `Ids` — P1 provides [`ids::UlidSource`] and [`ids::IdMinter`] for minting

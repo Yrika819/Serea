@@ -58,6 +58,7 @@ const TASK: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";
 const STEP_A: &str = "stp_01JQ8Z9M5T9WXK2H4BNPQ7RDSF";
 const STEP_B: &str = "stp_01JQ8Z9M5T9WXK2H4BNPQ7RDST";
 const STEP_C: &str = "stp_01JQ8Z9M5T9WXK2H4BNPQ7RDSA";
+const MODEL_STEP: &str = "stp_01JQ8Z9M5T9WXK2H4BNPQ7RDSB";
 const OTHER_TASK: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNB";
 const OTHER_STEP: &str = "stp_01JQ8Z9M5T9WXK2H4BNPQ7RDTU";
 const APPROVAL: &str = "apr_01JQ8ZA1D4NFG8K2M6RTV9XCWB";
@@ -69,6 +70,23 @@ fn seed_v4(path: &Path) {
     let conn = Connection::open(path).unwrap();
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
     for migration in Migrations::embedded().iter().take(4) {
+        conn.execute_batch(migration.sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations(version,name,checksum,applied_at_ms) VALUES (?1,?2,?3,0)",
+            params![
+                migration.version,
+                migration.name,
+                Migrations::checksum(migration.sql).as_str()
+            ],
+        )
+        .unwrap();
+    }
+}
+
+fn seed_v5(path: &Path) {
+    let conn = Connection::open(path).unwrap();
+    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    for migration in Migrations::embedded().iter().take(5) {
         conn.execute_batch(migration.sql).unwrap();
         conn.execute(
             "INSERT INTO schema_migrations(version,name,checksum,applied_at_ms) VALUES (?1,?2,?3,0)",
@@ -208,6 +226,19 @@ fn insert_request(conn: &Connection, steps: &[&str], digests: &[&str]) {
 }
 
 fn approve_and_grant(conn: &Connection, granted_steps: &[&str], digests: &[&str]) {
+    approve_and_grant_with_seal(conn, granted_steps, digests, true);
+}
+
+fn approve_and_grant_unsealed(conn: &Connection, granted_steps: &[&str], digests: &[&str]) {
+    approve_and_grant_with_seal(conn, granted_steps, digests, false);
+}
+
+fn approve_and_grant_with_seal(
+    conn: &Connection,
+    granted_steps: &[&str],
+    digests: &[&str],
+    seal: bool,
+) {
     conn.execute(
         "UPDATE approval_requests SET status='APPROVED' WHERE approval_id=?1",
         params![APPROVAL],
@@ -239,6 +270,13 @@ fn approve_and_grant(conn: &Connection, granted_steps: &[&str], digests: &[&str]
         )
         .unwrap();
     }
+    if seal {
+        conn.execute(
+            "INSERT INTO approval_grant_seals(grant_id,sealed_at_ms) VALUES (?1,200)",
+            params![GRANT],
+        )
+        .unwrap();
+    }
 }
 
 fn scalar(conn: &Connection, sql: &str) -> rusqlite::Result<i64> {
@@ -262,8 +300,8 @@ fn text(conn: &Connection, sql: &str, grant_id: &str) -> rusqlite::Result<String
 #[test]
 fn migration_catalog_appends_p6b_without_rewriting_any_prior_migration() {
     let catalog = Migrations::embedded();
-    assert_eq!(Migrations::LATEST, 5);
-    assert_eq!(catalog.len(), 5);
+    assert_eq!(Migrations::LATEST, 6);
+    assert_eq!(catalog.len(), 6);
     assert_eq!(
         (catalog[4].version, catalog[4].name),
         (5, "0005_policy_approval")
@@ -291,12 +329,20 @@ fn migration_catalog_appends_p6b_without_rewriting_any_prior_migration() {
             .as_str()
             .starts_with("sha256:")
     );
+    assert_eq!(
+        Migrations::checksum(catalog[4].sql).as_str(),
+        "sha256:cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a"
+    );
+    assert_eq!(
+        (catalog[5].version, catalog[5].name),
+        (6, "0006_policy_authority_sealing")
+    );
 }
 
 #[test]
-fn fresh_store_applies_the_whole_p6_schema_at_v5() {
+fn fresh_store_applies_the_whole_p6_schema_at_v6() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(store.schema_version().unwrap(), 6);
     let conn = store.conn.lock().unwrap();
     for table in [
         "policy_revisions",
@@ -307,6 +353,7 @@ fn fresh_store_applies_the_whole_p6_schema_at_v5() {
         "approval_grants",
         "approval_grant_members",
         "approval_grant_uses",
+        "approval_grant_seals",
     ] {
         let strict: i64 = conn
             .query_row(
@@ -336,7 +383,7 @@ fn fresh_store_applies_the_whole_p6_schema_at_v5() {
 }
 
 #[test]
-fn existing_schema_v4_upgrades_to_v5_and_keeps_its_rows() {
+fn existing_schema_v4_upgrades_through_v5_to_v6_and_keeps_its_rows() {
     let temp = TempDb::new();
     seed_v4(&temp.0);
     {
@@ -359,7 +406,7 @@ fn existing_schema_v4_upgrades_to_v5_and_keeps_its_rows() {
     }
 
     let store = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(store.schema_version().unwrap(), 6);
     let conn = store.conn.lock().unwrap();
     assert_eq!(
         scalar(
@@ -381,6 +428,41 @@ fn existing_schema_v4_upgrades_to_v5_and_keeps_its_rows() {
         .unwrap(),
         1
     );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM schema_migrations WHERE version=6"
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn existing_schema_v5_upgrades_to_v6_without_rewriting_migration_0005() {
+    let temp = TempDb::new();
+    seed_v5(&temp.0);
+    let before = Migrations::checksum(Migrations::embedded()[4].sql);
+    let store = Store::open(&temp.0, &FixedClock).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 6);
+    store.verify_integrity().unwrap();
+    let conn = store.conn.lock().unwrap();
+    let checksum: String = conn
+        .query_row(
+            "SELECT checksum FROM schema_migrations WHERE version=5",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(checksum, before.as_str());
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='approval_grant_seals'"
+        )
+        .unwrap(),
+        1
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +474,7 @@ fn altered_p6b_migration_bytes_are_refused_as_a_checksum_mismatch() {
     let temp = TempDb::new();
     {
         let store = Store::open(&temp.0, &FixedClock).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 5);
+        assert_eq!(store.schema_version().unwrap(), 6);
     }
     // Rewriting an applied migration's bytes is exactly what the checksum
     // guard is for. No reset, no force: the store refuses and stays intact.
@@ -521,8 +603,9 @@ fn revision_activation_and_its_policy_changed_event_commit_together_or_not_at_al
     );
     assert_eq!(count_kind(&store, "POLICY_CHANGED"), 1);
 
-    // Rollback case: a newer revision whose event append fails leaves the old
-    // pointer in place, and leaves no half-activated revision behind.
+    // Rollback case: revision 2 was prepared before the activation transaction.
+    // Its unactivated row may survive; only activation and the event must roll
+    // back together.
     {
         let conn = store.conn.lock().unwrap();
         insert_revision(&conn, 2, false);
@@ -549,8 +632,22 @@ fn revision_activation_and_its_policy_changed_event_commit_together_or_not_at_al
             "SELECT count(*) FROM policy_revisions WHERE revision_id=2"
         )
         .unwrap(),
-        0
+        1
     );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM policy_revisions WHERE revision_id=2 AND activated_at_ms IS NULL"
+        )
+        .unwrap(),
+        1,
+        "the prepared revision survives but remains unactivated"
+    );
+    assert_eq!(
+        pointer(&conn, "SELECT active_revision_id FROM policy_state"),
+        1
+    );
+    assert_eq!(count_kind_store(&conn, "POLICY_CHANGED"), 1);
 }
 
 fn activate(tx: &mut Tx<'_>, revision: i64) -> Result<(), StoreError> {
@@ -790,9 +887,9 @@ fn an_approval_action_must_belong_to_the_request_task_and_pinned_step() {
     // A non-capability step is not an approvable action either.
     conn.execute(
         "INSERT INTO task_steps(step_id,task_id,sequence,kind,status,attempt,plan_revision,
-                                lease_generation)
-         VALUES (?1,?2,9,'MODEL_TURN','PLANNED',0,0,NULL,NULL,NULL,NULL,0)",
-        params![STEP_C, TASK],
+                                input_digest,lease_generation)
+         VALUES (?1,?2,9,'MODEL_TURN','PLANNED',0,0,?3,0)",
+        params![MODEL_STEP, TASK, ARGS_A],
     )
     .unwrap();
     assert!(
@@ -800,7 +897,7 @@ fn an_approval_action_must_belong_to_the_request_task_and_pinned_step() {
             "INSERT INTO approval_request_actions(approval_id,position,step_id,arguments_digest,
                                                  scope,scope_digest)
              VALUES (?1,0,?2,?3,?4,?5)",
-            params![APPROVAL, STEP_C, ARGS_A, SCOPE, SCOPE_DIGEST],
+            params![APPROVAL, MODEL_STEP, ARGS_A, SCOPE, SCOPE_DIGEST],
         )
         .is_err(),
         "a non-capability step must never become an approval action"
@@ -941,6 +1038,263 @@ fn the_action_set_is_bounded_before_the_request_is_ever_raised() {
     .unwrap_err();
 }
 
+#[test]
+fn an_incomplete_request_action_set_cannot_be_approved() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    let conn = store.conn.lock().unwrap();
+    seed_registry_and_task(&conn);
+    conn.execute(
+        "INSERT INTO approval_requests(approval_id,task_id,plan_revision,capability_id,
+                                       capability_version,generation_id,descriptor_digest,
+                                       risk_class,side_effect_class,authorization,data_class,
+                                       requested_by,automation_context,action_set_digest,
+                                       action_count,max_uses,summary_kind,summary,raised_at_ms,
+                                       expires_at_ms,status)
+         VALUES (?1,?2,0,'calendar.event.create','1.0.0',1,?3,'EXTERNAL_WRITE','EXTERNAL_WRITE',
+                 'SCOPED_GRANT','PERSONAL','USER','INTERACTIVE',?4,2,2,'host.builder','s',100,
+                 100000,'PENDING')",
+        params![APPROVAL, TASK, DESCRIPTOR, BAD],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO approval_request_actions(approval_id,position,step_id,arguments_digest,
+                                             scope,scope_digest)
+         VALUES (?1,0,?2,?3,?4,?5)",
+        params![APPROVAL, STEP_A, ARGS_A, SCOPE, SCOPE_DIGEST],
+    )
+    .unwrap();
+
+    assert!(
+        conn.execute(
+            "UPDATE approval_requests SET status='APPROVED' WHERE approval_id=?1",
+            params![APPROVAL],
+        )
+        .is_err(),
+        "a declared two-action request with only one durable action cannot be approved"
+    );
+    assert_eq!(
+        text(
+            &conn,
+            "SELECT status FROM approval_requests WHERE approval_id=?1",
+            APPROVAL
+        )
+        .unwrap(),
+        "PENDING"
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO approval_requests(approval_id,task_id,plan_revision,capability_id,
+                                           capability_version,generation_id,descriptor_digest,
+                                           risk_class,side_effect_class,authorization,data_class,
+                                           requested_by,automation_context,action_set_digest,
+                                           action_count,max_uses,summary_kind,summary,raised_at_ms,
+                                           expires_at_ms,status)
+             VALUES (?1,?2,0,'calendar.event.create','1.0.0',1,?3,'EXTERNAL_WRITE',
+                     'EXTERNAL_WRITE','SCOPED_GRANT','PERSONAL','USER','INTERACTIVE',?4,2,2,
+                     'host.builder','s',100,100000,'APPROVED')",
+            params![APPROVAL_2, TASK, DESCRIPTOR, BAD],
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn a_grant_seal_refuses_a_member_count_below_its_declaration() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    let conn = store.conn.lock().unwrap();
+    seed_registry_and_task(&conn);
+    insert_request(&conn, &[STEP_A, STEP_B], &[ARGS_A, ARGS_B]);
+    conn.execute(
+        "UPDATE approval_requests SET status='APPROVED' WHERE approval_id=?1",
+        params![APPROVAL],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO approval_grants(grant_id,approval_id,task_id,plan_revision,capability_id,
+                                     capability_version,generation_id,descriptor_digest,
+                                     action_set_digest,action_count,max_uses,uses_remaining,
+                                     granted_at_ms,expires_at_ms,granted_by,auth_strength,status)
+         VALUES (?1,?2,?3,0,'calendar.event.create','1.0.0',1,?4,?5,2,2,2,200,100000,
+                 'USER','ELEVATED_CONFIRMED','ACTIVE')",
+        params![GRANT_2, APPROVAL, TASK, DESCRIPTOR, BAD],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO approval_grant_members(grant_id,position,approval_id,step_id,
+                                            arguments_digest,scope_digest)
+         VALUES (?1,0,?2,?3,?4,?5)",
+        params![GRANT_2, APPROVAL, STEP_A, ARGS_A, SCOPE_DIGEST],
+    )
+    .unwrap();
+    assert!(
+        conn.execute(
+            "INSERT INTO approval_grant_seals(grant_id,sealed_at_ms) VALUES (?1,200)",
+            params![GRANT_2],
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
+             VALUES (?1,?2,?3,300)",
+            params![GRANT_2, STEP_A, TASK],
+        )
+        .is_err()
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT uses_remaining FROM approval_grants WHERE grant_id='grt_01JQ8ZA7B3KMW9Q4TVY7XN2RDQ'"
+        )
+        .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn a_revoked_grant_cannot_be_reactivated_or_consumed() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    let conn = store.conn.lock().unwrap();
+    seed_registry_and_task(&conn);
+    insert_request(&conn, &[STEP_A], &[ARGS_A]);
+    approve_and_grant(&conn, &[STEP_A], &[ARGS_A]);
+    conn.execute(
+        "UPDATE approval_grants SET status='REVOKED' WHERE grant_id=?1",
+        params![GRANT],
+    )
+    .unwrap();
+    assert!(
+        conn.execute(
+            "UPDATE approval_grants SET status='ACTIVE' WHERE grant_id=?1",
+            params![GRANT],
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
+             VALUES (?1,?2,?3,300)",
+            params![GRANT, STEP_A, TASK],
+        )
+        .is_err()
+    );
+    assert_eq!(
+        text(
+            &conn,
+            "SELECT status FROM approval_grants WHERE grant_id=?1",
+            GRANT
+        )
+        .unwrap(),
+        "REVOKED"
+    );
+}
+
+#[test]
+fn an_incomplete_grant_member_set_cannot_consume_a_use_or_grow_after_sealing() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    let conn = store.conn.lock().unwrap();
+    seed_registry_and_task(&conn);
+    insert_request(&conn, &[STEP_A, STEP_B], &[ARGS_A, ARGS_B]);
+    approve_and_grant_unsealed(&conn, &[STEP_A], &[ARGS_A]);
+
+    // The grant declares exactly one member in this partial approval. Until
+    // that complete subset is explicitly sealed, it is not consumption authority.
+    assert!(
+        conn.execute(
+            "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
+             VALUES (?1,?2,?3,300)",
+            params![GRANT, STEP_A, TASK],
+        )
+        .is_err(),
+        "unsealed action membership cannot be spent"
+    );
+    conn.execute(
+        "INSERT INTO approval_grant_seals(grant_id,sealed_at_ms) VALUES (?1,200)",
+        params![GRANT],
+    )
+    .unwrap();
+    assert!(
+        conn.execute(
+            "INSERT INTO approval_grant_members(grant_id,position,approval_id,step_id,
+                                                arguments_digest,scope_digest)
+             VALUES (?1,1,?2,?3,?4,?5)",
+            params![GRANT, APPROVAL, STEP_B, ARGS_B, SCOPE_DIGEST],
+        )
+        .is_err()
+    );
+    conn.execute(
+        "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
+         VALUES (?1,?2,?3,300)",
+        params![GRANT, STEP_A, TASK],
+    )
+    .unwrap();
+    assert!(
+        conn.execute(
+            "DELETE FROM approval_grant_uses WHERE grant_id=?1",
+            params![GRANT]
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "UPDATE approval_grant_uses SET consumed_at_ms=301 WHERE grant_id=?1",
+            params![GRANT],
+        )
+        .is_err()
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1,
+        "the global consumed-Step record cannot be deleted or changed"
+    );
+}
+
+#[test]
+fn authority_history_and_bound_step_facts_cannot_be_deleted_or_changed_in_place() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    let conn = store.conn.lock().unwrap();
+    seed_registry_and_task(&conn);
+    insert_request(&conn, &[STEP_A], &[ARGS_A]);
+    approve_and_grant(&conn, &[STEP_A], &[ARGS_A]);
+
+    assert!(
+        conn.execute(
+            "UPDATE task_steps SET input_digest=?1 WHERE step_id=?2",
+            params![ARGS_B, STEP_A],
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute("DELETE FROM task_steps WHERE step_id=?1", params![STEP_A])
+            .is_err()
+    );
+    assert!(
+        conn.execute(
+            "DELETE FROM approval_grants WHERE grant_id=?1",
+            params![GRANT]
+        )
+        .is_err()
+    );
+    assert!(
+        conn.execute(
+            "DELETE FROM approval_requests WHERE approval_id=?1",
+            params![APPROVAL],
+        )
+        .is_err()
+    );
+
+    conn.execute(
+        "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
+         VALUES (?1,?2,?3,300)",
+        params![GRANT, STEP_A, TASK],
+    )
+    .unwrap();
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 11 — invalid identifiers, digests and states
 // ---------------------------------------------------------------------------
@@ -976,10 +1330,47 @@ fn invalid_identifiers_digests_and_states_are_refused_by_the_schema() {
         );
     }
 
+    let insert_candidate = |id: &str, class: &str, digest: &str| {
+        conn.execute(
+            "INSERT INTO approval_requests(approval_id,task_id,plan_revision,capability_id,
+                                           capability_version,generation_id,descriptor_digest,
+                                           risk_class,side_effect_class,authorization,data_class,
+                                           requested_by,automation_context,action_set_digest,
+                                           action_count,max_uses,summary_kind,summary,raised_at_ms,
+                                           expires_at_ms,status)
+             VALUES (?1,?2,0,'calendar.event.create','1.0.0',1,?3,'EXTERNAL_WRITE',
+                     'EXTERNAL_WRITE','SCOPED_GRANT',?4,'USER','INTERACTIVE',?5,1,1,
+                     'host.builder','s',100,100000,'PENDING')",
+            params![id, TASK, DESCRIPTOR, class, digest],
+        )
+    };
+    // A persisted request row may never be PRIVATE, SECRET or CREDENTIAL.
+    for (index, class) in ["PRIVATE", "SECRET", "CREDENTIAL"].into_iter().enumerate() {
+        let id = format!("apr_0000000000000000000000000{}", index + 1);
+        assert!(
+            insert_candidate(&id, class, BAD).is_err(),
+            "data_class {class} must be refused at insertion"
+        );
+    }
+    // Digest shape: malformed encoding and invalid length are distinct cases.
+    let invalid_length = &BAD[..BAD.len() - 1];
+    for (index, digest) in ["nope", "sha256:zz", invalid_length, &format!("{BAD}ff")]
+        .into_iter()
+        .enumerate()
+    {
+        let id = format!("apr_0000000000000000000000000{}", index + 5);
+        assert!(
+            insert_candidate(&id, "PERSONAL", digest).is_err(),
+            "digest {digest} must be refused at insertion"
+        );
+    }
+
     insert_request(&conn, &[STEP_A], &[ARGS_A]);
     // Every state outside the closed request set is refused. A request
     // REVOKED value does not exist: revocation is grant-only.
     for status in ["REVOKED", "PENDING ", "pending", "CANCELLED"] {
+        conn.execute_batch("SAVEPOINT invalid_request_status")
+            .unwrap();
         assert!(
             conn.execute(
                 "UPDATE approval_requests SET status=?1 WHERE approval_id=?2",
@@ -988,29 +1379,8 @@ fn invalid_identifiers_digests_and_states_are_refused_by_the_schema() {
             .is_err(),
             "request status {status} must be refused"
         );
-    }
-    // A persisted request row may never be PRIVATE, SECRET or CREDENTIAL. The
-    // PERSONAL ceiling is mechanical, per the ratified decision.
-    for class in ["PRIVATE", "SECRET", "CREDENTIAL"] {
-        assert!(
-            conn.execute(
-                "UPDATE approval_requests SET data_class=?1 WHERE approval_id=?2",
-                params![class, APPROVAL],
-            )
-            .is_err(),
-            "data_class {class} must be refused in a persisted approval row"
-        );
-    }
-    // Digest shape.
-    for digest in ["nope", BAD.trim_end_matches('1'), &format!("{BAD}ff")] {
-        assert!(
-            conn.execute(
-                "UPDATE approval_requests SET action_set_digest=?1 WHERE approval_id=?2",
-                params![digest, APPROVAL],
-            )
-            .is_err(),
-            "digest {digest} must be refused"
-        );
+        conn.execute_batch("ROLLBACK TO invalid_request_status; RELEASE invalid_request_status")
+            .unwrap();
     }
 }
 
@@ -1043,11 +1413,15 @@ fn a_grant_may_only_name_a_closed_actor_authentication_and_auth_strength() {
         );
     }
     for status in ["ACTIVE", "EXPIRED", "REVOKED"] {
+        conn.execute_batch("SAVEPOINT invalid_grant_status")
+            .unwrap();
         conn.execute(
             "UPDATE approval_grants SET status=?1 WHERE grant_id=?2",
             params![status, GRANT],
         )
         .unwrap();
+        conn.execute_batch("ROLLBACK TO invalid_grant_status; RELEASE invalid_grant_status")
+            .unwrap();
     }
     // EXHAUSTED means every granted step has consumed. Writing it by hand while
     // a use is still available would forge a state only the spend trigger makes.
@@ -1244,14 +1618,14 @@ fn a_second_grant_cannot_authorize_an_already_consumed_step() {
     conn.execute(
         "INSERT INTO approval_request_actions(approval_id,position,step_id,arguments_digest,
                                               scope,scope_digest)
-         VALUES (APPROVAL_2,0,?1,?2,?3,?4)",
+         VALUES (?5,0,?1,?2,?3,?4)",
         params![STEP_A, ARGS_A, SCOPE, SCOPE_DIGEST, APPROVAL_2],
     )
     .unwrap();
-    let second = "grt_01JQ8ZA7B3KMW9Q4TVY7XN2RDQ";
+    let second = GRANT_2;
     conn.execute(
-        "UPDATE approval_requests SET status='APPROVED' WHERE approval_id=APPROVAL_2",
-        [],
+        "UPDATE approval_requests SET status='APPROVED' WHERE approval_id=?1",
+        params![APPROVAL_2],
     )
     .unwrap();
     conn.execute(
@@ -1259,28 +1633,36 @@ fn a_second_grant_cannot_authorize_an_already_consumed_step() {
                                      capability_version,generation_id,descriptor_digest,
                                      action_set_digest,action_count,max_uses,uses_remaining,
                                      granted_at_ms,expires_at_ms,granted_by,auth_strength,status)
-         VALUES (?1,APPROVAL_2,?2,0,'calendar.event.create','1.0.0',1,?3,
+         VALUES (?1,?5,?2,0,'calendar.event.create','1.0.0',1,?3,
                  ?4,1,1,1,200,100000,'USER','ELEVATED_CONFIRMED','ACTIVE')",
-        params![second, TASK, DESCRIPTOR, BAD],
+        params![second, TASK, DESCRIPTOR, BAD, APPROVAL_2],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO approval_grant_members(grant_id,position,approval_id,step_id,
                                             arguments_digest,scope_digest)
-         VALUES (?1,0,APPROVAL_2,?2,?3,?4)",
-        params![second, STEP_A, ARGS_A, SCOPE_DIGEST],
+         VALUES (?1,0,?5,?2,?3,?4)",
+        params![second, STEP_A, ARGS_A, SCOPE_DIGEST, APPROVAL_2],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO approval_grant_seals(grant_id,sealed_at_ms) VALUES (?1,200)",
+        params![second],
     )
     .unwrap();
     // The member row is fine; the *use* is not. UNIQUE(step_id) is what makes a
     // previously consumed Step unauthorized by any second grant.
-    assert!(
-        conn.execute(
-            "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
+    let duplicate = conn.execute(
+        "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
              VALUES (?1,?2,?3,301)",
-            params![second, STEP_A, TASK],
-        )
-        .is_err(),
-        "a consumed step must not be authorized again by a second grant"
+        params![second, STEP_A, TASK],
+    );
+    assert!(
+        matches!(
+            duplicate,
+            Err(rusqlite::Error::SqliteFailure(ref error, _)) if error.extended_code == 2067
+        ),
+        "UNIQUE(step_id) must reject a second grant's attempt to consume the Step"
     );
     // And the second grant was never spent.
     assert_eq!(
@@ -1298,35 +1680,22 @@ fn only_an_enumerated_granted_step_can_consume_a_use() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
     let conn = store.conn.lock().unwrap();
     seed_registry_and_task(&conn);
-    insert_request(&conn, &[STEP_A, STEP_B], &[ARGS_A, ARGS_B]);
-    approve_and_grant(&conn, &[STEP_A, STEP_B], &[ARGS_A, ARGS_B]);
+    insert_request(&conn, &[STEP_A], &[ARGS_A]);
+    approve_and_grant(&conn, &[STEP_A], &[ARGS_A]);
 
-    // RT1/RT2: a step that is not a member is refused even though its arguments
-    // digest equals an approved one and it sits inside the approved scope.
+    // STEP_C is a valid Task Step with the same canonical arguments digest and
+    // structural scope as STEP_A, but it was not enumerated by the human.
     conn.execute(
         "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
          VALUES (?1,?2,?3,300)",
         params![GRANT, STEP_C, TASK],
     )
     .unwrap_err();
-    // RT11: an unapproved step of a partially approved unit is refused.
-    conn.execute(
-        "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
-         VALUES (?1,?2,?3,300)",
-        params![GRANT, STEP_B, TASK],
-    )
-    .unwrap_err();
-    // The enumerated steps consume normally.
+    // Membership, rather than equal scope or digest, decides authority.
     conn.execute(
         "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
          VALUES (?1,?2,?3,300)",
         params![GRANT, STEP_A, TASK],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
-         VALUES (?1,?2,?3,301)",
-        params![GRANT, STEP_B, TASK],
     )
     .unwrap();
     let remaining: i64 = conn
@@ -1469,7 +1838,7 @@ fn a_closed_store_reopens_with_the_same_authoritative_policy_and_approval_state(
     assert!(!temp.0.with_extension("sqlite-wal").exists());
 
     let reopened = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 5);
+    assert_eq!(reopened.schema_version().unwrap(), 6);
     reopened.verify_integrity().unwrap();
     let conn = reopened.conn.lock().unwrap();
     assert_eq!(
@@ -1507,8 +1876,8 @@ fn independent_connections_cannot_both_consume_one_step() {
         let conn = Connection::open(&temp.0).unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         seed_registry_and_task(&conn);
-        insert_request(&conn, &[STEP_A, STEP_B], &[ARGS_A, ARGS_B]);
-        approve_and_grant(&conn, &[STEP_A, STEP_B], &[ARGS_A, ARGS_B]);
+        insert_request(&conn, &[STEP_A], &[ARGS_A]);
+        approve_and_grant(&conn, &[STEP_A], &[ARGS_A]);
     }
 
     // Two genuinely independent connections, each holding a writer reservation.
@@ -1516,37 +1885,94 @@ fn independent_connections_cannot_both_consume_one_step() {
     let mut second = Connection::open(&temp.0).unwrap();
     for conn in [&first, &second] {
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        conn.busy_timeout(std::time::Duration::from_millis(5000))
-            .unwrap();
     }
+    second.busy_timeout(std::time::Duration::ZERO).unwrap();
     let tx_first = first
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .unwrap();
-    let tx_second = second
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .unwrap();
-
-    let insert = |tx: &rusqlite::Transaction<'_>| {
-        tx.execute(
+    tx_first
+        .execute(
             "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
              VALUES (?1,?2,?3,300)",
             params![GRANT, STEP_A, TASK],
         )
-    };
-    // The second writer must not be able to produce a second row for the same
-    // step, whatever the scheduling order.
-    let first_result = insert(&tx_first);
-    let second_result = insert(&tx_second);
-    assert!(
-        first_result.is_ok() ^ second_result.is_ok(),
-        "exactly one independent connection may insert the use row"
-    );
-    drop(tx_first);
-    drop(tx_second);
+        .unwrap();
 
-    let conn = Connection::open(&temp.0).unwrap();
+    // The first independent connection holds SQLite's writer reservation after
+    // inserting the use. A simultaneous second writer may be refused with
+    // SQLITE_BUSY; classify only that exact outcome as contention.
+    let busy = second.transaction_with_behavior(TransactionBehavior::Immediate);
+    assert!(matches!(
+        busy,
+        Err(rusqlite::Error::SqliteFailure(ref error, _))
+            if error.code == rusqlite::ErrorCode::DatabaseBusy
+    ));
+    drop(busy);
+    tx_first.commit().unwrap();
+
+    // Retry after the winner's commit. The competing connection now gets a
+    // serialized view and must still be unable to consume or decrement again.
+    let tx_second = second
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    assert!(
+        tx_second
+            .execute(
+                "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
+             VALUES (?1,?2,?3,301)",
+                params![GRANT, STEP_A, TASK],
+            )
+            .is_err()
+    );
+    tx_second.commit().unwrap();
+    drop(first);
+    drop(second);
+
+    // The winner is durable after reopening, with one use row and exactly one
+    // decrement. The rejected competitor cannot spend it after restart either.
+    let reopened = Connection::open(&temp.0).unwrap();
+    reopened.pragma_update(None, "foreign_keys", "ON").unwrap();
     assert_eq!(
-        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        scalar(&reopened, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1,
+        "one and only one consumption committed"
+    );
+    assert_eq!(
+        scalar(
+            &reopened,
+            "SELECT uses_remaining FROM approval_grants WHERE grant_id='grt_01JQ8ZA7B3KMW9Q4TVY7XN2RDP'"
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        text(
+            &reopened,
+            "SELECT status FROM approval_grants WHERE grant_id=?1",
+            GRANT
+        )
+        .unwrap(),
+        "EXHAUSTED"
+    );
+    assert!(
+        reopened
+            .execute(
+                "INSERT INTO approval_grant_uses(grant_id,step_id,task_id,consumed_at_ms)
+             VALUES (?1,?2,?3,302)",
+                params![GRANT, STEP_A, TASK],
+            )
+            .is_err()
+    );
+    assert_eq!(
+        scalar(&reopened, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &reopened,
+            "SELECT uses_remaining FROM approval_grants WHERE grant_id='grt_01JQ8ZA7B3KMW9Q4TVY7XN2RDP'"
+        )
+        .unwrap(),
         0
     );
 }

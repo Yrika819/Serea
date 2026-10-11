@@ -418,7 +418,7 @@ mod policy_tests {
                 Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
             assert_eq!(
                 migrate::inspect(&reader, Migrations::embedded(), false).unwrap(),
-                5
+                6
             );
             drop(reader);
             configure_file(conn).unwrap();

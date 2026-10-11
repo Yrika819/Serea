@@ -318,3 +318,99 @@ documentation.
   transaction-boundary fault plus a reopen.
 - ADR-0037 through ADR-0040 remain Accepted. This checkpoint changes no ADR and no frozen P5
   contract.
+
+---
+
+## 12. Cloud continuation record — 2026-10-11
+
+This addendum records work performed after the immutable checkpoint above. It does not rewrite
+the original checkpoint facts.
+
+### 12.1 Checkout and source identity
+
+| Item | Verified value |
+| --- | --- |
+| Working branch | `p6/policy-approval-runtime-clean` |
+| Base checkpoint | `3de5098e3b51c5a6bebf01b40550a6b94f4fd7e3` |
+| Checkpoint parent | `1c04451469a810a484e92fa7f0e5eb249451a54e` |
+| P6A PR #6 | `OPEN`, `DRAFT`, base `main`; preserved |
+| Migration 0005 SHA-256 | `cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a` |
+| Migrations 0001–0004 | byte-identical to the P6A parent |
+| ADR-0037–0040 | all `Accepted`; architecture `serea-arch/2.7.0` |
+
+The Cloud task initially opened at `e17fbfc` on branch `work`; that branch was left intact.
+The runtime branch was fetched from GitHub and checked out directly at the supplied checkpoint.
+The verification and fixes below are based on that checkpoint. The first publication used a local
+Git email rejected by the repository's noreply-only identity guard; exact-head Fast and Full CI
+reported that failure. Published history was preserved. The same reviewed tree is being republished
+from the original checkpoint on `p6/policy-approval-runtime-clean` with an approved Codex noreply
+identity, so the replacement branch does not inherit the rejected commit.
+
+### 12.2 Seven checkpoint failures
+
+All seven failures were reproduced individually on the original migration 0005 suite before
+editing. Each was a fixture defect; migration 0005 was not edited.
+
+| Test | Evidence and correction |
+| --- | --- |
+| `revision_activation_and_its_policy_changed_event_commit_together_or_not_at_all` | Revision 2 was inserted before the failed activation transaction. The corrected assertions retain the prepared row, require `activated_at_ms IS NULL`, keep active revision 1, and keep the event count at 1. |
+| `invalid_identifiers_digests_and_states_are_refused_by_the_schema` | `BAD.trim_end_matches('1')` was unchanged because the digest ended in `0`. The test now checks malformed encoding and short/long digest lengths on insert. |
+| `an_approval_action_must_belong_to_the_request_task_and_pinned_step` | The `MODEL_TURN` fixture supplied twelve values for eight columns, then lacked its required digest. It now inserts a distinct valid non-capability Step with matching arity and digest before asserting rejection from the action table. |
+| `a_grant_may_only_name_a_closed_actor_authentication_and_auth_strength` | The invalid-state loop left the grant revoked before consumption. Each state probe now runs in a savepoint and rolls back, preserving the valid active consume fixture. |
+| `only_an_enumerated_granted_step_can_consume_a_use` | Both Steps were enumerated and granted. The test now attempts an unenumerated valid Step with the same argument digest and scope, then proves only the enumerated member consumes. |
+| `a_second_grant_cannot_authorize_an_already_consumed_step` | Bare `APPROVAL_2` SQL identifiers were bound as parameters. The second grant is sealed and the test checks SQLite's `UNIQUE(step_id)` constraint specifically. |
+| `independent_connections_cannot_both_consume_one_step` | A deterministic writer reservation produces a classified `SQLITE_BUSY` loser, then retries the competitor after the winning commit. It verifies one durable use, one decrement, `EXHAUSTED` after reopen, and no later spend. |
+
+The original 27 tests passed after these repairs.
+
+### 12.3 Forward-only schema correction
+
+The required completeness audit found a schema defect not covered by the seven fixtures:
+migration 0005 enforced only the upper bound on request actions, allowed an incomplete request
+to become `APPROVED`, and allowed a grant use before its declared membership set was sealed.
+Migration 0005 remains byte-for-byte frozen. Additive migration `0006_policy_authority_sealing`
+now:
+
+- permits `PENDING -> APPROVED` only when persisted action rows equal the declared request count;
+- creates a grant seal only for the complete member count and blocks use until sealing;
+- freezes request/grant authority facts and sealed membership;
+- prevents deleting approval/grant history or changing/deleting an approved Step while its Task exists;
+- checks current Step arguments, plan/capability binding and registry generation at use time;
+- makes grant use accounting immutable and ties decrements to durable use rows;
+- preserves task deletion cascades while refusing direct use/seal deletion when the owning Task exists;
+- removes migration 0005's incorrect equality between a full request-set digest and a
+  potentially partial approved-subset digest; the trusted P6D writer must recompute the subset
+  digest before sealing.
+
+The schema is version 6. It has nine durable tables: the eight original P6 tables plus
+`approval_grant_seals`. Migration 0005's recorded SHA-256 is
+unchanged. Fresh, v4-to-v6 and v5-to-v6 startup paths are covered.
+
+Two RED-first tests demonstrated the old defect before migration 0006: incomplete request
+approval succeeded, and an incomplete/unsealed grant could consume. Both now pass against the
+forward migration. Additional tests cover request transition bounds, subset grant sealing,
+non-reactivation after revocation, immutable in-place Step authority, and approval history
+deletion. The migration-filtered suite has **33 passed, 0 failed**.
+
+### 12.4 Verification status at this addendum
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p serea-storage --lib --all-features migration_0005` | **PASS**, 33 passed, 0 failed |
+| `cargo test --workspace --all-targets --offline` | **PASS** |
+| `cargo test --workspace --all-features --offline` | **PASS**, including doc tests and fault-injection features |
+| `cargo check --workspace --all-targets --all-features --offline` | **PASS** |
+| `cargo clippy --workspace --all-targets --all-features --offline -- -D warnings` | **PASS** |
+| `cargo fmt --all -- --check` | **PASS** |
+| `cargo metadata --no-deps --format-version 1 --offline` | **PASS** |
+| `python3 tests/workspace_smoke.py` | **PASS** |
+| `python3 -m unittest discover -s tests -p workspace_smoke_tests.py` | **PASS**, 76 tests |
+| `python3 tools/validate_docs.py docs` | **PASS**, 108 Markdown files |
+| `python3 tools/check_commit_identity.py` | **PASS** |
+| `tools/prove_release_fault_exclusion.sh` | **PASS**; ordinary storage/workspace release artifacts contain no fault seam, crash test target contains it only under test cfg |
+| GitHub Actions at the final source SHA | not yet available; requires a committed/pushed exact head |
+
+P6B remains **WIP** pending exact-head GitHub jobs and final published-revision review. All
+required local gates and the release fault-exclusion proof passed after the final SQL/test
+review. No P6C code has been started. No P8 provider,
+dispatch or `RequestId` surface was added. This record makes no physical power-loss guarantee.

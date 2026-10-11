@@ -125,4 +125,24 @@ ordered WAIT gates have focused coverage. The added
 `Scheduler::process_approval_lifecycle_wakes` path, restarts with an unacknowledged
 wake, confirms the exact R2 grant member and digest, re-evaluates current Policy,
 and proves zero provider invocations. Exact-head CI must cover all subsequent
-source changes before P6E closure; no P6E or P6F completion claim is made yet.
+source changes before P6E closure.
+
+## P6E closure record
+
+**`P6E_TASK_ORCHESTRATION_VERIFIED`.** The owner-authorized Option A path is
+closed. Public mixed-plan creation, ALLOW → durable `NOT_REQUIRED`,
+REQUIRE_APPROVAL → atomic Task/request/WAIT/event state, authenticated response,
+R2 Grant membership, public Scheduler wake routing, TaskEngine wake application,
+and fresh Policy reevaluation passed the integration and recovery checks at
+source commit `798c483c98ab0adaeb48e66030d9b1673087aae7`. The P6E code was then
+included unchanged in the later exact-head P6F verification run. No Grant,
+provider invocation, dispatch intent, `RequestId`, or external effect is created
+by P6E.
+
+The owner decision is recorded in [ADR-0041](../decisions/ADR-0041-p6-initial-approval-gates.md).
+P6F separately adds concurrent Policy activation/snapshot, approval/expiry,
+cancellation/approval, distinct R2-member consumption, and Grant-consumption /
+revocation cases. Existing P6B–P6E attack, fault-injection, restart/reopen,
+redaction, credential refusal, Plan-order, and zero-provider tests remain part
+of the closure matrix. Software crash/reopen tests do not prove physical
+power-loss behavior.

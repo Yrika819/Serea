@@ -24,6 +24,131 @@ impl TaskEngine {
         Self { store, event_bus }
     }
 
+    /// Evaluates a prepared capability action against its current durable Task,
+    /// Step, registry binding, descriptor, overlay and active Policy snapshot.
+    ///
+    /// The returned evidence is a point-in-time explanation, not execution
+    /// authority. Any later approval request must still pass the atomic
+    /// Storage revalidation performed by [`Self::request_approval`], and a
+    /// future dispatcher must revalidate again immediately before execution.
+    pub fn evaluate_prepared_action(
+        &self,
+        prepared: &serea_capability::PreparedActionV1,
+    ) -> Result<serea_policy::PolicyEvaluation, EngineError> {
+        use serea_storage::CapabilityOverlayState;
+
+        let snapshot = self
+            .store
+            .load_task(prepared.task_id())
+            .map_err(EngineError::from)?;
+        let step = snapshot
+            .steps
+            .iter()
+            .find(|item| item.step.step_id == *prepared.step_id())
+            .ok_or(EngineError::InvalidPlan)?;
+        let plan_revision = i64::from(snapshot.plan_revision);
+        let generation_id = self
+            .store
+            .get_task_registry_generation(prepared.task_id())
+            .map_err(EngineError::from)?
+            .ok_or(EngineError::UnpinnedTaskCannotBindCapability)?;
+        let generation = self
+            .store
+            .get_registry_generation(generation_id)
+            .map_err(EngineError::from)?
+            .ok_or(EngineError::InvalidPlan)?;
+        let binding = self
+            .store
+            .get_step_capability_binding(prepared.task_id(), prepared.step_id())
+            .map_err(EngineError::from)?
+            .ok_or(EngineError::InvalidPlan)?;
+        let descriptor_revision = self
+            .store
+            .get_descriptor_revision(prepared.descriptor_digest())
+            .map_err(EngineError::from)?
+            .ok_or(EngineError::InvalidPlan)?;
+        let overlay = self
+            .store
+            .get_capability_overlay(prepared.capability_id())
+            .map_err(EngineError::from)?;
+
+        let task = &snapshot.task;
+        let descriptor = descriptor_revision.descriptor();
+        if step.plan_revision != snapshot.plan_revision
+            || step.step.kind != serea_protocol::StepKind::Capability
+            || step.step.input_digest != *prepared.arguments_digest()
+            || task.task_id != *prepared.task_id()
+            || task.state.is_terminal()
+            || task.cancelled_at.is_some()
+            || generation.generation_id() != prepared.generation_id()
+            || generation.manifest_digest() != prepared.generation_digest()
+            || generation.activated_at().is_none()
+            || binding.task_id() != prepared.task_id()
+            || binding.step_id() != prepared.step_id()
+            || binding.generation_id() != prepared.generation_id()
+            || binding.descriptor_digest() != prepared.descriptor_digest()
+            || binding.capability_id() != prepared.capability_id()
+            || binding.capability_version() != prepared.capability_version()
+            || binding.provider_id() != prepared.provider_id()
+            || binding.implementation_id() != prepared.implementation_id()
+            || descriptor_revision.descriptor_digest() != prepared.descriptor_digest()
+            || descriptor.id() != prepared.capability_id()
+            || descriptor.version() != prepared.capability_version()
+            || descriptor.provider_id() != prepared.provider_id()
+            || descriptor.implementation_id() != prepared.implementation_id()
+            || descriptor.risk_class() != prepared.risk_class()
+            || descriptor.side_effect_class() != prepared.side_effect_class()
+            || descriptor.required_authorization() != prepared.required_authorization()
+            || descriptor.root_requirement() != prepared.root_requirement()
+            || prepared.data_class().rank() > descriptor.data_class().rank()
+        {
+            return Err(EngineError::InvalidPlan);
+        }
+
+        let revision = serea_policy::load_active_revision(&self.store)
+            .map_err(|_| EngineError::InvalidPlan)?
+            .ok_or(EngineError::InvalidPlan)?;
+        let capability_enabled = overlay.state() == CapabilityOverlayState::Enabled
+            && (!descriptor.experimental() || overlay.experimental_opt_in());
+        let facts = serea_policy::PolicyInputDraft {
+            task_id: task.task_id.clone(),
+            step_id: prepared.step_id().clone(),
+            task_kind: task.kind,
+            task_state: task.state,
+            task_cancelled: task.cancelled_at.is_some(),
+            task_deadline_at: task
+                .deadline_at
+                .as_ref()
+                .map(|value| value.to_epoch_millis()),
+            task_data_class: task.data_class,
+            task_policy_class: task.policy_class,
+            capability_id: descriptor.id().clone(),
+            capability_version: descriptor.version().clone(),
+            provider_id: descriptor.provider_id().clone(),
+            implementation_id: descriptor.implementation_id().cloned(),
+            risk_class: descriptor.risk_class(),
+            side_effect_class: descriptor.side_effect_class(),
+            authorization: descriptor.required_authorization(),
+            root_requirement: descriptor.root_requirement(),
+            data_class: prepared.data_class(),
+            requested_by: prepared.requested_by(),
+            device_state: None,
+            capability_enabled,
+            // No durable destructive opt-in source exists in the accepted P6
+            // schema. Keep the gate closed rather than infer it from unrelated
+            // experimental-capability state.
+            destructive_enabled: false,
+            plan_revision,
+            registry_generation: generation_id,
+            generation_digest: generation.manifest_digest().clone(),
+            descriptor_digest: descriptor_revision.descriptor_digest().clone(),
+            arguments_digest: prepared.arguments_digest().clone(),
+        };
+        let input = serea_policy::PolicyInputV1::new(facts, &revision)
+            .map_err(|_| EngineError::InvalidPlan)?;
+        Ok(serea_policy::evaluate_with_evidence(&input, &revision))
+    }
+
     /// Raises a fully validated host-built approval request and moves its live
     /// Task to `WAITING_APPROVAL` atomically. Scheduler wake records are created
     /// later from the committed lifecycle event and are only routing signals.

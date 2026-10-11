@@ -1576,3 +1576,116 @@ fn p5e_never_invokes_a_provider() {
     let _ = engine.load(tid(1)).unwrap();
     // Reaching here without a panic is the zero-invoke proof.
 }
+
+#[test]
+fn task_engine_policy_input_is_derived_from_current_pinned_durable_facts() {
+    let temp = TempDb::new();
+    let store = temp.open();
+    let events = event_bus();
+    let d = descriptor();
+    let manifest = manifest_for(vec![d.clone()]);
+    install_manifest(
+        &store,
+        &events,
+        &manifest,
+        vec![provider(vec![d.clone()], ProviderHealth::Ready)],
+    );
+    let prepared_policy = serea_policy::prepare_revision(
+        &store,
+        vec![
+            serea_policy::PolicyRule::new(
+                "require_test_approval",
+                10,
+                true,
+                serea_policy::RuleMatch {
+                    capability_id: Some(d.id().clone()),
+                    ..serea_policy::RuleMatch::default()
+                },
+                serea_policy::RuleDecision::RequireApproval,
+            )
+            .unwrap(),
+        ],
+        at(15),
+        serea_storage::PolicyActorClass::Host,
+        ActorId::new("serea-core").unwrap(),
+        ReasonCode::new("POLICY_IMPORT").unwrap(),
+    )
+    .unwrap();
+    serea_policy::activate_revision(
+        &store,
+        &events,
+        &prepared_policy,
+        at(16),
+        SemVer::new("1.0.0").unwrap(),
+    )
+    .unwrap();
+
+    let mut engine = TaskEngine::new(temp.open(), events);
+    engine.create_task(spec(1), &Context::new().view()).unwrap();
+    engine
+        .start_planning(
+            tid(1),
+            TaskState::Received,
+            0,
+            at(20),
+            &Context::new().view(),
+        )
+        .unwrap();
+    let availability = snapshot(
+        &store,
+        manifest,
+        vec![provider(vec![d.clone()], ProviderHealth::Ready)],
+        true,
+    );
+    engine
+        .create_capability_step(
+            &availability,
+            tid(1),
+            sid(1),
+            1,
+            d.id(),
+            &classified_args(),
+            RequestedBy::Model,
+            at(30),
+            &Context::new().view(),
+        )
+        .unwrap();
+    let prepared_action = serea_capability::prepare_action(
+        &availability,
+        d.id(),
+        tid(1),
+        sid(1),
+        &classified_args(),
+        RequestedBy::Model,
+        None,
+        None,
+    )
+    .unwrap();
+
+    let evaluation = engine.evaluate_prepared_action(&prepared_action).unwrap();
+    assert!(matches!(
+        evaluation.decision,
+        serea_policy::PolicyDecision::RequireApproval(_)
+    ));
+    assert_eq!(evaluation.evidence.task_id(), &tid(1));
+    assert_eq!(evaluation.evidence.step_id(), &sid(1));
+    assert_eq!(
+        evaluation.evidence.input_facts().requested_by,
+        RequestedBy::Model
+    );
+    store
+        .transact(|tx| {
+            tx.set_capability_overlay(
+                d.id().clone(),
+                0,
+                serea_storage::CapabilityOverlayState::Disabled,
+                false,
+            )
+        })
+        .unwrap();
+    let disabled = engine.evaluate_prepared_action(&prepared_action).unwrap();
+    assert_eq!(
+        disabled.decision,
+        serea_policy::PolicyDecision::Deny(serea_policy::DenyReason::CapabilityDisabled)
+    );
+}

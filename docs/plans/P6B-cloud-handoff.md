@@ -754,3 +754,55 @@ Fast/Full/Cross-architecture CI at its exact source head.
 No provider invocation, P8 RequestId, dispatch intent, credential handling, or external side
 effect was added. Local and process-death tests establish software transaction behavior only;
 they do not establish physical power-loss guarantees.
+
+## 16. P6E durable policy-input integration attempt
+
+This section supersedes the P6E source/test status in §15.2 for the working tree based on
+`153a88d8cd7e1ed1f22979f0ef7109308e2bf107`. P6B, P6C and P6D remain verified as recorded in
+§§12–15. The current source change adds `TaskEngine::evaluate_prepared_action`, which loads the
+Task and current plan, verifies the prepared action against its exact Step digest, pinned
+registry generation, immutable binding and descriptor revision, reads the current capability
+overlay and active Policy snapshot, derives `PolicyInputDraft` from those trusted facts, and
+returns only deterministic `PolicyEvaluation` evidence. There is no destructive-enable source
+in the accepted durable schema, so that gate is deliberately supplied as `false`; it is not
+inferred from experimental-capability opt-in. The evaluator is a sequence of read snapshots,
+not a cross-table SQLite transaction. Its result is non-authorizing evidence, and the request
+transaction plus any later P8 boundary must revalidate current authority.
+
+The new integration regression proves a host prepared action matches its durable Step and
+binding, a matching `REQUIRE_APPROVAL` rule returns that decision, and changing the live overlay
+to `DISABLED` causes a fresh evaluation of the same immutable action to return
+`CAPABILITY_DISABLED`. Full `--all-targets` and `--all-features` workspace regressions passed,
+including 504 Storage unit tests and all TaskEngine integration tests. Stable Clippy, Rust 1.85
+Clippy, fmt, workspace smoke, 76 Python smoke tests, 108-file docs validation, identity check,
+and `git diff --check` passed on this working tree. Exact-head GitHub CI for these new files is
+not yet available until their normal commit is published.
+
+### 16.1 Blocking P6E integration defect found
+
+A successful TaskEngine request-to-wake path remains unavailable through the current public
+TaskEngine planning API. `Tx::raise_approval_request_and_wait` requires exactly one already
+persisted `WAIT_APPROVAL` Step earlier in the same current Plan revision than every requested
+Capability Step. `TaskEngine::create_capability_plan` accepts only capability proposals and
+does not create or bind mixed wait Steps; the generic complete-plan method does not create new
+capability bindings. Plan revisions only append higher sequence numbers, so adding that wait
+Step after the capability plan cannot satisfy the required ordering. A focused successful
+request integration attempt therefore reached the typed Storage refusal before any Task or
+request mutation. It was not converted into an expected-success test by bypassing TaskEngine or
+writing around the authoritative plan writer.
+
+Before P6E closure, provide and test a supported way to persist the authoritative wait Step and
+capability action in one complete Plan revision, preserving sequence, binding and immutable
+revision invariants. Also define how a predeclared wait Step is safely handled when policy allows
+the action without approval; no new `SKIPPED` semantics or alternate authority path may be
+invented. Then demonstrate successful TaskEngine request, authenticated response, Scheduler
+routing, TaskEngine wake application, restart/replay, cancellation/deadline, policy and
+capability-overlay changes while waiting, and fresh evaluation after wake. The current
+request/wake storage transactions remain WIP rather than P6E closure. P6F has not started and
+must wait for a complete, verified P6E path. No provider invocation, dispatch, external effect or
+P8 RequestId has been added. No software fault test proves physical power-loss durability.
+
+The owner-approved `APPROVAL_REVOKED` event remains an additive audit fact atomically committed
+with authenticated grant-only revocation; this update does not change migration bytes. Migration
+0005 SHA-256 remains
+`cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a`.

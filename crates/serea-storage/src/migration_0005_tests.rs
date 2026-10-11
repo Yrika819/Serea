@@ -18,8 +18,8 @@ use serde_json::json;
 use serea_protocol::{
     Actor, ActorId, ActorKind, ApprovalId, Authorization, CapabilityId, Clock, DataClass, Digest,
     EnvelopeVersion, EpochMillis, EventId, EventKind, GrantId, ProtocolError, RequestedBy,
-    RiskClass, SemVer, Seq, SereaEvent, SideEffectClass, StepId, TaskId, TaskKind, TaskState,
-    Timestamp, Trace, WireSurface, digest_of,
+    RiskClass, SemVer, Seq, SereaEvent, SideEffectClass, StepId, TaskId, TaskKind, TaskOriginKind,
+    TaskState, Timestamp, Trace, WireSurface, digest_of,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -3987,6 +3987,294 @@ fn independent_connections_cannot_both_consume_one_step_through_typed_api() {
         .unwrap(),
         1
     );
+}
+
+#[test]
+fn independent_connections_can_consume_distinct_r2_members_concurrently() {
+    let path = TempDb::new();
+    let setup = approval_store(&path.0);
+    let request = two_action_request_draft();
+    setup
+        .create_approval_request(request.clone(), approval_required_event(&request))
+        .unwrap();
+    let response = two_action_grant_storage_draft();
+    setup
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+    drop(setup);
+
+    let left = Store::open(&path.0, &FixedClock).unwrap();
+    let right = Store::open(&path.0, &FixedClock).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let spawn = |store: Store, step_id: &'static str, barrier: Arc<Barrier>| {
+        std::thread::spawn(move || {
+            barrier.wait();
+            store.consume_grant_use(
+                &GrantId::new(GRANT).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(step_id).unwrap(),
+                EpochMillis::new(300).unwrap(),
+            )
+        })
+    };
+    let action_a = spawn(left, STEP_A, barrier.clone());
+    let action_b = spawn(right, STEP_B, barrier.clone());
+    barrier.wait();
+    let outcomes = [action_a.join().unwrap(), action_b.join().unwrap()];
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, Ok(GrantConsumptionOutcome::Consumed { .. }))),
+        "both individually enumerated R2 members must consume exactly once: {outcomes:?}"
+    );
+
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        2
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT uses_remaining FROM approval_grants").unwrap(),
+        0
+    );
+    assert_eq!(
+        text(
+            &conn,
+            "SELECT status FROM approval_grants WHERE grant_id=?1",
+            GRANT
+        )
+        .unwrap(),
+        "EXHAUSTED"
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(DISTINCT step_id) FROM approval_grant_uses",
+        )
+        .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn independent_connections_serialize_r2_member_consumption_against_revocation() {
+    let path = TempDb::new();
+    let setup = approval_store(&path.0);
+    let request = two_action_request_draft();
+    setup
+        .create_approval_request(request.clone(), approval_required_event(&request))
+        .unwrap();
+    let response = two_action_grant_storage_draft();
+    setup
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+    drop(setup);
+
+    let consumer = Store::open(&path.0, &FixedClock).unwrap();
+    let revoker = Store::open(&path.0, &FixedClock).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let consume_barrier = barrier.clone();
+    let consume = std::thread::spawn(move || {
+        consume_barrier.wait();
+        let first = consumer.consume_grant_use(
+            &GrantId::new(GRANT).unwrap(),
+            &TaskId::new(TASK).unwrap(),
+            &StepId::new(STEP_A).unwrap(),
+            EpochMillis::new(300).unwrap(),
+        );
+        if matches!(first, Err(StoreError::Busy)) {
+            consumer.consume_grant_use(
+                &GrantId::new(GRANT).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+                EpochMillis::new(300).unwrap(),
+            )
+        } else {
+            first
+        }
+    });
+    let revoke_barrier = barrier.clone();
+    let revoke = std::thread::spawn(move || {
+        let draft = revocation_storage_draft();
+        revoke_barrier.wait();
+        let first = revoker.revoke_approval_grant(draft.clone(), approval_revoked_event(&draft));
+        if matches!(first, Err(StoreError::Busy)) {
+            revoker.revoke_approval_grant(draft.clone(), approval_revoked_event(&draft))
+        } else {
+            first
+        }
+    });
+    barrier.wait();
+    let consume_result = consume.join().unwrap();
+    let revoke_result = revoke.join().unwrap();
+    assert!(matches!(
+        consume_result,
+        Ok(GrantConsumptionOutcome::Consumed { .. }) | Ok(GrantConsumptionOutcome::Revoked)
+    ));
+    assert!(matches!(
+        revoke_result,
+        Ok(ApprovalRevocationOutcome::Revoked)
+    ));
+
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        text(
+            &conn,
+            "SELECT status FROM approval_grants WHERE grant_id=?1",
+            GRANT
+        )
+        .unwrap(),
+        "REVOKED"
+    );
+    assert_eq!(count_kind_store(&conn, "APPROVAL_REVOKED"), 1);
+    let consumed = scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap();
+    assert!(consumed == 0 || consumed == 1);
+    drop(conn);
+    assert_eq!(
+        reopened
+            .consume_grant_use(
+                &GrantId::new(GRANT).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_B).unwrap(),
+                EpochMillis::new(500).unwrap(),
+            )
+            .unwrap(),
+        GrantConsumptionOutcome::Revoked
+    );
+}
+
+#[test]
+fn independent_connections_serialize_task_cancellation_against_authenticated_response() {
+    struct CancelAudit;
+    impl TaskAuditParticipant for CancelAudit {
+        fn records(&self, facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
+            Ok(vec![JournalRecord {
+                kind: JournalKind::TaskCancelRequested,
+                state_from: facts.task_from().map(|state| state.wire_name().to_owned()),
+                state_to: Some(facts.task_to().wire_name().to_owned()),
+                reason: None,
+                payload_json: b"{}".to_vec(),
+            }])
+        }
+    }
+
+    let (_path, setup, _) = waiting_approval_store();
+    drop(setup);
+    let response_store = Store::open(&_path.0, &FixedClock).unwrap();
+    let cancel_store = Store::open(&_path.0, &FixedClock).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let response_barrier = barrier.clone();
+    let response = std::thread::spawn(move || {
+        let draft = authenticated_grant_storage_draft();
+        response_barrier.wait();
+        let first = response_store.respond_to_approval(
+            draft.clone(),
+            approval_response_event(&draft, EventKind::ApprovalGranted, STEP_A),
+        );
+        if matches!(first, Err(StoreError::Busy)) {
+            response_store.respond_to_approval(
+                draft.clone(),
+                approval_response_event(&draft, EventKind::ApprovalGranted, STEP_A),
+            )
+        } else {
+            first
+        }
+    });
+    let cancel_barrier = barrier.clone();
+    let cancel = std::thread::spawn(move || {
+        let actor = ActorId::new("local-user").unwrap();
+        let version = SemVer::new("1.0.0").unwrap();
+        let context = TransitionContext {
+            actor_kind: ActorKind::User,
+            actor_id: &actor,
+            actor_version: &version,
+            causation_id: None,
+        };
+        cancel_barrier.wait();
+        let first =
+            cancel_store.transact_with_participants(&CancelAudit, &ApprovalTaskEvents, |tx| {
+                tx.cancel_task(
+                    &TaskId::new(TASK).unwrap(),
+                    TaskOriginKind::new("USER_MESSAGE").unwrap(),
+                    EpochMillis::new(275).unwrap(),
+                    &context,
+                )
+            });
+        if matches!(first, Err(StoreError::Busy)) {
+            cancel_store.transact_with_participants(&CancelAudit, &ApprovalTaskEvents, |tx| {
+                tx.cancel_task(
+                    &TaskId::new(TASK).unwrap(),
+                    TaskOriginKind::new("USER_MESSAGE").unwrap(),
+                    EpochMillis::new(275).unwrap(),
+                    &context,
+                )
+            })
+        } else {
+            first
+        }
+    });
+    barrier.wait();
+    let response_result = response.join().unwrap();
+    let cancel_result = cancel.join().unwrap();
+    assert!(matches!(
+        response_result,
+        Ok(ApprovalResponseStorageOutcome::Granted(_)) | Err(StoreError::TaskNotApprovable)
+    ));
+    assert!(matches!(
+        cancel_result,
+        Ok(crate::CancellationOutcome {
+            changed: true,
+            already_terminal: false,
+            ..
+        })
+    ));
+
+    let reopened = Store::open(&_path.0, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),
+        "CANCELLED"
+    );
+    let status = text(
+        &conn,
+        "SELECT status FROM approval_requests WHERE approval_id=?1",
+        APPROVAL,
+    )
+    .unwrap();
+    assert!(status == "PENDING" || status == "APPROVED");
+    let grant_count = scalar(&conn, "SELECT count(*) FROM approval_grants").unwrap();
+    assert_eq!(grant_count, i64::from(status == "APPROVED"));
+    assert_eq!(count_kind_store(&conn, "APPROVAL_GRANTED"), grant_count);
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM task_journal WHERE journal_kind='TASK_CANCEL_REQUESTED'"
+        )
+        .unwrap(),
+        1
+    );
+    drop(conn);
+    if status == "APPROVED" {
+        assert_eq!(
+            reopened
+                .consume_grant_use(
+                    &GrantId::new(GRANT).unwrap(),
+                    &TaskId::new(TASK).unwrap(),
+                    &StepId::new(STEP_A).unwrap(),
+                    EpochMillis::new(300).unwrap(),
+                )
+                .unwrap_err(),
+            StoreError::InvalidApprovalResponse
+        );
+    }
 }
 
 #[test]

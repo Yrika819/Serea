@@ -51,7 +51,7 @@ fn migration_0001_and_0002_are_immutable_and_catalog_adds_0003() {
         "sha256:d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea"
     );
     let catalog = Migrations::embedded();
-    assert_eq!(catalog.len(), 5);
+    assert_eq!(catalog.len(), 6);
     assert_eq!((catalog[0].version, catalog[0].name), (1, "0001_initial"));
     assert_eq!(catalog[0].sql, INITIAL_SQL);
     assert_eq!(
@@ -66,7 +66,7 @@ fn migration_0001_and_0002_are_immutable_and_catalog_adds_0003() {
         (catalog[2].version, catalog[2].name),
         (3, "0003_model_accounting")
     );
-    assert_eq!(Migrations::LATEST, 5);
+    assert_eq!(Migrations::LATEST, 6);
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn fresh_database_applies_0001_through_0003_and_reopens_with_integrity() {
     let temp = TempDb::new();
     {
         let store = Store::open(&temp.0, &FixedClock).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 5);
+        assert_eq!(store.schema_version().unwrap(), 6);
         let conn = store.conn.lock().unwrap();
         let rows = conn
             .prepare("SELECT version,name,checksum FROM schema_migrations ORDER BY version")
@@ -89,7 +89,7 @@ fn fresh_database_applies_0001_through_0003_and_reopens_with_integrity() {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 6);
         assert_eq!((rows[0].0, rows[0].1.as_str()), (1, "0001_initial"));
         assert_eq!((rows[1].0, rows[1].1.as_str()), (2, "0002_event_scheduler"));
         assert_eq!(
@@ -101,6 +101,10 @@ fn fresh_database_applies_0001_through_0003_and_reopens_with_integrity() {
             (4, "0004_capability_registry")
         );
         assert_eq!((rows[4].0, rows[4].1.as_str()), (5, "0005_policy_approval"));
+        assert_eq!(
+            (rows[5].0, rows[5].1.as_str()),
+            (6, "0006_policy_authority_sealing")
+        );
         for name in [
             "event_store_state",
             "event_sequence_ledger",
@@ -117,7 +121,7 @@ fn fresh_database_applies_0001_through_0003_and_reopens_with_integrity() {
         }
     }
     let reopened = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 5);
+    assert_eq!(reopened.schema_version().unwrap(), 6);
     reopened.verify_integrity().unwrap();
 }
 

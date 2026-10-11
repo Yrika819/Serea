@@ -1669,6 +1669,7 @@ fn m12_m13_mixed_pass_changes_once_then_all_durable_tables_are_byte_identical() 
         before.keys().map(String::as_str).collect::<Vec<_>>(),
         vec![
             "approval_grant_members",
+            "approval_grant_seals",
             "approval_grant_uses",
             "approval_grants",
             "approval_lifecycle_wakes",

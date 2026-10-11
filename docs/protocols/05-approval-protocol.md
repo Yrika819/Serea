@@ -534,6 +534,13 @@ The ceiling is mechanical rather than aspirational: `serea-storage` refuses
 grant, an event, a summary or a log. `ElevatedConfirmationRef` is a digest of the
 attestation and never biometric material.
 
+Each action scope carries its host-computed inherited `DataClass`. A scope may
+be persisted only when that class is `PUBLIC` or `PERSONAL` and no higher than
+the request's aggregate class. Classification follows the source values used
+to derive the scope; a host cannot lower it to fit the row ceiling. Scope and
+summary debug views omit their text values, and the Storage request draft
+debug view reports only byte lengths and digests.
+
 ## 11. Changelog
 
 - 2026-10-07: ADR-0030 specifies routing-only durable handoff for approval

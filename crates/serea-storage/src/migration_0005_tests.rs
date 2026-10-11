@@ -2137,6 +2137,19 @@ fn typed_request_draft() -> ApprovalRequestStorageDraft {
     }
 }
 
+#[test]
+fn approval_storage_draft_debug_redacts_summary_and_scope_values() {
+    let mut draft = typed_request_draft();
+    draft.summary = "storage-summary-sentinel-2b07".to_owned();
+    draft.actions[0].scope_json = r#"{"target":"storage-scope-sentinel-5d91"}"#.to_owned();
+
+    let debug = format!("{draft:?}");
+    assert!(!debug.contains("storage-summary-sentinel-2b07"));
+    assert!(!debug.contains("storage-scope-sentinel-5d91"));
+    assert!(debug.contains("summary_bytes"));
+    assert!(debug.contains("action_count"));
+}
+
 fn approval_required_event(draft: &ApprovalRequestStorageDraft) -> EventDraft {
     let step = draft.actions.first().unwrap().step_id.clone();
     EventDraft {

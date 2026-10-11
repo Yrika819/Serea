@@ -1668,7 +1668,13 @@ fn m12_m13_mixed_pass_changes_once_then_all_durable_tables_are_byte_identical() 
     assert_eq!(
         before.keys().map(String::as_str).collect::<Vec<_>>(),
         vec![
+            "approval_grant_members",
+            "approval_grant_seals",
+            "approval_grant_uses",
+            "approval_grants",
             "approval_lifecycle_wakes",
+            "approval_request_actions",
+            "approval_requests",
             "blobs",
             "capability_descriptor_revisions",
             "capability_generation_defaults",
@@ -1686,6 +1692,9 @@ fn m12_m13_mixed_pass_changes_once_then_all_durable_tables_are_byte_identical() 
             "model_call_attempts",
             "model_usage",
             "plan_revisions",
+            "policy_revisions",
+            "policy_rules",
+            "policy_state",
             "schedule_command_receipts",
             "schedule_occurrences",
             "scheduler_consumer_state",
@@ -2428,9 +2437,11 @@ fn remediation_t1_storage_recovery_runtime_closure_has_no_effects_or_ambient_tim
             "'now'",
             "unixepoch()",
         ] {
-            if (path.file_name().unwrap() == "error.rs" && forbidden == "Scheduler")
-                || (path.file_name().unwrap() == "lib.rs"
-                    && matches!(forbidden, "Scheduler" | "scheduler::"))
+            let file_name = path.file_name().unwrap();
+            // P6 validates the frozen RequestedBy::Scheduler protocol value as
+            // provenance; these are not dependencies on Scheduler runtime APIs.
+            if ((file_name == "error.rs" || file_name == "approval.rs") && forbidden == "Scheduler")
+                || (file_name == "lib.rs" && matches!(forbidden, "Scheduler" | "scheduler::"))
             {
                 continue;
             }

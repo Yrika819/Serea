@@ -1536,6 +1536,8 @@ declare_enum!(
         ApprovalConsumed => "APPROVAL_CONSUMED",
         /// A grant hit expiry with uses remaining.
         ApprovalExpiredUnused => "APPROVAL_EXPIRED_UNUSED",
+        /// An authenticated principal withdrew consent for a grant.
+        ApprovalRevoked => "APPROVAL_REVOKED",
         /// Policy rules changed.
         PolicyChanged => "POLICY_CHANGED",
         /// Capability registry generation or admin overlay changed.

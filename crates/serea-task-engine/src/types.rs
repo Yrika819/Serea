@@ -1,6 +1,6 @@
 use serea_protocol::{
-    AssistantTask, AttemptBudget, CapabilityId, DataClass, EpochMillis, Extensions, RequestedBy,
-    RiskClass, StepId, TaskId, TaskKind, TaskOrigin, TaskStep, TaskTitle,
+    ApprovalId, AssistantTask, AttemptBudget, CapabilityId, DataClass, EpochMillis, Extensions,
+    RequestedBy, RiskClass, StepId, TaskId, TaskKind, TaskOrigin, TaskState, TaskStep, TaskTitle,
 };
 use serea_storage::{PlanRevisionSnapshot, TaskSnapshot};
 
@@ -54,7 +54,30 @@ pub struct CapabilityPlanStep {
     pub requested_by: RequestedBy,
 }
 
+/// One member of an initial mixed plan. Approval gates are host-authored and
+/// enumerate their exact following R2-compatible Capability action group.
+pub enum MixedCapabilityPlanStep {
+    ApprovalGate {
+        step_id: StepId,
+        sequence: u32,
+        actions: Vec<StepId>,
+    },
+    Capability(CapabilityPlanStep),
+}
+
 pub type PlanRevision = PlanRevisionSnapshot;
+
+/// Committed result of atomically raising an approval request and entering the
+/// durable wait state. This is routing/status data, not authorization evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalWaitOutcome {
+    /// The durable request identity supplied by the host.
+    pub approval_id: ApprovalId,
+    /// The Task whose state changed.
+    pub task_id: TaskId,
+    /// The state committed by this operation.
+    pub task_state: TaskState,
+}
 
 impl From<TaskSnapshot> for TaskRecord {
     fn from(snapshot: TaskSnapshot) -> Self {

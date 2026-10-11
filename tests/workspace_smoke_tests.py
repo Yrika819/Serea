@@ -48,6 +48,9 @@ class VirtualManifestTests(unittest.TestCase):
         model_router = getattr(smoke, "MODEL_ROUTER", None)
         if model_router is not None:
             names.append(model_router)
+        policy = getattr(smoke, "POLICY", None)
+        if policy is not None:
+            names.append(policy)
         names.append(smoke.TESTKIT)
         self.paths = {name: self.root / "crates" / name / "Cargo.toml" for name in names}
         members = ", ".join(f'"crates/{name}"' for name in names)
@@ -58,6 +61,7 @@ class VirtualManifestTests(unittest.TestCase):
         self.add(smoke.EVENT_BUS, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\n')
         self.add(smoke.CAPABILITY, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\n[dev-dependencies]\nserea-testkit = { path = "../serea-testkit" }\n')
         self.add(ENGINE, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\n[dev-dependencies]\nserde_json = "1"\n')
+        self.add(smoke.POLICY, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\n[dev-dependencies]\nrusqlite = "1"\n')
         if scheduler is not None:
             self.add(scheduler, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-task-engine = { path = "../serea-task-engine" }\n[dev-dependencies]\nserea-testkit = { path = "../serea-testkit" }\n')
 
@@ -538,10 +542,10 @@ class P2GroupOInvariantTests(unittest.TestCase):
                 if name == smoke.TESTKIT:
                     self.assertTrue(is_dev, f"{member} reaches testkit outside dev-dependencies")
 
-    def test_o5_frozen_enum_cardinalities_are_unchanged(self):
+    def test_o5_frozen_enum_cardinalities_match_ratified_p6_additions(self):
         source = (self.root / "crates/serea-protocol/src/types.rs").read_text()
         expected = {"DataClass": 5, "RiskClass": 8, "TaskState": 11,
-                    "StepKind": 8, "ActionErrorKind": 13, "EventKind": 61}
+                    "StepKind": 8, "ActionErrorKind": 13, "EventKind": 62}
         for name, count in expected.items():
             pattern = re.compile(
                 rf"declare_enum!\(\s*(?:///[^\n]*\n\s*)*{name}\s*\{{(.*?)^\s*\}}\s*\);",

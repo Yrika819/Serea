@@ -5,8 +5,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::{
-    ApprovalId, DataClass, DeviceId, EventKind, StepId, TaskId, TaskTitle, TextCategory, Trace,
-    canonicalize,
+    ApprovalId, DataClass, DeviceId, EpochMillis, EventKind, GrantId, SessionId, StepId, TaskId,
+    TaskTitle, TextCategory, Trace, canonicalize,
 };
 
 /// Payload-free validation error for an approval lifecycle event payload.
@@ -31,6 +31,7 @@ pub struct ApprovalLifecyclePayloadV1 {
     approval_id: ApprovalId,
     task_id: TaskId,
     step_id: StepId,
+    grant_id: Option<GrantId>,
     canonical_json: String,
 }
 
@@ -40,6 +41,28 @@ struct RawApprovalLifecyclePayload {
     approval_id: ApprovalId,
     task_id: TaskId,
     step_id: StepId,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawApprovalRevokedPayload {
+    approval_id: ApprovalId,
+    task_id: TaskId,
+    step_id: StepId,
+    grant_id: GrantId,
+    actor_class: String,
+    device_id: Option<DeviceId>,
+    session_id: Option<SessionId>,
+    revoked_at: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawApprovalExpiredUnusedPayload {
+    approval_id: ApprovalId,
+    task_id: TaskId,
+    step_id: StepId,
+    grant_id: GrantId,
 }
 
 impl ApprovalLifecyclePayloadV1 {
@@ -54,7 +77,12 @@ impl ApprovalLifecyclePayloadV1 {
     ) -> Result<Self, ApprovalLifecyclePayloadError> {
         if !matches!(
             kind,
-            EventKind::ApprovalGranted | EventKind::ApprovalDenied | EventKind::ApprovalExpired
+            EventKind::ApprovalRequired
+                | EventKind::ApprovalGranted
+                | EventKind::ApprovalDenied
+                | EventKind::ApprovalExpired
+                | EventKind::ApprovalExpiredUnused
+                | EventKind::ApprovalRevoked
         ) {
             return Err(ApprovalLifecyclePayloadError::Invalid);
         }
@@ -66,33 +94,92 @@ impl ApprovalLifecyclePayloadV1 {
             .as_object()
             .ok_or(ApprovalLifecyclePayloadError::Invalid)?;
         let actual: Vec<&str> = object.keys().map(String::as_str).collect();
-        if actual != ["approval_id", "step_id", "task_id"] {
-            return Err(ApprovalLifecyclePayloadError::Invalid);
-        }
-        let raw: RawApprovalLifecyclePayload =
-            serde_json::from_value(value).map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+        let (approval_id, task_id, step_id, grant_id, canonical_json) =
+            if kind == EventKind::ApprovalExpiredUnused {
+                if actual != ["approval_id", "grant_id", "step_id", "task_id"] {
+                    return Err(ApprovalLifecyclePayloadError::Invalid);
+                }
+                let raw: RawApprovalExpiredUnusedPayload = serde_json::from_value(value.clone())
+                    .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+                let canonical_json = String::from_utf8(canonical_input.clone())
+                    .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+                (
+                    raw.approval_id,
+                    raw.task_id,
+                    raw.step_id,
+                    Some(raw.grant_id),
+                    canonical_json,
+                )
+            } else if kind == EventKind::ApprovalRevoked {
+                if actual
+                    != [
+                        "actor_class",
+                        "approval_id",
+                        "device_id",
+                        "grant_id",
+                        "revoked_at",
+                        "session_id",
+                        "step_id",
+                        "task_id",
+                    ]
+                {
+                    return Err(ApprovalLifecyclePayloadError::Invalid);
+                }
+                let raw: RawApprovalRevokedPayload = serde_json::from_value(value.clone())
+                    .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+                if !matches!(raw.actor_class.as_str(), "USER" | "ADMIN")
+                    || EpochMillis::new(raw.revoked_at).is_err()
+                    || raw.device_id.is_some() != raw.session_id.is_some()
+                    || (raw.actor_class == "USER" && raw.device_id.is_none())
+                {
+                    return Err(ApprovalLifecyclePayloadError::Invalid);
+                }
+                let canonical_json = String::from_utf8(canonical_input.clone())
+                    .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+                (
+                    raw.approval_id,
+                    raw.task_id,
+                    raw.step_id,
+                    Some(raw.grant_id),
+                    canonical_json,
+                )
+            } else {
+                if actual != ["approval_id", "step_id", "task_id"] {
+                    return Err(ApprovalLifecyclePayloadError::Invalid);
+                }
+                let raw: RawApprovalLifecyclePayload = serde_json::from_value(value)
+                    .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+                let source = serde_json::to_string(&serde_json::json!({
+                    "approval_id": raw.approval_id,
+                    "task_id": raw.task_id,
+                    "step_id": raw.step_id,
+                }))
+                .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+                let canonical_json = String::from_utf8(
+                    canonicalize(&source).map_err(|_| ApprovalLifecyclePayloadError::Invalid)?,
+                )
+                .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
+                (
+                    raw.approval_id,
+                    raw.task_id,
+                    raw.step_id,
+                    None,
+                    canonical_json,
+                )
+            };
         let event_task = correlation_id.ok_or(ApprovalLifecyclePayloadError::Invalid)?;
         let event_trace = trace.ok_or(ApprovalLifecyclePayloadError::Invalid)?;
-        if &raw.task_id != event_task
-            || event_trace.task_id.as_ref() != Some(&raw.task_id)
-            || event_trace.step_id.as_ref() != Some(&raw.step_id)
+        if &task_id != event_task
+            || event_trace.task_id.as_ref() != Some(&task_id)
+            || event_trace.step_id.as_ref() != Some(&step_id)
         {
             return Err(ApprovalLifecyclePayloadError::Invalid);
         }
-        let source = serde_json::to_string(&serde_json::json!({
-            "approval_id": raw.approval_id,
-            "task_id": raw.task_id,
-            "step_id": raw.step_id,
-        }))
-        .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
-        let canonical_json = String::from_utf8(
-            canonicalize(&source).map_err(|_| ApprovalLifecyclePayloadError::Invalid)?,
-        )
-        .map_err(|_| ApprovalLifecyclePayloadError::Invalid)?;
         Ok(Self {
-            approval_id: raw.approval_id,
-            task_id: raw.task_id,
-            step_id: raw.step_id,
+            approval_id,
+            task_id,
+            step_id,
+            grant_id,
             canonical_json,
         })
     }
@@ -110,6 +197,11 @@ impl ApprovalLifecyclePayloadV1 {
     /// Existing step identity used for durable routing, not authority.
     pub fn step_id(&self) -> &StepId {
         &self.step_id
+    }
+
+    /// Grant identity is present for grant expiration or revocation events.
+    pub fn grant_id(&self) -> Option<&GrantId> {
+        self.grant_id.as_ref()
     }
 
     /// Returns the canonical SCJ-1 JSON routing payload.
@@ -268,6 +360,8 @@ pub fn event_kind_is_host_event_eligible(kind: EventKind) -> bool {
             | EventKind::ApprovalGranted
             | EventKind::ApprovalDenied
             | EventKind::ApprovalExpired
+            | EventKind::ApprovalExpiredUnused
+            | EventKind::ApprovalRevoked
             | EventKind::ScheduleCreated
             | EventKind::ScheduleUpdated
             | EventKind::SchedulePaused

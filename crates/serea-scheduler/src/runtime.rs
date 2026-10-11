@@ -7,10 +7,10 @@ use serea_protocol::{
     TaskTitle, canonicalize,
 };
 use serea_storage::{
-    ApprovalLifecycleOutcome, ApprovalLifecycleWake, Migrations, MissedOccurrencePolicy,
-    ScheduleCommandOutcome, ScheduleDraft, ScheduleDueOccurrence, ScheduleOccurrenceDraft,
-    ScheduleOccurrenceLease, ScheduleOwnerKind, ScheduleSnapshot, ScheduleTriggerKind,
-    SchedulerConsumerLease, Store, StoreError, TransitionContext,
+    ApprovalLifecycleOutcome, ApprovalLifecycleWake, ApprovalWakeApplyOutcome, Migrations,
+    MissedOccurrencePolicy, ScheduleCommandOutcome, ScheduleDraft, ScheduleDueOccurrence,
+    ScheduleOccurrenceDraft, ScheduleOccurrenceLease, ScheduleOwnerKind, ScheduleSnapshot,
+    ScheduleTriggerKind, SchedulerConsumerLease, Store, StoreError, TransitionContext,
 };
 use serea_task_engine::{EngineError, NewTask, RecoveryReport, TaskEngine, TaskRecord};
 
@@ -28,6 +28,8 @@ fn approval_outcome(kind: EventKind) -> Option<ApprovalLifecycleOutcome> {
         EventKind::ApprovalGranted => Some(ApprovalLifecycleOutcome::Granted),
         EventKind::ApprovalDenied => Some(ApprovalLifecycleOutcome::Denied),
         EventKind::ApprovalExpired => Some(ApprovalLifecycleOutcome::Expired),
+        EventKind::ApprovalExpiredUnused => Some(ApprovalLifecycleOutcome::ExpiredUnused),
+        EventKind::ApprovalRevoked => Some(ApprovalLifecycleOutcome::Revoked),
         _ => None,
     }
 }
@@ -596,15 +598,31 @@ impl Scheduler {
             .map_err(ScheduleError::Storage)
     }
 
-    /// Explicitly acknowledges a wake after the future P6 consumer has durably
-    /// applied its own result. Repeating acknowledgement is harmless.
-    pub fn acknowledge_approval_lifecycle_wake(
-        &self,
-        source_event_id: &EventId,
-    ) -> Result<bool, ScheduleError> {
-        self.store
-            .acknowledge_approval_lifecycle_wake(source_event_id)
-            .map_err(ScheduleError::Storage)
+    /// Routes a bounded page of committed approval events through TaskEngine.
+    /// Each source event is attached as causation, and its wake is acknowledged
+    /// only within the matching Task transition transaction.
+    pub fn process_approval_lifecycle_wakes(
+        &mut self,
+        now: EpochMillis,
+        limit: u16,
+    ) -> Result<Vec<ApprovalWakeApplyOutcome>, ScheduleError> {
+        let wakes = self
+            .store
+            .pending_approval_lifecycle_wakes(limit)
+            .map_err(ScheduleError::Storage)?;
+        let actor_id = ActorId::new("scheduler").map_err(|_| ScheduleError::Invalid)?;
+        let actor_version = SemVer::new("1.0.0").map_err(|_| ScheduleError::Invalid)?;
+        let mut outcomes = Vec::with_capacity(wakes.len());
+        for wake in &wakes {
+            let context = TransitionContext {
+                actor_kind: ActorKind::Scheduler,
+                actor_id: &actor_id,
+                actor_version: &actor_version,
+                causation_id: Some(&wake.source_event_id),
+            };
+            outcomes.push(self.tasks.apply_approval_wake(wake, now, &context)?);
+        }
+        Ok(outcomes)
     }
 
     /// Processes one bounded page of durable device-session resume wakes.

@@ -17,6 +17,7 @@
 // protocol, task-engine and testkit.
 #![forbid(unsafe_code)]
 
+mod approval;
 mod audit;
 mod blob;
 mod capability_registry;
@@ -34,11 +35,16 @@ mod migration_0002_tests;
 mod migration_0003_tests;
 #[cfg(test)]
 mod migration_0004_tests;
+#[cfg(test)]
+mod migration_0005_tests;
 mod model_accounting;
 #[cfg(test)]
 mod model_call_tests;
 #[cfg(test)]
 mod model_cost_tests;
+mod policy;
+#[cfg(test)]
+mod policy_tests;
 mod recovery;
 mod scheduler;
 mod store;
@@ -52,6 +58,12 @@ mod tx;
 #[cfg(feature = "p2h-fault-injection")]
 pub mod fault;
 
+pub use approval::{
+    ApprovalAutomationContext, ApprovalRequestActionDraft, ApprovalRequestStorageDraft,
+    ApprovalResponseDecisionStorage, ApprovalResponseStorageDraft, ApprovalResponseStorageOutcome,
+    ApprovalRevocationOutcome, ApprovalRevocationStorageDraft, GrantConsumptionOutcome,
+    action_set_digest as approval_action_set_digest,
+};
 pub use audit::{
     AuditOperation, DurableTransition, EventDraft, EventParticipant, JournalKind, JournalRecord,
     JournalRecords, TaskAuditParticipant,
@@ -79,18 +91,22 @@ pub use model_accounting::{
     UtcAccountingDay, calculate_cost_usd_micros, calculate_reservation_usd_micros,
     validate_price_snapshot,
 };
+pub use policy::{
+    PolicyActorClass, PolicyAutomationContext, PolicyDecisionKind, PolicyRevisionDraft,
+    PolicyRevisionSnapshot, PolicyRuleDraft, PolicyRuleMatchDraft,
+};
 pub use recovery::{
     RecoveryAction, RecoveryApplied, RecoveryAuthority, RecoveryPass, RecoveryReceiptRepair,
     RecoverySnapshot, RecoveryStep,
 };
 pub(crate) use scheduler::validate_scheduler_integrity as validate_p3_storage_integrity;
 pub use scheduler::{
-    ApprovalLifecycleOutcome, ApprovalLifecycleWake, DeviceResumeWait, DeviceSessionResumeWake,
-    MissedOccurrencePolicy, RecoverableScheduleOccurrence, ScheduleCommandOutcome,
-    ScheduleCommandState, ScheduleDraft, ScheduleDueOccurrence, ScheduleOccurrenceDraft,
-    ScheduleOccurrenceLease, ScheduleOccurrenceWork, ScheduleOwnerKind, ScheduleSnapshot,
-    ScheduleStateCommand, ScheduleStateCommandRequest, ScheduleTaskProvenance, ScheduleTriggerKind,
-    SchedulerConsumerLease, SchedulerCursorSnapshot,
+    ApprovalLifecycleOutcome, ApprovalLifecycleWake, ApprovalWakeApplyOutcome, DeviceResumeWait,
+    DeviceSessionResumeWake, MissedOccurrencePolicy, RecoverableScheduleOccurrence,
+    ScheduleCommandOutcome, ScheduleCommandState, ScheduleDraft, ScheduleDueOccurrence,
+    ScheduleOccurrenceDraft, ScheduleOccurrenceLease, ScheduleOccurrenceWork, ScheduleOwnerKind,
+    ScheduleSnapshot, ScheduleStateCommand, ScheduleStateCommandRequest, ScheduleTaskProvenance,
+    ScheduleTriggerKind, SchedulerConsumerLease, SchedulerCursorSnapshot,
 };
 pub use store::{CheckpointOutcome, Store};
 pub use task::{PlanRevisionSnapshot, PlanWrite, StepInput, StepSnapshot, TaskSnapshot};

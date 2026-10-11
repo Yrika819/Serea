@@ -139,17 +139,44 @@ fn approval_event(
             version: SemVer::new("1.0.0").unwrap(),
             extensions: Default::default(),
         },
-        data_class: DataClass::Public,
+        data_class: if matches!(
+            kind,
+            EventKind::ApprovalRevoked | EventKind::ApprovalExpiredUnused
+        ) {
+            DataClass::Personal
+        } else {
+            DataClass::Public
+        },
         trace: Some(Trace {
             task_id: Some(task_id.clone()),
             step_id: Some(step_id.clone()),
             ..Trace::default()
         }),
-        payload: serde_json::json!({
-            "approval_id": "apr_00000000000000000000000001",
-            "task_id": payload_task_id,
-            "step_id": step_id.as_str(),
-        })
+        payload: if kind == EventKind::ApprovalRevoked {
+            serde_json::json!({
+                "actor_class": "ADMIN",
+                "approval_id": "apr_00000000000000000000000001",
+                "device_id": null,
+                "grant_id": "grt_00000000000000000000000001",
+                "revoked_at": at(1).get(),
+                "session_id": null,
+                "step_id": step_id.as_str(),
+                "task_id": payload_task_id,
+            })
+        } else if kind == EventKind::ApprovalExpiredUnused {
+            serde_json::json!({
+                "approval_id": "apr_00000000000000000000000001",
+                "grant_id": "grt_00000000000000000000000001",
+                "step_id": step_id.as_str(),
+                "task_id": payload_task_id,
+            })
+        } else {
+            serde_json::json!({
+                "approval_id": "apr_00000000000000000000000001",
+                "task_id": payload_task_id,
+                "step_id": step_id.as_str(),
+            })
+        }
         .as_object()
         .unwrap()
         .clone(),
@@ -158,7 +185,7 @@ fn approval_event(
 }
 
 #[test]
-fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_ack() {
+fn approval_events_materialize_durable_routing_only_wakes_until_task_engine_applies_them() {
     let path = db_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&path, &Fixed).unwrap();
@@ -183,6 +210,8 @@ fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_a
         (EventKind::ApprovalGranted, 2),
         (EventKind::ApprovalDenied, 3),
         (EventKind::ApprovalExpired, 4),
+        (EventKind::ApprovalRevoked, 5),
+        (EventKind::ApprovalExpiredUnused, 6),
     ];
     for (kind, id) in event_facts {
         source
@@ -215,10 +244,12 @@ fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_a
         TaskState::Received
     );
     let wakes = scheduler.pending_approval_lifecycle_wakes(16).unwrap();
-    assert_eq!(wakes.len(), 3);
+    assert_eq!(wakes.len(), 5);
     assert_eq!(wakes[0].outcome, ApprovalLifecycleOutcome::Granted);
     assert_eq!(wakes[1].outcome, ApprovalLifecycleOutcome::Denied);
     assert_eq!(wakes[2].outcome, ApprovalLifecycleOutcome::Expired);
+    assert_eq!(wakes[3].outcome, ApprovalLifecycleOutcome::Revoked);
+    assert_eq!(wakes[4].outcome, ApprovalLifecycleOutcome::ExpiredUnused);
     assert_eq!(
         scheduler
             .approval_lifecycle_wake(&wakes[0].source_event_id)
@@ -230,20 +261,20 @@ fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_a
             .expire_eligible_events(at(4), 16)
             .unwrap()
             .content_records_deleted,
-        3
+        5
     );
     assert_eq!(
         scheduler
             .pending_approval_lifecycle_wakes(16)
             .unwrap()
             .len(),
-        3
+        5
     );
     source.verify_integrity().unwrap();
 
-    // A read or restart does not consume the handoff. Only explicit ACK removes it.
+    // A read or restart does not consume the handoff.
     drop(scheduler);
-    let restarted = Scheduler::new(
+    let mut restarted = Scheduler::new(
         Store::open(&path, &Fixed).unwrap(),
         TaskEngine::new(
             Store::open(&path, &Fixed).unwrap(),
@@ -256,24 +287,33 @@ fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_a
             .pending_approval_lifecycle_wakes(16)
             .unwrap()
             .len(),
-        3
+        5
     );
     assert!(
         restarted
-            .acknowledge_approval_lifecycle_wake(&wakes[0].source_event_id)
-            .unwrap()
-    );
-    assert!(
-        !restarted
-            .acknowledge_approval_lifecycle_wake(&wakes[0].source_event_id)
-            .unwrap()
+            .process_approval_lifecycle_wakes(at(7), 16)
+            .is_err()
     );
     assert_eq!(
         restarted
             .pending_approval_lifecycle_wakes(16)
             .unwrap()
             .len(),
-        2
+        5,
+        "a failed authoritative apply must leave every routing wake available"
+    );
+    assert_eq!(
+        source.load_task(&task_id).unwrap().task.state,
+        TaskState::Received
+    );
+    // Scheduler may inspect a wake but cannot discard it independently of the
+    // Task transition. Only TaskEngine's atomic apply operation acknowledges.
+    assert_eq!(
+        restarted
+            .pending_approval_lifecycle_wakes(16)
+            .unwrap()
+            .len(),
+        5
     );
     tasks.delete_task(task_id.clone()).unwrap();
     assert!(

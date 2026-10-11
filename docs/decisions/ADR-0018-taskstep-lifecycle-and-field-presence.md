@@ -181,8 +181,16 @@ Two rows deserve their reasoning stated.
 - **`result_digest` is required exactly when `SUCCEEDED`**, and every `SUCCEEDED`
   step persists a real host-written result document — for `WAIT_USER` that is
   `{"answered": true}`, for `VERIFY` the verification outcome, for `MODEL_TURN`
-  the structured output. This is how the row is satisfied **without a single
-  fabricated digest**. For `FAILED` and `RECONCILED_ABSENT` it is free: a failed
+  the structured output, and for `WAIT_APPROVAL` the host-authored
+  `{"outcome":"NOT_REQUIRED"}` only when the approved Policy-resolution
+  transition in [ADR-0041](ADR-0041-p6-initial-approval-gates.md) proves that
+  approval is not required for every action in that gate's exact group. This
+  result is not a human response, Grant, Grant use, or capability outcome. The
+  WAIT step completes through the ordinary audited lease/attempt/result path;
+  its RESULT blob/reference, digest, and audit commit atomically. The seven
+  statuses and every field-presence obligation remain unchanged. This is how
+  the row is satisfied **without a single fabricated digest**. For `FAILED`
+  and `RECONCILED_ABSENT` it is free: a failed
   attempt may or may not have persisted a partial result.
 - **`side_effect_receipt` is free on capability-shaped `SUCCEEDED`** and required when the step
   declared an effecting `side_effect_class`. P2 cannot evaluate that condition —

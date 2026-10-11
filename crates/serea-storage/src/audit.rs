@@ -15,6 +15,8 @@ pub enum AuditOperation {
     TaskInserted,
     PlanningStarted,
     PlanPersisted,
+    ApprovalWaitStarted,
+    ApprovalWakeApplied,
     LeaseAcquired,
     LeaseReleased,
     AttemptStarted,
@@ -386,11 +388,24 @@ fn validate_draft(facts: &DurableTransition, draft: &JournalRecord) -> Result<()
         JournalKind::PlanPersisted => facts.operation == AuditOperation::PlanPersisted,
         JournalKind::StepLeaseAcquired => facts.operation == AuditOperation::LeaseAcquired,
         JournalKind::StepLeaseReleased => facts.operation == AuditOperation::LeaseReleased,
-        JournalKind::StepAttemptStarted => facts.operation == AuditOperation::AttemptStarted,
-        JournalKind::StepCommitted | JournalKind::ReceiptRecorded => {
-            facts.operation == AuditOperation::StepSucceeded
+        JournalKind::StepAttemptStarted => {
+            matches!(
+                facts.operation,
+                AuditOperation::AttemptStarted | AuditOperation::ApprovalWaitStarted
+            )
         }
-        JournalKind::StepFailed => facts.operation == AuditOperation::StepFailed,
+        JournalKind::StepCommitted | JournalKind::ReceiptRecorded => {
+            matches!(
+                facts.operation,
+                AuditOperation::StepSucceeded | AuditOperation::ApprovalWakeApplied
+            )
+        }
+        JournalKind::StepFailed => {
+            matches!(
+                facts.operation,
+                AuditOperation::StepFailed | AuditOperation::ApprovalWakeApplied
+            )
+        }
         JournalKind::TaskCancelRequested => facts.operation == AuditOperation::Cancelled,
         JournalKind::TaskStateChanged | JournalKind::TaskTerminal => true,
         JournalKind::RecoveryDecision => facts.operation == AuditOperation::RecoveryDecision,
@@ -513,9 +528,16 @@ impl TaskAuditParticipant for TestAudit {
                 rows
             }
             AuditOperation::StepFailed => vec![step(JournalKind::StepFailed)],
+            AuditOperation::ApprovalWakeApplied => match facts.step_to.as_ref().map(|s| s.as_str())
+            {
+                Some("SUCCEEDED") => vec![step(JournalKind::StepCommitted)],
+                Some("FAILED") => vec![step(JournalKind::StepFailed)],
+                _ => vec![],
+            },
             AuditOperation::Cancelled => vec![task(JournalKind::TaskCancelRequested)],
             AuditOperation::RecoveryDecision => vec![task(JournalKind::RecoveryDecision)],
             AuditOperation::PlanningStarted
+            | AuditOperation::ApprovalWaitStarted
             | AuditOperation::Blocked
             | AuditOperation::DeviceSessionResumed
             | AuditOperation::InvariantFailed

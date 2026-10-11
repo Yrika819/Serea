@@ -129,6 +129,28 @@ pub enum StoreError {
     RegistryBindingRefused,
     /// Registry event facts do not match the closed metadata-only event shape.
     InvalidRegistryEvent,
+    /// A policy revision, rule set, or activation event is incomplete or inconsistent.
+    InvalidPolicyRevision,
+    /// An approval request or its enumerated R2 authority set is invalid.
+    InvalidApprovalRequest,
+    /// A response or grant does not satisfy the durable approval state machine.
+    InvalidApprovalResponse,
+    /// An approval lifecycle event does not name the request and leading action.
+    InvalidApprovalEvent,
+    /// The named durable approval request does not exist.
+    ApprovalRequestNotFound,
+    /// The named durable approval grant does not exist.
+    ApprovalGrantNotFound,
+    /// Authenticated GRANT/DENY conflicts with the first durable response.
+    ApprovalResponseConflict,
+    /// Approval request expired before the response could be applied.
+    ApprovalRequestExpired,
+    /// Grant authority was revoked and cannot be recovered by replay.
+    ApprovalGrantRevoked,
+    /// Grant authority expired and cannot be recovered by replay.
+    ApprovalGrantExpired,
+    /// Task is cancelled, failed, completed, or otherwise cannot be approved.
+    TaskNotApprovable,
     ScheduleNotActive,
     ScheduleRevisionConflict,
     SchedulerLeaseFenced,
@@ -238,6 +260,17 @@ impl StoreError {
             Self::RegistryBindingConflict => "RegistryBindingConflict",
             Self::RegistryBindingRefused => "RegistryBindingRefused",
             Self::InvalidRegistryEvent => "InvalidRegistryEvent",
+            Self::InvalidPolicyRevision => "InvalidPolicyRevision",
+            Self::InvalidApprovalRequest => "InvalidApprovalRequest",
+            Self::InvalidApprovalResponse => "InvalidApprovalResponse",
+            Self::InvalidApprovalEvent => "InvalidApprovalEvent",
+            Self::ApprovalRequestNotFound => "ApprovalRequestNotFound",
+            Self::ApprovalGrantNotFound => "ApprovalGrantNotFound",
+            Self::ApprovalResponseConflict => "ApprovalResponseConflict",
+            Self::ApprovalRequestExpired => "ApprovalRequestExpired",
+            Self::ApprovalGrantRevoked => "ApprovalGrantRevoked",
+            Self::ApprovalGrantExpired => "ApprovalGrantExpired",
+            Self::TaskNotApprovable => "TaskNotApprovable",
             Self::ScheduleNotActive => "ScheduleNotActive",
             Self::ScheduleRevisionConflict => "ScheduleRevisionConflict",
             Self::SchedulerLeaseFenced => "SchedulerLeaseFenced",

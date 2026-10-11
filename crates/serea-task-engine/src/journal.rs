@@ -111,6 +111,14 @@ impl TaskAuditParticipant for TaskJournal {
                 rows
             }
             AuditOperation::StepFailed => vec![step(JournalKind::StepFailed)],
+            AuditOperation::ApprovalWaitStarted => {
+                vec![step(JournalKind::StepAttemptStarted)]
+            }
+            AuditOperation::ApprovalWakeApplied => match facts.step_to().map(|s| s.as_str()) {
+                Some("SUCCEEDED") => vec![step(JournalKind::StepCommitted)],
+                Some("FAILED") => vec![step(JournalKind::StepFailed)],
+                _ => return Err(StoreError::AuditRejected),
+            },
             AuditOperation::Cancelled => vec![task(JournalKind::TaskCancelRequested)],
             AuditOperation::PlanningStarted
             | AuditOperation::Blocked

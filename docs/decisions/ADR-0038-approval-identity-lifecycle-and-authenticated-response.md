@@ -3,7 +3,7 @@
 Status: **Accepted** · Date: 2026-10-10 (ratified; R2 added 2026-10-10) · Architecture: `serea-arch/2.7.0`
 
 Surfaces affected: `serea.approval/1` semantics (prose only), `serea.event/1` gains one
-Proposed kind. No wire-major change.
+additive kind ratified for P6D on 2026-10-11. No wire-major change.
 
 ## Context
 
@@ -151,18 +151,10 @@ above.
 
 ### Revocation
 
-Revocation is an explicit, durable, terminal transition on the **grant**, performed by an
-authenticated user or admin through the same seam as an approval response, or from the local
-admin surface.
-
-**Unresolved seam gap.** The `AuthenticatedApprovalResponseV1` seam below carries
-`decision: ResponseDecision` with `GRANT | DENY` only, and
-[Device Protocol §5.2](../protocols/07-device-protocol.md) carries `GRANT | DENY | DEFER`
-only. Neither can express a revocation, so "through the same seam as an approval response"
-is not realizable as written. P6A must either widen `ResponseDecision` with a `REVOKE`
-variant — with the device surface added later as its own change — or narrow this
-recommendation to the local admin surface in P6 V1. The grant-only, human-initiated,
-durable, terminal semantics are unaffected either way.
+Revocation is an explicit, durable, terminal transition on the **grant**, performed by a
+separate authenticated host-side port. P6D supports an authenticated paired user session or
+local admin. The device response enum remains `GRANT | DENY | DEFER`; device-originated
+revocation transport is a separate future protocol change.
 
 Task cancellation does **not** revoke. A cancelled task makes its grants unusable — P8
 refuses a cancelled task — but the grant row keeps its `ACTIVE` state and is removed by the
@@ -173,12 +165,11 @@ A policy change likewise does not revoke; it is a revalidation outcome.
 Revoking a partially consumed grant is legal. Already-consumed uses are historical and are
 not undone; future uses are refused.
 
-`APPROVAL_REVOKED` is a **Proposed** new `EventKind`. It does not exist today. Adding it is
-an architecture-minor addition per Protocol Index §4.2 rule 4, and older clients skip
-unknown kinds rather than failing the stream. Its payload carries `approval_id`, `task_id`,
-`step_id`, `grant_id`, actor class, authenticated device and session, and `revoked_at` —
-matching the closed `ApprovalLifecyclePayloadV1` routing shape so the Scheduler wake path
-needs no change.
+`APPROVAL_REVOKED` is an additive architecture-minor `EventKind`, ratified by the owner on
+2026-10-11 for P6D. Older clients skip unknown kinds rather than failing the stream. Its
+closed payload carries `approval_id`, `task_id`, `step_id`, `grant_id`, actor class,
+authenticated device and session, and `revoked_at`. A separate authenticated host-side
+revocation port is used; the device wire decision enum remains unchanged.
 
 ### Authenticated response seam
 
@@ -255,13 +246,14 @@ route is either prohibited by the execution mandate or is a new authority design
 requiring owner ratification. Migration 0005 therefore does not exist and no
 `serea-policy` runtime is written.
 
-This ADR is **owner-ratified in content and remains Proposed**. It is not marked Accepted,
-because the P6A closure gate requires all four P6 ADRs to be Accepted together after the
-feasibility and contradiction gates pass, and the feasibility gate did not pass.
+This paragraph records the pre-R2 P6A feasibility-gate state and is superseded by the
+owner-ratified R2 decision on 2026-10-10 and the P6A acceptance recorded below. It is retained
+as historical context; it does not describe the current repository state.
 
 ## Status
 
 **Accepted** on 2026-10-10, following owner ratification of the P6 package and the additional
 owner decision R2. The `APPROVAL_REVOKED` event kind, the two grant states, the `PERSONAL`
-persisted ceiling and the enumerated multi-action grant identity are all ratified. No P6
-runtime exists yet; P6B builds the schema this ADR specifies.
+persisted ceiling and the enumerated multi-action grant identity are all ratified. P6D adds
+the authenticated grant-only revocation path and metadata-only audit routing; no device wire
+decision or provider dispatch is introduced.

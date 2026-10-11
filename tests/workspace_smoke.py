@@ -24,6 +24,7 @@ EXPECTED_MEMBERS = [
     "crates/serea-capability",
     "crates/serea-event-bus",
     "crates/serea-model-router",
+    "crates/serea-policy",
     "crates/serea-protocol",
     "crates/serea-scheduler",
     "crates/serea-storage",
@@ -38,6 +39,7 @@ SCHEDULER = "serea-scheduler"
 MODEL_ROUTER = "serea-model-router"
 TESTKIT = "serea-testkit"
 CAPABILITY = "serea-capability"
+POLICY = "serea-policy"
 DEPENDENCY_KINDS = ("dependencies", "build-dependencies", "dev-dependencies")
 
 
@@ -356,10 +358,12 @@ def main() -> int:
                     failures.append(f"{PROTOCOL} depends on internal {name}; protocol is a leaf")
                 # P5E freezes one new direction, `task-engine -> capability`,
                 # so a Task can pin a registry generation and bind a capability
-                # Step. The reverse edge stays forbidden below.
-                if owner == ENGINE and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS, CAPABILITY):
+                # Step. P6B adds `task-engine -> policy`, so the engine can
+                # compose P5 prepared actions with P6 policy decisions. The
+                # reverse edge stays forbidden below.
+                if owner == ENGINE and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS, CAPABILITY, POLICY):
                     failures.append(
-                        f"{ENGINE} has internal non-dev dependency {name}; only protocol/storage/event-bus/capability are allowed"
+                        f"{ENGINE} has internal non-dev dependency {name}; only protocol/storage/event-bus/capability/policy are allowed"
                     )
                 if owner == CAPABILITY and name == ENGINE:
                     failures.append(
@@ -370,6 +374,14 @@ def main() -> int:
                 if owner == CAPABILITY and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS):
                     failures.append(
                         f"{CAPABILITY} has internal non-dev dependency {name}; only protocol/storage/event-bus are allowed"
+                    )
+                # P6B: `serea-policy` is an L2 control crate that depends only on
+                # the L0 contract crate and the L1 foundation crates. A policy
+                # dependency on the capability crate would close the graph, and
+                # the capability crate may never reach the evaluator.
+                if owner == POLICY and internal and not is_dev and name not in (PROTOCOL, STORAGE, EVENT_BUS):
+                    failures.append(
+                        f"{POLICY} has internal non-dev dependency {name}; only protocol/storage/event-bus are allowed"
                     )
                 if owner == STORAGE and name == ENGINE:
                     failures.append(f"{STORAGE} depends on {ENGINE}; forbidden even in [dev-dependencies]")
@@ -409,12 +421,12 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P5 capability/protocol/storage/event-bus/task-engine/scheduler/model-router/testkit workspace; "
-          "event-bus protocol/storage-only; task-engine protocol/storage/event-bus/capability; "
+    print("OK: exact P5 capability/protocol/storage/event-bus/task-engine/scheduler/model-router/testkit/policy workspace; "
+          "event-bus protocol/storage-only; task-engine protocol/storage/event-bus/capability/policy; "
           "scheduler protocol/storage/event-bus/task-engine; "
-          "capability protocol/storage/event-bus with no edge to the Task Engine; "
+          "capability protocol/storage/event-bus with no edge to the Task Engine or policy; "
           "storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; "
-          "model-router protocol/storage/event-bus; testkit dev-only")
+          "model-router protocol/storage/event-bus; policy protocol/storage/event-bus; testkit dev-only")
     return 0
 
 

@@ -34,6 +34,8 @@ mod migration_0002_tests;
 mod migration_0003_tests;
 #[cfg(test)]
 mod migration_0004_tests;
+#[cfg(test)]
+mod migration_0005_tests;
 mod model_accounting;
 #[cfg(test)]
 mod model_call_tests;

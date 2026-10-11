@@ -2233,6 +2233,15 @@ fn activate_test_policy(store: &Store) {
 }
 
 fn install_wait_step(store: &Store) {
+    let input = format!(
+        "{{\"actions\":[{{\"arguments_digest\":\"{ARGS_A}\",\"step_id\":\"{STEP_A}\"}}],\"gate\":\"R2_ACTION_GROUP\"}}"
+    );
+    let input_digest = store
+        .transact(|tx| {
+            tx.put_blob(input.as_bytes(), DataClass::Personal)
+                .map(|blob| blob.digest().to_string())
+        })
+        .unwrap();
     let conn = store.conn.lock().unwrap();
     conn.execute(
         "UPDATE task_steps SET sequence=sequence+10 WHERE task_id=?1",
@@ -2242,7 +2251,7 @@ fn install_wait_step(store: &Store) {
     conn.execute(
         "INSERT INTO task_steps(step_id,task_id,sequence,kind,status,attempt,plan_revision,input_digest)
          VALUES (?1,?2,0,'WAIT_APPROVAL','PLANNED',0,1,?3)",
-        params![MODEL_STEP, TASK, digest_of("{}").unwrap().as_str()],
+        params![MODEL_STEP, TASK, input_digest],
     )
     .unwrap();
 }
@@ -2820,6 +2829,20 @@ fn granted_approval_wake_resumes_the_wait_step_and_acknowledges_atomically() {
             state: TaskState::Ready,
         }
     );
+    // SUCCEEDED steps must retain the exact host-written result document, not
+    // just its digest. The reference is the durable lookup path used on reload.
+    let result_ref_count: i64 = store
+        .conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM step_blob_refs r JOIN task_steps s USING(step_id)
+          WHERE s.task_id=?1 AND s.step_id=?2 AND r.role='RESULT' AND r.digest=s.result_digest",
+            params![TASK, MODEL_STEP],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(result_ref_count, 1);
     let conn = store.conn.lock().unwrap();
     assert_eq!(
         text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),

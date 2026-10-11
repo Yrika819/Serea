@@ -54,6 +54,17 @@ pub struct CapabilityPlanStep {
     pub requested_by: RequestedBy,
 }
 
+/// One member of an initial mixed plan. Approval gates are host-authored and
+/// enumerate their exact following R2-compatible Capability action group.
+pub enum MixedCapabilityPlanStep {
+    ApprovalGate {
+        step_id: StepId,
+        sequence: u32,
+        actions: Vec<StepId>,
+    },
+    Capability(CapabilityPlanStep),
+}
+
 pub type PlanRevision = PlanRevisionSnapshot;
 
 /// Committed result of atomically raising an approval request and entering the

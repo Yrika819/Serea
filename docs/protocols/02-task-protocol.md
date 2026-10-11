@@ -194,6 +194,25 @@ step `n` must be `SUCCEEDED`. Independent steps *may* run concurrently only
 when both are `IDEMPOTENT` and neither is an approval step. Every other
 configuration runs strictly in sequence order.
 
+For P6 initial plans, an approval-gate `WAIT_APPROVAL` Step may precede its
+exactly enumerated Capability action group in the same complete Plan revision.
+If current Policy evaluation is `ALLOW` for every member and all other required
+gates permit continuation, the host may complete that wait Step through the
+ordinary audited lease/attempt/result lifecycle with a durable RESULT document
+`{"outcome":"NOT_REQUIRED"}`. The result blob, reference, digest, and audit
+transition are atomic. It records that approval was not required at that
+evaluation; it is not a human approval, Grant, Grant use, or Capability result.
+Partial ALLOW groups do not complete the gate as `NOT_REQUIRED`. `DENY`,
+`REQUIRE_HANDOFF`, root approval, PROACTIVE, capability overlay, Task deadline,
+and all other mandatory checks retain their existing meanings. See
+[ADR-0041](../decisions/ADR-0041-p6-initial-approval-gates.md) for exact P6
+gate, R2, recovery, and revalidation semantics.
+
+A `NOT_REQUIRED` result cannot be reused after Policy changes. If a later
+evaluation requires human approval and the current append-only Plan has no safe
+unconsumed gate for the exact action group, the operation fails closed and
+requires a new Plan or Task. The Plan revision contract is not relaxed.
+
 This is a deliberate simplicity choice: sequential execution is trivially
 correct and trivially recoverable. Parallelism can be added later behind the
 same step record without changing the contract.

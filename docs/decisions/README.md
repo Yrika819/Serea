@@ -10,8 +10,10 @@ not started. P5A owner-decision closure is accepted by ADR-0034 through
 ADR-0036; P5 runtime has not started. P6A contract closure is accepted by ADR-0037
 through ADR-0040, following owner ratification of the P6 recommended package on
 2026-10-10 and the additional owner decision **R2 — enumerated multi-action grant**
-the same day, which resolved the P6A feasibility gate BLOCKER. P6 runtime has not
-started. See [P6A-feasibility-gate.md](../plans/P6A-feasibility-gate.md).
+the same day, which resolved the P6A feasibility gate BLOCKER. **ADR-0041**
+records the 2026-10-11 owner approval of Option A for P6E initial mixed approval
+plans and audited `NOT_REQUIRED` gate completion. See
+[P6A-feasibility-gate.md](../plans/P6A-feasibility-gate.md).
 
 ## P6 decisions (accepted 2026-10-10)
 
@@ -25,6 +27,7 @@ Accepted, and none authorizes runtime work.
 | [ADR-0038](ADR-0038-approval-identity-lifecycle-and-authenticated-response.md) | Grant binds generation and descriptor digest; **R2 enumerated multi-action grant over 1–8 individually approved Steps** with a normalized action-set digest and immutable membership; provider and implementation are transparency only; two-variable state machine; typed duplicate-response matrix; grant-only revocation with a Proposed `APPROVAL_REVOKED` event; authenticated response seam with clamping; `PERSONAL` persisted ceiling | **Accepted** |
 | [ADR-0039](ADR-0039-p6-p8-revalidation-and-grant-consumption-boundary.md) | Grant consumption joins the P8 dispatch-intent transaction, reclassified from a P6 blocker to a P8 contract decision | **Accepted** |
 | [ADR-0040](ADR-0040-p6-storage-retention-bounds-and-crate-ownership.md) | `serea-policy` owns policy and approval types; no `serea-capability -> serea-policy` edge; `PolicyInputV1` with no raw arguments and no `now`; `AuthorizationEvidenceV1`; eight-table migration 0005 concept including the R2 action and grant membership tables; four new bounds | **Accepted** |
+| [ADR-0041](ADR-0041-p6-initial-approval-gates.md) | Initial mixed Plan with exact R2 action groups; audited `WAIT_APPROVAL` → `SUCCEEDED` using typed `NOT_REQUIRED` only when all group actions ALLOW; no new lifecycle state, authority, schema, or Plan insertion semantics | **Accepted by owner** |
 
 ## Accepted decisions
 

@@ -104,9 +104,79 @@ fn input() -> StepInput {
         .unwrap(),
     }
 }
+fn approval_wait_input() -> StepInput {
+    let raw = b"{\"gate\":\"approval\"}";
+    StepInput {
+        input_json: raw.to_vec(),
+        step: TaskStep::new(TaskStepDraft {
+            step_id: StepId::new("stp_00000000000000000000000002").unwrap(),
+            task_id: tid(),
+            sequence: 1,
+            kind: StepKind::WaitApproval,
+            status: StepStatus::new("PLANNED").unwrap(),
+            attempt: 0,
+            idempotency_key: None,
+            provider_id: None,
+            capability_id: None,
+            capability_version: None,
+            input_digest: digest_of(std::str::from_utf8(raw).unwrap()).unwrap(),
+            result_digest: None,
+            side_effect_receipt: None,
+            started_at: None,
+            completed_at: None,
+            lease_owner: None,
+            lease_expires_at: None,
+            lease_generation: None,
+            error: None,
+            extensions: Default::default(),
+        })
+        .unwrap(),
+    }
+}
 fn fixture(ceiling: u32, c: &TransitionContext<'_>) -> Store {
     fixture_steps(ceiling, vec![input()], c)
 }
+
+#[test]
+fn initial_mixed_plan_persists_host_wait_and_canonical_capability_binding() {
+    context(|c| {
+        let wait = approval_wait_input();
+        let mut capability = input();
+        let mut capability_draft = TaskStepDraft::from(capability.step);
+        capability_draft.sequence = 2;
+        capability.step = TaskStep::new(capability_draft).unwrap();
+
+        let store = fixture_steps(3, vec![wait, capability], c);
+        let snapshot = store.load_task(&tid()).unwrap();
+        assert_eq!(snapshot.plan_revision, 1);
+        assert_eq!(snapshot.steps.len(), 2);
+        assert_eq!(snapshot.steps[0].step.kind, StepKind::WaitApproval);
+        assert_eq!(snapshot.steps[0].step.sequence, 1);
+        assert!(snapshot.steps[0].step.provider_id.is_none());
+        assert!(snapshot.steps[0].step.capability_id.is_none());
+        assert!(snapshot.steps[0].step.capability_version.is_none());
+        assert!(snapshot.steps[0].step.idempotency_key.is_none());
+        assert!(snapshot.steps[0].step.side_effect_receipt.is_none());
+        assert!(
+            store
+                .get_step_capability_binding(&tid(), &snapshot.steps[0].step.step_id)
+                .unwrap()
+                .is_none()
+        );
+
+        assert_eq!(snapshot.steps[1].step.kind, StepKind::Capability);
+        assert_eq!(snapshot.steps[1].step.sequence, 2);
+        let binding = store
+            .get_step_capability_binding(&tid(), &snapshot.steps[1].step.step_id)
+            .unwrap()
+            .expect("new capability step is bound in the same complete plan write");
+        assert_eq!(
+            binding.descriptor_digest(),
+            &digest_of("\"recovery-descriptor\"").unwrap()
+        );
+    });
+}
+
 fn fixture_steps(ceiling: u32, steps: Vec<StepInput>, c: &TransitionContext<'_>) -> Store {
     let store = Store::open_in_memory(&Fixed).unwrap();
     let descriptor = CapabilityDescriptor::new(CapabilityDescriptorDraft {

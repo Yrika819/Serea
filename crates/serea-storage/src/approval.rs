@@ -7,8 +7,8 @@ use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use serea_protocol::{
     ActorId, ActorKind, ApprovalId, Authorization, CapabilityId, DataClass, Digest, EpochMillis,
-    GrantId, RequestedBy, RiskClass, SemVer, SideEffectClass, StepId, StepStatus, TaskId, TaskKind,
-    TaskState, canonicalize, digest_of,
+    GrantId, LeaseOwner, RequestedBy, RiskClass, SemVer, SideEffectClass, StepId, StepStatus,
+    TaskId, TaskKind, TaskState, canonicalize, digest_of,
 };
 
 use crate::audit::{AuditOperation, DurableTransition};
@@ -43,6 +43,55 @@ type ExistingGrantResponseRow = (
     i64,
     String,
 );
+
+fn read_gate_action_members(
+    tx: &mut Tx<'_>,
+    task_id: &TaskId,
+    gate_id: &StepId,
+    class: DataClass,
+) -> Result<std::collections::BTreeMap<String, String>, StoreError> {
+    let digest: String = tx
+        .inner
+        .query_row(
+            "SELECT input_digest FROM task_steps WHERE task_id=?1 AND step_id=?2
+         AND kind='WAIT_APPROVAL'",
+            rusqlite::params![task_id.as_str(), gate_id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(StoreError::InvalidApprovalRequest)?;
+    let blob = crate::BlobRef::new(
+        Digest::new(digest).map_err(|_| StoreError::CorruptRow)?,
+        class,
+    );
+    let raw = tx.get_blob(&blob)?;
+    let value: Value = serde_json::from_slice(&raw).map_err(|_| StoreError::CorruptRow)?;
+    if value.get("gate").and_then(Value::as_str) != Some("R2_ACTION_GROUP") {
+        return Err(StoreError::InvalidApprovalRequest);
+    }
+    let actions = value
+        .get("actions")
+        .and_then(Value::as_array)
+        .ok_or(StoreError::InvalidApprovalRequest)?;
+    let mut result = std::collections::BTreeMap::new();
+    for action in actions {
+        let step_id = action
+            .get("step_id")
+            .and_then(Value::as_str)
+            .ok_or(StoreError::InvalidApprovalRequest)?;
+        let digest = action
+            .get("arguments_digest")
+            .and_then(Value::as_str)
+            .ok_or(StoreError::InvalidApprovalRequest)?;
+        if result
+            .insert(step_id.to_owned(), digest.to_owned())
+            .is_some()
+        {
+            return Err(StoreError::InvalidApprovalRequest);
+        }
+    }
+    Ok(result)
+}
 
 /// One complete action member for the request side of the R2 authority set.
 #[derive(Clone, PartialEq, Eq)]
@@ -299,6 +348,154 @@ impl Store {
 }
 
 impl Tx<'_> {
+    /// Completes a planned approval gate as NOT_REQUIRED only while its exact
+    /// enumerated action group, active Policy revision, Task and gate remain
+    /// current. The normal lease/attempt/result lifecycle supplies the required
+    /// SUCCEEDED fields and audit records; this creates no approval or Grant.
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_approval_gate_not_required(
+        &mut self,
+        task_id: &TaskId,
+        wait_step_id: &StepId,
+        plan_revision: u32,
+        actions: &[(StepId, Digest)],
+        policy_revision_id: i64,
+        policy_rules_digest: &Digest,
+        owner: LeaseOwner,
+        now: EpochMillis,
+        expires_at: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<crate::StepCommit, StoreError> {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        self.require_audit()?;
+        self.operation_savepoint(|tx| {
+            if actions.is_empty() || actions.len() > 8 || policy_revision_id <= 0 {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let mut expected = BTreeMap::new();
+            for (step_id, digest) in actions {
+                if expected.insert(step_id.as_str(), digest.as_str()).is_some() {
+                    return Err(StoreError::InvalidApprovalRequest);
+                }
+            }
+            let task_facts: (String, i64, Option<i64>, Option<i64>, i64) = tx.inner.query_row(
+                "SELECT state,plan_revision,cancelled_at_ms,deadline_at_ms,data_class_rank
+                 FROM tasks WHERE task_id=?1",
+                [task_id.as_str()],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+            ).optional()?.ok_or(StoreError::TaskNotFound)?;
+            if !matches!(task_facts.0.as_str(), "READY" | "EXECUTING")
+                || task_facts.1 != i64::from(plan_revision)
+                || task_facts.2.is_some()
+                || task_facts.3.is_some_and(|deadline| now.get() >= deadline)
+            {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let policy: Option<(i64, String)> = tx.inner.query_row(
+                "SELECT r.revision_id,r.rules_digest FROM policy_state p JOIN policy_revisions r
+                   ON r.revision_id=p.active_revision_id WHERE p.singleton=1",
+                [],
+                |row| Ok((row.get(0)?,row.get(1)?)),
+            ).optional()?;
+            if policy.as_ref() != Some(&(policy_revision_id, policy_rules_digest.as_str().to_owned())) {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let class = task_class(&tx.inner, task_id)?;
+            let gate: Option<(i64, String)> = tx.inner.query_row(
+                "SELECT sequence,input_digest FROM task_steps
+                 WHERE task_id=?1 AND step_id=?2 AND plan_revision=?3
+                   AND kind='WAIT_APPROVAL' AND status='PLANNED'",
+                rusqlite::params![task_id.as_str(),wait_step_id.as_str(),plan_revision],
+                |row| Ok((row.get(0)?,row.get(1)?)),
+            ).optional()?;
+            let (gate_sequence, input_digest) = gate.ok_or(StoreError::InvalidApprovalRequest)?;
+            let input_ref = crate::BlobRef::new(
+                Digest::new(input_digest).map_err(|_| StoreError::CorruptRow)?, class,
+            );
+            let input = tx.get_blob(&input_ref)?;
+            let gate_json: Value = serde_json::from_slice(&input).map_err(|_| StoreError::CorruptRow)?;
+            if gate_json.get("gate").and_then(Value::as_str) != Some("R2_ACTION_GROUP") {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let listed = gate_json.get("actions").and_then(Value::as_array)
+                .ok_or(StoreError::InvalidApprovalRequest)?;
+            let mut listed_actions = BTreeMap::new();
+            for member in listed {
+                let step = member.get("step_id").and_then(Value::as_str)
+                    .ok_or(StoreError::InvalidApprovalRequest)?;
+                let digest = member.get("arguments_digest").and_then(Value::as_str)
+                    .ok_or(StoreError::InvalidApprovalRequest)?;
+                if listed_actions.insert(step, digest).is_some() {
+                    return Err(StoreError::InvalidApprovalRequest);
+                }
+            }
+            if listed_actions != expected {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let mut seen_sequences = BTreeSet::new();
+            for (step_id, digest) in actions {
+                let member: Option<(i64,String,String,String)> = tx.inner.query_row(
+                    "SELECT sequence,status,kind,input_digest FROM task_steps
+                     WHERE task_id=?1 AND step_id=?2 AND plan_revision=?3",
+                    rusqlite::params![task_id.as_str(),step_id.as_str(),plan_revision],
+                    |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+                ).optional()?;
+                let (sequence,status,kind,actual_digest) = member.ok_or(StoreError::InvalidApprovalRequest)?;
+                if sequence <= gate_sequence || status != "PLANNED" || kind != "CAPABILITY"
+                    || actual_digest != digest.as_str() || !seen_sequences.insert(sequence)
+                {
+                    return Err(StoreError::InvalidApprovalRequest);
+                }
+                let overlay: Option<(String,i64,i64)> = tx.inner.query_row(
+                    "SELECT coalesce(o.availability_state,'ENABLED'),
+                            coalesce(o.experimental_opt_in,0),d.experimental
+                     FROM task_steps s JOIN step_capability_bindings b
+                       ON b.task_id=s.task_id AND b.step_id=s.step_id
+                     JOIN capability_descriptor_revisions d ON d.descriptor_digest=b.descriptor_digest
+                     LEFT JOIN capability_overlays o ON o.capability_id=b.capability_id
+                     WHERE s.task_id=?1 AND s.step_id=?2",
+                    rusqlite::params![task_id.as_str(),step_id.as_str()],
+                    |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+                ).optional()?;
+                if overlay.is_none_or(|(state,opt_in,experimental)|
+                    state != "ENABLED" || (experimental == 1 && opt_in != 1))
+                {
+                    return Err(StoreError::InvalidApprovalRequest);
+                }
+            }
+            let first_sequence = seen_sequences.first().copied().ok_or(StoreError::InvalidApprovalRequest)?;
+            let available_gates: Vec<String> = {
+                let mut statement = tx.inner.prepare(
+                    "SELECT step_id FROM task_steps WHERE task_id=?1 AND plan_revision=?2
+                      AND kind='WAIT_APPROVAL' AND status='PLANNED' AND sequence<?3 ORDER BY sequence",
+                )?;
+                statement.query_map(rusqlite::params![task_id.as_str(),plan_revision,first_sequence],
+                    |row| row.get(0))?.collect::<Result<_,_>>()?
+            };
+            if available_gates.as_slice() != [wait_step_id.as_str()] {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let pending: i64 = tx.inner.query_row(
+                "SELECT count(*) FROM approval_requests WHERE task_id=?1 AND status='PENDING'",
+                [task_id.as_str()], |row| row.get(0),
+            )?;
+            if pending != 0 {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let guard = tx.acquire_audited(
+                task_id.clone(), wait_step_id.clone(), owner, None, now, expires_at, context,
+            )?;
+            tx.begin_attempt(&guard, now, context)?;
+            tx.commit_step_outcome(
+                guard,
+                crate::StepOutcome::Succeeded { result_json: br#"{"outcome":"NOT_REQUIRED"}"#, receipt: None },
+                now,
+                context,
+            )
+        })
+    }
+
     /// Moves a live Task into `WAITING_APPROVAL` and creates its complete durable
     /// request plus `APPROVAL_REQUIRED` event in the same outer transaction.
     /// A failed request, event, audit participant, or commit therefore leaves
@@ -393,6 +590,15 @@ impl Tx<'_> {
             let wait_step_id = StepId::new(wait_steps[0].clone())
                 .map_err(|_| StoreError::InvalidApprovalRequest)?;
             let class = task_class(&tx.inner, &draft.task_id)?;
+            let expected_gate_actions: Vec<(StepId, Digest)> = draft.actions.iter()
+                .map(|action| (action.step_id.clone(), action.arguments_digest.clone()))
+                .collect();
+            if read_gate_action_members(tx, &draft.task_id, &wait_step_id, class)?
+                != expected_gate_actions.into_iter().map(|(step,digest)|
+                    (step.to_string(), digest.to_string())).collect()
+            {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
             let changed = tx.inner.execute(
                 "UPDATE tasks SET state='WAITING_APPROVAL',blocked_reason=NULL,updated_at_ms=?1
                  WHERE task_id=?2 AND state=?3 AND plan_revision=?4 AND updated_at_ms<=?1

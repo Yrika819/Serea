@@ -39,6 +39,6 @@ pub use serea_storage::{
 };
 pub use transition::{TaskTransitionReason, legal_task_transition, task_transition_reason};
 pub use types::{
-    ApprovalWaitOutcome, CapabilityPlanStep, NewTask, Plan, PlanRevision, PlanStep, StepRecord,
-    TaskRecord,
+    ApprovalWaitOutcome, CapabilityPlanStep, MixedCapabilityPlanStep, NewTask, Plan, PlanRevision,
+    PlanStep, StepRecord, TaskRecord,
 };

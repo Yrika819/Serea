@@ -5,7 +5,7 @@ use serea_protocol::{
     ActionErrorKind, ApprovalId, ApprovalLifecyclePayloadV1, DataClass, DeviceId, Digest,
     EpochMillis, ErrorCode, ErrorMessage, EventId, EventKind, FailureReason, HostAction,
     ReasonCode, ScheduleId, ScheduledTaskTemplateV1, StepId, StepStatus, TaskId, TaskState,
-    canonicalize, digest_of,
+    canonicalize,
 };
 
 const MAX_LEASE_MS: i64 = 120_000;
@@ -961,9 +961,15 @@ impl Tx<'_> {
             )? {
                 return Err(StoreError::InvalidTimestamp);
             }
-            let result_digest = digest_of(&format!("{{\"outcome\":\"{result_code}\"}}"))
-                .map_err(|_| StoreError::CanonicalJson)?;
+            let result_json = format!("{{\"outcome\":\"{result_code}\"}}");
+            let result_blob = tx.put_blob(result_json.as_bytes(), class)?;
+            let result_digest = result_blob.digest().clone();
             if target == TaskState::Ready {
+                tx.inner.execute(
+                    "INSERT INTO step_blob_refs(step_id,role,digest,data_class_rank)
+                     VALUES (?1,'RESULT',?2,?3)",
+                    rusqlite::params![wait_step.as_str(), result_digest.as_str(), class.rank()],
+                )?;
                 let changed = tx.inner.execute(
                     "UPDATE task_steps SET status='SUCCEEDED',result_digest=?1,completed_at_ms=?2
                       WHERE task_id=?3 AND step_id=?4 AND status='WAITING' AND kind='WAIT_APPROVAL'",

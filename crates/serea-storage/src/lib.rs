@@ -101,12 +101,12 @@ pub use recovery::{
 };
 pub(crate) use scheduler::validate_scheduler_integrity as validate_p3_storage_integrity;
 pub use scheduler::{
-    ApprovalLifecycleOutcome, ApprovalLifecycleWake, DeviceResumeWait, DeviceSessionResumeWake,
-    MissedOccurrencePolicy, RecoverableScheduleOccurrence, ScheduleCommandOutcome,
-    ScheduleCommandState, ScheduleDraft, ScheduleDueOccurrence, ScheduleOccurrenceDraft,
-    ScheduleOccurrenceLease, ScheduleOccurrenceWork, ScheduleOwnerKind, ScheduleSnapshot,
-    ScheduleStateCommand, ScheduleStateCommandRequest, ScheduleTaskProvenance, ScheduleTriggerKind,
-    SchedulerConsumerLease, SchedulerCursorSnapshot,
+    ApprovalLifecycleOutcome, ApprovalLifecycleWake, ApprovalWakeApplyOutcome, DeviceResumeWait,
+    DeviceSessionResumeWake, MissedOccurrencePolicy, RecoverableScheduleOccurrence,
+    ScheduleCommandOutcome, ScheduleCommandState, ScheduleDraft, ScheduleDueOccurrence,
+    ScheduleOccurrenceDraft, ScheduleOccurrenceLease, ScheduleOccurrenceWork, ScheduleOwnerKind,
+    ScheduleSnapshot, ScheduleStateCommand, ScheduleStateCommandRequest, ScheduleTaskProvenance,
+    ScheduleTriggerKind, SchedulerConsumerLease, SchedulerCursorSnapshot,
 };
 pub use store::{CheckpointOutcome, Store};
 pub use task::{PlanRevisionSnapshot, PlanWrite, StepInput, StepSnapshot, TaskSnapshot};

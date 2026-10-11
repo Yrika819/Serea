@@ -687,3 +687,70 @@ pushed normally, and every required hosted job passes at its exact resulting sou
 must wait for that closure. No provider invocation, dispatch intent, RequestId, or external side
 effect was added. Process-death tests establish software transaction recovery only, not physical
 power-loss guarantees.
+
+## 15. Superseding continuation record — P6D verified; P6E active
+
+This section supersedes §14.4's P6D WIP status and its statement that P6E must wait. P6D closed
+on the exact source head `ef064dfdce37ac765bc47c14000fc3ec547510b4` on branch
+`p6/policy-approval-runtime-privacy`. That commit descends from P6C `da2b391021270a67838930f0945b91bb09449948` and P6B `a5feb8373007aedf7b3418717f763c0d3c6475e3`. The current working tree is based on that
+head; the P6E changes below are uncommitted and therefore have no hosted CI evidence yet.
+
+### 15.1 P6D exact-head verification
+
+All required GitHub workflows passed for source `ef064df…` (PR #10, draft, base
+`p6/preimplementation-audit`):
+
+| Workflow | Run | Individual jobs |
+| --- | ---: | --- |
+| Fast CI | `38128811747` | Linux fast `114438675491`: success |
+| Full CI | `38128811753` | Linux stable `114438675629`, Rust 1.85 MSRV `114438675589`, macOS Intel x86_64 `114438675479`, macOS arm64 `114438675663`: all success |
+| Cross-architecture SQLite portability | `38128811727` | Intel producer `114438675474`, arm64 producer `114438675578`, arm64 DB on Intel `114438895291`, Intel DB on arm64 `114438924760`: all success |
+
+Every run reports exact source `ef064df…`; no job was skipped. The PR's synthetic merge SHA
+`9f98ce…` is not the source SHA. Cross-architecture artifacts were 36,954 bytes: Intel archive
+SHA-256 `ffb35149d8529b88db67abadfebbf0e52c70854732a5a79c9bb757d6cdfbb726`; arm64 archive
+SHA-256 `7d324ae229bbde5caee600a653878a416b7fcde2414f6dde80b39810114169`. This closes
+`P6D_APPROVAL_LIFECYCLE_VERIFIED` at that exact commit only. P6A PR #6 remains open and unchanged;
+P6D remains on separate draft PR #10 and is not merged.
+
+The owner approved the additive `APPROVAL_REVOKED` audit event on 2026-10-11. P6D already stores
+that authenticated revocation event atomically with grant-only revocation; consumed uses remain
+historical. No migration was changed for that event.
+
+### 15.2 P6E implementation in progress
+
+The current uncommitted P6E source adds TaskEngine request/wake methods and Storage transactions
+that move a live Task into `WAITING_APPROVAL` with its complete request, action set, routing event,
+wait Step and audit facts in one transaction. A wake re-reads request, grant, Task and Step state;
+grant wake returns the Task to `READY` only for later revalidation, revoked/unused-expired grants
+also return for revalidation, and denied/expired requests fail the wait Step and Task. Stale or
+duplicate routing work does not revive a terminal Task. The wake is acknowledged only in the
+same transaction as its Task event and audit facts; the standalone Scheduler ACK APIs were
+removed. No dispatch or external effect is performed.
+
+Focused local evidence on the working tree:
+
+| Check | Result |
+| --- | --- |
+| Storage `migration_0005` filter | **PASS**, 62 tests, including P6B, P6D and P6E transaction/restart cases |
+| Scheduler `approval_wake` | **PASS**, 3 tests; failed apply leaves all routing rows and Task unchanged |
+| TaskEngine `approval` | **PASS**, unrelated Task policy evidence is refused before mutation |
+| `cargo test --workspace --all-targets --locked --offline` | **PASS**, including the new TaskEngine and Scheduler regressions |
+| `cargo test --workspace --all-features --locked --offline` | **PASS**, including doc tests |
+| Stable and Rust 1.85 Clippy | **PASS**, `-D warnings` |
+| fmt, workspace smoke, Python smoke tests (76), docs validator (108 Markdown files), identity check | **PASS** |
+| migration 0005 SHA-256 | `cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a`; byte-identical |
+
+P6E is **not closed**. `TaskEngine::request_approval` currently accepts a host-built typed
+request plus policy evidence; it checks exact action-to-evidence bindings and Storage rechecks
+the active policy revision and durable Task/Step facts. It does not yet derive `PolicyInputV1`
+directly from a current `PreparedActionV1` and evaluate it inside one complete TaskEngine flow.
+The current tests do not yet exercise a successful full TaskEngine request-to-wake-to-fresh-policy
+path, or policy/capability changes while waiting. Complete those integrations and their recovery tests before claiming
+P6E. P6F has not started. The new working tree still requires a full rerun after the isolated
+TaskEngine test addition (now complete and green), a normal commit/push, and
+Fast/Full/Cross-architecture CI at its exact source head.
+
+No provider invocation, P8 RequestId, dispatch intent, credential handling, or external side
+effect was added. Local and process-death tests establish software transaction behavior only;
+they do not establish physical power-loss guarantees.

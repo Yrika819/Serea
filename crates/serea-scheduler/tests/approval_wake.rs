@@ -185,7 +185,7 @@ fn approval_event(
 }
 
 #[test]
-fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_ack() {
+fn approval_events_materialize_durable_routing_only_wakes_until_task_engine_applies_them() {
     let path = db_path();
     let bus = EventBus::new(DeterministicUlidSource::starting_at(1_700_300_000_000).unwrap());
     let store = Store::open(&path, &Fixed).unwrap();
@@ -272,9 +272,9 @@ fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_a
     );
     source.verify_integrity().unwrap();
 
-    // A read or restart does not consume the handoff. Only explicit ACK removes it.
+    // A read or restart does not consume the handoff.
     drop(scheduler);
-    let restarted = Scheduler::new(
+    let mut restarted = Scheduler::new(
         Store::open(&path, &Fixed).unwrap(),
         TaskEngine::new(
             Store::open(&path, &Fixed).unwrap(),
@@ -291,20 +291,29 @@ fn approval_events_materialize_durable_routing_only_wakes_and_require_explicit_a
     );
     assert!(
         restarted
-            .acknowledge_approval_lifecycle_wake(&wakes[0].source_event_id)
-            .unwrap()
-    );
-    assert!(
-        !restarted
-            .acknowledge_approval_lifecycle_wake(&wakes[0].source_event_id)
-            .unwrap()
+            .process_approval_lifecycle_wakes(at(7), 16)
+            .is_err()
     );
     assert_eq!(
         restarted
             .pending_approval_lifecycle_wakes(16)
             .unwrap()
             .len(),
-        4
+        5,
+        "a failed authoritative apply must leave every routing wake available"
+    );
+    assert_eq!(
+        source.load_task(&task_id).unwrap().task.state,
+        TaskState::Received
+    );
+    // Scheduler may inspect a wake but cannot discard it independently of the
+    // Task transition. Only TaskEngine's atomic apply operation acknowledges.
+    assert_eq!(
+        restarted
+            .pending_approval_lifecycle_wakes(16)
+            .unwrap()
+            .len(),
+        5
     );
     tasks.delete_task(task_id.clone()).unwrap();
     assert!(

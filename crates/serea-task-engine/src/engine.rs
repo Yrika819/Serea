@@ -1,15 +1,15 @@
 use crate::{
-    CancellationOutcome, DeletionOutcome, EngineError, LeaseGuard, NewTask, Plan, PlanRevision,
-    StepCommit, StepOutcome, TaskJournal, TaskRecord, TransitionContext,
+    ApprovalWaitOutcome, CancellationOutcome, DeletionOutcome, EngineError, LeaseGuard, NewTask,
+    Plan, PlanRevision, StepCommit, StepOutcome, TaskJournal, TaskRecord, TransitionContext,
 };
-use serea_event_bus::EventBus;
+use serea_event_bus::{ApprovalLifecycleKindV1, EventBus};
 use serea_protocol::{
-    AssistantTask, BlockedReason, DeviceId, EpochMillis, LeaseOwner, StepId, TaskId, TaskKind,
-    TaskOriginKind, TaskState, Timestamp,
+    ActorId, ActorKind, AssistantTask, BlockedReason, DeviceId, EpochMillis, LeaseOwner, StepId,
+    TaskId, TaskKind, TaskOriginKind, TaskState, Timestamp,
 };
 use serea_storage::{
-    DeviceSessionResumeWake, EventDraft, PlanWrite, ScheduleOccurrenceLease, StepInput, Store,
-    StoreError,
+    ApprovalLifecycleWake, ApprovalWakeApplyOutcome, DeviceSessionResumeWake, EventDraft,
+    PlanWrite, ScheduleOccurrenceLease, StepInput, Store, StoreError,
 };
 
 /// Owns lifecycle orchestration, not identifier entropy, clocks or effect execution.
@@ -22,6 +22,119 @@ pub struct TaskEngine {
 impl TaskEngine {
     pub fn new(store: Store, event_bus: EventBus) -> Self {
         Self { store, event_bus }
+    }
+
+    /// Raises a fully validated host-built approval request and moves its live
+    /// Task to `WAITING_APPROVAL` atomically. Scheduler wake records are created
+    /// later from the committed lifecycle event and are only routing signals.
+    pub fn request_approval(
+        &mut self,
+        request: serea_policy::ApprovalRequestV1,
+        evidence: &[serea_policy::AuthorizationEvidenceV1],
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<ApprovalWaitOutcome, EngineError> {
+        let request_facts = request.draft();
+        let approval_id = request_facts.approval_id.clone();
+        let task_id = request_facts.task_id.clone();
+        if request_facts.actions.actions().len() != evidence.len() || evidence.is_empty() {
+            return Err(EngineError::InvalidPlan);
+        }
+        let (policy_revision_id, policy_rules_digest) = {
+            let first = evidence.first().ok_or(EngineError::InvalidPlan)?;
+            if !matches!(
+                first.decision(),
+                serea_policy::PolicyDecision::RequireApproval(_)
+            ) {
+                return Err(EngineError::InvalidPlan);
+            }
+            (
+                first.policy_revision_id(),
+                first.policy_rules_digest().clone(),
+            )
+        };
+        for action in request_facts.actions.actions() {
+            let matched = evidence.iter().any(|item| {
+                let facts = item.input_facts();
+                matches!(
+                    item.decision(),
+                    serea_policy::PolicyDecision::RequireApproval(_)
+                ) && item.policy_revision_id() == policy_revision_id
+                    && item.policy_rules_digest() == &policy_rules_digest
+                    && facts.task_id == request_facts.task_id
+                    && facts.task_kind == request_facts.task_kind
+                    && facts.step_id == *action.step_id()
+                    && facts.arguments_digest == *action.arguments_digest()
+                    && facts.plan_revision == request_facts.plan_revision
+                    && facts.registry_generation == request_facts.registry_generation
+                    && facts.descriptor_digest == request_facts.descriptor_digest
+                    && facts.capability_id == request_facts.capability_id
+                    && facts.capability_version == request_facts.capability_version
+                    && facts.risk_class == request_facts.risk_class
+                    && facts.side_effect_class == request_facts.side_effect_class
+                    && facts.authorization == request_facts.authorization
+                    && facts.data_class.rank() <= request_facts.data_class.rank()
+                    && facts.requested_by == request_facts.requested_by
+            });
+            if !matched {
+                return Err(EngineError::InvalidPlan);
+            }
+        }
+        let first_action = request_facts
+            .actions
+            .actions()
+            .first()
+            .ok_or(EngineError::InvalidPlan)?;
+        // This lifecycle event is host-authored; model/user provenance stays in
+        // the durable request and task journal, never in the event actor slot.
+        let event_actor = ActorId::new("serea-core").map_err(|_| EngineError::InvalidPlan)?;
+        let event = self
+            .event_bus
+            .draft_approval_lifecycle(
+                ApprovalLifecycleKindV1::Required,
+                &request_facts.approval_id,
+                &request_facts.task_id,
+                first_action.step_id(),
+                ActorKind::Host,
+                event_actor,
+                context.actor_version.clone(),
+                now,
+            )
+            .map_err(EngineError::from)?;
+        let draft = request.storage_draft();
+        self.store
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
+                tx.raise_approval_request_and_wait(
+                    draft,
+                    event,
+                    policy_revision_id,
+                    &policy_rules_digest,
+                    now,
+                    context,
+                )
+            })
+            .map_err(EngineError::from)?;
+        Ok(ApprovalWaitOutcome {
+            approval_id,
+            task_id,
+            task_state: TaskState::WaitingApproval,
+        })
+    }
+
+    /// Applies an already materialized Scheduler wake after re-reading the
+    /// authoritative approval, grant, Task and wait Step rows. The Task update,
+    /// Task event, audit rows and wake acknowledgement share one transaction.
+    pub fn apply_approval_wake(
+        &mut self,
+        wake: &ApprovalLifecycleWake,
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<ApprovalWakeApplyOutcome, EngineError> {
+        self.store
+            .transact_with_participants(&TaskJournal, &self.event_bus, |tx| {
+                tx.apply_approval_lifecycle_wake(wake, now, context)
+            })
+            .map_err(EngineError::from)
     }
 
     /// Creates a Task, pinning the active capability registry generation in the

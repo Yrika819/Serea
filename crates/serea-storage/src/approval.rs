@@ -7,11 +7,12 @@ use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use serea_protocol::{
     ActorId, ActorKind, ApprovalId, Authorization, CapabilityId, DataClass, Digest, EpochMillis,
-    GrantId, RequestedBy, RiskClass, SemVer, SideEffectClass, StepId, TaskId, TaskKind,
-    canonicalize, digest_of,
+    GrantId, RequestedBy, RiskClass, SemVer, SideEffectClass, StepId, StepStatus, TaskId, TaskKind,
+    TaskState, canonicalize, digest_of,
 };
 
-use crate::{EventDraft, Store, StoreError, Tx};
+use crate::audit::{AuditOperation, DurableTransition};
+use crate::{EventDraft, Store, StoreError, TransitionContext, Tx, task::task_class};
 
 type ApprovalResponseRow = (
     String,
@@ -298,6 +299,143 @@ impl Store {
 }
 
 impl Tx<'_> {
+    /// Moves a live Task into `WAITING_APPROVAL` and creates its complete durable
+    /// request plus `APPROVAL_REQUIRED` event in the same outer transaction.
+    /// A failed request, event, audit participant, or commit therefore leaves
+    /// neither half of the wait transition visible.
+    pub fn raise_approval_request_and_wait(
+        &mut self,
+        draft: ApprovalRequestStorageDraft,
+        event: EventDraft,
+        policy_revision_id: i64,
+        policy_rules_digest: &serea_protocol::Digest,
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<(), StoreError> {
+        self.ensure_active()?;
+        self.operation_savepoint(|tx| {
+            if draft.raised_at != now || policy_revision_id <= 0 {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let active: Option<(i64, String)> = tx
+                .inner
+                .query_row(
+                    "SELECT p.active_revision_id,r.rules_digest
+                   FROM policy_state p JOIN policy_revisions r
+                     ON r.revision_id=p.active_revision_id
+                  WHERE p.singleton=1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if active.as_ref().map(|(id, digest)| (*id, digest.as_str()))
+                != Some((policy_revision_id, policy_rules_digest.as_str()))
+            {
+                return Err(StoreError::InvalidPolicyRevision);
+            }
+            let (state, plan_revision, updated_at): (String, i64, i64) = tx
+                .inner
+                .query_row(
+                    "SELECT state,plan_revision,updated_at_ms FROM tasks WHERE task_id=?1",
+                    [draft.task_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => StoreError::TaskNotFound,
+                    other => other.into(),
+                })?;
+            let from = match state.as_str() {
+                "READY" => TaskState::Ready,
+                "EXECUTING" => TaskState::Executing,
+                _ => return Err(StoreError::IllegalTaskTransition),
+            };
+            if plan_revision != draft.plan_revision || now.get() < updated_at {
+                return Err(StoreError::IllegalTaskTransition);
+            }
+            let pending: i64 = tx.inner.query_row(
+                "SELECT count(*) FROM approval_requests WHERE task_id=?1 AND status='PENDING'",
+                [draft.task_id.as_str()],
+                |row| row.get(0),
+            )?;
+            if pending != 0 {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let mut first_action_sequence = None;
+            for action in &draft.actions {
+                let sequence: Option<i64> = tx.inner.query_row(
+                    "SELECT sequence FROM task_steps
+                      WHERE task_id=?1 AND step_id=?2 AND plan_revision=?3 AND kind='CAPABILITY'",
+                    rusqlite::params![
+                        draft.task_id.as_str(),
+                        action.step_id.as_str(),
+                        draft.plan_revision
+                    ],
+                    |row| row.get(0),
+                ).optional()?;
+                let sequence = sequence.ok_or(StoreError::InvalidApprovalRequest)?;
+                first_action_sequence = Some(first_action_sequence.map_or(sequence, |current: i64| current.min(sequence)));
+            }
+            let first_action_sequence = first_action_sequence.ok_or(StoreError::InvalidApprovalRequest)?;
+            let wait_steps: Vec<String> = {
+                let mut statement = tx.inner.prepare(
+                    "SELECT step_id FROM task_steps
+                      WHERE task_id=?1 AND kind='WAIT_APPROVAL' AND status='PLANNED'
+                        AND plan_revision=?2 AND sequence<?3 ORDER BY sequence",
+                )?;
+                statement.query_map(
+                    rusqlite::params![draft.task_id.as_str(), draft.plan_revision, first_action_sequence],
+                    |row| row.get(0),
+                )?.collect::<Result<_, _>>()?
+            };
+            if wait_steps.len() != 1 {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            let wait_step_id = StepId::new(wait_steps[0].clone())
+                .map_err(|_| StoreError::InvalidApprovalRequest)?;
+            let class = task_class(&tx.inner, &draft.task_id)?;
+            let changed = tx.inner.execute(
+                "UPDATE tasks SET state='WAITING_APPROVAL',blocked_reason=NULL,updated_at_ms=?1
+                 WHERE task_id=?2 AND state=?3 AND plan_revision=?4 AND updated_at_ms<=?1
+                   AND cancelled_at_ms IS NULL",
+                rusqlite::params![
+                    now.get(),
+                    draft.task_id.as_str(),
+                    from.wire_name(),
+                    draft.plan_revision
+                ],
+            )?;
+            if changed != 1 {
+                return Err(StoreError::IllegalTaskTransition);
+            }
+            let changed = tx.inner.execute(
+                "UPDATE task_steps SET status='WAITING',attempt=1,started_at_ms=?1,lease_generation=1
+                  WHERE task_id=?2 AND step_id=?3 AND kind='WAIT_APPROVAL' AND status='PLANNED'
+                    AND plan_revision=?4",
+                rusqlite::params![now.get(), draft.task_id.as_str(), wait_step_id.as_str(), draft.plan_revision],
+            )?;
+            if changed != 1 {
+                return Err(StoreError::InvalidApprovalRequest);
+            }
+            tx.create_approval_request(draft.clone(), event)?;
+            let mut facts = DurableTransition::task(
+                AuditOperation::ApprovalWaitStarted,
+                &draft.task_id,
+                Some(from),
+                TaskState::WaitingApproval,
+                class,
+                now,
+                context,
+            );
+            facts.step_id = Some(wait_step_id);
+            facts.step_from = Some(StepStatus::new("PLANNED").map_err(|_| StoreError::CorruptRow)?);
+            facts.step_to = Some(StepStatus::new("WAITING").map_err(|_| StoreError::CorruptRow)?);
+            facts.attempt = Some(1);
+            facts.generation = Some(1);
+            tx.record_transition(&facts)?;
+            Ok(())
+        })
+    }
+
     /// Persists a complete PENDING request, normalized actions and routing event in one
     /// failure-atomic savepoint, joinable to the Task Engine's larger transaction.
     pub fn create_approval_request(

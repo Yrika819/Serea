@@ -6,18 +6,20 @@
 //! a reopen, and the note is repeated where it applies.
 
 use crate::{
-    ApprovalAutomationContext, ApprovalRequestActionDraft, ApprovalRequestStorageDraft,
-    ApprovalResponseDecisionStorage, ApprovalResponseStorageDraft, ApprovalResponseStorageOutcome,
-    ApprovalRevocationOutcome, ApprovalRevocationStorageDraft, EventDraft, GrantConsumptionOutcome,
-    Migrations, Store, StoreError, Tx, approval_action_set_digest,
+    ApprovalAutomationContext, ApprovalLifecycleWake, ApprovalRequestActionDraft,
+    ApprovalRequestStorageDraft, ApprovalResponseDecisionStorage, ApprovalResponseStorageDraft,
+    ApprovalResponseStorageOutcome, ApprovalRevocationOutcome, ApprovalRevocationStorageDraft,
+    DurableTransition, EventDraft, EventParticipant, GrantConsumptionOutcome, JournalKind,
+    JournalRecord, JournalRecords, Migrations, Store, StoreError, TaskAuditParticipant,
+    TransitionContext, Tx, approval_action_set_digest,
 };
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::json;
 use serea_protocol::{
     Actor, ActorId, ActorKind, ApprovalId, Authorization, CapabilityId, Clock, DataClass, Digest,
     EnvelopeVersion, EpochMillis, EventId, EventKind, GrantId, ProtocolError, RequestedBy,
-    RiskClass, SemVer, Seq, SereaEvent, SideEffectClass, StepId, TaskId, TaskKind, Timestamp,
-    Trace, WireSurface, digest_of,
+    RiskClass, SemVer, Seq, SereaEvent, SideEffectClass, StepId, TaskId, TaskKind, TaskState,
+    Timestamp, Trace, WireSurface, digest_of,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -312,6 +314,10 @@ fn pointer(conn: &Connection, sql: &str) -> i64 {
 
 fn text(conn: &Connection, sql: &str, grant_id: &str) -> rusqlite::Result<String> {
     conn.query_row(sql, params![grant_id], |row| row.get(0))
+}
+
+fn text_pair(conn: &Connection, sql: &str, first: &str, second: &str) -> rusqlite::Result<String> {
+    conn.query_row(sql, params![first, second], |row| row.get(0))
 }
 
 // ---------------------------------------------------------------------------
@@ -2214,6 +2220,33 @@ fn approval_store(path: &Path) -> Store {
     Store::open(path, &FixedClock).unwrap()
 }
 
+fn activate_test_policy(store: &Store) {
+    let conn = store.conn.lock().unwrap();
+    insert_revision(&conn, 1, false);
+    insert_rule(&conn, 1, "approval_wait_test", "ALLOW");
+    activate_seed_revision(&conn, 1);
+    conn.execute(
+        "UPDATE policy_state SET active_revision_id=1 WHERE singleton=1",
+        [],
+    )
+    .unwrap();
+}
+
+fn install_wait_step(store: &Store) {
+    let conn = store.conn.lock().unwrap();
+    conn.execute(
+        "UPDATE task_steps SET sequence=sequence+10 WHERE task_id=?1",
+        [TASK],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO task_steps(step_id,task_id,sequence,kind,status,attempt,plan_revision,input_digest)
+         VALUES (?1,?2,0,'WAIT_APPROVAL','PLANNED',0,1,?3)",
+        params![MODEL_STEP, TASK, digest_of("{}").unwrap().as_str()],
+    )
+    .unwrap();
+}
+
 fn approval_response_event(
     draft: &ApprovalResponseStorageDraft,
     kind: EventKind,
@@ -2415,6 +2448,7 @@ fn approval_expired_unused_event(now: EpochMillis) -> EventDraft {
 fn typed_request_write_recomputes_r2_commitment_and_commits_routing_event() {
     let path = TempDb::new();
     let store = approval_store(&path.0);
+    activate_test_policy(&store);
     let draft = typed_request_draft();
     let original_digest = draft.action_set_digest.clone();
     store
@@ -2441,6 +2475,569 @@ fn typed_request_write_recomputes_r2_commitment_and_commits_routing_event() {
     assert_eq!(count_kind_store(&conn, "APPROVAL_REQUIRED"), 1);
     drop(conn);
     store.verify_integrity().unwrap();
+}
+
+#[test]
+fn task_wait_and_complete_approval_request_commit_together() {
+    struct Audit;
+    impl TaskAuditParticipant for Audit {
+        fn records(&self, facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
+            Ok(vec![JournalRecord {
+                kind: JournalKind::TaskStateChanged,
+                state_from: facts.task_from().map(|state| state.wire_name().to_owned()),
+                state_to: Some(facts.task_to().wire_name().to_owned()),
+                reason: None,
+                payload_json: b"{}".to_vec(),
+            }])
+        }
+    }
+    struct Events;
+    impl EventParticipant for Events {
+        fn events(&self, _: &DurableTransition) -> Result<Vec<EventDraft>, StoreError> {
+            Ok(Vec::new())
+        }
+    }
+
+    let path = TempDb::new();
+    let store = approval_store(&path.0);
+    activate_test_policy(&store);
+    install_wait_step(&store);
+    let actor = ActorId::new("local-user").unwrap();
+    let version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::User,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    let draft = typed_request_draft();
+    store
+        .transact_with_participants(&Audit, &Events, |tx| {
+            tx.raise_approval_request_and_wait(
+                draft.clone(),
+                approval_required_event(&draft),
+                1,
+                &Digest::new(RULES).unwrap(),
+                draft.raised_at,
+                &context,
+            )
+        })
+        .unwrap();
+    let conn = store.conn.lock().unwrap();
+    assert_eq!(
+        text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),
+        TaskState::WaitingApproval.wire_name()
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM approval_requests WHERE status='PENDING'"
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_request_actions").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE kind='APPROVAL_REQUIRED'"
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn approval_wait_rolls_back_when_the_task_audit_participant_fails() {
+    struct RejectAudit;
+    impl TaskAuditParticipant for RejectAudit {
+        fn records(&self, _: &DurableTransition) -> Result<JournalRecords, StoreError> {
+            Err(StoreError::AuditRejected)
+        }
+    }
+    struct Events;
+    impl EventParticipant for Events {
+        fn events(&self, _: &DurableTransition) -> Result<Vec<EventDraft>, StoreError> {
+            Ok(Vec::new())
+        }
+    }
+
+    let path = TempDb::new();
+    let store = approval_store(&path.0);
+    activate_test_policy(&store);
+    install_wait_step(&store);
+    let actor = ActorId::new("local-user").unwrap();
+    let version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::User,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    let draft = typed_request_draft();
+    assert_eq!(
+        store.transact_with_participants(&RejectAudit, &Events, |tx| {
+            tx.raise_approval_request_and_wait(
+                draft.clone(),
+                approval_required_event(&draft),
+                1,
+                &Digest::new(RULES).unwrap(),
+                draft.raised_at,
+                &context,
+            )
+        }),
+        Err(StoreError::AuditRejected)
+    );
+    let conn = store.conn.lock().unwrap();
+    assert_eq!(
+        text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),
+        "EXECUTING"
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_requests").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_request_actions").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE kind='APPROVAL_REQUIRED'"
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn approval_wait_refuses_stale_policy_revision_identity() {
+    struct Audit;
+    impl TaskAuditParticipant for Audit {
+        fn records(&self, _: &DurableTransition) -> Result<JournalRecords, StoreError> {
+            Ok(Vec::new())
+        }
+    }
+    struct Events;
+    impl EventParticipant for Events {
+        fn events(&self, _: &DurableTransition) -> Result<Vec<EventDraft>, StoreError> {
+            Ok(Vec::new())
+        }
+    }
+
+    let path = TempDb::new();
+    let store = approval_store(&path.0);
+    activate_test_policy(&store);
+    let actor = ActorId::new("local-user").unwrap();
+    let version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::User,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    let draft = typed_request_draft();
+    assert_eq!(
+        store.transact_with_participants(&Audit, &Events, |tx| {
+            tx.raise_approval_request_and_wait(
+                draft.clone(),
+                approval_required_event(&draft),
+                2,
+                &Digest::new(RULES).unwrap(),
+                draft.raised_at,
+                &context,
+            )
+        }),
+        Err(StoreError::InvalidPolicyRevision)
+    );
+    let conn = store.conn.lock().unwrap();
+    assert_eq!(
+        text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),
+        "EXECUTING"
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_requests").unwrap(),
+        0
+    );
+    assert_eq!(count_kind_store(&conn, "APPROVAL_REQUIRED"), 0);
+}
+
+struct ApprovalTaskAudit;
+impl TaskAuditParticipant for ApprovalTaskAudit {
+    fn records(&self, facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
+        let mut rows = Vec::new();
+        let reason = facts.reason().cloned().or_else(|| match facts.operation() {
+            crate::AuditOperation::ApprovalWaitStarted => {
+                serea_protocol::ReasonCode::new("AWAIT_APPROVAL").ok()
+            }
+            crate::AuditOperation::ApprovalWakeApplied if facts.task_to() == TaskState::Ready => {
+                serea_protocol::ReasonCode::new("RESUME_READY").ok()
+            }
+            _ => None,
+        });
+        match facts.operation() {
+            crate::AuditOperation::ApprovalWaitStarted => rows.push(JournalRecord {
+                kind: JournalKind::StepAttemptStarted,
+                state_from: facts.step_from().map(|status| status.as_str().to_owned()),
+                state_to: facts.step_to().map(|status| status.as_str().to_owned()),
+                reason: reason.clone(),
+                payload_json: b"{}".to_vec(),
+            }),
+            crate::AuditOperation::ApprovalWakeApplied => rows.push(JournalRecord {
+                kind: if facts.task_to() == TaskState::Ready {
+                    JournalKind::StepCommitted
+                } else {
+                    JournalKind::StepFailed
+                },
+                state_from: facts.step_from().map(|status| status.as_str().to_owned()),
+                state_to: facts.step_to().map(|status| status.as_str().to_owned()),
+                reason: reason.clone(),
+                payload_json: b"{}".to_vec(),
+            }),
+            _ => return Err(StoreError::AuditRejected),
+        }
+        if let Some(from) = facts.task_from().filter(|from| *from != facts.task_to()) {
+            rows.push(JournalRecord {
+                kind: JournalKind::TaskStateChanged,
+                state_from: Some(from.wire_name().to_owned()),
+                state_to: Some(facts.task_to().wire_name().to_owned()),
+                reason: reason.clone(),
+                payload_json: b"{}".to_vec(),
+            });
+            if facts.task_to().is_terminal() {
+                rows.push(JournalRecord {
+                    kind: JournalKind::TaskTerminal,
+                    state_from: Some(from.wire_name().to_owned()),
+                    state_to: Some(facts.task_to().wire_name().to_owned()),
+                    reason: reason.clone(),
+                    payload_json: b"{}".to_vec(),
+                });
+            }
+        }
+        Ok(rows)
+    }
+}
+
+struct ApprovalTaskEvents;
+impl EventParticipant for ApprovalTaskEvents {
+    fn events(&self, _: &DurableTransition) -> Result<Vec<EventDraft>, StoreError> {
+        Ok(Vec::new())
+    }
+}
+
+fn waiting_approval_store() -> (TempDb, Store, ApprovalRequestStorageDraft) {
+    let path = TempDb::new();
+    let store = approval_store(&path.0);
+    activate_test_policy(&store);
+    install_wait_step(&store);
+    let draft = typed_request_draft();
+    let actor = ActorId::new("local-user").unwrap();
+    let version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::User,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    store
+        .transact_with_participants(&ApprovalTaskAudit, &ApprovalTaskEvents, |tx| {
+            tx.raise_approval_request_and_wait(
+                draft.clone(),
+                approval_required_event(&draft),
+                1,
+                &Digest::new(RULES).unwrap(),
+                draft.raised_at,
+                &context,
+            )
+        })
+        .unwrap();
+    (path, store, draft)
+}
+
+fn persist_approval_wake(store: &Store, outcome: &str) -> ApprovalLifecycleWake {
+    let conn = store.conn.lock().unwrap();
+    let source_seq: i64 = conn
+        .query_row(
+            "SELECT last_allocated_seq FROM event_store_state WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let source_event_id = EventId::new("evt_01JQ8ZA7B3KMW9Q4TVY7XN2RDQ").unwrap();
+    conn.execute(
+        "INSERT INTO approval_lifecycle_wakes(source_event_id,source_seq,approval_id,task_id,step_id,outcome_kind,created_at_ms)
+         VALUES (?1,?2,?3,?4,?5,?6,250)",
+        params![source_event_id.as_str(), source_seq, APPROVAL, TASK, STEP_A, outcome],
+    )
+    .unwrap();
+    ApprovalLifecycleWake {
+        source_event_id,
+        source_seq: source_seq as u64,
+        approval_id: ApprovalId::new(APPROVAL).unwrap(),
+        task_id: TaskId::new(TASK).unwrap(),
+        step_id: StepId::new(STEP_A).unwrap(),
+        outcome: match outcome {
+            "GRANTED" => crate::ApprovalLifecycleOutcome::Granted,
+            "DENIED" => crate::ApprovalLifecycleOutcome::Denied,
+            _ => unreachable!(),
+        },
+        created_at: EpochMillis::new(250).unwrap(),
+    }
+}
+
+#[test]
+fn granted_approval_wake_resumes_the_wait_step_and_acknowledges_atomically() {
+    let (_path, store, request) = waiting_approval_store();
+    let response = authenticated_grant_storage_draft();
+    store
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+    let wake = persist_approval_wake(&store, "GRANTED");
+    let actor = ActorId::new("serea-core").unwrap();
+    let version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::Host,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    let outcome = store
+        .transact_with_participants(&ApprovalTaskAudit, &ApprovalTaskEvents, |tx| {
+            tx.apply_approval_lifecycle_wake(&wake, EpochMillis::new(300).unwrap(), &context)
+        })
+        .unwrap();
+    assert_eq!(
+        outcome,
+        crate::ApprovalWakeApplyOutcome::Applied {
+            task_id: TaskId::new(TASK).unwrap(),
+            state: TaskState::Ready,
+        }
+    );
+    let conn = store.conn.lock().unwrap();
+    assert_eq!(
+        text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),
+        "READY"
+    );
+    assert_eq!(
+        text_pair(
+            &conn,
+            "SELECT status FROM task_steps WHERE task_id=?1 AND step_id=?2",
+            TASK,
+            MODEL_STEP
+        )
+        .unwrap(),
+        "SUCCEEDED"
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_lifecycle_wakes").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        0
+    );
+    assert_eq!(request.approval_id.as_str(), APPROVAL);
+}
+
+#[test]
+fn denied_approval_wake_fails_the_wait_step_without_revoking_any_grant() {
+    let (_path, store, _) = waiting_approval_store();
+    let mut response = authenticated_grant_storage_draft();
+    response.decision = ApprovalResponseDecisionStorage::Deny;
+    response.grant_id = None;
+    response.approved_step_ids.clear();
+    response.expires_at = None;
+    let event = approval_response_event(&response, EventKind::ApprovalDenied, STEP_A);
+    store.respond_to_approval(response, event).unwrap();
+    let wake = persist_approval_wake(&store, "DENIED");
+    let actor = ActorId::new("serea-core").unwrap();
+    let version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::Host,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    let outcome = store
+        .transact_with_participants(&ApprovalTaskAudit, &ApprovalTaskEvents, |tx| {
+            tx.apply_approval_lifecycle_wake(&wake, EpochMillis::new(300).unwrap(), &context)
+        })
+        .unwrap();
+    assert_eq!(
+        outcome,
+        crate::ApprovalWakeApplyOutcome::Applied {
+            task_id: TaskId::new(TASK).unwrap(),
+            state: TaskState::Failed,
+        }
+    );
+    let conn = store.conn.lock().unwrap();
+    assert_eq!(
+        text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),
+        "FAILED"
+    );
+    assert_eq!(
+        text_pair(
+            &conn,
+            "SELECT status FROM task_steps WHERE task_id=?1 AND step_id=?2",
+            TASK,
+            MODEL_STEP
+        )
+        .unwrap(),
+        "FAILED"
+    );
+    assert_eq!(
+        text_pair(
+            &conn,
+            "SELECT error_code FROM task_steps WHERE task_id=?1 AND step_id=?2",
+            TASK,
+            MODEL_STEP
+        )
+        .unwrap(),
+        "APPROVAL_DENIED"
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_lifecycle_wakes").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grants").unwrap(),
+        0
+    );
+}
+
+#[test]
+fn task_event_failure_rolls_back_wake_and_keeps_it_for_restart_retry() {
+    struct RejectEvents;
+    impl EventParticipant for RejectEvents {
+        fn events(&self, _: &DurableTransition) -> Result<Vec<EventDraft>, StoreError> {
+            Err(StoreError::CanonicalJson)
+        }
+    }
+
+    let (path, store, _) = waiting_approval_store();
+    let response = authenticated_grant_storage_draft();
+    store
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+    let wake = persist_approval_wake(&store, "GRANTED");
+    let actor = ActorId::new("serea-core").unwrap();
+    let version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::Host,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    assert_eq!(
+        store.transact_with_participants(&ApprovalTaskAudit, &RejectEvents, |tx| {
+            tx.apply_approval_lifecycle_wake(&wake, EpochMillis::new(300).unwrap(), &context)
+                .map(|_| ())
+        }),
+        Err(StoreError::CanonicalJson)
+    );
+    drop(store);
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),
+        "WAITING_APPROVAL"
+    );
+    assert_eq!(
+        text_pair(
+            &conn,
+            "SELECT status FROM task_steps WHERE task_id=?1 AND step_id=?2",
+            TASK,
+            MODEL_STEP
+        )
+        .unwrap(),
+        "WAITING"
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_lifecycle_wakes").unwrap(),
+        1
+    );
+    assert_eq!(
+        text(
+            &conn,
+            "SELECT status FROM approval_grants WHERE grant_id=?1",
+            GRANT
+        )
+        .unwrap(),
+        "ACTIVE"
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM task_journal WHERE journal_kind='STEP_COMMITTED'"
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn a_cancelled_task_is_never_revived_by_a_later_grant_wake() {
+    let (_path, store, _) = waiting_approval_store();
+    let response = authenticated_grant_storage_draft();
+    store
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+    let wake = persist_approval_wake(&store, "GRANTED");
+    store.conn.lock().unwrap().execute(
+        "UPDATE tasks SET state='CANCELLED',cancelled_at_ms=275,cancelled_by='USER',updated_at_ms=275
+          WHERE task_id=?1 AND state='WAITING_APPROVAL'",
+        [TASK],
+    ).unwrap();
+    let actor = ActorId::new("serea-core").unwrap();
+    let version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::Host,
+        actor_id: &actor,
+        actor_version: &version,
+        causation_id: None,
+    };
+    assert_eq!(
+        store
+            .transact_with_participants(&ApprovalTaskAudit, &ApprovalTaskEvents, |tx| {
+                tx.apply_approval_lifecycle_wake(&wake, EpochMillis::new(300).unwrap(), &context)
+            })
+            .unwrap(),
+        crate::ApprovalWakeApplyOutcome::AcknowledgedStale {
+            task_id: TaskId::new(TASK).unwrap()
+        }
+    );
+    let conn = store.conn.lock().unwrap();
+    assert_eq!(
+        text(&conn, "SELECT state FROM tasks WHERE task_id=?1", TASK).unwrap(),
+        "CANCELLED"
+    );
+    assert_eq!(
+        text_pair(
+            &conn,
+            "SELECT status FROM task_steps WHERE task_id=?1 AND step_id=?2",
+            TASK,
+            MODEL_STEP
+        )
+        .unwrap(),
+        "WAITING"
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_lifecycle_wakes").unwrap(),
+        0
+    );
 }
 
 #[test]

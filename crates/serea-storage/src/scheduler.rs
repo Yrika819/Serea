@@ -2,8 +2,10 @@ use crate::audit::{AuditOperation, DurableTransition};
 use crate::{EventDraft, StoreError, TransitionContext, Tx};
 use rusqlite::Connection;
 use serea_protocol::{
-    ApprovalId, ApprovalLifecyclePayloadV1, DataClass, DeviceId, Digest, EpochMillis, EventId,
-    EventKind, ScheduleId, ScheduledTaskTemplateV1, StepId, TaskId, canonicalize,
+    ActionErrorKind, ApprovalId, ApprovalLifecyclePayloadV1, DataClass, DeviceId, Digest,
+    EpochMillis, ErrorCode, ErrorMessage, EventId, EventKind, FailureReason, HostAction,
+    ReasonCode, ScheduleId, ScheduledTaskTemplateV1, StepId, StepStatus, TaskId, TaskState,
+    canonicalize, digest_of,
 };
 
 const MAX_LEASE_MS: i64 = 120_000;
@@ -301,6 +303,18 @@ pub struct ApprovalLifecycleWake {
     pub step_id: StepId,
     pub outcome: ApprovalLifecycleOutcome,
     pub created_at: EpochMillis,
+}
+
+/// Result of applying a durable approval wake to Task state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalWakeApplyOutcome {
+    /// The waiting Task and wait Step were transitioned atomically.
+    Applied { task_id: TaskId, state: TaskState },
+    /// The wake was stale because the Task had already moved on or terminated;
+    /// it was acknowledged without changing Task state.
+    AcknowledgedStale { task_id: TaskId },
+    /// Another Task Engine application already committed the transition and acknowledgement.
+    AlreadyAcknowledged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -820,9 +834,9 @@ impl Tx<'_> {
         row.map(approval_wake_from_row).transpose()
     }
 
-    /// Explicitly acknowledges one handoff after a future consumer has durably
-    /// applied its result. Repeating an acknowledgement is a no-op.
-    pub fn acknowledge_approval_lifecycle_wake(
+    /// Internal acknowledgement used only after authoritative Task application
+    /// has written its state and audit facts in this same transaction.
+    fn acknowledge_approval_lifecycle_wake(
         &mut self,
         source_event_id: &EventId,
     ) -> Result<bool, StoreError> {
@@ -833,6 +847,192 @@ impl Tx<'_> {
                 [source_event_id.as_str()],
             )?;
             Ok(changed == 1)
+        })
+    }
+
+    /// Applies one durable approval wake to the Task's wait Step and aggregate
+    /// state, then acknowledges the routing row in the same transaction. The
+    /// event is only a signal: current request, grant, Task and Step rows are
+    /// re-read before any state change.
+    pub fn apply_approval_lifecycle_wake(
+        &mut self,
+        wake: &ApprovalLifecycleWake,
+        now: EpochMillis,
+        context: &TransitionContext<'_>,
+    ) -> Result<ApprovalWakeApplyOutcome, StoreError> {
+        self.ensure_active()?;
+        self.operation_savepoint(|tx| {
+            let Some(saved) = tx.approval_lifecycle_wake(&wake.source_event_id)? else {
+                return Ok(ApprovalWakeApplyOutcome::AlreadyAcknowledged);
+            };
+            if saved != *wake {
+                return Err(StoreError::InvalidApprovalResponse);
+            }
+            let request: Option<(String, String, String, Option<String>, i64)> = tx.inner
+                .query_row(
+                    "SELECT r.status,t.state,r.task_id,g.status,r.raised_at_ms
+                       FROM approval_requests r JOIN tasks t ON t.task_id=r.task_id
+                       LEFT JOIN approval_grants g ON g.approval_id=r.approval_id
+                      WHERE r.approval_id=?1",
+                    [wake.approval_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                )
+                .optional()?;
+            let Some((request_status, task_state, task_id, grant_status, raised_at)) = request else {
+                return Err(StoreError::ApprovalRequestNotFound);
+            };
+            if task_id != wake.task_id.as_str() || now.get() < raised_at {
+                return Err(StoreError::InvalidApprovalResponse);
+            }
+            let member_table = matches!(wake.outcome,
+                ApprovalLifecycleOutcome::Granted
+                    | ApprovalLifecycleOutcome::ExpiredUnused
+                    | ApprovalLifecycleOutcome::Revoked
+            );
+            let membership_sql = if member_table {
+                "SELECT EXISTS(SELECT 1 FROM approval_grant_members m JOIN approval_grants g ON g.grant_id=m.grant_id WHERE g.approval_id=?1 AND m.step_id=?2)"
+            } else {
+                "SELECT EXISTS(SELECT 1 FROM approval_request_actions a WHERE a.approval_id=?1 AND a.step_id=?2)"
+            };
+            let step_is_bound: bool = tx.inner.query_row(
+                membership_sql,
+                rusqlite::params![wake.approval_id.as_str(), wake.step_id.as_str()],
+                |row| row.get(0),
+            )?;
+            if !step_is_bound {
+                return Err(StoreError::InvalidApprovalResponse);
+            }
+            let durable_outcome_matches = match wake.outcome {
+                ApprovalLifecycleOutcome::Granted => {
+                    request_status == "APPROVED" && grant_status.is_some()
+                }
+                ApprovalLifecycleOutcome::Denied => request_status == "DENIED",
+                ApprovalLifecycleOutcome::Expired => request_status == "EXPIRED",
+                ApprovalLifecycleOutcome::ExpiredUnused => {
+                    request_status == "APPROVED" && grant_status.as_deref() == Some("EXPIRED")
+                }
+                ApprovalLifecycleOutcome::Revoked => {
+                    request_status == "APPROVED" && grant_status.as_deref() == Some("REVOKED")
+                }
+            };
+            if !durable_outcome_matches {
+                return Err(StoreError::InvalidApprovalResponse);
+            }
+            if task_state != TaskState::WaitingApproval.wire_name() {
+                tx.acknowledge_approval_lifecycle_wake(&wake.source_event_id)?;
+                return Ok(ApprovalWakeApplyOutcome::AcknowledgedStale {
+                    task_id: wake.task_id.clone(),
+                });
+            }
+            let (target, result_code) = match wake.outcome {
+                ApprovalLifecycleOutcome::Granted => (
+                    TaskState::Ready,
+                    if grant_status.as_deref() == Some("ACTIVE") {
+                        "GRANTED"
+                    } else {
+                        "REVALIDATE"
+                    },
+                ),
+                ApprovalLifecycleOutcome::ExpiredUnused | ApprovalLifecycleOutcome::Revoked => {
+                    (TaskState::Ready, "REVALIDATE")
+                }
+                ApprovalLifecycleOutcome::Denied => (TaskState::Failed, "APPROVAL_DENIED"),
+                ApprovalLifecycleOutcome::Expired => (TaskState::Failed, "APPROVAL_EXPIRED"),
+            };
+            let waiting_steps: Vec<String> = {
+                let mut statement = tx.inner.prepare(
+                    "SELECT step_id FROM task_steps
+                      WHERE task_id=?1 AND kind='WAIT_APPROVAL' AND status='WAITING'",
+                )?;
+                statement
+                    .query_map([wake.task_id.as_str()], |row| row.get(0))?
+                    .collect::<Result<_, _>>()?
+            };
+            if waiting_steps.len() != 1 {
+                return Err(StoreError::CorruptRow);
+            }
+            let wait_step = StepId::new(waiting_steps[0].clone())
+                .map_err(|_| StoreError::CorruptRow)?;
+            let class = crate::task::task_class(&tx.inner, &wake.task_id)?;
+            if now.get() < tx.inner.query_row::<i64, _, _>(
+                "SELECT updated_at_ms FROM tasks WHERE task_id=?1",
+                [wake.task_id.as_str()],
+                |row| row.get(0),
+            )? {
+                return Err(StoreError::InvalidTimestamp);
+            }
+            let result_digest = digest_of(&format!("{{\"outcome\":\"{result_code}\"}}"))
+                .map_err(|_| StoreError::CanonicalJson)?;
+            if target == TaskState::Ready {
+                let changed = tx.inner.execute(
+                    "UPDATE task_steps SET status='SUCCEEDED',result_digest=?1,completed_at_ms=?2
+                      WHERE task_id=?3 AND step_id=?4 AND status='WAITING' AND kind='WAIT_APPROVAL'",
+                    rusqlite::params![result_digest.as_str(), now.get(), wake.task_id.as_str(), wait_step.as_str()],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::InvalidApprovalResponse);
+                }
+                let changed = tx.inner.execute(
+                    "UPDATE tasks SET state='READY',failure_reason=NULL,blocked_reason=NULL,updated_at_ms=?1
+                      WHERE task_id=?2 AND state='WAITING_APPROVAL' AND updated_at_ms<=?1",
+                    rusqlite::params![now.get(), wake.task_id.as_str()],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::IllegalTaskTransition);
+                }
+            } else {
+                let (error_kind, error_message) = if result_code == "APPROVAL_DENIED" {
+                    (ActionErrorKind::ApprovalDenied, "Approval denied")
+                } else {
+                    (ActionErrorKind::ApprovalRequired, "Approval expired")
+                };
+                let reason = FailureReason::new(result_code).map_err(|_| StoreError::CorruptRow)?;
+                let code = ErrorCode::new(result_code).map_err(|_| StoreError::CorruptRow)?;
+                let message = ErrorMessage::new(error_message).map_err(|_| StoreError::CorruptRow)?;
+                let host_action = HostAction::new("NONE").map_err(|_| StoreError::CorruptRow)?;
+                let changed = tx.inner.execute(
+                    "UPDATE task_steps SET status='FAILED',completed_at_ms=?1,error_kind=?2,
+                         error_code=?3,error_message=?4,error_retryable=0,error_host_action=?5
+                      WHERE task_id=?6 AND step_id=?7 AND status='WAITING' AND kind='WAIT_APPROVAL'",
+                    rusqlite::params![now.get(), error_kind.wire_name(), code.as_str(), message.as_str(), host_action.as_str(), wake.task_id.as_str(), wait_step.as_str()],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::InvalidApprovalResponse);
+                }
+                let changed = tx.inner.execute(
+                    "UPDATE tasks SET state='FAILED',failure_reason=?1,blocked_reason=NULL,updated_at_ms=?2
+                      WHERE task_id=?3 AND state='WAITING_APPROVAL' AND updated_at_ms<=?2",
+                    rusqlite::params![reason.as_str(), now.get(), wake.task_id.as_str()],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::IllegalTaskTransition);
+                }
+            }
+            let mut facts = DurableTransition::task(
+                AuditOperation::ApprovalWakeApplied,
+                &wake.task_id,
+                Some(TaskState::WaitingApproval),
+                target,
+                class,
+                now,
+                context,
+            );
+            facts.step_id = Some(wait_step);
+            facts.step_from = Some(StepStatus::new("WAITING").map_err(|_| StoreError::CorruptRow)?);
+            facts.step_to = Some(StepStatus::new(if target == TaskState::Ready { "SUCCEEDED" } else { "FAILED" }).map_err(|_| StoreError::CorruptRow)?);
+            facts.attempt = Some(1);
+            facts.generation = Some(1);
+            if target == TaskState::Ready {
+                facts.result = Some(result_digest);
+            } else {
+                facts.reason = Some(ReasonCode::new(result_code).map_err(|_| StoreError::CorruptRow)?);
+            }
+            tx.record_transition(&facts)?;
+            tx.acknowledge_approval_lifecycle_wake(&wake.source_event_id)?;
+            Ok(ApprovalWakeApplyOutcome::Applied {
+                task_id: wake.task_id.clone(),
+                state: target,
+            })
         })
     }
 
@@ -2602,15 +2802,6 @@ impl crate::Store {
         source_event_id: &EventId,
     ) -> Result<Option<ApprovalLifecycleWake>, StoreError> {
         self.transact(|tx| tx.approval_lifecycle_wake(source_event_id))
-    }
-
-    /// Explicitly acknowledges a pending handoff after the consumer's own
-    /// durable operation. A repeated acknowledgement returns `false`.
-    pub fn acknowledge_approval_lifecycle_wake(
-        &self,
-        source_event_id: &EventId,
-    ) -> Result<bool, StoreError> {
-        self.transact(|tx| tx.acknowledge_approval_lifecycle_wake(source_event_id))
     }
 }
 

@@ -1510,6 +1510,16 @@ fn task_event_kind(facts: &DurableTransition) -> Option<EventKind> {
             _ => None,
         },
         AuditOperation::PlanPersisted => Some(EventKind::TaskStateChanged),
+        AuditOperation::ApprovalWaitStarted => None,
+        AuditOperation::ApprovalWakeApplied => {
+            if to == TaskState::Failed {
+                Some(EventKind::TaskFailed)
+            } else if from == Some(TaskState::WaitingApproval) && to == TaskState::Ready {
+                Some(EventKind::TaskResumed)
+            } else {
+                None
+            }
+        }
         AuditOperation::LeaseAcquired | AuditOperation::LeaseReleased => None,
         AuditOperation::AttemptStarted
         | AuditOperation::StepSucceeded

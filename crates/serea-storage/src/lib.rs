@@ -41,6 +41,9 @@ mod model_accounting;
 mod model_call_tests;
 #[cfg(test)]
 mod model_cost_tests;
+mod policy;
+#[cfg(test)]
+mod policy_tests;
 mod recovery;
 mod scheduler;
 mod store;
@@ -80,6 +83,10 @@ pub use model_accounting::{
     ModelFailureUsage, ModelPriceSnapshot, ModelResponseStorage, ModelUsageRecord, UsdMicros,
     UtcAccountingDay, calculate_cost_usd_micros, calculate_reservation_usd_micros,
     validate_price_snapshot,
+};
+pub use policy::{
+    PolicyActorClass, PolicyAutomationContext, PolicyDecisionKind, PolicyRevisionDraft,
+    PolicyRevisionSnapshot, PolicyRuleDraft, PolicyRuleMatchDraft,
 };
 pub use recovery::{
     RecoveryAction, RecoveryApplied, RecoveryAuthority, RecoveryPass, RecoveryReceiptRepair,

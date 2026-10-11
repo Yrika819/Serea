@@ -2394,3 +2394,212 @@ fn require_approval_uses_the_exact_mixed_plan_gate_and_enters_durable_wait() {
         changed_policy.revision_id()
     );
 }
+
+#[test]
+fn mixed_allow_and_root_approval_resolve_distinct_wait_gates_without_blocking() {
+    let temp = TempDb::new();
+    let store = temp.open();
+    let events = event_bus();
+    let allow_descriptor = descriptor();
+    let mut root_draft = CapabilityDescriptorDraft::from(descriptor());
+    root_draft.id = CapabilityId::new("calendar.events.open").unwrap();
+    root_draft.root_requirement = RootRequirement::RequiresRoot;
+    let root_descriptor = CapabilityDescriptor::new(root_draft).unwrap();
+    let manifest = manifest_for(vec![allow_descriptor.clone(), root_descriptor.clone()]);
+    let providers = vec![provider(
+        vec![allow_descriptor.clone(), root_descriptor.clone()],
+        ProviderHealth::Ready,
+    )];
+    install_manifest(&store, &events, &manifest, providers.clone());
+    let availability = snapshot(&store, manifest, providers, true);
+
+    let empty_policy = serea_policy::prepare_revision(
+        &store,
+        vec![],
+        at(20),
+        serea_storage::PolicyActorClass::Host,
+        ActorId::new("policy-host").unwrap(),
+        ReasonCode::new("POLICY_IMPORT").unwrap(),
+    )
+    .unwrap();
+    serea_policy::activate_revision(
+        &store,
+        &events,
+        &empty_policy,
+        at(21),
+        SemVer::new("0.2.0").unwrap(),
+    )
+    .unwrap();
+
+    let mut engine = engine(temp.open(), events);
+    engine.create_task(spec(1), &Context::new().view()).unwrap();
+    engine
+        .start_planning(
+            tid(1),
+            TaskState::Received,
+            0,
+            at(25),
+            &Context::new().view(),
+        )
+        .unwrap();
+    engine
+        .create_mixed_capability_plan(
+            &availability,
+            tid(1),
+            vec![
+                MixedCapabilityPlanStep::ApprovalGate {
+                    step_id: sid(1),
+                    sequence: 1,
+                    actions: vec![sid(2)],
+                },
+                MixedCapabilityPlanStep::Capability(CapabilityPlanStep {
+                    step_id: sid(2),
+                    sequence: 2,
+                    capability_id: allow_descriptor.id().clone(),
+                    arguments: classified_args(),
+                    requested_by: RequestedBy::Model,
+                }),
+                MixedCapabilityPlanStep::ApprovalGate {
+                    step_id: sid(3),
+                    sequence: 3,
+                    actions: vec![sid(4)],
+                },
+                MixedCapabilityPlanStep::Capability(CapabilityPlanStep {
+                    step_id: sid(4),
+                    sequence: 4,
+                    capability_id: root_descriptor.id().clone(),
+                    arguments: classified_args(),
+                    requested_by: RequestedBy::Model,
+                }),
+            ],
+            at(30),
+            &Context::new().view(),
+        )
+        .unwrap();
+
+    let allow_action = serea_capability::prepare_action(
+        &availability,
+        allow_descriptor.id(),
+        tid(1),
+        sid(2),
+        &classified_args(),
+        RequestedBy::Model,
+        None,
+        None,
+    )
+    .unwrap();
+    let root_action = serea_capability::prepare_action(
+        &availability,
+        root_descriptor.id(),
+        tid(1),
+        sid(4),
+        &classified_args(),
+        RequestedBy::Model,
+        None,
+        None,
+    )
+    .unwrap();
+    let allow_evaluation = engine.evaluate_prepared_action(&allow_action).unwrap();
+    assert_eq!(
+        allow_evaluation.decision,
+        serea_policy::PolicyDecision::Allow
+    );
+    let root_evaluation = engine.evaluate_prepared_action(&root_action).unwrap();
+    assert_eq!(
+        root_evaluation.decision,
+        serea_policy::PolicyDecision::RequireApproval(
+            serea_policy::ApprovalReason::RootRequiresApproval
+        )
+    );
+
+    engine
+        .complete_approval_gate_not_required(
+            sid(1),
+            std::slice::from_ref(&allow_action),
+            LeaseOwner::new("task-engine").unwrap(),
+            at(39),
+            at(100),
+            &Context::new().view(),
+        )
+        .unwrap();
+    let after_allow = temp.open().load_task(&tid(1)).unwrap();
+    assert_eq!(
+        after_allow.steps[0].step.status,
+        StepStatus::new("SUCCEEDED").unwrap()
+    );
+    assert_eq!(
+        after_allow.steps[1].step.status,
+        StepStatus::new("PLANNED").unwrap()
+    );
+    assert_eq!(
+        after_allow.steps[2].step.status,
+        StepStatus::new("PLANNED").unwrap()
+    );
+
+    let facts = root_evaluation.evidence.input_facts();
+    let request = serea_policy::ApprovalRequestV1::new(serea_policy::ApprovalRequestDraftV1 {
+        approval_id: ApprovalId::new("apr_01JQ8ZB8H2XKM9P4QW7NRT5YCE").unwrap(),
+        task_id: tid(1),
+        task_kind: facts.task_kind,
+        plan_revision: facts.plan_revision,
+        capability_id: facts.capability_id.clone(),
+        capability_version: facts.capability_version.clone(),
+        registry_generation: facts.registry_generation,
+        descriptor_digest: facts.descriptor_digest.clone(),
+        risk_class: facts.risk_class,
+        side_effect_class: facts.side_effect_class,
+        authorization: facts.authorization,
+        data_class: facts.data_class,
+        requested_by: facts.requested_by,
+        actions: serea_policy::ApprovalActionSetV1::new(vec![
+            serea_policy::ApprovalActionV1::new(
+                sid(4),
+                root_action.arguments_digest().clone(),
+                serde_json::json!({"calendar":"work"}),
+                DataClass::Personal,
+            )
+            .unwrap(),
+        ])
+        .unwrap(),
+        summary: serea_policy::SafeApprovalSummaryV1::from_host_builder(
+            "calendar.events.open",
+            "Read root protected calendar events",
+            DataClass::Personal,
+        )
+        .unwrap(),
+        raised_at: at(40),
+        expires_at: at(900),
+    })
+    .unwrap();
+    let outcome = engine
+        .request_approval(
+            request,
+            &[root_evaluation.evidence],
+            at(40),
+            &Context::new().view(),
+        )
+        .unwrap();
+    assert_eq!(outcome.task_state, TaskState::WaitingApproval);
+    let waiting = temp.open().load_task(&tid(1)).unwrap();
+    assert_eq!(
+        waiting.steps[0].step.status,
+        StepStatus::new("SUCCEEDED").unwrap()
+    );
+    assert_eq!(
+        waiting.steps[2].step.status,
+        StepStatus::new("WAITING").unwrap()
+    );
+    assert_eq!(
+        waiting.steps[3].step.status,
+        StepStatus::new("PLANNED").unwrap()
+    );
+    let conn = rusqlite::Connection::open(&temp.0).unwrap();
+    let request_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM approval_requests WHERE task_id=?1",
+            [tid(1).as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(request_count, 1);
+}

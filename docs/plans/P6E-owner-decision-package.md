@@ -119,7 +119,8 @@ independent of the owner decision above. The public mixed-plan API, R2 group
 builder checks, ALLOW → audited `NOT_REQUIRED`, REQUIRE_APPROVAL request,
 authenticated response, event-to-wake materialization, restart around response
 and wake, TaskEngine wake application, policy revision change, overlay disable,
-and post-wake reevaluation have focused coverage. The added
+post-wake reevaluation, and mixed ALLOW / mandatory-root approval across two
+ordered WAIT gates have focused coverage. The added
 `crates/serea-scheduler/tests/task_engine_approval_e2e.rs` traverses the public
 `Scheduler::process_approval_lifecycle_wakes` path, restarts with an unacknowledged
 wake, confirms the exact R2 grant member and digest, re-evaluates current Policy,

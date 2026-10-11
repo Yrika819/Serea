@@ -1,7 +1,7 @@
 # P6F adversarial verification closure
 
-**Verdict: `P6F_VERIFIED_ON_UNMERGED_BRANCH`**  
-Verified runtime source HEAD: `09e2cc3d272bd445e13613310e238497657e1ff9`  
+**Verdict: `P6F_VERIFIED_ON_UNMERGED_BRANCH`**
+Verified runtime source HEAD: `09e2cc3d272bd445e13613310e238497657e1ff9`
 Verification date: 2026-10-11. PR #10 remains open, draft, and unmerged.
 
 ## Scope and threat model

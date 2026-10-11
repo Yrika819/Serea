@@ -1,6 +1,6 @@
 # P6 final closure and integration review
 
-**Status: `P6_VERIFIED_UNMERGED_READY_FOR_OWNER_REVIEW`**  
+**Status: `P6_VERIFIED_UNMERGED_READY_FOR_OWNER_REVIEW`**
 This records verification of two unmerged branches only. It does not claim main integration, release, or P8 completion.
 
 ## Verified baseline

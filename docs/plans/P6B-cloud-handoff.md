@@ -335,6 +335,7 @@ the original checkpoint facts.
 | Checkpoint parent | `1c04451469a810a484e92fa7f0e5eb249451a54e` |
 | P6A PR #6 | `OPEN`, `DRAFT`, base `main`; preserved |
 | Migration 0005 SHA-256 | `cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a` |
+| Migration 0006 SHA-256 | `0af16a30cd2b29f046c14d7079a356dc25ce4352216edd9ad6821b168e6eb6ca` |
 | Migrations 0001–0004 | byte-identical to the P6A parent |
 | ADR-0037–0040 | all `Accepted`; architecture `serea-arch/2.7.0` |
 
@@ -342,9 +343,11 @@ The Cloud task initially opened at `e17fbfc` on branch `work`; that branch was l
 The runtime branch was fetched from GitHub and checked out directly at the supplied checkpoint.
 The verification and fixes below are based on that checkpoint. The first publication used a local
 Git email rejected by the repository's noreply-only identity guard; exact-head Fast and Full CI
-reported that failure. Published history was preserved. The same reviewed tree is being republished
-from the original checkpoint on `p6/policy-approval-runtime-clean` with an approved Codex noreply
-identity, so the replacement branch does not inherit the rejected commit.
+reported that failure. Published history was preserved. The same reviewed tree was republished from
+the original checkpoint on `p6/policy-approval-runtime-clean` with an approved Codex noreply
+identity, so the replacement branch does not inherit the rejected commit. The first PR (#7) is
+closed; its commit remains preserved by the PR, while only its obsolete branch ref was removed so
+the all-refs identity guard would not rediscover it on every branch.
 
 ### 12.2 Seven checkpoint failures
 
@@ -410,7 +413,14 @@ deletion. The migration-filtered suite has **33 passed, 0 failed**.
 | `tools/prove_release_fault_exclusion.sh` | **PASS**; ordinary storage/workspace release artifacts contain no fault seam, crash test target contains it only under test cfg |
 | GitHub Actions at the final source SHA | not yet available; requires a committed/pushed exact head |
 
-P6B remains **WIP** pending exact-head GitHub jobs and final published-revision review. All
-required local gates and the release fault-exclusion proof passed after the final SQL/test
-review. No P6C code has been started. No P8 provider,
+The clean branch's first source SHA was `d90641974785faacc434821ef3336c0c7c31ec22`; Fast CI's
+rerun confirmed its identity guard passed. That run exposed stale schema-version-4 assertions in the
+cross-architecture portability fixture. Both producer and consumer now assert schema version 6;
+local producer and consumer tests pass on the same platform. A new commit and exact-head CI run are
+pending. None of the preliminary CI attempts is a green P6B result.
+
+P6B remains **WIP** pending exact-head GitHub jobs and final published-revision review. The two
+portability-mode tests pass after correcting the stale expected schema version; all other required
+local gates and the release fault-exclusion proof passed after the SQL/test review. No P6C code has
+been started. No P8 provider,
 dispatch or `RequestId` surface was added. This record makes no physical power-loss guarantee.

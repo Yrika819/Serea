@@ -515,7 +515,7 @@ fn produce(path: &std::path::Path) {
     add_model_accounting_fixture(&store, &model_task);
     assert_eq!(store.task_model_call_count(&model_task).unwrap(), 2);
     assert_eq!(store.task_model_turn_count(&model_task).unwrap(), 2);
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(store.schema_version().unwrap(), 6);
     store.verify_integrity().unwrap();
     drop(scheduler);
     drop(tasks);
@@ -535,7 +535,7 @@ fn produce(path: &std::path::Path) {
 
 fn consume(path: &std::path::Path) {
     let store = Store::open(path, &Fixed).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(store.schema_version().unwrap(), 6);
     store.verify_integrity().unwrap();
     let device_wait = TaskId::new("tsk_00000000000000000000000071").unwrap();
     assert_eq!(

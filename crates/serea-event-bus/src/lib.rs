@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
 use serea_protocol::{
-    Actor, ActorId, ActorKind, CostClass, DataClass, EnvelopeVersion, EpochMillis, EventId,
+    Actor, ActorId, ActorKind, CostClass, DataClass, Digest, EnvelopeVersion, EpochMillis, EventId,
     EventKind, FinishReason, IdMinter, ModelErrorCode, ModelId, ModelPurpose, ProviderId,
-    RequestId, ScheduleId, SemVer, Seq, SereaEvent, StepId, TaskId, TaskState, Timestamp, Trace,
-    UlidSource, WireSurface,
+    ReasonCode, RequestId, ScheduleId, SemVer, Seq, SereaEvent, StepId, TaskId, TaskState,
+    Timestamp, Trace, UlidSource, WireSurface,
 };
 use serea_storage::{
     AuditOperation, DurableTransition, EventDraft, EventParticipant, Store, StoreError, Tx,
@@ -52,6 +52,27 @@ pub enum ScheduleLifecycle {
 const TASK_LIFECYCLE_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const MODEL_ACTIVITY_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const REGISTRY_ADMIN_RETENTION_MS: i64 = 365 * 24 * 60 * 60 * 1_000;
+
+/// Trusted facts for a content-free `POLICY_CHANGED` event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyChangedEventV1 {
+    /// Newly activated monotonic policy revision.
+    pub revision_id: i64,
+    /// Revision that was active immediately before this activation.
+    pub previous_revision_id: Option<i64>,
+    /// Digest of the complete canonical rule set.
+    pub rules_digest: Digest,
+    /// Authenticated host actor category.
+    pub actor_kind: ActorKind,
+    /// Trusted host or user identity.
+    pub actor_id: ActorId,
+    /// Actor software version.
+    pub actor_version: SemVer,
+    /// Host-authored reason code.
+    pub reason_code: ReasonCode,
+    /// When the activation occurred.
+    pub occurred_at: EpochMillis,
+}
 
 /// Stable, content-free change kind for the P5 capability registry audit event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,6 +325,79 @@ impl EventBus {
                 source,
             ))))),
         }
+    }
+
+    /// Builds the policy activation event draft used by Storage's atomic
+    /// revision-activation operation.
+    pub fn draft_policy_changed(
+        &self,
+        change: PolicyChangedEventV1,
+    ) -> Result<EventDraft, StoreError> {
+        if change.revision_id <= 0
+            || change
+                .previous_revision_id
+                .is_some_and(|previous| previous <= 0 || previous >= change.revision_id)
+            || !matches!(change.actor_kind, ActorKind::Host | ActorKind::User)
+        {
+            return Err(StoreError::InvalidPolicyRevision);
+        }
+        let event_id = self
+            .ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?
+            .next_event_id();
+        let mut payload = Map::new();
+        payload.insert(
+            "change_kind".into(),
+            Value::String("REVISION_ACTIVATED".into()),
+        );
+        payload.insert("revision_id".into(), Value::from(change.revision_id));
+        payload.insert(
+            "previous_revision_id".into(),
+            change
+                .previous_revision_id
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+        );
+        payload.insert(
+            "rules_digest".into(),
+            Value::String(change.rules_digest.to_string()),
+        );
+        payload.insert(
+            "reason_code".into(),
+            Value::String(change.reason_code.as_str().to_owned()),
+        );
+        let retention_at = change
+            .occurred_at
+            .get()
+            .checked_add(REGISTRY_ADMIN_RETENTION_MS)
+            .and_then(|value| EpochMillis::new(value).ok())
+            .ok_or(StoreError::InvalidTimestamp)?;
+        Ok(EventDraft {
+            event: SereaEvent {
+                envelope_version: EnvelopeVersion::new("1")
+                    .map_err(|_| StoreError::InvalidPolicyRevision)?,
+                surface: WireSurface::new(WireSurface::EVENT)
+                    .map_err(|_| StoreError::InvalidPolicyRevision)?,
+                message_id: event_id,
+                seq: Seq::new(0),
+                kind: EventKind::PolicyChanged,
+                occurred_at: Timestamp::from_epoch_millis(change.occurred_at),
+                correlation_id: None,
+                causation_id: None,
+                actor: Actor {
+                    kind: change.actor_kind,
+                    id: change.actor_id,
+                    version: change.actor_version,
+                    extensions: Default::default(),
+                },
+                data_class: DataClass::Public,
+                trace: None,
+                payload,
+                extensions: Default::default(),
+            },
+            retention_at: Some(retention_at),
+        })
     }
 
     /// Appends `CAPABILITY_REGISTRY_CHANGED` inside the caller's Storage

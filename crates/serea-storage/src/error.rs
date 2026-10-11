@@ -129,6 +129,8 @@ pub enum StoreError {
     RegistryBindingRefused,
     /// Registry event facts do not match the closed metadata-only event shape.
     InvalidRegistryEvent,
+    /// A policy revision, rule set, or activation event is incomplete or inconsistent.
+    InvalidPolicyRevision,
     ScheduleNotActive,
     ScheduleRevisionConflict,
     SchedulerLeaseFenced,
@@ -238,6 +240,7 @@ impl StoreError {
             Self::RegistryBindingConflict => "RegistryBindingConflict",
             Self::RegistryBindingRefused => "RegistryBindingRefused",
             Self::InvalidRegistryEvent => "InvalidRegistryEvent",
+            Self::InvalidPolicyRevision => "InvalidPolicyRevision",
             Self::ScheduleNotActive => "ScheduleNotActive",
             Self::ScheduleRevisionConflict => "ScheduleRevisionConflict",
             Self::SchedulerLeaseFenced => "SchedulerLeaseFenced",

@@ -419,8 +419,113 @@ cross-architecture portability fixture. Both producer and consumer now assert sc
 local producer and consumer tests pass on the same platform. A new commit and exact-head CI run are
 pending. None of the preliminary CI attempts is a green P6B result.
 
-P6B remains **WIP** pending exact-head GitHub jobs and final published-revision review. The two
-portability-mode tests pass after correcting the stale expected schema version; all other required
-local gates and the release fault-exclusion proof passed after the SQL/test review. No P6C code has
-been started. No P8 provider,
-dispatch or `RequestId` surface was added. This record makes no physical power-loss guarantee.
+The paragraph above records the state before exact-head CI and is superseded by the closure
+record below.
+
+### 12.5 Exact-head closure record
+
+The P6B work is on `p6/policy-approval-runtime-clean`, a clean descendant of the immutable
+checkpoint `3de5098e3b51c5a6bebf01b40550a6b94f4fd7e3` (parent
+`1c04451469a810a484e92fa7f0e5eb249451a54e`). Exact P6B source HEAD:
+`a5feb8373007aedf7b3418717f763c0d3c6475e3`. The P6B repair commit is
+`d90641974785faacc434821ef3336c0c7c31ec22`; the portability fixture correction is the exact-head
+commit above. Migration 0005 remains byte-identical at SHA-256
+`cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a`. The forward migration
+0006 SHA-256 is `0af16a30cd2b29f046c14d7079a356dc25ce4352216edd9ad6821b168e6eb6ca`.
+
+Exact source-head GitHub Actions runs all tested source SHA
+`a5feb8373007aedf7b3418717f763c0d3c6475e3` (not a generated PR merge commit):
+
+| Workflow | Run ID | Required jobs |
+| --- | ---: | --- |
+| Fast CI | `38117338145` | Linux fast checks `114404752694`: success |
+| Full CI | `38117338144` | Linux stable `114404805758`, Rust 1.85.0 MSRV `114404805700`, macOS arm64 `114404805506`, macOS Intel x86_64 `114404805688`: all success |
+| Cross-architecture SQLite portability | `38117338125` | arm64 producer `114404752501`, Intel producer `114404752697`, arm64-produced DB opened on Intel `114404953027`, Intel-produced DB opened on arm64 `114405008396`: all success |
+
+All listed jobs concluded `success`; none was skipped. Portability artifacts were 36,235 bytes
+each: arm64 `sha256:a1ed2bc836d245fa6a38ca4b52c54fab01c8d299957bb37bed085ccf53e5d382`, Intel
+`sha256:40a12c932db56a1e6e09b4e9db59cdbedfc950dcf878c9b98c14e6971b94b7f3`. Earlier identity
+and schema-version CI failures were repaired on the clean branch and are not counted as closure
+evidence. Runtime Draft PR [#8](https://github.com/Yrika819/Serea/pull/8) is open against
+`p6/preimplementation-audit`; P6A PR #6 remains untouched. No branch history was rewritten.
+
+**P6B_STORAGE_FOUNDATION_VERIFIED** at exact source `a5feb8373007aedf7b3418717f763c0d3c6475e3`.
+This closure record supersedes the checkpoint's original 20/7 test state and the pending-CI
+status above. The workspace was locally green as enumerated in §12.4, the 33 filtered migration
+tests passed, and all exact-head GitHub jobs passed. No P8 provider, dispatch or `RequestId`
+surface was added. Software fault tests make no physical power-loss guarantee. P6C is the next
+active slice; no later milestone is claimed here.
+
+## 13. P6C implementation progress — local gates green, exact-head CI pending
+
+P6C is being implemented on the same runtime branch as a descendant of the P6B exact-head
+commit. The exact new source SHA is not yet recorded because this slice has not been committed.
+Do not treat this section as P6C closure until the reviewed commit and exact-head GitHub Actions
+are recorded below.
+
+### 13.1 Deterministic evaluator and trusted inputs
+
+`crates/serea-policy` now contains a pure evaluator over an immutable, canonicalized policy
+revision and a host-constructed `PolicyInputV1`. The input has no serde surface, no raw
+arguments, no clock value, no caller-selected automation context and no model authority fields.
+Context comes only from durable Task kind and trusted `RequestedBy`, using the exact ordered
+derivation in Policy Protocol §4.4. Rule matching has only its seven ratified exact-value
+dimensions. Explicit DENY supersedes all matching ALLOW rules; otherwise ordering is priority
+descending then rule id ascending. Task risk ceiling, proactive restrictions, disabled
+capability/destructive overlay, root approval and credential handoff are hard-coded gates.
+The output evidence records trusted facts and a decision but provides no execution method,
+approved flag, `RequestId` or dispatch intent.
+
+SQLite is the evaluation source through a typed Storage snapshot loader. Storage independently
+recomputes the canonical full-rule-set digest on both prepare and read. A mismatched caller
+digest is rejected before insert; a corrupted durable snapshot is refused as a corrupt row.
+The preparation API returns a distinct `PreparedPolicyRevision`; only a committed activation
+or load through the active SQLite pointer can produce the `PolicyRevision` accepted by the
+evaluator. A compile-fail doctest keeps a pending snapshot from being evaluated accidentally.
+Revision activation plus a content-minimal `POLICY_CHANGED` event is one transaction. The event
+names the previous and new immutable revision and the new digest, so the before/after state is
+reconstructible from policy history without copying rule contents into event payloads.
+Restart tests reload and re-evaluate the same active snapshot.
+
+### 13.2 Forward-only schema correction
+
+The P6C protocol audit found two omissions in frozen migrations: P6 policy has a separate
+`enabled` **match dimension** in addition to the rule's own participation flag, and an activated
+revision could previously be altered by inserting a new rule after activation. Migration 0007
+adds `policy_rules.match_enabled`, refuses activation until persisted rule count equals the
+declared count, and forbids late rule inserts. Migrations 0001–0006 are not edited; migration
+0005 remains SHA-256
+`cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a`, and migration 0006 remains
+`0af16a30cd2b29f046c14d7079a356dc25ce4352216edd9ad6821b168e6eb6ca`. Migration 0007 SHA-256 is
+`48f2f1805d59f4eec215963ac5109007294a0dfe015b9a4b4e7e69c14f9197eb`. Fresh schema is now 7;
+an actual preexisting schema-v6 file upgrade is covered, along with unchanged frozen migration
+catalog checksums.
+
+### 13.3 P6C local verification recorded before publication
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p serea-policy --all-features --offline` | **PASS**, 22 unit tests and 2 compile-fail doctests |
+| `cargo test -p serea-storage --lib --all-features --offline policy_tests -- --test-threads=1` | **PASS**, 10 tests |
+| `cargo test -p serea-storage --lib --all-features --offline migration_0005 -- --test-threads=1` | **PASS**, 33 tests |
+| `cargo test --workspace --all-targets --offline` | **PASS** |
+| `cargo test --workspace --all-features --offline` | **PASS**, including fault-injection paths and doc tests |
+| `cargo check --workspace --all-targets --all-features --offline` | **PASS** |
+| `cargo clippy --workspace --all-targets --all-features --offline -- -D warnings` | **PASS** |
+| `cargo fmt --all -- --check` | **PASS** |
+| workspace smoke + 76 smoke unittests | **PASS** |
+| `python3 tools/validate_docs.py docs` | **PASS**, 108 Markdown files |
+| `python3 tools/check_commit_identity.py` | **PASS** |
+| Cargo metadata, `git diff --check` | **PASS** |
+| `bash tools/prove_release_fault_exclusion.sh target/p6c-release-proof` | **PASS**; default release artifacts excluded the seam, positive control and crash test included it only in their intended targets |
+| Exact-head GitHub Actions | **PENDING** |
+
+These gates include the three stale external schema-v6 assertions found by the first full
+workspace run; they were changed to 7, then the full all-target run passed. A frozen workspace
+smoke invariant also rejected the literal `EventKind::` token in a new Storage production file;
+the check now compares the closed event wire name rather than constructing an event kind in
+that P2-scanned path. This preserved the event semantics and made all 76 smoke tests pass.
+
+P6C is still **in progress** pending final source review, ordinary commit/push, and green exact
+source-head CI. P6D has not started. No provider call, dispatch, grant consumption, P8 RequestId,
+or external side effect has been added.

@@ -852,6 +852,8 @@ dependencies = [
  "serea-event-bus",
  "serea-protocol",
  "serea-storage",
+ "serea-testkit",
+ "sha2",
 ]
 
 [[package]]

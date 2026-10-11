@@ -176,12 +176,12 @@ fn seed_registry_and_task(conn: &Connection) {
     }
 }
 
-fn insert_revision(conn: &Connection, revision: i64, activated: bool) {
+fn insert_revision(conn: &Connection, revision: i64, _activated: bool) {
     conn.execute(
         "INSERT INTO policy_revisions(revision_id,rules_digest,rule_count,created_at_ms,activated_at_ms,
                                       actor_class,actor_id,reason_code)
-         VALUES (?1,?2,1,500,?3,'HOST','local-admin','SEED')",
-        params![revision, RULES, activated.then_some(600)],
+         VALUES (?1,?2,1,500,NULL,'HOST','local-admin','SEED')",
+        params![revision, RULES],
     )
     .unwrap();
 }
@@ -194,6 +194,14 @@ fn insert_rule(conn: &Connection, revision: i64, rule_id: &str, decision: &str) 
          VALUES (?1,?2,10,'calendar.event.create','EXTERNAL_WRITE','EXTERNAL_WRITE','SCOPED_GRANT',
                  'INTERACTIVE','USER',1,?3,'SEED_RULE')",
         params![revision, rule_id, decision],
+    )
+    .unwrap();
+}
+
+fn activate_seed_revision(conn: &Connection, revision: i64) {
+    conn.execute(
+        "UPDATE policy_revisions SET activated_at_ms=600 WHERE revision_id=?1",
+        [revision],
     )
     .unwrap();
 }
@@ -300,8 +308,8 @@ fn text(conn: &Connection, sql: &str, grant_id: &str) -> rusqlite::Result<String
 #[test]
 fn migration_catalog_appends_p6b_without_rewriting_any_prior_migration() {
     let catalog = Migrations::embedded();
-    assert_eq!(Migrations::LATEST, 6);
-    assert_eq!(catalog.len(), 6);
+    assert_eq!(Migrations::LATEST, 7);
+    assert_eq!(catalog.len(), 7);
     assert_eq!(
         (catalog[4].version, catalog[4].name),
         (5, "0005_policy_approval")
@@ -340,9 +348,9 @@ fn migration_catalog_appends_p6b_without_rewriting_any_prior_migration() {
 }
 
 #[test]
-fn fresh_store_applies_the_whole_p6_schema_at_v6() {
+fn fresh_store_applies_the_whole_p6_schema_at_v7() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 6);
+    assert_eq!(store.schema_version().unwrap(), 7);
     let conn = store.conn.lock().unwrap();
     for table in [
         "policy_revisions",
@@ -383,7 +391,7 @@ fn fresh_store_applies_the_whole_p6_schema_at_v6() {
 }
 
 #[test]
-fn existing_schema_v4_upgrades_through_v5_to_v6_and_keeps_its_rows() {
+fn existing_schema_v4_upgrades_through_v5_to_v7_and_keeps_its_rows() {
     let temp = TempDb::new();
     seed_v4(&temp.0);
     {
@@ -406,7 +414,7 @@ fn existing_schema_v4_upgrades_through_v5_to_v6_and_keeps_its_rows() {
     }
 
     let store = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 6);
+    assert_eq!(store.schema_version().unwrap(), 7);
     let conn = store.conn.lock().unwrap();
     assert_eq!(
         scalar(
@@ -431,7 +439,7 @@ fn existing_schema_v4_upgrades_through_v5_to_v6_and_keeps_its_rows() {
     assert_eq!(
         scalar(
             &conn,
-            "SELECT count(*) FROM schema_migrations WHERE version=6"
+            "SELECT count(*) FROM schema_migrations WHERE version=7"
         )
         .unwrap(),
         1
@@ -439,12 +447,12 @@ fn existing_schema_v4_upgrades_through_v5_to_v6_and_keeps_its_rows() {
 }
 
 #[test]
-fn existing_schema_v5_upgrades_to_v6_without_rewriting_migration_0005() {
+fn existing_schema_v5_upgrades_to_v7_without_rewriting_migration_0005() {
     let temp = TempDb::new();
     seed_v5(&temp.0);
     let before = Migrations::checksum(Migrations::embedded()[4].sql);
     let store = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 6);
+    assert_eq!(store.schema_version().unwrap(), 7);
     store.verify_integrity().unwrap();
     let conn = store.conn.lock().unwrap();
     let checksum: String = conn
@@ -474,7 +482,7 @@ fn altered_p6b_migration_bytes_are_refused_as_a_checksum_mismatch() {
     let temp = TempDb::new();
     {
         let store = Store::open(&temp.0, &FixedClock).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 6);
+        assert_eq!(store.schema_version().unwrap(), 7);
     }
     // Rewriting an applied migration's bytes is exactly what the checksum
     // guard is for. No reset, no force: the store refuses and stays intact.
@@ -518,6 +526,8 @@ fn the_pointer_only_advances_and_deletion_is_refused() {
     let conn = store.conn.lock().unwrap();
     for revision in 1..=3 {
         insert_revision(&conn, revision, true);
+        insert_rule(&conn, revision, "pol_0001", "ALLOW");
+        activate_seed_revision(&conn, revision);
         conn.execute(
             "UPDATE policy_state SET active_revision_id=?1 WHERE singleton=1",
             params![revision],
@@ -703,8 +713,29 @@ fn policy_changed_event() -> serea_protocol::SereaEvent {
 fn an_activated_policy_revision_and_its_rules_are_immutable() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
     let conn = store.conn.lock().unwrap();
-    insert_revision(&conn, 1, true);
+    insert_revision(&conn, 1, false);
     insert_rule(&conn, 1, "pol_0001", "ALLOW");
+    conn.execute(
+        "INSERT INTO policy_rules(revision_id,rule_id,priority,enabled,decision,reason_code)
+         VALUES (1,'pol_0002',10,1,'ALLOW','TIE')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE policy_revisions SET rule_count=2 WHERE revision_id=1",
+        [],
+    )
+    .unwrap();
+    assert!(
+        conn.execute(
+            "INSERT INTO policy_rules(revision_id,rule_id,priority,enabled,decision,reason_code)
+         VALUES (1,'pol_0001',10,1,'DENY','DUP')",
+            [],
+        )
+        .is_err(),
+        "duplicate rule_id within one prepared revision must be refused"
+    );
+    activate_seed_revision(&conn, 1);
     conn.execute(
         "UPDATE policy_state SET active_revision_id=1 WHERE singleton=1",
         [],
@@ -751,24 +782,16 @@ fn an_activated_policy_revision_and_its_rules_are_immutable() {
         )
         .is_err()
     );
-    // Rule identity is unique within a revision. A priority tie between two
-    // *different* rules is legal and is exactly what rule_id ASC resolves, so
-    // only the duplicate rule_id is refused.
+    // A late rule cannot alter an activated digest, even when its identifier is unique.
     assert!(
         conn.execute(
             "INSERT INTO policy_rules(revision_id,rule_id,priority,enabled,decision,reason_code)
-             VALUES (1,'pol_0001',10,1,'DENY','DUP')",
+             VALUES (1,'pol_0003',10,1,'ALLOW','LATE')",
             []
         )
         .is_err(),
-        "duplicate rule_id within one revision must be refused"
+        "activated policy rule set must reject new members"
     );
-    conn.execute(
-        "INSERT INTO policy_rules(revision_id,rule_id,priority,enabled,decision,reason_code)
-         VALUES (1,'pol_0002',10,1,'ALLOW','TIE')",
-        [],
-    )
-    .unwrap();
 }
 
 #[test]
@@ -1463,6 +1486,7 @@ fn deleting_the_task_cascades_every_approval_row_and_spares_policy_history() {
     seed_registry_and_task(&conn);
     insert_revision(&conn, 1, true);
     insert_rule(&conn, 1, "pol_0001", "REQUIRE_APPROVAL");
+    activate_seed_revision(&conn, 1);
     conn.execute(
         "UPDATE policy_state SET active_revision_id=1 WHERE singleton=1",
         [],
@@ -1520,6 +1544,7 @@ fn deleting_the_task_never_touches_the_active_policy_pointer() {
     for revision in 1..=3 {
         insert_revision(&conn, revision, true);
         insert_rule(&conn, revision, "pol_0001", "ALLOW");
+        activate_seed_revision(&conn, revision);
         conn.execute(
             "UPDATE policy_state SET active_revision_id=?1 WHERE singleton=1",
             params![revision],
@@ -1807,6 +1832,7 @@ fn a_closed_store_reopens_with_the_same_authoritative_policy_and_approval_state(
             seed_registry_and_task(&conn);
             insert_revision(&conn, 1, true);
             insert_rule(&conn, 1, "pol_0001", "REQUIRE_APPROVAL");
+            activate_seed_revision(&conn, 1);
             conn.execute(
                 "UPDATE policy_state SET active_revision_id=1 WHERE singleton=1",
                 [],
@@ -1838,7 +1864,7 @@ fn a_closed_store_reopens_with_the_same_authoritative_policy_and_approval_state(
     assert!(!temp.0.with_extension("sqlite-wal").exists());
 
     let reopened = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 6);
+    assert_eq!(reopened.schema_version().unwrap(), 7);
     reopened.verify_integrity().unwrap();
     let conn = reopened.conn.lock().unwrap();
     assert_eq!(

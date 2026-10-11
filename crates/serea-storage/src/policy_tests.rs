@@ -9,6 +9,34 @@ use crate::{
     EventDraft, Migrations, PolicyActorClass, PolicyAutomationContext, PolicyDecisionKind,
     PolicyRevisionDraft, PolicyRuleDraft, PolicyRuleMatchDraft, Store, StoreError, Tx,
 };
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Barrier};
+
+static NEXT_POLICY_DB: AtomicU64 = AtomicU64::new(0);
+
+struct TempDb(PathBuf);
+
+impl TempDb {
+    fn new() -> Self {
+        let serial = NEXT_POLICY_DB.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "serea-policy-snapshot-race-{}-{serial}.sqlite",
+            std::process::id()
+        ));
+        Self(path)
+    }
+}
+
+impl Drop for TempDb {
+    fn drop(&mut self) {
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = self.0.as_os_str().to_os_string();
+            path.push(suffix);
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
 
 struct FixedClock;
 impl serea_protocol::Clock for FixedClock {
@@ -168,6 +196,72 @@ fn policy_activation_and_matching_event_commit_together() {
         )
         .unwrap();
     assert_eq!(events, 1);
+}
+
+#[test]
+fn independent_connections_read_one_complete_policy_snapshot_during_activation() {
+    let path = TempDb::new();
+    let setup = Store::open(&path.0, &FixedClock).unwrap();
+    let revision_id = setup
+        .transact(|tx| tx.prepare_policy_revision(revision_draft(vec![enabled_match_rule()])))
+        .unwrap();
+    let snapshot = setup.get_policy_revision(revision_id).unwrap().unwrap();
+    let event = policy_event(
+        revision_id,
+        None,
+        &snapshot.rules_digest,
+        &snapshot.reason_code,
+        0,
+    );
+    drop(setup);
+
+    let reader = Store::open(&path.0, &FixedClock).unwrap();
+    let activator = Store::open(&path.0, &FixedClock).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let read_barrier = barrier.clone();
+    let read = std::thread::spawn(move || {
+        read_barrier.wait();
+        reader.current_policy_revision()
+    });
+    let activate_barrier = barrier.clone();
+    let activate = std::thread::spawn(move || {
+        activate_barrier.wait();
+        activator.transact(|tx| {
+            tx.activate_policy_revision(revision_id, EpochMillis::new(1_000).unwrap(), event)
+        })
+    });
+    barrier.wait();
+    let observed = read.join().unwrap().unwrap();
+    let activated = activate.join().unwrap().unwrap();
+    assert_eq!(activated.revision_id, revision_id);
+    match observed {
+        None => {}
+        Some(observed) => {
+            assert_eq!(observed.revision_id, revision_id);
+            assert_eq!(observed.rules_digest, snapshot.rules_digest);
+            assert_eq!(observed.rules, snapshot.rules);
+            assert_eq!(
+                observed.activated_at,
+                Some(EpochMillis::new(1_000).unwrap())
+            );
+        }
+    }
+
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let active = reopened.current_policy_revision().unwrap().unwrap();
+    assert_eq!(active.revision_id, revision_id);
+    assert_eq!(active.rules, snapshot.rules);
+    let conn = reopened.conn.lock().unwrap();
+    let activation_events: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM event_content WHERE kind='POLICY_CHANGED'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(activation_events, 1);
+    drop(conn);
+    drop(reopened);
 }
 
 #[test]

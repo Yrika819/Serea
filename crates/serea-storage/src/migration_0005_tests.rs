@@ -4278,6 +4278,87 @@ fn independent_connections_serialize_task_cancellation_against_authenticated_res
 }
 
 #[test]
+fn independent_connections_serialize_approval_against_inclusive_request_expiry() {
+    let path = TempDb::new();
+    let setup = approval_store(&path.0);
+    let request = typed_request_draft();
+    setup
+        .create_approval_request(request.clone(), approval_required_event(&request))
+        .unwrap();
+    drop(setup);
+
+    let responder = Store::open(&path.0, &FixedClock).unwrap();
+    let expirer = Store::open(&path.0, &FixedClock).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let response_barrier = barrier.clone();
+    let response = std::thread::spawn(move || {
+        let draft = authenticated_grant_storage_draft();
+        response_barrier.wait();
+        let first = responder.respond_to_approval(
+            draft.clone(),
+            approval_response_event(&draft, EventKind::ApprovalGranted, STEP_A),
+        );
+        if matches!(first, Err(StoreError::Busy)) {
+            responder.respond_to_approval(
+                draft.clone(),
+                approval_response_event(&draft, EventKind::ApprovalGranted, STEP_A),
+            )
+        } else {
+            first
+        }
+    });
+    let expire_barrier = barrier.clone();
+    let expire = std::thread::spawn(move || {
+        expire_barrier.wait();
+        let first = expirer.expire_approval_request(
+            &request.approval_id,
+            request.expires_at,
+            approval_expired_event(&request, request.expires_at),
+        );
+        if matches!(first, Err(StoreError::Busy)) {
+            expirer.expire_approval_request(
+                &request.approval_id,
+                request.expires_at,
+                approval_expired_event(&request, request.expires_at),
+            )
+        } else {
+            first
+        }
+    });
+    barrier.wait();
+    let response_result = response.join().unwrap();
+    let expire_result = expire.join().unwrap();
+    assert!(matches!(
+        response_result,
+        Ok(ApprovalResponseStorageOutcome::Granted(_)) | Err(StoreError::ApprovalRequestExpired)
+    ));
+    assert!(matches!(expire_result, Ok(true) | Ok(false)));
+
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    let status = text(
+        &conn,
+        "SELECT status FROM approval_requests WHERE approval_id=?1",
+        APPROVAL,
+    )
+    .unwrap();
+    assert!(status == "APPROVED" || status == "EXPIRED");
+    let approved = status == "APPROVED";
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grants").unwrap(),
+        i64::from(approved)
+    );
+    assert_eq!(
+        count_kind_store(&conn, "APPROVAL_GRANTED"),
+        i64::from(approved)
+    );
+    assert_eq!(
+        count_kind_store(&conn, "APPROVAL_EXPIRED"),
+        i64::from(!approved)
+    );
+}
+
+#[test]
 fn independent_connections_serialize_grant_and_deny_responses_without_dual_outcome() {
     let path = TempDb::new();
     let setup = approval_store(&path.0);

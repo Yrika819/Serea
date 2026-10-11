@@ -529,3 +529,71 @@ that P2-scanned path. This preserved the event semantics and made all 76 smoke t
 P6C is still **in progress** pending final source review, ordinary commit/push, and green exact
 source-head CI. P6D has not started. No provider call, dispatch, grant consumption, P8 RequestId,
 or external side effect has been added.
+
+## 14. Superseding continuation record — P6C verified; P6D active
+
+This section supersedes the earlier P6C pending status and the statement that P6D had not
+started. Those paragraphs describe the checkpoint before publication, not the current branch.
+
+### 14.1 P6C exact-head closure
+
+P6C is verified at source commit `da2b391021270a67838930f0945b91bb09449948`, a descendant of
+P6B source `a5feb8373007aedf7b3418717f763c0d3c6475e3`. Exact-head GitHub Actions passed:
+
+| Workflow | Run | Job results |
+| --- | ---: | --- |
+| Fast CI | `38121392350` | Linux fast checks `114416785198`: success |
+| Full CI | `38121392297` | Linux stable `114417678249`, Rust 1.85.0 MSRV `114417678723`, macOS Intel `114417679273`, macOS arm64 `114417705684`: success |
+| Cross-architecture SQLite portability | `38121392394` | arm64 producer `114416678259`, Intel producer `114416678419`, arm64 on Intel `114417024326`, Intel on arm64 `114417374653`: success |
+
+All jobs tested source commit `da2b391…`; no job was skipped. The portability artifacts were
+36,536 bytes, with ZIP SHA-256 arm64
+`5cebb13cf3ae62cea50f7747bb501669973283b5b2a20963d2fc09be5d9ab290` and Intel
+`df421ad8f67fa782032ddd6bb16b433a62af9ca55883e785d0a27a4bc100b5dd`.
+`P6C_POLICY_ENGINE_VERIFIED` is recorded at this exact head.
+
+### 14.2 Current P6D work (not closed)
+
+P6D is active on branch `p6/policy-approval-runtime-p6c-clean`, based on the verified P6C
+commit above. The owner explicitly approved the additive `APPROVAL_REVOKED` metadata event on
+2026-10-11. The current uncommitted work adds a separate authenticated revocation port, exact
+R2 request/approved-subset persistence, typed duplicate response handling, transaction-joined
+grant consumption, atomic request/grant expiry and grant-only revocation, and Scheduler routing
+for revoked and unused-expired grant events. Migration 0008 is additive; migrations 0001–0007
+are unchanged. Migration 0005 still hashes to
+`cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a`.
+
+The final local verification for this working tree is green:
+
+| Check | Result |
+| --- | --- |
+| `cargo test -p serea-policy --all-features --locked --offline` | **PASS**, 35 unit tests and 2 compile-fail doctests |
+| `cargo test -p serea-storage --lib --all-features --locked --offline migration_0005_tests -- --test-threads=1` | **PASS**, 52 tests, including the request-expiry and post-cancellation response cases |
+| `cargo test --workspace --all-targets --locked --offline` | **PASS**, 494 tests in the largest suite plus doctests |
+| `cargo test --workspace --all-features --locked --offline` | **PASS**, 494 tests in the largest suite plus doctests |
+| `cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings` | **PASS**; only the pre-existing vendored `serde_json` deprecation warning is emitted |
+| `cargo fmt --all -- --check` | **PASS** |
+| `python3 tests/workspace_smoke.py` | **PASS** |
+| `python3 -m unittest discover -s tests -p workspace_smoke_tests.py` | **PASS**, 76 tests |
+| `python3 tools/validate_docs.py docs` | **PASS**, 108 Markdown files |
+| `python3 tools/check_commit_identity.py` | **PASS** |
+| `git diff --check` | **PASS** |
+
+The added lifecycle cases prove that a GRANT response at the request-expiry boundary commits
+only request expiration, and that a valid pending request cannot be granted after its Task has
+been durably marked CANCELLED. Existing fault, concurrency and reopen tests also passed in both
+workspace-wide runs. Migration 0008 SHA-256 is
+`6e1520bf22ced832ed480a1cf26476e056611f22b1f517f2324b32a8d4fbf925`; migrations 0001–0007
+remain byte-identical to their parent revision. The smoke cardinality expectation now includes
+the owner-ratified additive `APPROVAL_REVOKED` event.
+
+The additional adversarial review found that a requested grant expiry could be after the
+authenticated confirmation but at or before the current revalidation time. Policy now refuses
+that already-stale expiry with `InvalidExpiryBound` before producing Storage facts, with a
+dedicated regression test.
+
+P6D is still **WIP** because this exact source has not yet been committed, pushed, or tested by
+exact-head hosted CI, and a complete adversarial review remains necessary. Do not proceed to P6E
+or report lifecycle closure until those steps pass. No provider invocation, dispatch intent, P8
+RequestId, or external side effect has been added. Software transaction fault tests do not
+establish physical power-loss guarantees.

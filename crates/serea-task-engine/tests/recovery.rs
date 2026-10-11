@@ -2438,6 +2438,9 @@ fn remediation_t1_storage_recovery_runtime_closure_has_no_effects_or_ambient_tim
             "unixepoch()",
         ] {
             if (path.file_name().unwrap() == "error.rs" && forbidden == "Scheduler")
+                // P6 validates the frozen RequestedBy::Scheduler protocol value as
+                // provenance; this is not a dependency on Scheduler runtime APIs.
+                || (path.file_name().unwrap() == "approval.rs" && forbidden == "Scheduler")
                 || (path.file_name().unwrap() == "lib.rs"
                     && matches!(forbidden, "Scheduler" | "scheduler::"))
             {

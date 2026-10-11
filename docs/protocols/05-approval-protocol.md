@@ -445,18 +445,19 @@ Every approval lifecycle event is recorded:
 | `APPROVAL_EXPIRED` | Request or grant expired unused |
 | `APPROVAL_CONSUMED` | A use was consumed by a step |
 | `APPROVAL_EXPIRED_UNUSED` | Grant reached expiry with uses remaining |
-| `APPROVAL_REVOKED` *(Proposed)* | An authenticated principal revoked the grant |
+| `APPROVAL_REVOKED` | An authenticated user or local admin revoked the grant |
 
 `APPROVAL_EXPIRED` names the request; `APPROVAL_EXPIRED_UNUSED` names the grant.
 The transition must record which object expired, not merely that something did.
+The grant-expiry event carries `approval_id`, `grant_id`, `task_id`, and the
+first enumerated `step_id` for routing. It contains no arguments, scope, or
+authentication material.
 
-`APPROVAL_REVOKED` is a **Proposed** new event kind. It does not exist in the
-current `EventKind` set and adding it is an architecture-minor addition; older
-clients skip unknown kinds rather than failing the stream. Its payload carries
-only `approval_id`, `task_id`, `step_id`, `grant_id`, the actor class, the
-authenticated device and session, and `revoked_at`, matching the closed
-`ApprovalLifecyclePayloadV1` routing shape so the Scheduler wake path needs no
-change.
+`APPROVAL_REVOKED` is an additive architecture-minor event kind, ratified by
+the owner for P6D on 2026-10-11. It carries only `approval_id`, `task_id`,
+`step_id`, `grant_id`, actor class, authenticated device/session, and
+`revoked_at`. The event has its own strict parser; Scheduler extracts only the
+approval/task/step routing identity and re-reads the grant from Storage.
 
 The audit trail records the grant digest, the consuming `step_id`, and the
 device/session that authorized it. Approvals are part of the durable state that

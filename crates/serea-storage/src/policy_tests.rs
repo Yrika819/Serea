@@ -251,15 +251,15 @@ fn direct_sql_cannot_activate_partial_rules_or_append_after_activation() {
 
 #[test]
 fn migration_seven_is_forward_only_and_policy_schema_version_is_current() {
-    assert_eq!(Migrations::LATEST, 7);
-    assert_eq!(Migrations::embedded().len(), 7);
+    assert_eq!(Migrations::LATEST, 8);
+    assert_eq!(Migrations::embedded().len(), 8);
     assert_eq!(Migrations::embedded()[6].version, 7);
     assert_eq!(
         Migrations::embedded()[6].name,
         "0007_policy_revision_sealing"
     );
     let store = Store::open_in_memory(&FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 7);
+    assert_eq!(store.schema_version().unwrap(), 8);
     assert_eq!(
         EventId::new("evt_01JQ8ZB7H2XKM9P4QW7NRT5YCD")
             .unwrap()
@@ -269,7 +269,7 @@ fn migration_seven_is_forward_only_and_policy_schema_version_is_current() {
 }
 
 #[test]
-fn existing_v6_store_upgrades_to_v7_without_rewriting_frozen_migrations() {
+fn existing_v6_store_upgrades_to_v8_without_rewriting_frozen_migrations() {
     let path = std::env::temp_dir().join(format!(
         "serea-policy-v6-upgrade-{}.sqlite",
         std::process::id()
@@ -286,7 +286,7 @@ fn existing_v6_store_upgrades_to_v7_without_rewriting_frozen_migrations() {
     drop(conn);
 
     let store = Store::open(&path, &FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 7);
+    assert_eq!(store.schema_version().unwrap(), 8);
     let conn = store.conn.lock().unwrap();
     for version in [5_i64, 6] {
         let recorded: String = conn

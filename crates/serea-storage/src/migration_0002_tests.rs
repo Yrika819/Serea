@@ -51,7 +51,7 @@ fn migration_0001_and_0002_are_immutable_and_catalog_adds_0003() {
         "sha256:d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea"
     );
     let catalog = Migrations::embedded();
-    assert_eq!(catalog.len(), 7);
+    assert_eq!(catalog.len(), 8);
     assert_eq!((catalog[0].version, catalog[0].name), (1, "0001_initial"));
     assert_eq!(catalog[0].sql, INITIAL_SQL);
     assert_eq!(
@@ -66,7 +66,7 @@ fn migration_0001_and_0002_are_immutable_and_catalog_adds_0003() {
         (catalog[2].version, catalog[2].name),
         (3, "0003_model_accounting")
     );
-    assert_eq!(Migrations::LATEST, 7);
+    assert_eq!(Migrations::LATEST, 8);
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn fresh_database_applies_0001_through_0003_and_reopens_with_integrity() {
     let temp = TempDb::new();
     {
         let store = Store::open(&temp.0, &FixedClock).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 7);
+        assert_eq!(store.schema_version().unwrap(), 8);
         let conn = store.conn.lock().unwrap();
         let rows = conn
             .prepare("SELECT version,name,checksum FROM schema_migrations ORDER BY version")
@@ -89,7 +89,7 @@ fn fresh_database_applies_0001_through_0003_and_reopens_with_integrity() {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(rows.len(), 7);
+        assert_eq!(rows.len(), 8);
         assert_eq!((rows[0].0, rows[0].1.as_str()), (1, "0001_initial"));
         assert_eq!((rows[1].0, rows[1].1.as_str()), (2, "0002_event_scheduler"));
         assert_eq!(
@@ -121,7 +121,7 @@ fn fresh_database_applies_0001_through_0003_and_reopens_with_integrity() {
         }
     }
     let reopened = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 7);
+    assert_eq!(reopened.schema_version().unwrap(), 8);
     reopened.verify_integrity().unwrap();
 }
 

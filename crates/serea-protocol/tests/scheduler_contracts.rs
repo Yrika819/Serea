@@ -6,6 +6,7 @@ use serea_protocol::{
 const APPROVAL_ID: &str = "apr_01JQ8ZA1D4NFG8K2M6RTV9XCWB";
 const TASK_ID: &str = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";
 const STEP_ID: &str = "stp_01JQ8Z9M5T9WXK2H4BNPQ7RDSF";
+const GRANT_ID: &str = "grt_01JQ8ZA7B3KMW9Q4TVY7XN2RDP";
 
 fn approval_trace() -> Trace {
     Trace {
@@ -33,6 +34,7 @@ fn approval_lifecycle_payload_accepts_all_outcomes_and_canonicalizes_routing_ids
         r#"{{ "task_id":"{TASK_ID}", "step_id":"{STEP_ID}", "approval_id":"{APPROVAL_ID}" }}"#
     );
     for kind in [
+        EventKind::ApprovalRequired,
         EventKind::ApprovalGranted,
         EventKind::ApprovalDenied,
         EventKind::ApprovalExpired,
@@ -48,6 +50,44 @@ fn approval_lifecycle_payload_accepts_all_outcomes_and_canonicalizes_routing_ids
             )
         );
     }
+}
+
+#[test]
+fn approval_revocation_payload_is_closed_and_bound_to_grant_actor_and_time() {
+    let input = format!(
+        r#"{{"actor_class":"USER","approval_id":"{APPROVAL_ID}","device_id":"dev_01JQ8ZA7B3KMW9Q4TVY7XN2RDP","grant_id":"{GRANT_ID}","revoked_at":123,"session_id":"ses_01JQ8ZA7B3KMW9Q4TVY7XN2RDP","step_id":"{STEP_ID}","task_id":"{TASK_ID}"}}"#
+    );
+    let parsed = approval_payload(EventKind::ApprovalRevoked, &input).unwrap();
+    assert_eq!(parsed.grant_id().unwrap().as_str(), GRANT_ID);
+    assert_eq!(parsed.approval_id().as_str(), APPROVAL_ID);
+    let malformed = input.replace("\"actor_class\":\"USER\"", "\"actor_class\":\"MODEL\"");
+    assert!(approval_payload(EventKind::ApprovalRevoked, &malformed).is_err());
+    let missing_session = input.replace(",\"session_id\":\"ses_01JQ8ZA7B3KMW9Q4TVY7XN2RDP\"", "");
+    assert!(approval_payload(EventKind::ApprovalRevoked, &missing_session).is_err());
+}
+
+#[test]
+fn unused_grant_expiration_payload_is_grant_keyed_and_closed() {
+    let input = format!(
+        r#"{{"approval_id":"{APPROVAL_ID}","grant_id":"{GRANT_ID}","step_id":"{STEP_ID}","task_id":"{TASK_ID}"}}"#
+    );
+    let parsed = approval_payload(EventKind::ApprovalExpiredUnused, &input).unwrap();
+    assert_eq!(parsed.grant_id().unwrap().as_str(), GRANT_ID);
+    assert_eq!(parsed.approval_id().as_str(), APPROVAL_ID);
+    assert!(
+        approval_payload(
+            EventKind::ApprovalExpiredUnused,
+            &input.replace(&format!("\"grant_id\":\"{GRANT_ID}\","), "")
+        )
+        .is_err()
+    );
+    assert!(
+        approval_payload(
+            EventKind::ApprovalExpiredUnused,
+            &input.replace("\"task_id\":", "\"grant_id\":\"bad\",\"task_id\":")
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -182,6 +222,8 @@ fn every_registered_event_kind_has_pinned_host_event_eligibility() {
         "APPROVAL_GRANTED",
         "APPROVAL_DENIED",
         "APPROVAL_EXPIRED",
+        "APPROVAL_EXPIRED_UNUSED",
+        "APPROVAL_REVOKED",
         "DEVICE_CONNECTED",
         "SCHEDULE_CREATED",
         "SCHEDULE_UPDATED",

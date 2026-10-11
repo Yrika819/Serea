@@ -119,13 +119,13 @@ fn assert_initial(conn: &Connection, stamp: i64) {
 }
 
 fn assert_latest(conn: &Connection, stamp: i64) {
-    assert_eq!(Migrations::LATEST, 7);
-    assert_eq!(Migrations::embedded().len(), 7);
+    assert_eq!(Migrations::LATEST, 8);
+    assert_eq!(Migrations::embedded().len(), 8);
     assert_initial(conn, stamp);
-    assert_eq!(rows(conn).len(), 7);
+    assert_eq!(rows(conn).len(), 8);
     assert_eq!(
         scalar(conn, "SELECT max(version) FROM schema_migrations"),
-        7
+        8
     );
 }
 
@@ -200,7 +200,7 @@ fn absent_and_zero_length_files_migrate_exactly_once_and_reopen_keeps_original_s
         }
         {
             let store = temp.open();
-            assert_eq!(store.schema_version().unwrap(), 7);
+            assert_eq!(store.schema_version().unwrap(), 8);
             assert_latest(&store.conn.lock().unwrap(), STAMP);
             store.verify_integrity().unwrap();
             assert_eq!(
@@ -211,7 +211,7 @@ fn absent_and_zero_length_files_migrate_exactly_once_and_reopen_keeps_original_s
         for stamp in [0, EpochMillis::MAX] {
             let store = Store::open(&temp.path, &FixedClock(stamp)).unwrap();
             assert_latest(&store.conn.lock().unwrap(), STAMP);
-            assert_eq!(store.schema_version().unwrap(), 7);
+            assert_eq!(store.schema_version().unwrap(), 8);
             store.verify_integrity().unwrap();
         }
     }
@@ -363,9 +363,9 @@ fn catalog_prefix_refusals_are_typed_and_leave_main_bytes_unchanged() {
 #[test]
 fn newer_version_takes_priority_over_wrong_names_checksums_and_missing_prefix() {
     for sql in [
-        "UPDATE schema_migrations SET version=8, name='0008_future'",
-        "UPDATE schema_migrations SET version=8, name='wrong', checksum='sha256:0000000000000000000000000000000000000000000000000000000000000000'",
-        "UPDATE schema_migrations SET name='wrong', checksum='sha256:0000000000000000000000000000000000000000000000000000000000000000'; INSERT INTO schema_migrations VALUES (8, '0008_future', 'sha256:0000000000000000000000000000000000000000000000000000000000000000', 0)",
+        "UPDATE schema_migrations SET version=9, name='0009_future'",
+        "UPDATE schema_migrations SET version=9, name='wrong', checksum='sha256:0000000000000000000000000000000000000000000000000000000000000000'",
+        "UPDATE schema_migrations SET name='wrong', checksum='sha256:0000000000000000000000000000000000000000000000000000000000000000'; INSERT INTO schema_migrations VALUES (9, '0009_future', 'sha256:0000000000000000000000000000000000000000000000000000000000000000', 0)",
     ] {
         let temp = TempStore::new();
         {
@@ -387,7 +387,7 @@ fn live_uncheckpointed_wal_refusals_preserve_main_wal_and_committed_state() {
         (false, "DROP TABLE unrelated", StoreError::NotSereaStore),
         (
             true,
-            "UPDATE schema_migrations SET version=8, name='0008_future'",
+            "UPDATE schema_migrations SET version=9, name='0009_future'",
             StoreError::SchemaTooNew,
         ),
         (
@@ -512,7 +512,7 @@ fn malformed_earlier_catalog_rows_do_not_hide_a_later_future_version() {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO schema_migrations VALUES (8, '0008_future', ?1, 0)",
+                "INSERT INTO schema_migrations VALUES (9, '0009_future', ?1, 0)",
                 [Migrations::checksum(INITIAL_SQL).as_str()],
             )
             .unwrap();
@@ -1244,7 +1244,7 @@ fn concurrent_fresh_open_commits_one_catalog_and_busy_opener_can_retry() {
         })
         .collect();
     for store in &stores {
-        assert_eq!(store.schema_version().unwrap(), 7);
+        assert_eq!(store.schema_version().unwrap(), 8);
         assert_latest(&store.conn.lock().unwrap(), STAMP);
         store.verify_integrity().unwrap();
     }

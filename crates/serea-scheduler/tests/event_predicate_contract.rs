@@ -95,6 +95,8 @@ fn every_registered_event_kind_has_pinned_predicate_eligibility() {
         "APPROVAL_GRANTED",
         "APPROVAL_DENIED",
         "APPROVAL_EXPIRED",
+        "APPROVAL_EXPIRED_UNUSED",
+        "APPROVAL_REVOKED",
         "DEVICE_CONNECTED",
         "SCHEDULE_CREATED",
         "SCHEDULE_UPDATED",

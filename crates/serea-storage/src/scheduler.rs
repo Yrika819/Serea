@@ -263,6 +263,8 @@ pub enum ApprovalLifecycleOutcome {
     Granted,
     Denied,
     Expired,
+    ExpiredUnused,
+    Revoked,
 }
 
 impl ApprovalLifecycleOutcome {
@@ -271,6 +273,8 @@ impl ApprovalLifecycleOutcome {
             Self::Granted => "GRANTED",
             Self::Denied => "DENIED",
             Self::Expired => "EXPIRED",
+            Self::ExpiredUnused => "EXPIRED_UNUSED",
+            Self::Revoked => "REVOKED",
         }
     }
 
@@ -279,6 +283,8 @@ impl ApprovalLifecycleOutcome {
             "GRANTED" => Ok(Self::Granted),
             "DENIED" => Ok(Self::Denied),
             "EXPIRED" => Ok(Self::Expired),
+            "EXPIRED_UNUSED" => Ok(Self::ExpiredUnused),
+            "REVOKED" => Ok(Self::Revoked),
             _ => Err(StoreError::CorruptRow),
         }
     }
@@ -2687,7 +2693,9 @@ pub(crate) fn validate_scheduler_integrity(conn: &Connection) -> Result<(), Stor
                  AND c.kind=CASE w.outcome_kind
                    WHEN 'GRANTED' THEN 'APPROVAL_GRANTED'
                    WHEN 'DENIED' THEN 'APPROVAL_DENIED'
-                   WHEN 'EXPIRED' THEN 'APPROVAL_EXPIRED' END
+                   WHEN 'EXPIRED' THEN 'APPROVAL_EXPIRED'
+                   WHEN 'EXPIRED_UNUSED' THEN 'APPROVAL_EXPIRED_UNUSED'
+                   WHEN 'REVOKED' THEN 'APPROVAL_REVOKED' END
                  AND json_extract(c.event_json,'$.payload.approval_id')=w.approval_id
                  AND json_extract(c.event_json,'$.payload.task_id')=w.task_id
                  AND json_extract(c.event_json,'$.payload.step_id')=w.step_id

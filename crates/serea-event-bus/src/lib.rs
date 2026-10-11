@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
 use serea_protocol::{
-    Actor, ActorId, ActorKind, CostClass, DataClass, Digest, EnvelopeVersion, EpochMillis, EventId,
-    EventKind, FinishReason, IdMinter, ModelErrorCode, ModelId, ModelPurpose, ProviderId,
-    ReasonCode, RequestId, ScheduleId, SemVer, Seq, SereaEvent, StepId, TaskId, TaskState,
-    Timestamp, Trace, UlidSource, WireSurface,
+    Actor, ActorId, ActorKind, ApprovalId, CostClass, DataClass, DeviceId, Digest, EnvelopeVersion,
+    EpochMillis, EventId, EventKind, FinishReason, GrantId, IdMinter, ModelErrorCode, ModelId,
+    ModelPurpose, ProviderId, ReasonCode, RequestId, ScheduleId, SemVer, Seq, SereaEvent,
+    SessionId, StepId, TaskId, TaskState, Timestamp, Trace, UlidSource, WireSurface,
 };
 use serea_storage::{
     AuditOperation, DurableTransition, EventDraft, EventParticipant, Store, StoreError, Tx,
@@ -47,6 +47,30 @@ pub enum ScheduleLifecycle {
         schedule_id: ScheduleId,
         first_pending_key: String,
     },
+}
+
+/// P6 approval routing event; contains no arguments, credentials or grant authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalLifecycleKindV1 {
+    /// A complete pending request was durably raised.
+    Required,
+    /// The authenticated response created a grant.
+    Granted,
+    /// The authenticated response denied the request.
+    Denied,
+    /// The request expired before response.
+    Expired,
+}
+
+impl ApprovalLifecycleKindV1 {
+    const fn event_kind(self) -> EventKind {
+        match self {
+            Self::Required => EventKind::ApprovalRequired,
+            Self::Granted => EventKind::ApprovalGranted,
+            Self::Denied => EventKind::ApprovalDenied,
+            Self::Expired => EventKind::ApprovalExpired,
+        }
+    }
 }
 
 const TASK_LIFECYCLE_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
@@ -393,6 +417,211 @@ impl EventBus {
                 },
                 data_class: DataClass::Public,
                 trace: None,
+                payload,
+                extensions: Default::default(),
+            },
+            retention_at: Some(retention_at),
+        })
+    }
+
+    /// Builds a content-free approval lifecycle event from trusted routing facts.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draft_approval_lifecycle(
+        &self,
+        kind: ApprovalLifecycleKindV1,
+        approval_id: &ApprovalId,
+        task_id: &TaskId,
+        step_id: &StepId,
+        actor_kind: ActorKind,
+        actor_id: ActorId,
+        actor_version: SemVer,
+        occurred_at: EpochMillis,
+    ) -> Result<EventDraft, StoreError> {
+        if !matches!(
+            actor_kind,
+            ActorKind::Host | ActorKind::User | ActorKind::Scheduler | ActorKind::System
+        ) {
+            return Err(StoreError::InvalidPolicyRevision);
+        }
+        let event_id = self
+            .ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?
+            .next_event_id();
+        let mut payload = Map::new();
+        payload.insert("approval_id".into(), Value::String(approval_id.to_string()));
+        payload.insert("task_id".into(), Value::String(task_id.to_string()));
+        payload.insert("step_id".into(), Value::String(step_id.to_string()));
+        let retention_at = occurred_at
+            .get()
+            .checked_add(TASK_LIFECYCLE_RETENTION_MS)
+            .and_then(|value| EpochMillis::new(value).ok())
+            .ok_or(StoreError::InvalidTimestamp)?;
+        Ok(EventDraft {
+            event: SereaEvent {
+                envelope_version: EnvelopeVersion::new("1")
+                    .map_err(|_| StoreError::InvalidPolicyRevision)?,
+                surface: WireSurface::new(WireSurface::EVENT)
+                    .map_err(|_| StoreError::InvalidPolicyRevision)?,
+                message_id: event_id,
+                seq: Seq::new(0),
+                kind: kind.event_kind(),
+                occurred_at: Timestamp::from_epoch_millis(occurred_at),
+                correlation_id: Some(task_id.clone()),
+                causation_id: None,
+                actor: Actor {
+                    kind: actor_kind,
+                    id: actor_id,
+                    version: actor_version,
+                    extensions: Default::default(),
+                },
+                data_class: DataClass::Personal,
+                trace: Some(Trace {
+                    task_id: Some(task_id.clone()),
+                    step_id: Some(step_id.clone()),
+                    attempt: None,
+                    extensions: Default::default(),
+                }),
+                payload,
+                extensions: Default::default(),
+            },
+            retention_at: Some(retention_at),
+        })
+    }
+
+    /// Builds the strict metadata-only audit event for one authenticated grant revocation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draft_approval_revoked(
+        &self,
+        approval_id: &ApprovalId,
+        grant_id: &GrantId,
+        task_id: &TaskId,
+        step_id: &StepId,
+        actor_class: &'static str,
+        actor_id: ActorId,
+        actor_kind: ActorKind,
+        device_id: Option<&DeviceId>,
+        session_id: Option<&SessionId>,
+        actor_version: SemVer,
+        revoked_at: EpochMillis,
+    ) -> Result<EventDraft, StoreError> {
+        if !matches!(actor_class, "USER" | "ADMIN")
+            || (actor_class == "USER" && (device_id.is_none() || session_id.is_none()))
+            || device_id.is_some() != session_id.is_some()
+            || (actor_class == "USER" && actor_kind != ActorKind::User)
+            || (actor_class == "ADMIN" && actor_kind != ActorKind::Host)
+        {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+        let event_id = self
+            .ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?
+            .next_event_id();
+        let mut payload = Map::new();
+        payload.insert("actor_class".into(), Value::String(actor_class.into()));
+        payload.insert("approval_id".into(), Value::String(approval_id.to_string()));
+        payload.insert(
+            "device_id".into(),
+            device_id.map_or(Value::Null, |id| Value::String(id.to_string())),
+        );
+        payload.insert("grant_id".into(), Value::String(grant_id.to_string()));
+        payload.insert("revoked_at".into(), Value::from(revoked_at.get()));
+        payload.insert(
+            "session_id".into(),
+            session_id.map_or(Value::Null, |id| Value::String(id.to_string())),
+        );
+        payload.insert("step_id".into(), Value::String(step_id.to_string()));
+        payload.insert("task_id".into(), Value::String(task_id.to_string()));
+        let retention_at = revoked_at
+            .get()
+            .checked_add(TASK_LIFECYCLE_RETENTION_MS)
+            .and_then(|v| EpochMillis::new(v).ok())
+            .ok_or(StoreError::InvalidTimestamp)?;
+        Ok(EventDraft {
+            event: SereaEvent {
+                envelope_version: EnvelopeVersion::new("1")
+                    .map_err(|_| StoreError::InvalidApprovalEvent)?,
+                surface: WireSurface::new(WireSurface::EVENT)
+                    .map_err(|_| StoreError::InvalidApprovalEvent)?,
+                message_id: event_id,
+                seq: Seq::new(0),
+                kind: EventKind::ApprovalRevoked,
+                occurred_at: Timestamp::from_epoch_millis(revoked_at),
+                correlation_id: Some(task_id.clone()),
+                causation_id: None,
+                actor: Actor {
+                    kind: actor_kind,
+                    id: actor_id,
+                    version: actor_version,
+                    extensions: Default::default(),
+                },
+                data_class: DataClass::Personal,
+                trace: Some(Trace {
+                    task_id: Some(task_id.clone()),
+                    step_id: Some(step_id.clone()),
+                    attempt: None,
+                    extensions: Default::default(),
+                }),
+                payload,
+                extensions: Default::default(),
+            },
+            retention_at: Some(retention_at),
+        })
+    }
+
+    /// Builds a content-free audit event for expiry of a grant with unused actions.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draft_approval_expired_unused(
+        &self,
+        approval_id: &ApprovalId,
+        grant_id: &GrantId,
+        task_id: &TaskId,
+        step_id: &StepId,
+        actor_id: ActorId,
+        actor_version: SemVer,
+        expired_at: EpochMillis,
+    ) -> Result<EventDraft, StoreError> {
+        let event_id = self
+            .ids
+            .lock()
+            .map_err(|_| StoreError::LockPoisoned)?
+            .next_event_id();
+        let mut payload = Map::new();
+        payload.insert("approval_id".into(), Value::String(approval_id.to_string()));
+        payload.insert("grant_id".into(), Value::String(grant_id.to_string()));
+        payload.insert("step_id".into(), Value::String(step_id.to_string()));
+        payload.insert("task_id".into(), Value::String(task_id.to_string()));
+        let retention_at = expired_at
+            .get()
+            .checked_add(TASK_LIFECYCLE_RETENTION_MS)
+            .and_then(|value| EpochMillis::new(value).ok())
+            .ok_or(StoreError::InvalidTimestamp)?;
+        Ok(EventDraft {
+            event: SereaEvent {
+                envelope_version: EnvelopeVersion::new("1")
+                    .map_err(|_| StoreError::InvalidApprovalEvent)?,
+                surface: WireSurface::new(WireSurface::EVENT)
+                    .map_err(|_| StoreError::InvalidApprovalEvent)?,
+                message_id: event_id,
+                seq: Seq::new(0),
+                kind: EventKind::ApprovalExpiredUnused,
+                occurred_at: Timestamp::from_epoch_millis(expired_at),
+                correlation_id: Some(task_id.clone()),
+                causation_id: None,
+                actor: Actor {
+                    kind: ActorKind::Host,
+                    id: actor_id,
+                    version: actor_version,
+                    extensions: Default::default(),
+                },
+                data_class: DataClass::Personal,
+                trace: Some(Trace {
+                    task_id: Some(task_id.clone()),
+                    step_id: Some(step_id.clone()),
+                    attempt: None,
+                    extensions: Default::default(),
+                }),
                 payload,
                 extensions: Default::default(),
             },

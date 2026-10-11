@@ -136,9 +136,9 @@ repurposing one is major.
 | `APPROVAL_EXPIRED` | Request expired unused |
 | `APPROVAL_CONSUMED` | A use was consumed by a step |
 | `APPROVAL_EXPIRED_UNUSED` | Grant hit expiry with uses remaining |
-| `APPROVAL_REVOKED` | *Proposed.* An authenticated principal revoked the grant |
+| `APPROVAL_REVOKED` | An authenticated user or local admin revoked the grant |
 
-`APPROVAL_GRANTED`, `APPROVAL_DENIED`, and `APPROVAL_EXPIRED` carry the closed
+`APPROVAL_REQUIRED`, `APPROVAL_GRANTED`, `APPROVAL_DENIED`, and `APPROVAL_EXPIRED` carry the closed
 `ApprovalLifecyclePayloadV1` object with exactly `approval_id`, `task_id`, and
 `step_id`. The host validates the existing ID grammars, requires
 `correlation_id == payload.task_id`, and requires a trace whose task and step
@@ -149,11 +149,18 @@ a task from the event kind. Clients that do not interpret the kind-specific
 payload retain ordinary rendering behavior. The SereaEvent shape and
 `serea.event/1` remain unchanged (ADR-0030).
 
-`APPROVAL_REVOKED` is Proposed and does not exist in the `EventKind` set today.
-It uses the same closed routing shape, and older clients skip unknown kinds
-rather than failing the stream. Its payload carries only `approval_id`,
-`task_id`, `step_id`, `grant_id`, the actor class, the authenticated device and
-session, and `revoked_at`.
+`APPROVAL_EXPIRED_UNUSED` is grant-keyed and carries exactly `approval_id`,
+`grant_id`, `step_id`, and `task_id`. Its state transition and event append are
+atomic; the scheduler wake contains only approval/task/step routing keys, then
+reloads the authoritative grant state from Storage.
+
+`APPROVAL_REVOKED` has its own closed payload with exactly `actor_class`,
+`approval_id`, `device_id`, `grant_id`, `revoked_at`, `session_id`, `step_id`,
+and `task_id`. The actor class is `USER` or `ADMIN`; a USER event includes the
+authenticated device and session, while a local ADMIN event has both fields
+null or both present. `revoked_at` is the host confirmation time. The P6
+approval wake path routes this event for a fresh read of durable grant state.
+Older clients skip unknown kinds rather than failing the stream.
 
 ### 3.5 Policy and bounds
 

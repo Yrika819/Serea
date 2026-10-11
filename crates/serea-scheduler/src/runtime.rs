@@ -28,6 +28,8 @@ fn approval_outcome(kind: EventKind) -> Option<ApprovalLifecycleOutcome> {
         EventKind::ApprovalGranted => Some(ApprovalLifecycleOutcome::Granted),
         EventKind::ApprovalDenied => Some(ApprovalLifecycleOutcome::Denied),
         EventKind::ApprovalExpired => Some(ApprovalLifecycleOutcome::Expired),
+        EventKind::ApprovalExpiredUnused => Some(ApprovalLifecycleOutcome::ExpiredUnused),
+        EventKind::ApprovalRevoked => Some(ApprovalLifecycleOutcome::Revoked),
         _ => None,
     }
 }

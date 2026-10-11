@@ -17,6 +17,7 @@
 // protocol, task-engine and testkit.
 #![forbid(unsafe_code)]
 
+mod approval;
 mod audit;
 mod blob;
 mod capability_registry;
@@ -57,6 +58,12 @@ mod tx;
 #[cfg(feature = "p2h-fault-injection")]
 pub mod fault;
 
+pub use approval::{
+    ApprovalAutomationContext, ApprovalRequestActionDraft, ApprovalRequestStorageDraft,
+    ApprovalResponseDecisionStorage, ApprovalResponseStorageDraft, ApprovalResponseStorageOutcome,
+    ApprovalRevocationOutcome, ApprovalRevocationStorageDraft, GrantConsumptionOutcome,
+    action_set_digest as approval_action_set_digest,
+};
 pub use audit::{
     AuditOperation, DurableTransition, EventDraft, EventParticipant, JournalKind, JournalRecord,
     JournalRecords, TaskAuditParticipant,

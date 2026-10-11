@@ -542,10 +542,10 @@ class P2GroupOInvariantTests(unittest.TestCase):
                 if name == smoke.TESTKIT:
                     self.assertTrue(is_dev, f"{member} reaches testkit outside dev-dependencies")
 
-    def test_o5_frozen_enum_cardinalities_are_unchanged(self):
+    def test_o5_frozen_enum_cardinalities_match_ratified_p6_additions(self):
         source = (self.root / "crates/serea-protocol/src/types.rs").read_text()
         expected = {"DataClass": 5, "RiskClass": 8, "TaskState": 11,
-                    "StepKind": 8, "ActionErrorKind": 13, "EventKind": 61}
+                    "StepKind": 8, "ActionErrorKind": 13, "EventKind": 62}
         for name, count in expected.items():
             pattern = re.compile(
                 rf"declare_enum!\(\s*(?:///[^\n]*\n\s*)*{name}\s*\{{(.*?)^\s*\}}\s*\);",

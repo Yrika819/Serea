@@ -28,6 +28,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod approval;
+
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -44,6 +46,16 @@ use serea_storage::{
     PolicyRevisionSnapshot, PolicyRuleDraft, PolicyRuleMatchDraft, Store, StoreError,
 };
 use sha2::{Digest as _, Sha256};
+
+pub use approval::{
+    ApprovalActionSetError, ApprovalActionSetV1, ApprovalActionV1, ApprovalAuthenticationError,
+    ApprovalAuthenticationStrengthV1, ApprovalAuthenticationVerifier, ApprovalError,
+    ApprovalPrincipalV1, ApprovalRequestDraftV1, ApprovalRequestV1, ApprovalResponseCandidateV1,
+    ApprovalResponseDecisionV1, ApprovalResponseError, ApprovalResponseFactsV1,
+    ApprovalRevocationAuthenticationVerifier, ApprovalRevocationCandidateV1,
+    ApprovalRevocationFactsV1, ApprovalScopeV1, AuthenticatedApprovalResponseV1,
+    AuthenticatedApprovalRevocationV1, SafeApprovalSummaryV1,
+};
 
 /// Maximum number of active policy rules, ratified in ADR-0040.
 pub const MAX_POLICY_RULES: usize = 512;

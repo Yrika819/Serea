@@ -1,5 +1,10 @@
 # P6B cloud handoff — storage foundation checkpoint
 
+> **Superseded status pointer (2026-10-11):** Historical checkpoint and continuation
+> statuses below are retained as written. For final P6B–P6F verification, exact-head CI,
+> residual risks and integration readiness, see [P6 final closure](P6-closure.md) and
+> [P6F adversarial closure](P6F-closure.md).
+
 Status: **P6B_WIP_CHECKPOINT** · Written: 2026-10-10 · Architecture: `serea-arch/2.7.0`
 
 This is a controlled handoff record, not a closure claim. P6B is **not** closed. It records the

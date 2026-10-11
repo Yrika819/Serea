@@ -20,6 +20,7 @@ use serea_protocol::{
     Trace, WireSurface, digest_of,
 };
 use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 
@@ -2814,6 +2815,104 @@ fn grant_response_after_task_cancellation_creates_no_grant() {
         0
     );
     assert_eq!(count_kind_store(&conn, "APPROVAL_GRANTED"), 0);
+}
+
+fn run_approval_commit_crash_child(path: &Path, stage: &str) -> ExitStatus {
+    Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("migration_0005_tests::approval_commit_crash_child_entry")
+        .arg("--nocapture")
+        .env("SEREA_P6D_CRASH_DB", path)
+        .env("SEREA_P6D_CRASH_STAGE", stage)
+        .status()
+        .unwrap()
+}
+
+#[test]
+fn approval_commit_crash_child_entry() {
+    let Ok(path) = std::env::var("SEREA_P6D_CRASH_DB") else {
+        return;
+    };
+    let stage = std::env::var("SEREA_P6D_CRASH_STAGE").unwrap();
+    let store = Store::open(Path::new(&path), &FixedClock).unwrap();
+    let response = authenticated_grant_storage_draft();
+    store
+        .transact(|tx| {
+            tx.respond_to_approval(
+                response.clone(),
+                approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+            )?;
+            if stage == "before_commit" {
+                std::process::exit(41);
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(stage, "after_commit");
+    std::process::exit(42);
+}
+
+#[test]
+fn approval_process_death_before_and_after_commit_recovers_one_atomic_outcome() {
+    let path = TempDb::new();
+    let setup = approval_store(&path.0);
+    let request = typed_request_draft();
+    setup
+        .create_approval_request(request.clone(), approval_required_event(&request))
+        .unwrap();
+    drop(setup);
+
+    let before = run_approval_commit_crash_child(&path.0, "before_commit");
+    assert_eq!(before.code(), Some(41));
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    {
+        let conn = reopened.conn.lock().unwrap();
+        assert_eq!(
+            text(
+                &conn,
+                "SELECT status FROM approval_requests WHERE approval_id=?1",
+                APPROVAL
+            )
+            .unwrap(),
+            "PENDING"
+        );
+        assert_eq!(
+            scalar(&conn, "SELECT count(*) FROM approval_grants").unwrap(),
+            0
+        );
+        assert_eq!(count_kind_store(&conn, "APPROVAL_GRANTED"), 0);
+    }
+    drop(reopened);
+
+    let after = run_approval_commit_crash_child(&path.0, "after_commit");
+    assert_eq!(after.code(), Some(42));
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    {
+        let conn = reopened.conn.lock().unwrap();
+        assert_eq!(
+            text(
+                &conn,
+                "SELECT status FROM approval_requests WHERE approval_id=?1",
+                APPROVAL
+            )
+            .unwrap(),
+            "APPROVED"
+        );
+        assert_eq!(
+            scalar(&conn, "SELECT count(*) FROM approval_grants").unwrap(),
+            1
+        );
+        assert_eq!(
+            scalar(&conn, "SELECT count(*) FROM approval_grant_members").unwrap(),
+            1
+        );
+        assert_eq!(
+            scalar(&conn, "SELECT count(*) FROM approval_grant_seals").unwrap(),
+            1
+        );
+        assert_eq!(count_kind_store(&conn, "APPROVAL_GRANTED"), 1);
+    }
+    reopened.verify_integrity().unwrap();
 }
 
 #[test]

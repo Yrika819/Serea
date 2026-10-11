@@ -555,22 +555,30 @@ All jobs tested source commit `da2b391…`; no job was skipped. The portability 
 ### 14.2 Current P6D work (not closed)
 
 P6D is active on branch `p6/policy-approval-runtime-p6c-clean`, based on the verified P6C
-commit above. The owner explicitly approved the additive `APPROVAL_REVOKED` metadata event on
-2026-10-11. The current uncommitted work adds a separate authenticated revocation port, exact
-R2 request/approved-subset persistence, typed duplicate response handling, transaction-joined
-grant consumption, atomic request/grant expiry and grant-only revocation, and Scheduler routing
-for revoked and unused-expired grant events. Migration 0008 is additive; migrations 0001–0007
-are unchanged. Migration 0005 still hashes to
+commit above. The first P6D implementation commit `53ec5c549eab570ff8bd4e3ff05da13114b9ca01`
+is pushed. The owner explicitly approved the additive `APPROVAL_REVOKED` metadata event on
+2026-10-11. P6D adds a separate authenticated revocation port, exact R2 request/approved-subset
+persistence, typed duplicate response handling, transaction-joined grant consumption, atomic
+request/grant expiry and grant-only revocation, and Scheduler routing for revoked and
+unused-expired grant events. Migration 0008 is additive; migrations 0001–0007 are unchanged.
+Migration 0005 still hashes to
 `cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a`.
 
-The final local verification for this working tree is green:
+An adversarial lifecycle pass added a process-death test after the first P6D push: a child exits
+after request/grant/member/seal/event writes but before outer commit, then another child exits
+immediately after commit. Reopen proves the precommit operation left no partial state and the
+postcommit operation left one complete outcome. The resulting test/doc changes are currently
+uncommitted and require a new exact-head CI run; the first published SHA's hosted runs do not
+close P6D.
+
+The final local verification for the current working tree is green:
 
 | Check | Result |
 | --- | --- |
 | `cargo test -p serea-policy --all-features --locked --offline` | **PASS**, 35 unit tests and 2 compile-fail doctests |
-| `cargo test -p serea-storage --lib --all-features --locked --offline migration_0005_tests -- --test-threads=1` | **PASS**, 52 tests, including the request-expiry and post-cancellation response cases |
-| `cargo test --workspace --all-targets --locked --offline` | **PASS**, 494 tests in the largest suite plus doctests |
-| `cargo test --workspace --all-features --locked --offline` | **PASS**, 494 tests in the largest suite plus doctests |
+| `cargo test -p serea-storage --lib --all-features --locked --offline migration_0005_tests -- --test-threads=1` | **PASS**, 54 tests, including expiry, cancellation and process-death cases |
+| `cargo test --workspace --all-targets --locked --offline` | **PASS**, 496 tests in the largest suite plus doctests |
+| `cargo test --workspace --all-features --locked --offline` | **PASS**, 496 tests in the largest suite plus doctests |
 | `cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings` | **PASS**; only the pre-existing vendored `serde_json` deprecation warning is emitted |
 | `cargo fmt --all -- --check` | **PASS** |
 | `python3 tests/workspace_smoke.py` | **PASS** |
@@ -592,8 +600,35 @@ authenticated confirmation but at or before the current revalidation time. Polic
 that already-stale expiry with `InvalidExpiryBound` before producing Storage facts, with a
 dedicated regression test.
 
-P6D is still **WIP** because this exact source has not yet been committed, pushed, or tested by
-exact-head hosted CI, and a complete adversarial review remains necessary. Do not proceed to P6E
-or report lifecycle closure until those steps pass. No provider invocation, dispatch intent, P8
+P6D is still **WIP** because the crash-test extension is not yet published or tested by exact-head
+hosted CI, and the required full adversarial review remains necessary. Do not proceed to P6E or
+report lifecycle closure until those steps pass. No provider invocation, dispatch intent, P8
 RequestId, or external side effect has been added. Software transaction fault tests do not
 establish physical power-loss guarantees.
+
+### 14.3 First P6D hosted run and repair
+
+The first pushed implementation head was `53ec5c549eab570ff8bd4e3ff05da13114b9ca01`. For its
+PR-triggered runs, GitHub reported that source SHA as `head_sha`; the jobs checked out synthetic
+PR merge ref `794136e2b344aba5a4d12043911cc633b33bd8b9`. That merge object has parents
+`1c04451469a810a484e92fa7f0e5eb249451a54e` and `53ec5c549eab570ff8bd4e3ff05da13114b9ca01`
+and tree `a5f62c0de34834b14bc8d8388812f549779a4a75`, identical to the source commit tree.
+
+| Workflow | Run | Individual jobs |
+| --- | ---: | --- |
+| Fast CI | `38126857190` | Linux fast checks `114432904536`: success |
+| Full CI | `38126857191` | Linux stable `114432904783`: success; Rust 1.85.0 `114432904920`: failure in Clippy only; macOS arm64 `114432904990`: success; macOS Intel x86_64 `114432904991`: success |
+| Cross-architecture SQLite portability | `38126857199` | arm64 producer `114432904895`, Intel producer `114432905058`, arm64 database on Intel `114433057522`, Intel database on arm64 `114433264727`: all success |
+
+The MSRV job completed check, all-target tests, and all-feature tests successfully. Clippy then
+rejected the P6A recovery dependency scanner's newly duplicated `Scheduler` filename exception
+as `nonminimal_bool`. The exception conditions have been combined without broadening the filter;
+the exact scanner regression passes locally and `cargo +1.85.0 clippy --workspace --all-targets
+--all-features --locked --offline -- -D warnings` passes after that correction. The correction
+and the process-death regression test are not yet published; a new exact-head hosted run is
+required, and the first run is not P6D closure evidence.
+
+Cross-architecture artifacts from the first run were 36,954 bytes each. `portable-db-arm64`
+SHA-256: `ffbb763fd2ca7ece03b8b5f4068daa4a084d9968ef0e7ab003401baff159ffd4`; `portable-db-intel`
+SHA-256: `6b120bb9c981bdd457081247793d3157d50af5be53243a07b827f68809a39352`. Their producer and
+consumer jobs all passed, but these artifacts belong to the first P6D source tree.

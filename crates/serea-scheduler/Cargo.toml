@@ -17,6 +17,8 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 serea-capability.workspace = true
+serea-policy.workspace = true
 rusqlite.workspace = true
 serea-testkit.workspace = true

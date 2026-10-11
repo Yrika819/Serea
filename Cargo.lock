@@ -871,6 +871,7 @@ dependencies = [
 name = "serea-scheduler"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "jiff",
  "jiff-tzdb",
  "rusqlite",
@@ -878,6 +879,7 @@ dependencies = [
  "serde_json",
  "serea-capability",
  "serea-event-bus",
+ "serea-policy",
  "serea-protocol",
  "serea-storage",
  "serea-task-engine",

@@ -116,9 +116,12 @@ The focused approval wake regression initially failed because the P6E wake wrote
 stores the canonical result blob and reference in the same transaction; the
 regression is in `crates/serea-storage/src/migration_0005_tests.rs`. This is
 independent of the owner decision above. The public mixed-plan API, R2 group
-builder checks, ALLOW → audited `NOT_REQUIRED`, REQUIRE_APPROVAL request, authenticated
-response, event-to-wake materialization, restart around response/wake, TaskEngine
-wake application, policy revision change, overlay disable, and post-wake reevaluation
-now have focused integration coverage. Stable full-workspace tests and Rust 1.85
-TaskEngine integration tests pass. Exact-head GitHub CI is still required before
-P6E closure; no P6E or P6F completion claim is made yet.
+builder checks, ALLOW → audited `NOT_REQUIRED`, REQUIRE_APPROVAL request,
+authenticated response, event-to-wake materialization, restart around response
+and wake, TaskEngine wake application, policy revision change, overlay disable,
+and post-wake reevaluation have focused coverage. The added
+`crates/serea-scheduler/tests/task_engine_approval_e2e.rs` traverses the public
+`Scheduler::process_approval_lifecycle_wakes` path, restarts with an unacknowledged
+wake, confirms the exact R2 grant member and digest, re-evaluates current Policy,
+and proves zero provider invocations. Exact-head CI must cover all subsequent
+source changes before P6E closure; no P6E or P6F completion claim is made yet.

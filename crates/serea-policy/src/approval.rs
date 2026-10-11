@@ -12,11 +12,21 @@ use serea_protocol::{
 pub const MAX_APPROVAL_REQUEST_LIFETIME_MS: i64 = 1_800_000;
 
 /// Host-authored preview with the accepted persisted privacy ceiling.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SafeApprovalSummaryV1 {
     kind: String,
     text: String,
     data_class: serea_protocol::DataClass,
+}
+
+impl fmt::Debug for SafeApprovalSummaryV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SafeApprovalSummaryV1")
+            .field("kind", &self.kind)
+            .field("text", &"<redacted>")
+            .field("data_class", &self.data_class)
+            .finish()
+    }
 }
 
 /// Typed refusal for a summary that exceeds the accepted persistence contract.
@@ -160,6 +170,14 @@ impl ApprovalRequestV1 {
             return Err(ApprovalError::DataClassExceeded);
         }
         if draft.summary.data_class.rank() > draft.data_class.rank() {
+            return Err(ApprovalError::DataClassExceeded);
+        }
+        if draft
+            .actions
+            .actions()
+            .iter()
+            .any(|action| action.scope.data_class().rank() > draft.data_class.rank())
+        {
             return Err(ApprovalError::DataClassExceeded);
         }
         if draft.risk_class == serea_protocol::RiskClass::Credential
@@ -738,6 +756,8 @@ pub enum ApprovalActionSetError {
     InvalidScope,
     /// Wildcard scope values are unsupported.
     WildcardScope,
+    /// Scope contains values classified above the PERSONAL persistence ceiling.
+    ScopeClassExceeded,
     /// SCJ-1 canonicalization or digesting failed.
     Canonicalization,
 }
@@ -750,6 +770,7 @@ impl fmt::Display for ApprovalActionSetError {
             Self::UnexpectedStep => "approval subset contains an unrequested StepId",
             Self::InvalidScope => "approval action scope is not a bounded JSON object",
             Self::WildcardScope => "wildcard approval scopes are unsupported",
+            Self::ScopeClassExceeded => "approval scope exceeds the PERSONAL persistence ceiling",
             Self::Canonicalization => "approval action set could not be canonically digested",
         })
     }
@@ -758,15 +779,38 @@ impl fmt::Display for ApprovalActionSetError {
 impl std::error::Error for ApprovalActionSetError {}
 
 /// Canonical structural scope shown for exactly one Step.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ApprovalScopeV1 {
     canonical_json: String,
     digest: Digest,
+    data_class: serea_protocol::DataClass,
+}
+
+impl fmt::Debug for ApprovalScopeV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ApprovalScopeV1")
+            .field("digest", &self.digest)
+            .field("data_class", &self.data_class)
+            .field("canonical_json_bytes", &self.canonical_json.len())
+            .finish()
+    }
 }
 
 impl ApprovalScopeV1 {
-    /// Validates and canonicalizes a capability-defined object scope.
-    pub fn new(value: Value) -> Result<Self, ApprovalActionSetError> {
+    /// Validates a capability-defined scope and its inherited classification.
+    ///
+    /// `data_class` is the host-computed maximum class of every value in this
+    /// projection. Classification follows source data and may never be lowered.
+    pub fn new(
+        value: Value,
+        data_class: serea_protocol::DataClass,
+    ) -> Result<Self, ApprovalActionSetError> {
+        if !matches!(
+            data_class,
+            serea_protocol::DataClass::Public | serea_protocol::DataClass::Personal
+        ) {
+            return Err(ApprovalActionSetError::ScopeClassExceeded);
+        }
         if !value.is_object() {
             return Err(ApprovalActionSetError::InvalidScope);
         }
@@ -787,6 +831,7 @@ impl ApprovalScopeV1 {
         Ok(Self {
             canonical_json,
             digest,
+            data_class,
         })
     }
 
@@ -798,6 +843,11 @@ impl ApprovalScopeV1 {
     /// SHA-256 of the SCJ-1 canonical structural scope.
     pub fn digest(&self) -> &Digest {
         &self.digest
+    }
+
+    /// Host-computed inherited classification, capped at PERSONAL.
+    pub const fn data_class(&self) -> serea_protocol::DataClass {
+        self.data_class
     }
 
     /// Decodes the canonical JSON value for digest construction.
@@ -821,11 +871,12 @@ impl ApprovalActionV1 {
         step_id: StepId,
         arguments_digest: Digest,
         scope: Value,
+        scope_data_class: serea_protocol::DataClass,
     ) -> Result<Self, ApprovalActionSetError> {
         Ok(Self {
             step_id,
             arguments_digest,
-            scope: ApprovalScopeV1::new(scope)?,
+            scope: ApprovalScopeV1::new(scope, scope_data_class)?,
         })
     }
 

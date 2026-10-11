@@ -1,6 +1,7 @@
 //! Typed durable approval request persistence over the P6B authority schema.
 
 use std::collections::BTreeSet;
+use std::fmt;
 
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
@@ -43,7 +44,7 @@ type ExistingGrantResponseRow = (
 );
 
 /// One complete action member for the request side of the R2 authority set.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ApprovalRequestActionDraft {
     /// Exact Step identity.
     pub step_id: StepId,
@@ -55,8 +56,19 @@ pub struct ApprovalRequestActionDraft {
     pub scope_digest: Digest,
 }
 
+impl fmt::Debug for ApprovalRequestActionDraft {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ApprovalRequestActionDraft")
+            .field("step_id", &self.step_id)
+            .field("arguments_digest", &self.arguments_digest)
+            .field("scope_digest", &self.scope_digest)
+            .field("scope_json_bytes", &self.scope_json.len())
+            .finish()
+    }
+}
+
 /// Complete host-authored approval request facts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ApprovalRequestStorageDraft {
     /// Host-minted immutable request identity.
     pub approval_id: ApprovalId,
@@ -98,6 +110,26 @@ pub struct ApprovalRequestStorageDraft {
     pub raised_at: EpochMillis,
     /// Expiry no more than 30 minutes after creation.
     pub expires_at: EpochMillis,
+}
+
+impl fmt::Debug for ApprovalRequestStorageDraft {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ApprovalRequestStorageDraft")
+            .field("approval_id", &self.approval_id)
+            .field("task_id", &self.task_id)
+            .field("plan_revision", &self.plan_revision)
+            .field("capability_id", &self.capability_id)
+            .field("capability_version", &self.capability_version)
+            .field("generation_id", &self.generation_id)
+            .field("data_class", &self.data_class)
+            .field("action_set_digest", &self.action_set_digest)
+            .field("action_count", &self.actions.len())
+            .field("summary_kind", &self.summary_kind)
+            .field("summary_bytes", &self.summary.len())
+            .field("raised_at", &self.raised_at)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 /// Authenticated response facts after the Policy authentication port has

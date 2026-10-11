@@ -11,7 +11,7 @@ use super::{
     ApprovalAuthenticationStrengthV1, ApprovalAuthenticationVerifier, ApprovalError,
     ApprovalPrincipalV1, ApprovalRequestDraftV1, ApprovalRequestV1, ApprovalResponseCandidateV1,
     ApprovalResponseDecisionV1, ApprovalResponseError, ApprovalRevocationAuthenticationVerifier,
-    ApprovalRevocationCandidateV1, AuthenticatedApprovalResponseV1,
+    ApprovalRevocationCandidateV1, ApprovalScopeV1, AuthenticatedApprovalResponseV1,
     AuthenticatedApprovalRevocationV1, SafeApprovalSummaryV1,
 };
 
@@ -47,7 +47,7 @@ fn digest(ch: char) -> Digest {
 }
 
 fn action(id: &str, arg: char, scope: serde_json::Value) -> ApprovalActionV1 {
-    ApprovalActionV1::new(step(id), digest(arg), scope).unwrap()
+    ApprovalActionV1::new(step(id), digest(arg), scope, DataClass::Personal).unwrap()
 }
 
 #[test]
@@ -107,10 +107,35 @@ fn action_set_refuses_empty_oversized_and_wildcard_scope() {
         ApprovalActionV1::new(
             step("stp_01JQ8ZB8H2XKM9P4QW7NRT5YCD"),
             digest('a'),
-            json!({"target":"*"})
+            json!({"target":"*"}),
+            DataClass::Personal
         ),
         Err(ApprovalActionSetError::WildcardScope)
     );
+}
+
+#[test]
+fn protected_scope_classes_are_refused_and_scope_debug_redacts_values() {
+    for class in [DataClass::Private, DataClass::Secret, DataClass::Credential] {
+        assert_eq!(
+            ApprovalActionV1::new(
+                step("stp_01JQ8ZB8H2XKM9P4QW7NRT5YCD"),
+                digest('a'),
+                json!({"target":"credential-sentinel-7c91"}),
+                class,
+            ),
+            Err(ApprovalActionSetError::ScopeClassExceeded)
+        );
+    }
+
+    let scope = ApprovalScopeV1::new(
+        json!({"target":"personal-sentinel-2af3"}),
+        DataClass::Personal,
+    )
+    .unwrap();
+    let debug = format!("{scope:?}");
+    assert!(!debug.contains("personal-sentinel-2af3"));
+    assert!(debug.contains("canonical_json_bytes"));
 }
 
 #[test]
@@ -206,6 +231,22 @@ fn request_rejects_forged_provenance_and_private_persistence() {
 }
 
 #[test]
+fn a_scope_cannot_exceed_the_aggregate_request_classification() {
+    let mut draft = request_draft(1_800_100, RequestedBy::User);
+    draft.data_class = DataClass::Public;
+    draft.summary = SafeApprovalSummaryV1::from_host_builder(
+        "calendar.event.create",
+        "Create one event",
+        DataClass::Public,
+    )
+    .unwrap();
+    assert_eq!(
+        ApprovalRequestV1::new(draft),
+        Err(ApprovalError::DataClassExceeded)
+    );
+}
+
+#[test]
 fn safe_summary_has_no_unratified_global_byte_limit() {
     let text = "host-reviewed ".repeat(4_000);
     assert_eq!(
@@ -218,6 +259,35 @@ fn safe_summary_has_no_unratified_global_byte_limit() {
         .text(),
         text
     );
+}
+
+#[test]
+fn approval_debug_views_redact_summary_and_structural_scope_values() {
+    let mut draft = request_draft(1_800_100, RequestedBy::User);
+    draft.summary = SafeApprovalSummaryV1::from_host_builder(
+        "calendar.event.create",
+        "private-summary-sentinel-81fd",
+        DataClass::Personal,
+    )
+    .unwrap();
+    draft.actions = ApprovalActionSetV1::new(vec![
+        ApprovalActionV1::new(
+            step("stp_01JQ8ZB8H2XKM9P4QW7NRT5YCD"),
+            digest('b'),
+            json!({"target":"private-scope-sentinel-9e24"}),
+            DataClass::Personal,
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+
+    let request = ApprovalRequestV1::new(draft).unwrap();
+    let policy_debug = format!("{request:?}");
+    let storage_debug = format!("{:?}", request.storage_draft());
+    for debug in [policy_debug, storage_debug] {
+        assert!(!debug.contains("private-summary-sentinel-81fd"));
+        assert!(!debug.contains("private-scope-sentinel-9e24"));
+    }
 }
 
 #[test]

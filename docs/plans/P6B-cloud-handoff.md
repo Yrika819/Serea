@@ -567,11 +567,13 @@ Migration 0005 still hashes to
 An adversarial lifecycle pass added a process-death test after the first P6D push: a child exits
 after request/grant/member/seal/event writes but before outer commit, then another child exits
 immediately after commit. Reopen proves the precommit operation left no partial state and the
-postcommit operation left one complete outcome. The resulting test/doc changes are currently
-uncommitted and require a new exact-head CI run; the first published SHA's hosted runs do not
-close P6D.
+postcommit operation left one complete outcome. This test and the Rust 1.85 Clippy correction
+were published in `a54325b48af8c336b6d252fdfa2dc4c9821167db`; its exact-head hosted runs passed
+(see §14.3). A later privacy review added an uncommitted classification and Debug-redaction
+correction; it needs its own exact-head CI run before P6D closure.
 
-The final local verification for the current working tree is green:
+The following local verification table records the `a54325b` source tree before the later
+privacy correction. Current-tree results are recorded in §14.4:
 
 | Check | Result |
 | --- | --- |
@@ -600,11 +602,10 @@ authenticated confirmation but at or before the current revalidation time. Polic
 that already-stale expiry with `InvalidExpiryBound` before producing Storage facts, with a
 dedicated regression test.
 
-P6D is still **WIP** because the crash-test extension is not yet published or tested by exact-head
-hosted CI, and the required full adversarial review remains necessary. Do not proceed to P6E or
-report lifecycle closure until those steps pass. No provider invocation, dispatch intent, P8
-RequestId, or external side effect has been added. Software transaction fault tests do not
-establish physical power-loss guarantees.
+At the time this record was written, P6D was **WIP** because the crash-test extension had not
+yet been published or tested by exact-head hosted CI. That was superseded by §14.4. No provider
+invocation, dispatch intent, P8 RequestId, or external side effect has been added. Software
+transaction fault tests do not establish physical power-loss guarantees.
 
 ### 14.3 First P6D hosted run and repair
 
@@ -625,10 +626,64 @@ rejected the P6A recovery dependency scanner's newly duplicated `Scheduler` file
 as `nonminimal_bool`. The exception conditions have been combined without broadening the filter;
 the exact scanner regression passes locally and `cargo +1.85.0 clippy --workspace --all-targets
 --all-features --locked --offline -- -D warnings` passes after that correction. The correction
-and the process-death regression test are not yet published; a new exact-head hosted run is
-required, and the first run is not P6D closure evidence.
+and the process-death regression test were published in `a54325b48af8c336b6d252fdfa2dc4c9821167db`.
+Its exact-head Fast, Full and cross-architecture runs completed successfully. Individual job
+results and the later privacy follow-up are recorded in §14.4; these runs do not close P6D at a
+later source head.
 
 Cross-architecture artifacts from the first run were 36,954 bytes each. `portable-db-arm64`
 SHA-256: `ffbb763fd2ca7ece03b8b5f4068daa4a084d9968ef0e7ab003401baff159ffd4`; `portable-db-intel`
 SHA-256: `6b120bb9c981bdd457081247793d3157d50af5be53243a07b827f68809a39352`. Their producer and
 consumer jobs all passed, but these artifacts belong to the first P6D source tree.
+
+### 14.4 Privacy review and `a54325b` hosted CI
+
+A follow-up adversarial privacy review found that approval scope values were persisted under the
+request's PERSONAL ceiling but the typed scope had no explicit inherited `DataClass`, and derived
+Debug output for scopes/summaries could expose the values. The additive source correction makes
+scope classification explicit and host-computed, rejects PRIVATE/SECRET/CREDENTIAL scope classes,
+refuses an action scope above the request aggregate class, and redacts scope, summary and Storage
+draft Debug views. Regression tests include unique sentinel values at both Policy and Storage
+boundaries. Approval summary persistence still has no invented global byte limit.
+
+The previously published `a54325b48af8c336b6d252fdfa2dc4c9821167db` source head has now passed all
+three GitHub workflows. These are historical evidence for `a54325b`, before the privacy correction:
+
+| Workflow | Run ID | Exact source SHA | Job IDs and conclusions |
+| --- | ---: | --- | --- |
+| Fast CI | `38127583761` | `a54325b48af8c336b6d252fdfa2dc4c9821167db` | Linux fast `114435053335`: success |
+| Full CI | `38127583935` | same | Linux stable `114435053984`, Rust 1.85.0 MSRV `114435053900`, macOS Intel x86_64 `114435053760`, macOS arm64 `114435053922`: all success |
+| Cross-architecture SQLite portability | `38127583679` | same | Intel producer `114435053245`, arm64 producer `114435053330`, arm64 DB on Intel `114435193625`, Intel DB on arm64 `114435459107`: all success |
+
+The Fast and Full workflows tested the PR merge object `f457afa534902a5156dfdbd961ed674f04ee7c20`
+whose tree `dbb787ddba6ab23027b9f4d4395436a23fc99bcf` matched the source tree at that time. The
+source head is distinct from that synthetic merge SHA. No check was skipped. These runs do not
+validate the following uncommitted changes. Cross-architecture artifacts were 36,954 bytes each:
+Intel archive digest `c4d2e63ed8abe21172b6ab1caf61d9325ee5621419bb50c7ecb3c67f48b9e8a6`, arm64
+archive digest `26b7340cdf6bf7914d7a4534c837d70ab89d10826d3693a081c5550e5afeb0b9`.
+
+Local results on the privacy-corrected working tree:
+
+| Check | Result |
+| --- | --- |
+| Policy unit tests, all features | **PASS**, 38 tests |
+| Storage P6B/P6D approval+migration tests | **PASS**, 55 tests |
+| `cargo test --workspace --all-targets --locked --offline` | **PASS**, Storage's largest suite 497 tests, plus all other targets and doctests |
+| `cargo test --workspace --all-features --locked --offline` | **PASS**, Storage's largest suite 497 tests, plus doctests |
+| `cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings` | **PASS** |
+| `cargo +1.85.0 clippy --workspace --all-targets --all-features --locked --offline -- -D warnings` | **PASS** |
+| `cargo fmt --all -- --check` | **PASS** |
+| Workspace smoke + 76 smoke regression tests | **PASS** |
+| `python3 tools/validate_docs.py docs` | **PASS**, 108 Markdown files |
+| `python3 tools/check_commit_identity.py` and `git diff --check` | **PASS** |
+
+Migration 0005 SHA-256 remains
+`cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a`; migration 0008 remains
+`6e1520bf22ced832ed480a1cf26476e056611f22b1f517f2324b32a8d4fbf925`. No migration bytes were
+changed by this privacy correction.
+
+P6D remains WIP until stable/MSRV Clippy passes on this tree, this correction is committed and
+pushed normally, and every required hosted job passes at its exact resulting source HEAD. P6E
+must wait for that closure. No provider invocation, dispatch intent, RequestId, or external side
+effect was added. Process-death tests establish software transaction recovery only, not physical
+power-loss guarantees.

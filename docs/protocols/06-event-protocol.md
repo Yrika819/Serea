@@ -136,6 +136,7 @@ repurposing one is major.
 | `APPROVAL_EXPIRED` | Request expired unused |
 | `APPROVAL_CONSUMED` | A use was consumed by a step |
 | `APPROVAL_EXPIRED_UNUSED` | Grant hit expiry with uses remaining |
+| `APPROVAL_REVOKED` | *Proposed.* An authenticated principal revoked the grant |
 
 `APPROVAL_GRANTED`, `APPROVAL_DENIED`, and `APPROVAL_EXPIRED` carry the closed
 `ApprovalLifecyclePayloadV1` object with exactly `approval_id`, `task_id`, and
@@ -147,6 +148,12 @@ durable wakes for future P6 consumption; Scheduler never applies an outcome to
 a task from the event kind. Clients that do not interpret the kind-specific
 payload retain ordinary rendering behavior. The SereaEvent shape and
 `serea.event/1` remain unchanged (ADR-0030).
+
+`APPROVAL_REVOKED` is Proposed and does not exist in the `EventKind` set today.
+It uses the same closed routing shape, and older clients skip unknown kinds
+rather than failing the stream. Its payload carries only `approval_id`,
+`task_id`, `step_id`, `grant_id`, the actor class, the authenticated device and
+session, and `revoked_at`.
 
 ### 3.5 Policy and bounds
 
@@ -362,6 +369,14 @@ corresponding `APPROVAL_CONSUMED` event was never exercised.
 
 `POLICY_CHANGED` outliving the task it relates to is intentional: policy history
 is an audit artifact, not a task artifact.
+
+P6 approval rows follow the task retention class above: `approval_requests`,
+`approval_grants` and `approval_grant_uses` are task-scoped derived state and are
+removed by the task-deletion cascade. `policy_revisions`, `policy_rules` and the
+`policy_state` pointer never cascade with a task — they are host audit artefacts
+in the one-year class. Approval events that outlive their rows therefore route
+against identifiers that no longer resolve, which is the intended behaviour and
+the reason an event must never be read as authority.
 
 Identifiers such as `TaskId`, `StepId`, and related trace IDs in an event are
 immutable opaque historical values. Event content must not use task/step foreign

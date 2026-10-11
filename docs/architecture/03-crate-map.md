@@ -105,7 +105,6 @@ flowchart TB
     MEM --> BUS
     MEM --> STORE
 
-    CAP --> POLICY
     CAP --> BUS
     CAP --> STORE
 
@@ -143,8 +142,23 @@ flowchart TB
     KIT -.-> PGL
 ```
 
-`CAP --> POLICY` is only the later typed P6 authorization integration. P5
-preparation does not evaluate policy or approvals. Provider invocation,
+**There is no `CAP --> POLICY` edge, and none is planned.** `tests/workspace_smoke.py`
+fails the build if `serea-capability` depends on `serea-policy`, so a capability crate can
+never reach the policy evaluator or the approval types. An earlier revision of this graph
+drew `CAP --> POLICY` as "the later typed P6 authorization integration"; that edge was not
+a design option, it was a workspace-gate violation, and it is removed. The P6 composition
+is reached through the Task Engine, which already depends on both crates and already calls
+`serea_capability::prepare_action`:
+
+```text
+TaskEngine
+  -> serea_capability::prepare_action(...)      -> PreparedActionV1 (immutable)
+  -> build PolicyInputV1 from Task + PreparedActionV1
+  -> serea_policy::evaluate(input, current revision)
+  -> typed authorization outcome
+```
+
+P5 preparation does not evaluate policy or approvals. Provider invocation,
 duplicate/repeat dispatch state, and result persistence are P8 work and are not
 implemented in the P5/P6 capability path.
 
@@ -179,13 +193,13 @@ orchestration · **L4** composition · **PX** leaf provider · **TD** dev-only.
 
 | Crate | Purpose | Public API surface (types only) | Depends on | Depended on by | Layer |
 | --- | --- | --- | --- | --- | --- |
-| `serea-protocol` | Frozen wire types, frozen enums, identifier minting, canonical JSON, schema codegen targets, trait *port* declarations | `TaskId`, `StepId`, `ApprovalId`, `EventId`, `DeviceId`, `ScheduleId`, `ProposalId`, `ReceiptId`, `SessionId`, `IdempotencyKey`, `CapabilityId`, `ProviderId`, `ImplementationId`, `ModelId`, `Digest`, `Secret<T>`, `CredentialHandle`, `Envelope<T>`, `ActionRequest`, `ActionResult`, `ActionError`, `ActionErrorKind`, `Evidence`, `SideEffectReceipt`, `CapabilityDescriptor`, `ProviderContext`, `RiskClass`, `DataClass`, `SideEffectClass`, `ReplaySafety`, `Authorization`, `EventPredicateV1`, `ScheduledTaskTemplateV1`, `ModelProvider`, `ModelRequest`, `ModelResponse`, `ModelCapabilities`, `ModelError`, `PolicyDecision`, `DenyReason`, `ApprovalRequest`, `ApprovalGrant`, `SereaEvent`, `EventKind`, `Actor`, `AssistantTask`, `TaskState`, `TaskStep`, `StepKind`, `CapabilityProvider`, `HostGoalProvider`, `GoalHandle`, `GoalObservedState`, `GoalEvidenceRef`, `GoalArtifactRef`, `GoalSummary`, `DeviceLinkPort`, `Clock`, `Ids` | *(nothing internal)* | every crate in the workspace | L0 |
+| `serea-protocol` | Frozen wire types, frozen enums, identifier minting, canonical JSON, schema codegen targets, trait *port* declarations | `TaskId`, `StepId`, `ApprovalId`, `EventId`, `DeviceId`, `ScheduleId`, `ProposalId`, `ReceiptId`, `SessionId`, `IdempotencyKey`, `CapabilityId`, `ProviderId`, `ImplementationId`, `ModelId`, `Digest`, `Secret<T>`, `CredentialHandle`, `Envelope<T>`, `ActionRequest`, `ActionResult`, `ActionError`, `ActionErrorKind`, `Evidence`, `SideEffectReceipt`, `CapabilityDescriptor`, `ProviderContext`, `RiskClass`, `DataClass`, `SideEffectClass`, `ReplaySafety`, `Authorization`, `EventPredicateV1`, `ScheduledTaskTemplateV1`, `ModelProvider`, `ModelRequest`, `ModelResponse`, `ModelCapabilities`, `ModelError`, `SereaEvent`, `EventKind`, `Actor`, `AssistantTask`, `TaskState`, `TaskStep`, `StepKind`, `CapabilityProvider`, `HostGoalProvider`, `GoalHandle`, `GoalObservedState`, `GoalEvidenceRef`, `GoalArtifactRef`, `GoalSummary`, `DeviceLinkPort`, `Clock`, `Ids` | *(nothing internal)* | every crate in the workspace | L0 |
 | `serea-storage` | SQLite schema, ordered migrations, transactional commits, lease acquisition, content-addressed blob store, retention and redaction-at-rest | `Store`, `StoreError`, `Tx`, `LeaseGuard`, `BlobRef`, `BlobStore`, `Migrations` | `serea-protocol` | `serea-event-bus`, `serea-policy`, `serea-model-router`, `serea-capability`, `serea-memory`, `serea-task-engine`, `serea-scheduler`, `serea-core` | L1 |
 | `serea-event-bus` | Transaction-scoped event append and, in P3D, bounded range-aware replay and retention | `EventBus` | `serea-protocol`, `serea-storage` | `serea-policy`, `serea-model-router`, `serea-capability`, `serea-memory`, `serea-task-engine`, `serea-scheduler`, `serea-core` | L1 |
 | `serea-credential-store` | macOS Keychain custody; mint, resolve, rotate; the only code permitted to call `Secret::expose` | `CredentialStore`, `CredentialStoreError`, `CredentialScope`, `RotationOutcome` | `serea-protocol` | all `providers/serea-provider-*` needing OAuth or API secrets; `serea-core` | L1 |
-| `serea-policy` | Deterministic rule evaluation in the frozen order; `RiskClass` decisions; `DenyReason`; `HandoffRequest`; audited rule mutation | `PolicyEngine`, `PolicyRule`, `PolicyContext`, `AutomationContext`, `RuleStore`, `PolicyChange` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-capability`, `serea-task-engine`, `serea-core` | L2 |
+| `serea-policy` | Deterministic rule evaluation in the frozen order; `RiskClass` decisions; `DenyReason`; `HandoffRequest`; audited rule mutation; the P6 approval request/grant lifecycle and the authenticated response and revocation seams | `PolicyEngine`, `PolicyRule`, `PolicyContext`, `AutomationContext`, `RuleStore`, `PolicyChange`, `PolicyInputV1`, `PolicyDecision`, `DenyReason`, `ApprovalRequest`, `ApprovalGrant`, `ApprovalGrantUse`, `AuthenticatedApprovalResponseV1`, `AuthorizationEvidenceV1` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-task-engine`, `serea-core` | L2 |
 | `serea-model-router` | Prepared-call routing, immutable host roster, capability filtering, preference chains, health snapshot, durable attempt/usage accounting, validation, bounded repair/fallback, Codex exclusion | `ModelRouter`, `ModelRosterV1`, `PreferenceChain`, `UsageLedger`, `BudgetView`, `RoutingDecision` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-memory`, `serea-task-engine`, `serea-core` | L2 |
-| `serea-capability` | P5 registry generations, manifest matching, descriptor revisions, trusted schema compiler, deterministic tool projection, proposal validation, classified arguments, immutable PreparedActionV1, typed availability and P6 handoff. P5/P6 do not invoke providers; dispatch begins at P8. | `CapabilityRegistry`, `CapabilityManifestV1`, `CapabilitySchemaCatalogV1`, `ToolDefinitionV1`, `ToolCallProposalV1`, `PreparedActionV1`, `AvailabilityOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`; P6-only authorization handoff may depend on `serea-policy` | `serea-task-engine`, `serea-core` | L2 |
+| `serea-capability` | P5 registry generations, manifest matching, descriptor revisions, trusted schema compiler, deterministic tool projection, proposal validation, classified arguments, immutable PreparedActionV1, typed availability and P6 handoff. P5/P6 do not invoke providers; dispatch begins at P8. The crate holds `PreparedActionV1` and **nothing about policy or approval**: `tests/workspace_smoke.py` forbids a `serea-capability -> serea-policy` edge, so no approval type can live here. | `CapabilityRegistry`, `CapabilityManifestV1`, `CapabilitySchemaCatalogV1`, `ToolDefinitionV1`, `ToolCallProposalV1`, `PreparedActionV1`, `AvailabilityOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus` | `serea-task-engine`, `serea-core` | L2 |
 | `serea-memory` | Working, episodic, semantic and preference memory; extraction gating on `purpose: EXTRACTION`; provenance; supersession; deletion cascade with tombstones | `MemoryStore`, `MemoryItem`, `MemoryKind`, `Provenance`, `ExtractionOutcome`, `ForgetOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-model-router` | `serea-task-engine`, `serea-core` | L3 |
 | `serea-task-engine` | `AssistantTask` lifecycle, plan construction and revision, step sequencing, leases, recovery, cancellation, retention, attempt budgets | `TaskEngine`, `TaskRecord`, `StepRecord`, `Plan`, `PlanRevision`, `RecoveryReport`, `CancellationOutcome` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-policy`, `serea-model-router`, `serea-capability`, `serea-memory` | `serea-scheduler`, `serea-core` | L3 |
 | `serea-scheduler` | Event-driven wake sources, durable schedules, recurrence evaluation, causal predicate matching, template persistence, watcher cycles, proposal generation, task admission against `max_concurrent_tasks` | `Scheduler`, `CalendarRecurrenceV1`, `CalendarRecurrenceKind`, `WakeSource`, `ScheduleRecord`, `WatcherCycle`, `ProposalDraft`, `AdmissionResult` | `serea-protocol`, `serea-storage`, `serea-event-bus`, `serea-task-engine` | `serea-core` | L3 |
@@ -211,7 +225,8 @@ implementations of a guarantee.
 | P5 registry, manifest matching, schema compiler, proposal preparation and typed handoff | `serea-capability` | [Capability Protocol §10](../protocols/01-capability-protocol.md#10-capability-registry-and-p5p6p8-boundary) |
 | `AssistantTask`, `TaskStep`, state machine, recovery, cancellation | `serea-task-engine` | [Task Protocol §2](../protocols/02-task-protocol.md#2-assistanttask), §4, §6 |
 | `ModelProvider` routing, repair ladder, usage ledger, Codex exclusion | `serea-model-router` | [Model Protocol §6](../protocols/03-model-protocol.md#6-model-routing), §7, §8 |
-| `PolicyEngine`, `PolicyDecision`, rule store | `serea-policy` | [Policy Protocol §3](../protocols/04-policy-protocol.md#3-policydecision), §5 |
+| `PolicyEngine`, `PolicyDecision`, `DenyReason`, `PolicyInputV1`, rule store | `serea-policy` | [Policy Protocol §3](../protocols/04-policy-protocol.md#3-policydecision), §5 |
+| `ApprovalRequest`, `ApprovalGrant`, `ApprovalGrantUse`, `AuthenticatedApprovalResponseV1`, `AuthorizationEvidenceV1` | `serea-policy` | [Approval Protocol §2](../protocols/05-approval-protocol.md#2-approvalrequest), §3, §5.1 |
 | P6 policy and approval/grant lifecycle and authorization | `serea-policy` | [Policy Protocol §3](../protocols/04-policy-protocol.md#3-policydecision), [Approval Protocol](../protocols/05-approval-protocol.md) |
 | `SereaEvent`, `seq`, append-only log, retention classes | `serea-event-bus` | [Event Protocol §2](../protocols/06-event-protocol.md#2-sereaevent), §5, §8 |
 | Pairing, sessions, transport, device message set, device link | `serea-core` | [Device Protocol §3](../protocols/07-device-protocol.md#3-pairing), §4, §5 |

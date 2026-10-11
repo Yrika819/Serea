@@ -61,8 +61,8 @@ fn seed_task(conn: &Connection, task_id: &str) {
 #[test]
 fn migration_catalog_preserves_v1_to_v3_and_records_amended_v4() {
     let catalog = Migrations::embedded();
-    assert_eq!(Migrations::LATEST, 4);
-    assert_eq!(catalog.len(), 4);
+    assert_eq!(Migrations::LATEST, 5);
+    assert_eq!(catalog.len(), 5);
     assert_eq!(
         (catalog[3].version, catalog[3].name),
         (4, "0004_capability_registry")
@@ -88,7 +88,7 @@ fn migration_catalog_preserves_v1_to_v3_and_records_amended_v4() {
 #[test]
 fn fresh_store_applies_schema_v4_and_keeps_new_task_generation_nullable() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(store.schema_version().unwrap(), 5);
     let conn = store.conn.lock().unwrap();
     let columns: Vec<(String, i64)> = conn
         .prepare("SELECT name, \"notnull\" FROM pragma_table_info('tasks')")
@@ -117,11 +117,11 @@ fn fresh_store_closes_and_reopens_at_schema_v4() {
     let temp = TempDb::new();
     {
         let store = Store::open(&temp.0, &FixedClock).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 4);
+        assert_eq!(store.schema_version().unwrap(), 5);
         store.verify_integrity().unwrap();
     }
     let reopened = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 4);
+    assert_eq!(reopened.schema_version().unwrap(), 5);
     reopened.verify_integrity().unwrap();
 }
 
@@ -134,7 +134,7 @@ fn existing_schema_v3_upgrades_to_v4_without_pinning_existing_tasks() {
     drop(legacy);
 
     let store = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(store.schema_version().unwrap(), 5);
     let conn = store.conn.lock().unwrap();
     let pin: Option<i64> = conn
         .query_row(

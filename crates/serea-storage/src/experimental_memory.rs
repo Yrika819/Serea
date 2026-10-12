@@ -46,6 +46,8 @@ pub struct ExperimentalMemoryConfig {
     pub max_page: usize,
     /// Candidate FTS rows per query.
     pub max_candidates: usize,
+    /// Candidate approximate SQLite virtual machine instructions per query.
+    pub max_query_vm_ops: usize,
     /// Candidate provenance record bytes per item.
     pub max_provenance_bytes: usize,
     /// Candidate tombstone bytes per item.
@@ -128,6 +130,13 @@ pub struct MemoryPage {
     pub records: Vec<MemoryRecord>,
     pub has_more: bool,
 }
+struct SearchRequest<'a> {
+    class: MemoryClass,
+    query: &'a str,
+    now: EpochMillis,
+    after: Option<&'a str>,
+    limit: usize,
+}
 /// Sealed owner context; only a deterministic unit-test authenticator can create it.
 #[derive(Debug, Clone)]
 pub struct P7ExperimentalMemory {
@@ -153,6 +162,7 @@ pub const EXPERIMENTAL_PROVISIONAL: ExperimentalMemoryConfig = ExperimentalMemor
     max_query_bytes: 256,
     max_page: 20,
     max_candidates: 1000,
+    max_query_vm_ops: 100_000,
     max_provenance_bytes: 4096,
     max_tombstone_bytes: 1024,
     deletion_reserve_bytes: 64 * 1024 * 1024,
@@ -234,12 +244,56 @@ impl P7ExperimentalMemory {
         {
             return Err(StoreError::Sqlite);
         }
-        let literal = format!("\"{}\"", query.replace('"', "\"\""));
-        store.transact(|tx| { ensure_ready(tx,&self.owner_id)?;
-            tx.inner.execute("INSERT INTO p7_memory_fts(p7_memory_fts,rank) VALUES('integrity-check',1)",[])?;
-            let mut s=tx.inner.prepare("SELECT m.memory_id,m.class_rank,m.kind,m.body,m.expires_at_ms FROM p7_memory_fts f JOIN p7_memory_items m ON m.memory_id=f.memory_id WHERE p7_memory_fts MATCH ?1 AND f.owner_id=?2 AND f.class_rank=?3 AND m.owner_id=?2 AND m.class_rank=?3 AND m.active=1 AND m.expires_at_ms>?4 AND (?5 IS NULL OR m.memory_id>?5) ORDER BY m.memory_id COLLATE BINARY LIMIT ?6")?;
-            let rows=s.query_map(params![literal,self.owner_id,class.rank(),now.get(),after,(1001_i64)],record_from_row)?;
-            let mut records=rows.collect::<Result<Vec<_>,_>>()?; let has_more=records.len()>limit; records.truncate(limit); Ok(MemoryPage{records,has_more})
+        self.search_with_vm_budget(
+            store,
+            SearchRequest {
+                class,
+                query,
+                now,
+                after,
+                limit,
+            },
+            EXPERIMENTAL_PROVISIONAL.max_query_vm_ops,
+        )
+    }
+
+    fn search_with_vm_budget(
+        &self,
+        store: &Store,
+        request: SearchRequest<'_>,
+        vm_budget: usize,
+    ) -> Result<MemoryPage, StoreError> {
+        let literal = format!("\"{}\"", request.query.replace('"', "\"\""));
+        store.transact(|tx| {
+            let check_interval = vm_budget.clamp(1, 100);
+            let intervals = vm_budget.div_ceil(check_interval);
+            let mut remaining = intervals;
+            tx.inner
+                .progress_handler(check_interval as i32, Some(move || {
+                    if remaining == 0 {
+                        true
+                    } else {
+                        remaining -= 1;
+                        false
+                    }
+                }))
+                .map_err(StoreError::from)?;
+            let result = (|| {
+                ensure_ready(tx, &self.owner_id)?;
+                tx.inner.execute("INSERT INTO p7_memory_fts(p7_memory_fts,rank) VALUES('integrity-check',1)",[])?;
+                let mut s=tx.inner.prepare("SELECT m.memory_id,m.class_rank,m.kind,m.body,m.expires_at_ms FROM p7_memory_fts f JOIN p7_memory_items m ON m.memory_id=f.memory_id WHERE p7_memory_fts MATCH ?1 AND f.owner_id=?2 AND f.class_rank=?3 AND m.owner_id=?2 AND m.class_rank=?3 AND m.active=1 AND m.expires_at_ms>?4 AND (?5 IS NULL OR m.memory_id>?5) ORDER BY m.memory_id COLLATE BINARY LIMIT ?6")?;
+                let rows=s.query_map(params![literal,self.owner_id,request.class.rank(),request.now.get(),request.after,(1001_i64)],record_from_row)?;
+                let mut records = rows.collect::<Result<Vec<_>, _>>()?;
+                let has_more = records.len() > request.limit;
+                records.truncate(request.limit);
+                Ok(MemoryPage { records, has_more })
+            })();
+            let reset = tx
+                .inner
+                .progress_handler(0, None::<fn() -> bool>)
+                .map_err(StoreError::from);
+            reset?;
+            result
         })
     }
     /// Creates one owner-local successor edge; the former row remains retained but inactive.
@@ -290,7 +344,6 @@ impl P7ExperimentalMemory {
             return Err(StoreError::Sqlite);
         }
         store.transact(|tx| { ensure_ready(tx,&self.owner_id)?;
-            tx.inner.execute("INSERT INTO p7_memory_fts(p7_memory_fts,rank) VALUES('integrity-check',1)",[])?;
             let mut s=tx.inner.prepare("SELECT memory_id,class_rank,kind,body,expires_at_ms FROM p7_memory_items WHERE owner_id=?1 AND class_rank=?2 AND active=1 AND expires_at_ms>?3 AND (?4 IS NULL OR memory_id>?4) ORDER BY memory_id COLLATE BINARY LIMIT ?5")?;
             let rows=s.query_map(params![self.owner_id,class.rank(),now.get(),after,(limit+1) as i64],record_from_row)?;
             let mut records=rows.collect::<Result<Vec<_>,_>>()?; let has_more=records.len()>limit; records.truncate(limit); Ok(MemoryPage{records,has_more})
@@ -466,6 +519,44 @@ mod tests {
         assert_eq!(
             P7ExperimentalMemory::config().status,
             ProvisionalValue::TestOnly
+        );
+        assert_eq!(P7ExperimentalMemory::config().max_query_vm_ops, 100_000);
+    }
+
+    #[test]
+    fn fts_search_stops_at_its_sqlite_vm_instruction_budget_and_clears_the_handler() {
+        let s = store();
+        let a = actor(&s, "own_00000000000000000000000000000024", 24);
+        a.insert(
+            &s,
+            &draft("bounded", "synthetic lexical content", MemoryClass::Public),
+            EpochMillis::new(1000).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            a.search_with_vm_budget(
+                &s,
+                SearchRequest {
+                    class: MemoryClass::Public,
+                    query: "synthetic",
+                    now: EpochMillis::new(1001).unwrap(),
+                    after: None,
+                    limit: 20,
+                },
+                1,
+            )
+            .is_err()
+        );
+        assert!(
+            a.search(
+                &s,
+                MemoryClass::Public,
+                "synthetic",
+                EpochMillis::new(1001).unwrap(),
+                None,
+                20,
+            )
+            .is_ok()
         );
     }
     #[test]
@@ -751,6 +842,59 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(outcomes.iter().filter(|r| r.is_ok()).count(), 1);
         drop(outcomes);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn two_file_connections_cannot_commit_opposite_supersession_edges() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let path = std::env::temp_dir().join(format!("serea-p7-cycle-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let first = Store::open(&path, &Fixed).unwrap();
+        let owner = "own_00000000000000000000000000000025";
+        let a = actor(&first, owner, 25);
+        for id in ["left", "right"] {
+            a.insert(
+                &first,
+                &draft(id, "synthetic graph node", MemoryClass::Public),
+                EpochMillis::new(1000).unwrap(),
+            )
+            .unwrap();
+        }
+        let second = Store::open(&path, &Fixed).unwrap();
+        let b = P7ExperimentalMemory::fake(owner.into(), 26);
+        let gate = Arc::new(Barrier::new(3));
+        let handles = [(first, a, "left", "right"), (second, b, "right", "left")]
+            .into_iter()
+            .map(|(store, auth, prior, successor)| {
+                let gate = gate.clone();
+                thread::spawn(move || {
+                    gate.wait();
+                    auth.supersede(&store, prior, successor, EpochMillis::new(1001).unwrap())
+                })
+            })
+            .collect::<Vec<_>>();
+        gate.wait();
+        let outcomes = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Vec<_>>();
+        let successes = outcomes.iter().filter(|result| result.is_ok()).count();
+        assert_eq!(successes, 1);
+        let verify = Store::open(&path, &Fixed).unwrap();
+        let (edges, active): (i64, i64) = verify
+            .transact(|tx| {
+                Ok(tx.inner.query_row(
+                    "SELECT (SELECT count(*) FROM p7_supersession_edges WHERE owner_id=?1),(SELECT active_items FROM p7_resource_accounting WHERE owner_id=?1)",
+                    [owner],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?)
+            })
+            .unwrap();
+        assert_eq!((edges, active), (1, 1));
+        drop(verify);
         let _ = std::fs::remove_file(path);
     }
 

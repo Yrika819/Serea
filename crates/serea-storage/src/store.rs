@@ -151,6 +151,29 @@ impl Store {
         self.conn.lock().map_err(|_| StoreError::LockPoisoned)
     }
 
+    /// Executes an experimental P7 query while SQLite itself rejects writes.
+    /// The flag is restored on ordinary errors and Rust unwinding.
+    #[cfg(all(feature = "p7-experimental", test))]
+    pub(crate) fn p7_read_only<T>(
+        &self,
+        body: impl FnOnce(&Connection) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let conn = self.connection()?;
+        conn.pragma_update(None, "query_only", "ON")?;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&conn)));
+        let restored = conn.pragma_update(None, "query_only", "OFF");
+        match outcome {
+            Ok(result) => {
+                restored?;
+                result
+            }
+            Err(payload) => {
+                let _ = restored;
+                std::panic::resume_unwind(payload)
+            }
+        }
+    }
+
     /// Validates the applied migration prefix and returns its latest version.
     pub fn schema_version(&self) -> Result<u32, StoreError> {
         let conn = self.connection()?;

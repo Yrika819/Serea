@@ -85,8 +85,8 @@ CREATE TABLE p7_memory_provenance (
   CHECK (metadata_bytes + length(CAST(source_id AS BLOB)) + coalesce(length(CAST(source_task_id AS BLOB)),0) <= 4096)
 ) STRICT;
 CREATE TRIGGER p7_provenance_class_check BEFORE INSERT ON p7_memory_provenance
-WHEN NEW.source_class_rank < (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.memory_id AND owner_id=NEW.owner_id)
-BEGIN SELECT RAISE(ABORT, 'P7 provenance class weaker than Memory'); END;
+WHEN NEW.source_class_rank > (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.memory_id AND owner_id=NEW.owner_id)
+BEGIN SELECT RAISE(ABORT, 'P7 Memory below provenance classification'); END;
 CREATE TRIGGER p7_provenance_immutable_update BEFORE UPDATE ON p7_memory_provenance
 BEGIN SELECT RAISE(ABORT, 'P7 provenance is immutable'); END;
 CREATE TRIGGER p7_provenance_immutable_delete BEFORE DELETE ON p7_memory_provenance
@@ -132,11 +132,11 @@ CREATE TABLE p7_memory_blob_refs (
   FOREIGN KEY(digest, data_class_rank) REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT
 ) STRICT;
 CREATE TRIGGER p7_memory_blob_class_check BEFORE INSERT ON p7_memory_blob_refs
-WHEN NEW.data_class_rank < (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.memory_id AND owner_id=NEW.owner_id)
-BEGIN SELECT RAISE(ABORT, 'P7 Blob reference cannot lower classification'); END;
+WHEN NEW.data_class_rank > (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.memory_id AND owner_id=NEW.owner_id)
+BEGIN SELECT RAISE(ABORT, 'P7 Memory below Blob classification'); END;
 CREATE TRIGGER p7_memory_blob_class_check_update BEFORE UPDATE ON p7_memory_blob_refs
-WHEN NEW.data_class_rank < (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.memory_id AND owner_id=NEW.owner_id)
-BEGIN SELECT RAISE(ABORT, 'P7 Blob reference cannot lower classification'); END;
+WHEN NEW.data_class_rank > (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.memory_id AND owner_id=NEW.owner_id)
+BEGIN SELECT RAISE(ABORT, 'P7 Memory below Blob classification'); END;
 
 CREATE VIEW p7_memory_search_content AS
   SELECT rowid, memory_id, owner_id, class_rank, body FROM p7_memory_items WHERE active=1;
@@ -146,11 +146,12 @@ CREATE VIRTUAL TABLE p7_memory_fts USING fts5(
 );
 CREATE TRIGGER p7_memory_fts_insert AFTER INSERT ON p7_memory_items WHEN NEW.active=1
 BEGIN INSERT INTO p7_memory_fts(rowid,memory_id,owner_id,class_rank,body) VALUES(NEW.rowid,NEW.memory_id,NEW.owner_id,NEW.class_rank,NEW.body); END;
-CREATE TRIGGER p7_memory_fts_delete AFTER DELETE ON p7_memory_items
+CREATE TRIGGER p7_memory_fts_delete AFTER DELETE ON p7_memory_items WHEN OLD.active=1
 BEGIN INSERT INTO p7_memory_fts(p7_memory_fts,rowid,memory_id,owner_id,class_rank,body) VALUES('delete',OLD.rowid,OLD.memory_id,OLD.owner_id,OLD.class_rank,OLD.body); END;
 CREATE TRIGGER p7_memory_fts_update AFTER UPDATE OF body,active,class_rank,owner_id ON p7_memory_items
 BEGIN
-  INSERT INTO p7_memory_fts(p7_memory_fts,rowid,memory_id,owner_id,class_rank,body) VALUES('delete',OLD.rowid,OLD.memory_id,OLD.owner_id,OLD.class_rank,OLD.body);
+  INSERT INTO p7_memory_fts(p7_memory_fts,rowid,memory_id,owner_id,class_rank,body)
+    SELECT 'delete',OLD.rowid,OLD.memory_id,OLD.owner_id,OLD.class_rank,OLD.body WHERE OLD.active=1;
   INSERT INTO p7_memory_fts(rowid,memory_id,owner_id,class_rank,body)
     SELECT NEW.rowid,NEW.memory_id,NEW.owner_id,NEW.class_rank,NEW.body WHERE NEW.active=1;
 END;
@@ -212,9 +213,9 @@ BEGIN
 END;
 CREATE TRIGGER p7_memory_account_delete AFTER DELETE ON p7_memory_items
 BEGIN
-  UPDATE p7_resource_accounting SET active_items=active_items-1,retained_items=retained_items-1,
-    active_body_bytes=active_body_bytes-length(CAST(OLD.body AS BLOB)),
-    logical_fts_bytes=logical_fts_bytes-length(CAST(OLD.body AS BLOB)) WHERE owner_id=OLD.owner_id;
+  UPDATE p7_resource_accounting SET active_items=active_items-OLD.active,retained_items=retained_items-1,
+    active_body_bytes=active_body_bytes-OLD.active*length(CAST(OLD.body AS BLOB)),
+    logical_fts_bytes=logical_fts_bytes-OLD.active*length(CAST(OLD.body AS BLOB)) WHERE owner_id=OLD.owner_id;
 END;
 CREATE TRIGGER p7_memory_owner_body_immutable BEFORE UPDATE OF owner_id,class_rank,kind,body,created_at_ms,expires_at_ms,renewals ON p7_memory_items
 BEGIN SELECT RAISE(ABORT, 'P7 memory identity, classification, content, and retention are immutable'); END;

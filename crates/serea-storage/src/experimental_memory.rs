@@ -1,6 +1,7 @@
 //! Disabled-by-default synthetic P7 Memory prototype. Feature builds are
 //! development-only and optimized builds reject the feature.
 use crate::{Store, StoreError, Tx};
+use rusqlite::Connection;
 use rusqlite::{OptionalExtension, params};
 use serea_protocol::EpochMillis;
 
@@ -216,7 +217,8 @@ impl P7ExperimentalMemory {
                     )
                 })
                 .is_none_or(|n| n > 4096)
-            || draft.provenance.source_class.rank() < draft.class.rank()
+            // Derived Memory inherits the maximum class of its sources.
+            || draft.provenance.source_class.rank() > draft.class.rank()
         {
             return Err(StoreError::Sqlite);
         }
@@ -260,6 +262,18 @@ impl P7ExperimentalMemory {
         )
     }
 
+    /// Explicit maintenance check; ordinary search never mutates or verifies the index.
+    pub fn verify_fts_integrity(&self, store: &Store) -> Result<(), StoreError> {
+        store.transact(|tx| {
+            ensure_ready(tx, &self.owner_id)?;
+            tx.inner.execute(
+                "INSERT INTO p7_memory_fts(p7_memory_fts,rank) VALUES('integrity-check',1)",
+                [],
+            )?;
+            Ok(())
+        })
+    }
+
     fn search_with_vm_budget(
         &self,
         store: &Store,
@@ -267,36 +281,16 @@ impl P7ExperimentalMemory {
         vm_budget: usize,
     ) -> Result<MemoryPage, StoreError> {
         let literal = format!("\"{}\"", request.query.replace('"', "\"\""));
-        store.transact(|tx| {
-            let check_interval = vm_budget.clamp(1, 100);
-            let intervals = vm_budget.div_ceil(check_interval);
-            let mut remaining = intervals;
-            tx.inner
-                .progress_handler(check_interval as i32, Some(move || {
-                    if remaining == 0 {
-                        true
-                    } else {
-                        remaining -= 1;
-                        false
-                    }
-                }))
-                .map_err(StoreError::from)?;
-            let result = (|| {
-                ensure_ready(tx, &self.owner_id)?;
-                tx.inner.execute("INSERT INTO p7_memory_fts(p7_memory_fts,rank) VALUES('integrity-check',1)",[])?;
-                let mut s=tx.inner.prepare("SELECT m.memory_id,m.class_rank,m.kind,m.body,m.expires_at_ms FROM p7_memory_fts f JOIN p7_memory_items m ON m.memory_id=f.memory_id WHERE p7_memory_fts MATCH ?1 AND f.owner_id=?2 AND f.class_rank=?3 AND m.owner_id=?2 AND m.class_rank=?3 AND m.active=1 AND m.expires_at_ms>?4 AND (?5 IS NULL OR m.memory_id>?5) ORDER BY m.memory_id COLLATE BINARY LIMIT ?6")?;
-                let rows=s.query_map(params![literal,self.owner_id,request.class.rank(),request.now.get(),request.after,(1001_i64)],record_from_row)?;
+        store.p7_read_only(|conn| {
+            with_vm_budget(conn, vm_budget, || {
+                ensure_ready_conn(conn, &self.owner_id)?;
+                let mut s=conn.prepare("SELECT m.memory_id,m.class_rank,m.kind,m.body,m.expires_at_ms FROM p7_memory_fts f JOIN p7_memory_items m ON m.memory_id=f.memory_id WHERE p7_memory_fts MATCH ?1 AND f.owner_id=?2 AND f.class_rank=?3 AND m.owner_id=?2 AND m.class_rank=?3 AND m.active=1 AND m.expires_at_ms>?4 AND (?5 IS NULL OR m.memory_id>?5) ORDER BY m.memory_id COLLATE BINARY LIMIT ?6")?;
+                let rows=s.query_map(params![literal,self.owner_id,request.class.rank(),request.now.get(),request.after,1001_i64],record_from_row)?;
                 let mut records = rows.collect::<Result<Vec<_>, _>>()?;
                 let has_more = records.len() > request.limit;
                 records.truncate(request.limit);
                 Ok(MemoryPage { records, has_more })
-            })();
-            let reset = tx
-                .inner
-                .progress_handler(0, None::<fn() -> bool>)
-                .map_err(StoreError::from);
-            reset?;
-            result
+            })
         })
     }
     /// Creates one owner-local successor edge; the former row remains retained but inactive.
@@ -362,6 +356,52 @@ fn ensure_ready(tx: &mut Tx<'_>, owner: &str) -> Result<(), StoreError> {
         Ok(())
     } else {
         Err(StoreError::Sqlite)
+    }
+}
+fn ensure_ready_conn(conn: &Connection, owner: &str) -> Result<(), StoreError> {
+    let state: Option<(String, String)> = conn.query_row(
+        "SELECT o.state,l.read_state FROM p7_owners o JOIN p7_ledger_state l USING(owner_id) WHERE owner_id=?1",
+        [owner], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).optional()?;
+    if state
+        .as_ref()
+        .is_some_and(|(owner_state, read_state)| owner_state == "ACTIVE" && read_state == "READY")
+    {
+        Ok(())
+    } else {
+        Err(StoreError::Sqlite)
+    }
+}
+fn with_vm_budget<T>(
+    conn: &Connection,
+    vm_budget: usize,
+    body: impl FnOnce() -> Result<T, StoreError>,
+) -> Result<T, StoreError> {
+    let check_interval = vm_budget.clamp(1, 100);
+    let intervals = vm_budget.div_ceil(check_interval);
+    let mut remaining = intervals;
+    conn.progress_handler(
+        check_interval as i32,
+        Some(move || {
+            if remaining == 0 {
+                true
+            } else {
+                remaining -= 1;
+                false
+            }
+        }),
+    )?;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    let reset = conn.progress_handler(0, None::<fn() -> bool>);
+    match outcome {
+        Ok(result) => {
+            reset?;
+            result
+        }
+        Err(payload) => {
+            let _ = reset;
+            std::panic::resume_unwind(payload)
+        }
     }
 }
 fn record_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRecord> {
@@ -524,6 +564,51 @@ mod tests {
             ProvisionalValue::TestOnly
         );
         assert_eq!(P7ExperimentalMemory::config().max_query_vm_ops, 10_000_000);
+    }
+
+    #[test]
+    fn provenance_class_inheritance_rejects_downgrade_and_accepts_safe_raise() {
+        let s = store();
+        let a = actor(&s, "own_00000000000000000000000000000028", 28);
+
+        let mut personal_source_to_public = draft(
+            "personal-source-public-memory",
+            "synthetic",
+            MemoryClass::Public,
+        );
+        personal_source_to_public.provenance.source_class = MemoryClass::Personal;
+        assert!(
+            a.insert(
+                &s,
+                &personal_source_to_public,
+                EpochMillis::new(1000).unwrap()
+            )
+            .is_err()
+        );
+
+        let mut public_source_to_personal = draft(
+            "public-source-personal-memory",
+            "synthetic",
+            MemoryClass::Personal,
+        );
+        public_source_to_personal.provenance.source_class = MemoryClass::Public;
+        a.insert(
+            &s,
+            &public_source_to_personal,
+            EpochMillis::new(1000).unwrap(),
+        )
+        .unwrap();
+
+        let mut public_to_public = draft("public-same-class", "synthetic", MemoryClass::Public);
+        public_to_public.provenance.source_class = MemoryClass::Public;
+        a.insert(&s, &public_to_public, EpochMillis::new(1000).unwrap())
+            .unwrap();
+
+        let mut personal_to_personal =
+            draft("personal-same-class", "synthetic", MemoryClass::Personal);
+        personal_to_personal.provenance.source_class = MemoryClass::Personal;
+        a.insert(&s, &personal_to_personal, EpochMillis::new(1000).unwrap())
+            .unwrap();
     }
 
     #[test]
@@ -852,7 +937,60 @@ mod tests {
                 None,
                 20
             )
+            .unwrap()
+            .records
+            .is_empty()
+        );
+        assert!(a.verify_fts_integrity(&s).is_err());
+    }
+
+    #[test]
+    fn ordinary_search_is_sqlite_read_only_and_vm_handler_clears_during_unwind() {
+        let s = store();
+        let a = actor(&s, "own_00000000000000000000000000000031", 31);
+        a.insert(
+            &s,
+            &draft("read-only", "synthetic token", MemoryClass::Public),
+            EpochMillis::new(1000).unwrap(),
+        )
+        .unwrap();
+        a.search(
+            &s,
+            MemoryClass::Public,
+            "synthetic",
+            EpochMillis::new(1001).unwrap(),
+            None,
+            20,
+        )
+        .unwrap();
+        assert!(
+            s.p7_read_only(|conn| {
+                conn.execute("UPDATE p7_ledger_state SET read_state='QUARANTINED'", [])?;
+                Ok(())
+            })
             .is_err()
+        );
+        let query_only: i64 = s
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("PRAGMA query_only", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(query_only, 0);
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: Result<(), StoreError> =
+                with_vm_budget(&conn, 10, || panic!("controlled budget unwind"));
+        }));
+        assert!(panic.is_err());
+        conn.execute("CREATE TABLE after_unwind(value INTEGER)", [])
+            .unwrap();
+        conn.execute("INSERT INTO after_unwind VALUES(1)", [])
+            .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT value FROM after_unwind", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
         );
     }
 

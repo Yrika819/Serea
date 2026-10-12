@@ -1130,7 +1130,8 @@ fn apply_simulated_write_fault(
         Some(SimulatedWriteFault::Short) => {
             file.write_all(&encoded[..encoded.len() / 2])
                 .map_err(|_| LedgerError::Io)?;
-            file.sync_all().map_err(|_| LedgerError::Io)
+            file.sync_all().map_err(|_| LedgerError::Io)?;
+            Err(LedgerError::Io)
         }
         None => Ok(()),
     }

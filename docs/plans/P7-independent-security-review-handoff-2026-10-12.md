@@ -6,7 +6,9 @@
 
 Pre-change live refs were verified on 2026-10-12: `main=f70f34c1f683df1b175b612ba100ce6bb6979811`; PR #12 `865dcadad1750f6ba8f4928eb44a29cfa97f2f4c`; #13 `56c008e7a0c582c1b099ef9a809834884a1b245d`; #14 `cb4df7178a4dc74b124006c4bf2c020cd626aa5e`; #15 `49ffe5653c0b54dc2cc723b78110bad5d9288464`, based on `p7/implementation-synthetic-prototype`. All four PRs were OPEN/DRAFT. PR #14 remains the independent canonical P5 fix.
 
-At pre-change PR #15 HEAD, GitHub reported Fast CI run `38254091229`, Full CI `38254091248`, and SQLite portability `38254091462` as completed/success. These runs validate only `49ffe565…`. Final commit refs and CI must be recorded here after the campaign commit is pushed and all new runs complete; no earlier green run is evidence for later code.
+The campaign implementation was validated at PR #15 HEAD `82bbcc8d8ee2d6a3f6a3cbcf0b2b4e6eb2975822` (OPEN/DRAFT, base `p7/implementation-synthetic-prototype`). At that exact SHA, Fast CI run `38262743495`, Full CI run `38262743484`, and Cross-architecture SQLite portability run `38262743463` completed successfully. Full CI jobs: Linux stable `114857699289`, macOS Intel `114857699582`, macOS arm64 `114857699626`, Linux Rust 1.85 `114857699688`, Windows Gate C `114857699849`. SQLite portability jobs `114857149985`, `114857150496`, `114858134901`, and `114859034230` all passed, including both cross-architecture reopen directions. Fast CI covered workspace smoke, identity, docs, formatting, metadata, and workspace check.
+
+The first Windows run on `5bcbb7046555c2633e15e02cddc208b54a08b445` passed Gate C/process tests and correctly rejected the optimized feature, but its expected nonzero compiler status leaked through the PowerShell action and marked the job failed. The workflow now explicitly exits successfully after verifying that rejection. The corrected Windows job passed at `82bbcc8…`. This was a CI harness defect; it did not change product code. The final evidence-package documentation commit receives fresh CI runs, which are reported with the final PR #15 HEAD.
 
 ## Threat model and host boundary
 
@@ -69,9 +71,10 @@ Observed on the campaign run: ledger append through 64/256/512 frames took 75/1,
 
 | Platform | Evidence expected on final campaign HEAD | Status |
 |---|---|---|
-| Linux x86_64 | Rust 1.85 focused/all workspace tests, child process termination, Unix symlink/path tests, CI Fast/Full | locally exercised; final CI pending |
-| macOS arm64 and Intel | existing Full CI all-feature test suites; SQLite cross-architecture portability workflow | pre-campaign PR HEAD green; final campaign HEAD pending |
-| Windows | new narrow Full CI job on Rust 1.85: Gate C unit suite, SQLite WAL/reopen, process lock and lock release after termination, optimized-feature exclusion | workflow added; runner result pending |
+| Linux x86_64 | Rust 1.85 focused/all workspace tests, child process termination, Unix symlink/path tests, CI Fast/Full | PASS locally and in Full CI `38262743484`; stable Clippy `-D warnings` PASS |
+| macOS arm64 | Full CI all-feature and P2H crash/fault suites; SQLite cross-architecture reopen | PASS in Full CI job `114857699626`; portability run `38262743463` |
+| macOS Intel x86_64 | Full CI all-feature and P2H crash/fault suites; SQLite cross-architecture reopen | PASS in Full CI job `114857699582`; portability run `38262743463` |
+| Windows | Rust 1.85 Gate C unit suite, SQLite WAL/reopen, process lock/release after termination, optimized feature isolation and exclusion | PASS in Full CI job `114857699849` |
 
 Unix parent-directory sync is not asserted on Windows. Windows checkpoint create semantics use `create_new` immutable revisions; directory-entry durability is unsupported. Symlink tests that require Unix APIs are cfg-gated; CI privilege denial is NOT classified as a code failure. No platform proves physical power-loss durability.
 
@@ -120,7 +123,9 @@ Expected raw migration SHA-256 values at the campaign base:
 | `0007_policy_revision_sealing.sql` | `48f2f1805d59f4eec215963ac5109007294a0dfe015b9a4b4e7e69c14f9197eb` |
 | `0008_approval_lifecycle_routing.sql` | `6e1520bf22ced832ed480a1cf26476e056611f22b1f517f2324b32a8d4fbf925` |
 
-The migration hash output must match these values; no migration 0001–0008 edits are permitted. Current campaign completion requires the final PR #15 ref and all applicable GitHub workflows to be green. Until that evidence exists, status is **PENDING**, not review-ready.
+The migration hash output must match these values; no migration 0001–0008 edits are permitted. At implementation ref `82bbcc8d8ee2d6a3f6a3cbcf0b2b4e6eb2975822`, Fast CI, Full CI, and SQLite portability are PASS. The evidence-package documentation commit is validated again on its own final PR #15 ref; see the final campaign report for those exact run IDs and outcomes.
+
+Campaign exit state: **P7_GATE_C_PRE_INDEPENDENT_SECURITY_REVIEW_READY** once the documentation-only evidence commit's Fast CI, Full CI, and SQLite portability are all PASS. This state means the synthetic pre-independent-review evidence package is ready for an external reviewer. It is not an independent review, production authorization, merge authorization, or feature enablement.
 
 ## Explicit production blockers
 
@@ -128,6 +133,6 @@ The migration hash output must match these values; no migration 0001–0008 edit
 - Production Owner authentication, immutable Task admission, and reviewed production Storage/TaskEngine extraction contract are NOT IMPLEMENTED.
 - Production key custody, rotation/recovery authority, and independently surviving rollback authority are NOT IMPLEMENTED.
 - A fully local rollback remains undetectable; backup/restore/sync are disabled.
-- macOS/Windows production adapter semantics and physical durability are NOT TESTED. Windows Gate C CI result is pending.
+- macOS/Windows production adapter semantics, whole-host rollback protection, and physical durability are NOT TESTED. Synthetic Windows Gate C CI behavior is PASS; Unix parent-directory sync is unsupported on Windows.
 - Real personal data, model context, provider/account, OS secrets, physical deletion reserve, and physical secure erase are outside this campaign and unauthorized.
 - P8 is unauthorized. PR #15 must remain Draft and unmerged; no production feature activation is authorized by this review exit.

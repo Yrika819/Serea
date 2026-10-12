@@ -276,6 +276,9 @@ impl SyntheticKeyring {
 
     pub fn rotate_synthetic(&mut self, version: u16, seed: &[u8]) -> Result<(), LedgerError> {
         let next = Self::synthetic(version, seed)?;
+        if self.0.contains_key(&version) {
+            return Err(LedgerError::Invalid);
+        }
         self.0.extend(next.0);
         Ok(())
     }
@@ -615,6 +618,23 @@ pub fn append_sync(
     keys: &SyntheticKeyring,
 ) -> Result<(), LedgerError> {
     let encoded = encode(frame, keys)?;
+    let mut existing = Vec::new();
+    if path.exists() {
+        File::open(path)
+            .map_err(|_| LedgerError::Io)?
+            .take((MAX_FRAME_BYTES as u64 * 10_001) + 1)
+            .read_to_end(&mut existing)
+            .map_err(|_| LedgerError::Io)?;
+        if existing.len() > MAX_FRAME_BYTES * 10_001 {
+            return Err(LedgerError::TooLarge);
+        }
+    }
+    let records = verify_stream(&existing, keys)?;
+    if frame.sequence != records.len() as u64 + 1 {
+        return Err(LedgerError::Sequence);
+    }
+    existing.extend_from_slice(&encoded);
+    verify_stream(&existing, keys)?;
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -843,6 +863,10 @@ mod tests {
         let first = encode(&frame(1, 1, 1, FrameKind::Intent), &keys).unwrap();
         let applied = encode(&frame(2, 1, 1, FrameKind::PrimaryApplied), &keys).unwrap();
         keys.rotate_synthetic(2, b"new-synthetic").unwrap();
+        assert_eq!(
+            keys.rotate_synthetic(2, b"replacement-must-refuse"),
+            Err(LedgerError::Invalid)
+        );
         let second = encode(&frame(3, 1, 2, FrameKind::Finalized), &keys).unwrap();
         let reconciled = encode(&frame(4, 2, 2, FrameKind::Reconciled), &keys).unwrap();
         assert_eq!(
@@ -873,6 +897,10 @@ mod tests {
         append_sync(&path, &frame(3, 1, 1, FrameKind::Finalized), &keys).unwrap();
         append_sync(&path, &frame(4, 2, 1, FrameKind::Reconciled), &keys).unwrap();
         assert_eq!(read_verified(&path, &keys).unwrap().len(), 4);
+        assert_eq!(
+            append_sync(&path, &frame(4, 2, 1, FrameKind::Reconciled), &keys),
+            Err(LedgerError::Sequence)
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

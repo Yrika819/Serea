@@ -5,6 +5,7 @@ use crate::{Store, StoreError};
 use rusqlite::params;
 use serea_protocol::{Clock, EpochMillis, ProtocolError};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -138,7 +139,11 @@ impl Ledger {
     }
 }
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
 }
 
 fn seed(path: &Path) -> Store {

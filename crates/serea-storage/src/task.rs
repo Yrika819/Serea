@@ -1002,16 +1002,36 @@ pub(crate) fn sweep_blob_candidates(
     conn: &Connection,
     candidates: &[BlobCandidate],
 ) -> Result<u64, StoreError> {
+    // P7 is an isolated v9 fixture and is absent from ordinary v8 stores.
+    // Detect the capability once, then use the exact class-bound relation in
+    // the same SQLite transaction as the caller's reference mutations.
+    let p7_memory_refs: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='p7_memory_blob_refs')",
+        [],
+        |row| row.get(0),
+    )?;
     let mut removed = 0;
     for (digest, rank) in candidates {
-        removed+=u64::try_from(conn.execute("DELETE FROM blobs WHERE digest=?1 AND data_class_rank=?2
+        let sql = if p7_memory_refs {
+            "DELETE FROM blobs WHERE digest=?1 AND data_class_rank=?2
             AND NOT EXISTS(SELECT 1 FROM task_blob_refs WHERE digest=?1 AND data_class_rank=?2)
             AND NOT EXISTS(SELECT 1 FROM step_blob_refs WHERE digest=?1 AND data_class_rank=?2)
             AND NOT EXISTS(SELECT 1 FROM plan_revisions WHERE plan_digest=?1 AND data_class_rank=?2)
             AND NOT EXISTS(SELECT 1 FROM schedules WHERE template_digest=?1 AND template_data_class_rank=?2)
             AND NOT EXISTS(SELECT 1 FROM schedule_occurrences WHERE template_digest=?1 AND template_data_class_rank=?2)
-            AND NOT EXISTS(SELECT 1 FROM model_call_attempts WHERE response_blob_digest=?1 AND response_data_class_rank=?2)",params![digest,rank])?)
-            .map_err(|_|StoreError::Sqlite)?;
+            AND NOT EXISTS(SELECT 1 FROM model_call_attempts WHERE response_blob_digest=?1 AND response_data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM p7_memory_blob_refs WHERE digest=?1 AND data_class_rank=?2)"
+        } else {
+            "DELETE FROM blobs WHERE digest=?1 AND data_class_rank=?2
+            AND NOT EXISTS(SELECT 1 FROM task_blob_refs WHERE digest=?1 AND data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM step_blob_refs WHERE digest=?1 AND data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM plan_revisions WHERE plan_digest=?1 AND data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM schedules WHERE template_digest=?1 AND template_data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM schedule_occurrences WHERE template_digest=?1 AND template_data_class_rank=?2)
+            AND NOT EXISTS(SELECT 1 FROM model_call_attempts WHERE response_blob_digest=?1 AND response_data_class_rank=?2)"
+        };
+        removed += u64::try_from(conn.execute(sql, params![digest, rank])?)
+            .map_err(|_| StoreError::Sqlite)?;
     }
     Ok(removed)
 }

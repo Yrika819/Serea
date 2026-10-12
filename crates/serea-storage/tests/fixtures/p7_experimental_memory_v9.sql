@@ -58,7 +58,7 @@ CREATE TABLE p7_resource_accounting (
 ) STRICT;
 
 CREATE TABLE p7_memory_items (
-  memory_id TEXT PRIMARY KEY CHECK (length(memory_id) BETWEEN 1 AND 128),
+  memory_id TEXT NOT NULL CHECK (length(memory_id) BETWEEN 1 AND 128),
   owner_id TEXT NOT NULL REFERENCES p7_owners(owner_id) ON DELETE RESTRICT,
   class_rank INTEGER NOT NULL CHECK (class_rank IN (0,1)),
   kind TEXT NOT NULL CHECK (kind IN ('WORKING','EPISODIC','SEMANTIC','PREFERENCE')),
@@ -67,6 +67,7 @@ CREATE TABLE p7_memory_items (
   expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms BETWEEN -62167219200000 AND 253402300799999),
   renewals INTEGER NOT NULL DEFAULT 0 CHECK (renewals BETWEEN 0 AND 2),
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+  PRIMARY KEY(owner_id, memory_id),
   UNIQUE(memory_id, owner_id),
   CHECK (expires_at_ms > created_at_ms)
 ) STRICT;
@@ -74,13 +75,14 @@ CREATE INDEX p7_memory_owner_expiry ON p7_memory_items(owner_id, active, expires
 CREATE INDEX p7_memory_owner_class ON p7_memory_items(owner_id, class_rank, active, memory_id);
 
 CREATE TABLE p7_memory_provenance (
-  memory_id TEXT PRIMARY KEY,
+  memory_id TEXT NOT NULL,
   owner_id TEXT NOT NULL,
   source_id TEXT NOT NULL CHECK (length(CAST(source_id AS BLOB)) BETWEEN 1 AND 1024),
   source_task_id TEXT,
   source_class_rank INTEGER NOT NULL CHECK (source_class_rank IN (0,1)),
   metadata_bytes INTEGER NOT NULL CHECK (metadata_bytes BETWEEN 0 AND 4096),
   recorded_at_ms INTEGER NOT NULL CHECK (recorded_at_ms BETWEEN -62167219200000 AND 253402300799999),
+  PRIMARY KEY(owner_id,memory_id),
   FOREIGN KEY(memory_id, owner_id) REFERENCES p7_memory_items(memory_id, owner_id) ON DELETE CASCADE,
   CHECK (metadata_bytes + length(CAST(source_id AS BLOB)) + coalesce(length(CAST(source_task_id AS BLOB)),0) <= 4096)
 ) STRICT;
@@ -159,7 +161,7 @@ CREATE TABLE p7_memory_blob_refs (
   owner_id TEXT NOT NULL,
   digest TEXT NOT NULL,
   data_class_rank INTEGER NOT NULL CHECK (data_class_rank IN (0,1)),
-  PRIMARY KEY(memory_id, digest, data_class_rank),
+  PRIMARY KEY(owner_id, memory_id, digest, data_class_rank),
   FOREIGN KEY(memory_id, owner_id) REFERENCES p7_memory_items(memory_id, owner_id) ON DELETE CASCADE,
   FOREIGN KEY(digest, data_class_rank) REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT
 ) STRICT;
@@ -229,6 +231,8 @@ CREATE TABLE p7_ledger_state (
 -- transaction as item/provenance/FTS insertion. The limits are provisional test bounds.
 CREATE TRIGGER p7_memory_admission BEFORE INSERT ON p7_memory_items
 BEGIN
+  SELECT CASE WHEN EXISTS(SELECT 1 FROM p7_memory_tombstones WHERE owner_id=NEW.owner_id AND memory_id=NEW.memory_id)
+    THEN RAISE(ABORT, 'P7 forgotten Memory ID is permanently retired') END;
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM p7_resource_accounting WHERE owner_id=NEW.owner_id)
     THEN RAISE(ABORT, 'P7 quota row missing') END;
   SELECT CASE WHEN (SELECT retained_items FROM p7_resource_accounting WHERE owner_id=NEW.owner_id) >= 1000

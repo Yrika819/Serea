@@ -574,7 +574,8 @@ impl SyntheticCoordinator {
         if state.1 != ids.len() || state.0 != 0 || db_generation != checkpoint_generation {
             return Err(LedgerError::Stale);
         }
-        self.apply_closure(op, intent_generation, ids)?;
+        let blob_candidates = self.blob_candidates(ids)?;
+        self.apply_closure(op, intent_generation, ids, &blob_candidates)?;
         Ok(())
     }
 
@@ -741,25 +742,15 @@ impl SyntheticCoordinator {
         if closure.is_empty() || closure.len() > 1000 {
             return Err(LedgerError::TooLarge);
         }
+        // Resolve and bound GC candidates before writing intent so a reference
+        // fanout refusal cannot strand a pending Forget.
+        let blob_candidates = self.blob_candidates(&closure)?;
         let encoded_ids = encode_ids(&closure)?;
         let closure_digest: [u8; 32] = Sha256::digest(&encoded_ids).into();
         let generation = old_generation
             .checked_add(1)
             .ok_or(LedgerError::Generation)?;
         let reconciliation_generation = generation.checked_add(1).ok_or(LedgerError::Generation)?;
-
-        // Close the database read/extraction gate before writing an intent. If a
-        // later step fails, the durable DB bit remains denied on reopen.
-        self.store
-            .transact(|tx| {
-                tx.inner.execute(
-                    "UPDATE p7_ledger_state SET read_state='QUARANTINED',pending_operation_id=?2,pending_generation=?3 WHERE owner_id=?1",
-                    params![self.owner.as_str(), op, reconciliation_generation as i64],
-                )?;
-                Ok(())
-            })
-            .map_err(|_| LedgerError::Io)?;
-        crash_at("before-intent");
 
         let chunk_count = encoded_ids
             .len()
@@ -768,9 +759,11 @@ impl SyntheticCoordinator {
             return Err(LedgerError::TooLarge);
         }
         let target_count = u16::try_from(closure.len()).map_err(|_| LedgerError::TooLarge)?;
-        let mut sequence = frames.len() as u64;
-        let mut intent = frame(
-            sequence + 1,
+        let mut sequence = frames.last().map_or(0, |record| record.sequence);
+        let mut records = Vec::with_capacity(4 + chunk_count);
+        sequence = sequence.checked_add(1).ok_or(LedgerError::Sequence)?;
+        records.push(frame(
+            sequence,
             generation,
             target_count,
             chunk_count as u16,
@@ -779,16 +772,14 @@ impl SyntheticCoordinator {
             op,
             FrameKind::Intent,
             requested_digest.to_vec(),
-        );
-        sequence += 1;
-        guard.append_sync(&intent, &self.keys)?;
-        crash_at("after-intent");
+        ));
         for (index, bytes) in encoded_ids
             .chunks(crate::p7_gate_c::MAX_PAYLOAD_BYTES)
             .enumerate()
         {
+            sequence = sequence.checked_add(1).ok_or(LedgerError::Sequence)?;
             let chunk = frame(
-                sequence + 1,
+                sequence,
                 generation,
                 target_count,
                 chunk_count as u16,
@@ -800,17 +791,12 @@ impl SyntheticCoordinator {
             );
             let mut chunk = chunk;
             chunk.chunk_index = index as u16;
-            sequence += 1;
-            guard.append_sync(&chunk, &self.keys)?;
-            crash_at("after-chunk");
+            records.push(chunk);
         }
-        intent.payload.clear();
-
-        self.apply_closure(op, generation, &closure)?;
-        crash_at("after-primary-commit");
         for kind in [FrameKind::PrimaryApplied, FrameKind::Finalized] {
-            let record = frame(
-                sequence + 1,
+            sequence = sequence.checked_add(1).ok_or(LedgerError::Sequence)?;
+            records.push(frame(
+                sequence,
                 generation,
                 target_count,
                 chunk_count as u16,
@@ -819,17 +805,11 @@ impl SyntheticCoordinator {
                 op,
                 kind,
                 Vec::new(),
-            );
-            sequence += 1;
-            guard.append_sync(&record, &self.keys)?;
-            crash_at(if kind == FrameKind::PrimaryApplied {
-                "after-primary-record"
-            } else {
-                "after-finalized"
-            });
+            ));
         }
-        let reconciled = frame(
-            sequence + 1,
+        sequence = sequence.checked_add(1).ok_or(LedgerError::Sequence)?;
+        records.push(frame(
+            sequence,
             reconciliation_generation,
             target_count,
             chunk_count as u16,
@@ -838,9 +818,79 @@ impl SyntheticCoordinator {
             op,
             FrameKind::Reconciled,
             Vec::new(),
-        );
-        guard.append_sync(&reconciled, &self.keys)?;
-        crash_at("after-reconciled");
+        ));
+
+        // The namespace lock is still held. Authenticate the current stream,
+        // compute every real encoded frame size, and reserve the checkpoint
+        // revision before any durable Forget transition is started.
+        let encoded_records = guard.ensure_append_capacity(&records, &self.keys)?;
+        let mut checkpoint_store = self.checkpoint.lock().map_err(|_| LedgerError::Io)?;
+        checkpoint_store.refresh(&self.keys)?;
+        let checkpoint_revision = checkpoint_store
+            .current()
+            .revision
+            .checked_add(1)
+            .ok_or(LedgerError::Generation)?;
+        if checkpoint_revision > crate::p7_gate_c::MAX_CHECKPOINT_REVISIONS as u64 {
+            return Err(LedgerError::TooLarge);
+        }
+        let mut projected_stream = guard.read_bytes()?;
+        for bytes in &encoded_records {
+            projected_stream
+                .len()
+                .checked_add(bytes.len())
+                .filter(|length| *length <= crate::p7_gate_c::MAX_LEDGER_BYTES)
+                .ok_or(LedgerError::TooLarge)?;
+            projected_stream.extend_from_slice(bytes);
+        }
+        let terminal = records.last().ok_or(LedgerError::Invalid)?;
+        let projected_checkpoint = TrustedLedgerCheckpoint {
+            revision: checkpoint_revision,
+            owner: self.owner.clone(),
+            owner_epoch: OWNER_EPOCH,
+            key_version: terminal.key_version,
+            final_sequence: terminal.sequence,
+            generation: reconciliation_generation,
+            stream_digest: Sha256::digest(&projected_stream).into(),
+        };
+        if crate::p7_gate_c::checkpoint_bytes(&projected_checkpoint, &self.keys)?.len()
+            > crate::p7_gate_c::MAX_CHECKPOINT_BYTES as usize
+        {
+            return Err(LedgerError::TooLarge);
+        }
+        drop(checkpoint_store);
+        crash_at("before-intent");
+
+        guard.append_sync(&records[0], &self.keys)?;
+        crash_at("after-intent");
+        for (chunk_index, record) in records.iter().enumerate().take(1 + chunk_count).skip(1) {
+            guard.append_sync(record, &self.keys)?;
+            if chunk_index < chunk_count {
+                crash_at("after-chunk");
+            }
+        }
+        self.store.transact(|tx| {
+            let updated = tx.inner.execute(
+                "UPDATE p7_ledger_state SET read_state='QUARANTINED',pending_operation_id=?2,pending_generation=?3 WHERE owner_id=?1 AND generation=?4 AND read_state='READY' AND pending_operation_id IS NULL",
+                params![self.owner.as_str(),op,reconciliation_generation as i64,old_generation as i64],
+            )?;
+            if updated != 1 { return Err(StoreError::Sqlite); }
+            Ok(())
+        }).map_err(|_| LedgerError::Io)?;
+        crash_at("after-complete-intent");
+
+        self.apply_closure(op, generation, &closure, &blob_candidates)?;
+        crash_at("after-primary-commit");
+        for record in records.iter().skip(1 + chunk_count) {
+            guard.append_sync(record, &self.keys)?;
+            crash_at(if record.kind == FrameKind::PrimaryApplied {
+                "after-primary-record"
+            } else if record.kind == FrameKind::Finalized {
+                "after-finalized"
+            } else {
+                "after-reconciled"
+            });
+        }
         let bytes = guard.read_bytes()?;
         let latest = guard.read_verified(&self.keys)?;
         let checkpoint = TrustedLedgerCheckpoint {
@@ -904,7 +954,36 @@ impl SyntheticCoordinator {
         }).map_err(|_| LedgerError::Invalid)
     }
 
-    fn apply_closure(&self, op: &str, generation: u64, ids: &[String]) -> Result<(), LedgerError> {
+    fn blob_candidates(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<crate::task::BlobCandidate>, LedgerError> {
+        self.store
+            .transact(|tx| {
+                let ids_json = serde_json::to_string(ids).map_err(|_| StoreError::Sqlite)?;
+                let mut statement = tx.inner.prepare(
+                    "SELECT DISTINCT digest,data_class_rank FROM p7_memory_blob_refs WHERE owner_id=?1 AND memory_id IN (SELECT value FROM json_each(?2)) ORDER BY digest,data_class_rank LIMIT 1001",
+                )?;
+                let candidates = statement
+                    .query_map(params![self.owner.as_str(), ids_json], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, u8>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                if candidates.len() > 1000 {
+                    return Err(StoreError::Sqlite);
+                }
+                Ok(candidates)
+            })
+            .map_err(|_| LedgerError::TooLarge)
+    }
+
+    fn apply_closure(
+        &self,
+        op: &str,
+        generation: u64,
+        ids: &[String],
+        blob_candidates: &[crate::task::BlobCandidate],
+    ) -> Result<(), LedgerError> {
         self.store.transact(|tx| {
             for id in ids {
                 tx.inner.execute("INSERT INTO p7_memory_tombstones(owner_id,memory_id,forget_op_id,ledger_generation,forgotten_at_ms) VALUES(?1,?2,?3,?4,10100)", params![self.owner.as_str(), id, op, generation as i64])?;
@@ -912,7 +991,10 @@ impl SyntheticCoordinator {
             crash_at("during-primary-transaction");
             tx.inner.execute("DELETE FROM p7_memory_lineage WHERE owner_id=?1 AND (parent_memory_id IN (SELECT memory_id FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2) OR derived_memory_id IN (SELECT memory_id FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2))", params![self.owner.as_str(), op])?;
             tx.inner.execute("DELETE FROM p7_memory_blob_refs WHERE owner_id=?1 AND memory_id IN (SELECT memory_id FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2)", params![self.owner.as_str(), op])?;
+            crash_at("after-memory-blob-ref-removal");
             tx.inner.execute("DELETE FROM p7_memory_items WHERE owner_id=?1 AND memory_id IN (SELECT memory_id FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2)", params![self.owner.as_str(), op])?;
+            crate::task::sweep_blob_candidates(&tx.inner, blob_candidates)?;
+            crash_at("after-blob-candidates-swept");
             tx.inner.execute("UPDATE p7_ledger_state SET generation=?2,read_state='QUARANTINED' WHERE owner_id=?1", params![self.owner.as_str(), generation as i64])?;
             Ok(())
         }).map_err(|_| LedgerError::Io)
@@ -1206,6 +1288,610 @@ fn file_backed_memory_forget_reconciles_full_lineage_and_blocks_stale_ledger() {
 }
 
 #[test]
+fn p7_ir01_forgotten_memory_id_cannot_be_reinserted() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("retired-id", "synthetic original"))
+        .unwrap();
+    assert_eq!(
+        gate.forget(&auth(91), "retire-id", &["retired-id"])
+            .unwrap(),
+        ForgetStatus::Completed
+    );
+    let reinsert = gate
+        .insert(&draft("retired-id", "synthetic replacement"))
+        .unwrap_err();
+    assert_eq!(reinsert, LedgerError::Invalid);
+    let direct = gate.store.transact(|tx| {
+        tx.inner.execute(
+            "INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES('retired-id',?1,0,'WORKING','synthetic direct write',10000,1000000)",
+            [OWNER],
+        )?;
+        Ok(())
+    });
+    assert!(
+        direct.is_err(),
+        "fixture trigger must reject writes bypassing the API"
+    );
+    assert_eq!(
+        gate.forget(&auth(94), "retire-id", &["retired-id"])
+            .unwrap(),
+        ForgetStatus::AlreadyCompleted
+    );
+    let before: (i64,i64,i64) = gate.store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT active_items,active_body_bytes,logical_fts_bytes FROM p7_resource_accounting WHERE owner_id=?1",
+        [OWNER], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?)).unwrap();
+    let denied = gate.forget(&auth(95), "new-op-for-retired-id", &["retired-id"]);
+    assert!(
+        denied.is_err(),
+        "a fresh operation cannot create intent for a retired ID"
+    );
+    let after: (i64,i64,i64) = gate.store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT active_items,active_body_bytes,logical_fts_bytes FROM p7_resource_accounting WHERE owner_id=?1",
+        [OWNER], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?)).unwrap();
+    assert_eq!(after, before);
+    gate.verify_fts_integrity().unwrap();
+    drop(gate);
+    let reopened =
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .unwrap();
+    assert!(
+        reopened
+            .insert(&draft("retired-id", "synthetic after restart"))
+            .is_err()
+    );
+}
+
+#[test]
+fn p7_ir02_capacity_refusal_does_not_quarantine_before_intent() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("capacity-root", "synthetic capacity probe"))
+        .unwrap();
+    drop(gate);
+    // Fill the append-only fixture ledger until its first one-item Forget refusal.
+    let mut gate =
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .unwrap();
+    let mut refused = false;
+    for index in 0..400 {
+        let id = format!("capacity-{index:03}");
+        gate.insert(&draft(&id, "synthetic fill")).unwrap();
+        let before: (String, Option<String>, i64) = gate.store.transact(|tx| Ok(tx.inner.query_row(
+            "SELECT read_state,pending_operation_id,generation FROM p7_ledger_state WHERE owner_id=?1",
+            [OWNER], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?)).unwrap();
+        if gate
+            .forget(&auth(1), &format!("capacity-op-{index:03}"), &[&id])
+            .is_err()
+        {
+            let after: (String, Option<String>, i64) = gate.store.transact(|tx| Ok(tx.inner.query_row(
+                "SELECT read_state,pending_operation_id,generation FROM p7_ledger_state WHERE owner_id=?1",
+                [OWNER], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?)).unwrap();
+            assert_eq!(
+                after, before,
+                "pre-admission refusal must preserve READY state and generation"
+            );
+            refused = true;
+            break;
+        }
+        gate =
+            SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+                .unwrap();
+    }
+    assert!(refused, "finite ledger must eventually refuse Forget");
+}
+
+#[test]
+fn p7_ir02_checkpoint_exhaustion_refuses_before_quarantine_or_intent() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft(
+        "checkpoint-capacity-root",
+        "synthetic checkpoint probe",
+    ))
+    .unwrap();
+    let mut checkpoint = gate.checkpoint.lock().unwrap().current().clone();
+    for revision in 2..=crate::p7_gate_c::MAX_CHECKPOINT_REVISIONS as u64 {
+        checkpoint.revision = revision;
+        let bytes = crate::p7_gate_c::checkpoint_bytes(&checkpoint, &gate.keys).unwrap();
+        fs::write(
+            scratch
+                .checkpoint()
+                .join(format!("checkpoint-{revision:020}.bin")),
+            bytes,
+        )
+        .unwrap();
+    }
+    let before = gate.store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT read_state,pending_operation_id,generation FROM p7_ledger_state WHERE owner_id=?1",
+        [OWNER], |row| Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?)))?)).unwrap();
+    assert!(
+        gate.forget(
+            &auth(98),
+            "checkpoint-capacity-refused",
+            &["checkpoint-capacity-root"]
+        )
+        .is_err()
+    );
+    let after = gate.store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT read_state,pending_operation_id,generation FROM p7_ledger_state WHERE owner_id=?1",
+        [OWNER], |row| Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?)))?)).unwrap();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn p7_ir03_forget_collects_an_exclusive_memory_blob() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("blob-owner", "synthetic blob memory"))
+        .unwrap();
+    let blob = gate
+        .store
+        .transact(|tx| {
+            tx.put_blob(
+                b"\"synthetic blob bytes\"",
+                serea_protocol::DataClass::Public,
+            )
+        })
+        .unwrap();
+    gate.store.transact(|tx| {
+        tx.inner.execute(
+            "INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('blob-owner',?1,?2,?3)",
+            params![OWNER, blob.digest().as_str(), serea_protocol::DataClass::Public.rank()],
+        )?;
+        Ok(())
+    }).unwrap();
+    assert_eq!(
+        gate.forget(&auth(92), "forget-blob", &["blob-owner"])
+            .unwrap(),
+        ForgetStatus::Completed
+    );
+    let blob_count: i64 = gate
+        .store
+        .transact(|tx| {
+            Ok(tx.inner.query_row(
+                "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=?2",
+                params![
+                    blob.digest().as_str(),
+                    serea_protocol::DataClass::Public.rank()
+                ],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(
+        blob_count, 0,
+        "exclusive forgotten Memory Blob should be collected"
+    );
+}
+
+#[test]
+fn p7_ir03_same_digest_different_class_ranks_are_gc_candidates_separately() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    let mut memory = draft("ranked-blob-memory", "synthetic classified blob");
+    memory.class = MemoryClass::Personal;
+    memory.provenance.source_class = MemoryClass::Personal;
+    gate.insert(&memory).unwrap();
+    let (public, personal) = gate.store.transact(|tx| {
+        let public = tx.put_blob(b"\"same bytes\"", serea_protocol::DataClass::Public)?;
+        let personal = tx.put_blob(b"\"same bytes\"", serea_protocol::DataClass::Personal)?;
+        tx.inner.execute("INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('ranked-blob-memory',?1,?2,0)",params![OWNER,public.digest().as_str()])?;
+        tx.inner.execute("INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('ranked-blob-memory',?1,?2,1)",params![OWNER,personal.digest().as_str()])?;
+        Ok((public,personal))
+    }).unwrap();
+    assert_eq!(public.digest(), personal.digest());
+    assert_ne!(
+        serea_protocol::DataClass::Public.rank(),
+        serea_protocol::DataClass::Personal.rank()
+    );
+    gate.forget(&auth(101), "forget-ranked-blob", &["ranked-blob-memory"])
+        .unwrap();
+    let remaining: i64 = gate
+        .store
+        .transact(|tx| {
+            Ok(tx.inner.query_row(
+                "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank IN (0,1)",
+                [public.digest().as_str()],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[test]
+fn p7_ir03_shared_memory_blob_survives_until_last_reference_is_forgotten() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("blob-first", "synthetic first memory"))
+        .unwrap();
+    gate.insert(&draft("blob-second", "synthetic second memory"))
+        .unwrap();
+    let blob = gate
+        .store
+        .transact(|tx| {
+            tx.put_blob(
+                b"\"shared synthetic bytes\"",
+                serea_protocol::DataClass::Public,
+            )
+        })
+        .unwrap();
+    gate.store.transact(|tx| {
+        for memory_id in ["blob-first", "blob-second"] {
+            tx.inner.execute(
+                "INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES(?1,?2,?3,?4)",
+                params![memory_id,OWNER,blob.digest().as_str(),serea_protocol::DataClass::Public.rank()],
+            )?;
+        }
+        Ok(())
+    }).unwrap();
+    gate.forget(&auth(96), "forget-first", &["blob-first"])
+        .unwrap();
+    let count = |gate: &SyntheticCoordinator| {
+        gate.store
+            .transact(|tx| {
+                Ok(tx.inner.query_row(
+                    "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=?2",
+                    params![
+                        blob.digest().as_str(),
+                        serea_protocol::DataClass::Public.rank()
+                    ],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        count(&gate),
+        1,
+        "second Memory reference protects the shared Blob"
+    );
+    gate.forget(&auth(97), "forget-second", &["blob-second"])
+        .unwrap();
+    assert_eq!(
+        count(&gate),
+        0,
+        "last reference removal makes the Blob collectible"
+    );
+}
+
+#[test]
+fn p7_ir03_task_reference_protects_blob_until_task_reference_is_removed() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("memory-task-shared", "synthetic task shared blob"))
+        .unwrap();
+    let task_id = "tsk_00000000000000000000000061";
+    let blob = gate.store.transact(|tx| {
+        tx.inner.execute(
+            "INSERT INTO tasks(task_id,kind,title,state,origin_kind,data_class_rank,policy_class_rank,created_at_ms,updated_at_ms,max_model_calls,max_tool_calls,max_attempts_per_step) VALUES(?1,'MAINTENANCE','synthetic','EXECUTING','SYSTEM',0,0,0,0,1,0,0)",
+            [task_id],
+        )?;
+        tx.inner.execute("INSERT INTO p7_task_owner_bindings(task_id,owner_id,admitted_at_ms) VALUES(?1,?2,0)",params![task_id,OWNER])?;
+        let blob = tx.put_blob(b"\"task shared bytes\"", serea_protocol::DataClass::Public)?;
+        tx.inner.execute("INSERT INTO task_blob_refs(task_id,role,digest,data_class_rank) VALUES(?1,'PLAN',?2,0)",params![task_id,blob.digest().as_str()])?;
+        Ok(blob)
+    }).unwrap();
+    assert_eq!(
+        gate.forget(
+            &auth(99),
+            "forget-memory-task-shared",
+            &["memory-task-shared"]
+        )
+        .unwrap(),
+        ForgetStatus::Completed
+    );
+    let candidates = gate
+        .store
+        .transact(|tx| {
+            crate::task::task_blob_candidates(
+                &tx.inner,
+                &serea_protocol::TaskId::new(task_id).unwrap(),
+            )
+        })
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    let count = |gate: &SyntheticCoordinator| {
+        gate.store
+            .transact(|tx| {
+                Ok(tx.inner.query_row(
+                    "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=0",
+                    [blob.digest().as_str()],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap()
+    };
+    assert_eq!(count(&gate), 1);
+    gate.store
+        .transact(|tx| {
+            tx.inner
+                .execute("DELETE FROM task_blob_refs WHERE task_id=?1", [task_id])?;
+            crate::task::sweep_blob_candidates(&tx.inner, &candidates)?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(count(&gate), 0);
+}
+
+#[test]
+fn p7_ir03_schedule_and_occurrence_references_protect_blob() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft(
+        "memory-schedule-shared",
+        "synthetic schedule shared blob",
+    ))
+    .unwrap();
+    let schedule_id = "sch_00000000000000000000000071";
+    let event_id = "evt_00000000000000000000000071";
+    let blob = gate.store.transact(|tx| {
+        let blob = tx.put_blob(b"\"schedule shared bytes\"",serea_protocol::DataClass::Public)?;
+        tx.inner.execute(
+            "INSERT INTO schedules(schedule_id,owner_kind,owner_id,state,revision,trigger_kind,template_digest,template_data_class_rank,policy_class_rank,approval_policy_json,missed_policy,created_at_ms,updated_at_ms) VALUES(?1,'HOST','synthetic-owner','ACTIVE',1,'DEVICE_SESSION_ESTABLISHED',?2,0,0,'{}','SKIP',0,0)",
+            params![schedule_id,blob.digest().as_str()],
+        )?;
+        tx.inner.execute(
+            "INSERT INTO schedule_occurrences(schedule_id,occurrence_key,schedule_revision,trigger_kind,source_event_id,source_event_data_class_rank,state,lease_generation,template_digest,template_data_class_rank,created_at_ms,updated_at_ms) VALUES(?1,'occurrence-1',1,'DEVICE_SESSION_ESTABLISHED',?2,0,'PENDING',0,?3,0,0,0)",
+            params![schedule_id,event_id,blob.digest().as_str()],
+        )?;
+        tx.inner.execute("INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('memory-schedule-shared',?1,?2,0)",params![OWNER,blob.digest().as_str()])?;
+        Ok(blob)
+    }).unwrap();
+    assert_eq!(
+        gate.forget(
+            &auth(102),
+            "forget-schedule-shared",
+            &["memory-schedule-shared"]
+        )
+        .unwrap(),
+        ForgetStatus::Completed
+    );
+    let candidate = vec![(
+        blob.digest().as_str().to_owned(),
+        serea_protocol::DataClass::Public.rank(),
+    )];
+    let count = |gate: &SyntheticCoordinator| {
+        gate.store
+            .transact(|tx| {
+                Ok(tx.inner.query_row(
+                    "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=0",
+                    [blob.digest().as_str()],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap()
+    };
+    assert_eq!(count(&gate), 1);
+    gate.store
+        .transact(|tx| {
+            tx.inner.execute(
+                "DELETE FROM schedule_occurrences WHERE schedule_id=?1",
+                [schedule_id],
+            )?;
+            crate::task::sweep_blob_candidates(&tx.inner, &candidate)?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        count(&gate),
+        1,
+        "Schedule template alone still references Blob"
+    );
+    gate.store
+        .transact(|tx| {
+            tx.inner
+                .execute("DELETE FROM schedules WHERE schedule_id=?1", [schedule_id])?;
+            crate::task::sweep_blob_candidates(&tx.inner, &candidate)?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(count(&gate), 0);
+}
+
+#[test]
+fn p7_ir03_model_call_response_reference_protects_blob() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("memory-model-shared", "synthetic model shared blob"))
+        .unwrap();
+    let request = serea_protocol::RequestId::new("req_00000000000000000000000071").unwrap();
+    let model_call = crate::ModelCallAttemptDraft {
+        request_id: request.clone(),
+        task_id: None,
+        purpose: serea_protocol::ModelPurpose::Chat,
+        model_id: serea_protocol::ModelId::new("synthetic-model").unwrap(),
+        provider_id: serea_protocol::ProviderId::new("synthetic_provider").unwrap(),
+        deployment_class: crate::ModelDeploymentClass::Local,
+        data_class: serea_protocol::DataClass::Public,
+        relation_kind: crate::ModelAttemptRelationKind::None,
+        parent_request_id: None,
+        fallback_from_model_id: None,
+        price: crate::ModelPriceSnapshot::new(
+            serea_protocol::CostClass::Free,
+            "synthetic-v1",
+            0,
+            0,
+        ),
+        max_context_tokens: 128,
+        effective_max_output_tokens: 32,
+        dispatch_intent_at: EpochMillis::new(10_000).unwrap(),
+    };
+    gate.store
+        .reserve_model_call(model_call, crate::UsdMicros::new(0).unwrap())
+        .unwrap();
+    gate.store
+        .complete_model_call(
+            &request,
+            crate::ModelCallCompletion {
+                input_tokens: serea_protocol::TokenCount::new(1),
+                output_tokens: serea_protocol::TokenCount::new(1),
+                latency_ms: 1,
+                repair_attempts: 0,
+                finish_reason: serea_protocol::FinishReason::Stop,
+                recorded_at: EpochMillis::new(10_001).unwrap(),
+                accepted_response: crate::ModelResponseStorage {
+                    canonical_json: b"\"synthetic model response\"".to_vec(),
+                    data_class: serea_protocol::DataClass::Public,
+                },
+            },
+        )
+        .unwrap();
+    let (digest,rank):(String,u8) = gate.store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT response_blob_digest,response_data_class_rank FROM model_call_attempts WHERE request_id=?1",
+        [request.as_str()],|row|Ok((row.get(0)?,row.get(1)?)))?)).unwrap();
+    gate.store.transact(|tx| {
+        tx.inner.execute("INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('memory-model-shared',?1,?2,?3)",params![OWNER,digest,rank])?;
+        Ok(())
+    }).unwrap();
+    assert_eq!(
+        gate.forget(&auth(103), "forget-model-shared", &["memory-model-shared"])
+            .unwrap(),
+        ForgetStatus::Completed
+    );
+    let count = |gate: &SyntheticCoordinator| {
+        gate.store
+            .transact(|tx| {
+                Ok(tx.inner.query_row(
+                    "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=?2",
+                    params![digest, rank],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .unwrap()
+    };
+    assert_eq!(count(&gate), 1);
+    gate.store
+        .transact(|tx| {
+            tx.inner.execute(
+                "DELETE FROM model_call_attempts WHERE request_id=?1",
+                [request.as_str()],
+            )?;
+            crate::task::sweep_blob_candidates(&tx.inner, &[(digest.clone(), rank)])?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(count(&gate), 0);
+}
+
+#[test]
+fn p7_ir03_gc_candidate_bound_refuses_before_forget_intent() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("gc-bound-memory", "synthetic bounded gc"))
+        .unwrap();
+    gate.store.transact(|tx| {
+        for index in 0..=1000 {
+            let content = format!("\"candidate-{index:04}\"");
+            let blob = tx.put_blob(content.as_bytes(), serea_protocol::DataClass::Public)?;
+            tx.inner.execute(
+                "INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('gc-bound-memory',?1,?2,0)",
+                params![OWNER,blob.digest().as_str()],
+            )?;
+        }
+        Ok(())
+    }).unwrap();
+    let state = gate.store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT read_state,pending_operation_id,generation FROM p7_ledger_state WHERE owner_id=?1",
+        [OWNER],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?)))?)).unwrap();
+    let frames = LedgerFileGuard::acquire_existing(scratch.ledger())
+        .unwrap()
+        .read_verified(&gate.keys)
+        .unwrap()
+        .len();
+    assert!(
+        gate.forget(
+            &auth(100),
+            "gc-candidate-bound-refused",
+            &["gc-bound-memory"]
+        )
+        .is_err()
+    );
+    let after = gate.store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT read_state,pending_operation_id,generation FROM p7_ledger_state WHERE owner_id=?1",
+        [OWNER],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,i64>(2)?)))?)).unwrap();
+    let frames_after = LedgerFileGuard::acquire_existing(scratch.ledger())
+        .unwrap()
+        .read_verified(&gate.keys)
+        .unwrap()
+        .len();
+    assert_eq!(after, state);
+    assert_eq!(
+        frames_after, frames,
+        "bounded cleanup refusal must not create a Forget intent"
+    );
+}
+
+#[test]
+fn p7_ir03_crash_during_memory_blob_gc_replays_cleanup_after_reopen() {
+    for point in [
+        "after-memory-blob-ref-removal",
+        "after-blob-candidates-swept",
+    ] {
+        let scratch = Scratch::new();
+        let gate =
+            SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+                .unwrap();
+        gate.insert(&draft("gc-crash-memory", "synthetic gc restart"))
+            .unwrap();
+        let blob = gate
+            .store
+            .transact(|tx| {
+                tx.put_blob(
+                    b"\"synthetic gc crash bytes\"",
+                    serea_protocol::DataClass::Public,
+                )
+            })
+            .unwrap();
+        gate.store.transact(|tx| {
+            tx.inner.execute(
+                "INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('gc-crash-memory',?1,?2,?3)",
+                params![OWNER,blob.digest().as_str(),serea_protocol::DataClass::Public.rank()],
+            )?;
+            Ok(())
+        }).unwrap();
+        drop(gate);
+        let status = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+            .arg("--nocapture")
+            .env("SEREA_P7_CRASH_DB", scratch.db())
+            .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+            .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+            .env("SEREA_P7_CRASH_ROOT", "gc-crash-memory")
+            .env("SEREA_P7_CRASH_OP", "gc-crash-op")
+            .env("SEREA_P7_CRASH_AT", point)
+            .status().unwrap();
+        assert_eq!(status.code(), Some(73), "child did not crash at {point}");
+        let reopened =
+            SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+                .unwrap();
+        assert!(!reopened.get("gc-crash-memory").unwrap());
+        reopened.verify_fts_integrity().unwrap();
+        let (blobs,refs):(i64,i64) = reopened.store.transact(|tx| Ok((
+            tx.inner.query_row("SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=?2",params![blob.digest().as_str(),serea_protocol::DataClass::Public.rank()],|row|row.get(0))?,
+            tx.inner.query_row("SELECT count(*) FROM p7_memory_blob_refs WHERE memory_id='gc-crash-memory'",[],|row|row.get(0))?,
+        ))) .unwrap();
+        assert_eq!(
+            (blobs, refs),
+            (0, 0),
+            "replay must finish atomic reference removal and Blob GC"
+        );
+    }
+}
+
+#[test]
 fn incomplete_authenticated_intent_is_not_replayed_or_reopened() {
     let scratch = Scratch::new();
     let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -1268,11 +1954,12 @@ fn integrated_forget_crash_child_entry() {
 #[test]
 fn child_termination_after_durable_intent_keeps_reopened_memory_denied() {
     let cases = [
-        ("before-intent", false),
         ("after-intent", false),
         ("during-ledger-append", false),
-        ("after-chunk", true),
+        ("after-complete-intent", true),
         ("during-primary-transaction", true),
+        ("after-memory-blob-ref-removal", true),
+        ("after-blob-candidates-swept", true),
         ("after-primary-commit", true),
         ("after-primary-record", true),
         ("after-finalized", true),
@@ -1327,6 +2014,37 @@ fn child_termination_after_durable_intent_keeps_reopened_memory_denied() {
 }
 
 #[test]
+fn crash_before_intent_leaves_ready_generation_and_memory_unchanged() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("pre-intent-root", "synthetic remains available"))
+        .unwrap();
+    drop(gate);
+    let status = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("--nocapture")
+        .env("SEREA_P7_CRASH_DB", scratch.db())
+        .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+        .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+        .env("SEREA_P7_CRASH_ROOT", "pre-intent-root")
+        .env("SEREA_P7_CRASH_AT", "before-intent")
+        .status().unwrap();
+    assert_eq!(status.code(), Some(73));
+    let reopened =
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .unwrap();
+    assert!(reopened.get("pre-intent-root").unwrap());
+    assert_eq!(reopened.generation().unwrap(), 0);
+    let frames = LedgerFileGuard::acquire_existing(scratch.ledger())
+        .unwrap()
+        .read_verified(&reopened.keys)
+        .unwrap();
+    assert!(frames.is_empty());
+}
+
+#[test]
 fn recovery_itself_is_idempotent_across_process_termination() {
     let scratch = Scratch::new();
     let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -1346,7 +2064,7 @@ fn recovery_itself_is_idempotent_across_process_termination() {
             .env("SEREA_P7_CRASH_AT", point);
         command.status().unwrap().code()
     };
-    assert_eq!(run_child("after-chunk"), Some(73));
+    assert_eq!(run_child("after-complete-intent"), Some(73));
     assert_eq!(run_child("replay-after-primary-commit"), Some(73));
     let reopened =
         SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())

@@ -21,7 +21,7 @@ pub const MAX_PAYLOAD_BYTES: usize = 768;
 pub const MAX_LEDGER_FRAMES: usize = 1_024;
 pub const MAX_LEDGER_BYTES: usize = MAX_FRAME_BYTES * MAX_LEDGER_FRAMES;
 pub const MAX_CHECKPOINT_REVISIONS: usize = 1_024;
-const MAX_CHECKPOINT_BYTES: u64 = 256;
+pub(crate) const MAX_CHECKPOINT_BYTES: u64 = 256;
 /// Provisional closure bounds inherited from the recommendation, not Owner-approved limits.
 pub const PROVISIONAL_MAX_CLOSURE_TARGETS: u16 = 1_000;
 pub const PROVISIONAL_MAX_CLOSURE_CHUNKS: u16 = 500;
@@ -510,7 +510,7 @@ fn crash_during_ledger_append(_file: &mut &File, _bytes: &[u8]) -> Result<(), Le
     Ok(())
 }
 
-fn checkpoint_bytes(
+pub(crate) fn checkpoint_bytes(
     checkpoint: &TrustedLedgerCheckpoint,
     keys: &SyntheticKeyring,
 ) -> Result<Vec<u8>, LedgerError> {
@@ -819,7 +819,7 @@ fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), LedgerError> {
     Ok(())
 }
 
-fn encode(frame: &LedgerFrame, keys: &SyntheticKeyring) -> Result<Vec<u8>, LedgerError> {
+pub(crate) fn encode(frame: &LedgerFrame, keys: &SyntheticKeyring) -> Result<Vec<u8>, LedgerError> {
     if frame.sequence == 0
         || frame.generation == 0
         || frame.operation_id.is_empty()
@@ -1189,6 +1189,53 @@ impl LedgerFileGuard {
     /// Acquire an existing ledger without recreating a missing authority file.
     pub fn acquire_existing(ledger_path: impl AsRef<Path>) -> Result<Self, LedgerError> {
         Self::acquire_inner(ledger_path.as_ref(), false)
+    }
+
+    /// Reserve logical capacity for an exact encoded record set while this
+    /// guard retains the namespace's cross-process writer lock.
+    #[cfg(test)]
+    pub(crate) fn ensure_append_capacity(
+        &self,
+        records: &[LedgerFrame],
+        keys: &SyntheticKeyring,
+    ) -> Result<Vec<Vec<u8>>, LedgerError> {
+        let ledger_file = self.ledger_file.lock().map_err(|_| LedgerError::Io)?;
+        let current_len = ledger_file.metadata().map_err(|_| LedgerError::Io)?.len();
+        if current_len > MAX_LEDGER_BYTES as u64 {
+            return Err(LedgerError::TooLarge);
+        }
+        let mut file = &*ledger_file;
+        file.seek(SeekFrom::Start(0)).map_err(|_| LedgerError::Io)?;
+        let mut existing = Vec::new();
+        file.take(MAX_LEDGER_BYTES as u64 + 1)
+            .read_to_end(&mut existing)
+            .map_err(|_| LedgerError::Io)?;
+        if existing.len() > MAX_LEDGER_BYTES {
+            return Err(LedgerError::TooLarge);
+        }
+        let authenticated = verify_stream(&existing, keys)?;
+        let mut sequence = authenticated.last().map_or(0, |frame| frame.sequence);
+        let mut total_bytes = u64::try_from(existing.len()).map_err(|_| LedgerError::TooLarge)?;
+        let mut encoded_records = Vec::with_capacity(records.len());
+        for record in records {
+            sequence = sequence.checked_add(1).ok_or(LedgerError::Sequence)?;
+            if record.sequence != sequence {
+                return Err(LedgerError::Sequence);
+            }
+            let encoded = encode(record, keys)?;
+            total_bytes = total_bytes
+                .checked_add(u64::try_from(encoded.len()).map_err(|_| LedgerError::TooLarge)?)
+                .ok_or(LedgerError::TooLarge)?;
+            encoded_records.push(encoded);
+        }
+        let final_frames = authenticated
+            .len()
+            .checked_add(encoded_records.len())
+            .ok_or(LedgerError::TooLarge)?;
+        if final_frames > MAX_LEDGER_FRAMES || total_bytes > MAX_LEDGER_BYTES as u64 {
+            return Err(LedgerError::TooLarge);
+        }
+        Ok(encoded_records)
     }
 
     fn acquire_inner(ledger_path: &Path, create: bool) -> Result<Self, LedgerError> {

@@ -5,6 +5,7 @@ use crate::{
     ModelDeploymentClass, ModelFailureUsage, ModelPriceSnapshot, ModelResponseStorage, Store,
     StoreError, UsdMicros, UtcAccountingDay,
 };
+use rusqlite::params;
 use serea_protocol::{
     Clock, CostClass, DataClass, EpochMillis, FinishReason, ModelId, ModelPurpose, ProtocolError,
     ProviderId, RequestId, TaskId, TokenCount,
@@ -95,6 +96,59 @@ fn delete_task_with_blob_sweep(store: &Store) {
             Ok(())
         })
         .unwrap();
+}
+
+#[test]
+fn task_blob_sweep_is_v8_safe_and_preserves_a_p7_memory_reference() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    insert_task(&store);
+    let task_blob = store
+        .transact(|tx| tx.put_blob(b"\"task payload\"", DataClass::Public))
+        .unwrap();
+    store.transact(|tx| {
+        tx.inner.execute(
+            "INSERT INTO task_blob_refs(task_id,role,digest,data_class_rank) VALUES(?1,'PLAN',?2,0)",
+            params![task_id().as_str(),task_blob.digest().as_str()],
+        )?;
+        let candidates = crate::task::task_blob_candidates(&tx.inner, &task_id())?;
+        let has_p7: bool = tx.inner.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='p7_memory_blob_refs')",
+            [], |row| row.get(0),
+        )?;
+        let owner = "own_00000000000000000000000000000091";
+        if has_p7 {
+            tx.inner.execute("INSERT INTO p7_owners VALUES(?1,91,'ACTIVE',0)",[owner])?;
+            tx.inner.execute("INSERT INTO p7_resource_accounting(owner_id) VALUES(?1)",[owner])?;
+            tx.inner.execute("INSERT INTO p7_ledger_state(owner_id,read_state) VALUES(?1,'READY')",[owner])?;
+            tx.inner.execute("INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES('synthetic-memory',?1,0,'WORKING','synthetic',1,1000000)",[owner])?;
+        } else {
+            tx.inner.execute_batch("CREATE TABLE p7_memory_blob_refs(memory_id TEXT NOT NULL,owner_id TEXT NOT NULL,digest TEXT NOT NULL,data_class_rank INTEGER NOT NULL,PRIMARY KEY(owner_id,memory_id,digest,data_class_rank)) STRICT;")?;
+        }
+        tx.inner.execute(
+            "INSERT INTO p7_memory_blob_refs VALUES('synthetic-memory',?1,?2,0)",
+            params![owner,task_blob.digest().as_str()],
+        )?;
+        tx.inner.execute("DELETE FROM task_blob_refs WHERE task_id=?1", [task_id().as_str()])?;
+        crate::task::sweep_blob_candidates(&tx.inner, &candidates)?;
+        let present: i64 = tx.inner.query_row(
+            "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=0",
+            [task_blob.digest().as_str()], |row| row.get(0),
+        )?;
+        assert_eq!(present, 1, "P7 Memory relation must protect the shared Blob");
+        tx.inner.execute("DELETE FROM p7_memory_blob_refs", [])?;
+        crate::task::sweep_blob_candidates(&tx.inner, &candidates)?;
+        Ok(())
+    }).unwrap();
+    let absent: i64 = store
+        .transact(|tx| {
+            Ok(tx.inner.query_row(
+                "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=0",
+                [task_blob.digest().as_str()],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(absent, 0);
 }
 
 #[test]

@@ -15,6 +15,11 @@ use std::path::Path;
 
 pub const MAX_FRAME_BYTES: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 768;
+/// Provisional closure bounds inherited from the recommendation, not Owner-approved limits.
+pub const PROVISIONAL_MAX_CLOSURE_TARGETS: u16 = 1_000;
+pub const PROVISIONAL_MAX_CLOSURE_CHUNKS: u16 = 500;
+pub const PROVISIONAL_MAX_CLOSURE_BYTES: usize =
+    PROVISIONAL_MAX_CLOSURE_CHUNKS as usize * MAX_PAYLOAD_BYTES;
 const MAGIC: &[u8; 4] = b"S7LG";
 const FORMAT: u16 = 1;
 const MAC_BYTES: usize = 32;
@@ -233,6 +238,10 @@ pub struct LedgerFrame {
     pub sequence: u64,
     pub generation: u64,
     pub key_version: u16,
+    pub chunk_index: u16,
+    pub chunk_count: u16,
+    pub target_count: u16,
+    pub closure_digest: [u8; 32],
     pub owner: OwnerId,
     pub operation_id: String,
     pub kind: FrameKind,
@@ -317,6 +326,16 @@ fn encode(frame: &LedgerFrame, keys: &SyntheticKeyring) -> Result<Vec<u8>, Ledge
         || frame.operation_id.is_empty()
         || frame.operation_id.len() > 96
         || frame.payload.len() > MAX_PAYLOAD_BYTES
+        || frame.chunk_count > PROVISIONAL_MAX_CLOSURE_CHUNKS
+        || frame.target_count > PROVISIONAL_MAX_CLOSURE_TARGETS
+        || (frame.target_count == 0) != (frame.chunk_count == 0)
+        || (frame.kind == FrameKind::Intent && frame.chunk_index != 0)
+        || (frame.kind == FrameKind::Chunk
+            && (frame.chunk_count == 0 || frame.chunk_index >= frame.chunk_count))
+        || (frame.kind != FrameKind::Intent
+            && frame.kind != FrameKind::Chunk
+            && frame.chunk_index != 0)
+        || (frame.target_count == 0 && frame.closure_digest != [0; 32])
     {
         return Err(LedgerError::Invalid);
     }
@@ -326,6 +345,10 @@ fn encode(frame: &LedgerFrame, keys: &SyntheticKeyring) -> Result<Vec<u8>, Ledge
     body.extend_from_slice(&frame.key_version.to_be_bytes());
     body.extend_from_slice(&frame.sequence.to_be_bytes());
     body.extend_from_slice(&frame.generation.to_be_bytes());
+    body.extend_from_slice(&frame.chunk_index.to_be_bytes());
+    body.extend_from_slice(&frame.chunk_count.to_be_bytes());
+    body.extend_from_slice(&frame.target_count.to_be_bytes());
+    body.extend_from_slice(&frame.closure_digest);
     body.push(frame.kind as u8);
     put_bytes(&mut body, frame.owner.as_str().as_bytes())?;
     put_bytes(&mut body, frame.operation_id.as_bytes())?;
@@ -399,6 +422,24 @@ fn decode(bytes: &[u8], keys: &SyntheticKeyring) -> Result<LedgerFrame, LedgerEr
             .try_into()
             .map_err(|_| LedgerError::Invalid)?,
     );
+    let chunk_index = u16::from_be_bytes(
+        take(bytes, &mut cursor, 2)?
+            .try_into()
+            .map_err(|_| LedgerError::Invalid)?,
+    );
+    let chunk_count = u16::from_be_bytes(
+        take(bytes, &mut cursor, 2)?
+            .try_into()
+            .map_err(|_| LedgerError::Invalid)?,
+    );
+    let target_count = u16::from_be_bytes(
+        take(bytes, &mut cursor, 2)?
+            .try_into()
+            .map_err(|_| LedgerError::Invalid)?,
+    );
+    let closure_digest = take(bytes, &mut cursor, 32)?
+        .try_into()
+        .map_err(|_| LedgerError::Invalid)?;
     let kind = FrameKind::try_from(take(bytes, &mut cursor, 1)?[0])?;
     let owner = OwnerId::parse(
         String::from_utf8(take_bytes(bytes, &mut cursor)?.to_vec())
@@ -414,6 +455,13 @@ fn decode(bytes: &[u8], keys: &SyntheticKeyring) -> Result<LedgerFrame, LedgerEr
         || generation == 0
         || operation_id.is_empty()
         || payload.len() > MAX_PAYLOAD_BYTES
+        || chunk_count > PROVISIONAL_MAX_CLOSURE_CHUNKS
+        || target_count > PROVISIONAL_MAX_CLOSURE_TARGETS
+        || (target_count == 0) != (chunk_count == 0)
+        || (kind == FrameKind::Intent && chunk_index != 0)
+        || (kind == FrameKind::Chunk && (chunk_count == 0 || chunk_index >= chunk_count))
+        || (kind != FrameKind::Intent && kind != FrameKind::Chunk && chunk_index != 0)
+        || (target_count == 0 && closure_digest != [0; 32])
     {
         return Err(LedgerError::Invalid);
     }
@@ -425,6 +473,10 @@ fn decode(bytes: &[u8], keys: &SyntheticKeyring) -> Result<LedgerFrame, LedgerEr
         sequence,
         generation,
         key_version,
+        chunk_index,
+        chunk_count,
+        target_count,
+        closure_digest,
         owner,
         operation_id,
         kind,
@@ -442,7 +494,8 @@ pub fn verify_stream(
     let mut frames = Vec::new();
     let mut generation = 0_u64;
     let mut owner: Option<OwnerId> = None;
-    let mut operations = BTreeMap::<String, (u64, u8)>::new();
+    let mut operations = BTreeMap::<String, (u64, u8, u16, u16, u16, [u8; 32])>::new();
+    let mut closure_payloads = BTreeMap::<String, Vec<u8>>::new();
     while cursor < bytes.len() {
         let len_end = cursor.checked_add(4).ok_or(LedgerError::Invalid)?;
         let len_bytes: [u8; 4] = bytes
@@ -467,25 +520,82 @@ pub fn verify_stream(
         }
         owner.get_or_insert_with(|| frame.owner.clone());
         let transition = operations.get(&frame.operation_id).copied();
+        if frame.kind == FrameKind::Chunk {
+            let payload = closure_payloads
+                .entry(frame.operation_id.clone())
+                .or_default();
+            if payload
+                .len()
+                .checked_add(frame.payload.len())
+                .is_none_or(|len| len > PROVISIONAL_MAX_CLOSURE_BYTES)
+            {
+                return Err(LedgerError::TooLarge);
+            }
+            payload.extend_from_slice(&frame.payload);
+        }
+        let closure_complete = if frame.kind != FrameKind::PrimaryApplied {
+            true
+        } else if frame.target_count == 0 {
+            frame.closure_digest == [0; 32]
+        } else {
+            let committed: [u8; 32] = Sha256::digest(
+                closure_payloads
+                    .get(&frame.operation_id)
+                    .ok_or(LedgerError::Invalid)?,
+            )
+            .into();
+            committed == frame.closure_digest
+        };
         let next = match (frame.kind, transition) {
-            (FrameKind::Intent, None) => (frame.generation, 1),
-            (FrameKind::Chunk, Some((op_generation, 1))) if op_generation == frame.generation => {
-                (op_generation, 1)
-            }
-            (FrameKind::PrimaryApplied, Some((op_generation, 1)))
-                if op_generation == frame.generation =>
+            (FrameKind::Intent, None) => (
+                frame.generation,
+                1,
+                frame.chunk_count,
+                0,
+                frame.target_count,
+                frame.closure_digest,
+            ),
+            (FrameKind::Chunk, Some((op_generation, 1, count, next_chunk, targets, digest)))
+                if op_generation == frame.generation
+                    && frame.chunk_index == next_chunk
+                    && frame.chunk_count == count
+                    && frame.target_count == targets
+                    && frame.closure_digest == digest
+                    && !frame.payload.is_empty() =>
             {
-                (op_generation, 2)
+                (op_generation, 1, count, next_chunk + 1, targets, digest)
             }
-            (FrameKind::Finalized, Some((op_generation, 2)))
-                if op_generation == frame.generation =>
+            (
+                FrameKind::PrimaryApplied,
+                Some((op_generation, 1, count, next_chunk, targets, digest)),
+            ) if op_generation == frame.generation
+                && next_chunk == count
+                && frame.chunk_count == count
+                && frame.target_count == targets
+                && frame.closure_digest == digest
+                && closure_complete =>
             {
-                (op_generation, 3)
+                (op_generation, 2, count, next_chunk, targets, digest)
             }
-            (FrameKind::Reconciled, Some((op_generation, 3)))
-                if op_generation.checked_add(1) == Some(frame.generation) =>
+            (
+                FrameKind::Finalized,
+                Some((op_generation, 2, count, next_chunk, targets, digest)),
+            ) if op_generation == frame.generation
+                && frame.chunk_count == count
+                && frame.target_count == targets
+                && frame.closure_digest == digest =>
             {
-                (frame.generation, 4)
+                (op_generation, 3, count, next_chunk, targets, digest)
+            }
+            (
+                FrameKind::Reconciled,
+                Some((op_generation, 3, count, next_chunk, targets, digest)),
+            ) if op_generation.checked_add(1) == Some(frame.generation)
+                && frame.chunk_count == count
+                && frame.target_count == targets
+                && frame.closure_digest == digest =>
+            {
+                (frame.generation, 4, count, next_chunk, targets, digest)
             }
             _ => return Err(LedgerError::Invalid),
         };
@@ -544,6 +654,10 @@ mod tests {
             sequence,
             generation,
             key_version,
+            chunk_index: 0,
+            chunk_count: 0,
+            target_count: 0,
+            closure_digest: [0; 32],
             owner: owner(),
             operation_id: "forget-test-1".into(),
             kind,
@@ -627,6 +741,66 @@ mod tests {
             0x2e, 0x32, 0xcf, 0xf7,
         ];
         assert_eq!(hmac_sha256(&[0x0b; 20], b"Hi There"), expected);
+    }
+
+    #[test]
+    fn forget_intent_requires_complete_ordered_chunks_before_primary_apply() {
+        let keys = SyntheticKeyring::synthetic(1, b"chunk-fixture").unwrap();
+        let closure = b"synthetic-target-1";
+        let digest: [u8; 32] = Sha256::digest(closure).into();
+        let mut intent = frame(1, 1, 1, FrameKind::Intent);
+        intent.payload.clear();
+        intent.chunk_count = 1;
+        intent.target_count = 1;
+        intent.closure_digest = digest;
+        let mut chunk = frame(2, 1, 1, FrameKind::Chunk);
+        chunk.chunk_index = 0;
+        chunk.chunk_count = 1;
+        chunk.target_count = 1;
+        chunk.closure_digest = digest;
+        chunk.payload = closure.to_vec();
+        let mut applied = frame(3, 1, 1, FrameKind::PrimaryApplied);
+        applied.chunk_count = 1;
+        applied.target_count = 1;
+        applied.closure_digest = digest;
+        let mut finalized = frame(4, 1, 1, FrameKind::Finalized);
+        finalized.chunk_count = 1;
+        finalized.target_count = 1;
+        finalized.closure_digest = digest;
+        let mut reconciled = frame(5, 2, 1, FrameKind::Reconciled);
+        reconciled.chunk_count = 1;
+        reconciled.target_count = 1;
+        reconciled.closure_digest = digest;
+        let encoded = [
+            intent.clone(),
+            chunk.clone(),
+            applied.clone(),
+            finalized,
+            reconciled,
+        ]
+        .iter()
+        .map(|entry| encode(entry, &keys).unwrap())
+        .collect::<Vec<_>>();
+        assert_eq!(verify_stream(&encoded.concat(), &keys).unwrap().len(), 5);
+
+        let missing_chunk = [
+            encode(&intent, &keys).unwrap(),
+            encode(&applied, &keys).unwrap(),
+        ];
+        assert!(verify_stream(&missing_chunk.concat(), &keys).is_err());
+        intent.chunk_count = 2;
+        intent.target_count = 2;
+        chunk.chunk_index = 1;
+        chunk.chunk_count = 2;
+        chunk.target_count = 2;
+        let reordered_chunk = [
+            encode(&intent, &keys).unwrap(),
+            encode(&chunk, &keys).unwrap(),
+        ];
+        assert_eq!(
+            verify_stream(&reordered_chunk.concat(), &keys),
+            Err(LedgerError::Invalid)
+        );
     }
 
     #[test]

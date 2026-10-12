@@ -49,6 +49,7 @@ BEGIN SELECT RAISE(ABORT, 'P7 task owner binding is immutable'); END;
 CREATE TABLE p7_resource_accounting (
   owner_id TEXT PRIMARY KEY REFERENCES p7_owners(owner_id) ON DELETE RESTRICT,
   active_items INTEGER NOT NULL DEFAULT 0 CHECK (active_items BETWEEN 0 AND 1000),
+  retained_items INTEGER NOT NULL DEFAULT 0 CHECK (retained_items BETWEEN 0 AND 1000),
   active_body_bytes INTEGER NOT NULL DEFAULT 0 CHECK (active_body_bytes BETWEEN 0 AND 4194304),
   logical_fts_bytes INTEGER NOT NULL DEFAULT 0 CHECK (logical_fts_bytes BETWEEN 0 AND 8388608),
   extraction_starts_today INTEGER NOT NULL DEFAULT 0 CHECK (extraction_starts_today BETWEEN 0 AND 20),
@@ -116,6 +117,10 @@ BEGIN
 END;
 CREATE TRIGGER p7_supersession_no_cycle_update BEFORE UPDATE ON p7_supersession_edges
 BEGIN SELECT RAISE(ABORT, 'P7 supersession edges are immutable'); END;
+CREATE TRIGGER p7_supersession_class_check BEFORE INSERT ON p7_supersession_edges
+WHEN (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.prior_memory_id AND owner_id=NEW.owner_id) >
+     (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.successor_memory_id AND owner_id=NEW.owner_id)
+BEGIN SELECT RAISE(ABORT, 'P7 supersession cannot lower classification'); END;
 
 CREATE TABLE p7_memory_blob_refs (
   memory_id TEXT NOT NULL,
@@ -126,6 +131,12 @@ CREATE TABLE p7_memory_blob_refs (
   FOREIGN KEY(memory_id, owner_id) REFERENCES p7_memory_items(memory_id, owner_id) ON DELETE CASCADE,
   FOREIGN KEY(digest, data_class_rank) REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT
 ) STRICT;
+CREATE TRIGGER p7_memory_blob_class_check BEFORE INSERT ON p7_memory_blob_refs
+WHEN NEW.data_class_rank < (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.memory_id AND owner_id=NEW.owner_id)
+BEGIN SELECT RAISE(ABORT, 'P7 Blob reference cannot lower classification'); END;
+CREATE TRIGGER p7_memory_blob_class_check_update BEFORE UPDATE ON p7_memory_blob_refs
+WHEN NEW.data_class_rank < (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.memory_id AND owner_id=NEW.owner_id)
+BEGIN SELECT RAISE(ABORT, 'P7 Blob reference cannot lower classification'); END;
 
 CREATE VIEW p7_memory_search_content AS
   SELECT rowid, memory_id, owner_id, class_rank, body FROM p7_memory_items WHERE active=1;
@@ -184,6 +195,8 @@ CREATE TRIGGER p7_memory_admission BEFORE INSERT ON p7_memory_items
 BEGIN
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM p7_resource_accounting WHERE owner_id=NEW.owner_id)
     THEN RAISE(ABORT, 'P7 quota row missing') END;
+  SELECT CASE WHEN (SELECT retained_items FROM p7_resource_accounting WHERE owner_id=NEW.owner_id) >= 1000
+    THEN RAISE(ABORT, 'P7 retained item cap') END;
   SELECT CASE WHEN (SELECT active_items FROM p7_resource_accounting WHERE owner_id=NEW.owner_id) >= 1000
     THEN RAISE(ABORT, 'P7 item quota') END;
   SELECT CASE WHEN (SELECT active_body_bytes FROM p7_resource_accounting WHERE owner_id=NEW.owner_id) > 4194304-length(CAST(NEW.body AS BLOB))
@@ -193,13 +206,13 @@ BEGIN
 END;
 CREATE TRIGGER p7_memory_account_insert AFTER INSERT ON p7_memory_items
 BEGIN
-  UPDATE p7_resource_accounting SET active_items=active_items+1,
+  UPDATE p7_resource_accounting SET active_items=active_items+1,retained_items=retained_items+1,
     active_body_bytes=active_body_bytes+length(CAST(NEW.body AS BLOB)),
     logical_fts_bytes=logical_fts_bytes+length(CAST(NEW.body AS BLOB)) WHERE owner_id=NEW.owner_id;
 END;
 CREATE TRIGGER p7_memory_account_delete AFTER DELETE ON p7_memory_items
 BEGIN
-  UPDATE p7_resource_accounting SET active_items=active_items-1,
+  UPDATE p7_resource_accounting SET active_items=active_items-1,retained_items=retained_items-1,
     active_body_bytes=active_body_bytes-length(CAST(OLD.body AS BLOB)),
     logical_fts_bytes=logical_fts_bytes-length(CAST(OLD.body AS BLOB)) WHERE owner_id=OLD.owner_id;
 END;

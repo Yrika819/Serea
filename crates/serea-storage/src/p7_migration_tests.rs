@@ -107,12 +107,15 @@ fn composite_class_bound_blob_reference_rejects_wrong_class_and_cross_owner_prov
         tx.inner.execute("INSERT INTO p7_resource_accounting(owner_id) VALUES('own_00000000000000000000000000000021')",[])?;
         tx.inner.execute("INSERT INTO p7_ledger_state(owner_id,read_state) VALUES('own_00000000000000000000000000000021','READY')",[])?;
         tx.inner.execute("INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES('mem','own_00000000000000000000000000000021',0,'WORKING','synthetic',1,10)",[])?;
+        tx.inner.execute("INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES('personal-mem','own_00000000000000000000000000000021',1,'WORKING','personal',1,10)",[])?;
         tx.inner.execute("INSERT INTO blobs(digest,data_class_rank,protection,size_bytes,content) VALUES(?1,0,'NONE',1,x'78')",["sha256:0000000000000000000000000000000000000000000000000000000000000000"])?;
         tx.inner.execute("INSERT INTO p7_memory_blob_refs VALUES('mem','own_00000000000000000000000000000021',?1,0)",["sha256:0000000000000000000000000000000000000000000000000000000000000000"])?;
         Ok(())
     }).unwrap();
     let wrong=store.transact(|tx|{tx.inner.execute("INSERT INTO p7_memory_blob_refs VALUES('mem','own_00000000000000000000000000000021',?1,1)",["sha256:0000000000000000000000000000000000000000000000000000000000000000"])?;Ok(())});
     assert!(wrong.is_err());
+    let weakened=store.transact(|tx|{tx.inner.execute("INSERT INTO p7_memory_blob_refs VALUES('personal-mem','own_00000000000000000000000000000021',?1,0)",["sha256:0000000000000000000000000000000000000000000000000000000000000000"])?;Ok(())});
+    assert!(weakened.is_err());
     let cross=store.transact(|tx|{tx.inner.execute("INSERT INTO p7_memory_provenance(memory_id,owner_id,source_id,source_class_rank,metadata_bytes,recorded_at_ms) VALUES('mem','own_00000000000000000000000000000022','s',0,0,1)",[])?;Ok(())});
     assert!(cross.is_err());
 }

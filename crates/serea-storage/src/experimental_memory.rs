@@ -16,6 +16,8 @@ pub struct ExperimentalMemoryConfig {
     pub status: ProvisionalValue,
     /// Candidate active item cap.
     pub max_items: usize,
+    /// Candidate total retained item-row cap; refusal does not evict expired or superseded rows.
+    pub max_retained_items: usize,
     /// Candidate body bytes per item.
     pub max_body_bytes: usize,
     /// Candidate aggregate body bytes.
@@ -147,6 +149,7 @@ pub struct P7ExperimentalMemory {
 pub const EXPERIMENTAL_PROVISIONAL: ExperimentalMemoryConfig = ExperimentalMemoryConfig {
     status: ProvisionalValue::TestOnly,
     max_items: 1000,
+    max_retained_items: 1000,
     max_body_bytes: 4096,
     max_body_bytes_per_owner: 4 * 1024 * 1024,
     max_fts_bytes_per_owner: 8 * 1024 * 1024,
@@ -162,7 +165,7 @@ pub const EXPERIMENTAL_PROVISIONAL: ExperimentalMemoryConfig = ExperimentalMemor
     max_query_bytes: 256,
     max_page: 20,
     max_candidates: 1000,
-    max_query_vm_ops: 100_000,
+    max_query_vm_ops: 10_000_000,
     max_provenance_bytes: 4096,
     max_tombstone_bytes: 1024,
     deletion_reserve_bytes: 64 * 1024 * 1024,
@@ -520,7 +523,7 @@ mod tests {
             P7ExperimentalMemory::config().status,
             ProvisionalValue::TestOnly
         );
-        assert_eq!(P7ExperimentalMemory::config().max_query_vm_ops, 100_000);
+        assert_eq!(P7ExperimentalMemory::config().max_query_vm_ops, 10_000_000);
     }
 
     #[test]
@@ -604,6 +607,82 @@ mod tests {
                 .any(|r| r.memory_id == "m4")
         );
     }
+    #[test]
+    fn listing_and_fts_pages_are_stable_and_respect_page_and_candidate_caps() {
+        let s = store();
+        let owner = "own_00000000000000000000000000000027";
+        let a = actor(&s, owner, 27);
+        s.transact(|tx| {
+            for i in 0..1000 {
+                let id = format!("page-{i:04}");
+                tx.inner.execute(
+                    "INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES(?1,?2,0,'WORKING','common lexical',1,999999999)",
+                    params![id, owner],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(P7ExperimentalMemory::config().max_candidates, 1000);
+        let first = a
+            .search(
+                &s,
+                MemoryClass::Public,
+                "common",
+                EpochMillis::new(1000).unwrap(),
+                None,
+                20,
+            )
+            .unwrap();
+        assert_eq!(first.records.len(), 20);
+        assert!(first.has_more);
+        assert_eq!(first.records[0].memory_id, "page-0000");
+        assert_eq!(first.records[19].memory_id, "page-0019");
+        let second = a
+            .search(
+                &s,
+                MemoryClass::Public,
+                "common",
+                EpochMillis::new(1000).unwrap(),
+                Some("page-0019"),
+                20,
+            )
+            .unwrap();
+        assert_eq!(second.records[0].memory_id, "page-0020");
+        assert_eq!(second.records[19].memory_id, "page-0039");
+        assert!(second.has_more);
+        let final_page = a
+            .search(
+                &s,
+                MemoryClass::Public,
+                "common",
+                EpochMillis::new(1000).unwrap(),
+                Some("page-0979"),
+                20,
+            )
+            .unwrap();
+        assert_eq!(final_page.records[0].memory_id, "page-0980");
+        assert_eq!(final_page.records[19].memory_id, "page-0999");
+        assert!(!final_page.has_more);
+        let list = a
+            .list(
+                &s,
+                MemoryClass::Public,
+                EpochMillis::new(1000).unwrap(),
+                Some("page-0997"),
+                20,
+            )
+            .unwrap();
+        assert_eq!(
+            list.records
+                .iter()
+                .map(|r| r.memory_id.as_str())
+                .collect::<Vec<_>>(),
+            ["page-0998", "page-0999"]
+        );
+        assert!(!list.has_more);
+    }
+
     #[test]
     fn supersession_is_owner_local_single_successor_and_removes_prior_from_search() {
         let s = store();
@@ -801,6 +880,42 @@ mod tests {
     }
 
     #[test]
+    fn retained_item_cap_refuses_instead_of_evicting_superseded_content() {
+        let s = store();
+        let a = actor(&s, "own_00000000000000000000000000000026", 26);
+        a.insert(
+            &s,
+            &draft("retained", "must stay", MemoryClass::Public),
+            EpochMillis::new(1000).unwrap(),
+        )
+        .unwrap();
+        s.transact(|tx| {
+            tx.inner.execute(
+                "UPDATE p7_resource_accounting SET retained_items=1000 WHERE owner_id=?1",
+                ["own_00000000000000000000000000000026"],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            a.insert(
+                &s,
+                &draft("refused", "no eviction", MemoryClass::Public),
+                EpochMillis::new(1000).unwrap(),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            a.get(&s, "retained", EpochMillis::new(1001).unwrap())
+                .unwrap()
+                .unwrap()
+                .body,
+            "must stay"
+        );
+        assert_eq!(P7ExperimentalMemory::config().max_retained_items, 1000);
+    }
+
+    #[test]
     fn two_file_connections_serialize_duplicate_admission_and_quota() {
         use std::sync::{Arc, Barrier};
         use std::thread;
@@ -915,6 +1030,25 @@ mod tests {
             EpochMillis::new(1000).unwrap(),
         )
         .unwrap();
+        a.insert(
+            &s,
+            &draft("public-successor", "lower class", MemoryClass::Public),
+            EpochMillis::new(1000).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            a.supersede(&s, "b", "public-successor", EpochMillis::new(1001).unwrap(),)
+                .is_err()
+        );
+        assert!(s
+            .transact(|tx| {
+                tx.inner.execute(
+                    "INSERT INTO p7_supersession_edges(owner_id,prior_memory_id,successor_memory_id,created_at_ms) VALUES(?1,'b','public-successor',1)",
+                    ["own_00000000000000000000000000000004"],
+                )?;
+                Ok(())
+            })
+            .is_err());
         assert!(s.transact(|tx|{tx.inner.execute("INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES('p','own_00000000000000000000000000000004',2,'SEMANTIC','bad',1,2)",[])?;Ok(())}).is_err());
         for rank in [3_i64, 4_i64] {
             assert!(s.transact(|tx|{tx.inner.execute("INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES(?1,'own_00000000000000000000000000000004',?2,'SEMANTIC','bad',1,2)",params![format!("restricted-{rank}"),rank])?;Ok(())}).is_err());
@@ -923,6 +1057,6 @@ mod tests {
         assert!(s.transact(|tx|{tx.inner.execute("INSERT INTO p7_supersession_edges VALUES('own_00000000000000000000000000000004','a','b',1)",[])?;tx.inner.execute("INSERT INTO p7_supersession_edges VALUES('own_00000000000000000000000000000004','b','a',1)",[])?;Ok(())}).is_err());
         assert!(s.transact(|tx|{tx.inner.execute("INSERT INTO p7_supersession_edges VALUES('own_00000000000000000000000000000005','a','b',1)",[])?;Ok(())}).is_err());
         let n:i64=s.transact(|tx|Ok(tx.inner.query_row("SELECT count(*) FROM p7_memory_provenance WHERE source_task_id='detached-task-label'",[],|r|r.get(0))?)).unwrap();
-        assert_eq!(n, 2);
+        assert_eq!(n, 3);
     }
 }

@@ -326,6 +326,7 @@ fn memory_accounting_matches_authoritative_rows_across_deactivate_delete_and_rol
         })
         .unwrap();
     assert_eq!(refs, 0);
+    assert_memory_accounting(&store, owner);
 }
 
 #[test]

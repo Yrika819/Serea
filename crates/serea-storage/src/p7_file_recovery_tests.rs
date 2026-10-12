@@ -340,7 +340,7 @@ fn primary_failure_ledger_append_exhaustion_partial_or_invalid_ledger_quarantine
     fs::write(invalid.ledger(), bytes).unwrap();
     assert!(
         invalid_ledger.read().is_err(),
-        "digest/authentication mismatch quarantines the ledger"
+        "tampered frame fails the unkeyed chain-digest check"
     );
 }
 

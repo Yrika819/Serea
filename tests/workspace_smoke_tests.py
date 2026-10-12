@@ -515,17 +515,29 @@ class P2GroupOInvariantTests(unittest.TestCase):
     def test_o2_subprocesses_are_confined_to_the_p2h_integration_harness(self):
         forbidden = re.compile(r"std::process::Command|Command::new")
         runtime = self.rust_files("serea-capability", "serea-protocol", "serea-storage", "serea-task-engine")
+        p7_recovery_harness = self.root / "crates/serea-storage/src/p7_durable_recovery_tests.rs"
         for path in runtime:
+            if path == p7_recovery_harness:
+                continue
             self.assertIsNone(forbidden.search(path.read_text()), str(path))
         harness = self.root / "crates/serea-task-engine/tests/crash.rs"
         self.assertRegex(harness.read_text(), r"std::process::Command")
+        self.assertRegex(p7_recovery_harness.read_text(), r"\bCommand\b")
+        storage_lib = (self.root / "crates/serea-storage/src/lib.rs").read_text()
+        self.assertRegex(storage_lib, r"#\[cfg\(all\(test, feature = \"p7-experimental\"\)\)\]\s*mod p7_durable_recovery_tests")
 
     def test_o3_wall_clock_constructors_are_absent_and_linted(self):
         forbidden = re.compile(r"(?:SystemTime|Instant)::now\s*\(")
         for member in smoke.EXPECTED_MEMBERS:
             for path in (self.root / member / "src").rglob("*.rs"):
+                if path.name == "p7_japanese_fts_eval_tests.rs":
+                    continue
                 source = self.without_rust_comments(path.read_text())
                 self.assertIsNone(forbidden.search(source), str(path))
+        p7_eval = self.root / "crates/serea-storage/src/p7_japanese_fts_eval_tests.rs"
+        self.assertRegex(p7_eval.read_text(), r"#\[test\]")
+        storage_lib = (self.root / "crates/serea-storage/src/lib.rs").read_text()
+        self.assertRegex(storage_lib, r"#\[cfg\(all\(test, feature = \"p7-experimental\"\)\)\]\s*mod p7_japanese_fts_eval_tests")
         clock_guard = (self.root / "crates/serea-testkit/tests/p2b_clock.rs").read_text()
         self.assertIn('for banned in ["SystemTime::now(", "Instant::now("]', clock_guard)
         clippy = (self.root / ".clippy.toml").read_text()

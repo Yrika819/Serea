@@ -1,0 +1,120 @@
+# P7 Gate C independent security review handoff — 2026-10-12
+
+**Scope:** pre-review synthetic engineering evidence on Draft PR #15. This is the code author's review record, not an independent security review and not production authorization. ADR-0042/0043, frozen contracts, migrations 0001–0008, production schema v8, PRIVATE/SECRET/CREDENTIAL exclusion, disabled production Memory, disabled backup/restore/sync, and unauthorized P8 remain in force.
+
+## Ref and CI baseline
+
+Pre-change live refs were verified on 2026-10-12: `main=f70f34c1f683df1b175b612ba100ce6bb6979811`; PR #12 `865dcadad1750f6ba8f4928eb44a29cfa97f2f4c`; #13 `56c008e7a0c582c1b099ef9a809834884a1b245d`; #14 `cb4df7178a4dc74b124006c4bf2c020cd626aa5e`; #15 `49ffe5653c0b54dc2cc723b78110bad5d9288464`, based on `p7/implementation-synthetic-prototype`. All four PRs were OPEN/DRAFT. PR #14 remains the independent canonical P5 fix.
+
+At pre-change PR #15 HEAD, GitHub reported Fast CI run `38254091229`, Full CI `38254091248`, and SQLite portability `38254091462` as completed/success. These runs validate only `49ffe565…`. Final commit refs and CI must be recorded here after the campaign commit is pushed and all new runs complete; no earlier green run is evidence for later code.
+
+## Threat model and host boundary
+
+The fixture models accidental corruption, stale concurrent work, process termination, malformed or oversized local evidence, and cooperating independent processes using SQLite and OS file locks. It assumes the tested process, SQLite library, OS, and parent directory are trusted. The sidecar lock is cooperative. A hostile same-user process can bypass it or modify/replace files; direct SQLite tampering, compromised OS, controller-cache loss, whole-host rollback, and physical power loss are outside proven protection.
+
+The test checkpoint is a local synthetic authority with deterministic generated keys. Restoring the checkpoint directory, ledger, database, and key together to one valid older state cannot be detected. No platform authentication adapter, production key custody, external rollback-surviving authority, physical deletion reserve, backup reconciliation, or secure erase is claimed.
+
+## Security invariant evidence matrix
+
+`PASS` means the named synthetic test passed on the listed environment. It does not qualify production behavior. `NOT TESTED` identifies evidence absent from this campaign. Production blockers apply to every row unless a later independently reviewed authority contract changes them.
+
+| Invariant | Authority/design source | Implementation | Test and environment | Threat / observed result | Residual risk and production blocker |
+|---|---|---|---|---|---|
+| Owner isolation | ADR-0042 P7-D01/D03; ADR-0043 | `experimental_memory.rs`, owner-scoped SQL predicates and composite constraints | `fts_japanese_isolation_class_expiry_and_literal_bounds`; Linux x86_64, Rust 1.85, bundled SQLite | Cross-owner lookup/search isolation PASS | Synthetic Owner constructor only; host authentication and production identity binding are NOT IMPLEMENTED |
+| Immutable Task binding | ADR-0042 P7-D01; ADR-0043 | `p7_integrated_recovery_tests.rs` synthetic admission fixture | `synthetic_task_owner_admission_binds_in_one_transaction_and_quarantines_legacy`; Linux | immutable binding and legacy quarantine PASS | No production TaskEngine admission contract; actual integration NOT IMPLEMENTED |
+| Memory classification | ADR-0042 P7-D04; ADR-0043 | `experimental_memory.rs`, experimental v9 fixture | `provenance_class_inheritance_rejects_downgrade_and_accepts_safe_raise`; Linux | PUBLIC/PERSONAL boundary and class inheritance PASS | Real classification authority and model context are NOT IMPLEMENTED; PRIVATE/SECRET/CREDENTIAL prohibited |
+| Derived Forget closure | ADR-0042 P7-D02/D07; ADR-0043 | `p7_integrated_recovery_tests.rs`, lineage and tombstone transaction | `file_backed_memory_forget_reconciles_full_lineage_and_blocks_stale_ledger`; Linux | derived closure, unrelated-row preservation, FTS removal PASS | Fixture only; physical secure erase NOT TESTED and not claimed |
+| Authenticated ledger | ADR-0043 HMAC-SHA-256/key-version decision | `p7_gate_c.rs::{encode,decode,verify_stream,LedgerFileGuard}` | `ledger_detects_truncation_tampering_order_and_unknown_key`, `ledger_rotation_requires_old_and_new_verification_keys`; Linux | tamper/order/truncation/unknown-key denials PASS | Synthetic keyring only; production key lifecycle/custody NOT IMPLEMENTED |
+| Ledger thread concurrency | Gate C cooperative process lock plus local operation serialization | `LedgerFileGuard::{append_sync_inner,read_bytes}` | `concurrent_append_calls_on_one_guard_never_duplicate_a_sequence`; Linux x86_64, Rust 1.85 | RED reproduced two concurrent appends both returning success for one sequence; mutex repair changed regression to PASS | Does not protect hostile same-user lock bypass or direct inode writes |
+| Checkpoint freshness | ADR-0042 P7-D07; ADR-0043 | `PersistentCheckpointStore`, `verify_stream_at_checkpoint`, `verify_stream_recovery_extension` | `independently_checkpointed_stream_rejects_valid_prefixes_and_generation_mismatch`; Linux | missing/stale checkpoint, valid old prefix, generation/key mismatch denial PASS | Local all-artifact rollback protection NOT IMPLEMENTED; no independent authority survives full rollback |
+| Checkpoint bounds and failure | ADR-0042 P7-D05; review resource bound | `PersistentCheckpointStore::{open_existing,refresh,advance}` | `checkpoint_reopen_rejects_oversized_revision_before_allocation`, `checkpoint_revision_count_and_advance_ceiling_fail_closed`; Linux | 256-byte record and 1,024-revision hard ceilings PASS | No pruning/compaction; lifetime capacity remains unapproved beyond test bound |
+| Crash recovery | ADR-0043 fail-closed recovery direction | `p7_integrated_recovery_tests.rs` | `child_termination_after_durable_intent_keeps_reopened_memory_denied`, `recovery_itself_is_idempotent_across_process_termination`; Linux child processes | real process exit and restart recovery/denial PASS | No hardware power-loss or directory-cache-loss evidence; Windows/macOS process matrix pending CI |
+| Stale extraction fencing | ADR-0042 P7-D01/D05; ADR-0043 quota/generation direction | `p7_extraction_fence_tests.rs` (test-only SQLite fixture) | `extraction_started_before_forget_cannot_reinsert_stale_data`, `extraction_generation_check_is_inside_final_sqlite_commit`; Linux | generation compare and final insert in one `BEGIN IMMEDIATE` transaction; stale insert refused PASS. `process_crash_before_final_commit_leaves_no_extracted_row` exits a real child process after INSERT but before COMMIT and confirms no row after reopen | No TaskEngine/model integration; the interface below requires separate review |
+| Quota accounting and leases | ADR-0043: 20 starts/day, one concurrent extraction | `p7_extraction_fence_tests.rs` | `extraction_daily_quota_stops_at_twenty_without_counter_drift`, `independent_processes_admit_one_lease_and_crash_release_is_expiry_based`; Linux | exact 20-start ceiling, independent process admission, expiry after process death PASS | UTC is a persisted nondecreasing test clock; production monotonic/UTC authority and lease duration NOT APPROVED |
+| FTS leakage and query bounds | ADR-0042 P7-D06; ADR-0043 | `experimental_memory.rs` FTS query and authoritative-row join | `fts_japanese_isolation_class_expiry_and_literal_bounds`, `fts_content_mismatch_fails_closed_instead_of_returning_partial_search`; Linux | owner/class filters, literal limits, mismatch denial PASS | `unicode61` Japanese quality and production data confidentiality NOT independently assessed |
+| Key lifecycle | ADR-0043 explicit versions and fail-closed unknown/missing keys | `SyntheticKeyring`, checkpoint/ledger verification | `ledger_rotation_requires_old_and_new_verification_keys`; Linux | old key required to verify retained history; missing key denied PASS | Real OS secrets/Keychain/Keystore deliberately NOT IMPLEMENTED |
+| Filesystem/process behavior | ADR-0042 local filesystem residual-risk boundary | `LedgerFileGuard`, checkpoint file adapter | `ledger_guard_rejects_symlinks_and_keeps_the_opened_inode` (Unix); `ledger_lock_is_exclusive_across_processes_and_released_on_termination` (Linux/macOS/Windows CI) | Unix symlink/path substitution and cooperating process lock tested | Hostile parent-directory replacement out of scope; Windows symlink privilege case NOT TESTED |
+| Production feature exclusion | ADR-0043 disabled Gate C authorization | `crates/serea-storage/src/lib.rs` compile guards; feature declarations | optimized default build and optimized `p7-gate-c` rejection checks | ordinary build excludes Gate C; optimized opt-in is intended to fail | Final local/GitHub checks must verify after campaign commit; feature enablement remains prohibited |
+
+## Extraction fixture and production interface proposal
+
+`p7_extraction_fence_tests.rs` is compiled only for tests with both explicit development features. It is not exported as a production API and does not call TaskEngine, a model, or provider. It creates durable owner-scoped admission rows with operation identity, captured generation, UTC-day count, and lease state. `BEGIN IMMEDIATE` serializes admission/Forget/final commit. Final generation comparison, lease check, fixture row insert, and lease completion share one SQLite transaction. Forget increments the owner generation and deletes fixture output atomically. Crashes after durable admission leave the slot occupied until expiry; crashes after fixture insert but before SQLite commit leave no row. Backward wall-clock movement is refused; UTC-day keys use Euclidean division and do not roll back.
+
+Proposed future port, pending TaskEngine/Core and Storage review:
+
+```rust
+trait ExtractionAdmission {
+    fn admit(&self, owner: OwnerId, task: TaskId, operation: ExtractionOperationId,
+             observed_utc: UtcInstant) -> Result<ExtractionLease, Refusal>;
+    fn commit<T>(&self, lease: ExtractionLease,
+                 write: impl FnOnce(&mut StorageTransaction) -> Result<T, StorageError>)
+                 -> Result<T, Refusal>;
+}
+```
+
+The opaque lease must bind Owner, immutable Task Owner, durable operation ID, generation, UTC quota day, and expiry. Storage must validate the lease generation in the *same transaction* that inserts all derived Memory rows and FTS/accounting effects. Forget must increment generation and remove its approved derived closure in that same serialization domain. No external model call is made while holding a SQLite write transaction. The production design must separately decide idempotent operation replay, clock source/rollback handling, lease expiry semantics across reboot, cleanup authority, and how concurrent limit releases interact with the daily-start quota.
+
+## Resource measurement and bounds
+
+Linux x86_64, Rust 1.85, debug test binary, bundled SQLite 3.53.2; temporary synthetic files, single run, wall-clock `Instant`, no peak RSS instrumentation. Commands:
+
+```sh
+cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --test p7_resource_bench measure_ledger_append_replay_and_history_growth -- --ignored --nocapture
+cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --test p7_resource_bench measure_checkpoint_advance_and_reopen_history_growth -- --ignored --nocapture
+```
+
+Observed on the campaign run: ledger append through 64/256/512 frames took 75/1,391/6,570 ms total and produced 10,332/41,436/83,024 bytes; replay took 2/15/16 ms. Checkpoint histories of 16/64/128 revisions used 2,256/9,024/18,048 file bytes; advancing each history took 5/190/157 ms total, and reopening at those sizes took under 1/1/2 ms. Timings are noisy, machine-specific observations, not service latency promises. Peak memory was NOT MEASURED. Append still authenticates the accumulated stream once per append; cumulative work remains quadratic in frame count. The hard fixture ceilings are 1,024 ledger frames/1 MiB and 1,024 checkpoint revisions with 256-byte checkpoint records. At the ceiling, verification allocation/work is finite; history is refused rather than pruned or compacted. These are defensive fixture bounds, not ADR-0043 product quotas or a production deletion reserve.
+
+## Platform matrix and unsupported guarantees
+
+| Platform | Evidence expected on final campaign HEAD | Status |
+|---|---|---|
+| Linux x86_64 | Rust 1.85 focused/all workspace tests, child process termination, Unix symlink/path tests, CI Fast/Full | locally exercised; final CI pending |
+| macOS arm64 and Intel | existing Full CI all-feature test suites; SQLite cross-architecture portability workflow | pre-campaign PR HEAD green; final campaign HEAD pending |
+| Windows | new narrow Full CI job on Rust 1.85: Gate C unit suite, SQLite WAL/reopen, process lock and lock release after termination, optimized-feature exclusion | workflow added; runner result pending |
+
+Unix parent-directory sync is not asserted on Windows. Windows checkpoint create semantics use `create_new` immutable revisions; directory-entry durability is unsupported. Symlink tests that require Unix APIs are cfg-gated; CI privilege denial is NOT classified as a code failure. No platform proves physical power-loss durability.
+
+## Code-author review, independent questions, and reproduction
+
+This package records an adversarial review by the implementation author and automated tests. It is not ADR-0043's required independent security review. An independent reviewer should receive the exact final commit SHA, CI job IDs, this document, ADR-0042/0043, the fixture/schema, and repository source; they should work from a clean checkout and report findings without relying on this author's conclusions.
+
+Questions for the independent reviewer:
+
+1. Can any public/default/optimized feature path construct or use a Memory-capable handle, admit PRIVATE/SECRET/CREDENTIAL data, or bypass the authenticated Owner boundary?
+2. Does the Forget closure include every approved derived row, lineage edge, Blob reference, FTS entry, quota counter, and restore/reconciliation barrier under partial writes and retries?
+3. Can a valid stale ledger/checkpoint prefix or coordinated rollback of all local artifacts restore Memory access? Which separate authority must survive to prevent it?
+4. Are HMAC framing, key-version rotation, canonical parsing, duplicate IDs, sequence/generation transitions, checkpoint count/size limits, and append cumulative work sound under hostile inputs?
+5. Does extraction admission/final commit serialize correctly with Forget across independent processes, owner changes, duplicate operations, UTC boundaries, wall-clock rollback, crash, and SQLite busy/rollback?
+6. Which Windows/macOS filesystem guarantees are actually supported, especially lock release, file create/rename, SQLite WAL reopen, and directory-entry durability?
+7. Which production controls are missing before any real Owner, personal data, model context, backup, synchronization, or external effect can be enabled?
+
+Reproduction on a Rust 1.85 host:
+
+```sh
+cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --lib extraction_ --locked
+cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --lib p7_integrated_recovery_tests --locked
+cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --test p7_gate_c_lock --locked
+cargo +1.85.0 test --workspace --all-features --locked
+cargo +1.85.0 test --workspace --locked
+cargo +stable clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo +stable fmt --all -- --check
+python3 tools/validate_docs.py docs
+python3 tests/workspace_smoke.py
+python3 -m unittest discover -s tests -p workspace_smoke_tests.py
+python3 tools/check_commit_identity.py
+git diff --check
+sha256sum crates/serea-storage/migrations/000{1,2,3,4,5,6,7,8}_*.sql
+```
+
+The migration hash output must be compared byte-for-byte to the pre-campaign `main`/PR base values; no migration 0001–0008 edits are permitted. Current campaign completion requires the final PR #15 ref and all applicable GitHub workflows to be green. Until that evidence exists, status is **PENDING**, not review-ready.
+
+## Explicit production blockers
+
+- Independent external security review has not happened; automated/internal review does not satisfy ADR-0043.
+- Production Owner authentication, immutable Task admission, and reviewed production Storage/TaskEngine extraction contract are NOT IMPLEMENTED.
+- Production key custody, rotation/recovery authority, and independently surviving rollback authority are NOT IMPLEMENTED.
+- A fully local rollback remains undetectable; backup/restore/sync are disabled.
+- macOS/Windows production adapter semantics and physical durability are NOT TESTED. Windows Gate C CI result is pending.
+- Real personal data, model context, provider/account, OS secrets, physical deletion reserve, and physical secure erase are outside this campaign and unauthorized.
+- P8 is unauthorized. PR #15 must remain Draft and unmerged; no production feature activation is authorized by this review exit.

@@ -44,6 +44,8 @@ mod model_accounting;
 mod model_call_tests;
 #[cfg(test)]
 mod model_cost_tests;
+#[cfg(all(test, feature = "p7-gate-c", feature = "p7-experimental"))]
+mod p7_extraction_fence_tests;
 #[cfg(feature = "p7-gate-c")]
 pub mod p7_gate_c;
 mod policy;

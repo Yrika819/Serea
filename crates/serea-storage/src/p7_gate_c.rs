@@ -16,6 +16,12 @@ use std::path::{Path, PathBuf};
 
 pub const MAX_FRAME_BYTES: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 768;
+/// Hard synthetic-input ceilings. These are denial-of-service bounds, not
+/// retention or product capacity promises. History is never compacted here.
+pub const MAX_LEDGER_FRAMES: usize = 1_024;
+pub const MAX_LEDGER_BYTES: usize = MAX_FRAME_BYTES * MAX_LEDGER_FRAMES;
+pub const MAX_CHECKPOINT_REVISIONS: usize = 1_024;
+const MAX_CHECKPOINT_BYTES: u64 = 256;
 /// Provisional closure bounds inherited from the recommendation, not Owner-approved limits.
 pub const PROVISIONAL_MAX_CLOSURE_TARGETS: u16 = 1_000;
 pub const PROVISIONAL_MAX_CLOSURE_CHUNKS: u16 = 500;
@@ -342,7 +348,12 @@ impl PersistentCheckpointStore {
         }
         let entries = fs::read_dir(&directory).map_err(|_| LedgerError::MissingAuthority)?;
         let mut revisions = Vec::new();
+        let mut entry_count = 0usize;
         for entry in entries {
+            entry_count = entry_count.checked_add(1).ok_or(LedgerError::TooLarge)?;
+            if entry_count > MAX_CHECKPOINT_REVISIONS {
+                return Err(LedgerError::TooLarge);
+            }
             let entry = entry.map_err(|_| LedgerError::Io)?;
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
@@ -356,8 +367,20 @@ impl PersistentCheckpointStore {
                     return Err(LedgerError::Invalid);
                 }
                 let revision = suffix.parse::<u64>().map_err(|_| LedgerError::Invalid)?;
+                let metadata = fs::symlink_metadata(entry.path()).map_err(|_| LedgerError::Io)?;
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(LedgerError::Invalid);
+                }
+                if metadata.len() > MAX_CHECKPOINT_BYTES {
+                    return Err(LedgerError::TooLarge);
+                }
                 revisions.push((revision, entry.path()));
+            } else {
+                return Err(LedgerError::Invalid);
             }
+        }
+        if revisions.len() > MAX_CHECKPOINT_REVISIONS {
+            return Err(LedgerError::TooLarge);
         }
         revisions.sort_by_key(|(revision, _)| *revision);
         let Some((revision, _path)) = revisions.last() else {
@@ -425,6 +448,9 @@ impl PersistentCheckpointStore {
             .revision
             .checked_add(1)
             .ok_or(LedgerError::Generation)?;
+        if next.revision > MAX_CHECKPOINT_REVISIONS as u64 {
+            return Err(LedgerError::Stale);
+        }
         persist_checkpoint(&self.directory, &next, keys)?;
         let reopened = Self::open_existing(&self.directory, keys)?;
         if reopened.current != next {
@@ -963,6 +989,9 @@ pub fn verify_stream(
     bytes: &[u8],
     keys: &SyntheticKeyring,
 ) -> Result<Vec<LedgerFrame>, LedgerError> {
+    if bytes.len() > MAX_LEDGER_BYTES {
+        return Err(LedgerError::TooLarge);
+    }
     let mut cursor = 0;
     let mut frames = Vec::new();
     let mut generation = 0_u64;
@@ -982,6 +1011,9 @@ pub fn verify_stream(
         }
         let end = len_end.checked_add(frame_len).ok_or(LedgerError::Invalid)?;
         let frame = decode(bytes.get(cursor..end).ok_or(LedgerError::Invalid)?, keys)?;
+        if frames.len() >= MAX_LEDGER_FRAMES {
+            return Err(LedgerError::TooLarge);
+        }
         if frame.sequence != frames.len() as u64 + 1 {
             return Err(LedgerError::Sequence);
         }
@@ -1108,7 +1140,9 @@ pub fn verify_ledger_operation_reconciled(
 /// malicious same-user process replacing files or bypassing the lock.
 pub struct LedgerFileGuard {
     _lock_file: File,
-    ledger_file: File,
+    /// The sidecar lock serializes processes; this mutex serializes cursor
+    /// operations when one guard is shared by threads in a process.
+    ledger_file: std::sync::Mutex<File>,
 }
 
 #[derive(Clone, Copy)]
@@ -1225,7 +1259,7 @@ impl LedgerFileGuard {
         }
         Ok(Self {
             _lock_file: lock_file,
-            ledger_file,
+            ledger_file: std::sync::Mutex::new(ledger_file),
         })
     }
 
@@ -1255,31 +1289,28 @@ impl LedgerFileGuard {
         fault: Option<SimulatedWriteFault>,
     ) -> Result<(), LedgerError> {
         let encoded = encode(frame, keys)?;
+        let ledger_file = self.ledger_file.lock().map_err(|_| LedgerError::Io)?;
         let mut existing = Vec::new();
-        if self
-            .ledger_file
-            .metadata()
-            .map_err(|_| LedgerError::Io)?
-            .len()
-            > (MAX_FRAME_BYTES as u64 * 10_001)
+        let current_len = ledger_file.metadata().map_err(|_| LedgerError::Io)?.len();
+        if current_len > MAX_LEDGER_BYTES as u64
+            || current_len.saturating_add(encoded.len() as u64) > MAX_LEDGER_BYTES as u64
         {
             return Err(LedgerError::TooLarge);
         }
-        let mut file = &self.ledger_file;
+        let mut file = &*ledger_file;
         file.seek(SeekFrom::Start(0)).map_err(|_| LedgerError::Io)?;
-        file.take((MAX_FRAME_BYTES as u64 * 10_001) + 1)
+        file.take(MAX_LEDGER_BYTES as u64 + 1)
             .read_to_end(&mut existing)
             .map_err(|_| LedgerError::Io)?;
-        if existing.len() > MAX_FRAME_BYTES * 10_001 {
+        if existing.len() > MAX_LEDGER_BYTES {
             return Err(LedgerError::TooLarge);
         }
+        existing.extend_from_slice(&encoded);
         let records = verify_stream(&existing, keys)?;
-        if frame.sequence != records.len() as u64 + 1 {
+        if records.last().map(|record| record.sequence) != Some(frame.sequence) {
             return Err(LedgerError::Sequence);
         }
-        existing.extend_from_slice(&encoded);
-        verify_stream(&existing, keys)?;
-        let mut file = &self.ledger_file;
+        let mut file = &*ledger_file;
         file.seek(SeekFrom::End(0)).map_err(|_| LedgerError::Io)?;
         apply_simulated_write_fault(&mut file, &encoded, fault)?;
         crash_during_ledger_append(&mut file, &encoded)?;
@@ -1294,13 +1325,14 @@ impl LedgerFileGuard {
 
     /// Read the bounded bytes from the already opened ledger inode.
     pub fn read_bytes(&self) -> Result<Vec<u8>, LedgerError> {
-        let mut file = &self.ledger_file;
+        let ledger_file = self.ledger_file.lock().map_err(|_| LedgerError::Io)?;
+        let mut file = &*ledger_file;
         file.seek(SeekFrom::Start(0)).map_err(|_| LedgerError::Io)?;
         let mut bytes = Vec::new();
-        file.take((MAX_FRAME_BYTES as u64 * 10_001) + 1)
+        file.take(MAX_LEDGER_BYTES as u64 + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| LedgerError::Io)?;
-        if bytes.len() > MAX_FRAME_BYTES * 10_001 {
+        if bytes.len() > MAX_LEDGER_BYTES {
             return Err(LedgerError::TooLarge);
         }
         Ok(bytes)
@@ -1743,6 +1775,47 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_append_calls_on_one_guard_never_duplicate_a_sequence() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+        let root = std::env::temp_dir().join(format!(
+            "serea-gate-c-same-guard-race-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let keys = SyntheticKeyring::synthetic(1, b"same-guard-race-key").unwrap();
+        for iteration in 0..128 {
+            let guard = Arc::new(
+                LedgerFileGuard::acquire(root.join(format!("ledger-{iteration}"))).unwrap(),
+            );
+            let barrier = Arc::new(Barrier::new(2));
+            let first = {
+                let guard = Arc::clone(&guard);
+                let barrier = Arc::clone(&barrier);
+                let keys = keys.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    guard.append_sync(&frame(1, 1, 1, FrameKind::Intent), &keys)
+                })
+            };
+            let second = {
+                let guard = Arc::clone(&guard);
+                let barrier = Arc::clone(&barrier);
+                let keys = keys.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    guard.append_sync(&frame(1, 1, 1, FrameKind::Intent), &keys)
+                })
+            };
+            let results = [first.join().unwrap(), second.join().unwrap()];
+            assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+            assert_eq!(guard.read_verified(&keys).unwrap().len(), 1);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn persistent_checkpoint_bootstrap_reopen_tamper_and_missing_authority() {
         let root = std::env::temp_dir().join(format!(
             "serea-gate-c-checkpoint-{}-{}",
@@ -1805,6 +1878,277 @@ mod tests {
         let rolled_back = PersistentCheckpointStore::open_existing(&directory, &keys).unwrap();
         assert_eq!(rolled_back.current(), &first_revision);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_missing_middle_truncated_highest_duplicate_and_wrong_key_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "serea-gate-c-checkpoint-corruption-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let keys = SyntheticKeyring::synthetic(1, b"checkpoint-corruption-key").unwrap();
+        let initial = TrustedLedgerCheckpoint {
+            revision: 0,
+            owner: owner(),
+            owner_epoch: 7,
+            key_version: 1,
+            final_sequence: 0,
+            generation: 0,
+            stream_digest: Sha256::digest([]).into(),
+        };
+
+        let middle = root.join("middle");
+        let mut authority =
+            PersistentCheckpointStore::bootstrap(&middle, initial.clone(), &keys).unwrap();
+        for revision in 2..=3 {
+            authority
+                .advance(
+                    TrustedLedgerCheckpoint {
+                        revision: 0,
+                        owner: owner(),
+                        owner_epoch: 7,
+                        key_version: 1,
+                        final_sequence: revision,
+                        generation: revision,
+                        stream_digest: [revision as u8; 32],
+                    },
+                    &keys,
+                )
+                .unwrap();
+        }
+        drop(authority);
+        fs::remove_file(middle.join("checkpoint-00000000000000000002.bin")).unwrap();
+        assert_eq!(
+            PersistentCheckpointStore::open_existing(&middle, &keys).err(),
+            Some(LedgerError::Stale)
+        );
+
+        let truncated = root.join("truncated");
+        let mut authority =
+            PersistentCheckpointStore::bootstrap(&truncated, initial.clone(), &keys).unwrap();
+        authority
+            .advance(
+                TrustedLedgerCheckpoint {
+                    revision: 0,
+                    owner: owner(),
+                    owner_epoch: 7,
+                    key_version: 1,
+                    final_sequence: 1,
+                    generation: 1,
+                    stream_digest: [1; 32],
+                },
+                &keys,
+            )
+            .unwrap();
+        drop(authority);
+        let highest = truncated.join("checkpoint-00000000000000000002.bin");
+        let bytes = fs::read(&highest).unwrap();
+        fs::write(&highest, &bytes[..bytes.len() - 1]).unwrap();
+        assert_eq!(
+            PersistentCheckpointStore::open_existing(&truncated, &keys).err(),
+            Some(LedgerError::Invalid)
+        );
+
+        let duplicate = root.join("duplicate");
+        let mut authority =
+            PersistentCheckpointStore::bootstrap(&duplicate, initial.clone(), &keys).unwrap();
+        authority
+            .advance(
+                TrustedLedgerCheckpoint {
+                    revision: 0,
+                    owner: owner(),
+                    owner_epoch: 7,
+                    key_version: 1,
+                    final_sequence: 1,
+                    generation: 1,
+                    stream_digest: [1; 32],
+                },
+                &keys,
+            )
+            .unwrap();
+        drop(authority);
+        let first = fs::read(duplicate.join("checkpoint-00000000000000000001.bin")).unwrap();
+        fs::write(duplicate.join("checkpoint-00000000000000000002.bin"), first).unwrap();
+        assert_eq!(
+            PersistentCheckpointStore::open_existing(&duplicate, &keys).err(),
+            Some(LedgerError::Stale)
+        );
+
+        let other_keys = SyntheticKeyring::synthetic(2, b"different-checkpoint-key").unwrap();
+        let wrong_key = root.join("wrong-key");
+        PersistentCheckpointStore::bootstrap(&wrong_key, initial, &keys).unwrap();
+        assert_eq!(
+            PersistentCheckpointStore::open_existing(&wrong_key, &other_keys).err(),
+            Some(LedgerError::MissingKey)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checkpoint_directory_symlink_replacement_is_refused_on_refresh() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!(
+            "serea-gate-c-checkpoint-path-replacement-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let directory = root.join("authority");
+        let keys = SyntheticKeyring::synthetic(1, b"checkpoint-path-key").unwrap();
+        let mut authority = PersistentCheckpointStore::bootstrap(
+            &directory,
+            TrustedLedgerCheckpoint {
+                revision: 0,
+                owner: owner(),
+                owner_epoch: 7,
+                key_version: 1,
+                final_sequence: 0,
+                generation: 0,
+                stream_digest: Sha256::digest([]).into(),
+            },
+            &keys,
+        )
+        .unwrap();
+        fs::rename(&directory, root.join("original")).unwrap();
+        let replacement = root.join("replacement");
+        fs::create_dir(&replacement).unwrap();
+        symlink(&replacement, &directory).unwrap();
+        assert_eq!(authority.refresh(&keys), Err(LedgerError::Invalid));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_reopen_rejects_oversized_revision_before_allocation() {
+        let root = std::env::temp_dir().join(format!(
+            "serea-gate-c-checkpoint-bound-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let directory = root.join("authority");
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("checkpoint-00000000000000000001.bin"),
+            vec![0; MAX_CHECKPOINT_BYTES as usize + 1],
+        )
+        .unwrap();
+        let keys = SyntheticKeyring::synthetic(1, b"checkpoint-bound-test").unwrap();
+        assert_eq!(
+            PersistentCheckpointStore::open_existing(&directory, &keys).err(),
+            Some(LedgerError::TooLarge)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_revision_count_and_advance_ceiling_fail_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "serea-gate-c-checkpoint-revision-cap-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let directory = root.join("authority");
+        fs::create_dir(&directory).unwrap();
+        for revision in 1..=MAX_CHECKPOINT_REVISIONS + 1 {
+            fs::write(directory.join(format!("checkpoint-{revision:020}.bin")), []).unwrap();
+        }
+        let keys = SyntheticKeyring::synthetic(1, b"checkpoint-cap-key").unwrap();
+        assert_eq!(
+            PersistentCheckpointStore::open_existing(&directory, &keys).err(),
+            Some(LedgerError::TooLarge)
+        );
+        fs::remove_dir_all(&root).unwrap();
+
+        let mut authority = PersistentCheckpointStore::bootstrap(
+            std::env::temp_dir().join(format!(
+                "serea-p7-cap-{}",
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            )),
+            TrustedLedgerCheckpoint {
+                revision: 0,
+                owner: owner(),
+                owner_epoch: 7,
+                key_version: 1,
+                final_sequence: 0,
+                generation: 0,
+                stream_digest: Sha256::digest([]).into(),
+            },
+            &keys,
+        )
+        .unwrap();
+        authority.current.revision = MAX_CHECKPOINT_REVISIONS as u64;
+        let next = TrustedLedgerCheckpoint {
+            revision: 0,
+            owner: owner(),
+            owner_epoch: 7,
+            key_version: 1,
+            final_sequence: 1,
+            generation: 1,
+            stream_digest: [1; 32],
+        };
+        assert_eq!(authority.advance(next, &keys), Err(LedgerError::Stale));
+        authority.current.revision = u64::MAX;
+        let overflow = TrustedLedgerCheckpoint {
+            revision: 0,
+            owner: owner(),
+            owner_epoch: 7,
+            key_version: 1,
+            final_sequence: 1,
+            generation: 1,
+            stream_digest: [2; 32],
+        };
+        assert_eq!(
+            authority.advance(overflow, &keys),
+            Err(LedgerError::Generation)
+        );
+        fs::remove_dir_all(authority.directory).unwrap();
+    }
+
+    #[test]
+    fn ledger_verifier_rejects_stream_over_hard_byte_limit() {
+        let keys = SyntheticKeyring::synthetic(1, b"ledger-bound-test").unwrap();
+        assert_eq!(
+            verify_stream(&vec![0; MAX_LEDGER_BYTES + 1], &keys),
+            Err(LedgerError::TooLarge)
+        );
+    }
+
+    #[test]
+    fn ledger_verifier_rejects_frame_count_over_hard_limit() {
+        let keys = SyntheticKeyring::synthetic(1, b"ledger-frame-cap-key").unwrap();
+        let mut bytes = Vec::new();
+        let mut sequence = 0u64;
+        for operation in 1..=((MAX_LEDGER_FRAMES / 4) + 1) as u64 {
+            for (index, kind) in [
+                FrameKind::Intent,
+                FrameKind::PrimaryApplied,
+                FrameKind::Finalized,
+                FrameKind::Reconciled,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                sequence += 1;
+                let mut frame = frame(
+                    sequence,
+                    if index == 3 {
+                        operation * 2
+                    } else {
+                        operation * 2 - 1
+                    },
+                    1,
+                    kind,
+                );
+                frame.operation_id = format!("frame-cap-{operation}");
+                bytes.extend_from_slice(&encode(&frame, &keys).unwrap());
+            }
+        }
+        assert!(bytes.len() <= MAX_LEDGER_BYTES);
+        assert_eq!(verify_stream(&bytes, &keys), Err(LedgerError::TooLarge));
     }
 
     #[cfg(unix)]

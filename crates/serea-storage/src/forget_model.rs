@@ -105,6 +105,9 @@ impl Model {
     fn can_extract(&self) -> bool {
         self.phase == Phase::Ready
     }
+    fn can_commit_extraction(&self, captured_generation: u64) -> bool {
+        self.phase == Phase::Ready && self.generation == captured_generation
+    }
     fn can_ack(&self) -> bool {
         self.ledger == LedgerState::Finalized && self.phase == Phase::Complete
     }
@@ -154,59 +157,124 @@ fn crash_matrix_never_acknowledges_partial_intent_and_replay_is_idempotent() {
     for point in cases {
         let mut m = Model::initial();
         m.crash_at(point);
-        if m.ledger != LedgerState::Finalized {
-            assert!(!m.can_ack(), "false completion at {point:?}");
-        }
+        let expected = match point {
+            BeforeAuthorization => (LedgerState::Empty, Phase::Ready, 0, true, true, false),
+            AfterAuthorization | BeforeIntent => {
+                (LedgerState::Empty, Phase::Authorized, 0, true, false, false)
+            }
+            AfterAuthorizationBeforeIntent
+            | DuringChunkAppend
+            | DuringConcurrentExtraction
+            | DuringRecoveryReplay
+            | StorageExhaustion => (
+                LedgerState::Partial,
+                Phase::Quarantined,
+                0,
+                true,
+                false,
+                false,
+            ),
+            AfterCompleteIntent | DuringPrimaryTransaction | DuringFtsUpdate => (
+                LedgerState::Intent,
+                Phase::Quarantined,
+                0,
+                true,
+                false,
+                false,
+            ),
+            AfterPrimaryCommit | BeforeLedgerFinalization | DuringBlobGc => (
+                LedgerState::Applied,
+                Phase::Quarantined,
+                1,
+                false,
+                false,
+                false,
+            ),
+            AfterFinalizationBeforeResponse => (
+                LedgerState::Finalized,
+                Phase::Complete,
+                1,
+                false,
+                true,
+                true,
+            ),
+            DuringBackupExport | DuringOldSnapshotRestore => (
+                LedgerState::Finalized,
+                Phase::Quarantined,
+                0,
+                true,
+                false,
+                false,
+            ),
+        };
+        assert_eq!(m.ledger, expected.0, "ledger at {point:?}");
+        assert_eq!(m.phase, expected.1, "phase at {point:?}");
+        assert_eq!(m.generation, expected.2, "generation at {point:?}");
+        assert_eq!(
+            m.visible.contains(&("owner-a", "m1")),
+            expected.3,
+            "Owner A visibility at {point:?}"
+        );
+        assert_eq!(m.can_read(), expected.4, "read barrier at {point:?}");
+        assert_eq!(m.can_extract(), matches!(point, BeforeAuthorization));
+        assert_eq!(m.can_ack(), expected.5, "acknowledgment at {point:?}");
+        assert!(
+            m.visible.contains(&("owner-b", "other")),
+            "another Owner remains isolated at {point:?}"
+        );
         assert!(
             !m.response_sent,
             "the deterministic harness never claims a network response"
         );
-        if matches!(
-            point,
-            AfterCompleteIntent
-                | DuringPrimaryTransaction
-                | AfterPrimaryCommit
-                | BeforeLedgerFinalization
-                | DuringFtsUpdate
-                | DuringBlobGc
-                | DuringBackupExport
-                | DuringOldSnapshotRestore
-                | DuringConcurrentExtraction
-                | DuringRecoveryReplay
-                | StorageExhaustion
-                | DuringChunkAppend
-                | AfterAuthorizationBeforeIntent
-        ) {
-            assert!(
-                !m.can_extract(),
-                "quarantine must fence extraction at {point:?}"
-            );
-        }
         m.recover();
         let after = m.visible.clone();
         m.recover();
+        let recovered = (
+            m.ledger,
+            m.phase,
+            m.generation,
+            m.can_read(),
+            m.can_extract(),
+            m.can_ack(),
+        );
+        m.recover();
         assert_eq!(m.visible, after, "replay changed state at {point:?}");
+        assert_eq!(
+            (
+                m.ledger,
+                m.phase,
+                m.generation,
+                m.can_read(),
+                m.can_extract(),
+                m.can_ack()
+            ),
+            recovered,
+            "replay state must be idempotent at {point:?}"
+        );
+        assert!(m.visible.contains(&("owner-b", "other")));
         if matches!(
             point,
             AfterCompleteIntent
                 | DuringPrimaryTransaction
+                | DuringFtsUpdate
                 | AfterPrimaryCommit
                 | BeforeLedgerFinalization
-                | DuringFtsUpdate
                 | DuringBlobGc
                 | AfterFinalizationBeforeResponse
         ) {
-            assert!(
-                !m.visible.iter().any(|(owner, _)| *owner == "owner-a"),
-                "complete intent recovery must delete closure at {point:?}"
-            );
-            assert!(
-                m.visible.contains(&("owner-b", "other")),
-                "Forget must preserve another Owner at {point:?}"
-            );
+            assert!(!m.visible.iter().any(|(owner, _)| *owner == "owner-a"));
             assert!(
                 m.can_ack(),
                 "recovered complete intent should become reportable at {point:?}"
+            );
+            assert!(
+                !m.can_commit_extraction(0),
+                "stale extraction must not resurrect forgotten content at {point:?}"
+            );
+        } else {
+            assert!(
+                !m.can_ack(),
+                "incomplete or unverifiable Forget must not be reportable at {point:?}"
             );
         }
     }

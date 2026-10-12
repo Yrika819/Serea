@@ -139,3 +139,6 @@ mod forget_model;
 
 #[cfg(all(test, feature = "p7-experimental"))]
 mod p7_migration_tests;
+
+#[cfg(all(test, feature = "p7-experimental"))]
+mod p7_file_recovery_tests;

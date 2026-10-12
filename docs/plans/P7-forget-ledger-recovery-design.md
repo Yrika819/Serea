@@ -18,7 +18,7 @@
 Keep five concepts distinct:
 
 1. `memory_id`: random opaque identity for one Memory row; never derived from body/source.
-2. `source_id`: random opaque identifier for an admitted source occurrence/provenance record. Required for provenance/lineage if the Owner approves source tracking; it contains no content-derived value.
+2. `source_id`: random opaque identifier for an admitted source occurrence/provenance record. This proposal makes it required for every persisted Memory so provenance has a stable non-content identity; if the host cannot establish it, refuse persistence. Exact provenance fields remain subject to owner approval.
 3. `source_equivalence_tag`: optional keyed tag used only if the Owner separately approves re-extraction suppression. It is not `source_id` and is absent by default.
 4. HMAC tag: one possible encoding for the optional equivalence tag; it requires separately approved key custody, rotation, restore, and loss behavior. It is not authorized by this proposal.
 5. `forget_op_id` / ledger sequence: random operation identity and monotone-within-ledger record sequence; these identify a deletion operation, not Memory content.

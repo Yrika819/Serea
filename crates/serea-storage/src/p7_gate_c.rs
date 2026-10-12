@@ -740,13 +740,20 @@ mod tests {
     }
 
     #[test]
-    fn gate_c_feature_does_not_select_or_apply_experimental_migration_0009() {
-        assert_eq!(crate::Migrations::LATEST, 8);
-        assert!(
-            crate::Migrations::embedded()
-                .iter()
-                .all(|migration| migration.version <= 8)
-        );
+    fn gate_c_feature_does_not_select_experimental_migration_without_its_feature() {
+        if cfg!(feature = "p7-experimental") {
+            assert_eq!(crate::Migrations::LATEST, 9);
+            assert!(crate::Migrations::embedded().iter().any(|migration| {
+                migration.version == 9 && migration.name == "0009_p7_synthetic_memory"
+            }));
+        } else {
+            assert_eq!(crate::Migrations::LATEST, 8);
+            assert!(
+                crate::Migrations::embedded()
+                    .iter()
+                    .all(|migration| migration.version <= 8)
+            );
+        }
         assert_eq!(ACCEPTED_V1_BOUNDS.max_active_items, 1_000);
         assert_eq!(ACCEPTED_V1_BOUNDS.max_item_body_utf8_bytes, 4_096);
         assert_eq!(ACCEPTED_V1_BOUNDS.working_retention_days, 7);

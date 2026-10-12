@@ -141,11 +141,24 @@ struct SearchRequest<'a> {
     limit: usize,
 }
 /// Sealed owner context; only a deterministic unit-test authenticator can create it.
+/// The prototype type is deliberately absent from the public crate API.
+/// External callers cannot construct a Memory-capable handle:
+///
+/// ```compile_fail
+/// use serea_storage::P7ExperimentalMemory;
+/// ```
 #[derive(Debug, Clone)]
 pub struct P7ExperimentalMemory {
     owner_id: String,
     _test_auth_context: u64,
 }
+
+// The coordinator integration is nested here so it may exercise the fixture
+// internally without making P7ExperimentalMemory part of the crate API. The
+// only supported test composition is the coordinator in this child module.
+#[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
+#[path = "p7_integrated_recovery_tests.rs"]
+mod p7_integrated_recovery_tests;
 /// Provisional values supplied for synthetic testing only.
 pub const EXPERIMENTAL_PROVISIONAL: ExperimentalMemoryConfig = ExperimentalMemoryConfig {
     status: ProvisionalValue::TestOnly,

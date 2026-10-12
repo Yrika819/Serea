@@ -219,7 +219,10 @@ CREATE TABLE p7_ledger_state (
   owner_id TEXT PRIMARY KEY REFERENCES p7_owners(owner_id) ON DELETE RESTRICT,
   generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
   checkpoint_digest TEXT,
-  read_state TEXT NOT NULL CHECK (read_state IN ('READY','QUARANTINED','RECOVERY_REQUIRED'))
+  read_state TEXT NOT NULL CHECK (read_state IN ('READY','QUARANTINED','RECOVERY_REQUIRED')),
+  pending_operation_id TEXT,
+  pending_generation INTEGER CHECK (pending_generation IS NULL OR pending_generation >= 0),
+  CHECK ((pending_operation_id IS NULL) = (pending_generation IS NULL))
 ) STRICT;
 
 -- All admission accounting is checked and updated in the same SQLite write

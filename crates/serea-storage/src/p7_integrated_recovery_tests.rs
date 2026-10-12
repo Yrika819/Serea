@@ -1,18 +1,21 @@
-//! File-backed end-to-end synthetic Gate C coordinator tests. The checkpoint is
-//! deliberately held by the test process as an independent authority fixture;
-//! it is not persisted beside the database or ledger and is not production custody.
+//! File-backed end-to-end synthetic Gate C coordinator tests. The persistent
+//! checkpoint is stored in a separate temporary fixture directory, with a
+//! synthetic key. It is neither production custody nor rollback-independent.
 use crate::experimental_memory::{
     MemoryClass, MemoryDraft, MemoryKind, MemoryProvenance, P7ExperimentalMemory,
 };
 use crate::p7_gate_c::{
     AuthEvidence, AuthPurpose, EvidenceReplayGuard, FrameKind, LedgerError, LedgerFileGuard,
-    LedgerFrame, OwnerId, SyntheticKeyring, TrustedLedgerCheckpoint, verify_stream_at_checkpoint,
+    LedgerFrame, OwnerId, PersistentCheckpointStore, SyntheticKeyring, TrustedLedgerCheckpoint,
+    verify_stream_at_checkpoint,
 };
 use crate::{Store, StoreError};
 use rusqlite::{OptionalExtension, params};
 use serea_protocol::{Clock, EpochMillis, ProtocolError};
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use std::fs;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -22,6 +25,12 @@ use std::sync::{Arc, Barrier};
 const OWNER: &str = "own_00000000000000000000000000000071";
 const OWNER_EPOCH: u64 = 71;
 static NEXT: AtomicU64 = AtomicU64::new(1);
+
+fn crash_at(point: &str) {
+    if std::env::var("SEREA_P7_CRASH_AT").is_ok_and(|requested| requested == point) {
+        std::process::exit(73);
+    }
+}
 
 struct TestClock;
 impl Clock for TestClock {
@@ -46,6 +55,9 @@ impl Scratch {
     fn ledger(&self) -> PathBuf {
         self.0.join("forget.ledger")
     }
+    fn checkpoint(&self) -> PathBuf {
+        self.0.join("trusted-checkpoint")
+    }
 }
 impl Drop for Scratch {
     fn drop(&mut self) {
@@ -55,6 +67,7 @@ impl Drop for Scratch {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ForgetStatus {
+    Pending,
     Completed,
     AlreadyCompleted,
 }
@@ -68,17 +81,156 @@ struct SyntheticCoordinator {
     ledger_path: PathBuf,
     owner: OwnerId,
     keys: SyntheticKeyring,
-    checkpoint: Mutex<TrustedLedgerCheckpoint>,
+    checkpoint: Mutex<PersistentCheckpointStore>,
     replay: Mutex<EvidenceReplayGuard>,
 }
 
+/// Non-forgeable, non-clonable permit. It owns the cross-process lock and is
+/// tied to one coordinator borrow. Dropping it releases the permit; each
+/// operation also rechecks the primary generation/read barrier.
+struct VerifiedMemory<'a> {
+    coordinator: &'a SyntheticCoordinator,
+    _lock: LedgerFileGuard,
+    owner: OwnerId,
+    generation: u64,
+    used: Cell<bool>,
+    _unique: PhantomData<&'a mut ()>,
+}
+
+impl VerifiedMemory<'_> {
+    fn ensure_live(&self) -> Result<(), LedgerError> {
+        if self.used.replace(true) {
+            return Err(LedgerError::Stale);
+        }
+        let state: Option<(i64, String)> = self
+            .coordinator
+            .store
+            .transact(|tx| {
+                tx.inner
+                    .query_row(
+                        "SELECT generation,read_state FROM p7_ledger_state WHERE owner_id=?1",
+                        [self.owner.as_str()],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(StoreError::from)
+            })
+            .map_err(|_| LedgerError::Stale)?;
+        match state {
+            Some((generation, state))
+                if generation >= 0 && generation as u64 == self.generation && state == "READY" =>
+            {
+                Ok(())
+            }
+            _ => Err(LedgerError::Stale),
+        }
+    }
+
+    fn get(&self, id: &str) -> Result<bool, LedgerError> {
+        self.ensure_live()?;
+        self.coordinator
+            .memory
+            .get(
+                &self.coordinator.store,
+                id,
+                EpochMillis::new(10_000).unwrap(),
+            )
+            .map(|row| row.is_some())
+            .map_err(|_| LedgerError::Invalid)
+    }
+
+    fn insert(&self, draft: &MemoryDraft) -> Result<(), LedgerError> {
+        self.ensure_live()?;
+        self.coordinator
+            .memory
+            .insert(
+                &self.coordinator.store,
+                draft,
+                EpochMillis::new(10_000).unwrap(),
+            )
+            .map_err(|_| LedgerError::Invalid)
+    }
+
+    fn search(&self, literal: &str) -> Result<Vec<String>, LedgerError> {
+        self.ensure_live()?;
+        self.coordinator
+            .memory
+            .search(
+                &self.coordinator.store,
+                MemoryClass::Public,
+                literal,
+                EpochMillis::new(10_000).unwrap(),
+                None,
+                20,
+            )
+            .map(|page| page.records.into_iter().map(|r| r.memory_id).collect())
+            .map_err(|_| LedgerError::Invalid)
+    }
+
+    fn list(&self) -> Result<Vec<String>, LedgerError> {
+        self.ensure_live()?;
+        self.coordinator
+            .memory
+            .list(
+                &self.coordinator.store,
+                MemoryClass::Public,
+                EpochMillis::new(10_000).unwrap(),
+                None,
+                20,
+            )
+            .map(|page| page.records.into_iter().map(|r| r.memory_id).collect())
+            .map_err(|_| LedgerError::Invalid)
+    }
+
+    fn supersede(&self, prior: &str, successor: &str) -> Result<(), LedgerError> {
+        self.ensure_live()?;
+        self.coordinator
+            .memory
+            .supersede(
+                &self.coordinator.store,
+                prior,
+                successor,
+                EpochMillis::new(10_000).unwrap(),
+            )
+            .map_err(|_| LedgerError::Invalid)
+    }
+
+    fn verify_fts_integrity(&self) -> Result<(), LedgerError> {
+        self.ensure_live()?;
+        self.coordinator
+            .memory
+            .verify_fts_integrity(&self.coordinator.store)
+            .map_err(|_| LedgerError::Stale)
+    }
+}
+
 impl SyntheticCoordinator {
-    fn open(db: &Path, ledger: &Path) -> Result<Self, StoreError> {
+    fn open(db: &Path, ledger: &Path, checkpoint_path: &Path) -> Result<Self, StoreError> {
+        if db.exists() || ledger.exists() || checkpoint_path.exists() {
+            return Err(StoreError::Open);
+        }
         let store = Store::open(db, &TestClock)?;
         let owner = OwnerId::parse(OWNER).unwrap();
         let keys = SyntheticKeyring::synthetic(1, b"synthetic-integrated-owner-71").unwrap();
-        fs::write(ledger, []).map_err(|_| StoreError::Open)?;
+        let mut replay = EvidenceReplayGuard::default();
+        let bootstrap = AuthEvidence::from_verified_adapter(
+            AuthPurpose::Bootstrap,
+            10_000,
+            11_000,
+            [254; 32],
+            "synthetic-bootstrap-host-v1".into(),
+        )
+        .map_err(|_| StoreError::Open)?;
+        replay
+            .consume(&bootstrap, AuthPurpose::Bootstrap, 10_100)
+            .map_err(|_| StoreError::Open)?;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(ledger)
+            .map_err(|_| StoreError::Open)?;
         let checkpoint = TrustedLedgerCheckpoint {
+            revision: 1,
             owner: owner.clone(),
             owner_epoch: OWNER_EPOCH,
             key_version: 1,
@@ -86,10 +238,12 @@ impl SyntheticCoordinator {
             generation: 0,
             stream_digest: Sha256::digest([]).into(),
         };
+        let checkpoint = PersistentCheckpointStore::bootstrap(checkpoint_path, checkpoint, &keys)
+            .map_err(|_| StoreError::Open)?;
         store.transact(|tx| {
             tx.inner.execute("INSERT INTO p7_owners VALUES(?1,?2,'ACTIVE',0)", params![OWNER, OWNER_EPOCH as i64])?;
             tx.inner.execute("INSERT INTO p7_resource_accounting(owner_id) VALUES(?1)", [OWNER])?;
-            tx.inner.execute("INSERT INTO p7_ledger_state(owner_id,generation,checkpoint_digest,read_state) VALUES(?1,0,NULL,'READY')", [OWNER])?;
+            tx.inner.execute("INSERT INTO p7_ledger_state(owner_id,generation,checkpoint_digest,read_state,pending_operation_id,pending_generation) VALUES(?1,0,NULL,'READY',NULL,NULL)", [OWNER])?;
             Ok(())
         })?;
         Ok(Self {
@@ -99,30 +253,33 @@ impl SyntheticCoordinator {
             owner,
             keys,
             checkpoint: Mutex::new(checkpoint),
-            replay: Mutex::new(EvidenceReplayGuard::default()),
+            replay: Mutex::new(replay),
         })
     }
 
-    fn reopen(
-        db: &Path,
-        ledger: &Path,
-        checkpoint: TrustedLedgerCheckpoint,
-    ) -> Result<Self, StoreError> {
-        Ok(Self {
+    fn reopen(db: &Path, ledger: &Path, checkpoint_path: &Path) -> Result<Self, StoreError> {
+        let keys = SyntheticKeyring::synthetic(1, b"synthetic-integrated-owner-71").unwrap();
+        let checkpoint = PersistentCheckpointStore::open_existing(checkpoint_path, &keys)
+            .map_err(|_| StoreError::Open)?;
+        let coordinator = Self {
             store: Store::open(db, &TestClock)?,
             memory: P7ExperimentalMemory::fake(OWNER.into(), OWNER_EPOCH),
             ledger_path: ledger.to_path_buf(),
             owner: OwnerId::parse(OWNER).unwrap(),
-            keys: SyntheticKeyring::synthetic(1, b"synthetic-integrated-owner-71").unwrap(),
+            keys,
             checkpoint: Mutex::new(checkpoint),
             replay: Mutex::new(EvidenceReplayGuard::default()),
-        })
+        };
+        coordinator
+            .recover_startup()
+            .map_err(|_| StoreError::Open)?;
+        Ok(coordinator)
     }
 
     fn verify_locked(&self) -> Result<(LedgerFileGuard, Vec<LedgerFrame>, u64), LedgerError> {
-        let guard = LedgerFileGuard::acquire(&self.ledger_path)?;
+        let guard = LedgerFileGuard::acquire_existing(&self.ledger_path)?;
         let frames = guard.read_verified(&self.keys)?;
-        let bytes = fs::read(&self.ledger_path).map_err(|_| LedgerError::Io)?;
+        let bytes = guard.read_bytes()?;
         let primary_generation = self
             .store
             .transact(|tx| {
@@ -142,11 +299,13 @@ impl SyntheticCoordinator {
                 }
             })
             .map_err(|_| LedgerError::Stale)?;
-        let checkpoint = self.checkpoint.lock().map_err(|_| LedgerError::Stale)?;
+        let mut checkpoint_store = self.checkpoint.lock().map_err(|_| LedgerError::Stale)?;
+        checkpoint_store.refresh(&self.keys)?;
+        let checkpoint = checkpoint_store.current();
         verify_stream_at_checkpoint(
             &bytes,
             &self.keys,
-            Some(&checkpoint),
+            Some(checkpoint),
             &self.owner,
             OWNER_EPOCH,
             primary_generation,
@@ -154,58 +313,395 @@ impl SyntheticCoordinator {
         Ok((guard, frames, primary_generation))
     }
 
+    /// Startup recovery accepts only a cryptographically verified extension of
+    /// the exact persistent checkpoint prefix. It never grants reads until the
+    /// primary DB, FTS, terminal ledger and a newly persisted checkpoint agree.
+    fn recover_startup(&self) -> Result<(), LedgerError> {
+        let guard = LedgerFileGuard::acquire_existing(&self.ledger_path)?;
+        let bytes = guard.read_bytes()?;
+        let mut checkpoint_guard = self.checkpoint.lock().map_err(|_| LedgerError::Stale)?;
+        checkpoint_guard.refresh(&self.keys)?;
+        let trusted = checkpoint_guard.current().clone();
+        let (_prefix, extension) = crate::p7_gate_c::verify_stream_recovery_extension(
+            &bytes,
+            &self.keys,
+            &trusted,
+            &self.owner,
+            OWNER_EPOCH,
+        )?;
+        let primary: Option<(i64, String, Option<String>, Option<i64>)> = self.store.transact(|tx| {
+            tx.inner.query_row(
+                "SELECT generation,read_state,pending_operation_id,pending_generation FROM p7_ledger_state WHERE owner_id=?1",
+                [self.owner.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).optional().map_err(StoreError::from)
+        }).map_err(|_| LedgerError::Stale)?;
+        let (db_generation, read_state, pending_operation, pending_generation) =
+            primary.ok_or(LedgerError::Stale)?;
+        if db_generation < 0 {
+            return Err(LedgerError::Stale);
+        }
+        let frames = guard.read_verified(&self.keys)?;
+        if extension.is_empty() {
+            if db_generation as u64 != trusted.generation {
+                return Err(LedgerError::Generation);
+            }
+            crate::p7_gate_c::verify_stream_at_checkpoint(
+                &bytes,
+                &self.keys,
+                Some(&trusted),
+                &self.owner,
+                OWNER_EPOCH,
+                db_generation as u64,
+            )?;
+            self.check_fts_integrity()?;
+            self.check_owner_accounting()?;
+            match (pending_operation, pending_generation) {
+                (Some(op), Some(generation))
+                    if generation >= 0
+                        && generation as u64 == trusted.generation
+                        && frames.last().is_some_and(|f| {
+                            f.kind == FrameKind::Reconciled
+                                && f.operation_id == op
+                                && f.generation == trusted.generation
+                        }) =>
+                {
+                    self.release_ready(trusted.generation)?;
+                }
+                (None, None) if read_state == "READY" => {}
+                _ => return Err(LedgerError::Stale),
+            }
+            return Ok(());
+        }
+
+        let op = extension.first().ok_or(LedgerError::Invalid)?;
+        let reconciled_generation = op
+            .generation
+            .checked_add(1)
+            .ok_or(LedgerError::Generation)?;
+        if op.kind != FrameKind::Intent
+            || extension
+                .iter()
+                .any(|f| f.operation_id != op.operation_id || f.owner != self.owner)
+            || pending_operation.as_deref() != Some(op.operation_id.as_str())
+            || pending_generation != Some(reconciled_generation as i64)
+            || frames
+                .iter()
+                .any(|f| f.operation_id == op.operation_id && f.sequence <= trusted.final_sequence)
+            || extension.iter().any(|f| {
+                f.generation != op.generation
+                    && !(f.kind == FrameKind::Reconciled && f.generation == reconciled_generation)
+            })
+            || op.generation
+                != trusted
+                    .generation
+                    .checked_add(1)
+                    .ok_or(LedgerError::Generation)?
+        {
+            return Err(LedgerError::Stale);
+        }
+        let chunks = extension
+            .iter()
+            .filter(|f| f.kind == FrameKind::Chunk)
+            .collect::<Vec<_>>();
+        if chunks.len() != op.chunk_count as usize
+            || chunks
+                .iter()
+                .enumerate()
+                .any(|(i, f)| f.chunk_index as usize != i)
+        {
+            return Err(LedgerError::Invalid);
+        }
+        let encoded = chunks
+            .iter()
+            .flat_map(|f| f.payload.iter().copied())
+            .collect::<Vec<_>>();
+        if encoded.len() > crate::p7_gate_c::PROVISIONAL_MAX_CLOSURE_BYTES
+            || <[u8; 32]>::from(Sha256::digest(&encoded)) != op.closure_digest
+        {
+            return Err(LedgerError::Authentication);
+        }
+        let closure = decode_ids(&encoded)?;
+        if closure.len() != op.target_count as usize
+            || closure.is_empty()
+            || closure.len() > 1000
+            || closure.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(LedgerError::Invalid);
+        }
+        let _root_digest: [u8; 32] = op
+            .payload
+            .as_slice()
+            .try_into()
+            .map_err(|_| LedgerError::Invalid)?;
+        self.validate_or_apply_recovered_closure(
+            &op.operation_id,
+            op.generation,
+            &closure,
+            db_generation as u64,
+            trusted.generation,
+        )?;
+        crash_at("replay-after-primary-commit");
+
+        let has_primary = extension
+            .iter()
+            .any(|f| f.kind == FrameKind::PrimaryApplied);
+        let has_finalized = extension.iter().any(|f| f.kind == FrameKind::Finalized);
+        let has_reconciled = extension.iter().any(|f| f.kind == FrameKind::Reconciled);
+        let mut sequence = frames.last().map_or(0, |f| f.sequence);
+        if !has_primary {
+            let record = frame(
+                sequence + 1,
+                op.generation,
+                op.target_count,
+                op.chunk_count,
+                op.closure_digest,
+                self.owner.clone(),
+                &op.operation_id,
+                FrameKind::PrimaryApplied,
+                Vec::new(),
+            );
+            guard.append_sync(&record, &self.keys)?;
+            sequence += 1;
+            crash_at("replay-after-primary-record");
+        }
+        if !has_finalized {
+            let record = frame(
+                sequence + 1,
+                op.generation,
+                op.target_count,
+                op.chunk_count,
+                op.closure_digest,
+                self.owner.clone(),
+                &op.operation_id,
+                FrameKind::Finalized,
+                Vec::new(),
+            );
+            guard.append_sync(&record, &self.keys)?;
+            sequence += 1;
+            crash_at("replay-after-finalized");
+        }
+        let final_generation = reconciled_generation;
+        if !has_reconciled {
+            let record = frame(
+                sequence + 1,
+                final_generation,
+                op.target_count,
+                op.chunk_count,
+                op.closure_digest,
+                self.owner.clone(),
+                &op.operation_id,
+                FrameKind::Reconciled,
+                Vec::new(),
+            );
+            guard.append_sync(&record, &self.keys)?;
+            crash_at("replay-after-reconciled");
+        }
+        self.set_primary_generation(final_generation)?;
+        crash_at("replay-after-primary-generation");
+        let new_bytes = guard.read_bytes()?;
+        let final_frames = guard.read_verified(&self.keys)?;
+        let terminal = final_frames.last().ok_or(LedgerError::Invalid)?;
+        let next = TrustedLedgerCheckpoint {
+            revision: 0,
+            owner: self.owner.clone(),
+            owner_epoch: OWNER_EPOCH,
+            key_version: terminal.key_version,
+            final_sequence: terminal.sequence,
+            generation: final_generation,
+            stream_digest: Sha256::digest(&new_bytes).into(),
+        };
+        crate::p7_gate_c::verify_stream_at_checkpoint(
+            &new_bytes,
+            &self.keys,
+            Some(&next),
+            &self.owner,
+            OWNER_EPOCH,
+            final_generation,
+        )?;
+        self.check_fts_integrity()?;
+        self.check_owner_accounting()?;
+        drop(checkpoint_guard);
+        self.checkpoint
+            .lock()
+            .map_err(|_| LedgerError::Io)?
+            .advance(next, &self.keys)?;
+        crash_at("replay-after-checkpoint");
+        self.release_ready(final_generation)?;
+        Ok(())
+    }
+
+    fn validate_or_apply_recovered_closure(
+        &self,
+        op: &str,
+        intent_generation: u64,
+        ids: &[String],
+        db_generation: u64,
+        checkpoint_generation: u64,
+    ) -> Result<(), LedgerError> {
+        let state = self.store.transact(|tx| {
+            let mut tombstones = 0_usize;
+            let mut rows = 0_usize;
+            for id in ids {
+                let tombstone: Option<(String, i64)> = tx.inner.query_row(
+                    "SELECT forget_op_id,ledger_generation FROM p7_memory_tombstones WHERE owner_id=?1 AND memory_id=?2",
+                    params![self.owner.as_str(), id], |r| Ok((r.get(0)?,r.get(1)?)),
+                ).optional()?;
+                let row: bool = tx.inner.query_row("SELECT EXISTS(SELECT 1 FROM p7_memory_items WHERE owner_id=?1 AND memory_id=?2)", params![self.owner.as_str(), id], |r| r.get(0))?;
+                match tombstone {
+                    Some((known_op, generation)) if known_op == op && generation == intent_generation as i64 && !row => tombstones += 1,
+                    None if row => rows += 1,
+                    _ => return Err(StoreError::Sqlite),
+                }
+            }
+            Ok((tombstones, rows))
+        }).map_err(|_| LedgerError::Stale)?;
+        if state.0 == ids.len() {
+            if db_generation != intent_generation && db_generation != intent_generation + 1 {
+                return Err(LedgerError::Generation);
+            }
+            let leftovers = self.store.transact(|tx| {
+                tx.inner.query_row(
+                    "SELECT (SELECT count(*) FROM p7_memory_blob_refs WHERE owner_id=?1 AND memory_id IN (SELECT value FROM json_each(?2))) + (SELECT count(*) FROM p7_memory_lineage WHERE owner_id=?1 AND (parent_memory_id IN (SELECT value FROM json_each(?2)) OR derived_memory_id IN (SELECT value FROM json_each(?2))))",
+                    params![self.owner.as_str(), serde_json::to_string(ids).map_err(|_| StoreError::Sqlite)?], |r| r.get::<_,i64>(0),
+                ).map_err(StoreError::from)
+            }).map_err(|_| LedgerError::Stale)?;
+            if leftovers != 0 {
+                return Err(LedgerError::Stale);
+            }
+            self.check_owner_accounting()?;
+            return Ok(());
+        }
+        if state.1 != ids.len() || state.0 != 0 || db_generation != checkpoint_generation {
+            return Err(LedgerError::Stale);
+        }
+        self.apply_closure(op, intent_generation, ids)?;
+        Ok(())
+    }
+
+    fn set_primary_generation(&self, generation: u64) -> Result<(), LedgerError> {
+        self.store.transact(|tx| {
+            tx.inner.execute("UPDATE p7_ledger_state SET generation=?2,read_state='QUARANTINED' WHERE owner_id=?1", params![self.owner.as_str(), generation as i64])?;
+            Ok(())
+        }).map_err(|_| LedgerError::Io)
+    }
+
+    fn release_ready(&self, generation: u64) -> Result<(), LedgerError> {
+        self.store.transact(|tx| {
+            tx.inner.execute("UPDATE p7_ledger_state SET generation=?2,read_state='READY',pending_operation_id=NULL,pending_generation=NULL WHERE owner_id=?1", params![self.owner.as_str(), generation as i64])?;
+            Ok(())
+        }).map_err(|_| LedgerError::Io)
+    }
+
+    fn check_fts_integrity(&self) -> Result<(), LedgerError> {
+        self.store
+            .transact(|tx| {
+                tx.inner.execute(
+                    "INSERT INTO p7_memory_fts(p7_memory_fts,rank) VALUES('integrity-check',1)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .map_err(|_| LedgerError::Stale)
+    }
+
+    fn check_owner_accounting(&self) -> Result<(), LedgerError> {
+        let counts = self.store.transact(|tx| {
+            let rows = tx.inner.query_row(
+                "SELECT count(*),coalesce(sum(active),0),coalesce(sum(CASE WHEN active=1 THEN length(CAST(body AS BLOB)) ELSE 0 END),0) FROM p7_memory_items WHERE owner_id=?1",
+                [self.owner.as_str()], |r| Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?)),
+            )?;
+            let stored = tx.inner.query_row(
+                "SELECT retained_items,active_items,active_body_bytes,logical_fts_bytes FROM p7_resource_accounting WHERE owner_id=?1",
+                [self.owner.as_str()], |r| Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?)),
+            )?;
+            Ok((rows, stored))
+        }).map_err(|_| LedgerError::Stale)?;
+        if counts.0 != (counts.1.0, counts.1.1, counts.1.2) || counts.1.2 != counts.1.3 {
+            return Err(LedgerError::Stale);
+        }
+        Ok(())
+    }
+
+    fn memory_capability(&self) -> Result<VerifiedMemory<'_>, LedgerError> {
+        let (lock, _, generation) = self.verify_locked()?;
+        Ok(VerifiedMemory {
+            coordinator: self,
+            _lock: lock,
+            owner: self.owner.clone(),
+            generation,
+            used: Cell::new(false),
+            _unique: PhantomData,
+        })
+    }
+
     fn insert(&self, draft: &MemoryDraft) -> Result<(), LedgerError> {
-        let (_lock, _, _) = self.verify_locked()?;
-        self.memory
-            .insert(&self.store, draft, EpochMillis::new(10_000).unwrap())
-            .map_err(|_| LedgerError::Invalid)
+        self.memory_capability()?.insert(draft)
     }
     fn search(&self, literal: &str) -> Result<Vec<String>, LedgerError> {
-        let (_lock, _, _) = self.verify_locked()?;
-        self.memory
-            .search(
-                &self.store,
-                MemoryClass::Public,
-                literal,
-                EpochMillis::new(10_000).unwrap(),
-                None,
-                20,
-            )
-            .map(|page| page.records.into_iter().map(|r| r.memory_id).collect())
-            .map_err(|_| LedgerError::Invalid)
+        self.memory_capability()?.search(literal)
     }
     fn get(&self, id: &str) -> Result<bool, LedgerError> {
-        let (_lock, _, _) = self.verify_locked()?;
-        self.memory
-            .get(&self.store, id, EpochMillis::new(10_000).unwrap())
-            .map(|row| row.is_some())
-            .map_err(|_| LedgerError::Invalid)
+        self.memory_capability()?.get(id)
     }
 
     fn list(&self) -> Result<Vec<String>, LedgerError> {
-        let (_lock, _, _) = self.verify_locked()?;
-        self.memory
-            .list(
-                &self.store,
-                MemoryClass::Public,
-                EpochMillis::new(10_000).unwrap(),
-                None,
-                20,
-            )
-            .map(|page| page.records.into_iter().map(|r| r.memory_id).collect())
-            .map_err(|_| LedgerError::Invalid)
+        self.memory_capability()?.list()
+    }
+
+    fn generation(&self) -> Result<u64, LedgerError> {
+        self.store
+            .transact(|tx| {
+                tx.inner
+                    .query_row(
+                        "SELECT generation FROM p7_ledger_state WHERE owner_id=?1",
+                        [self.owner.as_str()],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .map_err(StoreError::from)
+            })
+            .map(|n| n as u64)
+            .map_err(|_| LedgerError::Stale)
+    }
+
+    fn forget_status(&self, op: &str) -> Result<ForgetStatus, LedgerError> {
+        let guard = LedgerFileGuard::acquire_existing(&self.ledger_path)?;
+        let pending: Option<(Option<String>, i64, String)> = self.store.transact(|tx| tx.inner.query_row(
+            "SELECT pending_operation_id,generation,read_state FROM p7_ledger_state WHERE owner_id=?1",
+            [self.owner.as_str()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+        ).optional().map_err(StoreError::from)).map_err(|_| LedgerError::Stale)?;
+        let (pending_op, generation, state) = pending.ok_or(LedgerError::Stale)?;
+        if pending_op.as_deref() == Some(op) || state != "READY" {
+            return Ok(ForgetStatus::Pending);
+        }
+        let mut checkpoint = self.checkpoint.lock().map_err(|_| LedgerError::Stale)?;
+        checkpoint.refresh(&self.keys)?;
+        let cp = checkpoint.current();
+        let bytes = guard.read_bytes()?;
+        verify_stream_at_checkpoint(
+            &bytes,
+            &self.keys,
+            Some(cp),
+            &self.owner,
+            OWNER_EPOCH,
+            generation as u64,
+        )?;
+        let frames = guard.read_verified(&self.keys)?;
+        if frames
+            .iter()
+            .any(|f| f.operation_id == op && f.kind == FrameKind::Reconciled)
+        {
+            Ok(ForgetStatus::AlreadyCompleted)
+        } else {
+            Err(LedgerError::Invalid)
+        }
     }
 
     fn supersede(&self, prior: &str, successor: &str) -> Result<(), LedgerError> {
-        let (_lock, _, _) = self.verify_locked()?;
-        self.memory
-            .supersede(
-                &self.store,
-                prior,
-                successor,
-                EpochMillis::new(10_000).unwrap(),
-            )
-            .map_err(|_| LedgerError::Invalid)
+        self.memory_capability()?.supersede(prior, successor)
+    }
+
+    fn verify_fts_integrity(&self) -> Result<(), LedgerError> {
+        self.memory_capability()?.verify_fts_integrity()
     }
 
     fn forget(
@@ -257,12 +753,13 @@ impl SyntheticCoordinator {
         self.store
             .transact(|tx| {
                 tx.inner.execute(
-                    "UPDATE p7_ledger_state SET read_state='QUARANTINED' WHERE owner_id=?1",
-                    [self.owner.as_str()],
+                    "UPDATE p7_ledger_state SET read_state='QUARANTINED',pending_operation_id=?2,pending_generation=?3 WHERE owner_id=?1",
+                    params![self.owner.as_str(), op, reconciliation_generation as i64],
                 )?;
                 Ok(())
             })
             .map_err(|_| LedgerError::Io)?;
+        crash_at("before-intent");
 
         let chunk_count = encoded_ids
             .len()
@@ -285,6 +782,7 @@ impl SyntheticCoordinator {
         );
         sequence += 1;
         guard.append_sync(&intent, &self.keys)?;
+        crash_at("after-intent");
         for (index, bytes) in encoded_ids
             .chunks(crate::p7_gate_c::MAX_PAYLOAD_BYTES)
             .enumerate()
@@ -304,10 +802,12 @@ impl SyntheticCoordinator {
             chunk.chunk_index = index as u16;
             sequence += 1;
             guard.append_sync(&chunk, &self.keys)?;
+            crash_at("after-chunk");
         }
         intent.payload.clear();
 
         self.apply_closure(op, generation, &closure)?;
+        crash_at("after-primary-commit");
         for kind in [FrameKind::PrimaryApplied, FrameKind::Finalized] {
             let record = frame(
                 sequence + 1,
@@ -322,6 +822,11 @@ impl SyntheticCoordinator {
             );
             sequence += 1;
             guard.append_sync(&record, &self.keys)?;
+            crash_at(if kind == FrameKind::PrimaryApplied {
+                "after-primary-record"
+            } else {
+                "after-finalized"
+            });
         }
         let reconciled = frame(
             sequence + 1,
@@ -335,9 +840,11 @@ impl SyntheticCoordinator {
             Vec::new(),
         );
         guard.append_sync(&reconciled, &self.keys)?;
-        let bytes = fs::read(&self.ledger_path).map_err(|_| LedgerError::Io)?;
+        crash_at("after-reconciled");
+        let bytes = guard.read_bytes()?;
         let latest = guard.read_verified(&self.keys)?;
         let checkpoint = TrustedLedgerCheckpoint {
+            revision: 0,
             owner: self.owner.clone(),
             owner_epoch: OWNER_EPOCH,
             key_version: 1,
@@ -353,11 +860,26 @@ impl SyntheticCoordinator {
             OWNER_EPOCH,
             reconciliation_generation,
         )?;
-        *self.checkpoint.lock().map_err(|_| LedgerError::Io)? = checkpoint;
+        self.store.transact(|tx| {
+            tx.inner.execute(
+                "UPDATE p7_ledger_state SET generation=?2,read_state='QUARANTINED' WHERE owner_id=?1",
+                params![self.owner.as_str(), reconciliation_generation as i64],
+            )?;
+            Ok(())
+        }).map_err(|_| LedgerError::Io)?;
+        crash_at("after-primary-generation");
+        self.check_fts_integrity()?;
+        self.check_owner_accounting()?;
+        self.checkpoint
+            .lock()
+            .map_err(|_| LedgerError::Io)?
+            .advance(checkpoint, &self.keys)?;
+        crash_at("after-checkpoint");
+        crash_at("before-ready");
         self.store
             .transact(|tx| {
                 tx.inner.execute(
-                    "UPDATE p7_ledger_state SET generation=?2,read_state='READY' WHERE owner_id=?1",
+                    "UPDATE p7_ledger_state SET generation=?2,read_state='READY',pending_operation_id=NULL,pending_generation=NULL WHERE owner_id=?1",
                     params![self.owner.as_str(), reconciliation_generation as i64],
                 )?;
                 Ok(())
@@ -387,9 +909,11 @@ impl SyntheticCoordinator {
             for id in ids {
                 tx.inner.execute("INSERT INTO p7_memory_tombstones(owner_id,memory_id,forget_op_id,ledger_generation,forgotten_at_ms) VALUES(?1,?2,?3,?4,10100)", params![self.owner.as_str(), id, op, generation as i64])?;
             }
+            crash_at("during-primary-transaction");
             tx.inner.execute("DELETE FROM p7_memory_lineage WHERE owner_id=?1 AND (parent_memory_id IN (SELECT memory_id FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2) OR derived_memory_id IN (SELECT memory_id FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2))", params![self.owner.as_str(), op])?;
             tx.inner.execute("DELETE FROM p7_memory_blob_refs WHERE owner_id=?1 AND memory_id IN (SELECT memory_id FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2)", params![self.owner.as_str(), op])?;
             tx.inner.execute("DELETE FROM p7_memory_items WHERE owner_id=?1 AND memory_id IN (SELECT memory_id FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2)", params![self.owner.as_str(), op])?;
+            tx.inner.execute("UPDATE p7_ledger_state SET generation=?2,read_state='QUARANTINED' WHERE owner_id=?1", params![self.owner.as_str(), generation as i64])?;
             Ok(())
         }).map_err(|_| LedgerError::Io)
     }
@@ -403,6 +927,35 @@ fn encode_ids(ids: &[String]) -> Result<Vec<u8>, LedgerError> {
         bytes.extend_from_slice(id.as_bytes());
     }
     Ok(bytes)
+}
+fn decode_ids(bytes: &[u8]) -> Result<Vec<String>, LedgerError> {
+    let mut cursor = 0_usize;
+    let mut ids = Vec::new();
+    while cursor < bytes.len() {
+        let end = cursor.checked_add(2).ok_or(LedgerError::Invalid)?;
+        let raw_len: [u8; 2] = bytes
+            .get(cursor..end)
+            .ok_or(LedgerError::Invalid)?
+            .try_into()
+            .map_err(|_| LedgerError::Invalid)?;
+        cursor = end;
+        let len = u16::from_be_bytes(raw_len) as usize;
+        if len == 0 || len > 128 {
+            return Err(LedgerError::Invalid);
+        }
+        let end = cursor.checked_add(len).ok_or(LedgerError::Invalid)?;
+        let id = std::str::from_utf8(bytes.get(cursor..end).ok_or(LedgerError::Invalid)?)
+            .map_err(|_| LedgerError::Invalid)?;
+        ids.push(id.to_owned());
+        if ids.len() > 1000 {
+            return Err(LedgerError::TooLarge);
+        }
+        cursor = end;
+    }
+    if encode_ids(&ids)? != bytes {
+        return Err(LedgerError::Invalid);
+    }
+    Ok(ids)
 }
 fn canonical_roots(roots: &[&str]) -> Result<Vec<String>, LedgerError> {
     let mut values = roots
@@ -463,8 +1016,11 @@ fn draft(id: &str, body: &str) -> MemoryDraft {
     }
 }
 fn auth(nonce: u8) -> AuthEvidence {
+    auth_for(AuthPurpose::Forget, nonce)
+}
+fn auth_for(purpose: AuthPurpose, nonce: u8) -> AuthEvidence {
     AuthEvidence::from_verified_adapter(
-        AuthPurpose::Forget,
+        purpose,
         10_000,
         11_000,
         [nonce; 32],
@@ -538,7 +1094,8 @@ fn admit_synthetic_task(
 #[test]
 fn file_backed_memory_forget_reconciles_full_lineage_and_blocks_stale_ledger() {
     let scratch = Scratch::new();
-    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger()).unwrap();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
     gate.insert(&draft("root", "東京 synthetic note")).unwrap();
     gate.insert(&draft("derived-a", "derived one")).unwrap();
     gate.insert(&draft("derived-b", "derived two")).unwrap();
@@ -598,9 +1155,13 @@ fn file_backed_memory_forget_reconciles_full_lineage_and_blocks_stale_ledger() {
             .iter()
             .any(|id| id.starts_with("derived"))
     );
-    gate.memory.verify_fts_integrity(&gate.store).unwrap();
+    gate.verify_fts_integrity().unwrap();
     assert_eq!(
         gate.forget(&auth(10), "forget-chain-1", &["root"]).unwrap(),
+        ForgetStatus::AlreadyCompleted
+    );
+    assert_eq!(
+        gate.forget_status("forget-chain-1").unwrap(),
         ForgetStatus::AlreadyCompleted
     );
     assert_eq!(
@@ -616,10 +1177,9 @@ fn file_backed_memory_forget_reconciles_full_lineage_and_blocks_stale_ledger() {
     assert!(!gate.get("superseded-old").unwrap());
     assert!(gate.get("superseding-new").unwrap());
 
-    let checkpoint_after_forget = gate.checkpoint.lock().unwrap().clone();
     drop(gate);
     let gate =
-        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), checkpoint_after_forget)
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
             .unwrap();
     assert!(
         gate.get("unrelated").unwrap(),
@@ -640,18 +1200,16 @@ fn file_backed_memory_forget_reconciles_full_lineage_and_blocks_stale_ledger() {
         "stale ledger prefix denies file-backed Memory access"
     );
     assert!(
-        gate.memory
-            .get(&gate.store, "unrelated", EpochMillis::new(10_000).unwrap())
-            .unwrap()
-            .is_some(),
-        "known isolation limitation: the legacy test-only Memory object checks the SQLite ready bit only; only the integrated coordinator verifies the checkpoint"
+        gate.get("unrelated").is_err(),
+        "stale checkpoint denies coordinator access"
     );
 }
 
 #[test]
-fn durable_unreconciled_intent_and_quarantined_primary_deny_after_reopen() {
+fn incomplete_authenticated_intent_is_not_replayed_or_reopened() {
     let scratch = Scratch::new();
-    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger()).unwrap();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
     gate.insert(&draft("pending-root", "must remain quarantined"))
         .unwrap();
     let owner = gate.owner.clone();
@@ -671,93 +1229,183 @@ fn durable_unreconciled_intent_and_quarantined_primary_deny_after_reopen() {
     gate.store
         .transact(|tx| {
             tx.inner.execute(
-                "UPDATE p7_ledger_state SET read_state='QUARANTINED' WHERE owner_id=?1",
-                [OWNER],
+                "UPDATE p7_ledger_state SET read_state='QUARANTINED',pending_operation_id=?2,pending_generation=2 WHERE owner_id=?1",
+                params![OWNER, "pending-crash"],
             )?;
             Ok(())
         })
         .unwrap();
     drop(guard);
-    let checkpoint = gate.checkpoint.lock().unwrap().clone();
-    drop(gate);
-    let reopened =
-        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), checkpoint).unwrap();
-    assert!(reopened.get("pending-root").is_err());
-    assert!(reopened.search("quarantined").is_err());
     assert_eq!(
-        reopened.forget(&auth(41), "retry-pending-crash", &["pending-root"]),
-        Err(LedgerError::Stale),
-        "without a trusted advancement authority, recovery leaves the pending operation denied"
+        gate.forget_status("pending-crash").unwrap(),
+        ForgetStatus::Pending
+    );
+    drop(gate);
+    assert!(
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .is_err(),
+        "intent without complete closure chunks fails startup closed"
     );
 }
 
 #[test]
 fn integrated_forget_crash_child_entry() {
-    let (Ok(db), Ok(ledger)) = (
+    let (Ok(db), Ok(ledger), Ok(checkpoint)) = (
         std::env::var("SEREA_P7_CRASH_DB"),
         std::env::var("SEREA_P7_CRASH_LEDGER"),
+        std::env::var("SEREA_P7_CRASH_CHECKPOINT"),
     ) else {
         return;
     };
-    let store = Store::open(Path::new(&db), &TestClock).unwrap();
-    store
-        .transact(|tx| {
-            tx.inner.execute(
-                "UPDATE p7_ledger_state SET read_state='QUARANTINED' WHERE owner_id=?1",
-                [OWNER],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-    let keys = SyntheticKeyring::synthetic(1, b"synthetic-integrated-owner-71").unwrap();
-    let guard = LedgerFileGuard::acquire(&ledger).unwrap();
-    guard
-        .append_sync(
-            &frame(
-                1,
-                1,
-                1,
-                1,
-                [5; 32],
-                OwnerId::parse(OWNER).unwrap(),
-                "crash-child-op",
-                FrameKind::Intent,
-                Vec::new(),
-            ),
-            &keys,
-        )
-        .unwrap();
-    // Bypass Rust destructors to model abrupt process death after durable intent.
-    std::process::exit(73);
+    let coordinator =
+        SyntheticCoordinator::reopen(Path::new(&db), Path::new(&ledger), Path::new(&checkpoint))
+            .unwrap();
+    let root = std::env::var("SEREA_P7_CRASH_ROOT").unwrap_or_else(|_| "crash-root".into());
+    let operation = std::env::var("SEREA_P7_CRASH_OP").unwrap_or_else(|_| "crash-child-op".into());
+    let _ = coordinator.forget(&auth(70), &operation, &[&root]);
 }
 
 #[test]
 fn child_termination_after_durable_intent_keeps_reopened_memory_denied() {
+    let cases = [
+        ("before-intent", false),
+        ("after-intent", false),
+        ("during-ledger-append", false),
+        ("after-chunk", true),
+        ("during-primary-transaction", true),
+        ("after-primary-commit", true),
+        ("after-primary-record", true),
+        ("after-finalized", true),
+        ("after-reconciled", true),
+        ("after-primary-generation", true),
+        ("after-checkpoint", true),
+        ("during-checkpoint-create", false),
+        ("during-checkpoint-write", false),
+        ("after-checkpoint-file-sync", true),
+        ("before-ready", true),
+    ];
+    for (point, should_recover) in cases {
+        let scratch = Scratch::new();
+        let gate =
+            SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+                .unwrap();
+        gate.insert(&draft("crash-root", "never reveal after crash"))
+            .unwrap();
+        drop(gate);
+        let status = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+            .arg("--nocapture")
+            .env("SEREA_P7_CRASH_DB", scratch.db())
+            .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+            .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+            .env("SEREA_P7_CRASH_AT", point)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(73), "child did not stop at {point}");
+        let reopened =
+            SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint());
+        if should_recover {
+            let reopened =
+                reopened.unwrap_or_else(|error| panic!("{point} should recover: {error:?}"));
+            assert!(
+                !reopened.get("crash-root").unwrap(),
+                "{point} left forgotten Memory visible"
+            );
+            assert!(reopened.search("reveal").unwrap().is_empty());
+            assert_eq!(reopened.generation().unwrap(), 2);
+            assert_eq!(
+                reopened
+                    .forget(&auth(72), "crash-child-op", &["crash-root"])
+                    .unwrap(),
+                ForgetStatus::AlreadyCompleted
+            );
+        } else {
+            assert!(reopened.is_err(), "{point} must retain quarantine");
+        }
+    }
+}
+
+#[test]
+fn recovery_itself_is_idempotent_across_process_termination() {
     let scratch = Scratch::new();
-    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger()).unwrap();
-    gate.insert(&draft("crash-root", "never reveal after crash"))
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
         .unwrap();
-    let checkpoint = gate.checkpoint.lock().unwrap().clone();
+    gate.insert(&draft("replay-root", "replay exactly once"))
+        .unwrap();
     drop(gate);
-    let status = Command::new(std::env::current_exe().unwrap())
-        .arg("--exact")
-        .arg("p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
-        .arg("--nocapture")
-        .env("SEREA_P7_CRASH_DB", scratch.db())
-        .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
-        .status()
-        .unwrap();
-    assert_eq!(status.code(), Some(73));
+    let run_child = |point: &str| {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.arg("--exact")
+            .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+            .arg("--nocapture")
+            .env("SEREA_P7_CRASH_DB", scratch.db())
+            .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+            .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+            .env("SEREA_P7_CRASH_ROOT", "replay-root")
+            .env("SEREA_P7_CRASH_AT", point);
+        command.status().unwrap().code()
+    };
+    assert_eq!(run_child("after-chunk"), Some(73));
+    assert_eq!(run_child("replay-after-primary-commit"), Some(73));
     let reopened =
-        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), checkpoint).unwrap();
-    assert!(reopened.get("crash-root").is_err());
-    assert!(reopened.search("reveal").is_err());
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .unwrap();
+    assert!(!reopened.get("replay-root").unwrap());
+    assert_eq!(reopened.generation().unwrap(), 2);
+    assert_eq!(
+        reopened
+            .forget(&auth(73), "crash-child-op", &["replay-root"])
+            .unwrap(),
+        ForgetStatus::AlreadyCompleted
+    );
+}
+
+#[test]
+fn concurrent_independent_owner_forgets_serialize_checkpoint_advancement() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("parallel-a", "alpha synthetic content"))
+        .unwrap();
+    gate.insert(&draft("parallel-b", "beta synthetic content"))
+        .unwrap();
+    drop(gate);
+    let paths = (scratch.db(), scratch.ledger(), scratch.checkpoint());
+    let start = Arc::new(Barrier::new(3));
+    let workers = [
+        ("parallel-forget-a", "parallel-a", 81),
+        ("parallel-forget-b", "parallel-b", 82),
+    ]
+    .map(|(operation, root, nonce)| {
+        let (db, ledger, checkpoint) = paths.clone();
+        let start = Arc::clone(&start);
+        std::thread::spawn(move || {
+            let coordinator = SyntheticCoordinator::reopen(&db, &ledger, &checkpoint).unwrap();
+            start.wait();
+            coordinator
+                .forget(&auth(nonce), operation, &[root])
+                .unwrap()
+        })
+    });
+    start.wait();
+    let statuses = workers.map(|worker| worker.join().unwrap());
+    assert!(
+        statuses
+            .iter()
+            .all(|status| *status == ForgetStatus::Completed)
+    );
+    let reopened = SyntheticCoordinator::reopen(&paths.0, &paths.1, &paths.2).unwrap();
+    assert!(!reopened.get("parallel-a").unwrap());
+    assert!(!reopened.get("parallel-b").unwrap());
+    assert_eq!(reopened.generation().unwrap(), 4);
 }
 
 #[test]
 fn integrated_barrier_rejects_wrong_purpose_and_stale_primary_generation() {
     let scratch = Scratch::new();
-    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger()).unwrap();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
     let evidence = AuthEvidence::from_verified_adapter(
         AuthPurpose::RenewMemory,
         10_000,
@@ -786,9 +1434,72 @@ fn integrated_barrier_rejects_wrong_purpose_and_stale_primary_generation() {
 }
 
 #[test]
+fn capability_is_single_use_generation_bound_and_lost_on_restart() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("capability-item", "private permit evidence"))
+        .unwrap();
+
+    let permit = gate.memory_capability().unwrap();
+    assert!(permit.get("capability-item").unwrap());
+    assert_eq!(
+        permit.get("capability-item"),
+        Err(LedgerError::Stale),
+        "permit cannot be reused"
+    );
+    drop(permit);
+
+    let stale = gate.memory_capability().unwrap();
+    gate.store
+        .transact(|tx| {
+            tx.inner.execute(
+                "UPDATE p7_ledger_state SET generation=generation+1 WHERE owner_id=?1",
+                [OWNER],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        stale.get("capability-item"),
+        Err(LedgerError::Stale),
+        "generation change revokes permit"
+    );
+    drop(stale);
+    assert!(
+        gate.get("capability-item").is_err(),
+        "checkpoint mismatch denies newly minted permits"
+    );
+}
+
+#[test]
+fn missing_checkpoint_or_ledger_does_not_bootstrap_ready_primary() {
+    for remove_checkpoint in [true, false] {
+        let scratch = Scratch::new();
+        let gate =
+            SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+                .unwrap();
+        gate.insert(&draft("authority-item", "deny on authority loss"))
+            .unwrap();
+        drop(gate);
+        let missing = if remove_checkpoint {
+            scratch.checkpoint()
+        } else {
+            scratch.ledger()
+        };
+        fs::rename(&missing, missing.with_extension("offline")).unwrap();
+        assert!(
+            SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn synthetic_task_owner_admission_binds_in_one_transaction_and_quarantines_legacy() {
     let scratch = Scratch::new();
-    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger()).unwrap();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
     let replay = Mutex::new(EvidenceReplayGuard::default());
     let actor = synthetic_task_actor(OWNER, OWNER_EPOCH, AuthPurpose::TaskAdmission, 31);
     let id = "tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA";

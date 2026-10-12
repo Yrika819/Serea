@@ -37,7 +37,7 @@ jobs:
         run: cargo +1.85.0 fetch --locked
 
       - name: Feature gated Gate C tests
-        run: cargo +1.85.0 test -p serea-storage --lib --features p7-experimental,p7-gate-c --locked --offline
+        run: cargo +1.85.0 test -p serea-storage --lib --features p7-experimental,p7-gate-c p7_ --locked --offline
 
       - name: Cross-process file lock and termination test
         run: cargo +1.85.0 test -p serea-storage --test p7_gate_c_lock --features p7-gate-c --locked --offline

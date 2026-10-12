@@ -63,7 +63,7 @@ cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --test 
 cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --test p7_resource_bench measure_checkpoint_advance_and_reopen_history_growth -- --ignored --nocapture
 ```
 
-Observed on the campaign run: ledger append through 64/256/512 frames took 75/1,391/6,570 ms total and produced 10,332/41,436/83,024 bytes; replay took 2/15/16 ms. Checkpoint histories of 16/64/128 revisions used 2,256/9,024/18,048 file bytes; advancing each history took 5/190/157 ms total, and reopening at those sizes took under 1/1/2 ms. Timings are noisy, machine-specific observations, not service latency promises. Peak memory was NOT MEASURED. Append still authenticates the accumulated stream once per append; cumulative work remains quadratic in frame count. The hard fixture ceilings are 1,024 ledger frames/1 MiB and 1,024 checkpoint revisions with 256-byte checkpoint records. At the ceiling, verification allocation/work is finite; history is refused rather than pruned or compacted. These are defensive fixture bounds, not ADR-0043 product quotas or a production deletion reserve.
+Observed on the campaign run: ledger append through 64/256/512 frames took 75/1,391/6,570 ms total and produced 10,332/41,436/83,024 bytes; replay took 2/15/16 ms. Each append revalidates the prefix plus its new frame, so cumulative append validation processed exactly 2,080/32,896/131,328 frames (N×(N+1)/2); replay processed another 64/256/512 frames. Checkpoint histories of 16/64/128 revisions used 2,256/9,024/18,048 file bytes; advancing each history took 5/190/157 ms total, and reopening at those sizes took under 1/1/2 ms. The per-advance reopen authenticated a cumulative 135/2,079/8,255 checkpoint revisions (N×(N+1)/2−1); bootstrap's initial reopen authenticated one more, and the separately timed reopen authenticated another 16/64/128. Timings are noisy, machine-specific observations, not service latency promises. Peak memory was NOT MEASURED. Append and checkpoint advancement still authenticate accumulated history repeatedly; cumulative work is quadratic. The hard fixture ceilings are 1,024 ledger frames/1 MiB and 1,024 checkpoint revisions with 256-byte checkpoint records. At the ceiling, verification allocation/work is finite; history is refused rather than pruned or compacted. These are defensive fixture bounds, not ADR-0043 product quotas or a production deletion reserve.
 
 ## Platform matrix and unsupported guarantees
 
@@ -107,7 +107,20 @@ git diff --check
 sha256sum crates/serea-storage/migrations/000{1,2,3,4,5,6,7,8}_*.sql
 ```
 
-The migration hash output must be compared byte-for-byte to the pre-campaign `main`/PR base values; no migration 0001–0008 edits are permitted. Current campaign completion requires the final PR #15 ref and all applicable GitHub workflows to be green. Until that evidence exists, status is **PENDING**, not review-ready.
+Expected raw migration SHA-256 values at the campaign base:
+
+| Migration | SHA-256 |
+|---|---|
+| `0001_initial.sql` | `d9068dccbc26ececb71be79c475080633166ba0163c62b2d98b9733512baefea` |
+| `0002_event_scheduler.sql` | `4924e69150bbff9c39e2e6b7e2bdd61045202e504900fe0f510d513fbf815e67` |
+| `0003_model_accounting.sql` | `530a6d6cb5ec9c757311d48e10a62ef456d9d01c09512f321cffe42fe3307f80` |
+| `0004_capability_registry.sql` | `06b22fa682564290b71a26825a777f7a295220bd02f4c6c614d234b73001685f` |
+| `0005_policy_approval.sql` | `cf6686807e3ceb10bd21c6653fbdd61c487e6b8938a2d78104d160920831e71a` |
+| `0006_policy_authority_sealing.sql` | `0af16a30cd2b29f046c14d7079a356dc25ce4352216edd9ad6821b168e6eb6ca` |
+| `0007_policy_revision_sealing.sql` | `48f2f1805d59f4eec215963ac5109007294a0dfe015b9a4b4e7e69c14f9197eb` |
+| `0008_approval_lifecycle_routing.sql` | `6e1520bf22ced832ed480a1cf26476e056611f22b1f517f2324b32a8d4fbf925` |
+
+The migration hash output must match these values; no migration 0001–0008 edits are permitted. Current campaign completion requires the final PR #15 ref and all applicable GitHub workflows to be green. Until that evidence exists, status is **PENDING**, not review-ready.
 
 ## Explicit production blockers
 

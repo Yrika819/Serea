@@ -26,6 +26,8 @@ mod capability_registry_tests;
 mod classify;
 mod error;
 mod event;
+#[cfg(all(feature = "p7-experimental", test))]
+mod experimental_memory;
 mod lease;
 mod lifecycle;
 mod migrate;
@@ -80,6 +82,14 @@ pub use event::{
     EventReplayPage, EventRetentionReport, MAX_EVENT_REPLAY_PAGE, MAX_RETENTION_DELETE_BATCH,
     ReplayItem,
 };
+#[cfg(all(feature = "p7-experimental", test))]
+pub use experimental_memory::{
+    EXPERIMENTAL_PROVISIONAL, ExperimentalMemoryConfig, MemoryClass, MemoryDraft, MemoryKind,
+    MemoryPage, MemoryProvenance, MemoryRecord, P7ExperimentalMemory, ProvisionalValue,
+};
+
+#[cfg(all(feature = "p7-experimental", not(debug_assertions)))]
+compile_error!("p7-experimental is test/development-only and cannot be built optimized");
 pub use lease::{LeaseGuard, StepCommit, StepFailure, StepOutcome, TransitionContext};
 pub use lifecycle::{CancellationOutcome, DeletionOutcome};
 pub use migrate::{Migration, Migrations};
@@ -123,3 +133,9 @@ mod protection_tests;
 mod scheduler_tests;
 #[cfg(test)]
 mod schema_tests;
+
+#[cfg(all(test, feature = "p7-experimental"))]
+mod forget_model;
+
+#[cfg(all(test, feature = "p7-experimental"))]
+mod p7_migration_tests;

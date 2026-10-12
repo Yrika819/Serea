@@ -79,8 +79,15 @@ fn insert_intent(
 #[test]
 fn catalog_adds_0003_without_rewriting_prior_migrations() {
     let catalog = Migrations::embedded();
-    assert_eq!(Migrations::LATEST, 8);
-    assert_eq!(catalog.len(), 8);
+    assert_eq!(
+        Migrations::LATEST,
+        if cfg!(feature = "p7-experimental") {
+            9
+        } else {
+            8
+        }
+    );
+    assert_eq!(catalog.len(), Migrations::LATEST as usize);
     assert_eq!(catalog[2].version, 3);
     assert_eq!(catalog[2].name, "0003_model_accounting");
     assert_eq!(
@@ -100,7 +107,7 @@ fn catalog_adds_0003_without_rewriting_prior_migrations() {
 #[test]
 fn fresh_store_applies_model_accounting_schema_v3() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), Migrations::LATEST);
 
     let conn = store.conn.lock().unwrap();
     for table in ["model_call_attempts", "model_usage"] {
@@ -130,7 +137,7 @@ fn existing_v2_store_upgrades_to_v3() {
     let path = TempDb::new();
     seed_v2(&path.0);
     let store = Store::open(&path.0, &FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), Migrations::LATEST);
 }
 
 #[test]

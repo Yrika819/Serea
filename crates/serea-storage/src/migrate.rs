@@ -18,7 +18,7 @@ pub struct Migration {
 
 /// Ordered migration source catalog. schema_migrations is the only version authority.
 pub struct Migrations;
-static EMBEDDED: [Migration; 8] = [
+static EMBEDDED: [Migration; 8 + cfg!(all(feature = "p7-experimental", test)) as usize] = [
     Migration {
         version: 1,
         name: "0001_initial",
@@ -59,13 +59,24 @@ static EMBEDDED: [Migration; 8] = [
         name: "0008_approval_lifecycle_routing",
         sql: include_str!("../migrations/0008_approval_lifecycle_routing.sql"),
     },
+    #[cfg(all(feature = "p7-experimental", test))]
+    Migration {
+        version: 9,
+        name: "0009_p7_synthetic_memory",
+        sql: include_str!("../migrations/0009_p7_synthetic_memory.sql"),
+    },
 ];
 
 impl Migrations {
     /// Latest version understood by this binary.
-    pub const LATEST: u32 = 8;
+    pub const LATEST: u32 = if cfg!(all(feature = "p7-experimental", test)) {
+        9
+    } else {
+        8
+    };
 
-    /// The production migration sources in deterministic application order.
+    /// The migration sources in deterministic order for the selected build.
+    /// The P7-only development feature appends version 9; default builds remain v8.
     pub fn embedded() -> &'static [Migration] {
         &EMBEDDED
     }

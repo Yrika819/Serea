@@ -4,9 +4,10 @@ use serea_protocol::*;
 use serea_scheduler::{ScheduleDefinition, Scheduler, occurrence_identity_key};
 use serea_storage::{
     CapabilityOverlayState, CapabilityPlanBindingDraft, DescriptorRevisionDraft, EventDraft,
-    GenerationMemberDraft, MissedOccurrencePolicy, ModelAttemptState, ModelCallAttemptDraft,
-    ModelCallCompletion, ModelDeploymentClass, ModelPriceSnapshot, ModelResponseStorage, PlanWrite,
-    RegistryGenerationDraft, ScheduleOwnerKind, ScheduleTriggerKind, StepInput, Store, UsdMicros,
+    GenerationMemberDraft, Migrations, MissedOccurrencePolicy, ModelAttemptState,
+    ModelCallAttemptDraft, ModelCallCompletion, ModelDeploymentClass, ModelPriceSnapshot,
+    ModelResponseStorage, PlanWrite, RegistryGenerationDraft, ScheduleOwnerKind,
+    ScheduleTriggerKind, StepInput, Store, UsdMicros,
 };
 use serea_task_engine::{NewTask, TaskEngine, TaskJournal, TransitionContext};
 use serea_testkit::DeterministicUlidSource;
@@ -515,7 +516,7 @@ fn produce(path: &std::path::Path) {
     add_model_accounting_fixture(&store, &model_task);
     assert_eq!(store.task_model_call_count(&model_task).unwrap(), 2);
     assert_eq!(store.task_model_turn_count(&model_task).unwrap(), 2);
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), Migrations::LATEST);
     store.verify_integrity().unwrap();
     drop(scheduler);
     drop(tasks);
@@ -535,7 +536,7 @@ fn produce(path: &std::path::Path) {
 
 fn consume(path: &std::path::Path) {
     let store = Store::open(path, &Fixed).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), Migrations::LATEST);
     store.verify_integrity().unwrap();
     let device_wait = TaskId::new("tsk_00000000000000000000000071").unwrap();
     assert_eq!(

@@ -1,119 +1,151 @@
 # P7-D07 Forget, deletion ledger, and recovery (PROPOSED)
 
 **Status:** Proposed for owner selection; no durability claim is accepted. **Implementation:** Not authorized.
-**Accepted baseline:** ADR-0042 requires authenticated explicit Forget, transitive derived-Memory deletion, content-free tombstones, shared-Blob-safe GC, independent deletion/reconciliation records, restored-snapshot quarantine, and truthful incomplete reporting. Migrations 0001–0008 and Blob identity `(digest,data_class_rank)` remain unchanged.
+**Accepted baseline:** ADR-0042 requires authenticated explicit Forget, transitive derived-Memory deletion, content-free tombstones, shared-Blob-safe GC, an independent deletion/reconciliation record, restored-snapshot quarantine, and truthful incomplete reporting. Migrations 0001–0008 and Blob identity `(digest,data_class_rank)` remain unchanged.
 
 ## Decision comparison
 
 | Option | Strength | Failure/rollback limitation | Disposition |
 | --- | --- | --- | --- |
-| A. Primary tombstone, separately reconciled ledger | Primary transaction makes local reads hide Forget atomically with FTS/link updates; simple when DB survives | Crash after DB commit before ledger persist leaves an unreported/incomplete operation and restore protection gap. A restored older DB has no tombstone. | Necessary local transaction, insufficient authority by itself |
-| B. Independent authoritative ledger + startup/read barrier | Ledger-first Forget survives primary DB rollback if ledger itself survives; startup can replay into DB before reads | Missing, corrupted, locked, or rolled-back ledger means no proof; deny Memory reads/extraction/sync. A ledger restored old with DB old cannot reveal rollback. | Required authority/barrier, subject to trust boundary |
-| C. Generation/epoch anchor | Detects partial restore when a monotonic anchor outside backup set records a newer generation | No general trusted monotonic hardware is verified for macOS/Windows/Linux. A file/keychain or local hash-chain restored together can roll back. | Not assumed available; optional future platform evidence only |
+| A. Primary tombstone plus separately reconciled ledger | DB transaction hides/deletes rows and updates FTS atomically while DB survives | Primary commit alone does not survive an older DB restore; a separate ledger write is not atomic with it | Required local step, insufficient authority alone |
+| B. Independent ledger plus startup/read barrier | Current ledger can repair a restored older primary DB before reads | Missing, corrupt, or rolled-back ledger means no proof; Memory must stay unavailable | Recommended authority/barrier, subject to owner-selected survival domain |
+| C. External generation/epoch anchor | Detects rollback if a current anchor survives independently | No trusted monotonic hardware has been verified for the target hosts; local hash chains/files can roll back together | Not assumed; separate future platform evidence only |
 
-**Recommendation:** combine A+B. Treat the independently retained deletion ledger as authoritative for all completed Forget operations; append a durable intent before modifying the primary DB; keep all Memory inaccessible until ledger and DB converge. Use a protected ledger directory excluded from ordinary DB snapshots, plus a separate backup manifest that binds OwnerId, identity epoch, ledger generation, and primary snapshot generation. This is rollback detection only when the ledger/manifest survives independently. A hash chain detects alteration but not complete rollback and must not be described as a monotonic anchor.
+**Recommendation:** combine A and B. A cross-process Memory operation lock serializes readers/writers around a Forget sequence; an independent ledger records all closure chunks before primary mutation. A protected ledger location/manifest outside ordinary DB snapshots is a proposal only. It detects rollback only if that evidence actually survives independently. A hash chain is tamper evidence when its current head survives; it is not monotonic rollback protection.
 
-## Record and schema sketch
+## Identity fields and schema sketch
 
-Primary DB additive sketch (illustrative, not migration DDL):
+Keep five concepts distinct:
+
+1. `memory_id`: random opaque identity for one Memory row; never derived from body/source.
+2. `source_id`: random opaque identifier for an admitted source occurrence/provenance record. Required for provenance/lineage if the Owner approves source tracking; it contains no content-derived value.
+3. `source_equivalence_tag`: optional keyed tag used only if the Owner separately approves re-extraction suppression. It is not `source_id` and is absent by default.
+4. HMAC tag: one possible encoding for the optional equivalence tag; it requires separately approved key custody, rotation, restore, and loss behavior. It is not authorized by this proposal.
+5. `forget_op_id` / ledger sequence: random operation identity and monotone-within-ledger record sequence; these identify a deletion operation, not Memory content.
+
+Primary DB sketch (illustrative, not migration DDL):
 
 ```sql
 memory_owner(owner_id TEXT PRIMARY KEY, identity_epoch INTEGER NOT NULL,
              db_applied_generation INTEGER NOT NULL, read_state TEXT NOT NULL);
 memory_items(memory_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
-             source_tag BLOB NOT NULL, class_rank INTEGER NOT NULL,
+             source_id TEXT NOT NULL, class_rank INTEGER NOT NULL,
              state TEXT NOT NULL, body_blob_digest TEXT, body_class_rank INTEGER,
              created_at_ms INTEGER NOT NULL, expires_at_ms INTEGER NOT NULL,
              UNIQUE(memory_id, owner_id),
              FOREIGN KEY(body_blob_digest, body_class_rank)
                REFERENCES blobs(digest, data_class_rank));
 memory_provenance(memory_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
-                  source_task_id TEXT, source_tag BLOB NOT NULL,
+                  source_id TEXT NOT NULL, source_task_id TEXT,
                   FOREIGN KEY(memory_id, owner_id)
                     REFERENCES memory_items(memory_id, owner_id));
+-- Optional only after owner approval of suppression mode and key lifecycle:
+memory_source_suppression(owner_id TEXT NOT NULL, key_version INTEGER NOT NULL,
+                          equivalence_tag BLOB NOT NULL,
+                          PRIMARY KEY(owner_id,key_version,equivalence_tag));
 memory_tombstones(owner_id TEXT NOT NULL, memory_id TEXT NOT NULL,
                   forget_op_id TEXT NOT NULL, ledger_generation INTEGER NOT NULL,
                   forgotten_at_ms INTEGER NOT NULL, state TEXT NOT NULL,
                   PRIMARY KEY(owner_id, memory_id));
 ```
 
-The durable tombstone contains identifiers, class/epoch/generation and status only. No text, plaintext excerpt, or unkeyed content digest. Provenance is immutable, minimized, and has no live Task foreign key. Keep a content-free ledger tombstone after deleting Memory/provenance only as necessary for restore/re-extraction policy.
+The prior sketch's mandatory `source_tag BLOB NOT NULL` was ambiguous and is withdrawn. This proposal uses an opaque `source_id` for provenance, while equivalence suppression is a separate nullable/optional relation. If Owner approval does not include suppression, no equivalence tag or tag key exists; repeated extraction is not claimed to be suppressed by content equivalence. No plaintext Memory text or unkeyed/guessable content digest may enter a tombstone. Existing Blob identity `(digest,data_class_rank)` is unchanged.
 
-Independent append-only conceptual ledger record (canonical bounded binary/JSON envelope, maximum 1 KiB each):
+If separately approved, a proposed HMAC input would use a versioned domain such as `serea:p7:forget-source-equivalence:v1\0` plus canonical source locator. The key must be distinct from the ledger-integrity MAC key. Both key custody designs remain undecided. Rotation must preserve comparison for every supported backup/tag version or explicitly disable suppression and quarantine on loss; no key store or recovery protocol is approved here. HMAC tags leak equality and may still reveal low-entropy source locators under key compromise.
 
-`format_version, owner_id, identity_epoch, generation, forget_op_id, request_nonce, target_memory_ids[], derived_memory_ids[], source_tags[], created_utc, previous_record_mac, record_mac, status(INTENT|COMMIT|RECONCILED)`.
+## Bounded, complete ledger representation
 
-A source equivalence tag is optional and requires HMAC, not plain hash: HMAC-SHA-256 over domain string `serea:p7:forget-source:v1\0` + canonical source locator; secret key held by the host OS secret store, never in the SQLite DB or backup manifest. Include key version; rotation retains old verification/suppression keys or re-tags under an explicit migration before retiring one. If key is lost, tags cannot be verified: stop extraction and do not promise re-extraction suppression; keep existing memory barrier until owner-directed recovery. If a supported restore cannot restore the key, require fresh owner decision and quarantine. HMAC tags can leak equality and are a privacy tradeoff requiring owner acceptance. Ledger encryption/confidentiality and key recovery are separate from integrity.
+A ledger operation uses immutable, individually framed records. Each canonical encoded record is at most **1,024 bytes**; a Chunk record carries at most **512 bytes** of canonical entry payload. No list is truncated to fit.
 
-## Forget transaction and durability sequence
+- `BEGIN`: owner ID/epoch, generation, operation ID, request nonce, snapshot generation, exact target count, exact chunk count, format/key versions, and closure commitment. The candidate maximum closure is 1,000 Memory IDs, matching the proposed per-Owner active-item cap; it remains PROPOSED. A larger/unbounded store would require changing both bounds and reserve calculations.
+- `CHUNK`: operation ID, zero-based chunk index, declared total chunks, canonical entries, previous-record MAC, and this-record MAC. Entries are sorted bytewise by `memory_id`; duplicates are forbidden. Each entry identifies direct versus derived target and its immediate predecessor/source Memory ID where applicable. Optional equivalence tags appear only in an approved suppression mode.
+- `COMPLETE_INTENT`: emitted only after every declared chunk exists and verifies; records exact total entries, chunk count, closure generation/commitment, and the authenticated chain tip. The primary DB must not be mutated before this marker is durable.
+- `PRIMARY_APPLIED`, `LEDGER_COMMITTED`, `RECONCILED`, or `ABORT`: bounded state records refer to the same operation ID/generation. An operation is reportable complete only after all declared chunks, COMPLETE_INTENT, primary application, and ledger finalization verify.
 
-1. Authenticate a fresh host actor for purpose `forget`; do not accept a logged-in session or device key alone. Validate exact target Owner and idempotency nonce. If auth or target validation fails, do not write and do not claim deletion.
-2. Acquire process-wide Memory operation barrier and SQLite `BEGIN IMMEDIATE`. Resolve the requested set plus complete transitive derived closure using owner-scoped rows, cycle detection, and bounded traversal. If graph exceeds the operation limit, persist/return `INCOMPLETE_LIMIT` and keep affected owner Memory inaccessible until resumed. Never truncate closure silently.
-3. Compute content-free intent record and reserve deletion space. Commit ledger `INTENT(g+1)` durably first. Ledger append uses exclusive lock, sequence/generation compare, fsync of file then parent directory as platform capability allows; a successful library write alone is not proof of stable media. Exact API/durability requirements await target verification.
-4. In one primary `BEGIN IMMEDIATE` transaction, set Owner `read_state=QUARANTINED`/advance `db_applied_generation`; insert content-free tombstones; mark closure pending-deletion; remove FTS rows; remove provenance; delete Memory-to-Blob references; preserve shared Blob rows while referenced elsewhere; record an idempotent pending GC set. Recheck Owner and ledger generation before commit. Search and model retrieval remain blocked for that Owner while this commit is incomplete.
-5. Append durable ledger `COMMIT(g+1)` and then `RECONCILED(g+1)` only after primary commit proof. If ledger append fails, operation remains incomplete and Owner stays quarantined; retry is idempotent. Do not report complete.
-6. In a primary transaction, set applied generation and `read_state=ACTIVE` only if current ledger confirms the same committed generation and no pending intents, then release barrier. Report Forget complete only after both DB transaction and independent ledger record are durable and FTS deletion is verified by an exact query/integrity check. Otherwise return truthful `PENDING_RECOVERY` with stable operation ID.
-7. Physical Blob GC runs later in bounded batches. Delete only when exact `(digest,data_class_rank)` has no references across all approved owners/domains. Crash repeats safely. Logical Forget completion need not wait for shared-safe garbage collection, but user-facing status says physical cleanup pending; no secure erase claim.
+The closure is computed from an owner-scoped consistent SQLite read snapshot while Memory writers are excluded. The canonical entries are chunked without dropping any member; chunk indices must equal exactly `[0, chunk_count)`, entries must total `target_count`, IDs must be unique, and graph edges must be owner-local and acyclic. The chain MAC authenticates each index and payload; the COMPLETE_INTENT binds the expected count and final chain tip. A missing, duplicated, reordered, altered, or truncated chunk cannot satisfy the completion check. A separately keyed ledger integrity MAC is a design dependency, not an accepted key-custody decision.
 
-To avoid claiming durable quarantine from RAM, the owner row/read barrier is committed before the Forget intent is exposed as pending; if even that cannot be written, the process stops all Memory access immediately and on restart detects ledger/store integrity mismatch if either state survives. If neither file can record a denial and all external evidence is unavailable, a prior complete operation may be indistinguishable from no operation; this is the explicit residual rollback limit below.
+If a crash leaves a BEGIN or a proper subset of chunks before COMPLETE_INTENT, no primary deletion has started and no success may be acknowledged. Startup detects the incomplete operation before Memory APIs open and quarantines that Owner (global quarantine if the Owner cannot be authenticated from the valid record prefix). Recovery reopens the DB under the same operation lock, verifies the saved snapshot generation and recomputes the full closure. If it exactly matches existing chunks, it appends the missing chunks and completion marker. If not, it appends an authenticated ABORT and requires a fresh authenticated request; it never fills from a changed/guessed closure. A torn frame, missing sequence, bad MAC, or orphan temp file is ledger uncertainty: do not truncate silently; retain evidence and keep Memory unavailable pending recovery.
 
-## Startup, reads, and extraction barrier
+**Proposed accounting:** the 10,000-record cap counts every BEGIN, CHUNK, completion, apply, finalization, reconciliation, abort, and recovery frame, not 10,000 operations. Each frame counts against the logical ledger byte and record budgets. A maximum 1,000-item closure can require up to 500 chunk frames at two worst-case entries/frame, plus state frames; reserve admission must calculate the complete operation before persisting BEGIN. If capacity for every required frame is unavailable, do not start a Forget that can only partially persist and do not acknowledge it. Keep a separately protected recovery allowance for one maximum closure as a candidate; finite reserve cannot promise unbounded future Forget if records cannot be safely compacted. Compaction is allowed only when accepted backups can no longer contain the deleted rows and an independent checkpoint proves that fact. These figures are PROPOSED and need reconciliation with the numeric package and owner approval.
 
-At startup, before opening any Memory-capable API or syncing data: verify ledger file presence, format, MAC/sequence continuity, OwnerId+epoch, and highest generation; verify primary DB's applied generation and restore manifest. Any missing/corrupt/truncated ledger, unexplained generation gap, unknown backup provenance, Owner mismatch, or key unavailability sets durable/global Memory unavailable and stops search, extraction, model context assembly, backup export, and synchronization. Recover ledger intents by replaying owner-scoped tombstones/closure, FTS deletes, Blob ref removals, and pending GC idempotently; commit DB generation; then append reconciliation marker. Only after exact generation equality and no unresolved intents may Memory reads resume.
+## Lock and transaction order
 
-Every Memory read/search/model-retrieval and extraction commit also checks a process barrier plus authoritative generation under a serialized Storage operation. A stale connection cannot bypass it. Extraction captures source tags and admission generation at start; its final transaction rechecks that no newer Forget covers the source and its tags are not suppressed. Forget takes a write fence that cancels or invalidates in-flight extraction; the extraction result is discarded if its generation is stale.
+There is no nested SQLite transaction and no SQLite write transaction is held across ledger filesystem I/O.
 
-## Recovery states
+1. **Memory visibility barrier:** acquire the process-local Memory write gate, then an exclusive cross-process operation lock. Proposed cross-process primitive is a host-verified OS lock on a dedicated lock object; supported APIs, crash release, network filesystems, and macOS/Windows/Linux behavior remain unverified. All Memory readers acquire a shared lock; every Memory mutation, extraction final commit, restore, Forget, and GC acquires exclusive. Lock order is fixed: process gate → cross-process operation lock → ledger lock (only for a record-set operation) → short SQLite transaction. Never acquire these in reverse order.
+2. **Closure snapshot:** while holding exclusive operation lock, read the DB generation and full owner-scoped graph in a read transaction; verify no cycle/cross-owner edge and build the exact bounded closure. End the read transaction before filesystem writes. All Serea Memory writers must honor the operation lock, so the closure cannot change while the lock is held.
+3. **Ledger intent:** with no SQLite transaction open, acquire the ledger's own exclusive lock, write BEGIN/chunks/COMPLETE_INTENT as immutable framed records, flush record contents and directory metadata using the platform durability primitive, verify the full operation, then release the ledger lock. Keep the cross-process Memory operation lock. Exact durable semantics need target-platform testing; a successful write call alone is not durability proof.
+4. **Primary apply:** start one `BEGIN IMMEDIATE`; recheck the DB generation and operation ID; set durable quarantine and applied generation, insert tombstones, delete the complete closure's FTS/provenance/Memory references, and enqueue shared-safe Blob GC. Commit. No filesystem I/O or ledger lock is held inside this SQLite transaction.
+5. **Ledger finalize:** with no SQLite transaction open, append and flush PRIMARY_APPLIED/LEDGER_COMMITTED/RECONCILED frames under ledger lock. If this fails, DB remains durably quarantined; no success response and no readers reopen.
+6. **Reopen:** start a short primary transaction; verify the complete ledger chain, matching OwnerId/epoch/generation and no unresolved operations; set `READY(g+1)` and commit. Then release cross-process lock and process gate. A successful Forget acknowledgement occurs only after this commit and verified FTS exclusion. Physical Blob GC may remain pending and is reported as such.
 
-`READY(g)` -> `FORGET_INTENT(g+1)` -> `PRIMARY_APPLIED(g+1)` -> `LEDGER_COMMITTED(g+1)` -> `READY(g+1)`.
-Any uncertainty transitions to `QUARANTINED(reason, observed_generation)`; only replay plus independently verified ledger convergence returns to READY. No startup path infers success from a primary tombstone without ledger confirmation or from a ledger record without applying it. `INCOMPLETE_LIMIT` remains quarantined and resumable; idempotent retry with same operation ID continues. Storage exhaustion, key loss, or corruption never falls back to ordinary reads.
+The shared read lock is held until search results/context are consumed at the boundary. To guarantee no pre-Forget context is newly sent to a model after Forget completion, model dispatch must retain a shared read lease through provider-call completion or use an equivalent serialized egress fence. This may make Forget wait for a bounded in-flight call; timeout fails closed and reports pending. A Forget cannot recall content already delivered before its linearization point. This boundary and timeout require owner acceptance. If host lock support is unavailable or cannot be verified, disable Memory rather than silently rely on in-process locking.
+
+## Recovery and visibility state
+
+`READY(g)` → process/interprocess exclusive gate → complete ledger intent durable → primary transaction sets `QUARANTINED(g+1)` and removes the complete target set → ledger finalization durable → primary transaction verifies and sets `READY(g+1)` → release locks and acknowledge.
+
+On startup, before any Memory API, inspect ledger frames, OwnerId/epoch, DB generation/read_state, and restore manifest. Incomplete or corrupt records, missing ledger/keys/manifest, generation mismatch, or uncertain lock state sets a durable Owner/global barrier where storage permits; otherwise the process refuses to open Memory APIs. Replay is idempotent by `(owner_id, forget_op_id, generation, memory_id)`. Never infer success from an in-memory flag. Readers acquire shared cross-process lock and recheck readiness/generation before returning content. Extraction start and final commit require the lock/generation check; Forget's exclusive lock fences both.
+
+A process crash releases OS locks, but that fact does not indicate transaction success. SQLite `BEGIN IMMEDIATE` rollback/commit is judged from reopened DB and configured SQLite durability. Ledger record durability is judged independently from verified frames and the platform flush guarantee. Primary DB and independent ledger are never described as one atomic transaction.
 
 ## Failure matrix
 
-| Point | Primary DB | Independent ledger | Visibility / report / extraction | Safe recovery and evidence |
+| Point | Primary DB durable state | Ledger durable state | Visibility / success | Safe recovery evidence |
 | --- | --- | --- | --- | --- |
-| 1 Before Forget validation | Unchanged | Unchanged | Existing state; no success; extraction may continue | Re-authenticate; request evidence |
-| 2 After auth, before transaction | Unchanged | Unchanged | No success; auth nonce consumed; extraction may continue unless operation lock taken | Fresh retry; auth evidence/nonce audit |
-| 3 During tombstone insertion | Transaction rollback or partial uncommitted pages | INTENT if step 3 completed | Owner barrier; no search/model; pending only; extraction blocked | SQLite recovery, replay INTENT; transaction/journal evidence |
-| 4 After primary commit | Tombstones/FTS deletion committed, DB generation advanced | INTENT only | Owner quarantined; no success; extraction/search stop | Append COMMIT then RECONCILED; inspect rows, FTS, generation |
-| 5 Before ledger persistence | Prior primary state or no commit | No INTENT | If no durable intent, no success and no Forget action; if DB may have started, global barrier until consistency inspection | Reopen/check DB; retry using operation ID; no assertion from RAM |
-| 6 During ledger persistence | Unchanged or transaction state | Torn/uncertain final record | Global Memory barrier, no success, extraction/search stop | Verify authenticated complete record; truncate only incomplete tail under locked recovery, retain evidence |
-| 7 Ledger durable, before success report | Applied DB or INTENT/COMMIT state | Durable record | No user success yet; reads blocked until READY | Retry returns same operation status; durable generation/MAC evidence |
-| 8 During FTS update/rollback | SQLite transaction either all committed or rolled back; if uncertain DB integrity check | INTENT persists | Owner blocked; no stale FTS use | Replay FTS deletion/rebuild under barrier; query + FTS integrity evidence |
-| 9 During shared Blob GC | Tombstones and ref deletion durable; some unreferenced blobs may remain | COMMIT/RECONCILED | No content retrievable; physical cleanup pending, not a Forget failure | Recompute exact class-bound refcount; delete only zero refs; repeat batch |
-| 10 During backup creation | Snapshot is consistent only if SQLite backup API/manifest protocol succeeds | Ledger has generation g | Backup not exportable until manifest binds DB generation g and ledger checkpoint g; no service success affected | Discard incomplete backup; checksum manifest and generation evidence |
-| 11 During restore | Restored DB may be older/newer; ledger independently current | Current ledger or unknown | Startup barrier blocks every Memory surface | Compare epoch/generations, replay newer tombstones; missing evidence => permanent quarantine until owner recovery |
-| 12 During startup reconciliation | Partial replay transaction rolls back or batch cursor advances durably | Authoritative sequence intact | No reads/extraction/sync | Idempotent replay; exact generation and unresolved-intent count evidence |
-| 13 Concurrent extraction of forgotten source | Write fence invalidates admission/final commit | INTENT generation advances | Search/model blocked; extraction cannot commit old generation | Retry source only after READY and suppression check; compare captured/current generation |
-| 14 During graph traversal | No deletion commit until bounded closure validated; incomplete traversal may have read-only snapshot | No intent until closure resolved (or a preliminary quarantine intent) | Do not report complete; quarantine affected Owner once traversal bound exceeded | Resume from persisted cursor only with closure generation fence; prove closure count and no cross-owner edge |
-| 15 Storage full | Atomic DB transaction may fail; some prior states intact | Append may fail or be uncertain | No success; stop all Memory reads if durable quarantine cannot be proven; stop extraction | Free/repair reserve, verify ledger tail, replay; preserve operation ID and report pending |
+| Before validation/auth | Unchanged | Unchanged | Existing visibility; no Forget | Fresh authentication and target check |
+| After auth, before locks | Unchanged | Unchanged | No success | New operation ID/nonce on retry |
+| Locks held, closure snapshot/read transaction | Unchanged | Unchanged | Readers/writers blocked by cross-process gate; no success | DB generation and exact closure snapshot |
+| During BEGIN/chunk frame writes | Unchanged | Valid prefix, incomplete operation or torn frame | No success; startup barrier before APIs | Frame sequence/MAC; recompute exact closure, resume or authenticated ABORT; torn data remains quarantined |
+| Complete intent durable, before primary transaction | Unchanged/READY at old generation | Complete INTENT with full chunk set | API remains blocked under lock; crash restart sees intent and blocks before reads | Verify all chunks and snapshot generation; replay primary apply |
+| During primary transaction | Atomic rollback or atomic commit under SQLite assumptions | Complete INTENT | Lock blocks live readers; after crash startup sees ledger intent before Memory opens | Reopen DB, generation/read_state, transaction integrity; apply or finish idempotently |
+| After primary commit, before ledger finalization | Quarantined; closure and FTS deleted | Complete INTENT only | No reads, no success | Verify DB commit then append final frames |
+| During ledger finalization | Quarantined | Final frame absent/partial/uncertain | No reads, no success | Validate segment durability; resume finalization or remain quarantined |
+| Ledger finalized, before READY transaction | Quarantined | Complete committed operation | No reads, no success | Verify full chain and DB state; set READY in one transaction |
+| After READY commit, before response | READY at new generation | Complete committed operation | Safe; retry returns same complete result | Readiness/generation plus operation ID |
+| FTS update/rollback | Same atomic outcome as primary transaction | Complete INTENT | No search until final readiness and FTS verification | Query exclusion and supported FTS integrity check |
+| Shared Blob GC | Memory/tombstones remain deleted; some bytes may remain | Complete record | Logical Forget complete; physical cleanup pending | Recount all class-bound references, bounded idempotent GC |
+| Backup during operation | SQLite snapshot may be old or quarantined depending snapshot point | Ledger may be newer | Backup not declared usable absent matching manifest generation | Discard/mismatch quarantine; bind snapshot and ledger checkpoint |
+| Restore or startup reconciliation | Restored DB may be older; replay transactions may advance it | Current/old/missing/invalid | All Memory APIs remain blocked | Independent trusted generation evidence; exact replay; manifest and integrity checks |
+| Concurrent extraction/supersession traversal | Writers excluded while closure snapshot/operation runs | No success until complete closure recorded | Extraction commit cannot pass exclusive gate; bounded graph traversal | Generation, owner-local full closure, no cycle, chunk counts |
+| Storage full / system-wide ENOSPC | SQLite apply may rollback or complete; readiness remains quarantined if committed | Ledger frame may fail/uncertain | No success; stop all Memory if durable denial cannot be proven | Recover capacity, inspect both durability domains, replay; no RAM-only recovery claim |
 
-Power loss and partial durable writes require filesystem, SQLite journal/WAL, `synchronous` mode, fsync, and hardware testing; a process-restart simulation proves none of these. SQLite transaction atomicity covers only one DB under its configured durability assumptions, not an independent ledger file.
+Power-loss behavior still requires target filesystem, SQLite journal/WAL mode, `synchronous`, flush ordering, directory metadata, and device testing. Python process-restart probes do not establish this behavior.
 
-## Restore scenarios and limits
+## Restore scenarios and rollback limits
 
-| Restore | Required response |
+| Scenario | Supported response |
 | --- | --- |
-| Old primary DB + current independent ledger | Detect lower DB generation; quarantine; replay every newer Forget before reads; preserve suppression tags |
-| Old primary DB + old ledger together | If no surviving external checkpoint/manifest, complete rollback is undetectable. Treat backup as untrusted/expired; require independent owner confirmation and quarantine. No resurrection-prevention guarantee |
-| Primary DB without ledger | Missing authority; global Memory barrier; do not synthesize an empty ledger |
-| Ledger key/integrity anchor lost | Cannot authenticate authoritative records; no read/extraction/sync; recover key from separately verified backup or owner-approved reset/quarantine |
-| Partial backup set | Generation/hash mismatch; reject as a usable Memory restore |
-| Offline restore | Ledger and signed manifest must be locally available and current; otherwise remain quarantined offline. Network is not assumed |
-| DB contains previously forgotten Memory | Replay tombstones and delete derived closure/FTS/Blob refs before opening readers |
-| Restore after tombstone expiry | Supported backups are max 30d; tombstone horizon is >=37d. Older/unknown backup is rejected/quarantined, not admitted as clean |
-| OwnerId recovery/replacement | Match exact OwnerId+epoch. New ID never inherits data automatically. Old ledger/key missing means old data quarantined; owner explicitly chooses rebind, export-free reset, or retain inaccessible |
+| Old primary DB, current independently surviving ledger | Detect lower generation; quarantine and replay every complete newer Forget before reads |
+| Old primary and old ledger, but a newer independently surviving authenticated manifest/checkpoint | Detect mismatch and quarantine/reconcile. This depends on the checkpoint being genuinely outside the rollback domain and is not yet implemented or approved |
+| Primary DB with no ledger | Fail closed; never synthesize an empty ledger |
+| Ledger key/anchor missing or corrupt | Fail closed; restore only from separately verified evidence or remain quarantined |
+| Partial backup set | Reject as usable; no Memory reads, extraction, model context, or sync |
+| Offline restore | Works only if current ledger and independently trusted manifest are available offline; otherwise quarantine |
+| DB still contains a forgotten row | Apply complete ledger operation before any reader opens |
+| Restore older than 30 days / after 37-day tombstone horizon | Reject/quarantine unless a separately surviving authority proves it safe; age values alone are not proof |
+| Owner recovery/replacement | Require exact OwnerId+epoch match; new Owner does not inherit old data automatically |
+| Primary, ledger, keys, and manifests all rolled back together | **Unsupported and potentially undetectable** without an independently surviving authority; do not claim resurrection prevention |
 
-A system cannot distinguish a complete rollback of every local DB, ledger, key, and manifest from a genuine older state without an independently surviving authority. No verified monotonic hardware, network authority, or universal host service is assumed. A local hash chain only detects partial alteration when a current chain head survives.
+A 30-day maximum backup age and 37-day tombstone retention are proposed operational limits only. They do not detect complete rollback of all local evidence. A local hash chain, file generation, or keychain value also does not supply independent monotonic authority if restored together with its state.
 
-## Reserve, exhaustion, and idempotence
+## Deletion reserve and exhaustion
 
-Proposed 64 MiB deletion reserve and 10,000 live operation records, with 25% warning and stop new extraction at 10% remaining. Reserve must be separately accounted/preallocated and inaccessible to ordinary Memory writes. Forget uses bounded 100-item replay/GC batches. Repeat Forget with same `forget_op_id` returns the same terminal/pending state and cannot create duplicate work. If ledger corruption or reserve exhaustion prevents durable denial/quarantine, stop all Memory reads, retrieval, extraction, synchronization, and backup export; this stop must be recoverable from an external surviving record or remain until manual recovery. No in-memory-only quarantine claim.
+The **64 MiB** value remains a capacity candidate, not proof of enforceable allocation. Distinguish these mechanisms:
 
-## Alternatives, limitations, gates
+| Mechanism | What it provides | What it does not guarantee |
+| --- | --- | --- |
+| Logical reservation/counters | Serea refuses ordinary growth before its logical budget | Other processes, WAL, temp files, filesystem metadata, or host disk usage can consume physical space |
+| Preallocated reserve file | May provide already allocated blocks that can be repurposed after ordinary space runs out, if allocation is real and platform semantics verified | Sparse allocation, metadata exhaustion, filesystem errors, WAL/SQLite write failure, or system-wide failure may still prevent durable denial |
+| Dedicated filesystem/quota | Stronger accounting isolation if target OS/filesystem enforces it and reserve is inaccessible to ordinary allocations | Not universal across macOS/Windows/Linux; administrator/volume failure, metadata, ledger rotation and SQLite WAL/temp still need capacity planning |
+| System-wide ENOSPC/device failure | No general Serea guarantee | Both primary DB and ledger may be unable to commit; an in-memory quarantine does not survive restart |
 
-**Security justification:** ledger-first intent prevents the normal primary-commit/ledger-later window from being reported as complete; startup/read barriers prevent stale primary snapshots from being served when current ledger evidence survives.
-**Known limitations:** complete rollback of all local evidence cannot be detected; ledger key custody/rotation and supported backup product are unresolved; filesystem fsync semantics vary; SQLite local file tampering remains in threat model; logical deletion is not physical secure erase.
-**Validation evidence:** primary schema in migrations 0001–0008 contains no Memory/Forget tables; Blob APIs and references are class-bound and existing GC helpers are DB-scoped. Synthetic transaction/restore probes are described in the evidence record and do not prove power-loss behavior.
-**Exact owner questions:** Which ledger survival domain is acceptable (second protected local volume, owner-managed backup, or future remote authority)? Accept fail-closed global Memory outage on ledger uncertainty? Accept HMAC equivalence-tag equality leakage and key custody? Accept 64 MiB reserve/10,000 records/30-day backup horizon? Is Forget “complete” once logical deletion is converged while physical GC remains pending? What explicit recovery may replace an OwnerId?
-**Implementation gate:** Gate A only. Gate B requires selected trust/rollback model, reserve and key/backup lifecycle. Gate C separately authorizes additive schema. Gate D requires Rust fault injection; Gate E independent review and target restore evidence.
+Reserve sizing must include ledger frames and filesystem allocation overhead, primary SQLite rollback/WAL space for FTS and metadata transactions, temp/rebuild files, checkpoint behavior, and directory/inode metadata. A reserve on the ledger volume does not ensure primary DB commit; a primary DB reserve does not ensure ledger finalization. The proposed 25% warning and 10% extraction-stop thresholds are logical admission thresholds until actual quota/preallocation is verified. If any required write cannot be durably established, acknowledge no Forget success; disable all Memory APIs and require recovery. Finite local reserve cannot guarantee unbounded future Forget if deletion evidence cannot be safely compacted; compaction depends on independent proof that all accepted backups predate neither the Forget nor the checkpoint.
+
+## Alternatives, evidence, gates, and owner decisions
+
+**Security justification:** no primary mutation starts before the complete bounded deletion intent is durable; cross-process locks serialize closure/read/write boundaries; no completion response is sent until primary and ledger converge.
+**Known limitations:** no cross-platform lock/flush implementation was tested; complete rollback of all local evidence remains undetectable; reserve enforceability is unproven; already delivered model context cannot be recalled; logical deletion is not secure erase.
+**Validation evidence:** synthetic SQLite findings are in [P7 SQLite feasibility evidence](P7-sqlite-feasibility-evidence.md); capacity assumptions and proposed thresholds are in [P7 numeric bounds](P7-numeric-bounds-owner-decision.md). No Rust, filesystem, power-loss, or platform lock test proves this proposal.
+**Exact owner questions:** Accept the lock/linearization boundary and bounded model-call wait? Approve source identity separate from optional equivalence suppression? If HMAC suppression is desired, approve its separate key custody/rotation/recovery design? Accept chunk and per-operation/ledger record limits? Which independent recovery authority, if any, is supported? Accept fail-closed behavior when ledger/reserve/evidence is uncertain? Which reserve mechanism and platform is a V1 requirement?
+**Implementation gate:** Gate A only. Gate B requires explicit choices for locks, closure/chunks, identity fields, rollback boundary, and reserve. Gate C separately authorizes additive schema. Gate D requires rusqlite, cross-process, crash/fault, restore, and filesystem evidence. Gate E requires independent security and target-platform review.

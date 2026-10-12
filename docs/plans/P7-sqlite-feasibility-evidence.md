@@ -74,6 +74,7 @@ The cycle check was a recursive CTE from `NEW.new_id` through existing successor
 6. FTS5 writes roll back with SQLite transactions in this build. Stale-index safety still requires search barriers and authoritative row/owner/class/expiry checks; this test did not verify external-content trigger configurations or `integrity-check` behavior on corruption.
 7. Ledger sequence, restart barrier, restore quarantine, query-work budgets, auth freshness, quota counters, HMAC/key lifecycle, deletion reserve, and truthful Forget completion are application/system contracts. SQLite cannot enforce the independent ledger atomically.
 8. The actual bundled Rust SQLite is 3.53.2 by vendored header inspection, versus Python 3.53.1. Run equivalent rusqlite integration tests against the actual project feature set before treating any result as a production constraint proof.
+9. The corrected chunked independent-ledger protocol and cross-process lock ordering are design proposals only; this probe did not test chunk completeness, filesystem flush ordering, OS locks, or crash recovery across two durability domains.
 
 **Security justification:** the probes test that proposed relational invariants can be expressed and expose which checks remain application responsibilities.
 **Known limitations:** synthetic schema only; no Rust binding execution, fault injection, power-loss, filesystem guarantee, target OS authentication, or production migration.

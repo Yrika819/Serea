@@ -57,6 +57,8 @@ The following are Gate A engineering proposals only. They are not added to the A
 
 These materials do not authorize P7B or alter ADR-0042.
 
+The documentation-only Git identity recovery and PR relationship are recorded in [P7 clean-history reconstruction](P7-clean-history-reconstruction.md). The original PR #11 remains audit evidence; replacement history and branch retirement do not ratify technical parameters.
+
 ## Next owner decisions
 
 1. Resolve each initial quota/retention value or explicitly defer it with a safe disabled/fail-closed scope; do not choose A/B/C by implication.

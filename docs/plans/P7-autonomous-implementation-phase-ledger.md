@@ -1,0 +1,38 @@
+# P7 synthetic implementation campaign ledger
+
+**Branch:** `p7/implementation-synthetic-prototype`  
+**Base:** PR #12 clean HEAD `865dcadad1750f6ba8f4928eb44a29cfa97f2f4c`  
+**Status:** Experimental, synthetic-only. No production entry point or real data integration is authorized. The migration and API require a unit-test build plus the explicit feature; optimized feature builds are rejected.
+
+## Campaign status
+
+| Phase | Status | Evidence / boundary |
+| --- | --- | --- |
+| 0 — preflight and contract freeze | Completed | GitHub main and PR #12 heads verified; accepted ADR principles and proposed values preserved; existing migration hashes checked. |
+| 1 — provisional baseline | Completed | Supplied values are tagged `TestOnly`; no promotion path exists. |
+| 2 — schema and integrity | Completed for the isolated test build | Rust bundled SQLite 0009 migration, fresh/v8 upgrade, rollback, reopen, FK, trigger, and concurrent admission tests. Excluded from ordinary builds. |
+| 3 — Memory/FTS prototype | Completed for the isolated unit-test API | Synthetic owner, insertion, lookup/list/search, provenance, expiry, supersession, quota, and FTS checks. Production authentication and extraction admission are absent. `unicode61` subword Japanese limitation recorded. |
+| 4 — Forget/recovery | Partially completed | In-memory fake-ledger model exercises 17 named crash points and replay/quarantine assertions. It does not model durable I/O, actual concurrent storage, or power loss. |
+| 5 — adversarial review | In progress | Implemented negative tests cover the reproduced cases listed below; full campaign gates remain in progress. No theoretical threat is labeled an exploit. |
+
+The review-ready campaign status is intentionally not asserted because the Forget model is not durable and Phase 5 does not complete production security review. Verified repository gates: `cargo test --workspace --all-features` passed (including doctests and the P6 TaskEngine crash suite); `cargo clippy --workspace --all-targets --all-features --offline -- -D warnings` passed; Rust 1.85 `cargo check --workspace --all-targets --all-features --locked --offline` passed; Python workspace smoke suite passed (76 tests); docs validation scanned 127 Markdown files and passed; formatting and `git diff --check` passed. Cargo emits one pre-existing deprecation warning from vendored `serde_json`.
+
+| Accepted constraint | Provisional implementation choice | Required test/evidence | Dependency | Blocking condition | Evidence/status |
+| --- | --- | --- | --- | --- | --- |
+| Migrations 0001–0008 immutable | Add version 0009 only in test + feature builds; ordinary catalog remains v8 | Hash comparison, fresh DB migration, v8 upgrade, rollback/reopen, `foreign_key_check` | Migration catalog | Existing migration bytes changed or catalog runner rejects additive version | Completed; Rust migration tests pass; original hashes match checked-in evidence |
+| Stable host Owner; caller/model OwnerId is not authority | Sealed context with deterministic unit-test fake; no production auth adapter | Fake context cannot be constructed by public API; cross-owner access denied | OS authentication and bootstrap contract remain proposed | Any production caller can mint a principal | Test-only API and cross-owner tests pass; no OS adapter |
+| Owner binding immutable; unknown legacy Task quarantined | Separate immutable task binding table and quarantine table | missing binding denied, update/delete rejected, legacy extraction excluded | Task admission integration is explicitly absent | Binding inferred from DeviceId/SessionId | Schema tests pass, including legacy upgrade quarantine; no Task admission integration |
+| PUBLIC/PERSONAL only; PRIVATE fails closed | Rank constrained to 0/1 and typed API has only those classes | SQL PRIVATE/SECRET/CREDENTIAL rejection | Production PRIVATE protection remains separate gate | Broadened class support | Rust schema/API tests pass for PRIVATE, SECRET, and CREDENTIAL rejection |
+| Owner-scoped relational integrity | Composite Owner keys and exact Blob `(digest,data_class_rank)` FK | FK mismatch probe, cross-owner failures, `foreign_key_check` | Parent UNIQUE keys | Any unverified composite parent key | Rust tests pass; parent key inventory asserted and foreign-key check clean |
+| At most one successor; no cycles | Unique outgoing/incoming edges and recursive CTE trigger | self, indirect, duplicate successor, concurrent writer tests | SQLite serialized writers | Unbounded traversal or cycle admitted | Self/indirect/duplicate/cross-owner rejection tests pass; writers serialize in SQLite |
+| Bounded quotas; no overflow/eviction | Trigger maintained per-Owner accounting using provisional ceilings | exact boundary/overflow/concurrent admission | Candidate limits not ratified | Any quota policy claim or implicit eviction | Exact cap, cap+1, and two-connection admission tests pass; no implicit eviction |
+| Bounded literal lexical search | Feature-gated migration 0009 plus FTS5 unicode61; quoted input; owner/class/base-row joins; stable ID order and integrity check | Rust integration tests on bundled SQLite 3.53.2 cover continuous/spaced/mixed Japanese, numbers, metacharacters, bounds and index mismatch | No default migration; experimental feature only | Baseline inadequacy requires tokenizer contract change | Observed: continuous 「今日は東京で開発」 does not match 「東京」; spaced 「今日は 東京 で開発」 does. Limitation documented, tokenizer unchanged. |
+| Expiry never extended by retrieval | Candidate retention is fixed at insert; reads filter expiry | boundary/expired tests | Clock contract | Retrieval changes expiry | Expiry tests pass; no retrieval renewal API exists |
+| Forget is explicit and complete only after authoritative evidence | Deterministic fake-ledger state model only; no durable OS ledger | Named crash-point model, replay idempotence, no false success | Ledger location, key custody, restore authority unratified | Real durability or resurrection-prevention claim | Partial fake model test passes; not evidence of durable deletion or power-loss recovery |
+| No production activation | Migration/API require `cfg(test)` plus `p7-experimental`; optimized feature build rejected | Default catalog is v8; compile-time optimized-build gate | Review and separate approval | Feature wired to Core/TaskEngine/model/provider | Gate implemented; build checks are campaign gates |
+
+## Unresolved owner decisions preserved
+
+Numerical limits and retention periods; Owner bootstrap/recovery and OS authentication target/freshness; exact provenance fields and Forget selection; cross-process lock and linearization semantics; independent ledger location and trust boundary; integrity key/HMAC custody and rotation; deletion reserve and storage exhaustion behavior; backup age/retention/reconciliation; Japanese search quality criteria and query/ranking contract; any production enablement gate.
+
+All parameter values in migration/API are explicitly provisional test bounds. They do not change ADR-0042 status and never transition automatically to accepted production configuration.

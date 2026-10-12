@@ -38,6 +38,6 @@ The following local checks passed on Linux x86_64, Rust 1.85, bundled SQLite 3.5
 - Rust 1.85 default optimized storage build — passed. Optimized `p7-gate-c` build — rejected by its intended compile-time guard.
 - Rustfmt, `git diff --check`, docs validator (130 Markdown files), Python workspace smoke (76 tests), commit identity checker, and raw SHA-256 comparison for migrations 0001–0008 — passed.
 
-GitHub Fast CI, Full CI and SQLite portability for the resulting head are pending push/dispatch. macOS/Windows Gate C runtime behavior and physical power-loss tests are **NOT TESTED**. Injected/process faults are not hardware failure tests.
+On source-integrated head `2d73b52f7426c23748a811f4f19a052f8892748f`, GitHub Fast CI run `38244073545`, Full CI run `38244073578`, and SQLite portability run `38244073575` all concluded **success**. Full CI covered Linux stable, Rust 1.85.0, macOS arm64 and macOS Intel x86_64; SQLite portability passed both cross-architecture open directions. macOS/Windows Gate C runtime behavior on a target production adapter and physical power-loss tests are **NOT TESTED**. Injected/process faults are not hardware failure tests.
 
 The highest proven state is an integrated **synthetic file-backed** admission/Memory/Forget/checkpoint-denial path. It is not `P7_GATE_C_INTEGRATED_SYNTHETIC_RECOVERY_REVIEW_READY` while the external checkpoint lacks durable independent custody, pending-intent replay is not implemented, and crash/concurrency and bypass coverage is incomplete.

@@ -379,11 +379,17 @@ impl SyntheticCoordinator {
             .checked_add(1)
             .ok_or(LedgerError::Generation)?;
         if op.kind != FrameKind::Intent
-            || extension
-                .iter()
-                .any(|f| f.operation_id != op.operation_id || f.owner != self.owner)
-            || pending_operation.as_deref() != Some(op.operation_id.as_str())
-            || pending_generation != Some(reconciled_generation as i64)
+            || op.operation_id.is_empty()
+            || op.operation_id.len() > 96
+            || op.payload.len() != 32
+            || extension.iter().any(|f| {
+                f.operation_id != op.operation_id
+                    || f.owner != self.owner
+                    || f.key_version != op.key_version
+                    || f.target_count != op.target_count
+                    || f.chunk_count != op.chunk_count
+                    || f.closure_digest != op.closure_digest
+            })
             || frames
                 .iter()
                 .any(|f| f.operation_id == op.operation_id && f.sequence <= trusted.final_sequence)
@@ -411,6 +417,32 @@ impl SyntheticCoordinator {
         {
             return Err(LedgerError::Invalid);
         }
+        let terminal_kinds = extension
+            .iter()
+            .skip(1 + chunks.len())
+            .map(|f| f.kind)
+            .collect::<Vec<_>>();
+        let expected_terminal = [
+            FrameKind::PrimaryApplied,
+            FrameKind::Finalized,
+            FrameKind::Reconciled,
+        ];
+        if terminal_kinds.len() > expected_terminal.len()
+            || terminal_kinds != expected_terminal[..terminal_kinds.len()]
+        {
+            return Err(LedgerError::Invalid);
+        }
+        let adopting_complete_intent = pending_operation.is_none()
+            && pending_generation.is_none()
+            && read_state == "READY"
+            && db_generation as u64 == trusted.generation
+            && extension.len() == 1 + chunks.len();
+        let matching_pending = pending_operation.as_deref() == Some(op.operation_id.as_str())
+            && pending_generation == Some(reconciled_generation as i64)
+            && read_state == "QUARANTINED";
+        if !adopting_complete_intent && !matching_pending {
+            return Err(LedgerError::Stale);
+        }
         let encoded = chunks
             .iter()
             .flat_map(|f| f.payload.iter().copied())
@@ -433,6 +465,26 @@ impl SyntheticCoordinator {
             .as_slice()
             .try_into()
             .map_err(|_| LedgerError::Invalid)?;
+        if adopting_complete_intent {
+            // This fixture treats a MAC-valid intent written by the synthetic
+            // coordinator as an already-admitted Forget. The test key is not
+            // an Owner authenticator; production recovery must independently
+            // prove admission and authorization at its real authority boundary.
+            self.validate_unapplied_recovered_closure(&op.operation_id, &closure)?;
+            let adopted = self.store.transact(|tx| {
+                let updated = tx.inner.execute(
+                    "UPDATE p7_ledger_state SET read_state='QUARANTINED',pending_operation_id=?2,pending_generation=?3 WHERE owner_id=?1 AND generation=?4 AND read_state='READY' AND pending_operation_id IS NULL AND pending_generation IS NULL",
+                    params![self.owner.as_str(), op.operation_id, reconciled_generation as i64, trusted.generation as i64],
+                )?;
+                if updated != 1 { return Err(StoreError::Sqlite); }
+                crash_at("during-pending-transaction");
+                Ok(())
+            });
+            if adopted.is_err() {
+                return Err(LedgerError::Stale);
+            }
+            crash_at("after-pending-commit");
+        }
         self.validate_or_apply_recovered_closure(
             &op.operation_id,
             op.generation,
@@ -527,6 +579,37 @@ impl SyntheticCoordinator {
             .advance(next, &self.keys)?;
         crash_at("replay-after-checkpoint");
         self.release_ready(final_generation)?;
+        Ok(())
+    }
+
+    fn validate_unapplied_recovered_closure(
+        &self,
+        op: &str,
+        ids: &[String],
+    ) -> Result<(), LedgerError> {
+        let valid = self.store.transact(|tx| {
+            let mut rows = 0_usize;
+            for id in ids {
+                let row: bool = tx.inner.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM p7_memory_items WHERE owner_id=?1 AND memory_id=?2)",
+                    params![self.owner.as_str(), id], |r| r.get(0),
+                )?;
+                let tombstone: bool = tx.inner.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM p7_memory_tombstones WHERE owner_id=?1 AND memory_id=?2)",
+                    params![self.owner.as_str(), id], |r| r.get(0),
+                )?;
+                if !row || tombstone { return Ok(false); }
+                rows += 1;
+            }
+            let prior_operation: bool = tx.inner.query_row(
+                "SELECT EXISTS(SELECT 1 FROM p7_memory_tombstones WHERE owner_id=?1 AND forget_op_id=?2)",
+                params![self.owner.as_str(), op], |r| r.get(0),
+            )?;
+            Ok(rows == ids.len() && !prior_operation)
+        }).map_err(|_| LedgerError::Stale)?;
+        if !valid {
+            return Err(LedgerError::Stale);
+        }
         Ok(())
     }
 
@@ -869,6 +952,7 @@ impl SyntheticCoordinator {
                 crash_at("after-chunk");
             }
         }
+        crash_at("after-last-chunk-before-pending");
         self.store.transact(|tx| {
             let updated = tx.inner.execute(
                 "UPDATE p7_ledger_state SET read_state='QUARANTINED',pending_operation_id=?2,pending_generation=?3 WHERE owner_id=?1 AND generation=?4 AND read_state='READY' AND pending_operation_id IS NULL",
@@ -1946,9 +2030,81 @@ fn integrated_forget_crash_child_entry() {
     let coordinator =
         SyntheticCoordinator::reopen(Path::new(&db), Path::new(&ledger), Path::new(&checkpoint))
             .unwrap();
-    let root = std::env::var("SEREA_P7_CRASH_ROOT").unwrap_or_else(|_| "crash-root".into());
+    let roots = std::env::var("SEREA_P7_CRASH_ROOTS")
+        .map(|value| value.split(',').map(str::to_owned).collect::<Vec<_>>())
+        .unwrap_or_else(|_| {
+            vec![std::env::var("SEREA_P7_CRASH_ROOT").unwrap_or_else(|_| "crash-root".into())]
+        });
+    let root_refs = roots.iter().map(String::as_str).collect::<Vec<_>>();
     let operation = std::env::var("SEREA_P7_CRASH_OP").unwrap_or_else(|_| "crash-child-op".into());
-    let _ = coordinator.forget(&auth(70), &operation, &[&root]);
+    let _ = coordinator.forget(&auth(70), &operation, &root_refs);
+}
+
+#[test]
+fn ir04_last_chunk_before_pending_recovers_after_red_reproduction() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("ir04-root", "IR-04 authenticated closure"))
+        .unwrap();
+    let before = gate.checkpoint.lock().unwrap().current().clone();
+    let keys = gate.keys.clone();
+    drop(gate);
+    let status = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("--nocapture")
+        .env("SEREA_P7_CRASH_DB", scratch.db())
+        .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+        .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+        .env("SEREA_P7_CRASH_ROOT", "ir04-root")
+        .env("SEREA_P7_CRASH_OP", "ir04-op")
+        .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
+        .status().unwrap();
+    assert_eq!(
+        status.code(),
+        Some(73),
+        "child did not reach deterministic IR-04 checkpoint"
+    );
+    let guard = LedgerFileGuard::acquire_existing(scratch.ledger()).unwrap();
+    let bytes = guard.read_bytes().unwrap();
+    let frames = guard.read_verified(&keys).unwrap();
+    drop(guard);
+    let store = Store::open(&scratch.db(), &TestClock).unwrap();
+    let state: (i64, String, Option<String>, Option<i64>) = store.transact(|tx| Ok(tx.inner.query_row(
+        "SELECT generation,read_state,pending_operation_id,pending_generation FROM p7_ledger_state WHERE owner_id=?1",
+        [OWNER], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+    )?)).unwrap();
+    assert_eq!(
+        frames.len(),
+        2,
+        "expected authenticated Intent plus complete closure chunk"
+    );
+    assert_eq!(frames[0].kind, FrameKind::Intent);
+    assert_eq!(frames[1].kind, FrameKind::Chunk);
+    assert_eq!(
+        bytes.len(),
+        std::fs::metadata(scratch.ledger()).unwrap().len() as usize
+    );
+    assert_eq!(before.final_sequence, 0);
+    assert_eq!(before.generation, 0);
+    assert_eq!(state, (0, "READY".into(), None, None));
+    let checkpoint = PersistentCheckpointStore::open_existing(scratch.checkpoint(), &keys).unwrap();
+    let coordinator = SyntheticCoordinator {
+        store,
+        memory: P7ExperimentalMemory::fake(OWNER.into(), OWNER_EPOCH),
+        ledger_path: scratch.ledger(),
+        owner: OwnerId::parse(OWNER).unwrap(),
+        keys,
+        checkpoint: Mutex::new(checkpoint),
+        replay: Mutex::new(EvidenceReplayGuard::default()),
+    };
+    let recovery = coordinator.recover_startup();
+    assert!(
+        recovery.is_ok(),
+        "IR-04 must adopt the complete authenticated closure; original exact error: {recovery:?}"
+    );
+    assert!(!coordinator.get("ir04-root").unwrap());
 }
 
 #[test]
@@ -1956,6 +2112,7 @@ fn child_termination_after_durable_intent_keeps_reopened_memory_denied() {
     let cases = [
         ("after-intent", false),
         ("during-ledger-append", false),
+        ("after-last-chunk-before-pending", true),
         ("after-complete-intent", true),
         ("during-primary-transaction", true),
         ("after-memory-blob-ref-removal", true),
@@ -2011,6 +2168,113 @@ fn child_termination_after_durable_intent_keeps_reopened_memory_denied() {
             assert!(reopened.is_err(), "{point} must retain quarantine");
         }
     }
+}
+
+#[test]
+fn ir04_pending_adoption_sqlite_crash_has_atomic_outcomes() {
+    for recovery_point in ["during-pending-transaction", "after-pending-commit"] {
+        let scratch = Scratch::new();
+        let gate =
+            SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+                .unwrap();
+        gate.insert(&draft("ir04-pending-root", "atomic pending adoption"))
+            .unwrap();
+        drop(gate);
+        let child = || {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .arg("--exact")
+                .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+                .arg("--nocapture")
+                .env("SEREA_P7_CRASH_DB", scratch.db())
+                .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+                .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint());
+            command
+        };
+        let intent_exit = child()
+            .env("SEREA_P7_CRASH_ROOT", "ir04-pending-root")
+            .env("SEREA_P7_CRASH_OP", "ir04-pending-op")
+            .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
+            .status()
+            .unwrap();
+        assert_eq!(intent_exit.code(), Some(73));
+        let adoption_exit = child()
+            .env("SEREA_P7_CRASH_AT", recovery_point)
+            .status()
+            .unwrap();
+        assert_eq!(
+            adoption_exit.code(),
+            Some(73),
+            "recovery child missed {recovery_point}"
+        );
+        let reopened =
+            SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+                .unwrap_or_else(|error| {
+                    panic!("{recovery_point} must recover atomically: {error:?}")
+                });
+        assert!(!reopened.get("ir04-pending-root").unwrap());
+        assert_eq!(reopened.generation().unwrap(), 2);
+        assert_eq!(
+            reopened
+                .forget(&auth(75), "ir04-pending-op", &["ir04-pending-root"])
+                .unwrap(),
+            ForgetStatus::AlreadyCompleted
+        );
+    }
+}
+
+#[test]
+fn ir04_multichunk_closure_recovers_after_last_chunk_before_pending() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    let ids = (0..60)
+        .map(|index| format!("ir04-multichunk-{index:02}"))
+        .collect::<Vec<_>>();
+    for id in &ids {
+        gate.insert(&draft(id, "multi chunk recovery")).unwrap();
+    }
+    drop(gate);
+    let status = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("--nocapture")
+        .env("SEREA_P7_CRASH_DB", scratch.db())
+        .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+        .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+        .env("SEREA_P7_CRASH_ROOTS", ids.join(","))
+        .env("SEREA_P7_CRASH_OP", "ir04-multichunk-op")
+        .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
+        .status().unwrap();
+    assert_eq!(status.code(), Some(73));
+    let reopened =
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .unwrap();
+    for id in &ids {
+        assert!(!reopened.get(id).unwrap(), "{id} remained visible");
+    }
+    assert_eq!(reopened.generation().unwrap(), 2);
+    let frames = LedgerFileGuard::acquire_existing(scratch.ledger())
+        .unwrap()
+        .read_verified(&reopened.keys)
+        .unwrap();
+    assert!(
+        frames
+            .iter()
+            .filter(|frame| frame.kind == FrameKind::Chunk)
+            .count()
+            > 1
+    );
+    assert_eq!(
+        reopened
+            .forget(
+                &auth(74),
+                "ir04-multichunk-op",
+                &ids.iter().map(String::as_str).collect::<Vec<_>>()
+            )
+            .unwrap(),
+        ForgetStatus::AlreadyCompleted
+    );
 }
 
 #[test]

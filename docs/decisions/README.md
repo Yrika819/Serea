@@ -1,6 +1,6 @@
 # Serea Decision Index
 
-Current frozen architecture: `serea-arch/2.6.0`; P0/P1 baseline
+Current frozen architecture: `serea-arch/2.7.0`; P0/P1 baseline
 `serea-arch/0.2.0` remains historical. P2 is closed. P3 is closed on the open
 `main` branch. Current P3 validation results and scope limits belong in the
 [P3 closure record](../plans/P3-closure.md). ADR-0021 remains Proposed as an
@@ -17,9 +17,9 @@ plans and audited `NOT_REQUIRED` gate completion. See
 
 ## P6 decisions (accepted 2026-10-10)
 
-Prepared for owner ratification; see the
-[P6 owner decision package](../plans/P6-owner-decision-package.md). None of these is
-Accepted, and none authorizes runtime work.
+Owner-ratified; see the
+[P6 owner decision package](../plans/P6-owner-decision-package.md). ADR-0037 through
+ADR-0041 are Accepted. Their acceptance does not by itself authorize runtime work.
 
 | ADR | Decision | Status |
 | --- | --- | --- |

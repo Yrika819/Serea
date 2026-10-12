@@ -4,7 +4,7 @@
 **Authority:** Explicit Serea owner approval
 **Process state:** `P7_OWNER_DIRECTIONS_RATIFIED_DETAILS_PENDING`
 **Implementation authorization:** None. P7B implementation is explicitly not authorized.
-**Baseline reviewed:** `main` `f70f34c1f683df1b175b612ba100ce6bb6979811`; Draft PR #11 head `d23b2163193aa1856390afb2b6ae4c8a0e09e1e9`.
+**Baseline reviewed:** `main` `f70f34c1f683df1b175b612ba100ce6bb6979811`; Draft PR #11 head `5a19dade4ece21223014e6ca2a186956d09906d0`.
 
 This record preserves the owner's approval of exactly the seven architectural directions below. Approval is limited to these principles. It does not complete all P7 technical contracts, approve unresolved values, authorize schema work, alter an Accepted ADR or frozen protocol, approve P8, or relax another security gate.
 
@@ -45,6 +45,17 @@ P7B remains blocked on approved numeric and deletion-ledger parameters, a concre
 ## Existing contracts and version scope
 
 ADR-0006's FTS5 lexical-only direction, ADR-0010 classification/credential exclusion, ADR-0022's unresolved PRIVATE protection, Task Protocol §8 independent retention/explicit forget, existing Blob identity `(digest,data_class_rank)`, frozen migrations 0001–0008, and the GoalLatch integration gate remain in force. This record does not amend an Accepted ADR or frozen protocol, and does not change architecture/wire version numbers. The architecture registry remains `serea-arch/2.7.0` pending a separately reviewed version-impact decision if implementation changes a frozen contract.
+
+## Technical proposals added after ratification
+
+The following are Gate A engineering proposals only. They are not added to the Accepted principles above and do not complete technical contract ratification:
+
+- [Owner authentication technical contract](P7-owner-auth-technical-contract.md)
+- [Numeric bounds and retention proposal](P7-numeric-bounds-owner-decision.md)
+- [Forget ledger and recovery design](P7-forget-ledger-recovery-design.md)
+- [Isolated SQLite feasibility evidence](P7-sqlite-feasibility-evidence.md) (synthetic probes; scope limits apply)
+
+These materials do not authorize P7B or alter ADR-0042.
 
 ## Next owner decisions
 

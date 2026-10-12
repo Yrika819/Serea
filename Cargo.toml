@@ -30,6 +30,8 @@ serea-policy = { path = "crates/serea-policy" }
 # P2C: synchronous SQLite foundation, compiled from the bundled amalgamation.
 # No default cache/wasm adapters or optional runtime features.
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
+# Cooperative file locking for the explicitly gated synthetic P7 ledger only.
+fs2 = "=0.4.3"
 serea-testkit = { path = "crates/serea-testkit" }
 
 # JSON (de)serialization for every wire surface. `std` has no JSON support and

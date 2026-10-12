@@ -2328,7 +2328,7 @@ fn recovery_itself_is_idempotent_across_process_termination() {
             .env("SEREA_P7_CRASH_AT", point);
         command.status().unwrap().code()
     };
-    assert_eq!(run_child("after-complete-intent"), Some(73));
+    assert_eq!(run_child("after-last-chunk-before-pending"), Some(73));
     assert_eq!(run_child("replay-after-primary-commit"), Some(73));
     let reopened =
         SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
@@ -2341,6 +2341,170 @@ fn recovery_itself_is_idempotent_across_process_termination() {
             .unwrap(),
         ForgetStatus::AlreadyCompleted
     );
+}
+
+#[test]
+fn ir04_recovered_forget_runs_blob_gc_after_last_chunk_crash() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft("ir04-gc-root", "recovered blob cleanup"))
+        .unwrap();
+    let blob = gate
+        .store
+        .transact(|tx| {
+            tx.put_blob(
+                b"\"IR-04 recovered blob\"",
+                serea_protocol::DataClass::Public,
+            )
+        })
+        .unwrap();
+    gate.store.transact(|tx| {
+        tx.inner.execute(
+            "INSERT INTO p7_memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('ir04-gc-root',?1,?2,?3)",
+            params![OWNER, blob.digest().as_str(), serea_protocol::DataClass::Public.rank()],
+        )?;
+        Ok(())
+    }).unwrap();
+    drop(gate);
+    let status = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("--nocapture")
+        .env("SEREA_P7_CRASH_DB", scratch.db())
+        .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+        .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+        .env("SEREA_P7_CRASH_ROOT", "ir04-gc-root")
+        .env("SEREA_P7_CRASH_OP", "ir04-gc-op")
+        .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
+        .status().unwrap();
+    assert_eq!(status.code(), Some(73));
+    let reopened =
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .unwrap();
+    assert!(!reopened.get("ir04-gc-root").unwrap());
+    let counts: (i64, i64) = reopened
+        .store
+        .transact(|tx| {
+            Ok((
+                tx.inner.query_row(
+                    "SELECT count(*) FROM blobs WHERE digest=?1 AND data_class_rank=?2",
+                    params![
+                        blob.digest().as_str(),
+                        serea_protocol::DataClass::Public.rank()
+                    ],
+                    |row| row.get(0),
+                )?,
+                tx.inner.query_row(
+                    "SELECT count(*) FROM p7_memory_blob_refs WHERE memory_id='ir04-gc-root'",
+                    [],
+                    |row| row.get(0),
+                )?,
+            ))
+        })
+        .unwrap();
+    assert_eq!(
+        counts,
+        (0, 0),
+        "recovery must perform the normal bounded Blob GC"
+    );
+    reopened.verify_fts_integrity().unwrap();
+}
+
+#[test]
+fn ir04_near_capacity_last_chunk_crash_uses_reserved_recovery_space() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    for index in 1..=203 {
+        let id = format!("ir04-capacity-{index:03}");
+        gate.insert(&draft(&id, "near capacity synthetic fill"))
+            .unwrap();
+        assert_eq!(
+            gate.forget(
+                &auth(index as u8),
+                &format!("ir04-capacity-op-{index:03}"),
+                &[&id]
+            )
+            .unwrap(),
+            ForgetStatus::Completed
+        );
+    }
+    gate.insert(&draft("ir04-capacity-crash", "reserved crash operation"))
+        .unwrap();
+    drop(gate);
+    let before_frames = LedgerFileGuard::acquire_existing(scratch.ledger())
+        .unwrap()
+        .read_verified(&SyntheticKeyring::synthetic(1, b"synthetic-integrated-owner-71").unwrap())
+        .unwrap()
+        .len();
+    assert_eq!(before_frames, 1015);
+    let status = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("--nocapture")
+        .env("SEREA_P7_CRASH_DB", scratch.db())
+        .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+        .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+        .env("SEREA_P7_CRASH_ROOT", "ir04-capacity-crash")
+        .env("SEREA_P7_CRASH_OP", "ir04-capacity-crash-op")
+        .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
+        .status().unwrap();
+    assert_eq!(
+        status.code(),
+        Some(73),
+        "preflight must reserve all replay frames at 1,015/1,024 frames"
+    );
+    let reopened =
+        SyntheticCoordinator::reopen(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+            .unwrap();
+    assert!(!reopened.get("ir04-capacity-crash").unwrap());
+    let frames = LedgerFileGuard::acquire_existing(scratch.ledger())
+        .unwrap()
+        .read_verified(&reopened.keys)
+        .unwrap();
+    assert_eq!(frames.len(), 1020);
+}
+
+#[test]
+fn ir04_concurrent_startup_recovery_adopts_once_and_both_handles_are_safe() {
+    let scratch = Scratch::new();
+    let gate = SyntheticCoordinator::open(&scratch.db(), &scratch.ledger(), &scratch.checkpoint())
+        .unwrap();
+    gate.insert(&draft(
+        "ir04-concurrent-root",
+        "serialized startup adoption",
+    ))
+    .unwrap();
+    drop(gate);
+    let status = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("experimental_memory::p7_integrated_recovery_tests::integrated_forget_crash_child_entry")
+        .arg("--nocapture")
+        .env("SEREA_P7_CRASH_DB", scratch.db())
+        .env("SEREA_P7_CRASH_LEDGER", scratch.ledger())
+        .env("SEREA_P7_CRASH_CHECKPOINT", scratch.checkpoint())
+        .env("SEREA_P7_CRASH_ROOT", "ir04-concurrent-root")
+        .env("SEREA_P7_CRASH_OP", "ir04-concurrent-op")
+        .env("SEREA_P7_CRASH_AT", "after-last-chunk-before-pending")
+        .status().unwrap();
+    assert_eq!(status.code(), Some(73));
+    let paths = (scratch.db(), scratch.ledger(), scratch.checkpoint());
+    let start = Arc::new(Barrier::new(3));
+    let workers = [0, 1].map(|_| {
+        let (db, ledger, checkpoint) = paths.clone();
+        let start = Arc::clone(&start);
+        std::thread::spawn(move || {
+            start.wait();
+            SyntheticCoordinator::reopen(&db, &ledger, &checkpoint).unwrap()
+        })
+    });
+    start.wait();
+    for worker in workers {
+        let coordinator = worker.join().unwrap();
+        assert!(!coordinator.get("ir04-concurrent-root").unwrap());
+        assert_eq!(coordinator.generation().unwrap(), 2);
+    }
 }
 
 #[test]

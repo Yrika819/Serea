@@ -258,6 +258,71 @@ pub enum LedgerError {
     Generation,
     TooLarge,
     Io,
+    /// The bytes authenticate but do not match the independently supplied latest checkpoint.
+    Stale,
+}
+
+/// Test/development representation of freshness evidence held outside the ledger
+/// rollback domain. Possessing a checkpoint alongside the ledger does not make it
+/// independent; production checkpoint custody remains unapproved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedLedgerCheckpoint {
+    pub owner: OwnerId,
+    pub owner_epoch: u64,
+    pub key_version: u16,
+    pub final_sequence: u64,
+    pub generation: u64,
+    pub stream_digest: [u8; 32],
+}
+
+/// Authenticate frames and require exact agreement with a separately supplied
+/// freshness checkpoint and primary-database generation. `None` is a denial.
+pub fn verify_stream_at_checkpoint(
+    bytes: &[u8],
+    keys: &SyntheticKeyring,
+    checkpoint: Option<&TrustedLedgerCheckpoint>,
+    owner: &OwnerId,
+    owner_epoch: u64,
+    primary_generation: u64,
+) -> Result<Vec<LedgerFrame>, LedgerError> {
+    let checkpoint = checkpoint.ok_or(LedgerError::Authentication)?;
+    let frames = verify_stream(bytes, keys)?;
+    let mut operation_terminal = BTreeMap::<&str, FrameKind>::new();
+    for frame in &frames {
+        operation_terminal.insert(&frame.operation_id, frame.kind);
+    }
+    if operation_terminal
+        .values()
+        .any(|kind| *kind != FrameKind::Reconciled)
+    {
+        return Err(LedgerError::Stale);
+    }
+    let digest: [u8; 32] = Sha256::digest(bytes).into();
+    let (final_sequence, generation, key_version, ledger_owner) = match frames.last() {
+        Some(last) if last.kind == FrameKind::Reconciled => (
+            last.sequence,
+            last.generation,
+            last.key_version,
+            &last.owner,
+        ),
+        Some(_) => return Err(LedgerError::Stale),
+        None if checkpoint.final_sequence == 0 && checkpoint.generation == 0 => {
+            (0, 0, checkpoint.key_version, owner)
+        }
+        None => return Err(LedgerError::Stale),
+    };
+    if &checkpoint.owner != owner
+        || ledger_owner != owner
+        || checkpoint.owner_epoch != owner_epoch
+        || checkpoint.final_sequence != final_sequence
+        || checkpoint.generation != generation
+        || checkpoint.key_version != key_version
+        || checkpoint.stream_digest != digest
+        || primary_generation != checkpoint.generation
+    {
+        return Err(LedgerError::Stale);
+    }
+    Ok(frames)
 }
 
 #[derive(Clone, Default)]
@@ -793,7 +858,7 @@ mod tests {
         if cfg!(feature = "p7-experimental") {
             assert_eq!(crate::Migrations::LATEST, 9);
             assert!(crate::Migrations::embedded().iter().any(|migration| {
-                migration.version == 9 && migration.name == "0009_p7_synthetic_memory"
+                migration.version == 9 && migration.name == "test-fixture-p7-experimental-memory-v9"
             }));
         } else {
             assert_eq!(crate::Migrations::LATEST, 8);
@@ -917,6 +982,135 @@ mod tests {
         assert_eq!(
             verify_stream(&reordered_chunk.concat(), &keys),
             Err(LedgerError::Invalid)
+        );
+    }
+
+    #[test]
+    fn independently_checkpointed_stream_rejects_valid_prefixes_and_generation_mismatch() {
+        let keys = SyntheticKeyring::synthetic(1, b"freshness-fixture").unwrap();
+        let first = [
+            frame(1, 1, 1, FrameKind::Intent),
+            frame(2, 1, 1, FrameKind::PrimaryApplied),
+            frame(3, 1, 1, FrameKind::Finalized),
+            frame(4, 2, 1, FrameKind::Reconciled),
+        ];
+        let mut second = [
+            frame(5, 2, 1, FrameKind::Intent),
+            frame(6, 2, 1, FrameKind::PrimaryApplied),
+            frame(7, 2, 1, FrameKind::Finalized),
+            frame(8, 3, 1, FrameKind::Reconciled),
+        ];
+        for entry in &mut second {
+            entry.operation_id = "forget-test-2".into();
+        }
+        let frames = [first.to_vec(), second.to_vec()].concat();
+        let encoded = frames
+            .iter()
+            .map(|entry| encode(entry, &keys).unwrap())
+            .collect::<Vec<_>>();
+        let complete = encoded.concat();
+        let checkpoint = TrustedLedgerCheckpoint {
+            owner: owner(),
+            owner_epoch: 7,
+            key_version: 1,
+            final_sequence: 8,
+            generation: 3,
+            stream_digest: Sha256::digest(&complete).into(),
+        };
+
+        assert_eq!(verify_stream(&complete, &keys).unwrap().len(), 8);
+        assert!(verify_stream_at_checkpoint(&complete, &keys, None, &owner(), 7, 3).is_err());
+        assert!(
+            verify_stream_at_checkpoint(&complete, &keys, Some(&checkpoint), &owner(), 7, 3)
+                .is_ok()
+        );
+
+        // Frame integrity alone accepts an older complete prefix, including one
+        // missing only the final reconciliation frame. Freshness must reject it.
+        for keep in [1, 2, 3, 4, 5, 6, 7] {
+            let prefix = encoded[..keep].concat();
+            assert_eq!(verify_stream(&prefix, &keys).unwrap().len(), keep);
+            assert_eq!(
+                verify_stream_at_checkpoint(&prefix, &keys, Some(&checkpoint), &owner(), 7, 3),
+                Err(LedgerError::Stale)
+            );
+        }
+        let torn = &complete[..complete.len() - 1];
+        assert!(verify_stream(torn, &keys).is_err());
+        assert_eq!(
+            verify_stream_at_checkpoint(&complete, &keys, Some(&checkpoint), &owner(), 8, 3),
+            Err(LedgerError::Stale),
+            "unknown Owner epoch is a freshness failure"
+        );
+        assert_eq!(
+            verify_stream_at_checkpoint(&complete, &keys, Some(&checkpoint), &owner(), 7, 2),
+            Err(LedgerError::Stale),
+            "primary older than checkpoint is denied"
+        );
+        assert_eq!(
+            verify_stream_at_checkpoint(&complete, &keys, Some(&checkpoint), &owner(), 7, 4),
+            Err(LedgerError::Stale),
+            "primary newer than checkpoint requires reconciliation"
+        );
+        let other_owner = OwnerId::parse("own_00000000000000000000000000000002").unwrap();
+        assert_eq!(
+            verify_stream_at_checkpoint(&complete, &keys, Some(&checkpoint), &other_owner, 7, 3),
+            Err(LedgerError::Stale)
+        );
+        let mut revoked = keys.clone();
+        revoked.forget_version(1);
+        assert_eq!(
+            verify_stream_at_checkpoint(&complete, &revoked, Some(&checkpoint), &owner(), 7, 3),
+            Err(LedgerError::MissingKey)
+        );
+        let mut unknown_version = checkpoint.clone();
+        unknown_version.key_version = 2;
+        assert_eq!(
+            verify_stream_at_checkpoint(&complete, &keys, Some(&unknown_version), &owner(), 7, 3),
+            Err(LedgerError::Stale)
+        );
+
+        // A later operation's reconciliation cannot hide an earlier unresolved
+        // intent in the same authenticated stream.
+        let mut pending = encode(&frame(1, 1, 1, FrameKind::Intent), &keys).unwrap();
+        let mut later = [
+            frame(2, 1, 1, FrameKind::Intent),
+            frame(3, 1, 1, FrameKind::PrimaryApplied),
+            frame(4, 1, 1, FrameKind::Finalized),
+            frame(5, 2, 1, FrameKind::Reconciled),
+        ];
+        for entry in &mut later {
+            entry.operation_id = "later-op".into();
+            pending.extend(encode(entry, &keys).unwrap());
+        }
+        let pending_checkpoint = TrustedLedgerCheckpoint {
+            owner: owner(),
+            owner_epoch: 7,
+            key_version: 1,
+            final_sequence: 5,
+            generation: 2,
+            stream_digest: Sha256::digest(&pending).into(),
+        };
+        assert!(verify_stream(&pending, &keys).is_ok());
+        assert_eq!(
+            verify_stream_at_checkpoint(&pending, &keys, Some(&pending_checkpoint), &owner(), 7, 2),
+            Err(LedgerError::Stale)
+        );
+
+        // If all local evidence is rolled back together, this verifier cannot
+        // distinguish it. The supplied checkpoint itself must survive elsewhere.
+        let old = Vec::new();
+        let rolled_back_checkpoint = TrustedLedgerCheckpoint {
+            owner: owner(),
+            owner_epoch: 7,
+            key_version: 1,
+            final_sequence: 0,
+            generation: 0,
+            stream_digest: Sha256::digest(&old).into(),
+        };
+        assert!(
+            verify_stream_at_checkpoint(&old, &keys, Some(&rolled_back_checkpoint), &owner(), 7, 0)
+                .is_ok()
         );
     }
 

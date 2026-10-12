@@ -65,7 +65,7 @@ fn p7_migration_has_exact_parent_keys_and_clean_foreign_key_state() {
     assert!(
         Migrations::embedded()
             .iter()
-            .any(|m| m.version == 9 && m.name == "0009_p7_synthetic_memory")
+            .any(|m| m.version == 9 && m.name == "test-fixture-p7-experimental-memory-v9")
     );
 }
 
@@ -83,7 +83,7 @@ fn failed_0009_migration_rolls_back_ddl_and_catalog_row_atomically() {
     migrate::apply(&mut conn, &catalog, EpochMillis::new(0).unwrap(), true).unwrap();
     catalog.push(crate::Migration {
         version: 9,
-        name: "0009_p7_synthetic_memory",
+        name: "test-fixture-p7-experimental-memory-v9",
         sql: "CREATE TABLE p7_rollback_probe(value INTEGER); THIS IS INVALID SQL;",
     });
     assert!(migrate::apply(&mut conn, &catalog, EpochMillis::new(1).unwrap(), false).is_err());

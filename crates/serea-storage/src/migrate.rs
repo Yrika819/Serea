@@ -62,8 +62,8 @@ static EMBEDDED: [Migration; 8 + cfg!(all(feature = "p7-experimental", test)) as
     #[cfg(all(feature = "p7-experimental", test))]
     Migration {
         version: 9,
-        name: "0009_p7_synthetic_memory",
-        sql: include_str!("../migrations/0009_p7_synthetic_memory.sql"),
+        name: "test-fixture-p7-experimental-memory-v9",
+        sql: include_str!("../tests/fixtures/p7_experimental_memory_v9.sql"),
     },
 ];
 

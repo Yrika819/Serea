@@ -382,7 +382,7 @@ fn migration_catalog_appends_p6b_without_rewriting_any_prior_migration() {
     #[cfg(feature = "p7-experimental")]
     assert_eq!(
         (catalog[8].version, catalog[8].name),
-        (9, "0009_p7_synthetic_memory")
+        (9, "test-fixture-p7-experimental-memory-v9")
     );
     assert_eq!(
         Migrations::checksum(catalog[6].sql).as_str(),

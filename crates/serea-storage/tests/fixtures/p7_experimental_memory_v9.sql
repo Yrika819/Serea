@@ -122,6 +122,38 @@ WHEN (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.prior_memory_id
      (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.successor_memory_id AND owner_id=NEW.owner_id)
 BEGIN SELECT RAISE(ABORT, 'P7 supersession cannot lower classification'); END;
 
+-- Synthetic derivation lineage is distinct from supersession and provenance.
+-- Forget closure follows only this explicit relation (plus the selected roots).
+CREATE TABLE p7_memory_lineage (
+  owner_id TEXT NOT NULL,
+  parent_memory_id TEXT NOT NULL,
+  derived_memory_id TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN -62167219200000 AND 253402300799999),
+  PRIMARY KEY(owner_id,parent_memory_id,derived_memory_id),
+  CHECK(parent_memory_id <> derived_memory_id),
+  FOREIGN KEY(parent_memory_id,owner_id) REFERENCES p7_memory_items(memory_id,owner_id),
+  FOREIGN KEY(derived_memory_id,owner_id) REFERENCES p7_memory_items(memory_id,owner_id)
+) STRICT;
+CREATE INDEX p7_memory_lineage_child ON p7_memory_lineage(owner_id,derived_memory_id);
+CREATE TRIGGER p7_memory_lineage_immutable_update BEFORE UPDATE ON p7_memory_lineage
+BEGIN SELECT RAISE(ABORT, 'P7 Memory lineage is immutable'); END;
+CREATE TRIGGER p7_memory_lineage_immutable_delete BEFORE DELETE ON p7_memory_lineage
+WHEN NOT EXISTS (SELECT 1 FROM p7_memory_tombstones WHERE owner_id=OLD.owner_id AND memory_id=OLD.parent_memory_id)
+  OR NOT EXISTS (SELECT 1 FROM p7_memory_tombstones WHERE owner_id=OLD.owner_id AND memory_id=OLD.derived_memory_id)
+BEGIN SELECT RAISE(ABORT, 'P7 Memory lineage is immutable'); END;
+CREATE TRIGGER p7_memory_lineage_no_cycle BEFORE INSERT ON p7_memory_lineage
+BEGIN
+  SELECT CASE WHEN EXISTS (
+    WITH RECURSIVE descendants(id) AS (
+      SELECT derived_memory_id FROM p7_memory_lineage
+       WHERE owner_id=NEW.owner_id AND parent_memory_id=NEW.derived_memory_id
+      UNION
+      SELECT e.derived_memory_id FROM p7_memory_lineage e JOIN descendants d
+        ON e.owner_id=NEW.owner_id AND e.parent_memory_id=d.id
+    ) SELECT 1 FROM descendants WHERE id=NEW.parent_memory_id
+  ) THEN RAISE(ABORT, 'P7 Memory lineage cycle') END;
+END;
+
 CREATE TABLE p7_memory_blob_refs (
   memory_id TEXT NOT NULL,
   owner_id TEXT NOT NULL,

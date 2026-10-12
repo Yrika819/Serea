@@ -7,11 +7,12 @@
 //! is the strongest portable std primitive used here and is not a power-loss or
 //! directory-entry durability guarantee.
 
+use fs2::FileExt as _;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const MAX_FRAME_BYTES: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 768;
@@ -632,59 +633,87 @@ pub fn verify_ledger_operation_reconciled(
     }
 }
 
-/// Append and flush one record. This primitive assumes the caller already
-/// holds a verified exclusive cross-process lock; it does not provide one.
-pub fn append_sync(
-    path: &Path,
-    frame: &LedgerFrame,
-    keys: &SyntheticKeyring,
-) -> Result<(), LedgerError> {
-    let encoded = encode(frame, keys)?;
-    let mut existing = Vec::new();
-    if path.exists() {
-        File::open(path)
-            .map_err(|_| LedgerError::Io)?
-            .take((MAX_FRAME_BYTES as u64 * 10_001) + 1)
-            .read_to_end(&mut existing)
-            .map_err(|_| LedgerError::Io)?;
-        if existing.len() > MAX_FRAME_BYTES * 10_001 {
-            return Err(LedgerError::TooLarge);
-        }
-    }
-    let records = verify_stream(&existing, keys)?;
-    if frame.sequence != records.len() as u64 + 1 {
-        return Err(LedgerError::Sequence);
-    }
-    existing.extend_from_slice(&encoded);
-    verify_stream(&existing, keys)?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|_| LedgerError::Io)?;
-    file.write_all(&encoded).map_err(|_| LedgerError::Io)?;
-    file.sync_all().map_err(|_| LedgerError::Io)
+/// Cooperative cross-process ledger lock and bounded file adapter. The stable
+/// sidecar must live beside the ledger in a trusted directory and must never
+/// be unlinked while processes may hold it. This does not defend against a
+/// malicious same-user process replacing files or bypassing the lock.
+pub struct LedgerFileGuard {
+    ledger_path: PathBuf,
+    _lock_file: File,
 }
 
-pub fn read_verified(
-    path: &Path,
-    keys: &SyntheticKeyring,
-) -> Result<Vec<LedgerFrame>, LedgerError> {
-    let file = File::open(path).map_err(|_| LedgerError::Io)?;
-    let mut bytes = Vec::new();
-    file.take((MAX_FRAME_BYTES as u64 * 10_001) + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| LedgerError::Io)?;
-    if bytes.len() > MAX_FRAME_BYTES * 10_001 {
-        return Err(LedgerError::TooLarge);
+impl LedgerFileGuard {
+    pub fn acquire(ledger_path: impl AsRef<Path>) -> Result<Self, LedgerError> {
+        let ledger_path = ledger_path.as_ref().to_path_buf();
+        let mut lock_name = ledger_path.as_os_str().to_os_string();
+        lock_name.push(".lock");
+        let lock_file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(PathBuf::from(lock_name))
+            .map_err(|_| LedgerError::Io)?;
+        lock_file.lock_exclusive().map_err(|_| LedgerError::Io)?;
+        Ok(Self {
+            ledger_path,
+            _lock_file: lock_file,
+        })
     }
-    verify_stream(&bytes, keys)
+
+    /// Append and flush one record while holding this guard's OS lock.
+    pub fn append_sync(
+        &self,
+        frame: &LedgerFrame,
+        keys: &SyntheticKeyring,
+    ) -> Result<(), LedgerError> {
+        let encoded = encode(frame, keys)?;
+        let mut existing = Vec::new();
+        if self.ledger_path.exists() {
+            File::open(&self.ledger_path)
+                .map_err(|_| LedgerError::Io)?
+                .take((MAX_FRAME_BYTES as u64 * 10_001) + 1)
+                .read_to_end(&mut existing)
+                .map_err(|_| LedgerError::Io)?;
+            if existing.len() > MAX_FRAME_BYTES * 10_001 {
+                return Err(LedgerError::TooLarge);
+            }
+        }
+        let records = verify_stream(&existing, keys)?;
+        if frame.sequence != records.len() as u64 + 1 {
+            return Err(LedgerError::Sequence);
+        }
+        existing.extend_from_slice(&encoded);
+        verify_stream(&existing, keys)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.ledger_path)
+            .map_err(|_| LedgerError::Io)?;
+        file.write_all(&encoded).map_err(|_| LedgerError::Io)?;
+        file.sync_all().map_err(|_| LedgerError::Io)
+    }
+
+    /// Read and authenticate the complete bounded ledger while holding the lock.
+    pub fn read_verified(&self, keys: &SyntheticKeyring) -> Result<Vec<LedgerFrame>, LedgerError> {
+        let file = File::open(&self.ledger_path).map_err(|_| LedgerError::Io)?;
+        let mut bytes = Vec::new();
+        file.take((MAX_FRAME_BYTES as u64 * 10_001) + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| LedgerError::Io)?;
+        if bytes.len() > MAX_FRAME_BYTES * 10_001 {
+            return Err(LedgerError::TooLarge);
+        }
+        verify_stream(&bytes, keys)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -962,15 +991,81 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let path = root.join("ledger.synthetic");
         let keys = SyntheticKeyring::synthetic(1, b"generated-test-fixture").unwrap();
-        append_sync(&path, &frame(1, 1, 1, FrameKind::Intent), &keys).unwrap();
-        append_sync(&path, &frame(2, 1, 1, FrameKind::PrimaryApplied), &keys).unwrap();
-        append_sync(&path, &frame(3, 1, 1, FrameKind::Finalized), &keys).unwrap();
-        append_sync(&path, &frame(4, 2, 1, FrameKind::Reconciled), &keys).unwrap();
-        assert_eq!(read_verified(&path, &keys).unwrap().len(), 4);
+        let guard = LedgerFileGuard::acquire(&path).unwrap();
+        guard
+            .append_sync(&frame(1, 1, 1, FrameKind::Intent), &keys)
+            .unwrap();
+        guard
+            .append_sync(&frame(2, 1, 1, FrameKind::PrimaryApplied), &keys)
+            .unwrap();
+        guard
+            .append_sync(&frame(3, 1, 1, FrameKind::Finalized), &keys)
+            .unwrap();
+        guard
+            .append_sync(&frame(4, 2, 1, FrameKind::Reconciled), &keys)
+            .unwrap();
+        assert_eq!(guard.read_verified(&keys).unwrap().len(), 4);
         assert_eq!(
-            append_sync(&path, &frame(4, 2, 1, FrameKind::Reconciled), &keys),
+            guard.append_sync(&frame(4, 2, 1, FrameKind::Reconciled), &keys),
             Err(LedgerError::Sequence)
         );
+        drop(guard);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ledger_file_lock_child_entry() {
+        let Ok(path) = std::env::var("SEREA_P7_LOCK_CHILD_PATH") else {
+            return;
+        };
+        let _guard = LedgerFileGuard::acquire(path).unwrap();
+        println!("LEDGER_LOCKED");
+        std::io::stdout().flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
+
+    #[test]
+    fn ledger_lock_is_exclusive_across_processes_and_released_on_termination() {
+        let root = std::env::temp_dir().join(format!(
+            "serea-gate-c-lock-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let ledger_path = root.join("ledger.synthetic");
+        let lock_path = root.join("ledger.synthetic.lock");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("p7_gate_c::tests::ledger_file_lock_child_entry")
+            .arg("--nocapture")
+            .env("SEREA_P7_LOCK_CHILD_PATH", &ledger_path)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        loop {
+            line.clear();
+            assert_ne!(
+                stdout.read_line(&mut line).unwrap(),
+                0,
+                "lock child exited early"
+            );
+            if line.contains("LEDGER_LOCKED") {
+                break;
+            }
+        }
+        let probe = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        assert!(probe.try_lock_exclusive().is_err());
+        child.kill().unwrap();
+        child.wait().unwrap();
+        probe.try_lock_exclusive().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 }

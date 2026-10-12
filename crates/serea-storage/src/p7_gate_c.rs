@@ -610,6 +610,29 @@ pub fn verify_stream(
     Ok(frames)
 }
 
+/// Verify that one ledger operation reached its terminal reconciliation frame.
+/// This proves ledger state only; callers must still compare the primary DB's
+/// Owner/generation/tombstones/FTS state before they can acknowledge Forget.
+pub fn verify_ledger_operation_reconciled(
+    bytes: &[u8],
+    keys: &SyntheticKeyring,
+    owner: &OwnerId,
+    operation_id: &str,
+    generation: u64,
+) -> Result<(), LedgerError> {
+    let frames = verify_stream(bytes, keys)?;
+    let last = frames
+        .iter()
+        .filter(|frame| frame.operation_id == operation_id)
+        .next_back()
+        .ok_or(LedgerError::Invalid)?;
+    if &last.owner == owner && last.kind == FrameKind::Reconciled && last.generation == generation {
+        Ok(())
+    } else {
+        Err(LedgerError::Invalid)
+    }
+}
+
 /// Append and flush one record. This primitive assumes the caller already
 /// holds a verified exclusive cross-process lock; it does not provide one.
 pub fn append_sync(
@@ -808,13 +831,54 @@ mod tests {
         .iter()
         .map(|entry| encode(entry, &keys).unwrap())
         .collect::<Vec<_>>();
-        assert_eq!(verify_stream(&encoded.concat(), &keys).unwrap().len(), 5);
+        let complete_stream = encoded.concat();
+        assert_eq!(verify_stream(&complete_stream, &keys).unwrap().len(), 5);
+        assert_eq!(
+            verify_ledger_operation_reconciled(
+                &complete_stream,
+                &keys,
+                &owner(),
+                "forget-test-1",
+                2
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            verify_ledger_operation_reconciled(
+                &complete_stream,
+                &keys,
+                &OwnerId::parse("own_00000000000000000000000000000002").unwrap(),
+                "forget-test-1",
+                2
+            ),
+            Err(LedgerError::Invalid)
+        );
+        assert_eq!(
+            verify_ledger_operation_reconciled(
+                &complete_stream,
+                &keys,
+                &owner(),
+                "forget-test-1",
+                1
+            ),
+            Err(LedgerError::Invalid)
+        );
 
         let missing_chunk = [
             encode(&intent, &keys).unwrap(),
             encode(&applied, &keys).unwrap(),
         ];
         assert!(verify_stream(&missing_chunk.concat(), &keys).is_err());
+        assert!(
+            verify_ledger_operation_reconciled(
+                &missing_chunk.concat(),
+                &keys,
+                &owner(),
+                "forget-test-1",
+                2
+            )
+            .is_err()
+        );
         intent.chunk_count = 2;
         intent.target_count = 2;
         chunk.chunk_index = 1;

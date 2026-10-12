@@ -73,10 +73,14 @@ fn descriptor() -> CapabilityDescriptor {
 }
 
 fn prepared(store: &Store) -> i64 {
+    prepared_with_manifest(store, digest('c'))
+}
+
+fn prepared_with_manifest(store: &Store, manifest_digest: Digest) -> i64 {
     let generation = CapabilityRegistry::create_generation(
         store,
         RegistryGenerationDraft {
-            manifest_digest: digest('c'),
+            manifest_digest,
             schema_catalog_digest: digest('d'),
         },
     )
@@ -401,14 +405,18 @@ fn committed_activation_and_event_survive_caller_loss_and_reopen_once() {
 }
 
 #[test]
-fn independent_connections_serialize_generation_activation_without_lost_event() {
+fn independent_connections_serialize_distinct_generation_activation_without_lost_event() {
     let temp = TempDb::new();
     let events = EventBus::new(DeterministicUlidSource::new());
     let (low, high);
     {
         let store = Store::open(&temp.0, &FixedClock).unwrap();
-        low = prepared(&store);
-        high = prepared(&store);
+        // This test verifies ordered activation for distinct registry contents.
+        // Identical-manifest deduplication is covered by the P5 install test;
+        // reusing the same digests here makes the winner depend on thread
+        // scheduling instead of exercising generation ordering.
+        low = prepared_with_manifest(&store, digest('c'));
+        high = prepared_with_manifest(&store, digest('e'));
     }
     let first_store = Store::open(&temp.0, &FixedClock).unwrap();
     let second_store = Store::open(&temp.0, &FixedClock).unwrap();

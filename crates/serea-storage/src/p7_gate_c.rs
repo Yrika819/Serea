@@ -623,8 +623,7 @@ pub fn verify_ledger_operation_reconciled(
     let frames = verify_stream(bytes, keys)?;
     let last = frames
         .iter()
-        .filter(|frame| frame.operation_id == operation_id)
-        .next_back()
+        .rfind(|frame| frame.operation_id == operation_id)
         .ok_or(LedgerError::Invalid)?;
     if &last.owner == owner && last.kind == FrameKind::Reconciled && last.generation == generation {
         Ok(())

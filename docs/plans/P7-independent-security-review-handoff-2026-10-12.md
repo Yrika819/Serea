@@ -100,6 +100,7 @@ cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --lib p
 cargo +1.85.0 test -p serea-storage --features p7-experimental,p7-gate-c --test p7_gate_c_lock --locked
 cargo +1.85.0 test --workspace --all-features --locked
 cargo +1.85.0 test --workspace --locked
+cargo +1.85.0 test --workspace --all-features --locked
 cargo +stable clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo +stable fmt --all -- --check
 python3 tools/validate_docs.py docs
@@ -162,15 +163,15 @@ cargo +stable clippy --workspace --all-targets --all-features --locked -- -D war
 cargo +stable fmt --all -- --check
 ```
 
-Also run `cargo +1.85.0 test -p serea-storage --features p7-experimental --locked` for the P7 FTS/migration suite, `cargo +1.85.0 test -p serea-storage --locked` for ordinary v8 Storage, the repository CI workflows for Linux/macOS/Windows and SQLite portability, `python3 -m unittest discover -s tests -p workspace_smoke_tests.py`, `python3 tools/validate_docs.py docs`, `python3 tools/check_commit_identity.py`, `git diff --check`, and the migration hash table above. Results and exact final code SHA are to be appended after CI.
+Also run `cargo +1.85.0 test -p serea-storage --features p7-experimental --locked` for the P7 FTS/migration suite, `cargo +1.85.0 test -p serea-storage --locked` for ordinary v8 Storage, the repository CI workflows for Linux/macOS/Windows and SQLite portability, `python3 -m unittest discover -s tests -p workspace_smoke_tests.py`, `python3 tools/validate_docs.py docs`, `python3 tools/check_commit_identity.py`, `git diff --check`, and the migration hash table above.
 
 ### Scope and non-claims
 
 ADR-0042/0043 and migrations 0001–0008 remain unchanged. Default production schema remains v8; v9 is an explicitly selected synthetic fixture. Gate C remains disabled in ordinary operation and optimized activation remains rejected. No Owner authentication adapter, production key custody, independent rollback authority, production backup/restore/sync, real personal data, or secure erase is implemented. No P8 or provider connection is authorized. The finite ledger/checkpoint capacity is a production design blocker, not a resolved implementation detail.
 
-Implementation commit `50806bb746d25f893bb9392c27feefbc9bfc1c13` has Rust 1.85 workspace default and all-feature tests/doctests PASS, stable all-target/all-feature Clippy with `-D warnings` PASS, Rustfmt PASS, release default check PASS, optimized `p7-gate-c` rejection PASS, docs validator PASS (133 Markdown files), Python workspace smoke PASS (76 tests), commit identity guard PASS, and migration 0001–0008 SHA-256 unchanged. Linux local execution only; hosted PR CI is pending until push. The code commit author and committer are both `Codex <noreply@github.com>`.
+Implementation commit `50806bb746d25f893bb9392c27feefbc9bfc1c13` is included in PR code head `70be4516b669862423d7e6d813811af0379167b3`. Rust 1.85 workspace default and all-feature tests/doctests PASS, stable all-target/all-feature Clippy with `-D warnings` PASS, Rustfmt PASS, release default check PASS, optimized `p7-gate-c` rejection PASS, docs validator PASS (133 Markdown files), Python workspace smoke PASS (76 tests), commit identity guard PASS, and migration 0001–0008 SHA-256 unchanged. On the exact code head `70be4516b669862423d7e6d813811af0379167b3`, GitHub Fast CI `38273915849`, Full CI `38273915855`, and Cross-architecture SQLite portability `38273915854` all concluded success. Full CI jobs passed on Linux stable, Linux Rust 1.85, macOS Intel x86_64, macOS arm64, and Windows Gate C synthetic validation. SQLite portability passed both cross-architecture directions. The code and handoff commits use author and committer `Codex <noreply@github.com>`.
 
-Engineering readiness label, only after final PR code SHA has green applicable CI: **P7_GATE_C_SECURITY_REMEDIATION_READY_FOR_INDEPENDENT_RECHECK**. This label does not mean an independent security approval and does not authorize PR merge or production enablement. Findings remain PENDING the independent reviewer. PR #15 remains OPEN/DRAFT.
+Engineering status: **P7_GATE_C_SECURITY_REMEDIATION_READY_FOR_INDEPENDENT_RECHECK**. This means the implementation and evidence package are ready for external recheck; it is not an independent security approval and does not authorize PR merge or production enablement. Findings remain PENDING the independent reviewer. PR #15 remains OPEN/DRAFT. The PR has no reviewer request assigned; route this handoff and the Rust 1.85 reproduction commands to an independent Rust-enabled reviewer. The actual external re-review request remains unsent because no GitHub reviewer handle was supplied.
 
 ## Explicit production blockers
 

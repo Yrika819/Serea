@@ -111,3 +111,10 @@ No security exception is self-approved. Any future exception must record: exact 
 ## Production access remains denied
 
 At this review state, Memory writes, PRIVATE Memory, real provider invocation, sensitive Android permissions, root operations, real GoalLatch/Local MCP and generic shell are unavailable. A proposed document, passing unit test, valid device signature, installed root binary, cached token or live user session does not change this state. Enablement requires the stage-specific gates above and a separate explicit owner authorization.
+
+
+## P7 owner ratification boundary (2026-10-12)
+
+[ADR-0042](../decisions/ADR-0042-p7-owner-ratified-directions.md) records owner approval of P7-D01..D07 principles only. State: `P7_OWNER_DIRECTIONS_RATIFIED_DETAILS_PENDING`. No candidate numeric quota or retention value is approved, no A/B/C option is selected, and P7B implementation is not authorized. In particular, storage exhaustion cannot make Forget silently leave Memory available: independently reserved deletion capacity, stop-before-exhaustion, truthful incomplete reporting, and durable quarantine across restart/restore require a separately proven design. An in-memory flag is insufficient.
+
+Existing security gates remain separate: PRIVATE persistence requires separately approved complete production protection; arbitrary local SQLite modification is outside SQLite constraint/audit guarantees and P7B must document OS filesystem assumptions and same-user process risk; high-impact production provider effects require separately reviewed Policy/Approval/Grant/Dispatch integrity and rollback protection, with external effects failing closed on integrity failure. No claim is made against a fully compromised OS. The GoalLatch integration gate is unchanged.

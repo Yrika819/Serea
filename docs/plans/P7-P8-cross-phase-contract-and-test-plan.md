@@ -1,6 +1,6 @@
 # P7–P8 cross-phase contract and test plan
 
-**Status:** Proposed implementation roadmap; no owner decision is ratified.
+**Status:** Owner-ratified P7 architectural directions; technical details pending; P7B implementation not authorized. See [ADR-0042](../decisions/ADR-0042-p7-owner-ratified-directions.md) and [ratification record](P7-owner-ratification-record.md). P8-D01..D07 remain unapproved.
 **Scope:** P7 durable Memory and P8 synthetic provider execution remain independently useful and may not introduce a cyclic dependency.
 
 ## Accepted layering and phase boundary
@@ -30,13 +30,17 @@ There is no provider→Memory or Memory→provider dependency edge. P7 can store
 1. P8 provider output is untrusted external data. It becomes a candidate source only after exact `RequestId`, intent, Task/Step, pinned descriptor output schema, canonical digest, provider reference and receipt validation succeed.
 2. The source identity is immutable: use an `EventId` under the currently specified EventId convention for the P8 result/receipt event, plus original TaskId/StepId, RequestId, capability/provider/account binding and validated result digest in provenance. The EventId is a routing identity, not authority. Do not use provider-controlled IDs alone as source identity.
 3. Extraction is a new host-created model request with `purpose=EXTRACTION`, source ID fixed by host and eligible projection fixed by host. It cannot be an implicit side effect of provider success or a model-selected action. The TaskEngine binds the extraction to its own Step and records source provenance as an immutable snapshot.
-4. Classification is monotone: derived Memory gets the highest class of request, result, receipt metadata, source provenance and extracted content. Redaction changes only transit projection; it does not lower stored class. Under proposed P7-D04, PRIVATE results and PRIVATE provenance fail closed; SECRET/CREDENTIAL never enter extraction or ordinary Memory. Credentials are never present in ActionResult or Memory.
+4. Classification is monotone: derived Memory gets the highest class of request, result, receipt metadata, source provenance and extracted content. Redaction changes only transit projection; it does not lower stored class. Under owner-approved P7-D04, PRIVATE results and PRIVATE provenance fail closed; SECRET/CREDENTIAL never enter extraction or ordinary Memory. Credentials are never present in ActionResult or Memory.
 5. External content is data, not host authority. Any instruction-like text returned by a provider is quoted/untrusted content in the extraction input; it cannot set owner, tool, policy, grant, retention, classification or follow-up action. Extraction output is schema-validated and cannot contain executable host instructions as a privileged field.
 6. Source Task deletion under normal retention does not delete retained Memory. Explicit forget resolves the retained provenance snapshot and derived supersession closure. Source EventId may itself age out under event retention; retained provenance must still distinguish “source event expired” from “never had source.” No live FK from retained Memory to an expiring event/task/step.
 
 7. A late P8 result received after Task cancellation is not automatically a successful Step, trusted Receipt, or EXTRACTION source. The current P2 outcome path cannot persist it against a CANCELLED Task; until an owner-approved late-outcome reconciliation contract exists, retain only safely classifiable unresolved intent evidence and do not grant it success/receipt authority.
 
 ## Event, Blob and retention ordering
+
+### Forget capacity exhaustion (approved principle; mechanism pending)
+
+If Forget cannot commit durable deletion proof because storage is exhausted, it must not leave affected Memory visible to retrieval or model input. Quarantine must survive process restart and backup restoration; an in-memory flag is insufficient. Reserve capacity and ledger lifecycle are unresolved, and ordinary extraction/storage must stop before the reserve is exhausted.
 
 - A normal P8 success transaction must commit validated receipt/result references, Step/Task progress and result event atomically. Only after commit can a separate explicit EXTRACTION Step consume that result event. A result event cannot precede an uncommitted receipt/success. A late result for a cancelled Task remains outside this normal path unless a separately approved reconciliation contract defines its exact durable identity, receipt and Step semantics; it never revives the Task.
 - P7 memory item, immutable provenance, owner binding checks, FTS row, supersession edge, event and any Blob reference commit in one SQLite transaction. Task deletion and Memory expiration are separate GC domains.
@@ -49,7 +53,7 @@ There is no provider→Memory or Memory→provider dependency edge. P7 can store
 
 Migrations 0001–0008 are frozen. Preferred order:
 
-1. Owner ratifies P7-D01..D07. No migration is drafted before owner identity, provenance-after-Task-delete, class ceiling, bounds and tombstone lifetime are resolved.
+1. P7-D01..D07 principles were owner-ratified on 2026-10-12. No migration or P7B implementation is authorized. Resolve remaining owner identity/bootstrap details, provenance scope, exact bounds and retention, deletion-reserve/quarantine/ledger lifecycle and restoration protocol before the separate implementation authorization.
 2. P7B authors one additive, reviewable schema migration plan: owner binding and backfill/quarantine; Memory and immutable provenance; owner/class unique keys; supersession; tombstone; FTS and indexes. Parent keys for every composite FK must be declared unique. Validate `foreign_key_check`, query plans and transaction rollback in isolated temporary DBs.
 3. P7C implements deterministic extraction, retrieval and forget under the approved schema and fake model/source fixtures. P7D validates privacy, FTS/Japanese and recovery across platform SQLite builds. P7E closure documents retained limits.
 4. P8A contract package is independent and can be reviewed at any point. P8 schema/migration follows the agreed P7 schema sequence so both phases share owner identity, Blob reference accounting and transaction/migration evidence. P8 introduces only its own intent/request/result state; no P7 table owns P8 authorization.
@@ -80,6 +84,6 @@ These are planned regression names; this document does not create tests.
 
 For all cross-phase tests, assert final SQLite rows, event ordering, foreign-key integrity and reopened-process behavior, not only returned Rust outcomes. Fault injection must cover precommit rollback and postcommit restart. Any test using a provider uses an in-process deterministic fake; zero network and zero external accounts.
 
-## Proposed next authorized slice (not authorized here)
+## Potential next slice (not authorized here; separate approval required)
 
-After owner review, the first implementation authorization should be **P7B schema design and isolated SQLite constraint proof**, not implementation of Memory UI or provider effects. Required inputs: ratified P7-D01..D07; exact single-user legacy backfill/quarantine rule; owner ID grammar and host identity port; chosen supersession graph semantics; retention/quota/tombstone values; FTS tokenizer decision or explicitly lexical-only default; approved additive migration sequence. Deliverable should be a migration design review with unique parent-key proof, foreign-key probes, retention/forget transaction diagrams, and benchmark plan. Do not bundle P8 provider invocation or P15 GoalLatch work into that slice.
+After owner review, the first implementation authorization should be **P7B schema design and isolated SQLite constraint proof**, not implementation of Memory UI or provider effects. Required inputs: ratified P7-D01..D07 plus resolved technical blockers, exact single-owner legacy quarantine rule; owner ID grammar and host identity port; chosen supersession graph semantics; retention/quota/deletion-reserve/tombstone values and durable quarantine proof; FTS tokenizer decision or explicitly lexical-only default; approved additive migration sequence. Deliverable should be a migration design review with unique parent-key proof, foreign-key probes, retention/forget transaction diagrams, and benchmark plan. Do not bundle P8 provider invocation or P15 GoalLatch work into that slice.

@@ -1,10 +1,11 @@
 # P7A owner decision package — Memory contract
 
-**Status:** PREIMPLEMENTATION / PROPOSED; no decision below is ratified.
-**Review state:** `P7A_P8A_OWNER_DECISION_PACKAGES_PREPARED`; this is a documentation-preparation label, not evidence of owner review, ratification, or implementation readiness.
+**Status:** PREIMPLEMENTATION; architectural directions ratified, technical details pending.
+**Review state:** `P7_OWNER_DIRECTIONS_RATIFIED_DETAILS_PENDING`; this records owner approval of principles only, not completion of P7 contracts or P7B authorization.
+**Authority:** Explicit Serea owner approval, 2026-10-12; see [ADR-0042](../decisions/ADR-0042-p7-owner-ratified-directions.md) and [ratification record](P7-owner-ratification-record.md).
 **Severity key:** BLOCKER prevents the affected implementation; MAJOR is a high-risk contract choice; MINOR is bounded scope; NOTE records a known limitation.
 
-This package separates accepted contracts, verified current behavior, proposed owner choices, and deferred work. It does not amend an Accepted ADR or authorize code or migrations.
+This package separates accepted contracts, verified current behavior, ratified principles, unresolved proposed details, and deferred work. The owner approved exactly P7-D01..D07 within their stated scope. Numeric candidates and other detailed parameters remain PROPOSED; no A/B/C choice is implied. This package does not amend an Accepted ADR or authorize code or migrations.
 
 ## Accepted existing contract
 
@@ -23,7 +24,11 @@ This package separates accepted contracts, verified current behavior, proposed o
 5. Existing migration identities 0001–0008 are recorded in [P6 post-merge verification](P6-post-merge-main-verification.md). Do not edit them. New schema must use additive migrations after owner-approved design.
 6. ADR-0006 names FTS5. A temporary Python SQLite 3.53.1 experiment confirmed FTS5 module availability and a `unicode61` Japanese substring limitation: searching `予定` did not match a one-row fixture containing contiguous `予定を午後に変更`. This is a narrow observation from CPython SQLite, not a Rust `rusqlite` bundled-build portability result, corpus benchmark or quality score. No Japanese retrieval benchmark has been run.
 
-## Proposed owner decisions
+## Owner-ratified principles; details remain open
+
+The direction in each D01–D07 section below is ratified only as summarized in ADR-0042 and the [owner-ratification record](P7-owner-ratification-record.md). The former recommendation/option/question material is retained as historical design evidence where it describes unresolved implementation parameters; it must not be read as reopening or narrowing the approved principles. P7B remains unauthorized.
+
+### Proposed owner decisions and unresolved implementation details
 
 ### P7-D01 — authoritative owner identity (**BLOCKER**)
 
@@ -70,7 +75,7 @@ Blob FK: `(content_digest, content_class_rank)` references `blobs(digest,data_cl
 
 **Supersession cycle prevention:** application-only validation is insufficient against concurrent writers. Serialize graph mutation in one immediate SQLite transaction, enforce a single canonical successor rule if selected, and run a bounded reachability check before insert; require property/concurrency tests showing A→B then B→A is rejected across independent connections. Alternative is immutable parent pointers with one parent per item and transactionally checked ancestors. The owner must select branch/fan-out semantics before migration.
 
-### P7-D04 — privacy at rest (**BLOCKER for PRIVATE activation**)
+### P7-D04 — privacy at rest (**approved initial class scope; PRIVATE activation separately blocked**)
 
 | Option | Consequence |
 | --- | --- |
@@ -86,7 +91,7 @@ The following are candidates only, not defaults approved by this package: WORKIN
 
 Before implementation select: max items per owner and kind, max bytes per owner and item, max retention extension and renewal cadence, FTS bytes, tombstone quota/lifetime, and GC batch/continuation semantics. Exhaustion fails closed and reports a bounded typed error; it never silently evicts non-expired Memory. GC deletes only expired, unreferenced objects in bounded transactions, preserves shared BlobRefs while any owner-visible item or other durable row references `(digest,class)`, and does not imply Task deletion. Source deletion/retention and Memory deletion are independent; record source no-longer-present without rewriting immutable provenance. Event retention remains governed by Event Protocol.
 
-### P7-D06 — FTS5 / Japanese lexical retrieval (**MAJOR**)
+### P7-D06 — FTS5 / Japanese lexical retrieval (**lexical principle approved; details pending**)
 
 ADR-0006 selects FTS5 but does not prove every bundled SQLite target has the feature or establish Japanese quality. Verify the actual `rusqlite` bundled SQLite compile configuration and `SELECT sqlite_compileoption_used('ENABLE_FTS5')` / module availability on Linux, Intel macOS, arm64 macOS and future Android/macOS builds. A deterministic test must create/search an FTS5 table, exercise rollback, rebuild, and `integrity-check`.
 
@@ -94,7 +99,7 @@ FTS5 `unicode61` tokenizes Unicode word characters and has no Japanese morpholog
 
 External-content FTS trigger maintenance must be in the same SQLite transaction as the content row. FTS is a derived index: migration/rebuild path, `integrity-check`, mismatch detection and repair are mandatory; failure blocks search or rebuilds, never falls back to an unclassified scan. Filter class on the authoritative row in the same query, not only in FTS. Benchmark evidence is currently **none**; record representative Japanese fixtures, platform, build, exact query set, latency, recall and index bytes before approving tokenizer choice.
 
-### P7-D07 — forget, tombstones, backup recovery and poisoning (**MAJOR**)
+### P7-D07 — forget, tombstones, backup recovery and poisoning (**principle approved; details pending**)
 
 **Recommendation (proposed):** authenticated host resolves target under OwnerId; verify current item and owner; compute transitive supersession closure with a cycle guard; in one transaction delete selected Memory, provenance, eligible FTS rows and unshared content references, insert content-free tombstones, and append a content-free event with stable identifiers/counts. Shared Blob rows are deleted only by reference-aware GC after all references are gone. Repeated forget is idempotent and returns an auditable outcome. Do not claim physical secure erase: SQLite pages, WAL, snapshots and backups may retain old bytes.
 
@@ -118,7 +123,7 @@ RED-first tests: forged provenance IDs; cross-owner fetch and forget; source cla
 
 ### Phase gates (proposed; no implementation gate is complete)
 
-**P7A — contract ratification gate.** P7A is complete only when the owner has reviewed and either ratified or explicitly deferred each D01–D07 choice, with a fail-closed scope for any deferral. Specify the authenticated OwnerId source and legacy Task backfill/quarantine policy; Task expiry versus independently retained Memory; PRIVATE scope; conceptual schema, unique parent keys and supersession semantics; numeric retention/capacity defaults or explicit deferred values with fail-closed behavior; FTS tokenizer/query semantics or a bounded preliminary lexical baseline; forget/tombstone/backup-restore contract; and RED-first test requirements. Identify any Accepted ADR or frozen protocol amendment separately for explicit approval. These are contract decisions and conceptual review criteria; P7A does **not** require P7B–P7E code or tests to exist or pass.
+**P7A — direction ratification is recorded.** The owner explicitly ratified the seven directions on 2026-10-12 (ADR-0042). P7 technical contract closure remains incomplete: specify the OS-authenticated OwnerId bootstrap/recovery and legacy quarantine details; Task expiry versus independently retained Memory provenance fields; PRIVATE scope gate; executable schema, unique parent keys and supersession proof; numeric retention/capacity and deletion-reserve/quarantine details or a separately approved fail-closed disabled scope; FTS query semantics and actual target SQLite evidence; Forget/tombstone/backup-restore ledger lifecycle; and RED-first test requirements. Identify any Accepted ADR or frozen protocol amendment separately for explicit approval. P7A direction ratification does **not** imply P7B–P7E code/tests exist or authorize their implementation.
 
 **P7B — schema implementation gate.** Before treating the schema slice as validated, require real additive migration validation; SQLite proof that every composite FK references a matching UNIQUE/PRIMARY KEY parent with the same columns and order; runtime foreign-key/integrity tests; owner binding, legacy quarantine, Task-expiry/Memory-retention and forget tests; actual FTS5 availability on each supported SQLite build; and migration, rollback and fault-injection validation. No P7B gate is complete in this package.
 

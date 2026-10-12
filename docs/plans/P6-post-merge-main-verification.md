@@ -11,9 +11,11 @@ This record supersedes the branch-state observations in [P6-closure.md](P6-closu
 | PR | Merge SHA | First parent | Second parent | Merge tree | Result |
 | --- | --- | --- | --- | --- | --- |
 | [#6](https://github.com/Yrika819/Serea/pull/6) | `9d2e0c442e419eccb1381bb27879eb5c704fa3fb` | `e17fbfc7f3e75f0bc95a66d693fe11b57a6ced50` | `1c04451469a810a484e92fa7f0e5eb249451a54e` | `888d64cd0efa4c70f87aa09acbecc52d4af0fd05` | MERGED |
-| [#10](https://github.com/Yrika819/Serea/pull/10) | `f70f34c1f683df1b175b612ba100ce6bb6979811` | `4c801275398c568cce82377fdbe4640a11ff6d0e` | `9d2e0c442e419eccb1381bb27879eb5c704fa3fb` | `2a3b0d5150d7800877befc1d6003c3c38fceec65` | MERGED |
+| [#10](https://github.com/Yrika819/Serea/pull/10) | `f70f34c1f683df1b175b612ba100ce6bb6979811` | `9d2e0c442e419eccb1381bb27879eb5c704fa3fb` | `2af8b7c48281bcd19487f24066ebc8bcf25aa17b` | `2a3b0d5150d7800877befc1d6003c3c38fceec65` | MERGED |
 
-PR #10's merge tree equals the recorded `main` HEAD tree. The second parent of #10 is the merge commit for #6, preserving the dependency order #6 → #10. GitHub reports both pull requests closed and merged. `origin/main` and the checked-out baseline both resolve to `f70f34c1f683df1b175b612ba100ce6bb6979811`.
+PR #10's merge tree equals the recorded `main` HEAD tree. Its immediate parents, in Git order, are PR #6's merge commit followed by PR #10's topic commit. Commit `4c801275398c568cce82377fdbe4640a11ff6d0e` is an ancestor in the topic history, not an immediate merge parent. GitHub reports both pull requests closed and merged. `origin/main` and the checked-out baseline both resolve to `f70f34c1f683df1b175b612ba100ce6bb6979811`.
+
+The merge SHA, ordered parent list and tree above were checked from the Git commit objects (`git show -s --format='%H %P %T' <sha>`); the values are not inferred from branch ancestry or PR labels.
 
 ## Post-merge main checks
 

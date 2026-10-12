@@ -1,3 +1,31 @@
+# P7 Owner ratification record — Gate B limited V1 decision
+
+**Decision date:** 2026-10-12. **Record:** ADR-0043. **Scope:** explicit limited V1 Gate B acceptance and disabled Gate C engineering authorization. This entry supplements, and does not rewrite, ADR-0042 or the earlier record below.
+
+## Accepted by the Owner
+
+The Owner accepted these hard per-Owner limits: 1,000 active items; 4,096 UTF-8 body bytes/item; 4 MiB active body budget; 8 MiB logical FTS source budget; 20 extraction starts per UTC day; one concurrent extraction. Accepted base retention is WORKING 7d, EPISODIC 90d, SEMANTIC 365d, PREFERENCE 365d. Retrieval does not renew expiry; active unexpired data is not implicitly evicted; admission is transactional; renewal is explicit and Owner-authenticated.
+
+Also accepted: opaque host-issued local OwnerId; fresh purpose-bound host authentication for sensitive actions; immutable Task Owner binding; legacy Tasks without proof quarantined; authenticated Forget ledger plus SQLite tombstones, generation/reconciliation barriers, and fail-closed uncertainty; HMAC-SHA-256 with explicit key versions/rotation and fail-closed unknown or missing keys. The current PUBLIC/PERSONAL-only boundary and all accepted classification invariants remain in force.
+
+## Not accepted or verified
+
+- Two renewals, 2x/730d cumulative age, GC 100, query 256 bytes, page 20, candidate 1,000, provenance 4 KiB, tombstone 1 KiB, 64 MiB/10,000-frame ledger capacity, and VM instruction ceilings remain recommended/provisional unless individually proven as implementation bounds. The 64 MiB deletion reserve is not a physical capacity guarantee.
+- macOS, Windows, and Linux authentication adapters and their freshness/assurance behavior are not implemented or validated. An OS session alone is not fresh authentication.
+- Production ledger trust domain, independent rollback-surviving authority, key custody, recovery, platform protection, and trust anchor are not selected or verified. A separate local ledger file is not a separate rollback domain.
+- Backup restore and cross-device Memory sync are deferred and disabled for V1. 30d backup age and 37d tombstone retention are not production guarantees. Existing restore work remains synthetic/test-only.
+- Independent security review, target-OS validation, real filesystem crash/recovery, confidentiality verification, and explicit production enablement remain gates. Gate D production authorization is not granted.
+
+## Gate C authorization
+
+Owner authorized disabled development-branch implementation of the storage/authentication ports, schema/migration infrastructure, Memory/accounting/search foundations, Forget/ledger/reconciliation state machines, synthetic-key adapters, restore-denial barriers, tests, docs and CI. No actual personal data, account/provider connection, root capability, production secrets, personal database migration, model Memory context, external effect, backup/sync, PR merge, or production activation is authorized.
+
+## Migration transition
+
+Experimental migration 0009 remains test-only and cannot enter normal migration catalogs. Normal storage remains v8. Canonical P7 migration version 0009 is reserved for a later reviewed schema; the experimental DDL must be isolated as fixture material or retired before a canonical migration can use that number. ADR-0043 leaves migrations 0001–0008 untouched.
+
+---
+
 # P7 owner-ratification record
 
 **Date:** 2026-10-12

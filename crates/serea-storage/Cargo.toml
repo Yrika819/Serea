@@ -15,6 +15,9 @@ publish.workspace = true
 p2h-fault-injection = []
 # Explicit synthetic prototype only. Forbidden in optimized builds.
 p7-experimental = []
+# Gate C contract/ledger development surface. Explicit opt-in only and rejected
+# in optimized builds; this is not an ordinary runtime or production API.
+p7-gate-c = []
 
 [dependencies]
 serea-protocol.workspace = true

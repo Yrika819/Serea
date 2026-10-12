@@ -37,6 +37,14 @@ ADR-0041 are Accepted. Their acceptance does not by itself authorize runtime wor
 | --- | --- | --- |
 | [ADR-0042](ADR-0042-p7-owner-ratified-directions.md) | P7-D01..D07 principles: local host-authenticated Owner; independent minimized provenance; additive owner-scoped SQLite and single-successor graph; PUBLIC/PERSONAL only; strict boundedness; lexical FTS5; authenticated Forget and restore reconciliation | **Accepted principles only; details pending; implementation not authorized** |
 
+## P7 Gate B and Gate C (2026-10-12)
+
+[ADR-0043](ADR-0043-p7-gate-b-limited-v1-and-gate-c-authorization.md) records the Owner's limited V1 numeric/resource choices and authorizes only disabled development-branch Gate C engineering. It does not authorize production enablement, personal data, account access, backup/restore/sync, PR merging, or P8 effects. Values not explicitly accepted remain provisional. ADR-0042 remains historically accurate for its original scope and is not rewritten.
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [ADR-0043](ADR-0043-p7-gate-b-limited-v1-and-gate-c-authorization.md) | Explicit 2026-10-12 limited V1 resource/retention direction; host-authenticated Owner and authenticated Forget/ledger contracts; backup/sync deferred; Gate C disabled engineering authorization | **Accepted within scope; Gate D not authorized** |
+
 ## Accepted decisions
 
 | ADR | Decision | Status |

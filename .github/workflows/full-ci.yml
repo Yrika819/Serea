@@ -50,6 +50,8 @@ jobs:
         run: |
           cargo +1.85.0 check -p serea-storage --release --features p7-gate-c --locked --offline
           if ($LASTEXITCODE -eq 0) { throw "optimized p7-gate-c unexpectedly compiled" }
+          Write-Host "optimized p7-gate-c was correctly rejected"
+          exit 0
 
   linux-stable:
     name: Linux stable full validation

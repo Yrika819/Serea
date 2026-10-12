@@ -18,7 +18,7 @@ Campaign started at PR #15 head `c14d1ad627e5475cfb9bc37be9b1fda4511648a3`. Curr
 
 ## Specific freshness cases
 
-`independently_checkpointed_stream_rejects_valid_prefixes_and_generation_mismatch` verifies middle-frame truncation, valid 1/2/3-frame complete prefixes of a four-frame stream, missing terminal reconciliation, no-checkpoint denial, Owner/epoch mismatch, primary older and newer generation, and key revocation/missing version. It also demonstrates the fundamental limit: if the ledger, key availability, primary DB and trusted checkpoint all return to the same earlier state, local verification cannot identify that complete rollback. The test checkpoint lives in process memory only and is not a production trust anchor.
+`independently_checkpointed_stream_rejects_valid_prefixes_and_generation_mismatch` verifies middle-frame truncation, valid one- through seven-frame prefixes of an eight-frame stream (including the complete earlier four-frame reconciled operation), missing terminal reconciliation, no-checkpoint denial, Owner/epoch mismatch, primary older and newer generation, and key revocation/missing version. It also demonstrates the fundamental limit: if the ledger, key availability, primary DB and trusted checkpoint all return to the same earlier state, local verification cannot identify that complete rollback. The test checkpoint lives in process memory only and is not a production trust anchor.
 
 ## Remaining failures and limits
 

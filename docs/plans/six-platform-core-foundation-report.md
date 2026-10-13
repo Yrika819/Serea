@@ -140,6 +140,9 @@ At the remediation worktree HEAD before publication:
 - Rust 1.85.0 all-feature workspace tests: **PASS**.
 - Rust 1.85.0 workspace release build and standalone Core/Host release builds: **PASS**.
 - Rust 1.85.0 explicit synthetic Host smoke: **PASS**; schema v8, Task generation pin, active-generation refusal, ordered audit, shutdown/checkpoint, reopen and recovery verified.
+- Stable explicit synthetic Host smoke: **PASS** with the same durable-state checks.
 - External consumer negative API probe: **PASS**, expected `E0599` observed.
+
+The native workflow now runs the explicit synthetic smoke in both its Stable and Rust 1.85.0 matrices on every native runner, in addition to each matrix's default/release build checks.
 
 Default/release consumers receive only portable Core composition and lifecycle operations. Synthetic registry installation exists only in the Host binary's explicit opt-in development harness. Neither boundary adds provider/network access, real credentials, or capability invocation. Native six-platform validation, Fast CI, Full CI, SQLite portability, final commit identity, and migration hash verification for the remediation HEAD are recorded here after those runs complete.

@@ -165,6 +165,9 @@ jobs:
       - name: Release build
         run: cargo +1.85.0 build --workspace --release --locked
 
+      - name: Synthetic host smoke
+        run: cargo +1.85.0 run -p serea-host --features synthetic --locked -- smoke --synthetic
+
       - name: Verify generated native executable architecture
         shell: bash
         run: python3 tools/check_native_binary.py target/release/serea-host${{ matrix.os == 'windows' && '.exe' || '' }} ${{ matrix.target }}

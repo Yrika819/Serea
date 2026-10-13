@@ -35,12 +35,12 @@ jobs:
           - platform: macOS x86_64
             runner: macos-15-intel
             target: x86_64-apple-darwin
-            os: macos
+            os: darwin
             arch: x86_64
           - platform: macOS ARM64
             runner: macos-15
             target: aarch64-apple-darwin
-            os: macos
+            os: darwin
             arch: arm64
           - platform: Linux x86_64
             runner: ubuntu-24.04
@@ -115,12 +115,12 @@ jobs:
           - platform: macOS x86_64
             runner: macos-15-intel
             target: x86_64-apple-darwin
-            os: macos
+            os: darwin
             arch: x86_64
           - platform: macOS ARM64
             runner: macos-15
             target: aarch64-apple-darwin
-            os: macos
+            os: darwin
             arch: arm64
           - platform: Linux x86_64
             runner: ubuntu-24.04

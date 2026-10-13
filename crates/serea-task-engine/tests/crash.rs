@@ -1434,7 +1434,7 @@ fn runtime_sources() -> Vec<(String, String)> {
                     .strip_prefix(&root)
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned();
+                    .replace('\\', "/");
                 if name.contains("/tests/")
                     || name.ends_with("_tests.rs")
                     // The executable host is the process boundary. Its

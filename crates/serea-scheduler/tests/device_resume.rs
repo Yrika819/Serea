@@ -509,6 +509,7 @@ fn event_before_wait_is_not_replayed_into_a_late_wait_but_a_later_event_is_eligi
     );
     assert_eq!(store.load_task(&id).unwrap().task.state, TaskState::Ready);
     drop(scheduler);
+    drop(engine);
     drop(store);
     std::fs::remove_file(db).unwrap();
 }

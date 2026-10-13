@@ -22,7 +22,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_MEMBERS = [
     "crates/serea-capability",
+    "crates/serea-core",
     "crates/serea-event-bus",
+    "crates/serea-host",
     "crates/serea-model-router",
     "crates/serea-policy",
     "crates/serea-protocol",
@@ -40,6 +42,8 @@ MODEL_ROUTER = "serea-model-router"
 TESTKIT = "serea-testkit"
 CAPABILITY = "serea-capability"
 POLICY = "serea-policy"
+CORE = "serea-core"
+HOST = "serea-host"
 DEPENDENCY_KINDS = ("dependencies", "build-dependencies", "dev-dependencies")
 
 
@@ -408,8 +412,26 @@ def main() -> int:
                         failures.append(
                             f"{MODEL_ROUTER} has internal non-dev dependency {name}; P4 routing may depend only on protocol, storage, and event-bus"
                         )
+                if owner == CORE and internal and not is_dev and name not in (
+                    PROTOCOL, STORAGE, EVENT_BUS, ENGINE, SCHEDULER, CAPABILITY
+                ):
+                    failures.append(
+                        f"{CORE} has internal non-dev dependency {name}; composition may only wire existing runtime crates"
+                    )
+                if owner == HOST and internal and not is_dev and name not in (
+                    CORE, PROTOCOL, EVENT_BUS, ENGINE, TESTKIT
+                ):
+                    failures.append(
+                        f"{HOST} has internal non-dev dependency {name}; the host must remain a thin process boundary"
+                    )
                 if name == TESTKIT and not is_dev:
-                    failures.append(f"{owner} names {TESTKIT} outside [dev-dependencies]")
+                    dependency_spec = table(manifest.get("dependencies", {}), f"{owner}.dependencies").get(TESTKIT)
+                    if owner == HOST and isinstance(dependency_spec, dict) and dependency_spec.get("optional") is True:
+                        continue
+                    if owner == HOST:
+                        failures.append(f"{owner} names {TESTKIT} outside an optional synthetic feature")
+                    else:
+                        failures.append(f"{owner} names {TESTKIT} outside [dev-dependencies]")
     except (OSError, UnicodeError, ValueError) as error:
         failures.append(f"manifest inspection failed: {error}")
     return report(failures)
@@ -421,12 +443,13 @@ def report(failures: list[str]) -> int:
             print(f"FAIL: {message}", file=sys.stderr)
         print(f"\n{len(failures)} workspace invariant failure(s)", file=sys.stderr)
         return 1
-    print("OK: exact P5 capability/protocol/storage/event-bus/task-engine/scheduler/model-router/testkit/policy workspace; "
+    print("OK: exact P6 runtime plus Core/host workspace; "
           "event-bus protocol/storage-only; task-engine protocol/storage/event-bus/capability/policy; "
           "scheduler protocol/storage/event-bus/task-engine; "
           "capability protocol/storage/event-bus with no edge to the Task Engine or policy; "
           "storage protocol-only with no Event Bus, Task Engine, or Scheduler edge; "
-          "model-router protocol/storage/event-bus; policy protocol/storage/event-bus; testkit dev-only")
+          "model-router protocol/storage/event-bus; policy protocol/storage/event-bus; "
+          "testkit dev-only except optional synthetic host feature")
     return 0
 
 

@@ -23,6 +23,21 @@ PR: [#16 — Six-platform foundation and synthetic host](https://github.com/Yrik
 - **Cross-platform source semantics:** added LF checkout attributes so immutable migration bytes and embedded Rust source are stable on Windows. The TaskEngine source guard canonicalizes path separators before excluding test-only paths.
 - **Persistent schema:** no migration SQL, accepted ADR, P7 Memory default, or canonical schema version changed; default schema remains v8.
 
+### Changes by commit
+
+| Commit | Change |
+| --- | --- |
+| `aa4203a` | Added native six-platform stable and MSRV CI matrices. |
+| `6c36c70` | Added Core composition and opt-in synthetic executable lifecycle. |
+| `9ff9c35` | Recorded isolated cap-std, keyring-core, and Lindera SQLite assessments. |
+| `e988eb1` | Corrected macOS OS identity detection in native jobs. |
+| `906ff85` | Fixed identical-manifest concurrent registry activation; cherry-picked the canonical PR #14 fix without modifying PR #14. |
+| `6af9e49`, `93976b4` | Closed lingering TaskEngine/Store SQLite handles before deleting test databases on Windows. |
+| `d0426d0` | Gave the distinct-generation activation race its own manifest digest. |
+| `94fad67` | Fixed LF checkout semantics for canonical migration/source bytes on Windows. |
+| `e5aca23` | Normalized path separators in the TaskEngine production-source guard. |
+| `1590b5a` | Recorded final implementation and native validation evidence. |
+
 ## 3. Native matrix and regression verification
 
 Verified on GitHub Actions run [38392787006](https://github.com/Yrika819/Serea/actions/runs/38392787006), for implementation revision `e5aca230d5f2ba87db48785c1c430720ea50c868`:

@@ -82,7 +82,7 @@ Regression defects found and corrected during native runs:
 | Release fault-seam exclusion | **PASS** in Full CI |
 | Git whitespace validation | **PASS** (`git diff --check`) |
 
-The latest PR tip after this report-only update has its own Full CI and six-platform native matrix in progress; the live PR checks are authoritative for that exact tip.
+The implementation revision above passed the linked Full CI and six-platform matrix. The report-only PR tip and its exact check conclusions are recorded on PR #16.
 
 ## 5. External component assessment
 

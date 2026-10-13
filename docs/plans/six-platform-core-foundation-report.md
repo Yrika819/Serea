@@ -145,4 +145,19 @@ At the remediation worktree HEAD before publication:
 
 The native workflow now runs the explicit synthetic smoke in both its Stable and Rust 1.85.0 matrices on every native runner, in addition to each matrix's default/release build checks.
 
-Default/release consumers receive only portable Core composition and lifecycle operations. Synthetic registry installation exists only in the Host binary's explicit opt-in development harness. Neither boundary adds provider/network access, real credentials, or capability invocation. Native six-platform validation, Fast CI, Full CI, SQLite portability, final commit identity, and migration hash verification for the remediation HEAD are recorded here after those runs complete.
+Default/release consumers receive only portable Core composition and lifecycle operations. Synthetic registry installation exists only in the Host binary's explicit opt-in development harness. Neither boundary adds provider/network access, real credentials, or capability invocation.
+
+### GitHub Actions and publication record
+
+Source commit `f879adf4cf2e55856279a2e7a59349101f842a7f` passed:
+
+| Workflow | Run | Result |
+| --- | ---: | --- |
+| Native platform validation | [38429458077](https://github.com/Yrika819/Serea/actions/runs/38429458077) | **12/12 native jobs PASS**: Stable and Rust 1.85.0 on Windows x86_64/ARM64, macOS x86_64/ARM64, and Linux x86_64/ARM64. Every job ran native workspace checks/tests, all-feature tests, release build, synthetic smoke, and executable architecture verification. |
+| SQLite cross-architecture portability | [38429457961](https://github.com/Yrika819/Serea/actions/runs/38429457961) | **PASS**, both producer/consumer directions. |
+| Fast CI | [38429458299](https://github.com/Yrika819/Serea/actions/runs/38429458299) | **FAIL at commit identity guard** before later checks. Workspace smoke guard and all 76 workspace smoke regression tests passed. |
+| Full CI | [38429458242](https://github.com/Yrika819/Serea/actions/runs/38429458242) | **FAIL at Linux stable commit identity guard**. Linux MSRV 1.85.0, macOS x86_64, and macOS ARM64 jobs passed. |
+
+The identity guard rejects the author/committer identity on commits `ed3a118407fa4d27a8f40a1bdd2d912c1168f64e` and `f879adf4cf2e55856279a2e7a59349101f842a7f`. Both commits are already published. Their history is not rewritten, and the guard is not weakened. This is the outstanding campaign blocker: Fast CI and Full CI are not green, so PR #16 is not ready for the independent recheck despite the successful API remediation and native/SQLite workflows.
+
+The reviewed baseline was `66bf5861292dfd59f575ef67480b5175e215be40`; at preflight PR #16 was Open/Draft/Unmerged with base `main` at `f70f34c1f683df1b175b612ba100ce6bb6979811`. Repository visibility was public, push permission was confirmed, and PRs #12–#15 were left unchanged. The PR remains Open/Draft/Unmerged. Migration files `0001`–`0008` and schema v8 are unchanged.

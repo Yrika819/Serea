@@ -1,75 +1,99 @@
 # Six Platform Core Foundation — Engineering Evidence
 
-Status: **PARTIAL — Draft PR requires six native runner results**
+Status: **VERIFIED on implementation revision `e5aca230d5f2ba87db48785c1c430720ea50c868`; final PR checks run on the report-only tip.**
 
-Branch: `platform/six-target-core-foundation`  
-Base: `main` at `f70f34c1f683df1b175b612ba100ce6bb6979811`  
-Final branch SHA and Draft PR URL: authoritative values are recorded on the linked GitHub PR; this report is part of that PR's source.
+Branch: `platform/six-target-core-foundation`
+
+Implementation revision: `e5aca230d5f2ba87db48785c1c430720ea50c868`
+
+PR: [#16 — Six-platform foundation and synthetic host](https://github.com/Yrika819/Serea/pull/16) (Draft)
 
 ## 1. Live repository preflight
 
-- `Yrika819/Serea` is public; live `main` equals `f70f34c1f683df1b175b612ba100ce6bb6979811`.
-- PR #6 and #10 are merged. PR #12–#15 are open drafts.
-- PR #15 HEAD equals `bcb49472a8d96020226b9d2e8625e57095abb15c`; its recorded independent verdict covers disabled synthetic Gate C only.
-- No existing PR branch was modified. This branch starts at the verified `main` commit.
+- `Yrika819/Serea` is public; live `main` was `f70f34c1f683df1b175b612ba100ce6bb6979811` before the branch was created.
+- PR #6 and #10 are merged. PR #12–#15 remained open drafts.
+- PR #15 HEAD was `bcb49472a8d96020226b9d2e8625e57095abb15c`; its independent verdict was `P7_INDEPENDENT_RECHECK_PASSED` for disabled synthetic Gate C only.
+- This branch was created from verified main. PR #12–#15 were not modified.
 
 ## 2. Implementation by area
 
-- **CI/platform:** added a six-native-runner stable matrix plus an exact Rust 1.85.0 matrix. Jobs verify OS, OS architecture, compiler host triple, and compiled host executable architecture. Jobs run locked metadata, workspace checks/tests, all-feature tests, release builds, and the synthetic Core lifecycle. Existing `full-ci.yml` continues to enforce stable Clippy, rustfmt, docs, Python guards, and Linux release-fault exclusion.
-- **Core:** added `serea-core` as a synchronous composition root for SQLite Store, Event Bus, Task Engine, and Scheduler recovery. Startup requires injected time and an Event Bus. Normal startup does not install a provider or capability generation. An explicitly named development method can install only an experimental, side-effect-free synthetic descriptor.
-- **Host:** added `serea-host` with development `doctor`, `status`, and opt-in `smoke --synthetic` commands. Testkit is behind the optional `synthetic` feature. The synthetic flow creates a Task, persists `RECEIVED → PLANNING`, checkpoints, reconstructs Core, recovers Scheduler/Task durable state, verifies schema v8, audit ordering, and exactly one TaskCreated event, then closes and removes its disposable DB.
-- **Architecture guard:** workspace dependency checks now permit the narrow Core wiring edges and keep testkit optional at the synthetic host boundary. Reusable libraries remain free of ambient process/environment access.
-- **Persistent schema:** no migration, accepted ADR, P7 Memory, or default schema version change.
+- **CI/platform:** added six native stable jobs and six native Rust 1.85.0 jobs. Each verifies OS, OS architecture, compiler host triple, and compiled host binary architecture. Stable jobs run locked metadata, default/all-target tests, all-feature tests, release builds, and Core smoke. MSRV jobs run checks and tests with defaults/all features plus release builds.
+- **Core:** added `serea-core` as a synchronous composition root for SQLite Store, Event Bus, Task Engine, and Scheduler recovery. Startup takes an injected clock and Event Bus. Normal startup installs no provider or capability generation. A development-only method can install the side-effect-free synthetic descriptor.
+- **Host:** added `serea-host` with development `doctor`, `status`, and opt-in `smoke --synthetic` commands. Testkit is optional behind the `synthetic` feature. The smoke creates one Task, persists `RECEIVED → PLANNING`, verifies audit/event ordering, closes/checkpoints SQLite, reconstructs Core, runs recovery, verifies schema v8 and durable task state, and ensures one `TaskCreated` event.
+- **Cross-platform source semantics:** added LF checkout attributes so immutable migration bytes and embedded Rust source are stable on Windows. The TaskEngine source guard canonicalizes path separators before excluding test-only paths.
+- **Persistent schema:** no migration SQL, accepted ADR, P7 Memory default, or canonical schema version changed; default schema remains v8.
 
-## 3. Local verification evidence
+## 3. Native matrix and regression verification
+
+Verified on GitHub Actions run [38392787006](https://github.com/Yrika819/Serea/actions/runs/38392787006), for implementation revision `e5aca230d5f2ba87db48785c1c430720ea50c868`:
+
+| Native runner | Target triple | Stable Rust 1.99.0 | Rust 1.85.0 |
+| --- | --- | --- | --- |
+| `windows-2025` | `x86_64-pc-windows-msvc` | **PASS** | **PASS** |
+| `windows-11-arm` | `aarch64-pc-windows-msvc` | **PASS** | **PASS** |
+| `macos-15-intel` | `x86_64-apple-darwin` | **PASS** | **PASS** |
+| `macos-15` | `aarch64-apple-darwin` | **PASS** | **PASS** |
+| `ubuntu-24.04` | `x86_64-unknown-linux-gnu` | **PASS** | **PASS** |
+| `ubuntu-24.04-arm` | `aarch64-unknown-linux-gnu` | **PASS** | **PASS** |
+
+- Each stable job verified the compiler host and output executable architecture; synthetic Core smoke passed on all six targets.
+- Stable compiler: `rustc 1.99.0 (b940084d7 2026-09-28)`, `cargo 1.99.0 (5f94df478 2026-08-27)`.
+- MSRV compiler: `rustc 1.85.0 (4d91de4e4 2025-02-17)`, `cargo 1.85.0 (d73d2caf9 2024-12-31)`.
+- Full CI [run 38392786894](https://github.com/Yrika819/Serea/actions/runs/38392786894): **PASS**, including stable Clippy, rustfmt, documentation, Python guards, stable/MSRV Linux tests, macOS Intel/ARM tests, and release fault-seam exclusion.
+- Cross-architecture SQLite portability [run 38392786851](https://github.com/Yrika819/Serea/actions/runs/38392786851): **PASS**, cleanly closed synthetic DBs reopened on the other macOS architecture in both directions.
+- Fast CI [run 38392786904](https://github.com/Yrika819/Serea/actions/runs/38392786904): **PASS**.
+- P2H child-process termination and recovery tests are part of the workspace suites and passed on all six native jobs. The Core host's own smoke uses orderly shutdown followed by reconstruction/recovery; it does not inject a kill into the host process itself.
+
+Regression defects found and corrected during native runs:
+
+1. Windows temp SQLite files could not be removed while TaskEngine/Store handles remained open. Tests now drop those handles before cleanup.
+2. The concurrent activation regression fixture used identical manifest digests for a distinct-generation race. The distinct-generation test now uses a distinct digest while same-manifest deduplication has its own coverage.
+3. Windows checkout line endings changed raw migration hashes and source probes. LF checkout attributes retain canonical migration bytes; migration SHA-256 values remain identical.
+4. A TaskEngine source guard searched only for `/tests/`, so Windows `\tests\` paths were incorrectly treated as runtime sources. Paths are normalized to `/` before the guard.
+
+## 4. Additional verification evidence
 
 | Check | Result |
 | --- | --- |
-| Stable workspace default all-target tests | **PASS** |
-| Stable workspace all-features tests and doctests | **PASS** |
-| Rust 1.85.0 workspace all-target/all-feature check | **PASS** |
-| Rust 1.85.0 workspace default all-target tests | **PASS** |
-| Rust 1.85.0 workspace all-features tests and doctests | **PASS** |
-| Stable Clippy, all targets/features, `-D warnings` | **PASS** |
-| Rust 1.85.0 Clippy, all targets/features, `-D warnings` | **PASS** |
-| Stable release workspace build | **PASS** |
-| Release fault-seam exclusion proof | **PASS** |
-| Linux x86_64 release binary format/ISA check | **PASS** (`ELF x86_64`) |
-| Synthetic Core lifecycle, restart/recovery, event ordering | **PASS** (local Linux x86_64) |
-| Workspace architecture guard and its 76 Python regressions | **PASS** |
-| Commit identity guard and 3 regressions | **PASS** |
-| Documentation validator (113 Markdown files) | **PASS** |
-| Rustfmt and `git diff --check` | **PASS** |
-| Migration SHA-256 versus `main`, 0001–0008 | **PASS**, all eight exact matches |
-| Windows x86_64/ARM64 and macOS Intel/ARM64/Linux ARM64 native execution | **NOT TESTED locally; GitHub Actions required** |
+| Stable workspace default/all-target tests | **PASS** on all six native targets |
+| Stable workspace all-features tests | **PASS** on all six native targets |
+| Rust 1.85.0 default/all-feature tests | **PASS** on all six native targets |
+| Stable release workspace build | **PASS** on all six native targets |
+| Rust 1.85.0 release workspace build | **PASS** on all six native targets |
+| Synthetic Core lifecycle and restart recovery | **PASS** on all six native targets |
+| Workspace Clippy `-D warnings`, rustfmt, docs validator | **PASS** in Full CI |
+| Python smoke/architecture guard and identity guard | **PASS** in Full/Fast CI |
+| Migration SHA-256 versus verified main, 0001–0008 | **PASS**, all eight unchanged |
+| Release fault-seam exclusion | **PASS** in Full CI |
+| Git whitespace validation | **PASS** (`git diff --check`) |
 
-Stable local compiler was `rustc 1.99.0`; MSRV was `rustc 1.85.0 (4d91de4e4 2025-02-17)` with `cargo 1.85.0`. Full platform results must be read from the final source HEAD's GitHub Actions checks; no matrix result is asserted here before those jobs finish.
+The latest PR tip after this report-only update has its own Full CI and six-platform native matrix in progress; the live PR checks are authoritative for that exact tip.
 
-## 4. External component assessment
+## 5. External component assessment
 
-Detailed versions, commits, licenses, MSRV, dependency and security boundaries, tested results, blocked areas, and recommendations are in [External Component Assessment](external-component-assessment.md). No evaluated dependency was added to production manifests.
+Detailed upstream commits, licenses, MSRV, dependency/security review, test evidence, and recommendation are in [External Component Assessment](external-component-assessment.md). No assessed component was added to Serea manifests or lockfile.
 
-| Component | Decision | Evidence state |
+| Component | Recommendation | Evidence state |
 | --- | --- | --- |
-| cap-std 4.0.3 | **CONDITIONAL** | Linux x86_64 MSRV check passed; filesystem race/security and other targets not tested.
-| keyring-core 1.0.1 | **DEFER** | Linux x86_64 MSRV check and 20 mock tests passed; native credential backends not tested.
-| Lindera SQLite 2.0.0 | **DEFER** | MSRV check blocked by resolved Lindera syntax and missing `stdarg.h`; search and performance not tested.
+| cap-std 4.0.3 | **CONDITIONAL** | Linux x86_64 MSRV check passed; filesystem race/security behavior and other targets not tested. |
+| keyring-core 1.0.1 | **DEFER** | Linux x86_64 MSRV check and 20 fake-store tests passed; native credential backends not tested. |
+| Lindera SQLite 2.0.0 | **DEFER** | Rust 1.85 check blocked by resolved Lindera syntax and missing `stdarg.h`; Japanese search and performance not tested. |
 
-## 5. Security boundaries and limitations
+## 6. Security boundaries and limitations
 
-- The host contains no external model provider, network client, real account, credential, or capability provider. The experimental descriptor has `SideEffectClass::None`; Core exposes no capability invocation path. Model Router invocation and P8 effects remain outside this host.
-- The synthetic feature uses deterministic test IDs/time and disposable local SQLite only. It is not a production identity or clock implementation.
-- No OS authentication, secure key custody, app-data directory selection, process lock, IPC, or lifecycle signal adapter is implemented. Security-sensitive operations remain unavailable; no plaintext/mock-auth fallback exists.
-- Structured tracing was not added. No user content is logged by the host smoke; the CLI prints only content-free status facts.
-- Recovery is exercised by orderly Core reconstruction in one process. Existing TaskEngine crash tests cover child termination at committed and uncommitted transition points, but a host-process kill/relaunch test is **NOT TESTED**.
-- Local verification is Linux x86_64 only. The final six-target result is pending the native GitHub runner matrix on the pushed PR HEAD.
+- The synthetic host has no external provider, network client, real account, credential, or capability invocation edge. The descriptor is `SideEffectClass::None`. Model Router invocation and P8 effects remain outside this host.
+- Deterministic test IDs/time and disposable local SQLite are development fixtures, not production identity or clock implementations.
+- No OS authentication, secure key custody, app-data directory selection, process lock, IPC, or lifecycle signal adapter is implemented. Security-sensitive facilities remain unavailable; no plaintext or mock-auth fallback exists.
+- Structured tracing was not added. The smoke prints only content-free status facts and does not log task payloads.
+- Only explicit clean-shutdown database reopening was portability-tested. Copying a live WAL database remains unsupported by this evidence.
+- External component PoCs are scoped as documented; security properties not tested there remain unverified.
 
-## 6. Remaining work and next milestone
+## 7. Recommended next milestone
 
-1. Run the final stable and Rust 1.85.0 matrices on the final PR HEAD; resolve reproducible native failures and rerun affected jobs.
-2. Review the Core composition contracts and the synthetic registry bootstrap with the architecture owners.
-3. Prototype portable file operations for the actual checkpoint/ledger threat model before adopting cap-std.
-4. Define a typed OS key-custody adapter and evaluate compatible native backends before integrating keyring-core.
-5. For Japanese search, build a disposable schema/tokenizer harness with a pinned Rust-1.85-compatible Lindera version; compare all four requested strategies and test delete consistency.
+1. Design typed OS filesystem/process/key-custody adapters around the actual Ledger/Checkpoint threat model; validate them independently on each desktop OS.
+2. Add host-level process-kill/relaunch E2E if the host becomes a long-running process. Current committed TaskEngine crash tests cover process termination at durable transition boundaries.
+3. Prototype the exact future file operations and races before adopting cap-std.
+4. Revisit keyring-core only with compatible native backends and per-OS missing-key/refusal tests.
+5. Build a disposable Japanese tokenizer harness with a pinned Rust-1.85-compatible Lindera version and benchmark all requested search strategies plus delete consistency.
 
 This milestone does not authorize production Memory, real Owner authentication, key custody, external accounts, P8 effects, PR merges, or deployment.

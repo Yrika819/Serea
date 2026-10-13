@@ -13,5 +13,7 @@ serea-storage = { workspace = true }
 serea-event-bus = { workspace = true }
 serea-task-engine = { workspace = true }
 serea-scheduler = { workspace = true }
-serea-capability = { workspace = true }
+
+[dev-dependencies]
+serea-testkit = { workspace = true }
 

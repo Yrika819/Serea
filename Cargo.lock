@@ -824,12 +824,12 @@ dependencies = [
 name = "serea-core"
 version = "0.1.0"
 dependencies = [
- "serea-capability",
  "serea-event-bus",
  "serea-protocol",
  "serea-scheduler",
  "serea-storage",
  "serea-task-engine",
+ "serea-testkit",
 ]
 
 [[package]]
@@ -846,9 +846,11 @@ dependencies = [
 name = "serea-host"
 version = "0.1.0"
 dependencies = [
+ "serea-capability",
  "serea-core",
  "serea-event-bus",
  "serea-protocol",
+ "serea-storage",
  "serea-task-engine",
  "serea-testkit",
 ]

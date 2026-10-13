@@ -419,19 +419,20 @@ def main() -> int:
                         f"{CORE} has internal non-dev dependency {name}; composition may only wire existing runtime crates"
                     )
                 if owner == HOST and internal and not is_dev and name not in (
-                    CORE, PROTOCOL, EVENT_BUS, ENGINE, TESTKIT
+                    CORE, PROTOCOL, EVENT_BUS, ENGINE
                 ):
-                    failures.append(
-                        f"{HOST} has internal non-dev dependency {name}; the host must remain a thin process boundary"
-                    )
-                if name == TESTKIT and not is_dev:
-                    dependency_spec = table(manifest.get("dependencies", {}), f"{owner}.dependencies").get(TESTKIT)
-                    if owner == HOST and isinstance(dependency_spec, dict) and dependency_spec.get("optional") is True:
-                        continue
-                    if owner == HOST:
-                        failures.append(f"{owner} names {TESTKIT} outside an optional synthetic feature")
-                    else:
-                        failures.append(f"{owner} names {TESTKIT} outside [dev-dependencies]")
+                    dependency_spec = table(manifest.get("dependencies", {}), f"{owner}.dependencies").get(name)
+                    synthetic = table(manifest.get("features", {}), f"{owner}.features").get("synthetic", [])
+                    if not (
+                        isinstance(dependency_spec, dict)
+                        and dependency_spec.get("optional") is True
+                        and f"dep:{name}" in synthetic
+                    ):
+                        failures.append(
+                            f"{HOST} has internal dependency {name} outside its explicit optional synthetic feature"
+                        )
+                if name == TESTKIT and not is_dev and owner != HOST:
+                    failures.append(f"{owner} names {TESTKIT} outside [dev-dependencies]")
     except (OSError, UnicodeError, ValueError) as error:
         failures.append(f"manifest inspection failed: {error}")
     return report(failures)

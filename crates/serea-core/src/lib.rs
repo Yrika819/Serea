@@ -7,19 +7,11 @@
 
 use std::path::{Path, PathBuf};
 
-use serea_capability::CapabilityRegistry;
 use serea_event_bus::EventBus;
 use serea_protocol::TaskId;
-use serea_protocol::{
-    Authorization, CapabilityDescriptor, CapabilityDescriptorDraft, CapabilityId, Clock, DataClass,
-    DescriptorDescription, DescriptorTitle, EpochMillis, IdempotencySupport, JsonSchemaRef,
-    ReplaySafety, RiskClass, RootRequirement, SemVer, SideEffectClass, digest_of,
-};
+use serea_protocol::{Clock, EpochMillis};
 use serea_scheduler::{ScheduleError, Scheduler, SchedulerRecoveryReport};
-use serea_storage::{
-    CheckpointOutcome, DescriptorRevisionDraft, EventReplayPage, GenerationMemberDraft,
-    RegistryGenerationDraft, Store, StoreError,
-};
+use serea_storage::{CheckpointOutcome, EventReplayPage, Store, StoreError};
 use serea_task_engine::{EngineError, TaskEngine, TaskRecord, TransitionContext};
 
 /// Content-free audit sequence facts used by synthetic host verification.
@@ -38,27 +30,18 @@ pub struct AuditSequenceSummary {
 pub enum CoreError {
     /// Durable storage could not be opened or validated.
     Storage(StoreError),
-    /// Initial capability registry generation could not be installed.
-    Registry(StoreError),
     /// Startup recovery refused the durable state.
     Recovery(ScheduleError),
     /// Task Engine refused a host operation.
     TaskEngine(EngineError),
-    /// A host-supplied or synthetic protocol value was rejected.
-    Protocol(serea_protocol::ProtocolError),
-    /// Canonical JSON or digest construction failed.
-    Canonical(serea_protocol::CanonicalJsonError),
 }
 
 impl std::fmt::Display for CoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Storage(_) => "core storage initialization failed",
-            Self::Registry(_) => "core capability registry initialization failed",
             Self::Recovery(_) => "core startup recovery failed",
             Self::TaskEngine(_) => "core task operation failed",
-            Self::Protocol(_) => "core protocol value was rejected",
-            Self::Canonical(_) => "core canonical value was rejected",
         })
     }
 }
@@ -88,91 +71,6 @@ impl Core {
             events,
             tasks,
         })
-    }
-
-    /// Explicitly installs the disabled synthetic registry fixture used by
-    /// development smoke flows. Normal Core startup never invokes this. It
-    /// refuses to replace any active registry generation.
-    pub fn install_synthetic_registry_generation(&self, now: EpochMillis) -> Result<(), CoreError> {
-        if CapabilityRegistry::current_generation(&self.store)
-            .map_err(CoreError::Registry)?
-            .is_some()
-        {
-            return Err(CoreError::Registry(StoreError::RegistryGenerationActivated));
-        }
-        let generation = CapabilityRegistry::create_generation(
-            &self.store,
-            RegistryGenerationDraft {
-                manifest_digest: digest_of("\"serea-empty-synthetic-manifest-v1\"")
-                    .map_err(CoreError::Canonical)?,
-                schema_catalog_digest: digest_of("\"serea-empty-synthetic-catalog-v1\"")
-                    .map_err(CoreError::Canonical)?,
-            },
-        )
-        .map_err(CoreError::Registry)?;
-        let descriptor = CapabilityDescriptor::new(CapabilityDescriptorDraft {
-            id: CapabilityId::new("synthetic.echo.read").map_err(CoreError::Protocol)?,
-            version: SemVer::new("1.0.0").map_err(CoreError::Protocol)?,
-            title: DescriptorTitle::new("Synthetic no-op").map_err(CoreError::Protocol)?,
-            description: DescriptorDescription::new("Synthetic-only no-op fixture")
-                .map_err(CoreError::Protocol)?,
-            provider_id: serea_protocol::ProviderId::new("synthetic")
-                .map_err(CoreError::Protocol)?,
-            implementation_id: None,
-            input_schema: JsonSchemaRef::new("serea://synthetic/input")
-                .map_err(CoreError::Protocol)?,
-            output_schema: JsonSchemaRef::new("serea://synthetic/output")
-                .map_err(CoreError::Protocol)?,
-            side_effect_class: SideEffectClass::None,
-            risk_class: RiskClass::Observe,
-            required_authorization: Authorization::None,
-            replay_safety: ReplaySafety::Idempotent,
-            data_class: DataClass::Public,
-            root_requirement: RootRequirement::NotRequired,
-            idempotency_support: IdempotencySupport::None,
-            max_duration_ms: 1_000,
-            cost_class: serea_protocol::CostClass::Free,
-            experimental: true,
-        })
-        .map_err(CoreError::Protocol)?;
-        let descriptor_digest =
-            digest_of("\"serea-synthetic-no-op-descriptor-v1\"").map_err(CoreError::Canonical)?;
-        let schema_digest =
-            digest_of("\"serea-synthetic-no-op-schema-v1\"").map_err(CoreError::Canonical)?;
-        CapabilityRegistry::insert_descriptor_revision(
-            &self.store,
-            DescriptorRevisionDraft {
-                descriptor_digest: descriptor_digest.clone(),
-                descriptor: descriptor.clone(),
-                input_schema_digest: schema_digest.clone(),
-                output_schema_digest: schema_digest,
-            },
-        )
-        .map_err(CoreError::Registry)?;
-        CapabilityRegistry::add_generation_member(
-            &self.store,
-            GenerationMemberDraft {
-                generation_id: generation.generation_id(),
-                descriptor_digest,
-                candidate_priority: 0,
-            },
-        )
-        .map_err(CoreError::Registry)?;
-        CapabilityRegistry::set_default_version(
-            &self.store,
-            generation.generation_id(),
-            descriptor.id().clone(),
-            descriptor.version().clone(),
-        )
-        .map_err(CoreError::Registry)?;
-        CapabilityRegistry::activate_generation(
-            &self.store,
-            &self.events,
-            generation.generation_id(),
-            now,
-        )
-        .map_err(CoreError::Registry)?;
-        Ok(())
     }
 
     /// Returns the active canonical schema version.

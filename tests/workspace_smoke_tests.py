@@ -66,7 +66,7 @@ class VirtualManifestTests(unittest.TestCase):
         if scheduler is not None:
             self.add(scheduler, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-task-engine = { path = "../serea-task-engine" }\n[dev-dependencies]\nserea-testkit = { path = "../serea-testkit" }\n')
         self.add(smoke.CORE, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-task-engine = { path = "../serea-task-engine" }\nserea-scheduler = { path = "../serea-scheduler" }\nserea-capability = { path = "../serea-capability" }\n')
-        self.add(smoke.HOST, '\n[dependencies]\nserea-core = { path = "../serea-core" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-protocol = { path = "../serea-protocol" }\nserea-task-engine = { path = "../serea-task-engine" }\nserea-testkit = { path = "../serea-testkit", optional = true }\n')
+        self.add(smoke.HOST, '\n[dependencies]\nserea-core = { path = "../serea-core" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-protocol = { path = "../serea-protocol" }\nserea-task-engine = { path = "../serea-task-engine" }\nserea-testkit = { path = "../serea-testkit", optional = true }\nserea-capability = { path = "../serea-capability", optional = true }\nserea-storage = { path = "../serea-storage", optional = true }\n[features]\nsynthetic = ["dep:serea-testkit", "dep:serea-capability", "dep:serea-storage"]\n')
 
     def run_main(self):
         def read(path, **kwargs):

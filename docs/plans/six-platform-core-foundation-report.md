@@ -112,3 +112,34 @@ Detailed upstream commits, licenses, MSRV, dependency/security review, test evid
 5. Build a disposable Japanese tokenizer harness with a pinned Rust-1.85-compatible Lindera version and benchmark all requested search strategies plus delete consistency.
 
 This milestone does not authorize production Memory, real Owner authentication, key custody, external accounts, P8 effects, PR merges, or deployment.
+
+## 8. PR #16 synthetic Core API security remediation
+
+Independent review finding: **MEDIUM — `Core::install_synthetic_registry_generation` was a public, ungated release API in `crates/serea-core/src/lib.rs`.** At reviewed baseline `66bf5861292dfd59f575ef67480b5175e215be40`, this allowed an ordinary Core consumer to install and activate the synthetic registry fixture.
+
+### RED reproduction
+
+An independent temporary consumer crate depended on `serea-core` by path and called the method from a function accepting `&Core`. `cargo +stable check --manifest-path /tmp/serea-core-api-probe/Cargo.toml` completed successfully at the baseline, proving the method resolved through the public dependency API. This probe did not use source-text inspection.
+
+After the correction, the same consumer call fails with Rust diagnostic `E0599: no method named install_synthetic_registry_generation found for reference &Core`. The checked-in `tools/check_core_api_boundary.py` reproduces this consumer boundary and fails unless that specific missing-method diagnostic is present. Full CI runs that guard.
+
+### Remediation architecture
+
+- Removed fixture construction and all fixture-only imports/error variants from the ordinary `serea-core` API. Core no longer has a regular dependency on `serea-capability`.
+- Moved the fixed, `SideEffectClass::None` synthetic fixture setup into the existing `serea-host` binary under its opt-in `synthetic` feature. Only that feature enables Host's optional `serea-capability`, `serea-storage`, and `serea-testkit` dependencies.
+- The explicit `smoke --synthetic` command creates a disposable SQLite database, installs one fixture through the existing trusted registry and Store functions, closes the setup Store, and then opens Core with the same EventBus. It rejects an already active generation and verifies the Task's durable generation pin.
+- Default Host commands remain `doctor` and `status`; they do not open a Core database or bootstrap a registry. Synthetic code is not compiled into the default Host build.
+- Added a Core startup regression test which opens/shuts down Core and inspects the durable database to verify that no active registry was installed.
+
+### Local remediation evidence
+
+At the remediation worktree HEAD before publication:
+
+- Rust 1.85.0 all-target/all-feature workspace check: **PASS**.
+- Rust 1.85.0 default all-target workspace tests: **PASS**.
+- Rust 1.85.0 all-feature workspace tests: **PASS**.
+- Rust 1.85.0 workspace release build and standalone Core/Host release builds: **PASS**.
+- Rust 1.85.0 explicit synthetic Host smoke: **PASS**; schema v8, Task generation pin, active-generation refusal, ordered audit, shutdown/checkpoint, reopen and recovery verified.
+- External consumer negative API probe: **PASS**, expected `E0599` observed.
+
+Default/release consumers receive only portable Core composition and lifecycle operations. Synthetic registry installation exists only in the Host binary's explicit opt-in development harness. Neither boundary adds provider/network access, real credentials, or capability invocation. Native six-platform validation, Fast CI, Full CI, SQLite portability, final commit identity, and migration hash verification for the remediation HEAD are recorded here after those runs complete.

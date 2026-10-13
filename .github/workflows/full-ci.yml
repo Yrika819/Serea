@@ -42,6 +42,9 @@ jobs:
       - name: Workspace smoke guard
         run: python3 tests/workspace_smoke.py
 
+      - name: External Core API boundary regression
+        run: python3 tools/check_core_api_boundary.py
+
       - name: Workspace smoke regression tests (Group O)
         run: python3 -m unittest discover -s tests -p workspace_smoke_tests.py
 

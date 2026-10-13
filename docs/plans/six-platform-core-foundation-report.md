@@ -161,3 +161,27 @@ Source commit `f879adf4cf2e55856279a2e7a59349101f842a7f` passed:
 The identity guard rejects the author/committer identity on commits `ed3a118407fa4d27a8f40a1bdd2d912c1168f64e` and `f879adf4cf2e55856279a2e7a59349101f842a7f`. Both commits are already published. Their history is not rewritten, and the guard is not weakened. This is the outstanding campaign blocker: Fast CI and Full CI are not green, so PR #16 is not ready for the independent recheck despite the successful API remediation and native/SQLite workflows.
 
 The reviewed baseline was `66bf5861292dfd59f575ef67480b5175e215be40`; at preflight PR #16 was Open/Draft/Unmerged with base `main` at `f70f34c1f683df1b175b612ba100ce6bb6979811`. Repository visibility was public, push permission was confirmed, and PRs #12–#15 were left unchanged. The PR remains Open/Draft/Unmerged. Migration files `0001`–`0008` and schema v8 are unchanged.
+
+## 9. PR #16 commit identity repair and final-head validation
+
+The PR branch identity repair was published on 2026-10-13 after verifying the live PR was Open/Draft/Unmerged, based on `main`, at the expected head, and that the target branch had not moved. The repository is public and the authenticated owner has push permission. A local bundle at `/workspace/serea-pr16-original.bundle` preserves the original branch objects without adding a ref that the identity guard can reach.
+
+### Identity-only rewrite
+
+The branch from base `f70f34c1f683df1b175b612ba100ce6bb6979811` to original HEAD `d71a459a52a2e29910a107994bebaa972873e607` was a 16-commit linear sequence with no merge or signed commits. Exactly two commits had invalid author and committer emails. Their human author name, timestamps, message, and tree were retained; the email was changed to the verified owner noreply identity. The unaffected preceding commits retain their original object IDs. Descendants were recreated only to point to the new parents.
+
+| Original commit | Repaired commit | Message |
+| --- | --- | --- |
+| `ed3a118407fa4d27a8f40a1bdd2d912c1168f64e` | `a951d453fd9af32cc00cc57e4232f60ad9433e03` | `security(core): isolate synthetic registry fixture` |
+| `f879adf4cf2e55856279a2e7a59349101f842a7f` | `6ce87a396c3ea87bd08c6e767097a00af7bdf868` | `ci: run synthetic smoke on MSRV native matrix` |
+| `d71a459a52a2e29910a107994bebaa972873e607` | `a0270b1cb84b49ac4c47002dfea1eb3899067361` | `docs: record synthetic core remediation evidence` |
+
+All 16 old/new commit pairs have identical tree SHA values, messages, author/committer names and timestamps; parent order and topology are equivalent. Only the two specified identities and descendant parent references changed. The original and repaired final tree SHA is `b7a2f8c6f9fc85179ce6ebe01e0379433d7feb1e`; `git diff d71a459a52a2e29910a107994bebaa972873e607 a0270b1cb84b49ac4c47002dfea1eb3899067361` is empty. No implementation, test, documentation or migration bytes were changed by the rewrite itself.
+
+### Publication and validation
+
+The branch was updated using `--force-with-lease` scoped to `refs/heads/platform/six-target-core-foundation` with expected old SHA `d71a459a52a2e29910a107994bebaa972873e607`. A fresh clone fetched exactly `a0270b1cb84b49ac4c47002dfea1eb3899067361`; its complete reachable history passes `python3 tools/check_commit_identity.py`. `python3 tools/validate_docs.py docs`, `python3 tests/workspace_smoke.py`, `git diff --check`, and the external consumer negative compilation probe passed. The probe failed with the expected E0599 for the removed `Core::install_synthetic_registry_generation` API.
+
+The explicit synthetic Host path remains feature-gated; the default Host does not install synthetic registry authority. No external Provider or Capability invocation edge was introduced. Schema remains v8; migrations 0001–0008 remain unchanged. Rust 1.85.0 is still the declared and validated MSRV. The post-rewrite local Rust 1.85.0 workspace check, tests, release build, and synthetic Host smoke were run from the fresh clone; their result and the final GitHub Actions run IDs are recorded in the PR description so the final source HEAD remains stable.
+
+The final Fast CI, Full CI, 12-job native platform validation, and SQLite portability run IDs and conclusions are maintained in the PR description. Independent review has not yet issued a PASS verdict. Remaining limitations are the same as those in §6: no production Memory, OS identity/key custody, real account/credentials, external provider invocation, P8 effects, or live-WAL copying.

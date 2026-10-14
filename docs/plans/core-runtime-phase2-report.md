@@ -119,10 +119,19 @@ ms shutdown under its separate one-off conditions.
 
 PR #17 remains an open Draft targeting
 `platform/six-target-core-foundation`; no other PR is changed or merged. The
-prior PR #17 HEAD `c6eebe449e5c0ab60db3ac970348a94926a5c396` passed the 12-job
-Stable/Rust 1.85.0 native matrix and Fast CI, Full CI, and SQLite portability.
-Those results do not apply to this changed HEAD. Final workflow run IDs and
-final HEAD will be recorded only after the new commits and workflows finish.
+implementation and measurements at HEAD
+`1eb46831687ee78b0a26ff4223893ae271ad7da8` passed these GitHub Actions runs:
+
+- Fast CI: [38558661854](https://github.com/Yrika819/Serea/actions/runs/38558661854)
+- Full CI: [38558662048](https://github.com/Yrika819/Serea/actions/runs/38558662048)
+- Cross-architecture SQLite portability:
+  [38558661903](https://github.com/Yrika819/Serea/actions/runs/38558661903)
+- Native Stable and Rust 1.85.0 matrix, 12/12 jobs:
+  [38558661856](https://github.com/Yrika819/Serea/actions/runs/38558661856)
+
+The subsequent report-only commit carries no implementation changes. The
+Draft PR description records the exact branch HEAD and final-head workflow run
+IDs so the verification target remains explicit.
 
 No live provider, credential, real account, external network path, production
 Memory, Capability invocation, or P8 effect is enabled. Process-kill tests do

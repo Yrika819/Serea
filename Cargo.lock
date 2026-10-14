@@ -858,11 +858,13 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "fs2",
+ "serde_json",
  "serea-capability",
  "serea-core",
  "serea-event-bus",
  "serea-model-router",
  "serea-protocol",
+ "serea-scheduler",
  "serea-storage",
  "serea-task-engine",
  "serea-testkit",

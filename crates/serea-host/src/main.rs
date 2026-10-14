@@ -71,12 +71,36 @@ fn main() -> ExitCode {
             }
         }
         #[cfg(feature = "synthetic")]
+        "scheduler-seed" if std::env::args().any(|arg| arg == "--synthetic") => {
+            let Some(directory) = option_value("--data-dir") else {
+                eprintln!("usage: serea-host scheduler-seed --synthetic --data-dir PATH");
+                return ExitCode::from(2);
+            };
+            match seed_synthetic_schedule(std::path::Path::new(&directory)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => {
+                    eprintln!("{{\"event\":\"scheduler_seed_error\",\"code\":\"seed_failed\"}}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        #[cfg(feature = "synthetic")]
         "model-smoke" if std::env::args().any(|arg| arg == "--synthetic") => {
             let Some(directory) = option_value("--data-dir") else {
                 eprintln!("usage: serea-host model-smoke --synthetic --data-dir PATH");
                 return ExitCode::from(2);
             };
-            match synthetic_model::execute_once(std::path::Path::new(&directory)) {
+            let failure = match option_value("--scenario").as_deref() {
+                None | Some("success") => false,
+                Some("failure") => true,
+                Some(_) => {
+                    eprintln!(
+                        "usage: serea-host model-smoke --synthetic --data-dir PATH [--scenario success|failure]"
+                    );
+                    return ExitCode::from(2);
+                }
+            };
+            match synthetic_model::execute_once(std::path::Path::new(&directory), failure) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("synthetic model check failed: {error}");
@@ -89,7 +113,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: serea-host [doctor|status|smoke --synthetic|model-config-check --synthetic|model-smoke --synthetic --data-dir PATH|run --synthetic --data-dir PATH|stop --synthetic --data-dir PATH]"
+                "usage: serea-host [doctor|status|smoke --synthetic|scheduler-seed --synthetic --data-dir PATH|model-config-check --synthetic|model-smoke --synthetic --data-dir PATH|run --synthetic --data-dir PATH|stop --synthetic --data-dir PATH]"
             );
             ExitCode::from(2)
         }
@@ -381,4 +405,63 @@ fn install_synthetic_registry_fixture(
     )?;
     CapabilityRegistry::activate_generation(&store, events, generation.generation_id(), now)?;
     Ok(generation.generation_id())
+}
+
+#[cfg(feature = "synthetic")]
+fn seed_synthetic_schedule(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use host_clock::WallClock;
+    use serea_event_bus::EventBus;
+    use serea_protocol::{Clock, DataClass, Digest, EventId, ScheduleId};
+    use serea_scheduler::{ScheduleDefinition, Scheduler};
+    use serea_storage::{MissedOccurrencePolicy, ScheduleOwnerKind, ScheduleTriggerKind, Store};
+    use serea_task_engine::TaskEngine;
+    use serea_testkit::DeterministicUlidSource;
+    use std::fs::OpenOptions;
+
+    std::fs::create_dir_all(root)?;
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join("host.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| "synthetic host is already running")?;
+    let _lock_guard = HostLock(lock);
+    let path = root.join("core.sqlite");
+    let clock = WallClock;
+    let now = clock.now_ms()?;
+    let events = EventBus::new(DeterministicUlidSource::new());
+    install_synthetic_registry_fixture(&path, &clock, &events, now)?;
+    let mut scheduler = Scheduler::new(
+        Store::open(&path, &clock)?,
+        TaskEngine::new(Store::open(&path, &clock)?, events.clone()),
+        events,
+    );
+    scheduler.create_schedule(
+        ScheduleDefinition {
+            schedule_id: ScheduleId::new("sch_00000000000000000000000041")?,
+            owner_kind: ScheduleOwnerKind::Host,
+            owner_id: "synthetic-host".to_owned(),
+            trigger_kind: ScheduleTriggerKind::Calendar,
+            recurrence_json: Some(
+                r#"{"version":"1","kind":"ONCE","anchor_local":"2020-01-02T03:04"}"#
+                    .to_owned(),
+            ),
+            event_predicate_json: None,
+            template_json: br#"{"version":"1","title":"Synthetic scheduled task","intent":"PUBLIC synthetic scheduled work."}"#.to_vec(),
+            title_data_class: DataClass::Public,
+            intent_data_class: DataClass::Public,
+            policy_class_rank: 0,
+            approval_policy: serde_json::json!({}),
+            timezone: Some("UTC".to_owned()),
+            missed_policy: MissedOccurrencePolicy::RunOnce,
+        },
+        &EventId::new("evt_00000000000000000000000041")?,
+        &Digest::new(format!("sha256:{}", "b".repeat(64)))?,
+        now,
+    )?;
+    println!(
+        "{{\"event\":\"scheduler_seeded\",\"trigger\":\"calendar_once\",\"data_class\":\"PUBLIC\"}}"
+    );
+    Ok(())
 }

@@ -11,8 +11,9 @@ use serea_event_bus::EventBus;
 use serea_model_router::{
     ModelDeploymentClass, ModelDispatchGateSnapshotV1, ModelDispatchGateSource,
     ModelDispatchGateSourceError, ModelEgressPolicySnapshotV1, ModelRosterEntryV1, ModelRosterV1,
-    ModelRouterHostContextV1, ModelRouterProcessV1, ModelRoutingRequirementsV1,
-    PreparedModelCallDraftV1, PreparedModelCallV1, StructuredRequirementV1,
+    ModelRouterCallFailureV1, ModelRouterHostContextV1, ModelRouterProcessV1,
+    ModelRoutingRequirementsV1, PreparedModelCallDraftV1, PreparedModelCallV1,
+    StructuredRequirementV1,
 };
 use serea_protocol::provider::ModelProvider;
 use serea_protocol::{Clock, CostClass, DataClass, ModelMessage, ModelPurpose, ResponseFormat};
@@ -37,8 +38,11 @@ impl ModelDispatchGateSource for OfflineGate {
     }
 }
 
-fn configured_router() -> Result<(ModelRouterProcessV1, Arc<MockModelProvider>), String> {
-    let descriptors = synthetic_model_roster();
+fn configured_router(
+    failure: bool,
+) -> Result<(ModelRouterProcessV1, Arc<MockModelProvider>), String> {
+    let mut descriptors = synthetic_model_roster();
+    descriptors.truncate(1); // this one-call probe has no fallback candidate
     let provider_id = descriptors
         .first()
         .ok_or_else(|| "synthetic roster is empty".to_owned())?
@@ -48,7 +52,17 @@ fn configured_router() -> Result<(ModelRouterProcessV1, Arc<MockModelProvider>),
         provider_id.clone(),
         descriptors.clone(),
     ));
-    provider.push(ModelScript::EchoText("synthetic response".to_owned()));
+    if failure {
+        provider.push(ModelScript::Fail(serea_protocol::ModelError {
+            kind: serea_protocol::ModelErrorCode::new("SYNTHETIC_FAILURE")
+                .map_err(|_| "synthetic error code rejected")?,
+            message: serea_protocol::ErrorMessage::new("scripted synthetic failure")
+                .map_err(|_| "synthetic error message rejected")?,
+            retryable: false,
+        }));
+    } else {
+        provider.push(ModelScript::EchoText("synthetic response".to_owned()));
+    }
     let providers: Vec<Arc<dyn ModelProvider>> = vec![provider.clone()];
     let mut entries = Vec::with_capacity(descriptors.len());
     let mut prices = Vec::with_capacity(descriptors.len());
@@ -82,7 +96,7 @@ fn configured_router() -> Result<(ModelRouterProcessV1, Arc<MockModelProvider>),
 }
 
 pub(crate) fn config_check() -> Result<(), String> {
-    configured_router().map(|_| ())
+    configured_router(false).map(|_| ())
 }
 
 fn prepared_call() -> Result<PreparedModelCallV1, String> {
@@ -115,7 +129,7 @@ fn prepared_call() -> Result<PreparedModelCallV1, String> {
 }
 
 /// Performs one explicitly requested, durable, in-process fake dispatch.
-pub(crate) fn execute_once(root: &Path) -> Result<(), String> {
+pub(crate) fn execute_once(root: &Path, failure: bool) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|_| "synthetic data directory unavailable")?;
     let lock = OpenOptions::new()
         .read(true)
@@ -135,13 +149,21 @@ pub(crate) fn execute_once(root: &Path) -> Result<(), String> {
             .map_err(|_| "synthetic identifier source unavailable")?,
     );
     let store = Store::open(&db_path, &clock).map_err(|_| "synthetic storage unavailable")?;
-    let (router, provider) = configured_router()?;
+    let (router, provider) = configured_router(failure)?;
     let call = prepared_call()?;
     let host = ModelRouterHostContextV1::new(&store, &events, &clock, &OfflineGate);
-    let response = block_on(router.execute(&call, &host))
-        .map_err(|_| "synthetic Router dispatch refused or failed")?;
-    if response.content != "synthetic response" || provider.calls() != 1 {
-        return Err("synthetic Router result did not match fake provider".to_owned());
+    match (failure, block_on(router.execute(&call, &host))) {
+        (false, Ok(response)) if response.content == "synthetic response" => {}
+        (
+            true,
+            Err(ModelRouterCallFailureV1::DefiniteProvider {
+                retryable: false, ..
+            }),
+        ) => {}
+        _ => return Err("synthetic Router result did not match scripted outcome".to_owned()),
+    }
+    if provider.calls() != 1 {
+        return Err("synthetic Router attempted an unintended retry".to_owned());
     }
     if !store
         .list_unfinished_model_call_attempts()
@@ -150,9 +172,15 @@ pub(crate) fn execute_once(root: &Path) -> Result<(), String> {
     {
         return Err("synthetic dispatch left an unresolved attempt".to_owned());
     }
-    println!(
-        "{{\"event\":\"synthetic_model_completed\",\"provider\":\"in_process_fake\",\"result\":\"success\"}}"
-    );
+    if failure {
+        println!(
+            "{{\"event\":\"synthetic_model_failed\",\"provider\":\"in_process_fake\",\"result\":\"definite_failure\"}}"
+        );
+    } else {
+        println!(
+            "{{\"event\":\"synthetic_model_completed\",\"provider\":\"in_process_fake\",\"result\":\"success\"}}"
+        );
+    }
     store
         .checkpoint_for_close()
         .map_err(|_| "synthetic database checkpoint failed")?;

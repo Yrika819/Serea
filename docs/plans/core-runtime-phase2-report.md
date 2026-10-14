@@ -30,26 +30,37 @@ per-wake JSON reports created-or-reused counts without task content.
 
 ## Verification and remaining gaps
 
-On this working change, `cargo +1.85.0 check -p serea-host --features synthetic
---all-targets --locked` passed. The targeted Host lifecycle suite passed 2/2
-with Rust 1.85.0, including the actual child-process model dispatch and
-database reopen. The revised security guard passed its targeted test. The
-existing Scheduler `calendar_runtime`
-integration suite passed 6/6, covering bounded catch-up, mapped occurrence
-reuse, expired-claim recovery, and RunOnce/Skip policy behavior. The exact
-changed code has not yet completed the requested full workspace verification.
+On this working change, Rust 1.85.0 workspace all-target and all-feature tests,
+all-target/all-feature check, release workspace build, all-feature Clippy with
+`-D warnings`, formatting, workspace smoke, API boundary, identity and docs
+guards passed. The Host lifecycle suite passed 3/3 with both Rust 1.85.0 and
+Stable. The revised security guard and Scheduler `calendar_runtime` suite
+passed (6/6), covering bounded catch-up, mapped occurrence reuse, expired-claim
+recovery, and RunOnce/Skip policy behavior. These local results do not replace
+the final-head GitHub Actions matrix.
+
+The Host harness invokes an explicit synthetic `scheduler-seed` command that
+uses a development-only Registry fixture and the existing
+`Scheduler::create_schedule` API to create a PUBLIC RunOnce calendar schedule.
+It starts the compiled Host child against that database, waits for the durable
+recovery/wake diagnostic, stops it, and independently inspects SQLite. The
+test checks exactly one `TaskCreated` followed by one `ScheduleTaskCreated`,
+matching Task correlation, Schedule ID and occurrence key, Scheduled Task kind
+and origin, and the Task's pinned generation against the active fixture
+generation. A fresh Host restart leaves TaskCreated count at one. This proves
+one due-occurrence and duplicate recovery path through the actual executable;
+it does not cover every crash barrier, timezone edge, or missed policy.
 
 The Core `scheduler_wake` regression test also runs two consecutive empty
 wake cycles on one disposable database to verify that the consumer fence is
-released for the next pass. It does not seed a due schedule and does not prove
-scheduled Task/audit attribution through the Host process.
+released for the next pass.
 
-The Scheduler child-process test still covers only start, single-instance
-refusal, cooperative shutdown, process termination after readiness, relaunch,
-and database reopening. The new model success child process checks terminal
-audit state, but neither test establishes deterministic barriers at the
-requested Scheduler/Model durable boundaries. Scheduler occurrence-to-Task
-attribution is not yet proven through the compiled Host executable. Process
+The existing lifecycle child test still covers start, single-instance
+refusal, cooperative shutdown, termination after readiness, relaunch, and
+database reopening. The added Scheduler child test proves one full durable
+occurrence-to-Task path and duplicate recovery; the model child test proves
+success/failure terminal audit state. Neither establishes deterministic
+barriers at the requested Scheduler/Model crash boundaries. Process
 termination is not a physical power-loss test.
 
 The Owner-approved guard correction is in
@@ -66,7 +77,8 @@ keeps Core free of Router references, requires default Host features to be
 empty, requires optional Router/testkit dependencies behind `synthetic`, keeps
 `main.rs` free of Router calls, and checks the dedicated adapter for the fake
 provider, Router execution, network adapters, credentials, and Capability
-invocation. Cargo tree inspection confirms default Host omits
+invocation. The test runs Cargo dependency-tree checks for default Core/default
+Host and the opt-in Host feature. It confirms default Host omits
 `serea-model-router` and `serea-testkit`; `--features synthetic` includes them.
 `--all-features` intentionally enables that test surface and is not the
 default/release exclusion proof. The test runs in Full CI's `serea-task-engine`
@@ -79,15 +91,17 @@ zero spend cap, an offline dispatch gate, and `MockModelProvider` with a
 deterministic echo script. It invokes the existing
 `ModelRouterProcessV1::execute` while SQLite remains synchronous. A child
 process test reopens the same v8 database and verifies durable `MODEL_CALLED`
-and `MODEL_COMPLETED` audit events and no unresolved attempt. This is success
-path evidence only: the command is opt-in, has no Task correlation, and normal
-Host startup never calls it or submits Scheduler-created Tasks to a model.
+and `MODEL_COMPLETED` audit events and no unresolved attempt. An explicit
+`--scenario failure` path returns a typed definite provider failure, records
+`MODEL_FAILED`, verifies exactly one fake call and no unresolved attempt, and
+uses a separate disposable database. These commands are opt-in, have no Task
+correlation, and normal Host startup never calls them or submits
+Scheduler-created Tasks to a model.
 
-Host-boundary tests for typed fake failure, provider identity mismatch,
-timeout, cancellation, budget/token limits, crash after intent, unresolved
-call recovery, conservative ambiguity, and no automatic redispatch remain
-unimplemented. Existing Router crate tests do not substitute for these Host
-scenarios.
+Host-boundary tests for provider identity mismatch, timeout, cancellation,
+budget/token limits, crash after intent, unresolved-call recovery, conservative
+ambiguity, and no automatic redispatch remain unimplemented. Existing Router
+crate tests do not substitute for these Host scenarios.
 
 Platform signal/console handling and Scheduler throughput/recovery measurements
 remain outstanding. A Rust 1.85.0 Linux x64 Release Host was measured against a

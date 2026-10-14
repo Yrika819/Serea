@@ -1544,6 +1544,35 @@ fn model_execution_is_confined_to_explicit_synthetic_host_feature() {
     assert!(!core_manifest.contains("serea-model-router"));
     assert!(!core_source.contains("ModelRouter"));
     assert!(!core_source.contains("ModelProvider::generate"));
+
+    let dependency_tree = |package: &str, features: Option<&str>| {
+        let mut command = Command::new("cargo");
+        command.current_dir(&root).args([
+            "tree",
+            "-p",
+            package,
+            "-e",
+            "normal",
+            "--locked",
+            "--offline",
+        ]);
+        if let Some(features) = features {
+            command.args(["--features", features]);
+        }
+        let output = command
+            .output()
+            .expect("inspect locked Cargo dependency tree");
+        assert!(output.status.success(), "cargo tree failed for {package}");
+        String::from_utf8(output.stdout).expect("cargo tree is utf-8")
+    };
+    for package in ["serea-core", "serea-host"] {
+        let default_tree = dependency_tree(package, None);
+        assert!(!default_tree.contains("serea-model-router"));
+        assert!(!default_tree.contains("serea-testkit"));
+    }
+    let synthetic_tree = dependency_tree("serea-host", Some("synthetic"));
+    assert!(synthetic_tree.contains("serea-model-router"));
+    assert!(synthetic_tree.contains("serea-testkit"));
     assert!(host_manifest.contains("default = []"));
     assert!(host_manifest.contains("serea-model-router = { workspace = true, optional = true }"));
     assert!(host_manifest.contains("synthetic = ["));

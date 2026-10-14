@@ -28,6 +28,25 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         #[cfg(feature = "synthetic")]
+        "run" if std::env::args().any(|arg| arg == "--synthetic") => match run_synthetic_host() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_error) => {
+                eprintln!("{{\"event\":\"host_error\",\"code\":\"runtime_failed\"}}");
+                ExitCode::FAILURE
+            }
+        },
+        #[cfg(feature = "synthetic")]
+        "stop" if std::env::args().any(|arg| arg == "--synthetic") => {
+            let Some(directory) = option_value("--data-dir") else {
+                eprintln!("usage: serea-host stop --synthetic --data-dir PATH");
+                return ExitCode::from(2);
+            };
+            match std::fs::write(std::path::Path::new(&directory).join("host.stop"), b"stop") {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::FAILURE,
+            }
+        }
+        #[cfg(feature = "synthetic")]
         "smoke" if std::env::args().any(|arg| arg == "--synthetic") => match synthetic_smoke() {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
@@ -36,9 +55,99 @@ fn main() -> ExitCode {
             }
         },
         _ => {
-            eprintln!("usage: serea-host [doctor|status|smoke --synthetic]");
+            eprintln!(
+                "usage: serea-host [doctor|status|smoke --synthetic|run --synthetic --data-dir PATH|stop --synthetic --data-dir PATH]"
+            );
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(feature = "synthetic")]
+fn option_value(name: &str) -> Option<String> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == name {
+            return args.next();
+        }
+    }
+    None
+}
+
+#[cfg(feature = "synthetic")]
+fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
+    use serea_core::Core;
+    use serea_event_bus::EventBus;
+    use serea_protocol::{Clock, EpochMillis};
+    use serea_testkit::DeterministicUlidSource;
+    use std::fs::OpenOptions;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    struct WallClock;
+    impl Clock for WallClock {
+        fn now_ms(&self) -> Result<EpochMillis, serea_protocol::ProtocolError> {
+            // This is the trusted OS clock adapter at the executable boundary;
+            // Core and Scheduler still receive time through the injected port.
+            #[allow(clippy::disallowed_methods)]
+            let millis = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| serea_protocol::ProtocolError::MalformedValue {
+                    field: serea_protocol::ValueField::Timestamp,
+                    reason: serea_protocol::ValueRejection::OutOfRange,
+                })?
+                .as_millis();
+            EpochMillis::new(i64::try_from(millis).unwrap_or(i64::MAX))
+        }
+    }
+
+    let directory = option_value("--data-dir").ok_or("--data-dir is required")?;
+    let root = std::path::PathBuf::from(directory);
+    std::fs::create_dir_all(&root)?;
+    let lock_path = root.join("host.lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| "synthetic host is already running")?;
+    let _lock_guard = HostLock(lock);
+    let stop = root.join("host.stop");
+    let db = root.join("core.sqlite");
+    let clock = WallClock;
+    let epoch = clock.now_ms()?;
+    // Keep separate host processes from replaying the deterministic testkit
+    // source at the same wall-clock millisecond during fast crash/relaunch.
+    let ulid_ms = u64::try_from(epoch.get())
+        .map_err(|_| "clock before ULID epoch")?
+        .checked_add(u64::from(std::process::id()))
+        .ok_or("identifier clock overflow")?;
+    let events = EventBus::new(DeterministicUlidSource::starting_at(ulid_ms)?);
+    let mut core = Core::open(&db, &clock, events)?;
+    if core.schema_version()? != 8 {
+        return Err("unexpected canonical schema version".into());
+    }
+    core.recover(epoch, "synthetic-host")?;
+    println!("{{\"event\":\"host_ready\",\"schema_version\":8,\"mode\":\"synthetic\"}}");
+    loop {
+        if stop.exists() {
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(200));
+    }
+    let _ = std::fs::remove_file(&stop);
+    core.shutdown()?;
+    println!("{{\"event\":\"host_stopped\",\"mode\":\"synthetic\"}}");
+    Ok(())
+}
+
+#[cfg(feature = "synthetic")]
+struct HostLock(std::fs::File);
+
+#[cfg(feature = "synthetic")]
+impl Drop for HostLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.0);
     }
 }
 

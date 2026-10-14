@@ -90,6 +90,9 @@ jobs:
       - name: Synthetic Core startup, task lifecycle, shutdown and recovery
         run: cargo +stable run --locked -p serea-host --features synthetic -- smoke --synthetic
 
+      - name: Synthetic Host child-process lifecycle and crash relaunch
+        run: cargo +stable test --locked -p serea-host --features synthetic --test host_lifecycle
+
       - name: Verify generated native executable architecture
         shell: bash
         run: python3 tools/check_native_binary.py target/release/serea-host${{ matrix.os == 'windows' && '.exe' || '' }} ${{ matrix.target }}
@@ -167,6 +170,9 @@ jobs:
 
       - name: Synthetic host smoke
         run: cargo +1.85.0 run -p serea-host --features synthetic --locked -- smoke --synthetic
+
+      - name: Synthetic Host child-process lifecycle and crash relaunch
+        run: cargo +1.85.0 test -p serea-host --features synthetic --locked --test host_lifecycle
 
       - name: Verify generated native executable architecture
         shell: bash

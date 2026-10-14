@@ -260,6 +260,8 @@ impl Scheduler {
         }
 
         let calendar_tasks_created_or_reused = self.process_calendar_due(now, lease_owner)?;
+        self.store
+            .transact(|tx| tx.release_scheduler_consumer(&consumer))?;
         Ok(SchedulerRecoveryReport {
             task_recovery,
             expired_claims_recovered,

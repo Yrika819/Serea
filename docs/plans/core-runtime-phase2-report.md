@@ -56,8 +56,13 @@ Router unit/crash tests do not prove Host integration.
 
 Platform signal/console handling and resource benchmarks (idle CPU/RSS,
 scheduler latency/throughput, shutdown and recovery duration) remain
-unmeasured. The one-second wake cadence is a configured behavior, not a
-measured latency result. No measurements are inferred for other architectures.
+partially measured. On Linux x64, one Rust 1.85.0 debug Host over a disposable
+empty database reported 12,972 KiB RSS and 5.2% of one core over a five-second
+idle sample. Start-to-ready took 193.68 ms. Shutdown took 265.95 ms including
+the separate stop command. These are single native observations, not stable
+benchmarks. Scheduler wake latency and bounded-work throughput have not been
+measured; the one-second wake cadence is configuration, not a measured
+latency result. No measurements are inferred for other architectures.
 
 ## Publication and CI
 

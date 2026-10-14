@@ -103,17 +103,17 @@ budget/token limits, crash after intent, unresolved-call recovery, conservative
 ambiguity, and no automatic redispatch remain unimplemented. Existing Router
 crate tests do not substitute for these Host scenarios.
 
-Platform signal/console handling and Scheduler throughput/recovery measurements
-remain outstanding. A Rust 1.85.0 Linux x64 Release Host was measured against a
-disposable empty database: idle RSS 11,668 KiB; idle CPU 1.00% of one core over
-five seconds; ready in 48.85 ms; stop-command-inclusive shutdown in 65.82 ms.
+Platform signal/console handling remains outstanding. A Rust 1.85.0 Linux x64
+Release Host was measured against disposable databases: idle RSS 11,708 KiB;
+idle CPU 1.00% of one core over five seconds; ready in 44.67 ms; one due
+calendar Task recovered in 30.43 ms from process start; one fake model command
+completed in 30.23 ms; shutdown took 115.70 ms after issuing the stop command.
 The native measurement sampled `/proc/<pid>/status` and `/proc/<pid>/stat` at
-100 clock ticks/second, then used the existing stop command. These are single
-run observations, not stable benchmarks. Scheduler wake latency and throughput
-were not measured; the one-second wake cadence is configuration, not a
-measured latency result. No estimates are made for other architectures. The
-earlier Rust 1.85.0 debug observation was 12,972 KiB RSS, 5.2% CPU, 193.68 ms
-startup, and 265.95 ms shutdown under its separate one-off conditions.
+100 clock ticks/second. These single-run timings are not stable benchmarks;
+the model and task observations are one-call/one-task latencies, not throughput
+tests. No estimates are made for other architectures. The earlier Rust 1.85.0
+debug observation was 12,972 KiB RSS, 5.2% CPU, 193.68 ms startup, and 265.95
+ms shutdown under its separate one-off conditions.
 
 ## Publication and CI
 

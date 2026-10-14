@@ -24,6 +24,32 @@ fn start(directory: &Path) -> Child {
         .expect("launch synthetic host")
 }
 
+#[cfg(feature = "synthetic-test-hooks")]
+fn start_at_scheduler_barrier(directory: &Path, barrier_dir: &Path, phase: &str) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["run", "--synthetic", "--data-dir"])
+        .arg(directory)
+        .env("SEREA_SCHEDULER_TEST_BARRIER", phase)
+        .env("SEREA_SCHEDULER_TEST_BARRIER_DIR", barrier_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("launch Host at Scheduler crash barrier")
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+fn wait_for_barrier(child: &mut Child, barrier_dir: &Path, phase: &str) {
+    let marker = barrier_dir.join(format!("{phase}.reached"));
+    let deadline = monotonic_now() + Duration::from_secs(30);
+    while !marker.exists() {
+        if let Some(status) = child.try_wait().expect("check barrier child") {
+            panic!("Host exited before {phase} barrier: {status}");
+        }
+        assert!(monotonic_now() < deadline, "{phase} barrier deadline");
+        std::thread::park_timeout(Duration::from_millis(5));
+    }
+}
+
 fn wait_ready(child: &mut Child) -> BufReader<std::process::ChildStdout> {
     let stdout = child.stdout.take().expect("captured stdout");
     let mut reader = BufReader::new(stdout);
@@ -316,6 +342,139 @@ fn compiled_host_creates_one_durable_task_for_a_due_calendar_occurrence() {
     std::fs::remove_dir_all(&directory).expect("clean Scheduler data directory");
 }
 
+#[cfg(feature = "synthetic-test-hooks")]
+#[test]
+fn actual_host_scheduler_crash_barriers_recover_durable_occurrences() {
+    use serea_protocol::{EpochMillis, EventKind, ScheduleId};
+    use serea_storage::{MissedOccurrencePolicy, Store};
+
+    for phase in [
+        "before-admission",
+        "after-admission",
+        "after-claim",
+        "before-task-commit",
+        "after-task-commit",
+    ] {
+        let directory = std::env::temp_dir().join(format!(
+            "serea-host-scheduler-barrier-{phase}-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let barrier_dir = directory.join("barrier");
+        std::fs::create_dir_all(&directory).expect("create Scheduler barrier database");
+        let seeded = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+            .args(["scheduler-seed", "--synthetic", "--data-dir"])
+            .arg(&directory)
+            .output()
+            .expect("seed synthetic schedule through Scheduler API");
+        assert!(seeded.status.success(), "seed schedule before crash test");
+
+        let mut child = start_at_scheduler_barrier(&directory, &barrier_dir, phase);
+        wait_for_barrier(&mut child, &barrier_dir, phase);
+        let database = directory.join("core.sqlite");
+        let inspection_clock = serea_testkit::TestClock::at_epoch();
+        let store =
+            Store::open(&database, &inspection_clock).expect("inspect Scheduler barrier DB");
+        let schedule_id = ScheduleId::new("sch_00000000000000000000000041").unwrap();
+        let inspection_time = EpochMillis::new(8_000_000_000_000).unwrap();
+        let occurrence_rows = store
+            .transact(|tx| {
+                let due = tx.due_schedule_occurrences(&schedule_id, inspection_time, 16)?;
+                let claimed = tx.expired_claimed_schedule_occurrences(inspection_time, 16)?;
+                Ok((due, claimed))
+            })
+            .expect("inspect pending and claimed occurrences");
+        let audit = store
+            .replay_events(None, None, 256)
+            .expect("inspect Scheduler audit");
+        let task_created = audit
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(item,
+            serea_storage::ReplayItem::Event { event } if event.kind == EventKind::TaskCreated)
+            })
+            .count();
+        match phase {
+            "before-admission" => {
+                assert!(occurrence_rows.0.is_empty());
+                assert!(occurrence_rows.1.is_empty());
+                assert_eq!(task_created, 0);
+            }
+            "after-admission" => {
+                assert_eq!(occurrence_rows.0.len(), 1);
+                assert!(occurrence_rows.1.is_empty());
+                assert_eq!(task_created, 0);
+            }
+            "after-claim" | "before-task-commit" => {
+                assert!(occurrence_rows.0.is_empty());
+                assert_eq!(occurrence_rows.1.len(), 1);
+                assert_eq!(task_created, 0);
+            }
+            "after-task-commit" => {
+                assert_eq!(task_created, 1);
+                assert_eq!(occurrence_rows.0.len() + occurrence_rows.1.len(), 0);
+            }
+            _ => unreachable!(),
+        }
+        store
+            .checkpoint_for_close()
+            .expect("checkpoint Scheduler inspection");
+        drop(store);
+        child
+            .kill()
+            .expect("kill Host at Scheduler durable boundary");
+        assert!(!child.wait().expect("reap killed Scheduler Host").success());
+
+        let mut restart = Command::new(env!("CARGO_BIN_EXE_serea-host"));
+        restart
+            .args(["run", "--synthetic", "--data-dir"])
+            .arg(&directory)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // Advance the injected Host clock past both the Scheduler consumer
+        // fence and any occurrence claim. This exercises lease recovery
+        // without waiting in real time.
+        restart.env("SEREA_TEST_CLOCK_NOW_MS", "4000000000000");
+        let mut restarted = restart.spawn().expect("restart Host after Scheduler crash");
+        let output = wait_ready(&mut restarted);
+        stop(&directory, restarted, output);
+
+        let recovered =
+            Store::open(&database, &inspection_clock).expect("inspect recovered Scheduler DB");
+        let final_audit = recovered
+            .replay_events(None, None, 256)
+            .expect("replay post-recovery audit");
+        let tasks = final_audit
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(item,
+            serea_storage::ReplayItem::Event { event } if event.kind == EventKind::TaskCreated)
+            })
+            .count();
+        let schedule_attribution = final_audit.items.iter().filter(|item| matches!(item,
+            serea_storage::ReplayItem::Event { event } if event.kind == EventKind::ScheduleTaskCreated)).count();
+        assert_eq!(tasks, 1, "one durable Task after {phase} recovery");
+        assert_eq!(
+            schedule_attribution, 1,
+            "one occurrence attribution after {phase} recovery"
+        );
+        assert!(matches!(
+            recovered
+                .transact(|tx| tx.load_schedule(&schedule_id))
+                .unwrap()
+                .missed_policy,
+            MissedOccurrencePolicy::RunOnce
+        ));
+        recovered
+            .checkpoint_for_close()
+            .expect("checkpoint recovered Scheduler DB");
+        drop(recovered);
+        std::fs::remove_dir_all(&directory).expect("clean Scheduler barrier directory");
+    }
+}
+
 #[test]
 fn fresh_host_startup_reconciles_unresolved_model_dispatch_once() {
     use serea_protocol::{
@@ -437,4 +596,174 @@ fn fresh_host_startup_reconciles_unresolved_model_dispatch_once() {
         .expect("checkpoint recovery database");
     drop(store);
     std::fs::remove_dir_all(&directory).expect("clean model recovery directory");
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[test]
+fn actual_host_model_dispatch_crash_barriers_recover_without_redispatch() {
+    use serea_protocol::RequestId;
+    use serea_storage::{ModelAttemptState, Store};
+
+    for phase in ["pre-dispatch", "provider", "terminal"] {
+        let directory = std::env::temp_dir().join(format!(
+            "serea-host-model-barrier-{phase}-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let barrier_dir = directory.join("barrier");
+        std::fs::create_dir_all(&directory).expect("create disposable model barrier directory");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+            .args(["model-smoke", "--synthetic", "--data-dir"])
+            .arg(&directory)
+            .args([
+                "--scenario",
+                "success",
+                "--test-barrier",
+                phase,
+                "--test-barrier-dir",
+            ])
+            .arg(&barrier_dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("launch actual Host model dispatch");
+
+        let marker = barrier_dir.join(format!("{phase}.reached"));
+        let deadline = monotonic_now() + Duration::from_secs(30);
+        while !marker.exists() {
+            if let Some(status) = child.try_wait().expect("check model child") {
+                panic!("Host exited before {phase} barrier: {status}");
+            }
+            assert!(monotonic_now() < deadline, "model {phase} barrier deadline");
+            std::thread::park_timeout(Duration::from_millis(5));
+        }
+
+        let database = directory.join("core.sqlite");
+        let clock = serea_testkit::TestClock::at_epoch();
+        let store = Store::open(&database, &clock).expect("inspect barrier durable state");
+        let replay = store
+            .replay_events(None, None, 128)
+            .expect("read dispatch audit at barrier");
+        let called_events = replay
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(item, serea_storage::ReplayItem::Event { event }
+                if event.kind == serea_protocol::EventKind::ModelCalled)
+            })
+            .count();
+        assert_eq!(called_events, usize::from(phase != "pre-dispatch"));
+        let attempts = store
+            .list_unfinished_model_call_attempts()
+            .expect("inspect active dispatch intent");
+
+        let request_id = match phase {
+            "pre-dispatch" => {
+                assert!(attempts.is_empty());
+                None
+            }
+            "provider" => {
+                assert_eq!(attempts.len(), 1);
+                assert_eq!(attempts[0].state, ModelAttemptState::DispatchIntent);
+                Some(attempts[0].request_id.clone())
+            }
+            "terminal" => {
+                assert!(
+                    attempts.is_empty(),
+                    "terminal barrier is after durable completion"
+                );
+                let completed = replay.items.iter().find_map(|item| match item {
+                    serea_storage::ReplayItem::Event { event }
+                        if event.kind == serea_protocol::EventKind::ModelCompleted =>
+                    {
+                        event
+                            .payload
+                            .get("request_id")
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|id| RequestId::new(id.to_owned()).ok())
+                    }
+                    _ => None,
+                });
+                // Model event metadata uses its canonical correlation field;
+                // inspect attempts by their durable event identity below.
+                Some(completed.expect("completed durable request identity"))
+            }
+            _ => unreachable!(),
+        };
+        store
+            .checkpoint_for_close()
+            .expect("checkpoint inspection connection");
+        drop(store);
+
+        child
+            .kill()
+            .expect("kill Host at deterministic model barrier");
+        assert!(!child.wait().expect("reap killed model Host").success());
+
+        let mut restarted = start(&directory);
+        let output = wait_ready(&mut restarted);
+        stop(&directory, restarted, output);
+
+        let reopened =
+            Store::open(&database, &clock).expect("reopen model database after recovery");
+        if let Some(request_id) = request_id {
+            let attempt = reopened
+                .get_model_call_attempt(&request_id)
+                .expect("read attempt after process restart")
+                .expect("original request id remains durable");
+            if phase == "provider" {
+                assert_eq!(attempt.state, ModelAttemptState::Ambiguous);
+                assert_eq!(attempt.actual_cost_usd_micros, None);
+                assert!(
+                    reopened
+                        .model_usage_for_request(&request_id)
+                        .unwrap()
+                        .is_none()
+                );
+            } else {
+                assert_eq!(attempt.state, ModelAttemptState::Completed);
+                assert!(
+                    reopened
+                        .model_usage_for_request(&request_id)
+                        .unwrap()
+                        .is_some()
+                );
+            }
+        } else {
+            assert!(
+                reopened
+                    .list_unfinished_model_call_attempts()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        let after = reopened
+            .replay_events(None, None, 128)
+            .expect("inspect recovered audit");
+        let called_after = after.items.iter().filter(|item| matches!(item,
+            serea_storage::ReplayItem::Event { event } if event.kind == serea_protocol::EventKind::ModelCalled)).count();
+        let terminal_after = after
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(item,
+            serea_storage::ReplayItem::Event { event } if matches!(event.kind,
+                serea_protocol::EventKind::ModelFailed | serea_protocol::EventKind::ModelCompleted))
+            })
+            .count();
+        let expected_dispatches = usize::from(phase != "pre-dispatch");
+        assert_eq!(
+            called_after, expected_dispatches,
+            "recovery never creates a new dispatch"
+        );
+        assert_eq!(
+            terminal_after, expected_dispatches,
+            "terminal audit remains singular"
+        );
+        reopened
+            .checkpoint_for_close()
+            .expect("checkpoint reopened model database");
+        drop(reopened);
+        std::fs::remove_dir_all(&directory).expect("clean model barrier directory");
+    }
 }

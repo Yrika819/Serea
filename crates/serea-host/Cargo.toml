@@ -25,4 +25,5 @@ getrandom = { workspace = true, optional = true }
 [features]
 default = []
 synthetic = ["dep:serea-testkit", "dep:serea-capability", "dep:serea-storage", "dep:serea-scheduler", "dep:serea-model-router", "dep:async-trait", "dep:serde_json", "dep:fs2", "dep:getrandom"]
+synthetic-test-hooks = ["synthetic", "serea-scheduler/test-hooks"]
 

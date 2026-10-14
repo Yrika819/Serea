@@ -19,6 +19,8 @@ use serea_protocol::provider::ModelProvider;
 use serea_protocol::{
     Clock, CostClass, DataClass, ModelMessage, ModelPurpose, ResponseFormat, TimestampMs,
 };
+#[cfg(feature = "synthetic-test-hooks")]
+use serea_protocol::{ModelRequest, ModelResponse, ProviderHealth, ProviderId};
 use serea_storage::{ModelPriceSnapshot, Store, UsdMicros};
 use serea_testkit::{MockModelProvider, ModelScript, synthetic_model_roster};
 
@@ -40,6 +42,80 @@ impl ModelDispatchGateSource for OfflineGate {
 
 fn configured_router(
     failure: bool,
+) -> Result<(ModelRouterProcessV1, Arc<MockModelProvider>), String> {
+    configured_router_with_barrier(failure, None)
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[derive(Clone)]
+struct TestBarrier {
+    directory: std::path::PathBuf,
+    phase: &'static str,
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+impl TestBarrier {
+    fn wait(&self) -> Result<(), String> {
+        std::fs::create_dir_all(&self.directory).map_err(|_| "barrier directory unavailable")?;
+        std::fs::write(
+            self.directory.join(format!("{}.reached", self.phase)),
+            b"ready",
+        )
+        .map_err(|_| "barrier marker unavailable")?;
+        let release = self.directory.join(format!("{}.release", self.phase));
+        for _ in 0..24_000 {
+            if release.exists() {
+                return Ok(());
+            }
+            std::thread::park_timeout(std::time::Duration::from_millis(5));
+        }
+        Err("test barrier deadline expired".to_owned())
+    }
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+struct TestBarrierProvider {
+    inner: Arc<MockModelProvider>,
+    barrier: TestBarrier,
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[async_trait::async_trait]
+impl ModelProvider for TestBarrierProvider {
+    fn provider_id(&self) -> ProviderId {
+        self.inner.provider_id()
+    }
+
+    fn models(&self) -> Vec<serea_protocol::ModelDescriptor> {
+        self.inner.models()
+    }
+
+    async fn generate(
+        &self,
+        request: &ModelRequest,
+        context: &serea_protocol::provider::ModelCallContext,
+    ) -> Result<ModelResponse, serea_protocol::ModelError> {
+        self.barrier
+            .wait()
+            .map_err(|_| serea_protocol::ModelError {
+                kind: serea_protocol::ModelErrorCode::new("TEST_BARRIER_FAILED")
+                    .unwrap_or_else(|_| unreachable!()),
+                message: serea_protocol::ErrorMessage::new("synthetic test barrier failed")
+                    .unwrap_or_else(|_| unreachable!()),
+                retryable: false,
+            })?;
+        self.inner.generate(request, context).await
+    }
+
+    async fn health(&self) -> ProviderHealth {
+        self.inner.health().await
+    }
+}
+
+fn configured_router_with_barrier(
+    failure: bool,
+    #[cfg(feature = "synthetic-test-hooks")] barrier: Option<TestBarrier>,
+    #[cfg(not(feature = "synthetic-test-hooks"))] _barrier: Option<()>,
 ) -> Result<(ModelRouterProcessV1, Arc<MockModelProvider>), String> {
     let mut descriptors = synthetic_model_roster();
     descriptors.truncate(1); // this one-call probe has no fallback candidate
@@ -63,6 +139,15 @@ fn configured_router(
     } else {
         provider.push(ModelScript::EchoText("synthetic response".to_owned()));
     }
+    #[cfg(feature = "synthetic-test-hooks")]
+    let providers: Vec<Arc<dyn ModelProvider>> = match barrier {
+        Some(barrier) => vec![Arc::new(TestBarrierProvider {
+            inner: provider.clone(),
+            barrier,
+        })],
+        None => vec![provider.clone()],
+    };
+    #[cfg(not(feature = "synthetic-test-hooks"))]
     let providers: Vec<Arc<dyn ModelProvider>> = vec![provider.clone()];
     let mut entries = Vec::with_capacity(descriptors.len());
     let mut prices = Vec::with_capacity(descriptors.len());
@@ -142,7 +227,43 @@ fn prepared_call() -> Result<PreparedModelCallV1, String> {
 }
 
 /// Performs one explicitly requested, durable, in-process fake dispatch.
+#[cfg(not(feature = "synthetic-test-hooks"))]
 pub(crate) fn execute_once(root: &Path, failure: bool) -> Result<(), String> {
+    execute_once_inner(root, failure, None)
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+pub(crate) fn execute_once_with_test_barrier(
+    root: &Path,
+    failure: bool,
+    phase: Option<&str>,
+    barrier_directory: Option<&Path>,
+) -> Result<(), String> {
+    let barrier = match (phase, barrier_directory) {
+        (None, None) => None,
+        (Some("pre-dispatch"), Some(directory)) => Some(TestBarrier {
+            directory: directory.to_path_buf(),
+            phase: "pre-dispatch",
+        }),
+        (Some("provider"), Some(directory)) => Some(TestBarrier {
+            directory: directory.to_path_buf(),
+            phase: "provider",
+        }),
+        (Some("terminal"), Some(directory)) => Some(TestBarrier {
+            directory: directory.to_path_buf(),
+            phase: "terminal",
+        }),
+        _ => return Err("invalid test barrier configuration".to_owned()),
+    };
+    execute_once_inner(root, failure, barrier)
+}
+
+fn execute_once_inner(
+    root: &Path,
+    failure: bool,
+    #[cfg(feature = "synthetic-test-hooks")] barrier: Option<TestBarrier>,
+    #[cfg(not(feature = "synthetic-test-hooks"))] _barrier: Option<()>,
+) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|_| "synthetic data directory unavailable")?;
     let lock = OpenOptions::new()
         .read(true)
@@ -163,10 +284,23 @@ pub(crate) fn execute_once(root: &Path, failure: bool) -> Result<(), String> {
         .map_err(|_| "synthetic identifier entropy unavailable")?;
     let events = EventBus::new(ids);
     let store = Store::open(&db_path, &clock).map_err(|_| "synthetic storage unavailable")?;
-    let (router, provider) = configured_router(failure)?;
+    #[cfg(feature = "synthetic-test-hooks")]
+    let provider_barrier = barrier.clone().filter(|b| b.phase == "provider");
+    #[cfg(not(feature = "synthetic-test-hooks"))]
+    let provider_barrier = None;
+    let (router, provider) = configured_router_with_barrier(failure, provider_barrier)?;
     let call = prepared_call()?;
     let host = ModelRouterHostContextV1::new(&store, &events, &clock, &OfflineGate);
-    match (failure, block_on(router.execute(&call, &host))) {
+    #[cfg(feature = "synthetic-test-hooks")]
+    if let Some(barrier) = barrier.clone().filter(|b| b.phase == "pre-dispatch") {
+        barrier.wait()?;
+    }
+    let outcome = block_on(router.execute(&call, &host));
+    #[cfg(feature = "synthetic-test-hooks")]
+    if let Some(barrier) = barrier.filter(|b| b.phase == "terminal") {
+        barrier.wait()?;
+    }
+    match (failure, outcome) {
         (false, Ok(response)) if response.content == "synthetic response" => {}
         (
             true,

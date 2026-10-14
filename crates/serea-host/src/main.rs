@@ -102,7 +102,26 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            match synthetic_model::execute_once(std::path::Path::new(&directory), failure) {
+            #[cfg(feature = "synthetic-test-hooks")]
+            let result = synthetic_model::execute_once_with_test_barrier(
+                std::path::Path::new(&directory),
+                failure,
+                option_value("--test-barrier").as_deref(),
+                option_value("--test-barrier-dir")
+                    .as_deref()
+                    .map(std::path::Path::new),
+            );
+            #[cfg(not(feature = "synthetic-test-hooks"))]
+            let result = {
+                if option_value("--test-barrier").is_some()
+                    || option_value("--test-barrier-dir").is_some()
+                {
+                    eprintln!("test barriers require the synthetic-test-hooks feature");
+                    return ExitCode::from(2);
+                }
+                synthetic_model::execute_once(std::path::Path::new(&directory), failure)
+            };
+            match result {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("synthetic model check failed: {error}");

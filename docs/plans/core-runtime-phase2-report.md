@@ -241,3 +241,15 @@ tests. The model smoke path remains an explicit short-lived command, so it has
 no long-running fake provider operation to pause at those boundaries.
 Process-kill tests do not prove physical power-loss durability or exactly-once
 external effects.
+
+### Release resource sample
+
+On the available native Linux x86_64 runner, the Stable optimized synthetic
+Host was measured in a fresh disposable directory/database. `host_ready` took
+55.42 ms from process launch, resident memory was 11,932 KiB after readiness,
+and CPU use over a 5-second idle sample was 1.60% of one core. The stop-command
+to process-exit interval was 115.66 ms, including creation/invocation of the
+separate stop process. These are one-run observations, not targets or
+cross-platform estimates. Scheduler latency/throughput and repeated fake-model
+throughput were not measured in this sample; the child E2E is correctness
+evidence only.

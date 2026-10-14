@@ -107,3 +107,52 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
     assert!(directory.join("core.sqlite").exists());
     std::fs::remove_dir_all(&directory).expect("clean disposable data directory");
 }
+
+#[test]
+fn explicit_model_smoke_runs_router_and_leaves_recoverable_sqlite_state() {
+    let directory = std::env::temp_dir().join(format!(
+        "serea-host-model-smoke-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&directory).expect("create disposable model data directory");
+    let output = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["model-smoke", "--synthetic", "--data-dir"])
+        .arg(&directory)
+        .output()
+        .expect("run actual synthetic Host model command");
+    assert!(
+        output.status.success(),
+        "synthetic model Host failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("synthetic_model_completed"));
+
+    let clock = serea_testkit::TestClock::at_epoch();
+    let store = serea_storage::Store::open(&directory.join("core.sqlite"), &clock)
+        .expect("reopen durable model database");
+    assert!(
+        store
+            .list_unfinished_model_call_attempts()
+            .expect("inspect durable model attempts")
+            .is_empty()
+    );
+    let audit = store
+        .replay_events(None, None, 256)
+        .expect("inspect durable model audit");
+    let kinds: Vec<_> = audit
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            serea_storage::ReplayItem::Event { event } => Some(event.kind),
+            _ => None,
+        })
+        .collect();
+    assert!(kinds.contains(&serea_protocol::EventKind::ModelCalled));
+    assert!(kinds.contains(&serea_protocol::EventKind::ModelCompleted));
+    store
+        .checkpoint_for_close()
+        .expect("close reopened database cleanly");
+    std::fs::remove_dir_all(&directory).expect("clean disposable model directory");
+}

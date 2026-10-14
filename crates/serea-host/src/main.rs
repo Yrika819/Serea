@@ -7,6 +7,8 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "synthetic")]
 mod host_clock;
+#[cfg(feature = "synthetic")]
+mod synthetic_model;
 
 #[cfg(feature = "synthetic")]
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
@@ -56,9 +58,38 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        #[cfg(feature = "synthetic")]
+        "model-config-check" if std::env::args().any(|arg| arg == "--synthetic") => {
+            match synthetic_model::config_check() {
+                Ok(()) => {
+                    println!(
+                        "{{\"event\":\"synthetic_model_configured\",\"provider\":\"in_process_fake\",\"dispatch\":false}}"
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(_) => ExitCode::FAILURE,
+            }
+        }
+        #[cfg(feature = "synthetic")]
+        "model-smoke" if std::env::args().any(|arg| arg == "--synthetic") => {
+            let Some(directory) = option_value("--data-dir") else {
+                eprintln!("usage: serea-host model-smoke --synthetic --data-dir PATH");
+                return ExitCode::from(2);
+            };
+            match synthetic_model::execute_once(std::path::Path::new(&directory)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("synthetic model check failed: {error}");
+                    eprintln!(
+                        "{{\"event\":\"synthetic_model_error\",\"code\":\"dispatch_failed\"}}"
+                    );
+                    ExitCode::FAILURE
+                }
+            }
+        }
         _ => {
             eprintln!(
-                "usage: serea-host [doctor|status|smoke --synthetic|run --synthetic --data-dir PATH|stop --synthetic --data-dir PATH]"
+                "usage: serea-host [doctor|status|smoke --synthetic|model-config-check --synthetic|model-smoke --synthetic --data-dir PATH|run --synthetic --data-dir PATH|stop --synthetic --data-dir PATH]"
             );
             ExitCode::from(2)
         }

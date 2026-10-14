@@ -27,6 +27,7 @@ serea-scheduler = { path = "crates/serea-scheduler" }
 serea-capability = { path = "crates/serea-capability" }
 serea-policy = { path = "crates/serea-policy" }
 serea-core = { path = "crates/serea-core" }
+serea-model-router = { path = "crates/serea-model-router" }
 
 # P2C: synchronous SQLite foundation, compiled from the bundled amalgamation.
 # No default cache/wasm adapters or optional runtime features.

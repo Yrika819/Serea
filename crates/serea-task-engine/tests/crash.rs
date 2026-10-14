@@ -1532,31 +1532,60 @@ fn development_host_has_no_ambient_configuration_or_subprocess_access() {
 }
 
 #[test]
-fn synthetic_core_has_no_model_or_capability_invocation_edge() {
+fn model_execution_is_confined_to_explicit_synthetic_host_feature() {
     let root = workspace_root();
     let core_manifest = fs::read_to_string(root.join("crates/serea-core/Cargo.toml")).unwrap();
     let host_manifest = fs::read_to_string(root.join("crates/serea-host/Cargo.toml")).unwrap();
     let core_source = fs::read_to_string(root.join("crates/serea-core/src/lib.rs")).unwrap();
     let host_source = fs::read_to_string(root.join("crates/serea-host/src/main.rs")).unwrap();
-    for (name, text) in [
-        ("Core manifest", core_manifest.as_str()),
-        ("host manifest", host_manifest.as_str()),
-        ("Core source", core_source.as_str()),
-        ("host source", host_source.as_str()),
-    ] {
-        for forbidden in [
-            "serea-model-router",
-            "ModelProvider::generate",
-            "CapabilityProvider::invoke",
-            "reqwest",
-            "std::net::",
-        ] {
-            assert!(
-                !text.contains(forbidden),
-                "{name} contains {forbidden}; synthetic host must not reach external effects"
-            );
-        }
-    }
+
+    // Core and the default Host stay independent of model execution and live
+    // transports. `--features synthetic` is the one approved opt-in boundary.
+    assert!(!core_manifest.contains("serea-model-router"));
+    assert!(!core_source.contains("ModelRouter"));
+    assert!(!core_source.contains("ModelProvider::generate"));
+    assert!(host_manifest.contains("default = []"));
+    assert!(host_manifest.contains("serea-model-router = { workspace = true, optional = true }"));
+    assert!(host_manifest.contains("synthetic = ["));
+    let synthetic_feature = host_manifest
+        .split("synthetic = [")
+        .nth(1)
+        .and_then(|tail| tail.split(']').next())
+        .unwrap_or_default();
+    assert!(synthetic_feature.contains("dep:serea-model-router"));
+    assert!(!host_source.contains("ModelRouter"));
+    assert!(!host_source.contains("ModelProvider::generate"));
+
+    let synthetic_source =
+        fs::read_to_string(root.join("crates/serea-host/src/synthetic_model.rs"))
+            .expect("synthetic model adapter must be a separate source module");
+    assert!(host_source.contains("#[cfg(feature = \"synthetic\")]"));
+    assert!(host_source.contains("mod synthetic_model;"));
+    assert!(synthetic_source.contains("MockModelProvider"));
+    assert!(synthetic_source.contains("ModelRouterProcessV1::new"));
+    assert!(synthetic_source.contains("router.execute(&call, &host)"));
+    assert!(!synthetic_source.contains("reqwest"));
+    assert!(!synthetic_source.contains("std::net::"));
+    assert!(!synthetic_source.contains("CapabilityProvider::invoke"));
+    assert!(!synthetic_source.contains("OPENAI_API_KEY"));
+    assert!(!synthetic_source.contains("CredentialHandle"));
+    let normal_run = host_source
+        .split("fn run_synthetic_host()")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("#[cfg(feature = \"synthetic\")]\nstruct HostLock")
+                .next()
+        })
+        .unwrap_or_default();
+    assert!(!normal_run.contains("synthetic_model::"));
+    assert!(host_source.contains("synthetic_model::execute_once"));
+    assert!(
+        host_source
+            .contains("\"model-smoke\" if std::env::args().any(|arg| arg == \"--synthetic\")")
+    );
+
+    // The ordinary Core surface must not regain development fixture installers.
+    assert!(!core_source.contains("install_synthetic_registry_generation"));
 }
 
 #[test]

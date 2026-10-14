@@ -529,16 +529,26 @@ class P2GroupOInvariantTests(unittest.TestCase):
     def test_o3_wall_clock_constructors_are_absent_and_linted(self):
         forbidden = re.compile(r"(?:SystemTime|Instant)::now\s*\(")
         ambient_host_clock = self.root / "crates/serea-host/src/host_clock.rs"
+        synthetic_host_model = self.root / "crates/serea-host/src/synthetic_model.rs"
         wall_clock_matches = []
+        host_monotonic_matches = []
         for member in smoke.EXPECTED_MEMBERS:
             for path in (self.root / member / "src").rglob("*.rs"):
                 source = self.without_rust_comments(path.read_text())
                 for match in forbidden.finditer(source):
                     if match.group().startswith("SystemTime"):
                         wall_clock_matches.append(path)
+                    elif path == synthetic_host_model:
+                        host_monotonic_matches.append(match.group())
                     else:
                         self.fail(f"ambient monotonic clock in production source: {path}")
         self.assertEqual(wall_clock_matches, [ambient_host_clock])
+        self.assertEqual(host_monotonic_matches, ["Instant::now(", "Instant::now("])
+        model_source = synthetic_host_model.read_text()
+        self.assertEqual(model_source.count("Instant::now("), 2)
+        self.assertIn("fn block_on_timeout", model_source)
+        host_source = (self.root / "crates/serea-host/src/main.rs").read_text()
+        self.assertIn('#[cfg(feature = "synthetic")]\nmod synthetic_model;', host_source)
         self.assertIn("impl Clock for WallClock", ambient_host_clock.read_text())
         clock_guard = (self.root / "crates/serea-testkit/tests/p2b_clock.rs").read_text()
         self.assertIn('for banned in ["SystemTime::now(", "Instant::now("]', clock_guard)

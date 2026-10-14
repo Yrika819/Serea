@@ -134,6 +134,48 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
     std::fs::remove_dir_all(&directory).expect("clean disposable data directory");
 }
 
+#[cfg(unix)]
+#[test]
+fn unix_sigterm_requests_bounded_cooperative_host_shutdown() {
+    let directory = std::env::temp_dir().join(format!(
+        "serea-host-sigterm-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&directory).expect("create disposable signal test directory");
+    let mut child = start(&directory);
+    let mut output = wait_ready(&mut child);
+    let started = monotonic_now();
+    let signal_status = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("send POSIX SIGTERM");
+    assert!(signal_status.success());
+    let deadline = monotonic_now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll SIGTERM child") {
+            break status;
+        }
+        assert!(monotonic_now() < deadline, "SIGTERM shutdown deadline");
+        std::thread::park_timeout(Duration::from_millis(10));
+    };
+    assert!(status.success(), "Host did not shut down cooperatively");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let mut tail = String::new();
+    std::io::Read::read_to_string(&mut output, &mut tail).expect("read shutdown diagnostics");
+    assert!(tail.contains("\"event\":\"host_stopped\""));
+
+    let clock = serea_testkit::TestClock::at_epoch();
+    let store = serea_storage::Store::open(&directory.join("core.sqlite"), &clock)
+        .expect("reopen SQLite after signal shutdown");
+    assert_eq!(store.schema_version().expect("read schema version"), 8);
+    store
+        .checkpoint_for_close()
+        .expect("checkpoint signal shutdown DB");
+    drop(store);
+    std::fs::remove_dir_all(&directory).expect("clean signal test directory");
+}
+
 #[test]
 fn explicit_model_smoke_runs_fake_success_and_failure_through_host_router() {
     let directory = std::env::temp_dir().join(format!(
@@ -208,6 +250,230 @@ fn explicit_model_smoke_runs_fake_success_and_failure_through_host_router() {
         drop(store);
     }
     std::fs::remove_dir_all(&directory).expect("clean disposable model directory");
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[test]
+fn actual_host_model_policy_and_accounting_scenarios_survive_database_reopen() {
+    use serea_storage::{ModelAttemptState, ReplayItem, Store};
+
+    for scenario in [
+        "cancelled",
+        "cancelled-after-intent",
+        "expired",
+        "identity-mismatch",
+        "usage-bound",
+        "spend-bound",
+        "paid-success",
+        "timeout",
+    ] {
+        let directory = std::env::temp_dir().join(format!(
+            "serea-host-model-policy-{scenario}-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).expect("create disposable scenario directory");
+        let output = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+            .args(["model-smoke", "--synthetic", "--data-dir"])
+            .arg(&directory)
+            .args(["--scenario", scenario])
+            .output()
+            .expect("run compiled synthetic Host scenario");
+        assert!(
+            output.status.success(),
+            "Host {scenario} scenario failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let clock = serea_testkit::TestClock::at_epoch();
+        let store = Store::open(&directory.join("core.sqlite"), &clock)
+            .expect("reopen Host scenario database");
+        let events = store
+            .replay_events(None, None, 128)
+            .expect("read persisted model scenario events")
+            .items
+            .into_iter()
+            .filter_map(|item| match item {
+                ReplayItem::Event { event } => Some(*event),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let called = events
+            .iter()
+            .filter(|event| event.kind == serea_protocol::EventKind::ModelCalled)
+            .collect::<Vec<_>>();
+        let request_id = called
+            .first()
+            .and_then(|event| event.payload.get("request_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(|value| serea_protocol::RequestId::new(value.to_owned()).unwrap());
+
+        match scenario {
+            "cancelled" | "expired" | "spend-bound" => {
+                assert!(called.is_empty(), "{scenario} must refuse before intent");
+                assert!(
+                    store
+                        .list_unfinished_model_call_attempts()
+                        .unwrap()
+                        .is_empty()
+                );
+                if scenario == "spend-bound" {
+                    let bound = events
+                        .iter()
+                        .find(|event| event.kind == serea_protocol::EventKind::BoundExceeded)
+                        .expect("daily spend refusal audit");
+                    assert_eq!(bound.payload["limit"], 1);
+                    assert!(bound.payload["observed"].as_u64().unwrap() > 1);
+                }
+            }
+            "cancelled-after-intent" => {
+                assert_eq!(called.len(), 1);
+                let id = request_id.clone().expect("intent has durable RequestId");
+                let attempt = store.get_model_call_attempt(&id).unwrap().unwrap();
+                assert_eq!(attempt.state, ModelAttemptState::Failed);
+                assert!(attempt.reserved_cost_usd_micros.get() > 0);
+                assert_eq!(attempt.actual_cost_usd_micros.unwrap().get(), 0);
+                assert!(store.model_usage_for_request(&id).unwrap().is_none());
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| event.kind == serea_protocol::EventKind::ModelFailed)
+                        .count(),
+                    1
+                );
+            }
+            "identity-mismatch" | "usage-bound" => {
+                assert_eq!(called.len(), 1);
+                let id = request_id.clone().expect("intent has durable RequestId");
+                let attempt = store.get_model_call_attempt(&id).unwrap().unwrap();
+                assert_eq!(attempt.state, ModelAttemptState::Failed);
+                assert_eq!(attempt.reserved_cost_usd_micros.get(), 0);
+                assert_eq!(attempt.actual_cost_usd_micros, None);
+                assert!(store.model_usage_for_request(&id).unwrap().is_none());
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| event.kind == serea_protocol::EventKind::ModelFailed)
+                        .count(),
+                    1
+                );
+            }
+            "paid-success" => {
+                assert_eq!(called.len(), 1);
+                let id = request_id.clone().expect("intent has durable RequestId");
+                let attempt = store.get_model_call_attempt(&id).unwrap().unwrap();
+                assert_eq!(attempt.state, ModelAttemptState::Completed);
+                assert_eq!(attempt.reserved_cost_usd_micros.get(), 131_080);
+                assert_eq!(attempt.actual_cost_usd_micros.unwrap().get(), 2);
+                let usage = store.model_usage_for_request(&id).unwrap().unwrap();
+                assert_eq!(usage.input_tokens.get(), 1);
+                assert_eq!(usage.output_tokens.get(), 1);
+                assert_eq!(usage.cost_usd_micros.get(), 2);
+            }
+            "timeout" => {
+                assert_eq!(called.len(), 1);
+                let id = request_id.clone().expect("intent has durable RequestId");
+                let attempt = store.get_model_call_attempt(&id).unwrap().unwrap();
+                assert_eq!(attempt.state, ModelAttemptState::Ambiguous);
+                assert_eq!(attempt.reserved_cost_usd_micros.get(), 131_080);
+                assert_eq!(attempt.actual_cost_usd_micros, None);
+                assert!(store.model_usage_for_request(&id).unwrap().is_none());
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| event.kind == serea_protocol::EventKind::ModelFailed)
+                        .count(),
+                    1
+                );
+            }
+            _ => unreachable!(),
+        }
+        if let Some(id) = request_id.as_ref() {
+            let id_text = id.as_str();
+            for event in events.iter().filter(|event| {
+                matches!(
+                    event.kind,
+                    serea_protocol::EventKind::ModelFailed
+                        | serea_protocol::EventKind::ModelCompleted
+                )
+            }) {
+                assert_eq!(
+                    event
+                        .payload
+                        .get("request_id")
+                        .and_then(serde_json::Value::as_str),
+                    Some(id_text),
+                    "terminal event must preserve the intent RequestId"
+                );
+                let called_event = called[0];
+                assert!(
+                    called_event.seq < event.seq,
+                    "audit order must be intent then outcome"
+                );
+            }
+        }
+        let called_count = called.len();
+        let failed_count = events
+            .iter()
+            .filter(|event| event.kind == serea_protocol::EventKind::ModelFailed)
+            .count();
+        let completed_count = events
+            .iter()
+            .filter(|event| event.kind == serea_protocol::EventKind::ModelCompleted)
+            .count();
+        let original_request = request_id.clone();
+        store
+            .checkpoint_for_close()
+            .expect("checkpoint policy scenario DB");
+        drop(store);
+
+        // A fresh normal Host performs startup reconciliation but must never
+        // auto-dispatch or create a replacement RequestId for this probe.
+        let mut restarted = start(&directory);
+        let output = wait_ready(&mut restarted);
+        stop(&directory, restarted, output);
+        let reopened = Store::open(&directory.join("core.sqlite"), &clock)
+            .expect("reopen policy DB after normal Host restart");
+        let after_restart = reopened
+            .replay_events(None, None, 128)
+            .expect("replay events after normal Host restart");
+        let after_called = after_restart
+            .items
+            .iter()
+            .filter(|item| matches!(item, ReplayItem::Event { event } if event.kind == serea_protocol::EventKind::ModelCalled))
+            .count();
+        let after_failed = after_restart
+            .items
+            .iter()
+            .filter(|item| matches!(item, ReplayItem::Event { event } if event.kind == serea_protocol::EventKind::ModelFailed))
+            .count();
+        let after_completed = after_restart
+            .items
+            .iter()
+            .filter(|item| matches!(item, ReplayItem::Event { event } if event.kind == serea_protocol::EventKind::ModelCompleted))
+            .count();
+        assert_eq!(
+            after_called, called_count,
+            "{scenario} redispatched after restart"
+        );
+        assert_eq!(
+            after_failed, failed_count,
+            "{scenario} duplicated terminal failure"
+        );
+        assert_eq!(
+            after_completed, completed_count,
+            "{scenario} duplicated completion"
+        );
+        if let Some(id) = original_request {
+            assert!(reopened.get_model_call_attempt(&id).unwrap().is_some());
+        }
+        reopened
+            .checkpoint_for_close()
+            .expect("checkpoint reopened DB");
+        drop(reopened);
+        std::fs::remove_dir_all(&directory).expect("clean model scenario directory");
+    }
 }
 
 #[test]
@@ -340,6 +606,127 @@ fn compiled_host_creates_one_durable_task_for_a_due_calendar_occurrence() {
         .expect("checkpoint Scheduler database");
     drop(store);
     std::fs::remove_dir_all(&directory).expect("clean Scheduler data directory");
+}
+
+#[test]
+fn bounded_scheduler_throughput_sample() {
+    const SCHEDULES: usize = 32;
+    let directory = std::env::temp_dir().join(format!(
+        "serea-host-scheduler-throughput-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&directory).expect("create Scheduler throughput DB directory");
+    let seeded = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["scheduler-seed", "--synthetic", "--data-dir"])
+        .arg(&directory)
+        .args(["--count", &SCHEDULES.to_string()])
+        .output()
+        .expect("seed bounded synthetic schedule workload");
+    assert!(seeded.status.success());
+
+    let started = monotonic_now();
+    let mut child = start(&directory);
+    let output = wait_ready(&mut child);
+    let elapsed = started.elapsed();
+    let clock = serea_testkit::TestClock::at_epoch();
+    let store = serea_storage::Store::open(&directory.join("core.sqlite"), &clock)
+        .expect("inspect bounded Scheduler throughput DB");
+    let replay = store
+        .replay_events(None, None, 256)
+        .expect("inspect bounded Scheduler throughput audit");
+    let created = replay
+        .items
+        .iter()
+        .filter(|item| matches!(item, serea_storage::ReplayItem::Event { event } if event.kind == serea_protocol::EventKind::TaskCreated))
+        .count();
+    assert_eq!(
+        created, SCHEDULES,
+        "all due occurrences should create one Task"
+    );
+    store
+        .checkpoint_for_close()
+        .expect("checkpoint throughput inspection");
+    drop(store);
+    stop(&directory, child, output);
+    let throughput = SCHEDULES as f64 / elapsed.as_secs_f64();
+    eprintln!(
+        "RUNTIME_MEASUREMENT scheduler_tasks={SCHEDULES} startup_to_ready_ms={} tasks_per_second={throughput:.2}",
+        elapsed.as_secs_f64() * 1000.0
+    );
+    std::fs::remove_dir_all(&directory).expect("clean Scheduler throughput directory");
+}
+
+#[test]
+fn bounded_fake_model_process_throughput_sample() {
+    const CALLS: usize = 16;
+    let directory = std::env::temp_dir().join(format!(
+        "serea-host-model-throughput-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&directory).expect("create Model throughput DB directory");
+    let started = monotonic_now();
+    for _ in 0..CALLS {
+        let output = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+            .args(["model-smoke", "--synthetic", "--data-dir"])
+            .arg(&directory)
+            .args(["--scenario", "success"])
+            .output()
+            .expect("run one bounded fake model request");
+        assert!(
+            output.status.success(),
+            "synthetic model process failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let elapsed = started.elapsed();
+    let clock = serea_testkit::TestClock::at_epoch();
+    let store = serea_storage::Store::open(&directory.join("core.sqlite"), &clock)
+        .expect("inspect bounded Model throughput DB");
+    let events = store
+        .replay_events(None, None, 256)
+        .expect("inspect bounded Model throughput audit");
+    let mut called = std::collections::BTreeSet::new();
+    let mut completed = std::collections::BTreeSet::new();
+    for item in events.items {
+        if let serea_storage::ReplayItem::Event { event } = item {
+            let destination = match event.kind {
+                serea_protocol::EventKind::ModelCalled => Some(&mut called),
+                serea_protocol::EventKind::ModelCompleted => Some(&mut completed),
+                _ => None,
+            };
+            if let Some(destination) = destination {
+                let request = event
+                    .payload
+                    .get("request_id")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("model event RequestId");
+                assert!(
+                    destination.insert(request.to_owned()),
+                    "duplicate RequestId event"
+                );
+            }
+        }
+    }
+    assert_eq!(called.len(), CALLS);
+    assert_eq!(completed, called);
+    assert!(
+        store
+            .list_unfinished_model_call_attempts()
+            .unwrap()
+            .is_empty()
+    );
+    store
+        .checkpoint_for_close()
+        .expect("checkpoint Model throughput inspection");
+    drop(store);
+    let throughput = CALLS as f64 / elapsed.as_secs_f64();
+    eprintln!(
+        "RUNTIME_MEASUREMENT fake_model_process_calls={CALLS} elapsed_ms={} calls_per_second={throughput:.2}",
+        elapsed.as_secs_f64() * 1000.0
+    );
+    std::fs::remove_dir_all(&directory).expect("clean Model throughput directory");
 }
 
 #[cfg(feature = "synthetic-test-hooks")]

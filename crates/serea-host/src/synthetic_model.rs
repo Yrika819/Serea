@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
 use serea_event_bus::EventBus;
+#[cfg(feature = "synthetic-test-hooks")]
+use serea_model_router::RouterError;
 use serea_model_router::{
     ModelDeploymentClass, ModelDispatchGateSnapshotV1, ModelDispatchGateSource,
     ModelDispatchGateSourceError, ModelEgressPolicySnapshotV1, ModelRosterEntryV1, ModelRosterV1,
@@ -24,7 +26,12 @@ use serea_protocol::{ModelRequest, ModelResponse, ProviderHealth, ProviderId};
 use serea_storage::{ModelPriceSnapshot, Store, UsdMicros};
 use serea_testkit::{MockModelProvider, ModelScript, synthetic_model_roster};
 
-struct OfflineGate;
+struct OfflineGate {
+    cancelled: bool,
+    cancel_after_initial: bool,
+    deadline_ms: u32,
+    snapshots: std::sync::atomic::AtomicUsize,
+}
 
 impl ModelDispatchGateSource for OfflineGate {
     fn snapshot(
@@ -32,10 +39,13 @@ impl ModelDispatchGateSource for OfflineGate {
         _task_id: Option<&serea_protocol::TaskId>,
         _data_class: DataClass,
     ) -> Result<ModelDispatchGateSnapshotV1, ModelDispatchGateSourceError> {
+        let snapshot = self
+            .snapshots
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(ModelDispatchGateSnapshotV1::from_host(
-            false,
+            self.cancelled || (self.cancel_after_initial && snapshot > 0),
             ModelEgressPolicySnapshotV1::from_host(false),
-            10_000,
+            self.deadline_ms,
         ))
     }
 }
@@ -43,7 +53,7 @@ impl ModelDispatchGateSource for OfflineGate {
 fn configured_router(
     failure: bool,
 ) -> Result<(ModelRouterProcessV1, Arc<MockModelProvider>), String> {
-    configured_router_with_barrier(failure, None)
+    configured_router_with_barrier(failure, None, None)
 }
 
 #[cfg(feature = "synthetic-test-hooks")]
@@ -76,7 +86,18 @@ impl TestBarrier {
 #[cfg(feature = "synthetic-test-hooks")]
 struct TestBarrierProvider {
     inner: Arc<MockModelProvider>,
-    barrier: TestBarrier,
+    barrier: Option<TestBarrier>,
+    behavior: Option<TestProviderBehavior>,
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestProviderBehavior {
+    IdentityMismatch,
+    DelayedResponse,
+    InvalidUsage,
+    PaidUsage,
+    DailySpendLimit,
 }
 
 #[cfg(feature = "synthetic-test-hooks")]
@@ -95,12 +116,41 @@ impl ModelProvider for TestBarrierProvider {
         request: &ModelRequest,
         context: &serea_protocol::provider::ModelCallContext,
     ) -> Result<ModelResponse, serea_protocol::ModelError> {
-        if self.barrier.phase == "provider" {
-            self.barrier.wait().map_err(|_| test_barrier_error())?;
+        if self.barrier.as_ref().is_some_and(|b| b.phase == "provider") {
+            self.barrier
+                .as_ref()
+                .expect("checked barrier")
+                .wait()
+                .map_err(|_| test_barrier_error())?;
         }
-        let response = self.inner.generate(request, context).await?;
-        if self.barrier.phase == "after-result" {
-            self.barrier.wait().map_err(|_| test_barrier_error())?;
+        let mut response = self.inner.generate(request, context).await?;
+        if self
+            .barrier
+            .as_ref()
+            .is_some_and(|b| b.phase == "after-result")
+        {
+            self.barrier
+                .as_ref()
+                .expect("checked barrier")
+                .wait()
+                .map_err(|_| test_barrier_error())?;
+        }
+        match self.behavior {
+            Some(TestProviderBehavior::IdentityMismatch) => {
+                response.provider_id = ProviderId::new("synthetic_unexpected_provider")
+                    .map_err(|_| test_barrier_error())?;
+            }
+            Some(TestProviderBehavior::InvalidUsage) => {
+                response.usage.output_tokens = serea_protocol::TokenCount::new(9);
+            }
+            Some(TestProviderBehavior::PaidUsage) => {
+                response.usage.cost_class = CostClass::Paid;
+            }
+            Some(TestProviderBehavior::DailySpendLimit) => {}
+            Some(TestProviderBehavior::DelayedResponse) => {
+                delayed_fake_response().await;
+            }
+            None => {}
         }
         Ok(response)
     }
@@ -108,6 +158,32 @@ impl ModelProvider for TestBarrierProvider {
     async fn health(&self) -> ProviderHealth {
         self.inner.health().await
     }
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+async fn delayed_fake_response() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let ready = Arc::new(AtomicBool::new(false));
+    let wait_ready = Arc::clone(&ready);
+    let mut started = false;
+    std::future::poll_fn(move |cx| {
+        if wait_ready.load(Ordering::Acquire) {
+            return Poll::Ready(());
+        }
+        if !started {
+            started = true;
+            let wake = cx.waker().clone();
+            let ready = Arc::clone(&wait_ready);
+            std::thread::spawn(move || {
+                std::thread::park_timeout(std::time::Duration::from_millis(100));
+                ready.store(true, Ordering::Release);
+                wake.wake();
+            });
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 #[cfg(feature = "synthetic-test-hooks")]
@@ -125,6 +201,8 @@ fn configured_router_with_barrier(
     failure: bool,
     #[cfg(feature = "synthetic-test-hooks")] barrier: Option<TestBarrier>,
     #[cfg(not(feature = "synthetic-test-hooks"))] _barrier: Option<()>,
+    #[cfg(feature = "synthetic-test-hooks")] behavior: Option<TestProviderBehavior>,
+    #[cfg(not(feature = "synthetic-test-hooks"))] _behavior: Option<()>,
 ) -> Result<(ModelRouterProcessV1, Arc<MockModelProvider>), String> {
     let mut descriptors = synthetic_model_roster();
     descriptors.truncate(1); // this one-call probe has no fallback candidate
@@ -149,15 +227,32 @@ fn configured_router_with_barrier(
         provider.push(ModelScript::EchoText("synthetic response".to_owned()));
     }
     #[cfg(feature = "synthetic-test-hooks")]
-    let providers: Vec<Arc<dyn ModelProvider>> = match barrier {
-        Some(barrier) => vec![Arc::new(TestBarrierProvider {
+    let providers: Vec<Arc<dyn ModelProvider>> = if barrier.is_some() || behavior.is_some() {
+        vec![Arc::new(TestBarrierProvider {
             inner: provider.clone(),
             barrier,
-        })],
-        None => vec![provider.clone()],
+            behavior,
+        })]
+    } else {
+        vec![provider.clone()]
     };
     #[cfg(not(feature = "synthetic-test-hooks"))]
     let providers: Vec<Arc<dyn ModelProvider>> = vec![provider.clone()];
+    #[cfg(feature = "synthetic-test-hooks")]
+    let cost_class = if matches!(
+        behavior,
+        Some(
+            TestProviderBehavior::PaidUsage
+                | TestProviderBehavior::DailySpendLimit
+                | TestProviderBehavior::DelayedResponse
+        )
+    ) {
+        CostClass::Paid
+    } else {
+        CostClass::Free
+    };
+    #[cfg(not(feature = "synthetic-test-hooks"))]
+    let cost_class = CostClass::Free;
     let mut entries = Vec::with_capacity(descriptors.len());
     let mut prices = Vec::with_capacity(descriptors.len());
     for descriptor in descriptors {
@@ -169,13 +264,17 @@ fn configured_router_with_barrier(
                 ModelDeploymentClass::Local,
                 true,
                 descriptor.capabilities,
-                CostClass::Free,
+                cost_class,
             )
             .map_err(|_| "synthetic model roster rejected")?,
         );
         prices.push((
             id,
-            ModelPriceSnapshot::new(CostClass::Free, "synthetic-free-v1", 0, 0),
+            if cost_class == CostClass::Paid {
+                ModelPriceSnapshot::new(CostClass::Paid, "synthetic-paid-v1", 1_000_000, 1_000_000)
+            } else {
+                ModelPriceSnapshot::new(CostClass::Free, "synthetic-free-v1", 0, 0)
+            },
         ));
     }
     let roster = ModelRosterV1::new(entries).map_err(|_| "synthetic roster invalid")?;
@@ -183,6 +282,18 @@ fn configured_router_with_barrier(
         roster,
         providers,
         prices,
+        #[cfg(feature = "synthetic-test-hooks")]
+        if matches!(
+            behavior,
+            Some(TestProviderBehavior::PaidUsage | TestProviderBehavior::DelayedResponse)
+        ) {
+            UsdMicros::new(10_000_000).map_err(|_| "synthetic budget invalid")?
+        } else if matches!(behavior, Some(TestProviderBehavior::DailySpendLimit)) {
+            UsdMicros::new(1).map_err(|_| "synthetic budget invalid")?
+        } else {
+            UsdMicros::new(0).map_err(|_| "synthetic budget invalid")?
+        },
+        #[cfg(not(feature = "synthetic-test-hooks"))]
         UsdMicros::new(0).map_err(|_| "synthetic budget invalid")?,
     )
     .map_err(|_| "synthetic Router configuration rejected")?;
@@ -238,16 +349,30 @@ fn prepared_call() -> Result<PreparedModelCallV1, String> {
 /// Performs one explicitly requested, durable, in-process fake dispatch.
 #[cfg(not(feature = "synthetic-test-hooks"))]
 pub(crate) fn execute_once(root: &Path, failure: bool) -> Result<(), String> {
-    execute_once_inner(root, failure, None)
+    execute_once_inner(
+        root,
+        if failure { "failure" } else { "success" },
+        failure,
+        None,
+        None,
+        OfflineGate {
+            cancelled: false,
+            cancel_after_initial: false,
+            deadline_ms: 10_000,
+            snapshots: std::sync::atomic::AtomicUsize::new(0),
+        },
+        std::time::Duration::from_millis(10_000),
+    )
 }
 
 #[cfg(feature = "synthetic-test-hooks")]
 pub(crate) fn execute_once_with_test_barrier(
     root: &Path,
-    failure: bool,
+    scenario: &str,
     phase: Option<&str>,
     barrier_directory: Option<&Path>,
 ) -> Result<(), String> {
+    let failure = scenario == "failure";
     let barrier = match (phase, barrier_directory) {
         (None, None) => None,
         (Some("pre-dispatch"), Some(directory)) => Some(TestBarrier {
@@ -268,14 +393,48 @@ pub(crate) fn execute_once_with_test_barrier(
         }),
         _ => return Err("invalid test barrier configuration".to_owned()),
     };
-    execute_once_inner(root, failure, barrier)
+    let behavior = match scenario {
+        "success" | "failure" => None,
+        "identity-mismatch" => Some(TestProviderBehavior::IdentityMismatch),
+        "timeout" => Some(TestProviderBehavior::DelayedResponse),
+        "usage-bound" => Some(TestProviderBehavior::InvalidUsage),
+        "paid-success" | "cancelled-after-intent" => Some(TestProviderBehavior::PaidUsage),
+        "spend-bound" => Some(TestProviderBehavior::DailySpendLimit),
+        "cancelled" | "expired" => None,
+        _ => return Err("invalid synthetic test scenario".to_owned()),
+    };
+    let gate = OfflineGate {
+        cancelled: scenario == "cancelled",
+        cancel_after_initial: scenario == "cancelled-after-intent",
+        deadline_ms: if scenario == "expired" { 0 } else { 10_000 },
+        snapshots: std::sync::atomic::AtomicUsize::new(0),
+    };
+    execute_once_inner(
+        root,
+        scenario,
+        failure,
+        barrier,
+        behavior,
+        gate,
+        if scenario == "timeout" {
+            std::time::Duration::from_millis(20)
+        } else {
+            std::time::Duration::from_millis(10_000)
+        },
+    )
 }
 
 fn execute_once_inner(
     root: &Path,
+    #[cfg(feature = "synthetic-test-hooks")] scenario: &str,
+    #[cfg(not(feature = "synthetic-test-hooks"))] _scenario: &str,
     failure: bool,
     #[cfg(feature = "synthetic-test-hooks")] barrier: Option<TestBarrier>,
     #[cfg(not(feature = "synthetic-test-hooks"))] _barrier: Option<()>,
+    #[cfg(feature = "synthetic-test-hooks")] behavior: Option<TestProviderBehavior>,
+    #[cfg(not(feature = "synthetic-test-hooks"))] _behavior: Option<()>,
+    gate: OfflineGate,
+    timeout: std::time::Duration,
 ) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|_| "synthetic data directory unavailable")?;
     let lock = OpenOptions::new()
@@ -303,30 +462,108 @@ fn execute_once_inner(
         .filter(|b| matches!(b.phase, "provider" | "after-result"));
     #[cfg(not(feature = "synthetic-test-hooks"))]
     let provider_barrier = None;
-    let (router, provider) = configured_router_with_barrier(failure, provider_barrier)?;
+    let (router, provider) = configured_router_with_barrier(
+        failure,
+        provider_barrier,
+        #[cfg(feature = "synthetic-test-hooks")]
+        behavior,
+        #[cfg(not(feature = "synthetic-test-hooks"))]
+        None,
+    )?;
     let call = prepared_call()?;
-    let host = ModelRouterHostContextV1::new(&store, &events, &clock, &OfflineGate);
+    let host = ModelRouterHostContextV1::new(&store, &events, &clock, &gate);
     #[cfg(feature = "synthetic-test-hooks")]
     if let Some(barrier) = barrier.clone().filter(|b| b.phase == "pre-dispatch") {
         barrier.wait()?;
     }
-    let outcome = block_on(router.execute(&call, &host));
+    let outcome = match block_on_timeout(router.execute(&call, &host), timeout) {
+        Some(outcome) => Some(outcome),
+        None => {
+            // Dropping the in-flight Router future leaves its committed
+            // dispatch intent unresolved. Reuse Router recovery to mark
+            // it ambiguous; this never invokes or retries a provider.
+            serea_model_router::recover_unresolved_model_calls(&store, &events, &clock)
+                .map_err(|_| "synthetic timeout recovery failed")?;
+            None
+        }
+    };
     #[cfg(feature = "synthetic-test-hooks")]
     if let Some(barrier) = barrier.filter(|b| b.phase == "terminal") {
         barrier.wait()?;
     }
-    match (failure, outcome) {
-        (false, Ok(response)) if response.content == "synthetic response" => {}
-        (
-            true,
-            Err(ModelRouterCallFailureV1::DefiniteProvider {
-                retryable: false, ..
-            }),
-        ) => {}
-        _ => return Err("synthetic Router result did not match scripted outcome".to_owned()),
+    #[cfg(feature = "synthetic-test-hooks")]
+    let expected = match scenario {
+        "cancelled" => matches!(
+            &outcome,
+            Some(Err(ModelRouterCallFailureV1::Refused(
+                RouterError::TaskCancelled
+            )))
+        ),
+        "cancelled-after-intent" => matches!(
+            &outcome,
+            Some(Err(ModelRouterCallFailureV1::Refused(
+                RouterError::TaskCancelled
+            )))
+        ),
+        "expired" => matches!(
+            &outcome,
+            Some(Err(ModelRouterCallFailureV1::Refused(
+                RouterError::DeadlineExpired
+            )))
+        ),
+        "identity-mismatch" | "usage-bound" => matches!(
+            &outcome,
+            Some(Err(ModelRouterCallFailureV1::TerminalProvider { .. }))
+        ),
+        "spend-bound" => matches!(
+            &outcome,
+            Some(Err(ModelRouterCallFailureV1::BoundExceeded { .. }))
+        ),
+        "timeout" => outcome.is_none(),
+        "failure" => matches!(
+            &outcome,
+            Some(Err(ModelRouterCallFailureV1::DefiniteProvider {
+                retryable: false,
+                ..
+            }))
+        ),
+        "success" | "paid-success" => {
+            matches!(&outcome, Some(Ok(response)) if response.content == "synthetic response")
+        }
+        _ => false,
+    };
+    #[cfg(feature = "synthetic-test-hooks")]
+    if !expected {
+        return Err("synthetic Router result did not match scripted outcome".to_owned());
     }
-    if provider.calls() != 1 {
-        return Err("synthetic Router attempted an unintended retry".to_owned());
+    #[cfg(not(feature = "synthetic-test-hooks"))]
+    if !matches!((&outcome, failure), (Some(Ok(response)), false) if response.content == "synthetic response")
+        && !matches!(
+            (&outcome, failure),
+            (
+                Some(Err(ModelRouterCallFailureV1::DefiniteProvider {
+                    retryable: false,
+                    ..
+                })),
+                true
+            )
+        )
+    {
+        return Err("synthetic Router result did not match scripted outcome".to_owned());
+    }
+    #[cfg(feature = "synthetic-test-hooks")]
+    let expected_calls = if matches!(
+        scenario,
+        "cancelled" | "cancelled-after-intent" | "expired" | "spend-bound"
+    ) {
+        0
+    } else {
+        1
+    };
+    #[cfg(not(feature = "synthetic-test-hooks"))]
+    let expected_calls = 1;
+    if provider.calls() != expected_calls {
+        return Err("synthetic Router provider call count was unexpected".to_owned());
     }
     if !store
         .list_unfinished_model_call_attempts()
@@ -370,14 +607,24 @@ impl Wake for ThreadWake {
     }
 }
 
-fn block_on<F: Future>(future: F) -> F::Output {
+// A bounded in-process provider wait needs a monotonic elapsed-time source;
+// wall-clock `Clock` values can jump and are not suitable for timeout races.
+#[allow(clippy::disallowed_methods)]
+fn block_on_timeout<F: Future>(future: F, timeout: std::time::Duration) -> Option<F::Output> {
+    let deadline = std::time::Instant::now().checked_add(timeout)?;
     let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
     let mut context = Context::from_waker(&waker);
     let mut future = pin!(future);
     loop {
         match future.as_mut().poll(&mut context) {
-            Poll::Ready(value) => return value,
-            Poll::Pending => std::thread::park(),
+            Poll::Ready(value) => return Some(value),
+            Poll::Pending => {
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    return None;
+                }
+                std::thread::park_timeout(deadline.saturating_duration_since(now));
+            }
         }
     }
 }

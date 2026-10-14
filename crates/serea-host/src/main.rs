@@ -75,10 +75,26 @@ fn main() -> ExitCode {
         #[cfg(feature = "synthetic")]
         "scheduler-seed" if std::env::args().any(|arg| arg == "--synthetic") => {
             let Some(directory) = option_value("--data-dir") else {
-                eprintln!("usage: serea-host scheduler-seed --synthetic --data-dir PATH");
+                eprintln!(
+                    "usage: serea-host scheduler-seed --synthetic --data-dir PATH [--count N]"
+                );
                 return ExitCode::from(2);
             };
-            match seed_synthetic_schedule(std::path::Path::new(&directory)) {
+            let count = match option_value("--count") {
+                None => 1,
+                Some(value) => match value.parse::<u16>() {
+                    Ok(count) => count,
+                    Err(_) => {
+                        eprintln!("scheduler seed count must be an integer");
+                        return ExitCode::from(2);
+                    }
+                },
+            };
+            if count == 0 || count > 256 {
+                eprintln!("scheduler seed count must be between 1 and 256");
+                return ExitCode::from(2);
+            }
+            match seed_synthetic_schedule(std::path::Path::new(&directory), count) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(_) => {
                     eprintln!("{{\"event\":\"scheduler_seed_error\",\"code\":\"seed_failed\"}}");
@@ -92,27 +108,30 @@ fn main() -> ExitCode {
                 eprintln!("usage: serea-host model-smoke --synthetic --data-dir PATH");
                 return ExitCode::from(2);
             };
-            let failure = match option_value("--scenario").as_deref() {
-                None | Some("success") => false,
-                Some("failure") => true,
-                Some(_) => {
-                    eprintln!(
-                        "usage: serea-host model-smoke --synthetic --data-dir PATH [--scenario success|failure]"
-                    );
-                    return ExitCode::from(2);
-                }
-            };
             #[cfg(feature = "synthetic-test-hooks")]
-            let result = synthetic_model::execute_once_with_test_barrier(
-                std::path::Path::new(&directory),
-                failure,
-                option_value("--test-barrier").as_deref(),
-                option_value("--test-barrier-dir")
-                    .as_deref()
-                    .map(std::path::Path::new),
-            );
+            let result = {
+                let scenario = option_value("--scenario").unwrap_or_else(|| "success".into());
+                synthetic_model::execute_once_with_test_barrier(
+                    std::path::Path::new(&directory),
+                    &scenario,
+                    option_value("--test-barrier").as_deref(),
+                    option_value("--test-barrier-dir")
+                        .as_deref()
+                        .map(std::path::Path::new),
+                )
+            };
             #[cfg(not(feature = "synthetic-test-hooks"))]
             let result = {
+                let failure = match option_value("--scenario").as_deref() {
+                    None | Some("success") => false,
+                    Some("failure") => true,
+                    Some(_) => {
+                        eprintln!(
+                            "usage: serea-host model-smoke --synthetic --data-dir PATH [--scenario success|failure]"
+                        );
+                        return ExitCode::from(2);
+                    }
+                };
                 if option_value("--test-barrier").is_some()
                     || option_value("--test-barrier-dir").is_some()
                 {
@@ -134,7 +153,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: serea-host [doctor|status|smoke --synthetic|scheduler-seed --synthetic --data-dir PATH|model-config-check --synthetic|model-smoke --synthetic --data-dir PATH|run --synthetic --data-dir PATH|stop --synthetic --data-dir PATH]"
+                "usage: serea-host [doctor|status|smoke --synthetic|scheduler-seed --synthetic --data-dir PATH [--count N]|model-config-check --synthetic|model-smoke --synthetic --data-dir PATH|run --synthetic --data-dir PATH|stop --synthetic --data-dir PATH]"
             );
             ExitCode::from(2)
         }
@@ -202,6 +221,14 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
     // Any failure is fatal and readiness is withheld.
     let model_recovered = synthetic_model::recover_unresolved(&root, &events, &clock)
         .map_err(|_| "synthetic model startup recovery failed")?;
+    let shutdown_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let signal_flag = std::sync::Arc::clone(&shutdown_requested);
+    let host_thread = std::thread::current();
+    ctrlc::set_handler(move || {
+        signal_flag.store(true, std::sync::atomic::Ordering::Release);
+        host_thread.unpark();
+    })
+    .map_err(|_| "termination handler unavailable")?;
     println!("{{\"event\":\"host_ready\",\"schema_version\":8,\"mode\":\"synthetic\"}}");
     if model_recovered > 0 {
         println!("{{\"event\":\"model_recovery\",\"ambiguous_attempts\":{model_recovered}}}");
@@ -216,7 +243,7 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     loop {
-        if stop.exists() {
+        if stop.exists() || shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
             break;
         }
         let now = clock.now_ms()?;
@@ -437,7 +464,10 @@ fn install_synthetic_registry_fixture(
 }
 
 #[cfg(feature = "synthetic")]
-fn seed_synthetic_schedule(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+fn seed_synthetic_schedule(
+    root: &std::path::Path,
+    count: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
     use host_clock::WallClock;
     use serea_event_bus::EventBus;
     use serea_protocol::{Clock, DataClass, Digest, EventId, ScheduleId};
@@ -466,31 +496,34 @@ fn seed_synthetic_schedule(root: &std::path::Path) -> Result<(), Box<dyn std::er
         TaskEngine::new(Store::open(&path, &clock)?, events.clone()),
         events,
     );
-    scheduler.create_schedule(
-        ScheduleDefinition {
-            schedule_id: ScheduleId::new("sch_00000000000000000000000041")?,
-            owner_kind: ScheduleOwnerKind::Host,
-            owner_id: "synthetic-host".to_owned(),
-            trigger_kind: ScheduleTriggerKind::Calendar,
-            recurrence_json: Some(
-                r#"{"version":"1","kind":"ONCE","anchor_local":"2020-01-02T03:04"}"#
-                    .to_owned(),
-            ),
-            event_predicate_json: None,
-            template_json: br#"{"version":"1","title":"Synthetic scheduled task","intent":"PUBLIC synthetic scheduled work."}"#.to_vec(),
-            title_data_class: DataClass::Public,
-            intent_data_class: DataClass::Public,
-            policy_class_rank: 0,
-            approval_policy: serde_json::json!({}),
-            timezone: Some("UTC".to_owned()),
-            missed_policy: MissedOccurrencePolicy::RunOnce,
-        },
-        &EventId::new("evt_00000000000000000000000041")?,
-        &Digest::new(format!("sha256:{}", "b".repeat(64)))?,
-        now,
-    )?;
+    for index in 1..=count {
+        let suffix = format!("{:026}", u32::from(index) + 40);
+        scheduler.create_schedule(
+            ScheduleDefinition {
+                schedule_id: ScheduleId::new(format!("sch_{suffix}"))?,
+                owner_kind: ScheduleOwnerKind::Host,
+                owner_id: "synthetic-host".to_owned(),
+                trigger_kind: ScheduleTriggerKind::Calendar,
+                recurrence_json: Some(
+                    r#"{"version":"1","kind":"ONCE","anchor_local":"2020-01-02T03:04"}"#
+                        .to_owned(),
+                ),
+                event_predicate_json: None,
+                template_json: br#"{"version":"1","title":"Synthetic scheduled task","intent":"PUBLIC synthetic scheduled work."}"#.to_vec(),
+                title_data_class: DataClass::Public,
+                intent_data_class: DataClass::Public,
+                policy_class_rank: 0,
+                approval_policy: serde_json::json!({}),
+                timezone: Some("UTC".to_owned()),
+                missed_policy: MissedOccurrencePolicy::RunOnce,
+            },
+            &EventId::new(format!("evt_{suffix}"))?,
+            &Digest::new(format!("sha256:{}", "b".repeat(64)))?,
+            now,
+        )?;
+    }
     println!(
-        "{{\"event\":\"scheduler_seeded\",\"trigger\":\"calendar_once\",\"data_class\":\"PUBLIC\"}}"
+        "{{\"event\":\"scheduler_seeded\",\"trigger\":\"calendar_once\",\"count\":{count},\"data_class\":\"PUBLIC\"}}"
     );
     Ok(())
 }

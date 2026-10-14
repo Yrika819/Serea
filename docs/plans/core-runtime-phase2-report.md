@@ -304,3 +304,91 @@ mismatch and budget/spend accounting integration tests; OS signal/console
 handlers; and Scheduler/model throughput measurements. The process-kill tests
 prove neither physical power-loss durability nor exactly-once external
 effects.
+
+
+### Host policy, accounting, termination and bounded workload follow-up
+
+At the follow-up from `15746d684a06124efc18f95f1332f40a552d9580`, the explicit
+synthetic `model-smoke` Host path gained bounded timeout handling and scripted
+policy/accounting scenarios. The Host waits using a monotonic elapsed-time
+boundary and drops a pending Router future at expiry. It then calls the existing
+`recover_unresolved_model_calls` reconciliation. A committed intent therefore
+remains conservatively `AMBIGUOUS`; the Host does not retry it, refund its
+reservation, invent usage, or record a fabricated cost. SQLite transactions
+remain synchronous and no write transaction crosses an async wait. This is
+limited to the explicitly requested synthetic probe and is not connected to
+Scheduler-created Tasks or ordinary Host startup dispatch.
+
+The compiled Host integration suite exercises pre-dispatch cancellation and
+expired deadlines (no attempt/provider call), cancellation after a durable
+intent (one intent and terminal refusal, zero provider calls), provider
+identity mismatch, invalid returned usage bounds, definite provider failure,
+paid success, daily spend refusal, and a provider pending past its effective
+deadline. Tests reopen the same SQLite database and inspect durable RequestIds,
+model-attempt state, reservation, settled cost, usage rows and audit event
+cardinality/order. The paid success reserves 131,080 micro-USD and settles the
+scripted 2 micro-USD for its two reported tokens. The timed-out attempt retains
+its 131,080 micro-USD reservation, records neither actual cost nor usage, and
+remains ambiguous after ordinary Host restart with no replacement RequestId or
+redispatch. The spend-bound scenario refuses before provider invocation. These
+are synthetic in-process provider outcomes; they do not establish behavior for
+external providers or a Task-correlated production budget.
+
+The test-only `after-result` barrier is reached after the scripted provider has
+constructed its response but before `generate` returns that response to the
+Router. It tests an obtained-but-unreturned result and correctly leaves the
+intent unresolved on process kill. The separate `terminal` barrier is reached
+after `router.execute` returns, which means Router terminal persistence and
+accounting have completed, but before the Host command acknowledges success.
+Restart at the former boundary yields ambiguity without invented usage;
+restart at the latter preserves the existing terminal result and accounting
+without duplicate audit. The barriers are only compiled by the distinct
+`synthetic-test-hooks` test feature and are absent from default and ordinary
+synthetic command builds.
+
+The synthetic Host registers a termination handler only after startup recovery
+and before publishing `host_ready`. On Unix the child-process test sends
+SIGTERM, observes bounded cooperative shutdown and `host_stopped`, then reopens
+the schema-v8 database. The optional `ctrlc` dependency is activated only by the
+non-default `synthetic` feature. Its documented Windows console support covers
+Ctrl-C/Ctrl-Break; interactive Windows console-control delivery was not
+available for native execution in this environment, and close/logoff/service
+shutdown events are not claimed. POSIX SIGTERM and Windows console events have
+different delivery semantics, so only the Unix signal path has direct runtime
+E2E evidence here.
+
+A reproducible bounded Release sample was run on native Linux x86_64 with Rust
+1.85.0. The Scheduler workload admitted 32 one-shot synthetic schedules and
+verified 32 durable `TaskCreated` events; start-to-ready elapsed time was
+74.04 ms, or 432.19 Tasks/s for this bounded startup workload. The fake-model
+sample ran 16 separate compiled `model-smoke` processes, then verified 16
+unique durable RequestIds, 16 completions and no unfinished attempts; the
+process-inclusive rate was 103.48 calls/s. These figures include process and
+database setup, are single-run observations rather than targets, and are not
+estimates for other platforms or pure in-process Router throughput. They do not
+measure idle CPU/RSS or provider network performance.
+
+Security checks retain `default = []`, no Router edge from Core/default Host,
+and no real provider/network or credential path. `ctrlc` and Router-related
+code remain behind explicit non-default synthetic features. The workspace smoke
+clock guard permits only the two monotonic `Instant::now` reads in the
+synthetic timeout helper; the injected protocol Clock remains authoritative for
+wall-clock policy and persisted event times. The ordinary `run --synthetic`
+loop still creates Scheduler Tasks without sending them to the model adapter.
+Schema v8 and migrations 0001–0008 are unchanged.
+
+Local verification for this follow-up includes Rust 1.85 and Stable workspace
+tests, all-feature tests, Clippy with denied warnings, and ten Release Host
+lifecycle tests including policy/accounting scenarios, Scheduler/model crash
+barriers, throughput samples, and Unix SIGTERM. Final pushed-HEAD Actions run
+IDs and their results are recorded in the PR #17 description after completion.
+
+Remaining limitations: the task-correlated token/model-call budget path is not
+independently exercised through a real TaskEngine-created Task; cancellation
+while a fake provider is already pending is represented by timeout/process
+termination rather than a separate live cancellation control; Windows console
+termination is compile/dependency evidence only; and this run does not provide
+idle resource, physical power-loss, external side-effect, or exactly-once
+measurements. The security guards are source/dependency checks plus behavioral
+tests, not a formal proof over arbitrary transitive execution paths. Independent
+review remains required.

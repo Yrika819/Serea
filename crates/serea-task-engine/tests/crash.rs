@@ -1581,10 +1581,14 @@ fn model_execution_is_confined_to_explicit_synthetic_host_feature() {
         let default_tree = dependency_tree(package, None);
         assert!(!default_tree.contains("serea-model-router"));
         assert!(!default_tree.contains("serea-testkit"));
+        if package == "serea-host" {
+            assert!(!default_tree.contains("ctrlc"));
+        }
     }
     let synthetic_tree = dependency_tree("serea-host", Some("synthetic"));
     assert!(synthetic_tree.contains("serea-model-router"));
     assert!(synthetic_tree.contains("serea-testkit"));
+    assert!(synthetic_tree.contains("ctrlc"));
     assert!(host_manifest.contains("default = []"));
     assert!(
         host_manifest
@@ -1597,6 +1601,7 @@ fn model_execution_is_confined_to_explicit_synthetic_host_feature() {
         .unwrap_or_default();
     assert!(!default_features.contains("synthetic"));
     assert!(host_manifest.contains("serea-model-router = { workspace = true, optional = true }"));
+    assert!(host_manifest.contains("ctrlc = { workspace = true, optional = true }"));
     assert!(host_manifest.contains("synthetic = ["));
     let synthetic_feature = host_manifest
         .split("synthetic = [")
@@ -1604,6 +1609,7 @@ fn model_execution_is_confined_to_explicit_synthetic_host_feature() {
         .and_then(|tail| tail.split(']').next())
         .unwrap_or_default();
     assert!(synthetic_feature.contains("dep:serea-model-router"));
+    assert!(synthetic_feature.contains("dep:ctrlc"));
     assert!(!host_source.contains("ModelRouter"));
     assert!(!host_source.contains("ModelProvider::generate"));
 

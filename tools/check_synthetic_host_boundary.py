@@ -36,6 +36,10 @@ def check(root: Path) -> list[str]:
         errors.append("process crash hooks must remain a separate opt-in feature")
     if "serea-model-router = { workspace = true, optional = true }" not in host_manifest:
         errors.append("Host Model Router dependency must be optional")
+    if 'ctrlc = { workspace = true, optional = true }' not in host_manifest:
+        errors.append("termination adapter must remain an optional Host dependency")
+    if '"dep:ctrlc"' not in host_manifest.split("synthetic = [", 1)[-1].split("]", 1)[0]:
+        errors.append("termination adapter must be excluded from default Host builds")
 
     if "ModelRouter" in host or "ModelProvider::generate" in host:
         errors.append("Host entrypoint must not directly construct or invoke Model Router")

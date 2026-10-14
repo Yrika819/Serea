@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "synthetic")]
 mod host_clock;
 #[cfg(feature = "synthetic")]
+mod synthetic_ids;
+#[cfg(feature = "synthetic")]
 mod synthetic_model;
 
 #[cfg(feature = "synthetic")]
@@ -133,11 +135,11 @@ fn option_value(name: &str) -> Option<String> {
 
 #[cfg(feature = "synthetic")]
 fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::synthetic_ids::SyntheticHostUlidSource;
     use host_clock::WallClock;
     use serea_core::Core;
     use serea_event_bus::EventBus;
-    use serea_protocol::Clock;
-    use serea_testkit::DeterministicUlidSource;
+    use serea_protocol::{Clock, TimestampMs};
     use std::fs::OpenOptions;
     use std::time::Duration;
 
@@ -164,13 +166,13 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
     let db = root.join("core.sqlite");
     let clock = WallClock;
     let epoch = clock.now_ms()?;
-    // Keep separate host processes from replaying the deterministic testkit
-    // source at the same wall-clock millisecond during fast crash/relaunch.
-    let ulid_ms = u64::try_from(epoch.get())
-        .map_err(|_| "clock before ULID epoch")?
-        .checked_add(u64::from(std::process::id()))
-        .ok_or("identifier clock overflow")?;
-    let events = EventBus::new(DeterministicUlidSource::starting_at(ulid_ms)?);
+    // OS entropy separates process lifetimes even with same-millisecond
+    // restarts, clock rollback, or PID reuse.
+    let ulid_ms = u64::try_from(epoch.get()).map_err(|_| "clock before ULID epoch")?;
+    let ulid_timestamp = TimestampMs::new(ulid_ms)?;
+    let ids = SyntheticHostUlidSource::new(ulid_timestamp)
+        .map_err(|_| "synthetic identifier entropy unavailable")?;
+    let events = EventBus::new(ids);
     let mut core = Core::open(&db, &clock, events.clone())?;
     if core.schema_version()? != 8 {
         return Err("unexpected canonical schema version".into());

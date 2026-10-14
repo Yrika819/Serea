@@ -20,8 +20,9 @@ serea-scheduler = { workspace = true, optional = true }
 fs2 = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
 
 [features]
 default = []
-synthetic = ["dep:serea-testkit", "dep:serea-capability", "dep:serea-storage", "dep:serea-scheduler", "dep:serea-model-router", "dep:async-trait", "dep:serde_json", "dep:fs2"]
+synthetic = ["dep:serea-testkit", "dep:serea-capability", "dep:serea-storage", "dep:serea-scheduler", "dep:serea-model-router", "dep:async-trait", "dep:serde_json", "dep:fs2", "dep:getrandom"]
 

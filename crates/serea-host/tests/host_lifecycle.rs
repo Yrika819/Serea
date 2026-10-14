@@ -56,25 +56,6 @@ fn wait_ready(child: &mut Child) -> BufReader<std::process::ChildStdout> {
     }
 }
 
-fn wait_scheduled_task(reader: &mut BufReader<std::process::ChildStdout>) {
-    let started = monotonic_now();
-    let mut line = String::new();
-    loop {
-        assert!(
-            started.elapsed() < Duration::from_secs(30),
-            "Host did not report scheduled task processing"
-        );
-        line.clear();
-        let bytes = reader.read_line(&mut line).expect("read Host diagnostics");
-        assert_ne!(bytes, 0, "Host exited before scheduled processing");
-        if (line.contains("scheduler_recovery") || line.contains("scheduler_wake"))
-            && line.contains("calendar_tasks_created_or_reused\":1")
-        {
-            return;
-        }
-    }
-}
-
 fn stop(directory: &Path, mut child: Child, _stdout: BufReader<std::process::ChildStdout>) {
     let status = Command::new(env!("CARGO_BIN_EXE_serea-host"))
         .args(["stop", "--synthetic", "--data-dir"])
@@ -138,24 +119,27 @@ fn explicit_model_smoke_runs_fake_success_and_failure_through_host_router() {
     for scenario in ["success", "failure"] {
         let scenario_dir = directory.join(scenario);
         std::fs::create_dir_all(&scenario_dir).expect("create scenario database directory");
-        let output = Command::new(env!("CARGO_BIN_EXE_serea-host"))
-            .args(["model-smoke", "--synthetic", "--data-dir"])
-            .arg(&scenario_dir)
-            .args(["--scenario", scenario])
-            .output()
-            .expect("run actual synthetic Host model command");
-        assert!(
-            output.status.success(),
-            "synthetic model Host {scenario} failed: stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
         let expected_event = if scenario == "success" {
             "synthetic_model_completed"
         } else {
             "synthetic_model_failed"
         };
-        assert!(String::from_utf8_lossy(&output.stdout).contains(expected_event));
+        let repetitions = if scenario == "success" { 2 } else { 1 };
+        for _ in 0..repetitions {
+            let output = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+                .args(["model-smoke", "--synthetic", "--data-dir"])
+                .arg(&scenario_dir)
+                .args(["--scenario", scenario])
+                .output()
+                .expect("run actual synthetic Host model command");
+            assert!(
+                output.status.success(),
+                "synthetic model Host {scenario} failed: stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains(expected_event));
+        }
 
         let clock = serea_testkit::TestClock::at_epoch();
         let store = serea_storage::Store::open(&scenario_dir.join("core.sqlite"), &clock)
@@ -178,6 +162,14 @@ fn explicit_model_smoke_runs_fake_success_and_failure_through_host_router() {
             })
             .collect();
         assert!(kinds.contains(&serea_protocol::EventKind::ModelCalled));
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|kind| **kind == serea_protocol::EventKind::ModelCalled)
+                .count(),
+            repetitions,
+            "separate Host process lifetimes must persist distinct RequestIds"
+        );
         assert!(kinds.contains(&if scenario == "success" {
             serea_protocol::EventKind::ModelCompleted
         } else {
@@ -212,10 +204,18 @@ fn compiled_host_creates_one_durable_task_for_a_due_calendar_occurrence() {
         String::from_utf8_lossy(&seeded.stderr)
     );
 
+    // Startup recovery commits the due occurrence's Task and audit before it
+    // publishes readiness. Kill at that process boundary, before the later
+    // scheduler diagnostic/acknowledgement, then inspect SQLite independently.
     let mut first = start(&directory);
-    let mut output = wait_ready(&mut first);
-    wait_scheduled_task(&mut output);
-    stop(&directory, first, output);
+    let _output = wait_ready(&mut first);
+    first
+        .kill()
+        .expect("kill Host after durable Scheduler recovery");
+    assert!(
+        !first.wait().expect("reap killed Scheduler Host").success(),
+        "process-kill boundary must terminate the child"
+    );
 
     let clock = serea_testkit::TestClock::at_epoch();
     let store = serea_storage::Store::open(&directory.join("core.sqlite"), &clock)

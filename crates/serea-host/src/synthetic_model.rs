@@ -16,11 +16,11 @@ use serea_model_router::{
     StructuredRequirementV1,
 };
 use serea_protocol::provider::ModelProvider;
-use serea_protocol::{Clock, CostClass, DataClass, ModelMessage, ModelPurpose, ResponseFormat};
-use serea_storage::{ModelPriceSnapshot, Store, UsdMicros};
-use serea_testkit::{
-    DeterministicUlidSource, MockModelProvider, ModelScript, synthetic_model_roster,
+use serea_protocol::{
+    Clock, CostClass, DataClass, ModelMessage, ModelPurpose, ResponseFormat, TimestampMs,
 };
+use serea_storage::{ModelPriceSnapshot, Store, UsdMicros};
+use serea_testkit::{MockModelProvider, ModelScript, synthetic_model_roster};
 
 struct OfflineGate;
 
@@ -157,10 +157,11 @@ pub(crate) fn execute_once(root: &Path, failure: bool) -> Result<(), String> {
     let clock = super::host_clock::WallClock;
     let now = clock.now_ms().map_err(|_| "synthetic clock unavailable")?;
     let id_ms = u64::try_from(now.get()).map_err(|_| "synthetic clock before ULID epoch")?;
-    let events = EventBus::new(
-        DeterministicUlidSource::starting_at(id_ms)
-            .map_err(|_| "synthetic identifier source unavailable")?,
-    );
+    let timestamp =
+        TimestampMs::new(id_ms).map_err(|_| "synthetic identifier timestamp invalid")?;
+    let ids = super::synthetic_ids::SyntheticHostUlidSource::new(timestamp)
+        .map_err(|_| "synthetic identifier entropy unavailable")?;
+    let events = EventBus::new(ids);
     let store = Store::open(&db_path, &clock).map_err(|_| "synthetic storage unavailable")?;
     let (router, provider) = configured_router(failure)?;
     let call = prepared_call()?;

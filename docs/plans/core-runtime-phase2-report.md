@@ -200,12 +200,44 @@ Native platform run `38568006922` succeeded. The native matrix completed
 Windows x64 and ARM64. These runs are on the implementation commit; a later
 report-only commit requires its own exact-HEAD workflow verification.
 
-The overall verdict remains partial. Still required are deterministic actual
-Host process-kill barriers before/after Scheduler admission, claim, Task/audit
-commit and acknowledgement; actual Host Router provider-entry/pending/result
-barriers and restart inspection; Host-path cancellation, timeout, identity
-mismatch, budget and accounting coverage; mutation testing of the security
-guard; and a durable identifier strategy analysis/fix for fast restart and PID
-reuse. Existing Scheduler and model-smoke success/failure E2E tests remain
-green locally. No physical power-loss durability or exactly-once external
-effect guarantee is claimed.
+At the end of the preceding recovery campaign, the remaining items included
+Scheduler and Router process barriers, Host-path cancellation and accounting
+coverage, mutation tests for the security guard, and a durable identifier
+strategy review. The follow-up below addresses only identifier restart
+collision resistance and the Scheduler post-commit kill boundary; the overall
+verdict remains partial.
+
+### Identifier and Scheduler crash follow-up
+
+The long-running Host and explicit model-smoke command now construct a
+Host-owned ULID source from OS-provided entropy behind the non-default
+`synthetic` feature. This replaces the prior deterministic testkit sequence
+seeded from wall-clock milliseconds and PID. One EventBus source supplies both
+event and model RequestIds during the exclusive Host lifetime. The 80-bit
+entropy value increments per identifier, and exhaustion fails loudly. Each
+process lifetime receives an independent OS-random seed; collision resistance
+is probabilistic (for identifiers from two lifetimes at the same timestamp,
+the seed collision probability is 2^-80 before accounting for call volume),
+not a mathematical uniqueness guarantee or production identity system. OS
+entropy failure aborts startup before readiness.
+
+The compiled Host Scheduler E2E now kills and reaps the child immediately
+after `host_ready`. Startup has already committed the due occurrence's Task
+and audit through `Core::recover`; the test independently inspects SQLite,
+restarts the Host, and verifies exactly one TaskCreated and one
+ScheduleTaskCreated event with matching occurrence identity, Task origin,
+registry generation pin and audit order. This covers a process kill after the
+atomic Task/audit transaction and before subsequent Host diagnostics. The
+existing transaction does not expose safe separate kill points inside
+admission, claim and Task/audit commit; splitting it for tests would weaken the
+durability envelope.
+
+The follow-up Rust 1.85.0 synthetic Host suite passed 4/4, including the
+same-database process-restart ID check and Scheduler kill/relaunch scenario.
+Still unimplemented are distinct barriers at Scheduler admission/claim and
+model provider entry/pending/result; Host-path timeout/cancellation/provider
+identity/budget/accounting matrix; and isolated-copy security guard mutation
+tests. The model smoke path remains an explicit short-lived command, so it has
+no long-running fake provider operation to pause at those boundaries.
+Process-kill tests do not prove physical power-loss durability or exactly-once
+external effects.

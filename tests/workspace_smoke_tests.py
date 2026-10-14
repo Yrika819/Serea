@@ -5,7 +5,10 @@ from __future__ import annotations
 import contextlib
 import io
 import re
+import shutil
 import sqlite3
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -660,6 +663,78 @@ class P2GroupOInvariantTests(unittest.TestCase):
             self.assertRegex(sql, rf"CREATE TRIGGER {trigger}\b")
         self.assertIn("REFERENCES task_steps(step_id) ON DELETE CASCADE", sql)
         self.assertIn("FOREIGN KEY (digest, data_class_rank)", sql)
+
+
+class SyntheticHostSecurityMutationTests(unittest.TestCase):
+    root = Path(__file__).resolve().parents[1]
+    checker = root / "tools/check_synthetic_host_boundary.py"
+    guarded = (
+        "crates/serea-core/Cargo.toml",
+        "crates/serea-host/Cargo.toml",
+        "crates/serea-host/src/main.rs",
+        "crates/serea-host/src/synthetic_model.rs",
+    )
+
+    def run_guard(self, root: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["python3", str(self.checker), "--root", str(root), "--static-only"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def assert_mutation_rejected(self, path: str, old: str, new: str):
+        with tempfile.TemporaryDirectory(prefix="serea-guard-mutation-") as temp:
+            clone = Path(temp)
+            for relative in self.guarded:
+                target = clone / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(self.root / relative, target)
+            target = clone / path
+            source = target.read_text(encoding="utf-8")
+            self.assertIn(old, source)
+            target.write_text(source.replace(old, new, 1), encoding="utf-8")
+            result = self.run_guard(clone)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_baseline_boundary_passes(self):
+        result = self.run_guard(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_default_host_router_dependency_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-host/Cargo.toml",
+            "serea-model-router = { workspace = true, optional = true }",
+            "serea-model-router = { workspace = true }",
+        )
+
+    def test_default_core_router_dependency_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-core/Cargo.toml",
+            "[dependencies]",
+            "[dependencies]\nserea-model-router = { workspace = true }",
+        )
+
+    def test_synthetic_default_activation_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-host/Cargo.toml",
+            "default = []",
+            'default = ["synthetic"]',
+        )
+
+    def test_normal_host_dispatch_reference_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-host/src/main.rs",
+            "synthetic_model::recover_unresolved(&root, &events, &clock)",
+            "synthetic_model::execute_once(&root, false)",
+        )
+
+    def test_network_adapter_reference_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-host/src/synthetic_model.rs",
+            "MockModelProvider",
+            "reqwest::Client; MockModelProvider",
+        )
 
 
 if __name__ == "__main__":

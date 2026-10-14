@@ -181,10 +181,10 @@ ordinary Core source, and the separate fake adapter. It permits only
 `execute_once` and `ModelProvider::generate` references there. It continues to
 exclude Router/testkit from default builds and network/credential/capability
 references from the synthetic model adapter. Its focused test passed locally
-and the full crash test ran in Full CI. The requested isolated-copy mutation
-suite for five forbidden manifest/source changes has not been added. The guard
-remains source-pattern and Cargo-tree based; it is not a proof against every
-possible indirect call graph mutation.
+and the full crash test ran in Full CI. The isolated-copy mutation suite is
+recorded in the current follow-up below. The guard remains source-pattern and
+Cargo-tree based; it is not a proof against every possible indirect call graph
+mutation.
 
 Current local evidence for this follow-up: Rust 1.85.0 workspace check,
 workspace tests, all-feature tests, release build and all-feature Clippy
@@ -203,9 +203,10 @@ report-only commit requires its own exact-HEAD workflow verification.
 At the end of the preceding recovery campaign, the remaining items included
 Scheduler and Router process barriers, Host-path cancellation and accounting
 coverage, mutation tests for the security guard, and a durable identifier
-strategy review. The follow-up below addresses only identifier restart
-collision resistance and the Scheduler post-commit kill boundary; the overall
-verdict remains partial.
+strategy review. The prior follow-up addressed identifier restart collision
+resistance and the Scheduler post-commit kill boundary. The current follow-up
+adds Model Router and Scheduler child-process barriers and security guard
+mutation tests; the overall verdict remains partial.
 
 ### Identifier and Scheduler crash follow-up
 
@@ -233,14 +234,10 @@ admission, claim and Task/audit commit; splitting it for tests would weaken the
 durability envelope.
 
 The follow-up Rust 1.85.0 synthetic Host suite passed 4/4, including the
-same-database process-restart ID check and Scheduler kill/relaunch scenario.
-Still unimplemented are distinct barriers at Scheduler admission/claim and
-model provider entry/pending/result; Host-path timeout/cancellation/provider
-identity/budget/accounting matrix; and isolated-copy security guard mutation
-tests. The model smoke path remains an explicit short-lived command, so it has
-no long-running fake provider operation to pause at those boundaries.
-Process-kill tests do not prove physical power-loss durability or exactly-once
-external effects.
+same-database process-restart ID check and Scheduler post-commit kill/relaunch
+scenario. The more detailed barrier coverage and mutation suite are recorded
+below. Process-kill tests do not prove physical power-loss durability or
+exactly-once external effects.
 
 ### Release resource sample
 
@@ -253,3 +250,56 @@ separate stop process. These are one-run observations, not targets or
 cross-platform estimates. Scheduler latency/throughput and repeated fake-model
 throughput were not measured in this sample; the child E2E is correctness
 evidence only.
+
+### Deterministic crash-boundary follow-up
+
+At HEAD `6fce8ea3c1b827e46bc85d4d72b0956f11f5f935`, Fast CI 38597809280,
+Full CI 38597809324, SQLite portability 38597809277 and Native platform
+validation 38597809378 succeeded; the native matrix completed 12/12
+Stable/MSRV jobs. The changes below follow that HEAD and require new final-HEAD
+workflow runs before acceptance.
+
+The Host adds the non-default `synthetic-test-hooks` feature, which forwards
+`serea-scheduler/test-hooks`. It is not included by `default = []`; normal
+default and ordinary synthetic Host builds do not compile the barrier or clock
+override. The native lifecycle test command explicitly enables this feature.
+
+The actual Host executable's model-smoke dispatch can pause immediately before
+Router execution (no durable attempt or `ModelCalled`), in the fake provider's
+`generate` entry after the Router has committed its durable intent and
+`ModelCalled` event, or after terminal persistence and before command
+acknowledgement. The lifecycle harness opens the same SQLite database at each
+barrier, kills and reaps the child, restarts a fresh Host, and checks the
+original RequestId, state, usage and audit cardinality. At provider entry, the
+attempt is `DISPATCH_INTENT`; startup marks it `AMBIGUOUS`, leaves usage absent,
+and does not append a second `ModelCalled`. After terminal commit, restart
+preserves completion, usage and the singular terminal event. This does not
+claim exactly-once execution by an external provider.
+
+The Scheduler test feature pauses around existing transaction boundaries:
+before/after occurrence admission, after durable claim, immediately before
+TaskEngine's atomic Task/audit transaction, and immediately after that
+transaction. The compiled Host E2E independently inspects SQLite at each
+barrier, kills/reaps the process, restarts against the same database, and
+checks for one TaskCreated and one ScheduleTaskCreated. Claim recovery uses a
+test-only injected Host clock advanced beyond the existing lease expiry; no
+production clock or lease semantics changed. The Task and audit remain in one
+existing atomic TaskEngine transaction, with no manufactured interior crash
+point. Rust 1.85.0 passed both model and Scheduler barrier suites locally.
+
+`tools/check_synthetic_host_boundary.py` adds source checks for default
+dependency edges, synthetic-only Router use, trusted Host request preparation,
+network/credential/Capability exclusions and no normal-loop dispatch.
+`SyntheticHostSecurityMutationTests` mutates five disposable copies: default
+Host Router dependency, default Core Router dependency, synthetic default
+activation, dispatch from the normal Host loop, and an external network
+adapter reference. All five mutations are rejected; the unmodified source
+passes. Existing Rust security tests still inspect Cargo dependency trees.
+These checks are defense-in-depth, not a semantic proof of every possible
+indirect Rust call path.
+
+Remaining gaps are Host-level timeout/cancellation, provider response identity
+mismatch and budget/spend accounting integration tests; OS signal/console
+handlers; and Scheduler/model throughput measurements. The process-kill tests
+prove neither physical power-loss durability nor exactly-once external
+effects.

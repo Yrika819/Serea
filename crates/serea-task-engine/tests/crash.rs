@@ -1437,6 +1437,11 @@ fn runtime_sources() -> Vec<(String, String)> {
                     .replace('\\', "/");
                 if name.contains("/tests/")
                     || name.ends_with("_tests.rs")
+                    // This isolated module is only declared by the non-default
+                    // Scheduler `test-hooks` feature; the guard below pins that
+                    // declaration and the normal runtime implementation stays
+                    // free of environment and filesystem barriers.
+                    || name == "crates/serea-scheduler/src/test_hooks.rs"
                     // The executable host is the process boundary. Its
                     // synthetic-only CLI may read argv and allocate a
                     // disposable test database; libraries remain ambient-free.
@@ -1504,6 +1509,13 @@ fn production_runtime_crates_spawn_no_subprocess_and_read_no_environment() {
             );
         }
     }
+    let root = workspace_root();
+    let scheduler_manifest =
+        fs::read_to_string(root.join("crates/serea-scheduler/Cargo.toml")).unwrap();
+    let scheduler_lib = fs::read_to_string(root.join("crates/serea-scheduler/src/lib.rs")).unwrap();
+    assert!(scheduler_manifest.contains("default = []"));
+    assert!(scheduler_manifest.contains("test-hooks = []"));
+    assert!(scheduler_lib.contains("#[cfg(feature = \"test-hooks\")]\nmod test_hooks;"));
 }
 
 #[test]
@@ -1574,6 +1586,16 @@ fn model_execution_is_confined_to_explicit_synthetic_host_feature() {
     assert!(synthetic_tree.contains("serea-model-router"));
     assert!(synthetic_tree.contains("serea-testkit"));
     assert!(host_manifest.contains("default = []"));
+    assert!(
+        host_manifest
+            .contains("synthetic-test-hooks = [\"synthetic\", \"serea-scheduler/test-hooks\"]")
+    );
+    let default_features = host_manifest
+        .split("[features]")
+        .nth(1)
+        .and_then(|tail| tail.lines().next())
+        .unwrap_or_default();
+    assert!(!default_features.contains("synthetic"));
     assert!(host_manifest.contains("serea-model-router = { workspace = true, optional = true }"));
     assert!(host_manifest.contains("synthetic = ["));
     let synthetic_feature = host_manifest

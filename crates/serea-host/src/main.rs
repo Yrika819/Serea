@@ -5,6 +5,8 @@ use std::error::Error;
 use std::process::ExitCode;
 #[cfg(feature = "synthetic")]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "synthetic")]
+mod host_clock;
 
 #[cfg(feature = "synthetic")]
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
@@ -76,29 +78,13 @@ fn option_value(name: &str) -> Option<String> {
 
 #[cfg(feature = "synthetic")]
 fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
+    use host_clock::WallClock;
     use serea_core::Core;
     use serea_event_bus::EventBus;
-    use serea_protocol::{Clock, EpochMillis};
+    use serea_protocol::Clock;
     use serea_testkit::DeterministicUlidSource;
     use std::fs::OpenOptions;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    struct WallClock;
-    impl Clock for WallClock {
-        fn now_ms(&self) -> Result<EpochMillis, serea_protocol::ProtocolError> {
-            // This is the trusted OS clock adapter at the executable boundary;
-            // Core and Scheduler still receive time through the injected port.
-            #[allow(clippy::disallowed_methods)]
-            let millis = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| serea_protocol::ProtocolError::MalformedValue {
-                    field: serea_protocol::ValueField::Timestamp,
-                    reason: serea_protocol::ValueRejection::OutOfRange,
-                })?
-                .as_millis();
-            EpochMillis::new(i64::try_from(millis).unwrap_or(i64::MAX))
-        }
-    }
+    use std::time::Duration;
 
     let directory = option_value("--data-dir").ok_or("--data-dir is required")?;
     let root = std::path::PathBuf::from(directory);

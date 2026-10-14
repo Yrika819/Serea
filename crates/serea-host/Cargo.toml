@@ -15,7 +15,7 @@ serea-task-engine = { workspace = true }
 serea-testkit = { workspace = true, optional = true }
 serea-capability = { workspace = true, optional = true }
 serea-storage = { workspace = true, optional = true }
-fs2 = { version = "=0.4.3", optional = true }
+fs2 = { workspace = true, optional = true }
 
 [features]
 default = []

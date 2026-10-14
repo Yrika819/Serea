@@ -54,6 +54,7 @@ jsonschema = { version = "=0.58.3", default-features = false }
 # Crate Map §6.1 require (providers are registered as trait objects by
 # `serea-core`). This is a proc macro only; it introduces no async runtime.
 async-trait = "0.1"
+fs2 = "=0.4.3"
 jiff = { version = "=0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 jiff-tzdb = "=0.1.9"
 

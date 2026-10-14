@@ -136,3 +136,76 @@ IDs so the verification target remains explicit.
 No live provider, credential, real account, external network path, production
 Memory, Capability invocation, or P8 effect is enabled. Process-kill tests do
 not establish exactly-once external effects or physical power-loss durability.
+
+## Durable recovery follow-up
+
+This follow-up starts from PR #17 HEAD
+`4868489a943201837b389658821084a27911892a`. The synthetic Host startup now
+keeps the existing order `Core::recover` (Scheduler and Task repair), then
+`recover_unresolved_model_calls`, and only then emits `host_ready`. The latter
+uses the existing Model Router recovery function with the canonical Store,
+the Host EventBus, and injected Clock. It does not construct a Router or
+register/call a provider. A recovery error propagates to the existing generic
+`host_error` response and startup exits before readiness; there is no warning
+and continue path. Core/Scheduler recovery and Model Router recovery use
+separate bounded synchronous Store transactions, with no async wait while a
+SQLite transaction is open.
+
+The new compiled-executable child test seeds one valid PUBLIC `DISPATCH_INTENT`
+in a disposable v8 database, starts the real Host, and independently reads the
+database after startup. It verifies AMBIGUOUS state, original RequestId,
+preserved spend reservation, null actual cost, no model_usage row, and exactly
+one ModelFailed audit event. A second actual Host process startup leaves the
+state and audit count unchanged. The fixture seeds the durable intent directly
+through Store, so this proves Host startup recovery and repeat idempotence; it
+does not prove a kill at each provider execution boundary or the full
+Router-created `MODEL_CALLED` to `MODEL_FAILED` sequence in this Host test.
+Existing Model Router tests separately exercise actual process-death intent,
+ambiguous recovery, repeated/concurrent recovery, completion recovery,
+failure, cancellation and accounting behavior, but they are not the requested
+Host child-process barrier matrix.
+
+The prior security guard in
+`crates/serea-task-engine/tests/crash.rs`,
+`model_execution_is_confined_to_explicit_synthetic_host_feature` at line 1535.
+At reviewed base SHA `c74228c`, line 1535 defined
+`synthetic_core_has_no_model_or_capability_invocation_edge`. That original
+guard read Core and Host manifests/source and rejected any occurrence of
+`serea-model-router`, `ModelProvider::generate`, `CapabilityProvider::invoke`,
+`reqwest`, or `std::net::`; its purpose was to keep synthetic execution from
+reaching model, capability, or network edges. The guard was located and
+preserved with narrower feature-aware semantics; it was not deleted. The
+revised test checks default dependency trees, non-default synthetic activation,
+ordinary Core source, and the separate fake adapter. It permits only
+`synthetic_model::recover_unresolved` inside `run_synthetic_host` and rejects
+`execute_once` and `ModelProvider::generate` references there. It continues to
+exclude Router/testkit from default builds and network/credential/capability
+references from the synthetic model adapter. Its focused test passed locally
+and the full crash test ran in Full CI. The requested isolated-copy mutation
+suite for five forbidden manifest/source changes has not been added. The guard
+remains source-pattern and Cargo-tree based; it is not a proof against every
+possible indirect call graph mutation.
+
+Current local evidence for this follow-up: Rust 1.85.0 workspace check,
+workspace tests, all-feature tests, release build and all-feature Clippy
+completed successfully; formatting, workspace smoke, identity and Core API
+boundary checks passed. Stable Host lifecycle tests passed 4/4. Default Host
+release and explicit synthetic Host release builds both completed. Migration
+regression tests were included in the passing workspace suite, and no
+migration source was changed. On implementation commit
+`68d99d9f8557506de1dcfbd7f35caa4a2c269754`, GitHub Actions Fast CI
+`38568006823`, Full CI `38568006964`, SQLite portability `38568006855`, and
+Native platform run `38568006922` succeeded. The native matrix completed
+12/12 Stable/MSRV jobs, including compiled Host child-process lifecycle on
+Windows x64 and ARM64. These runs are on the implementation commit; a later
+report-only commit requires its own exact-HEAD workflow verification.
+
+The overall verdict remains partial. Still required are deterministic actual
+Host process-kill barriers before/after Scheduler admission, claim, Task/audit
+commit and acknowledgement; actual Host Router provider-entry/pending/result
+barriers and restart inspection; Host-path cancellation, timeout, identity
+mismatch, budget and accounting coverage; mutation testing of the security
+guard; and a durable identifier strategy analysis/fix for fast restart and PID
+reuse. Existing Scheduler and model-smoke success/failure E2E tests remain
+green locally. No physical power-loss durability or exactly-once external
+effect guarantee is claimed.

@@ -99,6 +99,19 @@ pub(crate) fn config_check() -> Result<(), String> {
     configured_router(false).map(|_| ())
 }
 
+/// Reconciles only durable unresolved attempts before the synthetic Host is
+/// allowed to report readiness. This path does not construct or call a Router.
+pub(crate) fn recover_unresolved(
+    root: &Path,
+    events: &EventBus,
+    clock: &dyn Clock,
+) -> Result<usize, String> {
+    let store = Store::open(&root.join("core.sqlite"), clock)
+        .map_err(|_| "synthetic recovery storage unavailable")?;
+    serea_model_router::recover_unresolved_model_calls(&store, events, clock)
+        .map_err(|_| "synthetic model recovery failed".to_owned())
+}
+
 fn prepared_call() -> Result<PreparedModelCallV1, String> {
     let draft = PreparedModelCallDraftV1 {
         task_id: None,

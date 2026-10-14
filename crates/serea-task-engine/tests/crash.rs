@@ -1606,7 +1606,12 @@ fn model_execution_is_confined_to_explicit_synthetic_host_feature() {
                 .next()
         })
         .unwrap_or_default();
-    assert!(!normal_run.contains("synthetic_model::"));
+    // Synthetic startup may reconcile durable unresolved intents before
+    // readiness. This is state-only recovery and must never construct a
+    // Router or invoke a provider from the ordinary run loop.
+    assert!(normal_run.contains("synthetic_model::recover_unresolved"));
+    assert!(!normal_run.contains("synthetic_model::execute_once"));
+    assert!(!normal_run.contains("ModelProvider::generate"));
     assert!(host_source.contains("synthetic_model::execute_once"));
     assert!(
         host_source

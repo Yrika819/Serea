@@ -171,12 +171,20 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
         .checked_add(u64::from(std::process::id()))
         .ok_or("identifier clock overflow")?;
     let events = EventBus::new(DeterministicUlidSource::starting_at(ulid_ms)?);
-    let mut core = Core::open(&db, &clock, events)?;
+    let mut core = Core::open(&db, &clock, events.clone())?;
     if core.schema_version()? != 8 {
         return Err("unexpected canonical schema version".into());
     }
     let recovered = core.recover(epoch, "synthetic-host")?;
+    // Task/Scheduler repair runs first, then unresolved dispatch intents are
+    // terminally reconciled without registering or invoking a provider.
+    // Any failure is fatal and readiness is withheld.
+    let model_recovered = synthetic_model::recover_unresolved(&root, &events, &clock)
+        .map_err(|_| "synthetic model startup recovery failed")?;
     println!("{{\"event\":\"host_ready\",\"schema_version\":8,\"mode\":\"synthetic\"}}");
+    if model_recovered > 0 {
+        println!("{{\"event\":\"model_recovery\",\"ambiguous_attempts\":{model_recovered}}}");
+    }
     if recovered.calendar_tasks_created_or_reused > 0
         || recovered.host_event_tasks_created_or_reused > 0
     {

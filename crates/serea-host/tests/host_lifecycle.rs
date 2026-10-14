@@ -315,3 +315,126 @@ fn compiled_host_creates_one_durable_task_for_a_due_calendar_occurrence() {
     drop(store);
     std::fs::remove_dir_all(&directory).expect("clean Scheduler data directory");
 }
+
+#[test]
+fn fresh_host_startup_reconciles_unresolved_model_dispatch_once() {
+    use serea_protocol::{
+        CostClass, DataClass, EpochMillis, ModelId, ModelPurpose, ProviderId, RequestId,
+    };
+    use serea_storage::{
+        ModelAttemptRelationKind, ModelAttemptState, ModelCallAttemptDraft, ModelDeploymentClass,
+        ModelPriceSnapshot, Store, UsdMicros,
+    };
+
+    let directory = std::env::temp_dir().join(format!(
+        "serea-host-model-recovery-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&directory).expect("create disposable model recovery directory");
+    let database = directory.join("core.sqlite");
+    let seed_clock = serea_testkit::TestClock::at_epoch();
+    let request_id =
+        RequestId::new("req_00000000000000000000000081").expect("valid synthetic request id");
+    let store = Store::open(&database, &seed_clock).expect("open recovery database");
+    let intent = store
+        .reserve_model_call(
+            ModelCallAttemptDraft {
+                request_id: request_id.clone(),
+                task_id: None,
+                purpose: ModelPurpose::Chat,
+                model_id: ModelId::new("nemotron-3-nano-30b").expect("model id"),
+                // This descriptor identifier is resolved exclusively by the
+                // explicit in-process MockModelProvider in synthetic mode.
+                provider_id: ProviderId::new("ollama").expect("provider id"),
+                deployment_class: ModelDeploymentClass::Local,
+                data_class: DataClass::Public,
+                relation_kind: ModelAttemptRelationKind::None,
+                parent_request_id: None,
+                fallback_from_model_id: None,
+                price: ModelPriceSnapshot::new(CostClass::Free, "synthetic-free-v1", 0, 0),
+                max_context_tokens: 4096,
+                effective_max_output_tokens: 8,
+                dispatch_intent_at: EpochMillis::new(0).expect("epoch"),
+            },
+            UsdMicros::new(0).expect("zero synthetic spend bound"),
+        )
+        .expect("persist unresolved dispatch intent");
+    let original_reservation = intent.reserved_cost_usd_micros;
+    drop(store);
+
+    let mut first = start(&directory);
+    let mut output = wait_ready(&mut first);
+    let mut line = String::new();
+    let started = monotonic_now();
+    let mut recovery_reported = false;
+    while started.elapsed() < Duration::from_secs(5) {
+        line.clear();
+        if output
+            .read_line(&mut line)
+            .expect("read startup diagnostics")
+            == 0
+        {
+            break;
+        }
+        if line.contains("\"event\":\"model_recovery\"")
+            && line.contains("\"ambiguous_attempts\":1")
+        {
+            recovery_reported = true;
+            break;
+        }
+    }
+    assert!(
+        recovery_reported,
+        "Host did not report startup reconciliation"
+    );
+    stop(&directory, first, output);
+
+    let clock = serea_testkit::TestClock::at_epoch();
+    let store = Store::open(&database, &clock).expect("inspect recovered intent");
+    let recovered = store
+        .get_model_call_attempt(&request_id)
+        .expect("read recovered attempt")
+        .expect("original attempt retained");
+    assert_eq!(recovered.state, ModelAttemptState::Ambiguous);
+    assert_eq!(recovered.request_id, request_id);
+    assert_eq!(recovered.reserved_cost_usd_micros, original_reservation);
+    assert_eq!(recovered.actual_cost_usd_micros, None);
+    assert!(
+        store
+            .model_usage_for_request(&recovered.request_id)
+            .unwrap()
+            .is_none()
+    );
+    let failed_count = || {
+        store
+            .replay_events(None, None, 128)
+            .expect("replay recovery audit")
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(item, serea_storage::ReplayItem::Event { event }
+                    if event.kind == serea_protocol::EventKind::ModelFailed)
+            })
+            .count()
+    };
+    assert_eq!(failed_count(), 1);
+
+    // A second real process startup is idempotent: terminal state and its
+    // content-free failure audit record remain singular.
+    let mut second = start(&directory);
+    let output = wait_ready(&mut second);
+    stop(&directory, second, output);
+    assert_eq!(failed_count(), 1);
+    assert!(
+        store
+            .list_unfinished_model_call_attempts()
+            .unwrap()
+            .is_empty()
+    );
+    store
+        .checkpoint_for_close()
+        .expect("checkpoint recovery database");
+    drop(store);
+    std::fs::remove_dir_all(&directory).expect("clean model recovery directory");
+}

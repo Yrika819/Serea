@@ -423,6 +423,17 @@ impl Scheduler {
             .map_err(ScheduleError::Storage)
     }
 
+    /// Releases a completed bounded consumer pass using its owner and
+    /// generation fence. A stale process cannot release a replacement lease.
+    pub fn release_event_consumer(
+        &self,
+        lease: &SchedulerConsumerLease,
+    ) -> Result<(), ScheduleError> {
+        self.store
+            .transact(|tx| tx.release_scheduler_consumer(lease))
+            .map_err(ScheduleError::Storage)
+    }
+
     /// Replays one committed Event Bus page and atomically commits all exact
     /// HOST_EVENT decisions with its Scheduler cursor advancement. Corruption
     /// aborts the complete page; declared expiry advances the cursor without

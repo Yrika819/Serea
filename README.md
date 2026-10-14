@@ -46,8 +46,8 @@ cargo run -p serea-host --features synthetic -- stop --synthetic --data-dir ./se
 The Host uses schema v8, performs bounded startup recovery, and waits for the
 stop command without busy polling. See
 [`docs/plans/core-runtime-phase2-report.md`](docs/plans/core-runtime-phase2-report.md)
-for the current implementation scope and remaining Scheduler and Model Router
-integration gaps.
+for the current implementation scope, bounded Scheduler wake integration and
+remaining Host Model Router integration gaps.
 
 ## Evidence and limitations
 

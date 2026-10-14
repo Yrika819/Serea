@@ -99,6 +99,13 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
     fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| "synthetic host is already running")?;
     let _lock_guard = HostLock(lock);
     let stop = root.join("host.stop");
+    // A stop request belongs to the previous process lifetime. The lock is
+    // held before removing it, so concurrent starts cannot consume it.
+    match std::fs::remove_file(&stop) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     let db = root.join("core.sqlite");
     let clock = WallClock;
     let epoch = clock.now_ms()?;
@@ -113,13 +120,30 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
     if core.schema_version()? != 8 {
         return Err("unexpected canonical schema version".into());
     }
-    core.recover(epoch, "synthetic-host")?;
+    let recovered = core.recover(epoch, "synthetic-host")?;
     println!("{{\"event\":\"host_ready\",\"schema_version\":8,\"mode\":\"synthetic\"}}");
+    if recovered.calendar_tasks_created_or_reused > 0
+        || recovered.host_event_tasks_created_or_reused > 0
+    {
+        println!(
+            "{{\"event\":\"scheduler_recovery\",\"calendar_tasks_created_or_reused\":{},\"host_event_tasks_created_or_reused\":{}}}",
+            recovered.calendar_tasks_created_or_reused,
+            recovered.host_event_tasks_created_or_reused
+        );
+    }
     loop {
         if stop.exists() {
             break;
         }
-        std::thread::park_timeout(Duration::from_millis(200));
+        let now = clock.now_ms()?;
+        let (event_tasks, calendar_tasks) = core.process_scheduler_wake(now, "synthetic-host")?;
+        if event_tasks > 0 || calendar_tasks > 0 {
+            println!(
+                "{{\"event\":\"scheduler_wake\",\"host_event_tasks_created_or_reused\":{event_tasks},\"calendar_tasks_created_or_reused\":{calendar_tasks}}}"
+            );
+        }
+        // Bounded wake cadence; due schedules are rechecked after every wake.
+        std::thread::park_timeout(Duration::from_secs(1));
     }
     let _ = std::fs::remove_file(&stop);
     core.shutdown()?;

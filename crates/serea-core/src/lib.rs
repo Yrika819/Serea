@@ -135,6 +135,68 @@ impl Core {
             .map_err(CoreError::Recovery)
     }
 
+    /// Processes one bounded due-calendar wake through the existing Scheduler.
+    /// The Scheduler owns admission, claims, TaskEngine creation and audit
+    /// attribution; this method exposes no direct storage mutation surface.
+    pub fn process_due_calendar(
+        &self,
+        now: EpochMillis,
+        lease_owner: &str,
+    ) -> Result<u16, CoreError> {
+        let scheduler_store =
+            Store::open(&self.path, &FixedClock(now)).map_err(CoreError::Storage)?;
+        let task_store = Store::open(&self.path, &FixedClock(now)).map_err(CoreError::Storage)?;
+        let mut scheduler = Scheduler::new(
+            scheduler_store,
+            TaskEngine::new(task_store, self.events.clone()),
+            self.events.clone(),
+        );
+        scheduler
+            .process_calendar_due(now, lease_owner)
+            .map_err(CoreError::Recovery)
+    }
+
+    /// Runs one bounded live Scheduler wake: replay a committed Host Event
+    /// page, dispatch materialized Host Event occurrences, then process due
+    /// calendar occurrences. The durable consumer fence is released only after
+    /// the bounded pass completes successfully.
+    pub fn process_scheduler_wake(
+        &self,
+        now: EpochMillis,
+        lease_owner: &str,
+    ) -> Result<(u16, u16), CoreError> {
+        let scheduler_store =
+            Store::open(&self.path, &FixedClock(now)).map_err(CoreError::Storage)?;
+        let task_store = Store::open(&self.path, &FixedClock(now)).map_err(CoreError::Storage)?;
+        let mut scheduler = Scheduler::new(
+            scheduler_store,
+            TaskEngine::new(task_store, self.events.clone()),
+            self.events.clone(),
+        );
+        let expires_at = EpochMillis::new(
+            now.get()
+                .checked_add(120_000)
+                .ok_or(CoreError::Recovery(ScheduleError::Invalid))?,
+        )
+        .map_err(|_| CoreError::Recovery(ScheduleError::Invalid))?;
+        let consumer = scheduler
+            .claim_event_consumer(lease_owner, now, expires_at)
+            .map_err(CoreError::Recovery)?;
+        scheduler
+            .replay_host_events(&consumer, now, 64)
+            .map_err(CoreError::Recovery)?;
+        let event_tasks = scheduler
+            .process_host_event_occurrences(now, lease_owner, 64)
+            .map_err(CoreError::Recovery)?;
+        let calendar_tasks = scheduler
+            .process_calendar_due(now, lease_owner)
+            .map_err(CoreError::Recovery)?;
+        scheduler
+            .release_event_consumer(&consumer)
+            .map_err(CoreError::Recovery)?;
+        Ok((event_tasks, calendar_tasks))
+    }
+
     /// Provides the existing Task Engine API to the trusted host composition.
     pub fn tasks(&mut self) -> &mut TaskEngine {
         &mut self.tasks

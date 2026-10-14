@@ -604,7 +604,7 @@ fn actual_host_model_dispatch_crash_barriers_recover_without_redispatch() {
     use serea_protocol::RequestId;
     use serea_storage::{ModelAttemptState, Store};
 
-    for phase in ["pre-dispatch", "provider", "terminal"] {
+    for phase in ["pre-dispatch", "provider", "after-result", "terminal"] {
         let directory = std::env::temp_dir().join(format!(
             "serea-host-model-barrier-{phase}-{}-{}",
             std::process::id(),
@@ -662,7 +662,7 @@ fn actual_host_model_dispatch_crash_barriers_recover_without_redispatch() {
                 assert!(attempts.is_empty());
                 None
             }
-            "provider" => {
+            "provider" | "after-result" => {
                 assert_eq!(attempts.len(), 1);
                 assert_eq!(attempts[0].state, ModelAttemptState::DispatchIntent);
                 Some(attempts[0].request_id.clone())
@@ -711,7 +711,7 @@ fn actual_host_model_dispatch_crash_barriers_recover_without_redispatch() {
                 .get_model_call_attempt(&request_id)
                 .expect("read attempt after process restart")
                 .expect("original request id remains durable");
-            if phase == "provider" {
+            if matches!(phase, "provider" | "after-result") {
                 assert_eq!(attempt.state, ModelAttemptState::Ambiguous);
                 assert_eq!(attempt.actual_cost_usd_micros, None);
                 assert!(

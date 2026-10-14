@@ -95,20 +95,29 @@ impl ModelProvider for TestBarrierProvider {
         request: &ModelRequest,
         context: &serea_protocol::provider::ModelCallContext,
     ) -> Result<ModelResponse, serea_protocol::ModelError> {
-        self.barrier
-            .wait()
-            .map_err(|_| serea_protocol::ModelError {
-                kind: serea_protocol::ModelErrorCode::new("TEST_BARRIER_FAILED")
-                    .unwrap_or_else(|_| unreachable!()),
-                message: serea_protocol::ErrorMessage::new("synthetic test barrier failed")
-                    .unwrap_or_else(|_| unreachable!()),
-                retryable: false,
-            })?;
-        self.inner.generate(request, context).await
+        if self.barrier.phase == "provider" {
+            self.barrier.wait().map_err(|_| test_barrier_error())?;
+        }
+        let response = self.inner.generate(request, context).await?;
+        if self.barrier.phase == "after-result" {
+            self.barrier.wait().map_err(|_| test_barrier_error())?;
+        }
+        Ok(response)
     }
 
     async fn health(&self) -> ProviderHealth {
         self.inner.health().await
+    }
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+fn test_barrier_error() -> serea_protocol::ModelError {
+    serea_protocol::ModelError {
+        kind: serea_protocol::ModelErrorCode::new("TEST_BARRIER_FAILED")
+            .unwrap_or_else(|_| unreachable!()),
+        message: serea_protocol::ErrorMessage::new("synthetic test barrier failed")
+            .unwrap_or_else(|_| unreachable!()),
+        retryable: false,
     }
 }
 
@@ -249,6 +258,10 @@ pub(crate) fn execute_once_with_test_barrier(
             directory: directory.to_path_buf(),
             phase: "provider",
         }),
+        (Some("after-result"), Some(directory)) => Some(TestBarrier {
+            directory: directory.to_path_buf(),
+            phase: "after-result",
+        }),
         (Some("terminal"), Some(directory)) => Some(TestBarrier {
             directory: directory.to_path_buf(),
             phase: "terminal",
@@ -285,7 +298,9 @@ fn execute_once_inner(
     let events = EventBus::new(ids);
     let store = Store::open(&db_path, &clock).map_err(|_| "synthetic storage unavailable")?;
     #[cfg(feature = "synthetic-test-hooks")]
-    let provider_barrier = barrier.clone().filter(|b| b.phase == "provider");
+    let provider_barrier = barrier
+        .clone()
+        .filter(|b| matches!(b.phase, "provider" | "after-result"));
     #[cfg(not(feature = "synthetic-test-hooks"))]
     let provider_barrier = None;
     let (router, provider) = configured_router_with_barrier(failure, provider_barrier)?;

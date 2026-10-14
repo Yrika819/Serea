@@ -267,7 +267,8 @@ override. The native lifecycle test command explicitly enables this feature.
 The actual Host executable's model-smoke dispatch can pause immediately before
 Router execution (no durable attempt or `ModelCalled`), in the fake provider's
 `generate` entry after the Router has committed its durable intent and
-`ModelCalled` event, or after terminal persistence and before command
+`ModelCalled` event, after the fake response is obtained but before terminal
+persistence, or after terminal persistence and before command
 acknowledgement. The lifecycle harness opens the same SQLite database at each
 barrier, kills and reaps the child, restarts a fresh Host, and checks the
 original RequestId, state, usage and audit cardinality. At provider entry, the

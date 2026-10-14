@@ -154,5 +154,8 @@ fn explicit_model_smoke_runs_router_and_leaves_recoverable_sqlite_state() {
     store
         .checkpoint_for_close()
         .expect("close reopened database cleanly");
+    // Windows does not allow deleting the data directory while SQLite still
+    // owns an open file handle, even after a successful checkpoint.
+    drop(store);
     std::fs::remove_dir_all(&directory).expect("clean disposable model directory");
 }

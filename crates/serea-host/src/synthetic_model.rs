@@ -176,7 +176,7 @@ async fn delayed_fake_response() {
             let wake = cx.waker().clone();
             let ready = Arc::clone(&wait_ready);
             std::thread::spawn(move || {
-                std::thread::park_timeout(std::time::Duration::from_millis(100));
+                std::thread::park_timeout(std::time::Duration::from_millis(1_000));
                 ready.store(true, Ordering::Release);
                 wake.wake();
             });
@@ -417,7 +417,7 @@ pub(crate) fn execute_once_with_test_barrier(
         behavior,
         gate,
         if scenario == "timeout" {
-            std::time::Duration::from_millis(20)
+            std::time::Duration::from_millis(150)
         } else {
             std::time::Duration::from_millis(10_000)
         },

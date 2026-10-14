@@ -312,7 +312,9 @@ At the follow-up from `15746d684a06124efc18f95f1332f40a552d9580`, the explicit
 synthetic `model-smoke` Host path gained bounded timeout handling and scripted
 policy/accounting scenarios. The Host waits using a monotonic elapsed-time
 boundary and drops a pending Router future at expiry. It then calls the existing
-`recover_unresolved_model_calls` reconciliation. A committed intent therefore
+`recover_unresolved_model_calls` reconciliation. The scripted timeout test holds the provider pending for one second against a
+150 ms Host timeout, leaving a wide scheduling margin on slower native runners.
+A committed intent therefore
 remains conservatively `AMBIGUOUS`; the Host does not retry it, refund its
 reservation, invent usage, or record a fabricated cost. SQLite transactions
 remain synchronous and no write transaction crosses an async wait. This is
@@ -392,3 +394,16 @@ idle resource, physical power-loss, external side-effect, or exactly-once
 measurements. The security guards are source/dependency checks plus behavioral
 tests, not a formal proof over arbitrary transitive execution paths. Independent
 review remains required.
+
+
+#### Cross-platform timeout regression correction
+
+The first final-HEAD native run exposed a timing-sensitive failure in the timeout
+integration scenario on Rust 1.85.0 macOS ARM64: a 20 ms timeout against a 100
+ms fake delay returned an outcome before the expected timeout classification
+under parallel workspace load. The behavior was confined to the synthetic test
+provider timing margin; no Router/storage contract failed. The fixture now waits
+1,000 ms and the Host timeout is 150 ms. On the Linux runner, the full Host
+lifecycle suite and two additional repetitions of the policy/accounting test all
+passed after this adjustment. The native workflow is being rerun at the updated
+HEAD; the original failure remains documented and is not represented as green.

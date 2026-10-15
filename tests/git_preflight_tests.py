@@ -77,6 +77,8 @@ class GitFixture(unittest.TestCase):
 
     def hook_env(self):
         real_git = shutil.which("git")
+        if os.name == "nt":
+            real_git = Path(real_git).as_posix()
         shim_dir = Path(self.temp.name) / "shim"
         shim_dir.mkdir(exist_ok=True)
         shim = shim_dir / "git"

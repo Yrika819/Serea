@@ -144,9 +144,11 @@ python tools/git_preflight.py --mode commit
 
 Windows Git hook behavior is exercised in the `Git hooks Windows compatibility`
 workflow on Windows x64. It deliberately places a failing `python3` shim first
-on `PATH`, then runs the real pre-commit/pre-push fixture tests through the
-`python` fallback and verifies the `py -3` selection path with isolated launcher
-fixtures. Windows ARM64 hook execution is not currently run by CI.
+on `PATH`, then runs the real pre-commit and fail-closed pre-push fixture tests
+through the `python` fallback and verifies the `py -3` selection path with
+isolated launcher fixtures. Bare-remote routing tests for accepted fast-forward
+and stale-target behavior run on Linux/macOS; the Windows fixture only verifies
+local hook decisions. Windows ARM64 hook execution is not currently run by CI.
 
 ## Recovery after an identity mistake
 

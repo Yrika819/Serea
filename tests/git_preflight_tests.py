@@ -258,6 +258,7 @@ class GitFixture(unittest.TestCase):
                                 text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "bare remote routing fixture is POSIX-only")
     def test_actual_prepush_hook_accepts_new_branch_and_fast_forward(self):
         bare, head, env = self.make_hook_fixture()
         new_branch = self.run_prepush_hook(env, self.push_row(head))
@@ -279,6 +280,7 @@ class GitFixture(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("all zeroes", result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "bare remote routing fixture is POSIX-only")
     def test_actual_prepush_hook_rejects_non_fast_forward(self):
         bare, head, env = self.make_hook_fixture()
         diverged = self.run_git("commit-tree", self.run_git("rev-parse", "HEAD^{tree}"),
@@ -294,6 +296,7 @@ class GitFixture(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not be a fast-forward", result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "bare remote routing fixture is POSIX-only")
     def test_actual_prepush_hook_rejects_stale_remote_head(self):
         bare, head, env = self.make_hook_fixture()
         old = self.head
@@ -317,6 +320,7 @@ class GitFixture(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("non-main branch", result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "bare remote routing fixture is POSIX-only")
     def test_actual_prepush_hook_rejects_multiple_branch_targets(self):
         _, head, env = self.make_hook_fixture()
         rows = self.push_row(head, "topic") + self.push_row(head, "other")

@@ -45,6 +45,7 @@ def main() -> int:
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
     except (OSError, subprocess.CalledProcessError):
         print("commit identity check could not read Git history", file=sys.stderr)

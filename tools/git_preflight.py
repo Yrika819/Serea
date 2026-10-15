@@ -24,7 +24,7 @@ class PreflightError(RuntimeError):
 def git(args: list[str], *, input_text: str | None = None) -> str:
     try:
         result = subprocess.run(
-            ["git", *args], input=input_text, text=True,
+            ["git", *args], input=input_text, text=True, encoding="utf-8",
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
         )
     except OSError as exc:
@@ -45,7 +45,8 @@ def config_sources(key: str) -> list[str]:
     try:
         raw = subprocess.run(
             ["git", "config", "--show-origin", "--show-scope", "--get-all", key],
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+            text=True, encoding="utf-8", stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, check=False,
         ).stdout
     except OSError:
         return []
@@ -194,7 +195,8 @@ def ls_remote(remote: str, branch: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", "ls-remote", "--heads", remote, f"refs/heads/{branch}"],
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+            text=True, encoding="utf-8", stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, check=False,
         )
     except OSError:
         raise PreflightError("Could not run remote HEAD freshness check.") from None
@@ -224,7 +226,8 @@ def check_push(remote: str, target: str, head: str, branch: str, base_branch: st
     live_target = ls_remote(remote, target)
     upstream_result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+        text=True, encoding="utf-8", stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, check=False,
     )
     upstream = upstream_result.stdout.strip() if upstream_result.returncode == 0 else ""
     if live_target is not None:

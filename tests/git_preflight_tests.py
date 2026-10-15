@@ -81,19 +81,14 @@ class GitFixture(unittest.TestCase):
         shim_dir.mkdir(exist_ok=True)
         shim = shim_dir / "git"
         shim.write_text(
-            "#!/bin/sh\n"
-            "if [ \"$1\" = ls-remote ]; then\n"
-            "    shift\n"
-            "    if [ \"$1\" = --heads ]; then\n"
-            "        shift\n"
-            "        if [ \"$1\" = origin ]; then\n"
-            "            shift\n"
-            "            set -- --heads \"$FIXTURE_BARE\" \"$@\"\n"
-            "        fi\n"
-            "    fi\n"
-            "    exec \"$REAL_GIT\" ls-remote \"$@\"\n"
-            "fi\n"
-            "exec \"$REAL_GIT\" \"$@\"\n",
+            "#!/usr/bin/env python\n"
+            "import os, sys\n"
+            "real = os.environ['REAL_GIT']\n"
+            "args = sys.argv[1:]\n"
+            "if args and args[0] == 'ls-remote':\n"
+            "    args = ['ls-remote', *args[1:]]\n"
+            "    args = [os.environ['FIXTURE_BARE'] if x == 'origin' else x for x in args]\n"
+            "os.execv(real, [real, *args])\n",
             encoding="utf-8",
         )
         shim.chmod(0o755)

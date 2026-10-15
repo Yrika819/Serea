@@ -475,7 +475,9 @@ control-event acceptance remains unverified until the native Windows jobs run
 this test; compile success alone is not considered delivery evidence. The
 test suppresses Ctrl-C handling in its sender while it temporarily joins the
 isolated Host console, because `CTRL_C_EVENT` is broadcast to attached
-processes. `CTRL_BREAK_EVENT` is directed to the dedicated Host process group.
+processes. The sender keeps its Ctrl-C ignore handler active until the Host
+exits because console-control delivery is asynchronous. `CTRL_BREAK_EVENT` is
+directed to the dedicated Host process group.
 The implementation keeps Windows console delivery distinct from Unix SIGTERM,
 which already has a native child-process test.
 
@@ -492,9 +494,11 @@ list for the toolchain reason above. The final GitHub Actions evidence must be
 read from the exact final HEAD in the PR description; the CI run IDs listed in
 older sections are historical runs for the commits they name.
 
-After adding the sender-side Ctrl-C suppression, Rust 1.85.0 formatting,
+After adding sender-side Ctrl-C suppression, Rust 1.85.0 formatting,
 documentation validation, and all 12 Host lifecycle tests passed locally.
-Native Windows delivery still requires a successful final Windows runner test.
+The first native Windows run showed that the ignore handler was restored too
+early, before asynchronous event delivery completed. The sender now remains
+shielded until the Host exits. Native Windows revalidation is pending.
 
 No migration or canonical schema source was changed. Model dispatch remains
 behind the non-default Host `synthetic` feature and explicit development

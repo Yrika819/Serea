@@ -238,7 +238,6 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
                 "deliver real Windows {label} control event"
             );
             let _ = FreeConsole();
-            let _ = SetConsoleCtrlHandler(None, 0);
             // ATTACH_PARENT_PROCESS = (DWORD)-1. A service runner may have no
             // console, so restoration is best-effort and not a test condition.
             let _ = AttachConsole(u32::MAX);
@@ -252,6 +251,12 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             assert!(monotonic_now() < deadline, "bounded {label} shutdown");
             std::thread::park_timeout(Duration::from_millis(20));
         };
+        // GenerateConsoleCtrlEvent is asynchronous. Keep the sender shielded
+        // until the Host has exited, so a late broadcast cannot terminate the
+        // test harness after the sender has already detached from its console.
+        unsafe {
+            let _ = SetConsoleCtrlHandler(None, 0);
+        }
         assert!(
             status.success(),
             "{label} should request cooperative shutdown"

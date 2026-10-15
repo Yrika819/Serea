@@ -1,6 +1,6 @@
 # Serea Decision Index
 
-Current frozen architecture: `serea-arch/2.6.0`; P0/P1 baseline
+Current frozen architecture: `serea-arch/2.7.0`; P0/P1 baseline
 `serea-arch/0.2.0` remains historical. P2 is closed. P3 is closed on the open
 `main` branch. Current P3 validation results and scope limits belong in the
 [P3 closure record](../plans/P3-closure.md). ADR-0021 remains Proposed as an
@@ -17,9 +17,9 @@ plans and audited `NOT_REQUIRED` gate completion. See
 
 ## P6 decisions (accepted 2026-10-10)
 
-Prepared for owner ratification; see the
-[P6 owner decision package](../plans/P6-owner-decision-package.md). None of these is
-Accepted, and none authorizes runtime work.
+Owner-ratified; see the
+[P6 owner decision package](../plans/P6-owner-decision-package.md). ADR-0037 through
+ADR-0041 are Accepted. Their acceptance does not by itself authorize runtime work.
 
 | ADR | Decision | Status |
 | --- | --- | --- |
@@ -28,6 +28,14 @@ Accepted, and none authorizes runtime work.
 | [ADR-0039](ADR-0039-p6-p8-revalidation-and-grant-consumption-boundary.md) | Grant consumption joins the P8 dispatch-intent transaction, reclassified from a P6 blocker to a P8 contract decision | **Accepted** |
 | [ADR-0040](ADR-0040-p6-storage-retention-bounds-and-crate-ownership.md) | `serea-policy` owns policy and approval types; no `serea-capability -> serea-policy` edge; `PolicyInputV1` with no raw arguments and no `now`; `AuthorizationEvidenceV1`; eight-table migration 0005 concept including the R2 action and grant membership tables; four new bounds | **Accepted** |
 | [ADR-0041](ADR-0041-p6-initial-approval-gates.md) | Initial mixed Plan with exact R2 action groups; audited `WAIT_APPROVAL` → `SUCCEEDED` using typed `NOT_REQUIRED` only when all group actions ALLOW; no new lifecycle state, authority, schema, or Plan insertion semantics | **Accepted by owner** |
+
+## P7 owner-ratified directions (2026-10-12)
+
+[ADR-0042](ADR-0042-p7-owner-ratified-directions.md) and the [owner-ratification record](../plans/P7-owner-ratification-record.md) record explicit Serea owner approval of the seven P7 architectural principles. The ratification does **not** approve candidate quotas or lifetimes, complete the deletion-ledger/quarantine design, authorize P7B, change frozen contracts, approve P8, or change the GoalLatch integration gate. Process state is `P7_OWNER_DIRECTIONS_RATIFIED_DETAILS_PENDING`.
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [ADR-0042](ADR-0042-p7-owner-ratified-directions.md) | P7-D01..D07 principles: local host-authenticated Owner; independent minimized provenance; additive owner-scoped SQLite and single-successor graph; PUBLIC/PERSONAL only; strict boundedness; lexical FTS5; authenticated Forget and restore reconciliation | **Accepted principles only; details pending; implementation not authorized** |
 
 ## Accepted decisions
 

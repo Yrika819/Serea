@@ -1434,8 +1434,19 @@ fn runtime_sources() -> Vec<(String, String)> {
                     .strip_prefix(&root)
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned();
-                if name.contains("/tests/") || name.ends_with("_tests.rs") {
+                    .replace('\\', "/");
+                if name.contains("/tests/")
+                    || name.ends_with("_tests.rs")
+                    // This isolated module is only declared by the non-default
+                    // Scheduler `test-hooks` feature; the guard below pins that
+                    // declaration and the normal runtime implementation stays
+                    // free of environment and filesystem barriers.
+                    || name == "crates/serea-scheduler/src/test_hooks.rs"
+                    // The executable host is the process boundary. Its
+                    // synthetic-only CLI may read argv and allocate a
+                    // disposable test database; libraries remain ambient-free.
+                    || name.starts_with("crates/serea-host/src/")
+                {
                     continue;
                 }
                 files.push((name, fs::read_to_string(&path).unwrap()));
@@ -1498,6 +1509,145 @@ fn production_runtime_crates_spawn_no_subprocess_and_read_no_environment() {
             );
         }
     }
+    let root = workspace_root();
+    let scheduler_manifest =
+        fs::read_to_string(root.join("crates/serea-scheduler/Cargo.toml")).unwrap();
+    let scheduler_lib = fs::read_to_string(root.join("crates/serea-scheduler/src/lib.rs")).unwrap();
+    assert!(scheduler_manifest.contains("default = []"));
+    assert!(scheduler_manifest.contains("test-hooks = []"));
+    assert!(scheduler_lib.contains("#[cfg(feature = \"test-hooks\")]\nmod test_hooks;"));
+}
+
+#[test]
+fn development_host_has_no_ambient_configuration_or_subprocess_access() {
+    let root = workspace_root();
+    let host = fs::read_to_string(root.join("crates/serea-host/src/main.rs")).unwrap();
+    assert!(
+        host.contains("std::env::args()"),
+        "the host owns its CLI boundary"
+    );
+    assert!(
+        host.contains("std::env::temp_dir()"),
+        "synthetic DBs stay disposable"
+    );
+    for banned in [
+        "std::env::var",
+        "std::process::Command",
+        "std::net::",
+        "reqwest",
+    ] {
+        assert!(
+            !host.contains(banned),
+            "development host contains forbidden {banned}"
+        );
+    }
+}
+
+#[test]
+fn model_execution_is_confined_to_explicit_synthetic_host_feature() {
+    let root = workspace_root();
+    let core_manifest = fs::read_to_string(root.join("crates/serea-core/Cargo.toml")).unwrap();
+    let host_manifest = fs::read_to_string(root.join("crates/serea-host/Cargo.toml")).unwrap();
+    let core_source = fs::read_to_string(root.join("crates/serea-core/src/lib.rs")).unwrap();
+    let host_source = fs::read_to_string(root.join("crates/serea-host/src/main.rs")).unwrap();
+
+    // Core and the default Host stay independent of model execution and live
+    // transports. `--features synthetic` is the one approved opt-in boundary.
+    assert!(!core_manifest.contains("serea-model-router"));
+    assert!(!core_source.contains("ModelRouter"));
+    assert!(!core_source.contains("ModelProvider::generate"));
+
+    let dependency_tree = |package: &str, features: Option<&str>| {
+        let mut command = Command::new("cargo");
+        command.current_dir(&root).args([
+            "tree",
+            "-p",
+            package,
+            "-e",
+            "normal",
+            "--locked",
+            "--offline",
+        ]);
+        if let Some(features) = features {
+            command.args(["--features", features]);
+        }
+        let output = command
+            .output()
+            .expect("inspect locked Cargo dependency tree");
+        assert!(output.status.success(), "cargo tree failed for {package}");
+        String::from_utf8(output.stdout).expect("cargo tree is utf-8")
+    };
+    for package in ["serea-core", "serea-host"] {
+        let default_tree = dependency_tree(package, None);
+        assert!(!default_tree.contains("serea-model-router"));
+        assert!(!default_tree.contains("serea-testkit"));
+        if package == "serea-host" {
+            assert!(!default_tree.contains("ctrlc"));
+        }
+    }
+    let synthetic_tree = dependency_tree("serea-host", Some("synthetic"));
+    assert!(synthetic_tree.contains("serea-model-router"));
+    assert!(synthetic_tree.contains("serea-testkit"));
+    assert!(synthetic_tree.contains("ctrlc"));
+    assert!(host_manifest.contains("default = []"));
+    assert!(
+        host_manifest
+            .contains("synthetic-test-hooks = [\"synthetic\", \"serea-scheduler/test-hooks\"]")
+    );
+    let default_features = host_manifest
+        .split("[features]")
+        .nth(1)
+        .and_then(|tail| tail.lines().next())
+        .unwrap_or_default();
+    assert!(!default_features.contains("synthetic"));
+    assert!(host_manifest.contains("serea-model-router = { workspace = true, optional = true }"));
+    assert!(host_manifest.contains("ctrlc = { workspace = true, optional = true }"));
+    assert!(host_manifest.contains("synthetic = ["));
+    let synthetic_feature = host_manifest
+        .split("synthetic = [")
+        .nth(1)
+        .and_then(|tail| tail.split(']').next())
+        .unwrap_or_default();
+    assert!(synthetic_feature.contains("dep:serea-model-router"));
+    assert!(synthetic_feature.contains("dep:ctrlc"));
+    assert!(!host_source.contains("ModelRouter"));
+    assert!(!host_source.contains("ModelProvider::generate"));
+
+    let synthetic_source =
+        fs::read_to_string(root.join("crates/serea-host/src/synthetic_model.rs"))
+            .expect("synthetic model adapter must be a separate source module");
+    assert!(host_source.contains("#[cfg(feature = \"synthetic\")]"));
+    assert!(host_source.contains("mod synthetic_model;"));
+    assert!(synthetic_source.contains("MockModelProvider"));
+    assert!(synthetic_source.contains("ModelRouterProcessV1::new"));
+    assert!(synthetic_source.contains("router.execute(&call, &host)"));
+    assert!(!synthetic_source.contains("reqwest"));
+    assert!(!synthetic_source.contains("std::net::"));
+    assert!(!synthetic_source.contains("CapabilityProvider::invoke"));
+    assert!(!synthetic_source.contains("OPENAI_API_KEY"));
+    assert!(!synthetic_source.contains("CredentialHandle"));
+    let normal_run = host_source
+        .split("fn run_synthetic_host()")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("#[cfg(feature = \"synthetic\")]\nstruct HostLock")
+                .next()
+        })
+        .unwrap_or_default();
+    // Synthetic startup may reconcile durable unresolved intents before
+    // readiness. This is state-only recovery and must never construct a
+    // Router or invoke a provider from the ordinary run loop.
+    assert!(normal_run.contains("synthetic_model::recover_unresolved"));
+    assert!(!normal_run.contains("synthetic_model::execute_once"));
+    assert!(!normal_run.contains("ModelProvider::generate"));
+    assert!(host_source.contains("synthetic_model::execute_once"));
+    assert!(
+        host_source
+            .contains("\"model-smoke\" if std::env::args().any(|arg| arg == \"--synthetic\")")
+    );
+
+    // The ordinary Core surface must not regain development fixture installers.
+    assert!(!core_source.contains("install_synthetic_registry_generation"));
 }
 
 #[test]

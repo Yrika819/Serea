@@ -21,6 +21,10 @@ pub enum ModelScript {
     Respond(serea_protocol::ModelResponse),
     /// Fail with this exact typed error.
     Fail(ModelError),
+    /// Echo a deterministic synthetic text response bound to the current
+    /// request identity. This lets Router integrations exercise dispatch
+    /// without precomputing a RequestId or reaching a live provider.
+    EchoText(String),
 }
 
 impl ModelScript {
@@ -188,6 +192,21 @@ impl ModelProvider for MockModelProvider {
         match self.next_script() {
             Some(ModelScript::Respond(response)) => Ok(response),
             Some(ModelScript::Fail(error)) => Err(error),
+            Some(ModelScript::EchoText(content)) => Ok(serea_protocol::ModelResponse {
+                request_id: request.request_id.clone(),
+                model_id: request.model_id.clone(),
+                provider_id: self.provider_id.clone(),
+                content,
+                structured: None,
+                finish_reason: serea_protocol::FinishReason::Stop,
+                usage: serea_protocol::ModelUsage {
+                    input_tokens: serea_protocol::TokenCount::new(1),
+                    output_tokens: serea_protocol::TokenCount::new(1),
+                    cost_class: serea_protocol::CostClass::Free,
+                },
+                latency_ms: 1,
+                repair_attempts: 0,
+            }),
             None => Err(ModelError {
                 kind: serea_protocol::ModelErrorCode::new("SCRIPT_EXHAUSTED").unwrap_or_else(
                     |error| unreachable!("a frozen code shape is valid: {error:?}"),

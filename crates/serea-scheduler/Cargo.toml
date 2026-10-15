@@ -22,3 +22,7 @@ serea-capability.workspace = true
 serea-policy.workspace = true
 rusqlite.workspace = true
 serea-testkit.workspace = true
+
+[features]
+default = []
+test-hooks = []

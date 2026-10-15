@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+case "$repo_root" in
+    *\\*)
+        if ! command -v cygpath >/dev/null 2>&1; then
+            echo "could not normalize Windows repository path for hook execution" >&2
+            exit 1
+        fi
+        repo_root=$(cygpath -u "$repo_root")
+        ;;
+esac
+"$repo_root/tools/run_python.sh" "$repo_root/tools/git_preflight.py" --mode commit

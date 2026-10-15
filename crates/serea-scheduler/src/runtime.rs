@@ -260,6 +260,8 @@ impl Scheduler {
         }
 
         let calendar_tasks_created_or_reused = self.process_calendar_due(now, lease_owner)?;
+        self.store
+            .transact(|tx| tx.release_scheduler_consumer(&consumer))?;
         Ok(SchedulerRecoveryReport {
             task_recovery,
             expired_claims_recovered,
@@ -418,6 +420,17 @@ impl Scheduler {
     ) -> Result<SchedulerConsumerLease, ScheduleError> {
         self.store
             .transact(|tx| tx.claim_scheduler_consumer(owner, now, expires_at))
+            .map_err(ScheduleError::Storage)
+    }
+
+    /// Releases a completed bounded consumer pass using its owner and
+    /// generation fence. A stale process cannot release a replacement lease.
+    pub fn release_event_consumer(
+        &self,
+        lease: &SchedulerConsumerLease,
+    ) -> Result<(), ScheduleError> {
+        self.store
+            .transact(|tx| tx.release_scheduler_consumer(lease))
             .map_err(ScheduleError::Storage)
     }
 
@@ -912,9 +925,15 @@ impl Scheduler {
             actor_version: &actor_version,
             causation_id: work.source_event_id.as_ref(),
         };
-        self.tasks
+        #[cfg(feature = "test-hooks")]
+        crate::test_hooks::barrier("before-task-commit")?;
+        let created = self
+            .tasks
             .create_scheduled_task(spec, lease, now, event, &context)
-            .map_err(ScheduleError::TaskEngine)
+            .map_err(ScheduleError::TaskEngine)?;
+        #[cfg(feature = "test-hooks")]
+        crate::test_hooks::barrier("after-task-commit")?;
+        Ok(created)
     }
 
     pub fn occurrence_draft(
@@ -989,7 +1008,9 @@ impl Scheduler {
         let key =
             crate::occurrence_identity_key(label, timezone).map_err(ScheduleError::Recurrence)?;
         let draft = Self::occurrence_draft(&schedule, key.clone(), &resolved, now)?;
-        if schedule.missed_policy == MissedOccurrencePolicy::RunOnce {
+        #[cfg(feature = "test-hooks")]
+        crate::test_hooks::barrier("before-admission")?;
+        let admitted = if schedule.missed_policy == MissedOccurrencePolicy::RunOnce {
             let previous = self.store.transact(|tx| {
                 tx.due_schedule_occurrences(schedule_id, now, MAX_CALENDAR_SCAN_PER_WAKE)
             })?;
@@ -1023,7 +1044,10 @@ impl Scheduler {
                 )
             })
         }
-        .map_err(ScheduleError::Storage)
+        .map_err(ScheduleError::Storage)?;
+        #[cfg(feature = "test-hooks")]
+        crate::test_hooks::barrier("after-admission")?;
+        Ok(admitted)
     }
 
     fn first_due_occurrence(
@@ -1085,6 +1109,8 @@ impl Scheduler {
                 expires_at,
             )
         })?;
+        #[cfg(feature = "test-hooks")]
+        crate::test_hooks::barrier("after-claim")?;
         self.dispatch_claimed_occurrence(&lease, now)
     }
 

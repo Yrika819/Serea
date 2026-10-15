@@ -73,10 +73,14 @@ fn descriptor() -> CapabilityDescriptor {
 }
 
 fn prepared(store: &Store) -> i64 {
+    prepared_with_manifest(store, digest('c'))
+}
+
+fn prepared_with_manifest(store: &Store, manifest_digest: Digest) -> i64 {
     let generation = CapabilityRegistry::create_generation(
         store,
         RegistryGenerationDraft {
-            manifest_digest: digest('c'),
+            manifest_digest,
             schema_catalog_digest: digest('d'),
         },
     )
@@ -408,7 +412,9 @@ fn independent_connections_serialize_generation_activation_without_lost_event() 
     {
         let store = Store::open(&temp.0, &FixedClock).unwrap();
         low = prepared(&store);
-        high = prepared(&store);
+        // This test races distinct generations. The duplicate-manifest race is
+        // covered separately by p5f_integration.
+        high = prepared_with_manifest(&store, digest('e'));
     }
     let first_store = Store::open(&temp.0, &FixedClock).unwrap();
     let second_store = Store::open(&temp.0, &FixedClock).unwrap();

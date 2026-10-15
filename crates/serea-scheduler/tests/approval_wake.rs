@@ -325,6 +325,7 @@ fn approval_events_materialize_durable_routing_only_wakes_until_task_engine_appl
 
     drop(restarted);
     drop(source);
+    drop(tasks);
     std::fs::remove_file(path).unwrap();
 }
 
@@ -387,6 +388,7 @@ fn malformed_approval_event_does_not_materialize_or_advance_cursor() {
     );
     drop(scheduler);
     drop(source);
+    drop(tasks);
     std::fs::remove_file(path).unwrap();
 }
 

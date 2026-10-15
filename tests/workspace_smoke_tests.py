@@ -5,7 +5,10 @@ from __future__ import annotations
 import contextlib
 import io
 import re
+import shutil
 import sqlite3
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -51,6 +54,7 @@ class VirtualManifestTests(unittest.TestCase):
         policy = getattr(smoke, "POLICY", None)
         if policy is not None:
             names.append(policy)
+        names.extend([smoke.CORE, smoke.HOST])
         names.append(smoke.TESTKIT)
         self.paths = {name: self.root / "crates" / name / "Cargo.toml" for name in names}
         members = ", ".join(f'"crates/{name}"' for name in names)
@@ -64,6 +68,8 @@ class VirtualManifestTests(unittest.TestCase):
         self.add(smoke.POLICY, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\n[dev-dependencies]\nrusqlite = "1"\n')
         if scheduler is not None:
             self.add(scheduler, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-task-engine = { path = "../serea-task-engine" }\n[dev-dependencies]\nserea-testkit = { path = "../serea-testkit" }\n')
+        self.add(smoke.CORE, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-task-engine = { path = "../serea-task-engine" }\nserea-scheduler = { path = "../serea-scheduler" }\nserea-capability = { path = "../serea-capability" }\n')
+        self.add(smoke.HOST, '\n[dependencies]\nserea-core = { path = "../serea-core" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-protocol = { path = "../serea-protocol" }\nserea-task-engine = { path = "../serea-task-engine" }\nserea-testkit = { path = "../serea-testkit", optional = true }\nserea-capability = { path = "../serea-capability", optional = true }\nserea-storage = { path = "../serea-storage", optional = true }\n[features]\nsynthetic = ["dep:serea-testkit", "dep:serea-capability", "dep:serea-storage"]\n')
 
     def run_main(self):
         def read(path, **kwargs):
@@ -151,7 +157,7 @@ class VirtualManifestTests(unittest.TestCase):
         self.assert_main(1, "internal non-dev dependency serea-testkit")
 
     def test_workspace_dotted_alias_keys(self):
-        self.manifests[self.root_path] = 'workspace.members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-task-engine", "crates/serea-testkit"]\nworkspace.dependencies.helper.package = "serea-testkit"\nworkspace.dependencies.helper.version = "1"\n'
+        self.manifests[self.root_path] = 'workspace.members = [' + ", ".join(f'"crates/{name}"' for name in smoke.EXPECTED_MEMBERS) + ']\nworkspace.dependencies.helper.package = "serea-testkit"\nworkspace.dependencies.helper.version = "1"\n'
         self.add(smoke.STORAGE, '\n[dependencies]\nhelper.workspace = true\n')
         self.assert_main(1, "internal non-dev dependency serea-testkit")
 
@@ -522,10 +528,32 @@ class P2GroupOInvariantTests(unittest.TestCase):
 
     def test_o3_wall_clock_constructors_are_absent_and_linted(self):
         forbidden = re.compile(r"(?:SystemTime|Instant)::now\s*\(")
+        ambient_host_clock = self.root / "crates/serea-host/src/host_clock.rs"
+        synthetic_host_model = self.root / "crates/serea-host/src/synthetic_model.rs"
+        wall_clock_matches = []
+        host_monotonic_matches = []
         for member in smoke.EXPECTED_MEMBERS:
             for path in (self.root / member / "src").rglob("*.rs"):
                 source = self.without_rust_comments(path.read_text())
-                self.assertIsNone(forbidden.search(source), str(path))
+                for match in forbidden.finditer(source):
+                    if match.group().startswith("SystemTime"):
+                        wall_clock_matches.append(path)
+                    elif path == synthetic_host_model:
+                        host_monotonic_matches.append(match.group())
+                    else:
+                        self.fail(f"ambient monotonic clock in production source: {path}")
+        self.assertEqual(wall_clock_matches, [ambient_host_clock])
+        self.assertEqual(
+            host_monotonic_matches,
+            ["Instant::now(", "Instant::now(", "Instant::now(", "Instant::now("],
+        )
+        model_source = synthetic_host_model.read_text()
+        self.assertEqual(model_source.count("Instant::now("), 4)
+        self.assertIn("fn block_on_timeout", model_source)
+        self.assertIn("fn block_on_control", model_source)
+        host_source = (self.root / "crates/serea-host/src/main.rs").read_text()
+        self.assertIn('#[cfg(feature = "synthetic")]\nmod synthetic_model;', host_source)
+        self.assertIn("impl Clock for WallClock", ambient_host_clock.read_text())
         clock_guard = (self.root / "crates/serea-testkit/tests/p2b_clock.rs").read_text()
         self.assertIn('for banned in ["SystemTime::now(", "Instant::now("]', clock_guard)
         clippy = (self.root / ".clippy.toml").read_text()
@@ -572,8 +600,27 @@ class P2GroupOInvariantTests(unittest.TestCase):
         named = set(shared)
         for path in sorted((self.root / "crates").rglob("Cargo.toml")):
             manifest = smoke.load_manifest(path)
-            for name, _, _ in smoke.dependency_tables(manifest, shared, path):
-                self.assertIn(name, named, f"unnamed direct dependency {name} in {path}")
+            dependencies = list(smoke.dependency_tables(manifest, shared, path))
+            extras = [name for name, _, _ in dependencies if name not in named]
+            if path == self.root / "crates/serea-host/Cargo.toml":
+                # The only external dependency outside the frozen shared set
+                # is the native API used by Windows-only integration tests.
+                # Keep it a single target-specific dev dependency so no
+                # production/default target can acquire this OS API edge.
+                self.assertEqual(extras, ["windows-sys"])
+                self.assertEqual(
+                    manifest["target"]["cfg(windows)"]["dev-dependencies"],
+                    {
+                        "windows-sys": {
+                            "version": "0.61.2",
+                            "features": ["Win32_System_Console"],
+                        }
+                    },
+                )
+                self.assertNotIn("windows-sys", manifest.get("dependencies", {}))
+                self.assertNotIn("windows-sys", manifest.get("dev-dependencies", {}))
+            else:
+                self.assertEqual(extras, [], f"unnamed direct dependencies in {path}: {extras}")
 
     def test_o9_no_event_kind_is_constructed_in_p2_production(self):
         for path in self.rust_files("serea-protocol", "serea-storage", "serea-task-engine"):
@@ -649,6 +696,78 @@ class P2GroupOInvariantTests(unittest.TestCase):
             self.assertRegex(sql, rf"CREATE TRIGGER {trigger}\b")
         self.assertIn("REFERENCES task_steps(step_id) ON DELETE CASCADE", sql)
         self.assertIn("FOREIGN KEY (digest, data_class_rank)", sql)
+
+
+class SyntheticHostSecurityMutationTests(unittest.TestCase):
+    root = Path(__file__).resolve().parents[1]
+    checker = root / "tools/check_synthetic_host_boundary.py"
+    guarded = (
+        "crates/serea-core/Cargo.toml",
+        "crates/serea-host/Cargo.toml",
+        "crates/serea-host/src/main.rs",
+        "crates/serea-host/src/synthetic_model.rs",
+    )
+
+    def run_guard(self, root: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["python3", str(self.checker), "--root", str(root), "--static-only"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def assert_mutation_rejected(self, path: str, old: str, new: str):
+        with tempfile.TemporaryDirectory(prefix="serea-guard-mutation-") as temp:
+            clone = Path(temp)
+            for relative in self.guarded:
+                target = clone / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(self.root / relative, target)
+            target = clone / path
+            source = target.read_text(encoding="utf-8")
+            self.assertIn(old, source)
+            target.write_text(source.replace(old, new, 1), encoding="utf-8")
+            result = self.run_guard(clone)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_baseline_boundary_passes(self):
+        result = self.run_guard(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_default_host_router_dependency_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-host/Cargo.toml",
+            "serea-model-router = { workspace = true, optional = true }",
+            "serea-model-router = { workspace = true }",
+        )
+
+    def test_default_core_router_dependency_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-core/Cargo.toml",
+            "[dependencies]",
+            "[dependencies]\nserea-model-router = { workspace = true }",
+        )
+
+    def test_synthetic_default_activation_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-host/Cargo.toml",
+            "default = []",
+            'default = ["synthetic"]',
+        )
+
+    def test_normal_host_dispatch_reference_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-host/src/main.rs",
+            "synthetic_model::recover_unresolved(&root, &events, &clock)",
+            "synthetic_model::execute_once(&root, false)",
+        )
+
+    def test_network_adapter_reference_is_rejected(self):
+        self.assert_mutation_rejected(
+            "crates/serea-host/src/synthetic_model.rs",
+            "MockModelProvider",
+            "reqwest::Client; MockModelProvider",
+        )
 
 
 if __name__ == "__main__":

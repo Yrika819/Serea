@@ -641,10 +641,14 @@ impl Tx<'_> {
             }
         }
         let active = self.current_registry_generation()?;
-        if active
-            .as_ref()
-            .is_some_and(|g| g.generation_id >= generation_id)
-        {
+        if active.as_ref().is_some_and(|g| {
+            g.generation_id >= generation_id
+                // Concurrent installs of the same manifest may prepare distinct
+                // generation rows. Once one activates, later rows must reuse it
+                // instead of publishing a second activation event.
+                || (g.manifest_digest == generation.manifest_digest
+                    && g.schema_catalog_digest == generation.schema_catalog_digest)
+        }) {
             return Err(StoreError::RegistryGenerationOrder);
         }
         self.inner.execute("UPDATE capability_registry_generations SET activated_at_ms=?1 WHERE generation_id=?2 AND activated_at_ms IS NULL", params![activated_at.get(),generation_id]).map_err(registry_error)?;

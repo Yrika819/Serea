@@ -473,7 +473,10 @@ Rust 1.85 Windows-target `cargo check` was attempted but the environment lacks
 MSVC `lib.exe`; that cross-target check did not complete. Therefore Windows
 control-event acceptance remains unverified until the native Windows jobs run
 this test; compile success alone is not considered delivery evidence. The
-implementation keeps Windows console delivery distinct from Unix SIGTERM,
+test suppresses Ctrl-C handling in its sender while it temporarily joins the
+isolated Host console, because `CTRL_C_EVENT` is broadcast to attached
+processes. `CTRL_BREAK_EVENT` is directed to the dedicated Host process group.
+The implementation keeps Windows console delivery distinct from Unix SIGTERM,
 which already has a native child-process test.
 
 Local verification on this closure includes Rust 1.85.0 workspace
@@ -488,6 +491,10 @@ workspace tests. The Windows target compile attempt is excluded from the PASS
 list for the toolchain reason above. The final GitHub Actions evidence must be
 read from the exact final HEAD in the PR description; the CI run IDs listed in
 older sections are historical runs for the commits they name.
+
+After adding the sender-side Ctrl-C suppression, Rust 1.85.0 formatting,
+documentation validation, and all 12 Host lifecycle tests passed locally.
+Native Windows delivery still requires a successful final Windows runner test.
 
 No migration or canonical schema source was changed. Model dispatch remains
 behind the non-default Host `synthetic` feature and explicit development

@@ -183,6 +183,7 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
     use std::os::windows::process::CommandExt;
     use windows_sys::Win32::System::Console::{
         AttachConsole, CTRL_BREAK_EVENT, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent,
+        SetConsoleCtrlHandler,
     };
 
     // CTRL_C_EVENT cannot be addressed to one process group. Give the Host
@@ -218,9 +219,17 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
 
         // Console control events are broadcast within a console, so attach
         // temporarily to the isolated child console. Restore the parent's
-        // console association after delivery when one exists.
+        // console association after delivery when one exists. CTRL_C_EVENT
+        // targets every process attached to the child console, including this
+        // test process, so suppress Ctrl-C handling in the sender while the
+        // event is in flight.
         unsafe {
             let _ = FreeConsole();
+            assert_ne!(
+                SetConsoleCtrlHandler(None, 1),
+                0,
+                "suppress Ctrl-C in the test sender"
+            );
             assert_ne!(AttachConsole(child.id()), 0, "attach to Host console");
             let group = if new_group { child.id() } else { 0 };
             assert_ne!(
@@ -229,6 +238,7 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
                 "deliver real Windows {label} control event"
             );
             let _ = FreeConsole();
+            let _ = SetConsoleCtrlHandler(None, 0);
             // ATTACH_PARENT_PROCESS = (DWORD)-1. A service runner may have no
             // console, so restoration is best-effort and not a test condition.
             let _ = AttachConsole(u32::MAX);

@@ -17,6 +17,7 @@ git config --local user.name 'Codex'
 git config --local user.email 'noreply@github.com'
 git config --local user.useConfigOnly true
 git config --local push.default nothing
+git config --local serea.identityProfile codex
 git var GIT_AUTHOR_IDENT
 git var GIT_COMMITTER_IDENT
 python3 tools/check_commit_identity.py
@@ -75,14 +76,40 @@ git config --show-origin --show-scope --get core.hooksPath
 ```
 
 The installer writes only repository-local `core.hooksPath`. The pre-commit
-hook runs commit preflight; the pre-push hook checks the actual remote name,
-URL, pushed branch, local HEAD, and live remote HEAD. Always run the explicit
-commands as well: hooks can be skipped or absent in another clone.
+hook runs commit preflight; the pre-push hook first runs the reachable-history
+identity guard and then checks the actual remote name, URL, pushed branch,
+local HEAD, and live remote HEAD. It rejects deletion records whose local
+object ID is all zeroes. Always run explicit commands too: hooks can be skipped
+or absent in another clone.
 
 ## Windows and macOS/Linux
 
-Use the same repository-local identity and `push.default` settings on every
-OS. Do not apply one user's settings to every repository. Let `.gitattributes`
+Personal Windows/macOS/Linux clones must opt in explicitly. Set `user.name` to
+the exact approved local name, use that account's GitHub noreply address, and
+select the personal profile in repository-local config. The checker requires
+`serea.approvedName` and an exact match; it never infers a personal profile
+from the current name or OS:
+
+```sh
+git config --local user.name 'Your GitHub display name'
+git config --local user.email '12345678+yourname@users.noreply.github.com'
+git config --local user.useConfigOnly true
+git config --local push.default nothing
+git config --local serea.identityProfile personal
+git config --local serea.approvedName 'Your GitHub display name'
+git var GIT_AUTHOR_IDENT
+git var GIT_COMMITTER_IDENT
+python3 tools/git_preflight.py --mode commit
+python3 tools/check_commit_identity.py
+```
+
+Replace the example with the noreply address shown in that GitHub account's
+email settings. Legacy `name@users.noreply.github.com` addresses are accepted;
+private email addresses are rejected. Codex Cloud clones must keep the
+`codex` profile and `Codex <noreply@github.com>` identity.
+
+Use repository-local settings on each OS; do not apply one user's settings to
+every repository. Let `.gitattributes`
 specify repository text normalization. Check `core.autocrlf`, `core.eol`, and
 `core.filemode` with `--show-origin --show-scope` before changing them.
 
@@ -100,6 +127,7 @@ git config --local user.name 'Codex'
 git config --local user.email 'noreply@github.com'
 git config --local user.useConfigOnly true
 git config --local push.default nothing
+git config --local serea.identityProfile codex
 git var GIT_AUTHOR_IDENT
 git var GIT_COMMITTER_IDENT
 python tools/check_commit_identity.py

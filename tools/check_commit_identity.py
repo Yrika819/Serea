@@ -2,14 +2,14 @@
 """Reject reachable commits with malformed names or unsafe email addresses."""
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 
 
 def approved_email(email: str) -> bool:
-    return email == "noreply@github.com" or (
-        email.endswith("@users.noreply.github.com")
-        and bool(email.removesuffix("@users.noreply.github.com"))
+    return email == "noreply@github.com" or bool(
+        re.fullmatch(r"[^@/\s]+@users\.noreply\.github\.com", email)
     )
 
 

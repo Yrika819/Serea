@@ -86,7 +86,13 @@ def canonical_repo(url: str) -> str | None:
 
 def approved_email(email: str) -> bool:
     return email == "noreply@github.com" or bool(
-        re.fullmatch(r"[0-9]+\+[^@/\s]+@users\.noreply\.github\.com", email)
+        re.fullmatch(r"[^@/\s]+@users\.noreply\.github\.com", email)
+    )
+
+
+def valid_name(name: str) -> bool:
+    return bool(name) and name == name.strip() and not name.startswith("--") and not any(
+        ord(char) < 32 or ord(char) == 127 for char in name
     )
 
 
@@ -98,10 +104,24 @@ def parse_ident(ident: str) -> tuple[str, str]:
 
 
 def check_identity() -> None:
+    try:
+        profile = git(["config", "--get", "serea.identityProfile"])
+    except PreflightError:
+        raise PreflightError("Repository-local serea.identityProfile must explicitly select codex or personal.") from None
+    if not has_local_source("serea.identityProfile") or profile not in {"codex", "personal"}:
+        raise PreflightError("Repository-local serea.identityProfile must explicitly select codex or personal.")
+    expected_name = EXPECTED_NAME
+    if profile == "personal":
+        try:
+            expected_name = git(["config", "--get", "serea.approvedName"])
+        except PreflightError:
+            raise PreflightError("Personal profile requires repository-local serea.approvedName.") from None
+        if not has_local_source("serea.approvedName") or not valid_name(expected_name):
+            raise PreflightError("Personal profile requires a valid repository-local serea.approvedName.")
     for var in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
         value = os.environ.get(var)
-        if value is not None and value != EXPECTED_NAME:
-            raise PreflightError(f"{var} overrides the approved Codex name.")
+        if value is not None and value != expected_name:
+            raise PreflightError(f"{var} overrides the explicitly approved {profile} name.")
     for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL", "EMAIL"):
         value = os.environ.get(var)
         if value is not None and not approved_email(value):
@@ -124,8 +144,8 @@ def check_identity() -> None:
             raise PreflightError(f"Git setting {key} contains an option-like invalid value.")
         if not has_local_source(key):
             raise PreflightError(f"Git setting {key} must be set in this clone's repository-local config.")
-        if key == "user.name" and value != EXPECTED_NAME:
-            raise PreflightError("Effective user.name is not the approved Codex name.")
+        if key == "user.name" and (not valid_name(value) or value != expected_name):
+            raise PreflightError(f"Effective user.name does not match the explicit {profile} profile.")
         if key == "user.email" and not approved_email(value):
             raise PreflightError("Effective user.email is not an approved GitHub noreply address.")
         if key == "user.useConfigOnly" and value.lower() != "true":
@@ -133,9 +153,9 @@ def check_identity() -> None:
 
     for var in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
         name, email = parse_ident(git(["var", var]))
-        if name != EXPECTED_NAME or not approved_email(email):
+        if name != expected_name or not approved_email(email):
             raise PreflightError(f"Effective {var} does not match the approved identity.")
-        print(f"PASS {var}: name={name}, email=approved-noreply")
+        print(f"PASS {var}: profile={profile}, name={name}, email=approved-noreply")
     for key in ("user.name", "user.email", "user.useConfigOnly"):
         sources = ",".join(config_sources(key)) or "config source unavailable"
         print(f"PASS {key}: scope/source={sources}; effective-value=validated")
@@ -266,12 +286,12 @@ def main() -> int:
                     if len(row) != 4:
                         raise PreflightError("pre-push ref input is malformed.")
                     _, local_sha, remote_ref, _ = row
+                    if re.fullmatch(r"0+", local_sha):
+                        raise PreflightError("Branch deletion pushes are prohibited (local_sha is all zeroes).")
                     if not remote_ref.startswith("refs/heads/"):
                         raise PreflightError("Only explicit branch pushes are allowed.")
-                    if remote_ref == "(delete)":
-                        raise PreflightError("Branch deletion pushes are prohibited.")
                     target = remote_ref.removeprefix("refs/heads/")
-                    if local_sha != "0" * len(local_sha) and local_sha != head:
+                    if local_sha != head:
                         raise PreflightError("Pushed commit differs from the inspected HEAD.")
                     check_push(args.remote, target, head, branch, args.base_branch, args.force)
             else:

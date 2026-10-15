@@ -379,11 +379,7 @@ wall-clock policy and persisted event times. The ordinary `run --synthetic`
 loop still creates Scheduler Tasks without sending them to the model adapter.
 Schema v8 and migrations 0001–0008 are unchanged.
 
-Local verification for this follow-up includes Rust 1.85 and Stable workspace
-tests, all-feature tests, Clippy with denied warnings, and ten Release Host
-lifecycle tests including policy/accounting scenarios, Scheduler/model crash
-barriers, throughput samples, and Unix SIGTERM. Final pushed-HEAD Actions run
-IDs and their results are recorded in the PR #17 description after completion.
+Local verification at runtime source HEAD `6b740c09e880f7a94836968b1fb2077fa2f00a6a` includes Rust 1.85 and Stable workspace tests, all-feature tests, Clippy with denied warnings, default and synthetic Release builds, and ten Host lifecycle tests including policy/accounting scenarios, Scheduler/model crash barriers, throughput samples, and Unix SIGTERM. The local Host suite passed again twice for the policy/accounting scenario after increasing the fake-provider wait margin.
 
 Remaining limitations: the task-correlated token/model-call budget path is not
 independently exercised through a real TaskEngine-created Task; cancellation
@@ -405,5 +401,4 @@ under parallel workspace load. The behavior was confined to the synthetic test
 provider timing margin; no Router/storage contract failed. The fixture now waits
 1,000 ms and the Host timeout is 150 ms. On the Linux runner, the full Host
 lifecycle suite and two additional repetitions of the policy/accounting test all
-passed after this adjustment. The native workflow is being rerun at the updated
-HEAD; the original failure remains documented and is not represented as green.
+passed after this adjustment. The original failure was corrected before final validation. On runtime source HEAD `6b740c09e880f7a94836968b1fb2077fa2f00a6a`, Fast CI run 38656957158, Full CI run 38656957280 (4/4), SQLite portability run 38656957279 (4/4), and Native platform run 38656957376 (12/12) all succeeded. The exact Actions evidence is linked from the PR #17 description. The initial failed run was 38653559344; it is retained as diagnostic history rather than counted as a pass.

@@ -11,14 +11,15 @@ their older gap lists and run IDs.
 
 ## Current final-acceptance register
 
-Implementation HEAD (before this documentation-only closure commit):
-`f2f652fcdea49285fec1bbf40294175a100577c0`. Fast CI run `38667766590` passed.
-Full CI `38667766574`, SQLite portability `38667766704`, and Native platform
-validation `38667766577` are pending/in progress. Their completion and exact
-final-HEAD run IDs must be recorded here and in PR #17 before acceptance is
-reported. Windows Ctrl-C/Ctrl-Break delivery is implemented as a native test,
-but remains unverified until that Windows test actually passes on a Windows
-runner; a cross-target check on Linux is insufficient.
+Runtime implementation HEAD: `cbf00bc10110513bf7a0e8ed04add05372d85c86`.
+At that HEAD, Fast CI `38671680210`, Full CI `38671680443`, SQLite portability
+`38671680310`, and Native platform validation `38671680229` all succeeded;
+the native Stable/MSRV matrix was 12/12. Native Windows x64 and ARM64 each
+passed both Stable and Rust 1.85.0 Host child-process lifecycle suites,
+including real CTRL-C/CTRL-BREAK delivery and SQLite reopening. The report
+refresh is a documentation-only commit after this implementation HEAD; final
+HEAD workflow evidence is recorded in the PR #17 description. This is an
+implementation evidence report, not an independent-review approval.
 
 The Owner-approved trust boundary permits only the non-default Host `synthetic`
 feature to use the existing Model Router with an in-process testkit fake.
@@ -496,11 +497,13 @@ older sections are historical runs for the commits they name.
 
 After adding sender-side Ctrl-C suppression, Rust 1.85.0 formatting,
 documentation validation, and all 12 Host lifecycle tests passed locally.
-Native Windows CI confirmed both control-event cases complete the actual Host
-shutdown. It then exposed a separate Windows cleanup defect in the Task
-accounting test: the initial SQLite Store remained open while its directory
-was removed. The test now drops that Store after reading Task metadata. The
-next native run must confirm the cleanup and full matrix.
+The first native Windows run confirmed both control-event cases completed Host
+shutdown but exposed a separate cleanup defect: the Task accounting test kept
+its initial Store open while deleting the database directory. The test now
+drops that Store after reading Task metadata. At implementation HEAD
+`cbf00bc`, the corrected cleanup and both console events passed on Windows
+x64/ARM64 under Stable and Rust 1.85.0. The exact final documentation HEAD's
+workflow results are listed in the PR description.
 
 No migration or canonical schema source was changed. Model dispatch remains
 behind the non-default Host `synthetic` feature and explicit development

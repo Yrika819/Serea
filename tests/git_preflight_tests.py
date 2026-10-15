@@ -84,13 +84,14 @@ class GitFixture(unittest.TestCase):
         shim = shim_dir / "git"
         shim.write_text(
             "#!/usr/bin/env python\n"
-            "import os, sys\n"
+            "import os, subprocess, sys\n"
             "real = os.environ['REAL_GIT']\n"
             "args = sys.argv[1:]\n"
             "if args and args[0] == 'ls-remote':\n"
             "    args = ['ls-remote', *args[1:]]\n"
             "    args = [os.environ['FIXTURE_BARE'] if x == 'origin' else x for x in args]\n"
-            "os.execv(real, [real, *args])\n",
+            "result = subprocess.run([real, *args], check=False)\n"
+            "raise SystemExit(result.returncode)\n",
             encoding="utf-8",
         )
         shim.chmod(0o755)

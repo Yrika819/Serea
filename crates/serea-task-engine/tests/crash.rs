@@ -1434,8 +1434,14 @@ fn runtime_sources() -> Vec<(String, String)> {
                     .strip_prefix(&root)
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned();
-                if name.contains("/tests/") || name.ends_with("_tests.rs") {
+                    .replace('\\', "/");
+                if name.contains("/tests/")
+                    || name.ends_with("_tests.rs")
+                    // The executable host is the process boundary. Its
+                    // synthetic-only CLI may read argv and allocate a
+                    // disposable test database; libraries remain ambient-free.
+                    || name.starts_with("crates/serea-host/src/")
+                {
                     continue;
                 }
                 files.push((name, fs::read_to_string(&path).unwrap()));
@@ -1495,6 +1501,59 @@ fn production_runtime_crates_spawn_no_subprocess_and_read_no_environment() {
             assert!(
                 !scan.contains(banned),
                 "{name} contains {banned}; runtime crates have no subprocess or environment path"
+            );
+        }
+    }
+}
+
+#[test]
+fn development_host_has_no_ambient_configuration_or_subprocess_access() {
+    let root = workspace_root();
+    let host = fs::read_to_string(root.join("crates/serea-host/src/main.rs")).unwrap();
+    assert!(
+        host.contains("std::env::args()"),
+        "the host owns its CLI boundary"
+    );
+    assert!(
+        host.contains("std::env::temp_dir()"),
+        "synthetic DBs stay disposable"
+    );
+    for banned in [
+        "std::env::var",
+        "std::process::Command",
+        "std::net::",
+        "reqwest",
+    ] {
+        assert!(
+            !host.contains(banned),
+            "development host contains forbidden {banned}"
+        );
+    }
+}
+
+#[test]
+fn synthetic_core_has_no_model_or_capability_invocation_edge() {
+    let root = workspace_root();
+    let core_manifest = fs::read_to_string(root.join("crates/serea-core/Cargo.toml")).unwrap();
+    let host_manifest = fs::read_to_string(root.join("crates/serea-host/Cargo.toml")).unwrap();
+    let core_source = fs::read_to_string(root.join("crates/serea-core/src/lib.rs")).unwrap();
+    let host_source = fs::read_to_string(root.join("crates/serea-host/src/main.rs")).unwrap();
+    for (name, text) in [
+        ("Core manifest", core_manifest.as_str()),
+        ("host manifest", host_manifest.as_str()),
+        ("Core source", core_source.as_str()),
+        ("host source", host_source.as_str()),
+    ] {
+        for forbidden in [
+            "serea-model-router",
+            "ModelProvider::generate",
+            "CapabilityProvider::invoke",
+            "reqwest",
+            "std::net::",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "{name} contains {forbidden}; synthetic host must not reach external effects"
             );
         }
     }

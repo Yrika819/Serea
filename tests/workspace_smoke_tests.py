@@ -51,6 +51,7 @@ class VirtualManifestTests(unittest.TestCase):
         policy = getattr(smoke, "POLICY", None)
         if policy is not None:
             names.append(policy)
+        names.extend([smoke.CORE, smoke.HOST])
         names.append(smoke.TESTKIT)
         self.paths = {name: self.root / "crates" / name / "Cargo.toml" for name in names}
         members = ", ".join(f'"crates/{name}"' for name in names)
@@ -64,6 +65,8 @@ class VirtualManifestTests(unittest.TestCase):
         self.add(smoke.POLICY, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\n[dev-dependencies]\nrusqlite = "1"\n')
         if scheduler is not None:
             self.add(scheduler, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-task-engine = { path = "../serea-task-engine" }\n[dev-dependencies]\nserea-testkit = { path = "../serea-testkit" }\n')
+        self.add(smoke.CORE, '\n[dependencies]\nserea-protocol = { path = "../serea-protocol" }\nserea-storage = { path = "../serea-storage" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-task-engine = { path = "../serea-task-engine" }\nserea-scheduler = { path = "../serea-scheduler" }\nserea-capability = { path = "../serea-capability" }\n')
+        self.add(smoke.HOST, '\n[dependencies]\nserea-core = { path = "../serea-core" }\nserea-event-bus = { path = "../serea-event-bus" }\nserea-protocol = { path = "../serea-protocol" }\nserea-task-engine = { path = "../serea-task-engine" }\nserea-testkit = { path = "../serea-testkit", optional = true }\nserea-capability = { path = "../serea-capability", optional = true }\nserea-storage = { path = "../serea-storage", optional = true }\n[features]\nsynthetic = ["dep:serea-testkit", "dep:serea-capability", "dep:serea-storage"]\n')
 
     def run_main(self):
         def read(path, **kwargs):
@@ -151,7 +154,7 @@ class VirtualManifestTests(unittest.TestCase):
         self.assert_main(1, "internal non-dev dependency serea-testkit")
 
     def test_workspace_dotted_alias_keys(self):
-        self.manifests[self.root_path] = 'workspace.members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-task-engine", "crates/serea-testkit"]\nworkspace.dependencies.helper.package = "serea-testkit"\nworkspace.dependencies.helper.version = "1"\n'
+        self.manifests[self.root_path] = 'workspace.members = [' + ", ".join(f'"crates/{name}"' for name in smoke.EXPECTED_MEMBERS) + ']\nworkspace.dependencies.helper.package = "serea-testkit"\nworkspace.dependencies.helper.version = "1"\n'
         self.add(smoke.STORAGE, '\n[dependencies]\nhelper.workspace = true\n')
         self.assert_main(1, "internal non-dev dependency serea-testkit")
 

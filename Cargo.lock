@@ -821,6 +821,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "serea-core"
+version = "0.1.0"
+dependencies = [
+ "serea-event-bus",
+ "serea-protocol",
+ "serea-scheduler",
+ "serea-storage",
+ "serea-task-engine",
+ "serea-testkit",
+]
+
+[[package]]
 name = "serea-event-bus"
 version = "0.1.0"
 dependencies = [
@@ -828,6 +840,19 @@ dependencies = [
  "serde_json",
  "serea-protocol",
  "serea-storage",
+]
+
+[[package]]
+name = "serea-host"
+version = "0.1.0"
+dependencies = [
+ "serea-capability",
+ "serea-core",
+ "serea-event-bus",
+ "serea-protocol",
+ "serea-storage",
+ "serea-task-engine",
+ "serea-testkit",
 ]
 
 [[package]]

@@ -1,6 +1,15 @@
 #!/bin/sh
 set -eu
 repo_root=$(git rev-parse --show-toplevel)
+case "$repo_root" in
+    *\\*)
+        if ! command -v cygpath >/dev/null 2>&1; then
+            echo "could not normalize Windows repository path for hook execution" >&2
+            exit 1
+        fi
+        repo_root=$(cygpath -u "$repo_root")
+        ;;
+esac
 remote=${1:?Git did not provide a remote name}
 remote_url=${2:?Git did not provide a push URL}
 "$repo_root/tools/run_python.sh" "$repo_root/tools/check_commit_identity.py"

@@ -600,8 +600,27 @@ class P2GroupOInvariantTests(unittest.TestCase):
         named = set(shared)
         for path in sorted((self.root / "crates").rglob("Cargo.toml")):
             manifest = smoke.load_manifest(path)
-            for name, _, _ in smoke.dependency_tables(manifest, shared, path):
-                self.assertIn(name, named, f"unnamed direct dependency {name} in {path}")
+            dependencies = list(smoke.dependency_tables(manifest, shared, path))
+            extras = [name for name, _, _ in dependencies if name not in named]
+            if path == self.root / "crates/serea-host/Cargo.toml":
+                # The only external dependency outside the frozen shared set
+                # is the native API used by Windows-only integration tests.
+                # Keep it a single target-specific dev dependency so no
+                # production/default target can acquire this OS API edge.
+                self.assertEqual(extras, ["windows-sys"])
+                self.assertEqual(
+                    manifest["target"]["cfg(windows)"]["dev-dependencies"],
+                    {
+                        "windows-sys": {
+                            "version": "0.61.2",
+                            "features": ["Win32_System_Console"],
+                        }
+                    },
+                )
+                self.assertNotIn("windows-sys", manifest.get("dependencies", {}))
+                self.assertNotIn("windows-sys", manifest.get("dev-dependencies", {}))
+            else:
+                self.assertEqual(extras, [], f"unnamed direct dependencies in {path}: {extras}")
 
     def test_o9_no_event_kind_is_constructed_in_p2_production(self):
         for path in self.rust_files("serea-protocol", "serea-storage", "serea-task-engine"):

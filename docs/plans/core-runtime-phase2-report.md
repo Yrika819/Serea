@@ -11,15 +11,23 @@ their older gap lists and run IDs.
 
 ## Current final-acceptance register
 
-Runtime implementation HEAD: `cbf00bc10110513bf7a0e8ed04add05372d85c86`.
-At that HEAD, Fast CI `38671680210`, Full CI `38671680443`, SQLite portability
-`38671680310`, and Native platform validation `38671680229` all succeeded;
-the native Stable/MSRV matrix was 12/12. Native Windows x64 and ARM64 each
-passed both Stable and Rust 1.85.0 Host child-process lifecycle suites,
-including real CTRL-C/CTRL-BREAK delivery and SQLite reopening. The report
-refresh is a documentation-only commit after this implementation HEAD; final
-HEAD workflow evidence is recorded in the PR #17 description. This is an
-implementation evidence report, not an independent-review approval.
+Runtime and acceptance-test candidate HEAD:
+`55637a92a037e3e53cd28bc6b7f159c609bf6fc2`. On that exact SHA, Fast CI
+`38674023498`, Full CI `38674023495`, SQLite portability `38674023598`, and
+Native platform validation `38674023504` all succeeded. The native Stable/MSRV
+matrix completed 12/12. It ran the compiled Host lifecycle/crash-relaunch
+suite on all six native target/architecture combinations; Windows x64 and
+ARM64 both delivered CTRL-C and CTRL-BREAK and verified cooperative shutdown
+and SQLite reopening. The register refresh is documentation-only and follows
+that tested candidate; its commit and exact-head workflow IDs are recorded in
+the PR #17 description. This report records implementation evidence, not
+independent-review approval.
+
+The last acceptance gaps are closed by Host-path tests using real Tasks created
+by Scheduler/TaskEngine and a distinct explicit-cancellation control while a
+scripted fake provider is pending. These checks independently reopen SQLite
+and verify RequestIds, attempt/usage rows, reservation and settlement, Task
+limits, and audit cardinality. Details and bounded results are below.
 
 The Owner-approved trust boundary permits only the non-default Host `synthetic`
 feature to use the existing Model Router with an in-process testkit fake.
@@ -480,7 +488,9 @@ processes. The sender keeps its Ctrl-C ignore handler active until the Host
 exits because console-control delivery is asynchronous. `CTRL_BREAK_EVENT` is
 directed to the dedicated Host process group.
 The implementation keeps Windows console delivery distinct from Unix SIGTERM,
-which already has a native child-process test.
+which also has a native child-process test. While the local Linux environment
+could not deliver Windows console events, the exact-candidate native matrix
+above executed those cases on Windows x64 and ARM64 under both toolchains.
 
 Local verification on this closure includes Rust 1.85.0 workspace
 `--all-targets` tests and workspace `--all-features` tests, Rust 1.85.0 release
@@ -502,8 +512,9 @@ shutdown but exposed a separate cleanup defect: the Task accounting test kept
 its initial Store open while deleting the database directory. The test now
 drops that Store after reading Task metadata. At implementation HEAD
 `cbf00bc`, the corrected cleanup and both console events passed on Windows
-x64/ARM64 under Stable and Rust 1.85.0. The exact final documentation HEAD's
-workflow results are listed in the PR description.
+x64/ARM64 under Stable and Rust 1.85.0. The exact candidate and successful
+run IDs are recorded in the acceptance register above; the report-refresh
+commit's exact-head run IDs are listed in the PR description.
 
 No migration or canonical schema source was changed. Model dispatch remains
 behind the non-default Host `synthetic` feature and explicit development

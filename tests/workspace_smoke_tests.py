@@ -543,10 +543,14 @@ class P2GroupOInvariantTests(unittest.TestCase):
                     else:
                         self.fail(f"ambient monotonic clock in production source: {path}")
         self.assertEqual(wall_clock_matches, [ambient_host_clock])
-        self.assertEqual(host_monotonic_matches, ["Instant::now(", "Instant::now("])
+        self.assertEqual(
+            host_monotonic_matches,
+            ["Instant::now(", "Instant::now(", "Instant::now(", "Instant::now("],
+        )
         model_source = synthetic_host_model.read_text()
-        self.assertEqual(model_source.count("Instant::now("), 2)
+        self.assertEqual(model_source.count("Instant::now("), 4)
         self.assertIn("fn block_on_timeout", model_source)
+        self.assertIn("fn block_on_control", model_source)
         host_source = (self.root / "crates/serea-host/src/main.rs").read_text()
         self.assertIn('#[cfg(feature = "synthetic")]\nmod synthetic_model;', host_source)
         self.assertIn("impl Clock for WallClock", ambient_host_clock.read_text())

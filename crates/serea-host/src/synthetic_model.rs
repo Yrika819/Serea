@@ -81,6 +81,37 @@ impl TestBarrier {
         }
         Err("test barrier deadline expired".to_owned())
     }
+
+    async fn wait_async(&self) -> Result<(), String> {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let announced = Arc::new(AtomicBool::new(false));
+        let barrier = self.clone();
+        std::future::poll_fn(move |_cx| {
+            if !announced.swap(true, Ordering::AcqRel)
+                && (std::fs::create_dir_all(&barrier.directory).is_err()
+                    || std::fs::write(
+                        barrier.directory.join(format!("{}.reached", barrier.phase)),
+                        b"ready",
+                    )
+                    .is_err())
+            {
+                return Poll::Ready(Err("test barrier marker unavailable".to_owned()));
+            }
+            if barrier
+                .directory
+                .join(format!("{}.release", barrier.phase))
+                .exists()
+            {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        })
+        .await
+    }
 }
 
 #[cfg(feature = "synthetic-test-hooks")]
@@ -120,7 +151,8 @@ impl ModelProvider for TestBarrierProvider {
             self.barrier
                 .as_ref()
                 .expect("checked barrier")
-                .wait()
+                .wait_async()
+                .await
                 .map_err(|_| test_barrier_error())?;
         }
         let mut response = self.inner.generate(request, context).await?;
@@ -132,7 +164,8 @@ impl ModelProvider for TestBarrierProvider {
             self.barrier
                 .as_ref()
                 .expect("checked barrier")
-                .wait()
+                .wait_async()
+                .await
                 .map_err(|_| test_barrier_error())?;
         }
         match self.behavior {
@@ -317,9 +350,12 @@ pub(crate) fn recover_unresolved(
         .map_err(|_| "synthetic model recovery failed".to_owned())
 }
 
-fn prepared_call() -> Result<PreparedModelCallV1, String> {
+fn prepared_call(task_id: Option<&str>) -> Result<PreparedModelCallV1, String> {
     let draft = PreparedModelCallDraftV1 {
-        task_id: None,
+        task_id: task_id
+            .map(|value| serea_protocol::TaskId::new(value.to_owned()))
+            .transpose()
+            .map_err(|_| "synthetic task identity rejected")?,
         purpose: ModelPurpose::Chat,
         messages: vec![ModelMessage {
             role: serea_protocol::MessageRole::new("user")
@@ -348,7 +384,11 @@ fn prepared_call() -> Result<PreparedModelCallV1, String> {
 
 /// Performs one explicitly requested, durable, in-process fake dispatch.
 #[cfg(not(feature = "synthetic-test-hooks"))]
-pub(crate) fn execute_once(root: &Path, failure: bool) -> Result<(), String> {
+pub(crate) fn execute_once(
+    root: &Path,
+    failure: bool,
+    task_id: Option<&str>,
+) -> Result<(), String> {
     execute_once_inner(
         root,
         if failure { "failure" } else { "success" },
@@ -362,6 +402,8 @@ pub(crate) fn execute_once(root: &Path, failure: bool) -> Result<(), String> {
             snapshots: std::sync::atomic::AtomicUsize::new(0),
         },
         std::time::Duration::from_millis(10_000),
+        task_id,
+        None,
     )
 }
 
@@ -371,6 +413,7 @@ pub(crate) fn execute_once_with_test_barrier(
     scenario: &str,
     phase: Option<&str>,
     barrier_directory: Option<&Path>,
+    task_id: Option<&str>,
 ) -> Result<(), String> {
     let failure = scenario == "failure";
     let barrier = match (phase, barrier_directory) {
@@ -395,6 +438,8 @@ pub(crate) fn execute_once_with_test_barrier(
     };
     let behavior = match scenario {
         "success" | "failure" => None,
+        "cancel-during-provider" => Some(TestProviderBehavior::PaidUsage),
+        "budget-probe" => None,
         "identity-mismatch" => Some(TestProviderBehavior::IdentityMismatch),
         "timeout" => Some(TestProviderBehavior::DelayedResponse),
         "usage-bound" => Some(TestProviderBehavior::InvalidUsage),
@@ -421,9 +466,14 @@ pub(crate) fn execute_once_with_test_barrier(
         } else {
             std::time::Duration::from_millis(10_000)
         },
+        task_id,
+        (scenario == "cancel-during-provider")
+            .then(|| barrier_directory.map(|dir| dir.join("cancel.request")))
+            .flatten(),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_once_inner(
     root: &Path,
     #[cfg(feature = "synthetic-test-hooks")] scenario: &str,
@@ -435,6 +485,9 @@ fn execute_once_inner(
     #[cfg(not(feature = "synthetic-test-hooks"))] _behavior: Option<()>,
     gate: OfflineGate,
     timeout: std::time::Duration,
+    task_id: Option<&str>,
+    #[cfg(feature = "synthetic-test-hooks")] cancel_marker: Option<std::path::PathBuf>,
+    #[cfg(not(feature = "synthetic-test-hooks"))] _cancel_marker: Option<()>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|_| "synthetic data directory unavailable")?;
     let lock = OpenOptions::new()
@@ -470,23 +523,38 @@ fn execute_once_inner(
         #[cfg(not(feature = "synthetic-test-hooks"))]
         None,
     )?;
-    let call = prepared_call()?;
+    let call = prepared_call(task_id)?;
     let host = ModelRouterHostContextV1::new(&store, &events, &clock, &gate);
     #[cfg(feature = "synthetic-test-hooks")]
     if let Some(barrier) = barrier.clone().filter(|b| b.phase == "pre-dispatch") {
         barrier.wait()?;
     }
-    let outcome = match block_on_timeout(router.execute(&call, &host), timeout) {
-        Some(outcome) => Some(outcome),
-        None => {
+    #[cfg(feature = "synthetic-test-hooks")]
+    let (outcome, cancelled_during_provider) = match block_on_control(
+        router.execute(&call, &host),
+        timeout,
+        cancel_marker.as_deref(),
+    ) {
+        ControlOutcome::Completed(outcome) => (Some(outcome), false),
+        ControlOutcome::TimedOut | ControlOutcome::Cancelled => {
             // Dropping the in-flight Router future leaves its committed
             // dispatch intent unresolved. Reuse Router recovery to mark
             // it ambiguous; this never invokes or retries a provider.
             serea_model_router::recover_unresolved_model_calls(&store, &events, &clock)
                 .map_err(|_| "synthetic timeout recovery failed")?;
-            None
+            (None, true)
         }
     };
+    #[cfg(not(feature = "synthetic-test-hooks"))]
+    let (outcome, _cancelled_during_provider) =
+        match block_on_timeout(router.execute(&call, &host), timeout) {
+            Some(outcome) => (Some(outcome), false),
+            None => {
+                serea_model_router::recover_unresolved_model_calls(&store, &events, &clock)
+                    .map_err(|_| "synthetic timeout recovery failed")?;
+                (None, false)
+            }
+        };
     #[cfg(feature = "synthetic-test-hooks")]
     if let Some(barrier) = barrier.filter(|b| b.phase == "terminal") {
         barrier.wait()?;
@@ -519,7 +587,14 @@ fn execute_once_inner(
             &outcome,
             Some(Err(ModelRouterCallFailureV1::BoundExceeded { .. }))
         ),
+        "budget-probe" => matches!(
+            &outcome,
+            Some(Err(
+                ModelRouterCallFailureV1::ModelCallBudgetExceeded { .. }
+            ))
+        ),
         "timeout" => outcome.is_none(),
+        "cancel-during-provider" => outcome.is_none() && cancelled_during_provider,
         "failure" => matches!(
             &outcome,
             Some(Err(ModelRouterCallFailureV1::DefiniteProvider {
@@ -554,7 +629,12 @@ fn execute_once_inner(
     #[cfg(feature = "synthetic-test-hooks")]
     let expected_calls = if matches!(
         scenario,
-        "cancelled" | "cancelled-after-intent" | "expired" | "spend-bound"
+        "cancelled"
+            | "cancelled-after-intent"
+            | "expired"
+            | "spend-bound"
+            | "budget-probe"
+            | "cancel-during-provider"
     ) {
         0
     } else {
@@ -572,19 +652,55 @@ fn execute_once_inner(
     {
         return Err("synthetic dispatch left an unresolved attempt".to_owned());
     }
-    if failure {
-        println!(
-            "{{\"event\":\"synthetic_model_failed\",\"provider\":\"in_process_fake\",\"result\":\"definite_failure\"}}"
-        );
-    } else {
-        println!(
+    match outcome {
+        Some(Ok(_)) => println!(
             "{{\"event\":\"synthetic_model_completed\",\"provider\":\"in_process_fake\",\"result\":\"success\"}}"
-        );
+        ),
+        Some(Err(_)) => println!(
+            "{{\"event\":\"synthetic_model_failed\",\"provider\":\"in_process_fake\",\"result\":\"terminal_failure\"}}"
+        ),
+        None => println!(
+            "{{\"event\":\"synthetic_model_ambiguous\",\"provider\":\"in_process_fake\",\"result\":\"unresolved_after_dispatch\"}}"
+        ),
     }
     store
         .checkpoint_for_close()
         .map_err(|_| "synthetic database checkpoint failed")?;
     Ok(())
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+enum ControlOutcome<T> {
+    Completed(T),
+    TimedOut,
+    Cancelled,
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[allow(clippy::disallowed_methods)]
+fn block_on_control<F: Future>(
+    future: F,
+    timeout: std::time::Duration,
+    cancel_marker: Option<&Path>,
+) -> ControlOutcome<F::Output> {
+    let Some(deadline) = std::time::Instant::now().checked_add(timeout) else {
+        return ControlOutcome::TimedOut;
+    };
+    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let mut future = pin!(future);
+    loop {
+        if cancel_marker.is_some_and(Path::exists) {
+            return ControlOutcome::Cancelled;
+        }
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(value) => return ControlOutcome::Completed(value),
+            Poll::Pending if std::time::Instant::now() >= deadline => {
+                return ControlOutcome::TimedOut;
+            }
+            Poll::Pending => std::thread::park_timeout(std::time::Duration::from_millis(1)),
+        }
+    }
 }
 
 struct ModelLock(std::fs::File);
@@ -609,6 +725,7 @@ impl Wake for ThreadWake {
 
 // A bounded in-process provider wait needs a monotonic elapsed-time source;
 // wall-clock `Clock` values can jump and are not suitable for timeout races.
+#[cfg(not(feature = "synthetic-test-hooks"))]
 #[allow(clippy::disallowed_methods)]
 fn block_on_timeout<F: Future>(future: F, timeout: std::time::Duration) -> Option<F::Output> {
     let deadline = std::time::Instant::now().checked_add(timeout)?;

@@ -176,6 +176,94 @@ fn unix_sigterm_requests_bounded_cooperative_host_shutdown() {
     std::fs::remove_dir_all(&directory).expect("clean signal test directory");
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
+    use std::io::Read;
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Console::{
+        AttachConsole, CTRL_BREAK_EVENT, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent,
+    };
+
+    // CTRL_C_EVENT cannot be addressed to one process group. Give the Host
+    // its own console so group 0 targets only this disposable child. For
+    // CTRL_BREAK_EVENT, use a dedicated process group and address its PID.
+    for (label, event, new_group) in [
+        ("ctrl-c", CTRL_C_EVENT, false),
+        ("ctrl-break", CTRL_BREAK_EVENT, true),
+    ] {
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        let directory = std::env::temp_dir().join(format!(
+            "serea-host-windows-{label}-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).expect("create disposable Windows Host directory");
+        let flags = CREATE_NEW_CONSOLE
+            | if new_group {
+                CREATE_NEW_PROCESS_GROUP
+            } else {
+                0
+            };
+        let mut child = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+            .args(["run", "--synthetic", "--data-dir"])
+            .arg(&directory)
+            .creation_flags(flags)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start Host with isolated console");
+        let mut output = wait_ready(&mut child);
+
+        // Console control events are broadcast within a console, so attach
+        // temporarily to the isolated child console. Restore the parent's
+        // console association after delivery when one exists.
+        unsafe {
+            let _ = FreeConsole();
+            assert_ne!(AttachConsole(child.id()), 0, "attach to Host console");
+            let group = if new_group { child.id() } else { 0 };
+            assert_ne!(
+                GenerateConsoleCtrlEvent(event, group),
+                0,
+                "deliver real Windows {label} control event"
+            );
+            let _ = FreeConsole();
+            // ATTACH_PARENT_PROCESS = (DWORD)-1. A service runner may have no
+            // console, so restoration is best-effort and not a test condition.
+            let _ = AttachConsole(u32::MAX);
+        }
+
+        let deadline = monotonic_now() + Duration::from_secs(15);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("poll Windows Host shutdown") {
+                break status;
+            }
+            assert!(monotonic_now() < deadline, "bounded {label} shutdown");
+            std::thread::park_timeout(Duration::from_millis(20));
+        };
+        assert!(
+            status.success(),
+            "{label} should request cooperative shutdown"
+        );
+        let mut tail = String::new();
+        output
+            .read_to_string(&mut tail)
+            .expect("read final Windows lifecycle diagnostics");
+        assert!(tail.contains("\"event\":\"host_stopped\""));
+
+        let clock = serea_testkit::TestClock::at_epoch();
+        let store = serea_storage::Store::open(&directory.join("core.sqlite"), &clock)
+            .expect("reopen SQLite after Windows console event");
+        assert_eq!(store.schema_version().unwrap(), 8);
+        store
+            .checkpoint_for_close()
+            .expect("checkpoint Windows Host DB");
+        drop(store);
+        std::fs::remove_dir_all(&directory).expect("clean Windows console test directory");
+    }
+}
+
 #[test]
 fn explicit_model_smoke_runs_fake_success_and_failure_through_host_router() {
     let directory = std::env::temp_dir().join(format!(
@@ -474,6 +562,395 @@ fn actual_host_model_policy_and_accounting_scenarios_survive_database_reopen() {
         drop(reopened);
         std::fs::remove_dir_all(&directory).expect("clean model scenario directory");
     }
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[test]
+fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
+    use serea_storage::{ReplayItem, Store};
+
+    let directory = std::env::temp_dir().join(format!(
+        "serea-host-task-model-accounting-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&directory).expect("create disposable Task model directory");
+    let seeded = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["scheduler-seed", "--synthetic", "--data-dir"])
+        .arg(&directory)
+        .args(["--count", "2"])
+        .output()
+        .expect("seed schedule through the Scheduler API");
+    assert!(seeded.status.success());
+
+    let mut host = start(&directory);
+    let output = wait_ready(&mut host);
+    stop(&directory, host, output);
+
+    let clock = serea_testkit::TestClock::at_epoch();
+    let store = Store::open(&directory.join("core.sqlite"), &clock)
+        .expect("open TaskEngine-created schedule database");
+    let events = store
+        .replay_events(None, None, 256)
+        .expect("read TaskEngine audit")
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            ReplayItem::Event { event } => Some(*event),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut task_ids = events
+        .iter()
+        .filter(|event| event.kind == serea_protocol::EventKind::TaskCreated)
+        .map(|event| {
+            event
+                .correlation_id
+                .clone()
+                .expect("TaskCreated Task identity")
+        })
+        .collect::<Vec<_>>();
+    task_ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    assert_eq!(task_ids.len(), 2, "Scheduler/TaskEngine creates both Tasks");
+    let paid_task_id = task_ids[0].clone();
+    let bounded_task_id = task_ids[1].clone();
+    for task_id in [&paid_task_id, &bounded_task_id] {
+        assert_eq!(
+            store.load_task(task_id).expect("load Task").task.kind,
+            serea_protocol::TaskKind::Scheduled
+        );
+        assert_eq!(store.task_model_call_limit(task_id).unwrap(), 12);
+    }
+
+    // The explicit synthetic command accepts a Task id only so this opt-in
+    // test path can exercise the Router's existing durable task accounting.
+    // The id is the occurrence Task's TaskCreated correlation, never a fixture row.
+    for index in 0..12 {
+        let result = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+            .args(["model-smoke", "--synthetic", "--data-dir"])
+            .arg(&directory)
+            .args([
+                "--scenario",
+                "success",
+                "--task-id",
+                bounded_task_id.as_str(),
+            ])
+            .output()
+            .expect("execute explicit fake Router call correlated to Task");
+        assert!(
+            result.status.success(),
+            "Task model call {index} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    let paid_result = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["model-smoke", "--synthetic", "--data-dir"])
+        .arg(&directory)
+        .args([
+            "--scenario",
+            "paid-success",
+            "--task-id",
+            paid_task_id.as_str(),
+        ])
+        .output()
+        .expect("execute paid fake Router call correlated to Task");
+    assert!(
+        paid_result.status.success(),
+        "paid Task model call failed: {}",
+        String::from_utf8_lossy(&paid_result.stderr)
+    );
+
+    let bounded = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["model-smoke", "--synthetic", "--data-dir"])
+        .arg(&directory)
+        .args([
+            "--scenario",
+            "budget-probe",
+            "--task-id",
+            bounded_task_id.as_str(),
+        ])
+        .output()
+        .expect("probe TaskEngine model-call budget");
+    assert!(
+        bounded.status.success(),
+        "exhausted Task budget must refuse through Router: {}",
+        String::from_utf8_lossy(&bounded.stderr)
+    );
+
+    let reopened = Store::open(&directory.join("core.sqlite"), &clock)
+        .expect("reopen Task-correlated model database");
+    assert_eq!(
+        reopened.task_model_call_count(&bounded_task_id).unwrap(),
+        12
+    );
+    assert_eq!(
+        reopened.task_model_turn_count(&bounded_task_id).unwrap(),
+        12
+    );
+    assert_eq!(
+        reopened
+            .task_model_token_usage(&bounded_task_id)
+            .unwrap()
+            .get(),
+        24
+    );
+    assert_eq!(reopened.task_model_call_count(&paid_task_id).unwrap(), 1);
+    assert_eq!(
+        reopened
+            .task_model_token_usage(&paid_task_id)
+            .unwrap()
+            .get(),
+        2
+    );
+    let final_events = reopened
+        .replay_events(None, None, 256)
+        .expect("inspect correlated Model audit")
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            ReplayItem::Event { event } => Some(*event),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let called = final_events
+        .iter()
+        .filter(|event| event.kind == serea_protocol::EventKind::ModelCalled)
+        .collect::<Vec<_>>();
+    let completed = final_events
+        .iter()
+        .filter(|event| event.kind == serea_protocol::EventKind::ModelCompleted)
+        .collect::<Vec<_>>();
+    let bound = final_events
+        .iter()
+        .filter(|event| event.kind == serea_protocol::EventKind::ModelBudgetExhausted)
+        .collect::<Vec<_>>();
+    assert_eq!(called.len(), 13);
+    assert_eq!(completed.len(), 13);
+    assert_eq!(bound.len(), 1);
+    assert!(called.iter().all(|event| {
+        event.correlation_id.as_ref() == Some(&paid_task_id)
+            || event.correlation_id.as_ref() == Some(&bounded_task_id)
+    }));
+    let request_ids = called
+        .iter()
+        .map(|event| event.payload["request_id"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(request_ids.len(), 13);
+    let paid = called
+        .iter()
+        .find(|event| {
+            let id = event.payload["request_id"].as_str().unwrap();
+            reopened
+                .get_model_call_attempt(&serea_protocol::RequestId::new(id.to_owned()).unwrap())
+                .unwrap()
+                .is_some_and(|attempt| {
+                    attempt
+                        .actual_cost_usd_micros
+                        .is_some_and(|cost| cost.get() > 0)
+                })
+        })
+        .expect("one paid fake result has durable settlement");
+    let paid_id =
+        serea_protocol::RequestId::new(paid.payload["request_id"].as_str().unwrap().to_owned())
+            .unwrap();
+    let paid_attempt = reopened.get_model_call_attempt(&paid_id).unwrap().unwrap();
+    assert_eq!(paid_attempt.task_id.as_ref(), Some(&paid_task_id));
+    assert_eq!(paid_attempt.reserved_cost_usd_micros.get(), 131_080);
+    assert_eq!(paid_attempt.actual_cost_usd_micros.unwrap().get(), 2);
+    let usage = reopened.model_usage_for_request(&paid_id).unwrap().unwrap();
+    assert_eq!(usage.input_tokens.get(), 1);
+    assert_eq!(usage.output_tokens.get(), 1);
+    assert_eq!(usage.cost_usd_micros.get(), 2);
+    reopened.checkpoint_for_close().unwrap();
+    drop(reopened);
+
+    // Startup recovery is read-only for completed calls and does not duplicate
+    // their terminal audit or settle usage a second time.
+    let mut restarted = start(&directory);
+    let output = wait_ready(&mut restarted);
+    stop(&directory, restarted, output);
+    let after_restart =
+        Store::open(&directory.join("core.sqlite"), &clock).expect("reopen after Host startup");
+    assert_eq!(
+        after_restart
+            .task_model_call_count(&bounded_task_id)
+            .unwrap(),
+        12
+    );
+    assert_eq!(
+        after_restart
+            .task_model_token_usage(&bounded_task_id)
+            .unwrap()
+            .get(),
+        24
+    );
+    assert_eq!(
+        after_restart.task_model_call_count(&paid_task_id).unwrap(),
+        1
+    );
+    assert_eq!(
+        after_restart
+            .task_model_token_usage(&paid_task_id)
+            .unwrap()
+            .get(),
+        2
+    );
+    assert_eq!(
+        after_restart
+            .replay_events(None, None, 256)
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| matches!(item, ReplayItem::Event { event } if event.kind == serea_protocol::EventKind::ModelCompleted))
+            .count(),
+        13
+    );
+    after_restart.checkpoint_for_close().unwrap();
+    drop(after_restart);
+    std::fs::remove_dir_all(&directory).expect("clean Task model directory");
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[test]
+fn explicit_cancellation_while_fake_provider_is_pending_leaves_ambiguous_intent() {
+    use serea_storage::{ModelAttemptState, ReplayItem, Store};
+
+    let directory = std::env::temp_dir().join(format!(
+        "serea-host-model-cancel-inflight-{}-{}",
+        std::process::id(),
+        NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    let barrier_dir = directory.join("barrier");
+    std::fs::create_dir_all(&directory).expect("create cancellation directory");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["model-smoke", "--synthetic", "--data-dir"])
+        .arg(&directory)
+        .args([
+            "--scenario",
+            "cancel-during-provider",
+            "--test-barrier",
+            "provider",
+            "--test-barrier-dir",
+        ])
+        .arg(&barrier_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("launch compiled Host fake cancellation scenario");
+    wait_for_barrier(&mut child, &barrier_dir, "provider");
+
+    let database = directory.join("core.sqlite");
+    let clock = serea_testkit::TestClock::at_epoch();
+    let store = Store::open(&database, &clock).expect("inspect live dispatch intent");
+    let before_cancel = store
+        .replay_events(None, None, 128)
+        .expect("read in-flight intent audit")
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            ReplayItem::Event { event } => Some(*event),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let called = before_cancel
+        .iter()
+        .find(|event| event.kind == serea_protocol::EventKind::ModelCalled)
+        .expect("Router committed intent before entering fake provider");
+    let request_id =
+        serea_protocol::RequestId::new(called.payload["request_id"].as_str().unwrap().to_owned())
+            .unwrap();
+    let active = store.get_model_call_attempt(&request_id).unwrap().unwrap();
+    assert_eq!(active.state, ModelAttemptState::DispatchIntent);
+    let reservation = active.reserved_cost_usd_micros;
+    assert!(reservation.get() > 0);
+    assert_eq!(
+        before_cancel
+            .iter()
+            .filter(|event| event.kind == serea_protocol::EventKind::ModelCalled)
+            .count(),
+        1
+    );
+    store.checkpoint_for_close().unwrap();
+    drop(store);
+
+    // This explicit test-control file is observed by the synthetic Host's
+    // bounded execution pump, which drops the pending Router future. It is
+    // separate from a deadline expiry and from killing the process.
+    std::fs::write(barrier_dir.join("cancel.request"), b"cancel")
+        .expect("request in-flight cancellation");
+    let deadline = monotonic_now() + Duration::from_secs(15);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll cancelled Host") {
+            break status;
+        }
+        assert!(
+            monotonic_now() < deadline,
+            "cancelled Host should finish boundedly"
+        );
+        std::thread::park_timeout(Duration::from_millis(10));
+    };
+    assert!(
+        status.success(),
+        "explicit cancellation recovery should complete"
+    );
+    let reopened = Store::open(&database, &clock).expect("reopen after explicit cancellation");
+    let attempt = reopened
+        .get_model_call_attempt(&request_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(attempt.state, ModelAttemptState::Ambiguous);
+    assert_eq!(attempt.reserved_cost_usd_micros, reservation);
+    assert!(attempt.actual_cost_usd_micros.is_none());
+    assert!(
+        reopened
+            .model_usage_for_request(&request_id)
+            .unwrap()
+            .is_none()
+    );
+    let final_events = reopened
+        .replay_events(None, None, 128)
+        .expect("inspect cancellation recovery audit")
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            ReplayItem::Event { event } => Some(*event),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        final_events
+            .iter()
+            .filter(|event| event.kind == serea_protocol::EventKind::ModelCalled)
+            .count(),
+        1
+    );
+    assert_eq!(
+        final_events
+            .iter()
+            .filter(|event| event.kind == serea_protocol::EventKind::ModelFailed)
+            .count(),
+        1
+    );
+    assert_eq!(
+        final_events
+            .iter()
+            .filter(|event| event.kind == serea_protocol::EventKind::ModelCompleted)
+            .count(),
+        0
+    );
+    assert!(
+        final_events
+            .iter()
+            .position(|event| event.kind == serea_protocol::EventKind::ModelCalled)
+            < final_events
+                .iter()
+                .position(|event| event.kind == serea_protocol::EventKind::ModelFailed)
+    );
+    reopened.checkpoint_for_close().unwrap();
+    drop(reopened);
+    std::fs::remove_dir_all(&directory).expect("clean cancellation directory");
 }
 
 #[test]

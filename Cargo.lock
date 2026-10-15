@@ -935,6 +935,7 @@ dependencies = [
  "serea-storage",
  "serea-task-engine",
  "serea-testkit",
+ "windows-sys",
 ]
 
 [[package]]

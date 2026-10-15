@@ -105,7 +105,9 @@ fn main() -> ExitCode {
         #[cfg(feature = "synthetic")]
         "model-smoke" if std::env::args().any(|arg| arg == "--synthetic") => {
             let Some(directory) = option_value("--data-dir") else {
-                eprintln!("usage: serea-host model-smoke --synthetic --data-dir PATH");
+                eprintln!(
+                    "usage: serea-host model-smoke --synthetic --data-dir PATH [--task-id TASK_ID]"
+                );
                 return ExitCode::from(2);
             };
             #[cfg(feature = "synthetic-test-hooks")]
@@ -118,6 +120,7 @@ fn main() -> ExitCode {
                     option_value("--test-barrier-dir")
                         .as_deref()
                         .map(std::path::Path::new),
+                    option_value("--task-id").as_deref(),
                 )
             };
             #[cfg(not(feature = "synthetic-test-hooks"))]
@@ -127,7 +130,7 @@ fn main() -> ExitCode {
                     Some("failure") => true,
                     Some(_) => {
                         eprintln!(
-                            "usage: serea-host model-smoke --synthetic --data-dir PATH [--scenario success|failure]"
+                            "usage: serea-host model-smoke --synthetic --data-dir PATH [--scenario success|failure] [--task-id TASK_ID]"
                         );
                         return ExitCode::from(2);
                     }
@@ -138,7 +141,11 @@ fn main() -> ExitCode {
                     eprintln!("test barriers require the synthetic-test-hooks feature");
                     return ExitCode::from(2);
                 }
-                synthetic_model::execute_once(std::path::Path::new(&directory), failure)
+                synthetic_model::execute_once(
+                    std::path::Path::new(&directory),
+                    failure,
+                    option_value("--task-id").as_deref(),
+                )
             };
             match result {
                 Ok(()) => ExitCode::SUCCESS,

@@ -637,6 +637,9 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
         );
         assert_eq!(store.task_model_call_limit(task_id).unwrap(), 12);
     }
+    // Windows refuses to remove a directory while a SQLite file inside it is
+    // still open. Later child processes use independent Store connections.
+    drop(store);
 
     // The explicit synthetic command accepts a Task id only so this opt-in
     // test path can exercise the Router's existing durable task accounting.

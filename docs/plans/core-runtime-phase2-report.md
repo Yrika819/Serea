@@ -496,9 +496,11 @@ older sections are historical runs for the commits they name.
 
 After adding sender-side Ctrl-C suppression, Rust 1.85.0 formatting,
 documentation validation, and all 12 Host lifecycle tests passed locally.
-The first native Windows run showed that the ignore handler was restored too
-early, before asynchronous event delivery completed. The sender now remains
-shielded until the Host exits. Native Windows revalidation is pending.
+Native Windows CI confirmed both control-event cases complete the actual Host
+shutdown. It then exposed a separate Windows cleanup defect in the Task
+accounting test: the initial SQLite Store remained open while its directory
+was removed. The test now drops that Store after reading Task metadata. The
+next native run must confirm the cleanup and full matrix.
 
 No migration or canonical schema source was changed. Model dispatch remains
 behind the non-default Host `synthetic` feature and explicit development

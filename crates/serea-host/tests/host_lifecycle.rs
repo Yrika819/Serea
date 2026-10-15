@@ -578,7 +578,7 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
     let seeded = Command::new(env!("CARGO_BIN_EXE_serea-host"))
         .args(["scheduler-seed", "--synthetic", "--data-dir"])
         .arg(&directory)
-        .args(["--count", "2"])
+        .args(["--count", "3"])
         .output()
         .expect("seed schedule through the Scheduler API");
     assert!(seeded.status.success());
@@ -611,10 +611,11 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
         })
         .collect::<Vec<_>>();
     task_ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    assert_eq!(task_ids.len(), 2, "Scheduler/TaskEngine creates both Tasks");
+    assert_eq!(task_ids.len(), 3, "Scheduler/TaskEngine creates all Tasks");
     let paid_task_id = task_ids[0].clone();
     let bounded_task_id = task_ids[1].clone();
-    for task_id in [&paid_task_id, &bounded_task_id] {
+    let token_task_id = task_ids[2].clone();
+    for task_id in [&paid_task_id, &bounded_task_id, &token_task_id] {
         assert_eq!(
             store.load_task(task_id).expect("load Task").task.kind,
             serea_protocol::TaskKind::Scheduled
@@ -644,6 +645,39 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
             String::from_utf8_lossy(&result.stderr)
         );
     }
+
+    let token_usage = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["model-smoke", "--synthetic", "--data-dir"])
+        .arg(&directory)
+        .args([
+            "--scenario",
+            "token-usage",
+            "--task-id",
+            token_task_id.as_str(),
+        ])
+        .output()
+        .expect("persist bounded synthetic token usage");
+    assert!(
+        token_usage.status.success(),
+        "token usage dispatch failed: {}",
+        String::from_utf8_lossy(&token_usage.stderr)
+    );
+    let token_bound = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        .args(["model-smoke", "--synthetic", "--data-dir"])
+        .arg(&directory)
+        .args([
+            "--scenario",
+            "token-probe",
+            "--task-id",
+            token_task_id.as_str(),
+        ])
+        .output()
+        .expect("probe Task token budget after threshold crossing");
+    assert!(
+        token_bound.status.success(),
+        "token ceiling must refuse through Router: {}",
+        String::from_utf8_lossy(&token_bound.stderr)
+    );
 
     let paid_result = Command::new(env!("CARGO_BIN_EXE_serea-host"))
         .args(["model-smoke", "--synthetic", "--data-dir"])
@@ -704,6 +738,14 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
             .get(),
         2
     );
+    assert_eq!(reopened.task_model_call_count(&token_task_id).unwrap(), 1);
+    assert_eq!(
+        reopened
+            .task_model_token_usage(&token_task_id)
+            .unwrap()
+            .get(),
+        131_072
+    );
     let final_events = reopened
         .replay_events(None, None, 256)
         .expect("inspect correlated Model audit")
@@ -726,18 +768,38 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
         .iter()
         .filter(|event| event.kind == serea_protocol::EventKind::ModelBudgetExhausted)
         .collect::<Vec<_>>();
-    assert_eq!(called.len(), 13);
-    assert_eq!(completed.len(), 13);
+    assert_eq!(called.len(), 14);
+    assert_eq!(completed.len(), 14);
     assert_eq!(bound.len(), 1);
+    let token_completion = completed
+        .iter()
+        .find(|event| event.correlation_id.as_ref() == Some(&token_task_id))
+        .expect("token-threshold response has one durable ModelCompleted event");
+    assert_eq!(token_completion.payload["input_tokens"], 131_071);
+    assert_eq!(token_completion.payload["output_tokens"], 1);
+    assert_eq!(bound[0].payload["limit"], 12);
+    assert_eq!(bound[0].payload["observed"], 12);
     assert!(called.iter().all(|event| {
         event.correlation_id.as_ref() == Some(&paid_task_id)
             || event.correlation_id.as_ref() == Some(&bounded_task_id)
+            || event.correlation_id.as_ref() == Some(&token_task_id)
     }));
     let request_ids = called
         .iter()
         .map(|event| event.payload["request_id"].as_str().unwrap())
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(request_ids.len(), 13);
+    assert_eq!(request_ids.len(), 14);
+    let token_bound_audit = final_events
+        .iter()
+        .find(|event| {
+            event.kind == serea_protocol::EventKind::BoundExceeded
+                && event.correlation_id.as_ref() == Some(&token_task_id)
+        })
+        .expect("token-bound refusal is attributed to its Task");
+    assert_eq!(
+        token_bound_audit.payload["bound_name"],
+        "max_task_total_tokens"
+    );
     let paid = called
         .iter()
         .find(|event| {
@@ -791,11 +853,22 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
         1
     );
     assert_eq!(
+        after_restart.task_model_call_count(&token_task_id).unwrap(),
+        1
+    );
+    assert_eq!(
         after_restart
             .task_model_token_usage(&paid_task_id)
             .unwrap()
             .get(),
         2
+    );
+    assert_eq!(
+        after_restart
+            .task_model_token_usage(&token_task_id)
+            .unwrap()
+            .get(),
+        131_072
     );
     assert_eq!(
         after_restart
@@ -805,7 +878,7 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
             .iter()
             .filter(|item| matches!(item, ReplayItem::Event { event } if event.kind == serea_protocol::EventKind::ModelCompleted))
             .count(),
-        13
+        14
     );
     after_restart.checkpoint_for_close().unwrap();
     drop(after_restart);

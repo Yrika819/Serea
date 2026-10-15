@@ -129,6 +129,7 @@ enum TestProviderBehavior {
     InvalidUsage,
     PaidUsage,
     DailySpendLimit,
+    HighTokenUsage,
 }
 
 #[cfg(feature = "synthetic-test-hooks")]
@@ -175,6 +176,12 @@ impl ModelProvider for TestBarrierProvider {
             }
             Some(TestProviderBehavior::InvalidUsage) => {
                 response.usage.output_tokens = serea_protocol::TokenCount::new(9);
+            }
+            Some(TestProviderBehavior::HighTokenUsage) => {
+                // Keep input plus output at the fake descriptor's 131,072
+                // context-window ceiling while crossing Router's 128,000
+                // per-Task usage bound.
+                response.usage.input_tokens = serea_protocol::TokenCount::new(131_071);
             }
             Some(TestProviderBehavior::PaidUsage) => {
                 response.usage.cost_class = CostClass::Paid;
@@ -440,7 +447,9 @@ pub(crate) fn execute_once_with_test_barrier(
         "success" | "failure" => None,
         "cancel-during-provider" => Some(TestProviderBehavior::PaidUsage),
         "budget-probe" => None,
+        "token-probe" => None,
         "identity-mismatch" => Some(TestProviderBehavior::IdentityMismatch),
+        "token-usage" => Some(TestProviderBehavior::HighTokenUsage),
         "timeout" => Some(TestProviderBehavior::DelayedResponse),
         "usage-bound" => Some(TestProviderBehavior::InvalidUsage),
         "paid-success" | "cancelled-after-intent" => Some(TestProviderBehavior::PaidUsage),
@@ -593,8 +602,19 @@ fn execute_once_inner(
                 ModelRouterCallFailureV1::ModelCallBudgetExceeded { .. }
             ))
         ),
+        "token-probe" => matches!(
+            &outcome,
+            Some(Err(ModelRouterCallFailureV1::TaskBudgetExceeded {
+                bound: serea_event_bus::ModelBoundKindV1::TaskTotalTokens,
+                ..
+            } | ModelRouterCallFailureV1::BoundExceeded {
+                bound: serea_event_bus::ModelBoundKindV1::TaskTotalTokens,
+                ..
+            }))
+        ),
         "timeout" => outcome.is_none(),
         "cancel-during-provider" => outcome.is_none() && cancelled_during_provider,
+        "token-usage" => outcome.is_some(),
         "failure" => matches!(
             &outcome,
             Some(Err(ModelRouterCallFailureV1::DefiniteProvider {
@@ -634,6 +654,7 @@ fn execute_once_inner(
             | "expired"
             | "spend-bound"
             | "budget-probe"
+            | "token-probe"
             | "cancel-during-provider"
     ) {
         0

@@ -48,6 +48,12 @@ jobs:
       - name: Commit identity guard tests
         run: python3 -m unittest discover -s tests -p commit_identity_tests.py
 
+      - name: Git preflight regression tests
+        run: python3 -m unittest discover -s tests -p git_preflight_tests.py
+
+      - name: Git hook Python launcher tests
+        run: python3 -m unittest discover -s tests -p git_hook_python_tests.py
+
       - name: Validate documentation
         run: python3 tools/validate_docs.py docs
 

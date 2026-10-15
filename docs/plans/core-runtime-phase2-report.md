@@ -3,8 +3,24 @@
 This branch continues PR #17 on `core/runtime-phase2`, stacked on
 `platform/six-target-core-foundation`. It remains synthetic-only and uses the
 canonical schema v8. Migrations 0001–0008 are unchanged. This report records a
-partial implementation; it is not an independent-review readiness claim. The
-Owner-approved trust boundary permits only the non-default Host `synthetic`
+sequence of implementation and verification evidence. The final acceptance
+status is recorded only after exact-HEAD CI completes; this report does not
+claim independent-review approval. Earlier sections preserve historical
+follow-up status; the acceptance register and latest closure section supersede
+their older gap lists and run IDs.
+
+## Current final-acceptance register
+
+Implementation HEAD (before this documentation-only closure commit):
+`f2f652fcdea49285fec1bbf40294175a100577c0`. Fast CI run `38667766590` passed.
+Full CI `38667766574`, SQLite portability `38667766704`, and Native platform
+validation `38667766577` are pending/in progress. Their completion and exact
+final-HEAD run IDs must be recorded here and in PR #17 before acceptance is
+reported. Windows Ctrl-C/Ctrl-Break delivery is implemented as a native test,
+but remains unverified until that Windows test actually passes on a Windows
+runner; a cross-target check on Linux is insufficient.
+
+The Owner-approved trust boundary permits only the non-default Host `synthetic`
 feature to use the existing Model Router with an in-process testkit fake.
 Ordinary Core/default Host remain model-execution-free; production providers,
 network access, credentials, and Capability invocation remain prohibited.
@@ -402,3 +418,81 @@ provider timing margin; no Router/storage contract failed. The fixture now waits
 1,000 ms and the Host timeout is 150 ms. On the Linux runner, the full Host
 lifecycle suite and two additional repetitions of the policy/accounting test all
 passed after this adjustment. The original failure was corrected before final validation. On runtime source HEAD `6b740c09e880f7a94836968b1fb2077fa2f00a6a`, Fast CI run 38656957158, Full CI run 38656957280 (4/4), SQLite portability run 38656957279 (4/4), and Native platform run 38656957376 (12/12) all succeeded. The exact Actions evidence is linked from the PR #17 description. The initial failed run was 38653559344; it is retained as diagnostic history rather than counted as a pass.
+
+### Final acceptance closure follow-up (from PR #17 HEAD `29c8b51`)
+
+The earlier limitation that model accounting was not correlated to a Task is
+closed by a Host integration scenario that first seeds schedules through the
+existing Scheduler API and starts the compiled Host. Scheduler/TaskEngine
+creates three real `Scheduled` Tasks and pins their active registry generation.
+The test obtains their IDs from durable `TaskCreated` audit events; it does not
+insert or edit Task rows. The explicit, non-default `model-smoke --synthetic`
+command accepts one of those existing IDs, constructs `PreparedModelCallV1`
+through `from_host`, and traverses the existing Model Router and Store
+accounting transactions. Normal Host startup and Scheduler wake code do not
+call this command or dispatch Tasks to a model.
+
+For one Task, a scripted paid fake call persists one durable RequestId, a
+131,080 micro-USD reservation, 2 micro-USD actual cost, and one input plus one
+output token. The Task's call and token counters, attempt relation, usage row,
+`MODEL_CALLED`/`MODEL_COMPLETED` audit correlation, and settled amount are
+checked after SQLite reopen and again after a fresh Host startup. Completed
+usage and audit cardinality remain unchanged after recovery. A second real Task
+accepts twelve free fake calls, reaches its TaskEngine-pinned model-call limit,
+and refuses the thirteenth before provider execution or a new dispatch intent.
+The durable Task count/turn counters remain 12, token total is 24, twelve
+RequestIds are distinct, and one `MODEL_BUDGET_EXHAUSTED` event is recorded.
+A third real Task uses a scripted response reporting 131,071 input tokens and
+one output token, exactly at the fake descriptor's context bound. The Router
+persists that response and the 131,072 Task token count; the next Host Router
+call is refused before a new intent, with a Task-correlated
+`BOUND_EXCEEDED(max_task_total_tokens)` audit. Reopen and a fresh Host startup
+preserve that count and event. This is a deterministic boundary fixture, not a
+claim about tokenizer accuracy for real providers.
+
+A separate compiled-Host test now sends explicit cancellation while the fake
+provider future is pending at its deterministic provider-entry barrier. Before
+cancellation, an independent Store connection verifies the committed
+`DISPATCH_INTENT`, original RequestId, `MODEL_CALLED` event, and positive
+reservation. The test then sends a cancellation control marker, distinct from
+timeout and process termination. The synthetic Host drops the pending Router
+future and invokes the existing unresolved-call recovery; it does not fabricate
+provider completion or retry. After reopen, the same attempt is `AMBIGUOUS`,
+its reservation remains, actual cost and usage are absent, exactly one
+`MODEL_CALLED` and one later `MODEL_FAILED` exist, and no `MODEL_COMPLETED`
+event exists. This is conservative cancellation after dispatch, not a claim
+that the provider did not process the request.
+
+For Windows, `host_lifecycle.rs` now includes a `cfg(windows)` native child
+process test. It gives each real Host process an isolated console, dispatches
+`CTRL_C_EVENT` to that console and `CTRL_BREAK_EVENT` to a separately created
+process group, requires a bounded successful cooperative shutdown and
+`host_stopped`, and reopens/checkpoints the schema-v8 database. The Linux
+Codex execution environment cannot deliver Windows console events. A local
+Rust 1.85 Windows-target `cargo check` was attempted but the environment lacks
+MSVC `lib.exe`; that cross-target check did not complete. Therefore Windows
+control-event acceptance remains unverified until the native Windows jobs run
+this test; compile success alone is not considered delivery evidence. The
+implementation keeps Windows console delivery distinct from Unix SIGTERM,
+which already has a native child-process test.
+
+Local verification on this closure includes Rust 1.85.0 workspace
+`--all-targets` tests and workspace `--all-features` tests, Rust 1.85.0 release
+workspace build and all-feature Clippy with `-D warnings`, Stable workspace
+`--all-targets` tests, Stable all-feature Clippy, default/debug, default/release
+and explicit synthetic Host builds, all 12 synthetic Host lifecycle tests,
+workspace smoke, documentation validation, commit identity and Core API
+boundary guards, synthetic Host boundary checks, formatting and `git diff
+--check`. The all-feature workspace smoke mutation suite ran as part of the
+workspace tests. The Windows target compile attempt is excluded from the PASS
+list for the toolchain reason above. The final GitHub Actions evidence must be
+read from the exact final HEAD in the PR description; the CI run IDs listed in
+older sections are historical runs for the commits they name.
+
+No migration or canonical schema source was changed. Model dispatch remains
+behind the non-default Host `synthetic` feature and explicit development
+command; no production provider, network, credentials, real account, P7
+Memory, P8 effect, or automatic Scheduler-to-model path was added. Existing
+Linux throughput samples remain bounded one-run observations and are not
+extrapolated to Windows. Process cancellation and process-kill tests do not
+establish physical power-loss durability or exactly-once external effects.

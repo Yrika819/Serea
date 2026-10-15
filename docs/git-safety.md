@@ -82,6 +82,14 @@ local HEAD, and live remote HEAD. It rejects deletion records whose local
 object ID is all zeroes. Always run explicit commands too: hooks can be skipped
 or absent in another clone.
 
+Hooks invoke `tools/run_python.sh`, which checks `python3`, then `python`, then
+the Windows `py -3` launcher for a working Python 3 interpreter. It passes the
+script and arguments as separate quoted arguments, so executable paths with
+spaces are supported. If no Python 3 launcher works, the hook exits with an
+error and does not skip the check. One push may update only the current branch;
+multi-branch and multi-ref pushes are intentionally rejected. Push each branch
+separately after running its explicit-target preflight.
+
 ## Windows and macOS/Linux
 
 Personal Windows/macOS/Linux clones must opt in explicitly. Set `user.name` to
@@ -133,6 +141,12 @@ git var GIT_COMMITTER_IDENT
 python tools/check_commit_identity.py
 python tools/git_preflight.py --mode commit
 ```
+
+Windows Git hook behavior is exercised in the `Git hooks Windows compatibility`
+workflow on Windows x64. It deliberately places a failing `python3` shim first
+on `PATH`, then runs the real pre-commit/pre-push fixture tests through the
+`python` fallback and verifies the `py -3` selection path with isolated launcher
+fixtures. Windows ARM64 hook execution is not currently run by CI.
 
 ## Recovery after an identity mistake
 

@@ -3,5 +3,5 @@ set -eu
 repo_root=$(git rev-parse --show-toplevel)
 remote=${1:?Git did not provide a remote name}
 remote_url=${2:?Git did not provide a push URL}
-python3 "$repo_root/tools/check_commit_identity.py"
-python3 "$repo_root/tools/git_preflight.py" --mode push --remote "$remote" --hook-url "$remote_url" --hook
+"$repo_root/tools/run_python.sh" "$repo_root/tools/check_commit_identity.py"
+"$repo_root/tools/run_python.sh" "$repo_root/tools/git_preflight.py" --mode push --remote "$remote" --hook-url "$remote_url" --hook

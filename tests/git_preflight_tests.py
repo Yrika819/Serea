@@ -26,7 +26,7 @@ class GitFixture(unittest.TestCase):
         self.root.mkdir()
         project = Path(__file__).resolve().parents[1]
         (self.root / "tools").mkdir()
-        for filename in ("git_preflight.py", "check_commit_identity.py"):
+        for filename in ("git_preflight.py", "check_commit_identity.py", "run_python.sh"):
             shutil.copy2(project / "tools" / filename, self.root / "tools" / filename)
         shutil.copytree(project / ".githooks", self.root / ".githooks")
         self.env = {
@@ -81,14 +81,19 @@ class GitFixture(unittest.TestCase):
         shim_dir.mkdir(exist_ok=True)
         shim = shim_dir / "git"
         shim.write_text(
-            "#!/usr/bin/env python3\n"
-            "import os, sys\n"
-            "real = os.environ['REAL_GIT']\n"
-            "args = sys.argv[1:]\n"
-            "if args and args[0] == 'ls-remote':\n"
-            "    args = ['ls-remote', *args[1:]]\n"
-            "    args = [os.environ['FIXTURE_BARE'] if x == 'origin' else x for x in args]\n"
-            "os.execv(real, [real, *args])\n",
+            "#!/bin/sh\n"
+            "if [ \"$1\" = ls-remote ]; then\n"
+            "    shift\n"
+            "    if [ \"$1\" = --heads ]; then\n"
+            "        shift\n"
+            "        if [ \"$1\" = origin ]; then\n"
+            "            shift\n"
+            "            set -- --heads \"$FIXTURE_BARE\" \"$@\"\n"
+            "        fi\n"
+            "    fi\n"
+            "    exec \"$REAL_GIT\" ls-remote \"$@\"\n"
+            "fi\n"
+            "exec \"$REAL_GIT\" \"$@\"\n",
             encoding="utf-8",
         )
         shim.chmod(0o755)
@@ -313,6 +318,13 @@ class GitFixture(unittest.TestCase):
         result = self.run_prepush_hook(env, rows)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("non-main branch", result.stderr)
+
+    def test_actual_prepush_hook_rejects_multiple_branch_targets(self):
+        _, head, env = self.make_hook_fixture()
+        rows = self.push_row(head, "topic") + self.push_row(head, "other")
+        result = self.run_prepush_hook(env, rows)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match the current branch", result.stderr)
 
     def test_actual_prepush_hook_rejects_main_push(self):
         _, head, env = self.make_hook_fixture()

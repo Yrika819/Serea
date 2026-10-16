@@ -5,6 +5,39 @@ use serea_protocol::EpochMillis;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 
+const P7_V9_CANDIDATE: &str =
+    include_str!("../migrations/candidates/0009_p7_memory_schema_candidate.sql");
+
+fn p7_v9_candidate_catalog() -> Vec<crate::Migration> {
+    let mut catalog = Migrations::embedded()[..8]
+        .iter()
+        .map(|migration| crate::Migration {
+            version: migration.version,
+            name: migration.name,
+            sql: migration.sql,
+        })
+        .collect::<Vec<_>>();
+    catalog.push(crate::Migration {
+        version: 9,
+        name: "0009_p7_memory_schema_candidate_not_accepted",
+        sql: P7_V9_CANDIDATE,
+    });
+    catalog
+}
+
+fn apply_v8_to_p7_candidate(conn: &mut Connection) {
+    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    migrate::apply(
+        conn,
+        &p7_v9_candidate_catalog(),
+        EpochMillis::new(0).unwrap(),
+        true,
+    )
+    .unwrap();
+}
+
 static NEXT_TEMP_DB: AtomicU64 = AtomicU64::new(1);
 
 #[test]
@@ -465,6 +498,341 @@ impl serea_protocol::Clock for TestClock {
     fn now_ms(&self) -> Result<EpochMillis, serea_protocol::ProtocolError> {
         EpochMillis::new(0)
     }
+}
+
+#[test]
+fn canonical_v9_candidate_is_separate_from_fixture_and_preserves_v8_tasks() {
+    let fixture = include_str!("../tests/fixtures/p7_experimental_memory_v9.sql");
+    assert_ne!(P7_V9_CANDIDATE, fixture);
+    assert!(P7_V9_CANDIDATE.contains("NOT ACCEPTED"));
+    assert!(!P7_V9_CANDIDATE.contains("p7_memory_items"));
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    migrate::apply(
+        &mut conn,
+        &Migrations::embedded()[..8],
+        EpochMillis::new(0).unwrap(),
+        true,
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO tasks(task_id,kind,title,state,origin_kind,data_class_rank,policy_class_rank,created_at_ms,updated_at_ms,max_model_calls,max_tool_calls,max_attempts_per_step) VALUES('tsk_00000000000000000000000041','USER_REQUEST','candidate legacy','RECEIVED','USER',0,0,0,0,1,1,1)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO task_steps(step_id,task_id,sequence,kind,status,attempt,plan_revision,provider_id,capability_id,capability_version,idempotency_key,input_digest,result_digest,started_at_ms,completed_at_ms,lease_generation) VALUES('stp_00000000000000000000000041','tsk_00000000000000000000000041',0,'CAPABILITY','SUCCEEDED',1,0,'calendar','calendar.events.create','1.0.0',?1,?2,?3,1,2,1)",
+        rusqlite::params![
+            format!("idk_{}", "1".repeat(64)),
+            format!("sha256:{}", "2".repeat(64)),
+            format!("sha256:{}", "3".repeat(64)),
+        ],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO side_effect_receipts(receipt_id,task_id,step_id,capability_id,idempotency_key,effect_summary,observed_at_ms,replay_safe,data_class_rank) VALUES('rcp_00000000000000000000000041','tsk_00000000000000000000000041','stp_00000000000000000000000041','calendar.events.create',?1,'synthetic receipt',2,0,0)",
+        [format!("idk_{}", "1".repeat(64))],
+    )
+    .unwrap();
+    migrate::apply(
+        &mut conn,
+        &p7_v9_candidate_catalog(),
+        EpochMillis::new(1).unwrap(),
+        false,
+    )
+    .unwrap();
+
+    let applied: (String, String) = conn
+        .query_row(
+            "SELECT name,checksum FROM schema_migrations WHERE version=9",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(applied.0, "0009_p7_memory_schema_candidate_not_accepted");
+    assert_eq!(applied.1, Migrations::checksum(P7_V9_CANDIDATE).as_str());
+    let legacy: (i64, i64, i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT count(*) FROM tasks WHERE task_id='tsk_00000000000000000000000041'), (SELECT count(*) FROM legacy_task_quarantine WHERE task_id='tsk_00000000000000000000000041'), (SELECT count(*) FROM task_owner_bindings WHERE task_id='tsk_00000000000000000000000041'), (SELECT count(*) FROM side_effect_receipts WHERE step_id='stp_00000000000000000000000041')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(legacy, (1, 1, 0, 1));
+    let fk_errors: i64 = conn
+        .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let integrity: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(fk_errors, 0);
+    assert_eq!(integrity, "ok");
+}
+
+#[test]
+fn canonical_v9_candidate_checks_owner_fk_blob_fts_forget_and_reopen() {
+    let path = std::env::temp_dir().join(format!(
+        "serea-p7-v9-candidate-{}-{}.sqlite",
+        std::process::id(),
+        NEXT_TEMP_DB.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut conn = Connection::open(&path).unwrap();
+    apply_v8_to_p7_candidate(&mut conn);
+    conn.execute(
+        "INSERT INTO owners(owner_id,epoch,state,created_at_ms) VALUES('opaque-owner-a',1,'ACTIVE',0)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO owners(owner_id,epoch,state,created_at_ms) VALUES('opaque-owner-b',2,'ACTIVE',0)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO resource_accounting(owner_id) VALUES('opaque-owner-a')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO ledger_state(owner_id,read_state) VALUES('opaque-owner-a','READY')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES('evt_00000000000000000000000042','opaque-owner-a',0,'WORKING','synthetic probe',1,10)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memory_provenance(memory_id,owner_id,source_id,source_class_rank,metadata_bytes,recorded_at_ms) VALUES('evt_00000000000000000000000042','opaque-owner-a','evt_source',0,0,1)",
+        [],
+    )
+    .unwrap();
+
+    let wrong_owner = conn.execute(
+        "INSERT INTO memory_provenance(memory_id,owner_id,source_id,source_class_rank,metadata_bytes,recorded_at_ms) VALUES('evt_00000000000000000000000042','opaque-owner-b','evt_cross',0,0,1)",
+        [],
+    );
+    assert!(wrong_owner.is_err());
+    let fts_hits: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM memory_fts WHERE memory_fts MATCH 'synthetic'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(fts_hits, 1);
+
+    conn.execute(
+        "INSERT INTO blobs(digest,data_class_rank,protection,size_bytes,content) VALUES(?1,0,'NONE',1,x'78')",
+        [format!("sha256:{}", "1".repeat(64))],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memory_blob_refs(memory_id,owner_id,digest,data_class_rank) VALUES('evt_00000000000000000000000042','opaque-owner-a',?1,0)",
+        [format!("sha256:{}", "1".repeat(64))],
+    )
+    .unwrap();
+    let blob_fk = conn
+        .prepare(
+            "SELECT seq,\"from\",\"table\",\"to\" FROM pragma_foreign_key_list('memory_blob_refs') WHERE \"table\"='blobs' ORDER BY seq",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        blob_fk,
+        vec![
+            (
+                0,
+                "digest".to_string(),
+                "blobs".to_string(),
+                "digest".to_string()
+            ),
+            (
+                1,
+                "data_class_rank".to_string(),
+                "blobs".to_string(),
+                "data_class_rank".to_string(),
+            ),
+        ]
+    );
+
+    conn.execute(
+        "INSERT INTO memory_tombstones(owner_id,memory_id,forget_op_id,ledger_generation,forgotten_at_ms) VALUES('opaque-owner-a','evt_00000000000000000000000042','evt_forget',1,2)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "DELETE FROM memory_items WHERE owner_id='opaque-owner-a' AND memory_id='evt_00000000000000000000000042'",
+        [],
+    )
+    .unwrap();
+    let post_forget_hits: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM memory_fts WHERE memory_fts MATCH 'synthetic'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(post_forget_hits, 0);
+    assert_eq!(
+        conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+    assert_eq!(
+        conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0
+    );
+    drop(conn);
+
+    let reopened = Connection::open(&path).unwrap();
+    reopened.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(
+        reopened
+            .query_row("SELECT max(version) FROM schema_migrations", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        9
+    );
+    assert_eq!(reopened.query_row("SELECT count(*) FROM memory_tombstones WHERE memory_id='evt_00000000000000000000000042'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    assert_eq!(
+        reopened
+            .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        0
+    );
+    drop(reopened);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn candidate_migration_failure_rolls_back_schema_and_catalog_and_catalog_excludes_candidate() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrate::apply(
+        &mut conn,
+        &Migrations::embedded()[..8],
+        EpochMillis::new(0).unwrap(),
+        true,
+    )
+    .unwrap();
+    let mut broken = p7_v9_candidate_catalog();
+    broken[8].sql = "CREATE TABLE candidate_rollback_probe(id); INVALID SQL;";
+    assert!(migrate::apply(&mut conn, &broken, EpochMillis::new(1).unwrap(), false,).is_err());
+    let state: (i64, i64) = conn
+        .query_row(
+            "SELECT max(version),(SELECT count(*) FROM sqlite_schema WHERE name='owners') FROM schema_migrations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(state, (8, 0));
+    assert!(
+        Migrations::embedded()
+            .iter()
+            .all(|migration| migration.sql != P7_V9_CANDIDATE)
+    );
+}
+
+#[test]
+fn candidate_v9_owner_scoped_insert_race_has_one_winner_across_connections() {
+    let path = std::env::temp_dir().join(format!(
+        "serea-p7-v9-race-{}-{}.sqlite",
+        std::process::id(),
+        NEXT_TEMP_DB.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut initial = Connection::open(&path).unwrap();
+    apply_v8_to_p7_candidate(&mut initial);
+    initial
+        .execute(
+            "INSERT INTO owners(owner_id,epoch,state,created_at_ms) VALUES('race-owner',1,'ACTIVE',0)",
+            [],
+        )
+        .unwrap();
+    initial
+        .execute(
+            "INSERT INTO resource_accounting(owner_id) VALUES('race-owner')",
+            [],
+        )
+        .unwrap();
+    initial
+        .execute(
+            "INSERT INTO ledger_state(owner_id,read_state) VALUES('race-owner','READY')",
+            [],
+        )
+        .unwrap();
+    drop(initial);
+
+    let barrier = Arc::new(Barrier::new(3));
+    let run = |barrier: Arc<Barrier>| {
+        let path = path.clone();
+        std::thread::spawn(move || {
+            let conn = Connection::open(path).unwrap();
+            conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            barrier.wait();
+            conn.execute(
+                "INSERT INTO memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES('evt_00000000000000000000000043','race-owner',0,'WORKING','race',1,10)",
+                [],
+            )
+            .is_ok()
+        })
+    };
+    let first = run(barrier.clone());
+    let second = run(barrier.clone());
+    barrier.wait();
+    let winners = [first.join().unwrap(), second.join().unwrap()]
+        .into_iter()
+        .filter(|won| *won)
+        .count();
+    assert_eq!(winners, 1);
+
+    let reopened = Connection::open(&path).unwrap();
+    reopened.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(
+        reopened
+            .query_row("SELECT count(*) FROM memory_items", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        reopened
+            .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+    assert_eq!(
+        reopened
+            .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        0
+    );
+    drop(reopened);
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]

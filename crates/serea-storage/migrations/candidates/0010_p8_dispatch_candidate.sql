@@ -14,8 +14,8 @@ CREATE TABLE dispatch_intents (
   idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key)=68
                                                AND substr(idempotency_key,1,4)='idk_'
                                                AND substr(idempotency_key,5) NOT GLOB '*[^0-9a-f]*'),
-  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-  step_id TEXT NOT NULL UNIQUE REFERENCES task_steps(step_id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+  step_id TEXT NOT NULL UNIQUE REFERENCES task_steps(step_id) ON DELETE RESTRICT,
   owner_id TEXT NOT NULL,
   grant_id TEXT NOT NULL,
   plan_revision INTEGER NOT NULL CHECK (plan_revision >= 0),
@@ -43,8 +43,10 @@ CREATE TABLE dispatch_intents (
                                          AND substr(event_id,1,4)='evt_'
                                          AND substr(event_id,5,1)<='7'),
   committed_at_ms INTEGER NOT NULL CHECK (committed_at_ms BETWEEN -62167219200000 AND 253402300799999),
-  FOREIGN KEY(task_id, owner_id) REFERENCES task_owner_bindings(task_id, owner_id) ON DELETE CASCADE,
-  FOREIGN KEY(grant_id, step_id) REFERENCES approval_grant_uses(grant_id, step_id) ON DELETE CASCADE,
+  -- Retention/Forget authority remains PROPOSED. This development candidate
+  -- fails closed by refusing deletion while an unresolved intent is present.
+  FOREIGN KEY(task_id, owner_id) REFERENCES task_owner_bindings(task_id, owner_id) ON DELETE RESTRICT,
+  FOREIGN KEY(grant_id, step_id) REFERENCES approval_grant_uses(grant_id, step_id) ON DELETE RESTRICT,
   FOREIGN KEY(generation_id, descriptor_digest)
     REFERENCES capability_generation_members(generation_id, descriptor_digest) ON DELETE RESTRICT
 ) STRICT;

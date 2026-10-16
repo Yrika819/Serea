@@ -49,7 +49,12 @@ Workstreams 1–5 are complete. Only normal commit and dedicated Draft PR public
 - `cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings`: PASS. Compiler emitted one deprecated `usize::max_value` warning from vendored `serde_json`; Clippy exited successfully and the vendored file was not changed.
 - `cargo fmt --all -- --check`, `git diff --check`, `python3 tools/validate_docs.py docs` (139 Markdown files), Core API boundary, Synthetic Host boundary, workspace smoke and 82 workspace smoke regression tests: PASS.
 - Stable `cargo check --workspace --all-targets --all-features --locked --offline`: PASS. Exact Rust 1.85.0 `cargo check --workspace --all-targets --all-features --locked --offline`: PASS. Local MSRV all-feature tests/Clippy are **NOT EXECUTED**; GitHub Full CI on the exact baseline ran Linux Rust 1.85 workspace check/tests/Clippy successfully.
-- Native platform and cross-architecture SQLite portability: **NOT EXECUTED locally**. GitHub Native (`38887469455`) and SQLite portability (`38887469452`) succeeded on the exact baseline `e0acb025...`; the PR-triggered run for this docs branch remains pending until Draft PR creation.
+- Native platform and cross-architecture SQLite portability: **NOT EXECUTED locally**. GitHub Native (`38887469455`) and SQLite portability (`38887469452`) succeeded on the exact baseline `e0acb025...`.
 - Hostile review recorded in `Post-Gate-C-review-2026-10-16.md`: no stale-authority/provider path exists to approve yet; P8 retry/cancellation/Receipt invariants remain Owner blockers; no independent P7 security review is claimed; no code defect against an Accepted invariant was found, so no source fix/regression test was introduced.
 
-Remaining before branch publication: rerun final doc/diff and Git preflight, commit by normal commit, push only this dedicated branch with explicit-target preflight, then open a Draft PR (never merge).
+### Publication state
+
+- Dedicated branch `codex/post-gate-c-review` was pushed after a fresh explicit-target preflight; it contains normal commit `7472f8cc323297a49c2b52550721cb28b4420bfb`. No force push or main update was used.
+- Draft PR #19 is OPEN/DRAFT, base `main` at `e0acb0254820c381dd97828824bef86a1db5176c`, head `7472f8cc323297a49c2b52550721cb28b4420bfb`: https://github.com/Yrika819/Serea/pull/19. It is blocked as expected while Draft.
+- PR checks started at 2026-10-16 11:51 UTC: Fast `38896599970`, Full `38896599868`, Native `38896599790`, SQLite portability `38896599963`, Git hooks Windows `38896599679`. At last read, Fast and Git hooks were in progress; Full, Native and SQLite runs were queued. Recheck before closing this ExecPlan.
+- Next autonomous work: monitor these exact PR runs, record any failure and diagnose it without relaxing gates; keep PR #19 Draft and do not merge. Owner review is still required for P8 D01–D07 and any proposed migration/protocol change.

@@ -1,6 +1,6 @@
 # Approval Protocol
 
-Protocol ID: `PROTO-APPROVAL` · Surface: `serea.approval/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.6.0`
+Protocol ID: `PROTO-APPROVAL` · Surface: `serea.approval/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.8.0`
 
 P6 owns deterministic approval/grant lifecycle and matching. P5 may prepare an
 immutable action but does not evaluate approval or grants; P6 cannot invoke a

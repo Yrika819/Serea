@@ -1,6 +1,6 @@
 # Execution Pipeline
 
-Architecture version: `serea-arch/2.6.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-08
+Architecture version: `serea-arch/2.8.0` · Status: **FROZEN current contract set** · Base ratified 2026-10-08; P8 V1 direction amendment 2026-10-16
 
 This document describes the future end-to-end target flow. P5 stops after
 PreparedActionV1, P6 stops after authorization, and P8 is the first phase

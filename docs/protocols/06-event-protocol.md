@@ -1,6 +1,6 @@
 # Event Protocol
 
-Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.6.0`
+Protocol ID: `PROTO-EVENT` · Surface: `serea.event/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.8.0`
 
 Events are Serea's structured record of what it did and what it observed. They
 are the substrate for the Android Activity Timeline, the audit trail, and the

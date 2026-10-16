@@ -192,7 +192,7 @@ select a model.
 JSON. P5 prepares immutable internal `PreparedActionV1`; P6 authorizes it.
 The final executable ActionRequest belongs to the future P8 dispatch boundary.
 
-`request_id` is a `RequestId` (`req_` + ULID; see [Protocol Index §2](00-protocol-index.md#2-identifier-grammar)). It is per actual provider dispatch attempt and is echoed by that dispatch's corresponding `ActionResult`. P5 PreparedActionV1 does not contain a RequestId; P8 mints a new one for every committed dispatch intent, including same-Step retry. The same Step retains IDK-1 and pinned facts.
+`request_id` is a `RequestId` (`req_` + ULID; see [Protocol Index §2](00-protocol-index.md#2-identifier-grammar)). It is per actual provider dispatch attempt and is echoed by that dispatch's corresponding `ActionResult`. P5 PreparedActionV1 does not contain a RequestId; P8 mints one for each committed dispatch intent. Under the Owner-approved initial P8 V1 direction (2026-10-16), an intent is not automatically re-invoked and there is no automatic same-Step effect retry. Any later retry contract requires a separate decision. The Step retains its IDK-1 and pinned facts.
 
 ```json
 {
@@ -388,8 +388,8 @@ stable schema.
 
 | Value | Automatic retry on `retryable` failure | Retry on `AMBIGUOUS` |
 | --- | --- | --- |
-| `IDEMPOTENT` | Allowed | Allowed |
-| `CONDITIONAL` | Only when the provider confirms no effect; replay the same step with the same key for transport retry | After confirmed-absent, close the old attempt and create a new `StepId` and key under fresh policy/approval |
+| `IDEMPOTENT` | No automatic same-Step effect retry in initial P8 V1. A new logical operation requires a new Step, IDK-1 and current authorization. | Forbidden; reconcile-only, including when provider support is `NATIVE`. |
+| `CONDITIONAL` | No automatic same-Step effect retry in initial P8 V1. A new logical operation requires a new Step, IDK-1 and current authorization. | Forbidden; reconcile-only. Confirmed absence does not itself grant effect authority. |
 | `NON_REPLAYABLE` | Never | Never; reconcile or block |
 
 ### 8.2 Idempotency key derivation
@@ -411,18 +411,14 @@ no key. Approval checks argument digest/capability/pinned version independently;
 key equality does not transfer approval. Full SCJ-1/digest/IDK-1/sha2 0.11 without
 defaults land with action/2 atomically in P2A, not P2B.
 
-The key is derived from the *request*, not from the attempt. Every attempt of
-the same step produces the same key. This is what makes duplicate detection
-and crash recovery work: after a restart, a step that may have executed is
-re-issued with the same key, and the provider or host dedupe layer recognises
-it.
-
-Crash replay or a transport retry of the same durable step always uses the
-same key. If reconciliation confirms an ambiguous effect is absent and policy
-permits another execution, the old step is closed as `RECONCILED_ABSENT` and
-the host creates a distinct `step_id`, hence a distinct key. That replacement
-step must pass policy and any required approval again. The host never reuses a
-key to mean "again".
+The key is derived from the *logical request*, not a provider attempt. The
+initial P8 V1 direction does not authorize another effect attempt for the same
+Step, even though derivation is deterministic. An unresolved committed intent
+is inspected and reconciled; it is never re-issued automatically, including
+after restart and regardless of provider idempotency support. If a future,
+separately approved reconciliation proves absence and a new logical operation
+is chosen, it requires a distinct `step_id`, hence a distinct key, and fresh
+authorization. The host never reuses a key to mean "again".
 
 ### 8.3 Duplicate detection
 
@@ -523,8 +519,10 @@ plans.
 | C8 | Credentials reach providers only as opaque `CredentialHandle`s. |
 | C9 | Root absence yields a structured `CAPABILITY_UNAVAILABLE`, never a crash or degraded startup. |
 | C10 | Capability removal disables new requests without stranding in-flight steps. |
+
 ## 11. P2A migration note and changelog
 
+- 2026-10-16: [ADR-0044](../decisions/ADR-0044-p8-durable-dispatch-v1-directions.md) records the Owner-approved initial P8 V1 restriction: no automatic same-Step effect retry and AMBIGUOUS is reconcile-only even when provider idempotency is `NATIVE`. This does not define reconciliation authority, provider key retention, late Receipt eligibility, or other proposed lifecycle details. Architecture advances to `serea-arch/2.8.0`; `serea.action/2` wire major is unchanged.
 - 2026-10-03: frozen current action/2 with implemented SCJ-1 limited integer
   domain, named IDK-1 framing and complete text-category validation (Accepted
   ADR-0019/23). Accepted B3 semantic clarification is architecture-minor in

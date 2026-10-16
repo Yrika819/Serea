@@ -19,7 +19,7 @@ fail-closed.
 | --- | --- | --- |
 | 0 — PR #19 | BLOCKED, safely retained Draft | Exact base/head and all five workflows reverified below. Reviews list is empty. Branch-protection endpoint returned HTTP 403 `Resource not accessible by integration`, so required review and protection conditions could not be verified. No merge or Draft-to-ready transition. |
 | 1 — P8A direction record | DIRECTION RECORDED; exact contract closure IN PROGRESS | ADR-0044 records the approved direction; Capability/Task Protocol and ADR-0036 retry text and architecture index now align. Receipt/reconciliation/retention details remain proposed and runtime-blocked. |
-| 2 — P7 schema 0009 | PROTOTYPE REVIEW ONLY | Existing disposable v8→synthetic-fixture-v9 suite passed 10/10; migration 0001–0008 bytes match the dependency base. No canonical 0009 file/catalog entry was added. OwnerId issuer/grammar, exact provenance/FTS/tombstone/Forget and quarantine-release details need a distinct candidate review before promotion. |
+| 2 — P7 schema 0009 | PROTOTYPE REVIEW ONLY | Disposable v8→fixture suite passed 10/10. A distinct out-of-catalog candidate now passes 4 focused candidate checks and the full P7 migration selector passes 14/14. Existing migrations 0001–0008 remain byte-identical. Provisional caps, Owner authority, retention, FTS, provenance, Forget and quarantine-release policies block canonical promotion. See [candidate audit](P7-schema-0009-candidate-audit-2026-10-16.md). |
 | 3 — P8B 0010+ | NOT STARTED | Must stack on the reviewed P7 0009 candidate. No Storage write API may bypass the dispatch gate. |
 | 4 — P8C Fake Provider | NOT STARTED | No network, credentials or real accounts. Must use the canonical TaskEngine → Capability → Storage path. |
 | 5 — CI / hostile review | NOT STARTED | Runs must match each final SHA and its actual base. |
@@ -40,6 +40,10 @@ fail-closed.
   provider call path, production CredentialStore or production Memory change
   was added in this slice.
 
+- Wave 2 added only a development candidate SQL file outside the migration
+  catalog and test-only probes behind `p7-experimental`. It remains explicitly
+  noncanonical; see the audit and the 14/14 selector result below.
+
 ## Local validation on current source state
 
 - `cargo test --workspace --all-targets --locked --offline`: PASS on retry.
@@ -57,7 +61,8 @@ fail-closed.
   and doctests passed.
 - `cargo test -p serea-storage --features p7-experimental --locked
   p7_migration`: PASS, 10 tests. This verifies the existing synthetic fixture,
-  not a canonical candidate.
+  plus the separate candidate probes (14 total); it does not certify a
+  canonical migration.
 - `cargo fmt --all -- --check`, `tools/validate_docs.py docs`,
   `git diff --check`, Core API boundary, Synthetic Host boundary and
   `workspace_smoke_tests.py` (82 tests): PASS.

@@ -1,6 +1,6 @@
 # P8A owner decision package — provider execution contract
 
-**Status:** PREIMPLEMENTATION / PROPOSED; no decision below is ratified.
+**Status:** PREIMPLEMENTATION. P8-D01–D07 are **PROPOSED / NOT RATIFIED**; no decision below is ratified.
 **Boundary:** P8 alone may invoke a provider, and only after a dedicated dispatch authorization transaction commits. This document does not implement or enable provider execution.
 **Severity:** BLOCKER prevents first invoke; MAJOR is a high-risk contract choice; MINOR is bounded; NOTE records a known limitation.
 
@@ -24,6 +24,8 @@
 5. Credential-store crate is specified in Crate Map but is not yet production-ready provider integration. No live credential or external-provider access occurred in this audit.
 
 ## Proposed owner decisions
+
+Every recommendation, matrix default, migration option, lifecycle rule, test gate, and API suggestion in this section is **PROPOSED / NOT RATIFIED**. Only items under “Accepted existing contract” are recorded as Accepted, and they are not amended here.
 
 ### P8-D01 — dedicated dispatch authorization and status matrix (**BLOCKER**)
 

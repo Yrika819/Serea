@@ -17,9 +17,9 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::json;
 use serea_protocol::{
     Actor, ActorId, ActorKind, ApprovalId, Authorization, CapabilityId, Clock, DataClass, Digest,
-    EnvelopeVersion, EpochMillis, EventId, EventKind, GrantId, ProtocolError, RequestedBy,
-    RiskClass, SemVer, Seq, SereaEvent, SideEffectClass, StepId, TaskId, TaskKind, TaskOriginKind,
-    TaskState, Timestamp, Trace, WireSurface, digest_of,
+    EnvelopeVersion, EpochMillis, EventId, EventKind, GrantId, LeaseOwner, ProtocolError,
+    RequestedBy, RiskClass, SemVer, Seq, SereaEvent, SideEffectClass, StepId, TaskId, TaskKind,
+    TaskOriginKind, TaskState, Timestamp, Trace, WireSurface, digest_of,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -4006,6 +4006,481 @@ fn independent_connections_cannot_both_consume_one_step_through_typed_api() {
             "SELECT uses_remaining FROM approval_grants WHERE grant_id=?1",
             [GRANT],
             |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        1
+    );
+}
+
+/// Test-only composition probe for P8's missing runtime boundary. It uses the
+/// real Store transaction, real Lease acquisition, real P6 grant-use writer,
+/// real active-policy/registry/overlay rows, and candidate 0009/0010 SQL. It
+/// does not authorize dispatch: budget semantics and durable Provider
+/// availability are absent, and TaskEngine has no dispatch entry point.
+fn p8_real_storage_fixture() -> (TempDb, Store) {
+    let path = TempDb::new();
+    let store = approval_store(&path.0);
+    {
+        let conn = store.conn.lock().unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/candidates/0009_p7_memory_schema_candidate.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/candidates/0010_p8_dispatch_candidate.sql"
+        ))
+        .unwrap();
+        conn.execute(
+            "INSERT INTO owners(owner_id,epoch,state,created_at_ms) VALUES ('own_synthetic_p8',1,'ACTIVE',0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO task_owner_bindings(task_id,owner_id,admitted_at_ms) VALUES (?1,'own_synthetic_p8',0)",
+            [TASK],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO capability_overlays(capability_id,availability_state,experimental_opt_in,revision) VALUES ('calendar.event.create','ENABLED',0,1)",
+            [],
+        )
+        .unwrap();
+    }
+    activate_test_policy(&store);
+    let request = typed_request_draft();
+    store
+        .create_approval_request(request.clone(), approval_required_event(&request))
+        .unwrap();
+    let response = authenticated_grant_storage_draft();
+    store
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+    // Exercise the actual Storage lease authority and persist its generation.
+    let lease = store
+        .transact(|tx| {
+            tx.acquire_lease(
+                TaskId::new(TASK).unwrap(),
+                StepId::new(STEP_A).unwrap(),
+                LeaseOwner::new("p8-test-worker-a").unwrap(),
+                None,
+                EpochMillis::new(301).unwrap(),
+                EpochMillis::new(10_000).unwrap(),
+            )
+        })
+        .unwrap();
+    assert_eq!(lease.generation(), 1);
+    drop(lease);
+    (path, store)
+}
+
+fn p8_candidate_request_event(request_id: &str, now: EpochMillis) -> SereaEvent {
+    SereaEvent {
+        envelope_version: EnvelopeVersion::new("1").unwrap(),
+        surface: WireSurface::new(WireSurface::EVENT).unwrap(),
+        message_id: EventId::new("evt_00000000000000000000000070").unwrap(),
+        seq: Seq::new(0),
+        kind: EventKind::CapabilityRequested,
+        occurred_at: Timestamp::from_epoch_millis(now),
+        correlation_id: Some(TaskId::new(TASK).unwrap()),
+        causation_id: None,
+        actor: Actor {
+            kind: ActorKind::Host,
+            id: ActorId::new("serea-core").unwrap(),
+            version: SemVer::new("1.0.0").unwrap(),
+            extensions: Default::default(),
+        },
+        data_class: DataClass::Personal,
+        trace: Some(Trace {
+            task_id: Some(TaskId::new(TASK).unwrap()),
+            step_id: Some(StepId::new(STEP_A).unwrap()),
+            attempt: Some(1),
+            extensions: Default::default(),
+        }),
+        payload: json!({"request_id": request_id, "step_id": STEP_A})
+            .as_object()
+            .unwrap()
+            .clone(),
+        extensions: Default::default(),
+    }
+}
+
+/// This persists a candidate Intent in the same transaction as P6 consumption
+/// and a protocol Event. All values are synthetic test inputs; no result is
+/// exposed as a callable production dispatch API.
+fn p8_real_storage_commit_probe(
+    store: &Store,
+    fail_after_grant: bool,
+    fail_after_intent: bool,
+) -> Result<(), StoreError> {
+    let now = EpochMillis::new(301).unwrap();
+    let request_id = "req_00000000000000000000000070";
+    store.transact(|tx| {
+        let task: (String, Option<i64>, Option<i64>, i64, i64) = tx.inner.query_row(
+            "SELECT state,cancelled_at_ms,deadline_at_ms,plan_revision,state_revision FROM tasks WHERE task_id=?1",
+            [TASK],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )?;
+        if task.0 != "EXECUTING"
+            || task.1.is_some()
+            || task.2.is_some_and(|deadline| deadline <= now.get())
+            || task.3 != 1
+            || task.4 <= 0
+        {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+        let step: (String, i64, String, String, i64) = tx.inner.query_row(
+            "SELECT status,plan_revision,input_digest,idempotency_key,lease_generation FROM task_steps WHERE task_id=?1 AND step_id=?2",
+            rusqlite::params![TASK, STEP_A],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )?;
+        if step.0 != "LEASED" || step.1 != 1 || step.2 != ARGS_A || step.4 <= 0 {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+        let lease: (String, i64, i64, Option<i64>) = tx.inner.query_row(
+            "SELECT owner,generation,expires_at_ms,released_at_ms FROM leases WHERE step_id=?1",
+            [STEP_A],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        if lease.0 != "p8-test-worker-a"
+            || lease.1 != step.4
+            || lease.2 <= now.get()
+            || lease.3.is_some()
+        {
+            return Err(StoreError::LeaseFenced);
+        }
+        let policy: (i64, String) = tx.inner.query_row(
+            "SELECT p.active_revision_id,r.rules_digest FROM policy_state p JOIN policy_revisions r ON r.revision_id=p.active_revision_id WHERE p.singleton=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if policy != (1, RULES.to_owned()) {
+            return Err(StoreError::InvalidPolicyRevision);
+        }
+        let binding: i64 = tx.inner.query_row(
+            "SELECT count(*) FROM step_capability_bindings b JOIN capability_generation_members m ON m.generation_id=b.generation_id AND m.descriptor_digest=b.descriptor_digest WHERE b.task_id=?1 AND b.step_id=?2 AND b.generation_id=1 AND b.descriptor_digest=?3 AND m.capability_id='calendar.event.create' AND m.capability_version='1.0.0' AND m.provider_id='calendar'",
+            rusqlite::params![TASK, STEP_A, DESCRIPTOR],
+            |row| row.get(0),
+        )?;
+        let owner_binding: i64 = tx.inner.query_row(
+            "SELECT count(*) FROM task_owner_bindings WHERE task_id=?1 AND owner_id='own_synthetic_p8'",
+            [TASK],
+            |row| row.get(0),
+        )?;
+        let overlay: (String, i64) = tx.inner.query_row(
+            "SELECT availability_state,revision FROM capability_overlays WHERE capability_id='calendar.event.create'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if binding != 1 || owner_binding != 1 || overlay != ("ENABLED".to_owned(), 1) {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+
+        match tx.consume_grant_use(
+            &GrantId::new(GRANT).unwrap(),
+            &TaskId::new(TASK).unwrap(),
+            &StepId::new(STEP_A).unwrap(),
+            now,
+        )? {
+            GrantConsumptionOutcome::Consumed { .. } => {}
+            GrantConsumptionOutcome::AlreadyConsumed
+            | GrantConsumptionOutcome::Revoked
+            | GrantConsumptionOutcome::Expired
+            | GrantConsumptionOutcome::Exhausted => {
+                return Err(StoreError::InvalidApprovalResponse);
+            }
+        }
+        if fail_after_grant {
+            return Err(StoreError::ConstraintViolation);
+        }
+        tx.inner.execute(
+            "INSERT INTO dispatch_intents(request_id,idempotency_key,task_id,step_id,owner_id,grant_id,plan_revision,task_state_revision,lease_generation,policy_revision_id,policy_rules_digest,generation_id,descriptor_digest,capability_id,capability_version,provider_id,overlay_revision,arguments_digest,request_digest,event_id,committed_at_ms) VALUES (?1,?2,?3,?4,'own_synthetic_p8',?5,1,?6,?7,?8,?9,1,?10,'calendar.event.create','1.0.0','calendar',1,?11,?11,'evt_00000000000000000000000070',?12)",
+            rusqlite::params![
+                request_id,
+                step.3,
+                TASK,
+                STEP_A,
+                GRANT,
+                task.4,
+                step.4,
+                policy.0,
+                policy.1,
+                DESCRIPTOR,
+                ARGS_A,
+                now.get(),
+            ],
+        )?;
+        if fail_after_intent {
+            return Err(StoreError::ConstraintViolation);
+        }
+        tx.append_event(
+            p8_candidate_request_event(request_id, now),
+            Some(EpochMillis::new(2_592_301).unwrap()),
+        )?;
+        Ok(())
+    })
+}
+
+fn assert_p8_candidate_probe_rolled_back(path: &Path) {
+    let reopened = Store::open(path, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT uses_remaining FROM approval_grants").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'"
+        )
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn real_storage_p6_grant_intent_and_event_join_one_sqlite_transaction() {
+    // RED boundary: the implementation fails closed if any live P6 fact has
+    // changed, while an approved synthetic fixture commits through actual Tx.
+    for (fail_after_grant, fail_after_intent) in [(true, false), (false, true)] {
+        let (path, store) = p8_real_storage_fixture();
+        assert!(p8_real_storage_commit_probe(&store, fail_after_grant, fail_after_intent).is_err());
+        drop(store);
+        assert_p8_candidate_probe_rolled_back(&path.0);
+    }
+
+    let (path, store) = p8_real_storage_fixture();
+    p8_real_storage_commit_probe(&store, false, false).unwrap();
+    // The already-used Grant is a past operation record, never authority to
+    // create a second intent for the same Step.
+    assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
+    // Existing TaskEngine deletion delegates to Tx::delete_task. The candidate
+    // FK makes an unresolved Intent deletion fail closed on the real Store DB.
+    assert!(
+        store
+            .transact(|tx| tx.delete_task(&TaskId::new(TASK).unwrap()))
+            .is_err()
+    );
+    drop(store);
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    reopened.verify_integrity().unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT uses_remaining FROM approval_grants").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM tasks WHERE task_id='tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA'"
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'"
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn real_storage_boundary_fails_closed_on_event_failure_revocation_policy_and_lease_change() {
+    // Event persistence failure after the P6 use and candidate Intent has
+    // started must roll the entire SQLite transaction back.
+    let (path, store) = p8_real_storage_fixture();
+    store
+        .conn
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER p8_test_fail_event BEFORE INSERT ON event_content
+             BEGIN SELECT RAISE(ABORT,'injected P8 event failure'); END;",
+        )
+        .unwrap();
+    assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
+    drop(store);
+    assert_p8_candidate_probe_rolled_back(&path.0);
+
+    // Cancellation through the real Tx lifecycle writer is re-read at the
+    // transaction boundary before the P6 Grant-use is touched.
+    struct P8CancelAudit;
+    impl TaskAuditParticipant for P8CancelAudit {
+        fn records(&self, facts: &DurableTransition) -> Result<JournalRecords, StoreError> {
+            Ok(vec![JournalRecord {
+                kind: JournalKind::TaskCancelRequested,
+                state_from: facts.task_from().map(|state| state.wire_name().to_owned()),
+                state_to: Some(facts.task_to().wire_name().to_owned()),
+                reason: None,
+                payload_json: b"{}".to_vec(),
+            }])
+        }
+    }
+    let (path, store) = p8_real_storage_fixture();
+    let actor = ActorId::new("local-user").unwrap();
+    let actor_version = SemVer::new("1.0.0").unwrap();
+    let context = TransitionContext {
+        actor_kind: ActorKind::User,
+        actor_id: &actor,
+        actor_version: &actor_version,
+        causation_id: None,
+    };
+    store
+        .transact_with_participants(&P8CancelAudit, &ApprovalTaskEvents, |tx| {
+            tx.cancel_task(
+                &TaskId::new(TASK).unwrap(),
+                TaskOriginKind::new("USER_MESSAGE").unwrap(),
+                EpochMillis::new(350).unwrap(),
+                &context,
+            )
+        })
+        .unwrap();
+    assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
+    drop(store);
+    assert_p8_candidate_probe_rolled_back(&path.0);
+
+    // The actual P6 revocation operation is authoritative in the next
+    // transaction; the attempted candidate write observes it and refuses.
+    let (path, store) = p8_real_storage_fixture();
+    let revoke = revocation_storage_draft();
+    store
+        .revoke_approval_grant(revoke.clone(), approval_revoked_event(&revoke))
+        .unwrap();
+    assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
+    drop(store);
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        0
+    );
+    assert_eq!(
+        text(
+            &conn,
+            "SELECT status FROM approval_grants WHERE grant_id=?1",
+            GRANT
+        )
+        .unwrap(),
+        "REVOKED"
+    );
+    drop(conn);
+
+    // An active Policy pointer change cannot be hidden by the earlier policy
+    // snapshot. This test setup mutates rows directly; runtime authority is not
+    // being inferred from the test fixture.
+    let (path, store) = p8_real_storage_fixture();
+    {
+        let conn = store.conn.lock().unwrap();
+        insert_revision(&conn, 2, false);
+        insert_rule(&conn, 2, "p8_policy_change", "ALLOW");
+        activate_seed_revision(&conn, 2);
+        conn.execute(
+            "UPDATE policy_state SET active_revision_id=2 WHERE singleton=1",
+            [],
+        )
+        .unwrap();
+    }
+    assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
+    drop(store);
+    assert_p8_candidate_probe_rolled_back(&path.0);
+
+    // Deadline equality is expired: it refuses before the existing Grant-use
+    // accounting is touched.
+    let (path, store) = p8_real_storage_fixture();
+    store
+        .conn
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE tasks SET deadline_at_ms=301 WHERE task_id=?1",
+            [TASK],
+        )
+        .unwrap();
+    assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
+    drop(store);
+    assert_p8_candidate_probe_rolled_back(&path.0);
+
+    // A newer lease generation fences the stale worker before it consumes the
+    // real Grant-use row.
+    let (path, store) = p8_real_storage_fixture();
+    store
+        .transact(|tx| {
+            tx.acquire_lease(
+                TaskId::new(TASK).unwrap(),
+                StepId::new(STEP_A).unwrap(),
+                LeaseOwner::new("p8-test-worker-b").unwrap(),
+                Some(1),
+                EpochMillis::new(10_001).unwrap(),
+                EpochMillis::new(20_000).unwrap(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        p8_real_storage_commit_probe(&store, false, false),
+        Err(StoreError::LeaseFenced)
+    );
+    drop(store);
+    assert_p8_candidate_probe_rolled_back(&path.0);
+}
+
+#[test]
+fn independent_connections_admit_at_most_one_real_storage_candidate_intent() {
+    let (path, setup) = p8_real_storage_fixture();
+    drop(setup);
+    let left = Store::open(&path.0, &FixedClock).unwrap();
+    let right = Store::open(&path.0, &FixedClock).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let spawn = |store: Store, barrier: Arc<Barrier>| {
+        std::thread::spawn(move || {
+            barrier.wait();
+            p8_real_storage_commit_probe(&store, false, false)
+        })
+    };
+    let left_worker = spawn(left, barrier.clone());
+    let right_worker = spawn(right, barrier.clone());
+    barrier.wait();
+    let outcomes = [left_worker.join().unwrap(), right_worker.join().unwrap()];
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    reopened.verify_integrity().unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'"
         )
         .unwrap(),
         1

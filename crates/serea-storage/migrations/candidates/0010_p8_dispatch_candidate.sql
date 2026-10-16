@@ -52,8 +52,9 @@ CREATE TABLE dispatch_intents (
 ) STRICT;
 
 -- The intent is a frozen historical record. It has no lifecycle/status column:
--- state transitions have not been approved. Cascading Task deletion remains
--- possible under the already-defined Task ownership lifecycle.
+-- state transitions have not been approved. ON DELETE RESTRICT above means a
+-- Task with an intent cannot currently be deleted. This candidate-only
+-- fail-closed behavior is not an accepted retention or Forget policy.
 CREATE TRIGGER dispatch_intent_no_update
 BEFORE UPDATE ON dispatch_intents
 BEGIN SELECT RAISE(ABORT, 'P8 dispatch intent is immutable'); END;

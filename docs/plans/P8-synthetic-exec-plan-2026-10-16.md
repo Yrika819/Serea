@@ -289,3 +289,75 @@ only; no automatic same-Step retry or canonical late Receipt exists. Production
 Memory, OS Owner authentication, key custody, rollback-resistant authority,
 real credentials/accounts/providers and Gate D remain disabled and
 unauthorized.
+
+## P8B real Storage boundary follow-up (2026-10-16)
+
+**Branch:** `p8/real-storage-boundary-prototype`, based on PR #23 head
+`b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16`; dependent on PR #23 → #22 → #21 →
+#20 → #19. Worktree: `/workspace/Serea-p8-real-storage`.
+Draft PR #24: <https://github.com/Yrika819/Serea/pull/24>. Source commit
+`75017d7be38eddb30eaa93037f1b6510f9c0b463`; formatting correction
+`99b945e271c6773e54c66ef393c1e4a75dd9ab98`. The source-code checkpoint
+was clean before this ExecPlan update. PR #24 is open,
+Draft, and mergeable; its base SHA remains PR #23's
+`b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16`.
+
+- Corrected the trailing comment in candidate 0010: Task deletion is refused
+  while an Intent remains because the FK is `ON DELETE RESTRICT`. The former
+  comment claimed Task deletion remained possible. The SQL still is a candidate
+  only; this does not settle retention or Forget policy.
+- Added a `#[cfg(test)]` Storage boundary probe to the existing P6 migration
+  test module. Its disposable file DB applies candidate 0009/0010 SQL outside
+  the migration catalog, seeds a synthetic Owner binding, and creates an actual
+  P6 approval Grant using the typed Storage API. It acquires a real Storage
+  Lease, then in one `Store::transact` calls `Tx::consume_grant_use`, checks
+  current Task/Step/Lease/Policy/Registry/Overlay rows, inserts a candidate
+  Intent, and appends an existing Protocol Event. It uses no public Intent
+  writer and is unreachable outside test builds.
+- Fault probes return errors after Grant consumption and after Intent insert;
+  an SQLite trigger also fails event persistence. They check Grant-use,
+  `uses_remaining`, Intent and Event state after dropping and reopening the
+  file-backed Store. A success probe checks all four persisted records and then
+  verifies duplicate same-Step use and Task deletion fail without removing the
+  unresolved Intent.
+- Additional refusal probes use actual Storage cancellation and P6 Grant
+  revocation paths, change the active Policy revision, and reclaim the Lease
+  under a second owner/generation. Deadline equality also refuses. Each refuses
+  before candidate Intent commit. A two-connection race allows at most one
+  Grant-use/Intent/Event transaction to commit.
+- The test intentionally does **not** claim P8 authorization. Budget accounting
+  has no accepted durable call counter; provider availability has no accepted
+  durable authority source; TaskEngine has no dispatch entry point; the test
+  does not create a commit-to-invoke path. Candidate Owner binding is synthetic
+  and is not OS authentication. The probe demonstrates transaction composition
+  and revalidation boundaries only.
+- Local verification environment has no `cargo`, `rustc`, or `rustfmt` binary,
+  so Rust test/format execution is NOT RUN locally. The existing build caches
+  were left intact. Python SQLite applied migrations 0001–0008 followed by
+  candidate 0009/0010 with `foreign_key_check` empty; this is SQL parser/schema
+  evidence only, not the Rust integration-test result.
+- RED/GREEN evidence is therefore pending exact-head CI. Do not mark this slice
+  complete until CI compiles and runs the new P6/P8 tests, and run formatting,
+  all-target/all-feature, MSRV and Clippy gates on this branch head.
+- Exact-head Actions for `99b945e271c6773e54c66ef393c1e4a75dd9ab98` were
+  submitted as Fast `38920572913`, Full `38920573172`, Native
+  `38920573301`, SQLite portability `38920572461`, and Git Hooks
+  `38920572998`. At 2026-10-16 15:05 UTC, Git Hooks Windows and Ubuntu jobs
+  had succeeded while its macOS job was queued; all other workflows were
+  queued. This is pending, not PASS. The exact-head statuses must be refreshed
+  after the next commit because any plan update changes the tested HEAD.
+- PR #23's exact-head Fast `38916026696`, Git Hooks `38916026814`, and SQLite
+  portability `38916026673` succeeded; Full `38916026730` and Native
+  `38916027180` remained in progress at the same poll. This is separate from
+  PR #24 validation.
+
+### Restart point and owner decisions
+
+Resume by checking this branch's exact-head Fast/Full/Native/SQLite/Git Hooks
+workflows and correcting any concrete compile/test failure without widening
+the candidate schema. If they pass, review real TaskEngine/Storage reachability
+again and add only test-only cases supported by existing authority APIs.
+Runtime integration remains blocked pending an accepted Budget source and
+accounting rule, Provider availability evidence, and commit-to-invoke/recovery
+eligibility. Retention/Forget, Receipt authority, retry and late-outcome rules
+remain fail-closed as recorded above.

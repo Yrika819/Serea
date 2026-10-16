@@ -4087,11 +4087,76 @@ fn p8_real_storage_fixture_with_tool_budget(max_tool_calls: i64) -> (TempDb, Sto
     (path, store)
 }
 
-fn p8_candidate_request_event(request_id: &str, now: EpochMillis) -> SereaEvent {
+fn p8_real_storage_fixture_with_two_eligible_steps(max_tool_calls: i64) -> (TempDb, Store) {
+    let path = TempDb::new();
+    let store = approval_store_with_tool_budget(&path.0, max_tool_calls);
+    {
+        let conn = store.conn.lock().unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/candidates/0009_p7_memory_schema_candidate.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/candidates/0010_p8_dispatch_candidate.sql"
+        ))
+        .unwrap();
+        conn.execute(
+            "INSERT INTO owners(owner_id,epoch,state,created_at_ms) VALUES ('own_synthetic_p8',1,'ACTIVE',0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO task_owner_bindings(task_id,owner_id,admitted_at_ms) VALUES (?1,'own_synthetic_p8',0)",
+            [TASK],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO capability_overlays(capability_id,availability_state,experimental_opt_in,revision) VALUES ('calendar.event.create','ENABLED',0,1)",
+            [],
+        )
+        .unwrap();
+    }
+    activate_test_policy(&store);
+    let request = two_action_request_draft();
+    store
+        .create_approval_request(request.clone(), approval_required_event(&request))
+        .unwrap();
+    let response = two_action_grant_storage_draft();
+    store
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+    for step_id in [STEP_A, STEP_B] {
+        let lease = store
+            .transact(|tx| {
+                tx.acquire_lease(
+                    TaskId::new(TASK).unwrap(),
+                    StepId::new(step_id).unwrap(),
+                    LeaseOwner::new("p8-test-worker-a").unwrap(),
+                    None,
+                    EpochMillis::new(301).unwrap(),
+                    EpochMillis::new(10_000).unwrap(),
+                )
+            })
+            .unwrap();
+        assert_eq!(lease.generation(), 1);
+        drop(lease);
+    }
+    (path, store)
+}
+
+fn p8_candidate_request_event(
+    request_id: &str,
+    event_id: &str,
+    step_id: &str,
+    now: EpochMillis,
+) -> SereaEvent {
     SereaEvent {
         envelope_version: EnvelopeVersion::new("1").unwrap(),
         surface: WireSurface::new(WireSurface::EVENT).unwrap(),
-        message_id: EventId::new("evt_00000000000000000000000070").unwrap(),
+        message_id: EventId::new(event_id).unwrap(),
         seq: Seq::new(0),
         kind: EventKind::CapabilityRequested,
         occurred_at: Timestamp::from_epoch_millis(now),
@@ -4106,11 +4171,11 @@ fn p8_candidate_request_event(request_id: &str, now: EpochMillis) -> SereaEvent 
         data_class: DataClass::Personal,
         trace: Some(Trace {
             task_id: Some(TaskId::new(TASK).unwrap()),
-            step_id: Some(StepId::new(STEP_A).unwrap()),
+            step_id: Some(StepId::new(step_id).unwrap()),
             attempt: Some(1),
             extensions: Default::default(),
         }),
-        payload: json!({"request_id": request_id, "step_id": STEP_A})
+        payload: json!({"request_id": request_id, "step_id": step_id})
             .as_object()
             .unwrap()
             .clone(),
@@ -4147,6 +4212,26 @@ fn p8_real_storage_commit_probe_with_readiness(
     fail_after_grant: bool,
     fail_after_intent: bool,
 ) -> Result<(), StoreError> {
+    p8_real_storage_commit_probe_for_step(
+        store,
+        STEP_A,
+        "req_00000000000000000000000070",
+        "evt_00000000000000000000000070",
+        readiness,
+        fail_after_grant,
+        fail_after_intent,
+    )
+}
+
+fn p8_real_storage_commit_probe_for_step(
+    store: &Store,
+    step_id: &str,
+    request_id: &str,
+    event_id: &str,
+    readiness: P8TestProviderReadiness,
+    fail_after_grant: bool,
+    fail_after_intent: bool,
+) -> Result<(), StoreError> {
     // The synthetic ready variant exists only to exercise database composition
     // in this cfg(test) helper. Unknown or unavailable readiness fails before
     // the candidate transaction; no Provider trait or runtime is involved.
@@ -4154,7 +4239,6 @@ fn p8_real_storage_commit_probe_with_readiness(
         return Err(StoreError::ConstraintViolation);
     }
     let now = EpochMillis::new(301).unwrap();
-    let request_id = "req_00000000000000000000000070";
     store.transact(|tx| {
         let task: (String, Option<i64>, Option<i64>, i64, i64, i64) = tx.inner.query_row(
             "SELECT state,cancelled_at_ms,deadline_at_ms,plan_revision,state_revision,max_tool_calls FROM tasks WHERE task_id=?1",
@@ -4183,15 +4267,15 @@ fn p8_real_storage_commit_probe_with_readiness(
         }
         let step: (String, i64, String, String, i64) = tx.inner.query_row(
             "SELECT status,plan_revision,input_digest,idempotency_key,lease_generation FROM task_steps WHERE task_id=?1 AND step_id=?2",
-            rusqlite::params![TASK, STEP_A],
+            rusqlite::params![TASK, step_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )?;
-        if step.0 != "LEASED" || step.1 != 1 || step.2 != ARGS_A || step.4 <= 0 {
+        if step.0 != "LEASED" || step.1 != 1 || step.4 <= 0 {
             return Err(StoreError::InvalidApprovalResponse);
         }
         let lease: (String, i64, i64, Option<i64>) = tx.inner.query_row(
             "SELECT owner,generation,expires_at_ms,released_at_ms FROM leases WHERE step_id=?1",
-            [STEP_A],
+            [step_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         if lease.0 != "p8-test-worker-a"
@@ -4211,7 +4295,7 @@ fn p8_real_storage_commit_probe_with_readiness(
         }
         let binding: i64 = tx.inner.query_row(
             "SELECT count(*) FROM step_capability_bindings b JOIN capability_generation_members m ON m.generation_id=b.generation_id AND m.descriptor_digest=b.descriptor_digest WHERE b.task_id=?1 AND b.step_id=?2 AND b.generation_id=1 AND b.descriptor_digest=?3 AND m.capability_id='calendar.event.create' AND m.capability_version='1.0.0' AND m.provider_id='calendar'",
-            rusqlite::params![TASK, STEP_A, DESCRIPTOR],
+            rusqlite::params![TASK, step_id, DESCRIPTOR],
             |row| row.get(0),
         )?;
         let owner_binding: i64 = tx.inner.query_row(
@@ -4231,7 +4315,7 @@ fn p8_real_storage_commit_probe_with_readiness(
         match tx.consume_grant_use(
             &GrantId::new(GRANT).unwrap(),
             &TaskId::new(TASK).unwrap(),
-            &StepId::new(STEP_A).unwrap(),
+            &StepId::new(step_id).unwrap(),
             now,
         )? {
             GrantConsumptionOutcome::Consumed { .. } => {}
@@ -4246,19 +4330,20 @@ fn p8_real_storage_commit_probe_with_readiness(
             return Err(StoreError::ConstraintViolation);
         }
         tx.inner.execute(
-            "INSERT INTO dispatch_intents(request_id,idempotency_key,task_id,step_id,owner_id,grant_id,plan_revision,task_state_revision,lease_generation,policy_revision_id,policy_rules_digest,generation_id,descriptor_digest,capability_id,capability_version,provider_id,overlay_revision,arguments_digest,request_digest,event_id,committed_at_ms) VALUES (?1,?2,?3,?4,'own_synthetic_p8',?5,1,?6,?7,?8,?9,1,?10,'calendar.event.create','1.0.0','calendar',1,?11,?11,'evt_00000000000000000000000070',?12)",
+            "INSERT INTO dispatch_intents(request_id,idempotency_key,task_id,step_id,owner_id,grant_id,plan_revision,task_state_revision,lease_generation,policy_revision_id,policy_rules_digest,generation_id,descriptor_digest,capability_id,capability_version,provider_id,overlay_revision,arguments_digest,request_digest,event_id,committed_at_ms) VALUES (?1,?2,?3,?4,'own_synthetic_p8',?5,1,?6,?7,?8,?9,1,?10,'calendar.event.create','1.0.0','calendar',1,?11,?11,?12,?13)",
             rusqlite::params![
                 request_id,
                 step.3,
                 TASK,
-                STEP_A,
+                step_id,
                 GRANT,
                 task.4,
                 step.4,
                 policy.0,
                 policy.1,
                 DESCRIPTOR,
-                ARGS_A,
+                step.2,
+                event_id,
                 now.get(),
             ],
         )?;
@@ -4266,7 +4351,7 @@ fn p8_real_storage_commit_probe_with_readiness(
             return Err(StoreError::ConstraintViolation);
         }
         tx.append_event(
-            p8_candidate_request_event(request_id, now),
+            p8_candidate_request_event(request_id, event_id, step_id, now),
             Some(EpochMillis::new(2_592_301).unwrap()),
         )?;
         Ok(())
@@ -4409,6 +4494,175 @@ fn real_storage_candidate_budget_exhaustion_rolls_back_grant_and_all_dispatch_ro
     );
     drop(store);
     assert_p8_candidate_probe_rolled_back(&path.0);
+}
+
+#[test]
+fn real_storage_unresolved_intent_survives_second_store_deletes_and_event_expiry() {
+    let (path, store) = p8_real_storage_fixture();
+    p8_real_storage_commit_probe(&store, false, false).unwrap();
+    drop(store);
+
+    // Store::open must apply connection-local foreign-key enforcement on each
+    // independent connection. This remains a candidate-schema test, not a
+    // production retention or Forget contract.
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    let foreign_keys: i64 = conn
+        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(foreign_keys, 1);
+
+    assert!(
+        conn.execute("DELETE FROM tasks WHERE task_id=?1", [TASK])
+            .is_err(),
+        "Task deletion must preserve unresolved Intent evidence"
+    );
+    assert!(
+        conn.execute("DELETE FROM task_steps WHERE step_id=?1", [STEP_A])
+            .is_err(),
+        "Step deletion must preserve unresolved Intent evidence"
+    );
+    assert!(
+        conn.execute(
+            "DELETE FROM approval_grant_uses WHERE task_id=?1 AND step_id=?2",
+            rusqlite::params![TASK, STEP_A],
+        )
+        .is_err(),
+        "consumed Grant-use deletion must preserve unresolved Intent evidence"
+    );
+    assert!(
+        conn.execute(
+            "DELETE FROM dispatch_intents WHERE request_id=?1",
+            ["req_00000000000000000000000070"],
+        )
+        .is_err(),
+        "direct Intent deletion must be refused"
+    );
+
+    let intents_before_expiry: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM dispatch_intents WHERE request_id='req_00000000000000000000000070' AND idempotency_key=(SELECT idempotency_key FROM task_steps WHERE step_id=?1)",
+            [STEP_A],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(intents_before_expiry, 1);
+    drop(conn);
+
+    // Event retention is independent from the candidate Intent record. The
+    // Event is intentionally pruned after its configured deadline, while the
+    // exact RequestId/IDK budget evidence survives another Store reopen.
+    let expired = reopened
+        .expire_eligible_events(EpochMillis::new(3_000_000).unwrap(), 32)
+        .unwrap();
+    assert!(expired.content_records_deleted > 0);
+    drop(reopened);
+
+    let final_store = Store::open(&path.0, &FixedClock).unwrap();
+    let conn = final_store.conn.lock().unwrap();
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'",
+        )
+        .unwrap(),
+        0,
+        "the expired event content should be pruned"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM dispatch_intents WHERE request_id='req_00000000000000000000000070' AND idempotency_key=(SELECT idempotency_key FROM task_steps WHERE step_id=?1)",
+            [STEP_A],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        1,
+        "event pruning must not erase or rewrite unresolved Intent evidence"
+    );
+}
+
+#[test]
+fn real_storage_task_budget_limit_one_serializes_two_eligible_steps() {
+    let (path, setup) = p8_real_storage_fixture_with_two_eligible_steps(1);
+    drop(setup);
+
+    let workers = [
+        (
+            STEP_A,
+            "req_00000000000000000000000070",
+            "evt_00000000000000000000000070",
+        ),
+        (
+            STEP_B,
+            "req_00000000000000000000000071",
+            "evt_00000000000000000000000071",
+        ),
+    ];
+    let barrier = Arc::new(Barrier::new(3));
+    let joins = workers.map(|(step_id, request_id, event_id)| {
+        let store = Store::open(&path.0, &FixedClock).unwrap();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            p8_real_storage_commit_probe_for_step(
+                &store,
+                step_id,
+                request_id,
+                event_id,
+                P8TestProviderReadiness::SyntheticReadyForCompositionOnly,
+                false,
+                false,
+            )
+        })
+    });
+    barrier.wait();
+    let outcomes = joins.map(|join| join.join().unwrap());
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|result| **result == Err(StoreError::ConstraintViolation))
+            .count(),
+        1,
+        "the second eligible Step must be refused at max_tool_calls=1: {outcomes:?}"
+    );
+
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT max_tool_calls FROM tasks WHERE task_id='tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA'"
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT uses_remaining FROM approval_grants WHERE grant_id=?1",
+            [GRANT],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM event_content WHERE message_id IN ('evt_00000000000000000000000070','evt_00000000000000000000000071')").unwrap(),
+        1,
+        "the refused second Step must not leave a candidate Event"
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents WHERE step_id IN ('stp_01JQ8Z9M5T9WXK2H4BNPQ7RDSF','stp_01JQ8Z9M5T9WXK2H4BNPQ7RDST')").unwrap(),
+        1
+    );
 }
 
 #[test]

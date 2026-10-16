@@ -8,6 +8,7 @@
 use rusqlite::{Connection, params};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_LEDGER: AtomicU64 = AtomicU64::new(0);
@@ -398,4 +399,111 @@ fn fake_provider_rejects_before_effect_without_ledger_write() {
         SimulatedOutcome::RejectedBeforeEffect
     );
     assert_eq!(provider.ledger.count(&request.request_id).unwrap(), 0);
+}
+
+#[test]
+fn process_crash_child() {
+    let Ok(mode) = std::env::var("SEREA_P8_PROCESS_CRASH_MODE") else {
+        return;
+    };
+    let intent_path = PathBuf::from(std::env::var_os("SEREA_P8_INTENT_PATH").unwrap());
+    let effect_path = PathBuf::from(std::env::var_os("SEREA_P8_EFFECT_PATH").unwrap());
+    let request = match mode.as_str() {
+        "after_intent_before_invoke" => SyntheticRequest {
+            request_id: "req_process_preinvoke".into(),
+            idempotency_key: "idk_process_preinvoke".into(),
+        },
+        "after_effect_before_ack" => SyntheticRequest {
+            request_id: "req_process_ackloss".into(),
+            idempotency_key: "idk_process_ackloss".into(),
+        },
+        _ => panic!("unknown test child crash mode"),
+    };
+    IntentLedger::open(intent_path)
+        .unwrap()
+        .commit(&request)
+        .unwrap();
+
+    match mode.as_str() {
+        "after_intent_before_invoke" => std::process::exit(73),
+        "after_effect_before_ack" => {
+            let mut provider = ScriptedFakeProvider::new(
+                EffectLedger::open(effect_path).unwrap(),
+                [Script::ApplyThenLoseAcknowledgement],
+            );
+            assert_eq!(
+                provider.invoke(&request, ManualClock(10), 20).unwrap(),
+                SimulatedOutcome::Ambiguous
+            );
+            // Abrupt process exit stands in for losing the worker after the
+            // fake effect but before the caller persists or receives an ACK.
+            std::process::exit(74);
+        }
+        _ => unreachable!("mode was validated above"),
+    }
+}
+
+#[test]
+fn child_process_termination_preserves_commit_and_effect_ledgers_without_replay() {
+    for (mode, expected_exit, request, expected_effects) in [
+        (
+            "after_intent_before_invoke",
+            73,
+            SyntheticRequest {
+                request_id: "req_process_preinvoke".into(),
+                idempotency_key: "idk_process_preinvoke".into(),
+            },
+            0,
+        ),
+        (
+            "after_effect_before_ack",
+            74,
+            SyntheticRequest {
+                request_id: "req_process_ackloss".into(),
+                idempotency_key: "idk_process_ackloss".into(),
+            },
+            1,
+        ),
+    ] {
+        let db = TempLedger::new();
+        drop(IntentLedger::open(db.intent_path()).unwrap());
+        drop(EffectLedger::open(db.0.clone()).unwrap());
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "p8_synthetic_recovery_tests::process_crash_child",
+                "--nocapture",
+            ])
+            .env("SEREA_P8_PROCESS_CRASH_MODE", mode)
+            .env("SEREA_P8_INTENT_PATH", db.intent_path())
+            .env("SEREA_P8_EFFECT_PATH", &db.0)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(expected_exit), "child mode {mode}");
+
+        let reopened_intents = IntentLedger::open(db.intent_path()).unwrap();
+        let reopened_effects = EffectLedger::open(db.0.clone()).unwrap();
+        assert!(reopened_intents.matches(&request).unwrap());
+        assert_eq!(
+            reopened_effects.count(&request.request_id).unwrap(),
+            expected_effects,
+            "child mode {mode}"
+        );
+        assert_eq!(
+            reopened_effects
+                .count_pair(&request.request_id, &request.idempotency_key)
+                .unwrap(),
+            expected_effects,
+            "exact RequestId/IDK evidence after child mode {mode}"
+        );
+        // Recovery is deliberately read-only: no permit or invoke path is
+        // reconstructed by opening these ledgers again.
+        drop(reopened_intents);
+        let recovered_again = EffectLedger::open(db.0.clone()).unwrap();
+        assert_eq!(
+            recovered_again.count(&request.request_id).unwrap(),
+            expected_effects,
+            "repeated reopen must not replay child mode {mode}"
+        );
+    }
 }

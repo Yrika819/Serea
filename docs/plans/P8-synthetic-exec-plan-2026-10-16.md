@@ -628,3 +628,34 @@ PARTIAL and all production invocation/Receipt/retry authority fail-closed.
   macOS Intel were still running. Native `38935044857` and cross-architecture
   SQLite `38935044264` remained queued. These refer to the earlier exact head
   `acd1dc5...`; the Permit slice still requires its own pushed-head Actions.
+
+### Exact-head CI completion — `27f3b14cdd8fdf58764d0b7e34196a1c9b916462`
+
+The one-shot Permit regression was committed as `27f3b14` and pushed to Draft
+PR #26. All five workflows completed success against that exact SHA; no
+queued, skipped, cancelled, or running result is counted as a pass. This CI
+checkpoint is recorded in the present ExecPlan update:
+
+| Workflow | Run | Final result |
+| --- | ---: | --- |
+| Fast CI | 38936046309 | success |
+| Full CI | 38936046460 | success |
+| Native platform validation | 38936046279 | success, all target jobs |
+| Cross-architecture SQLite portability | 38936046530 | success, both cross-open directions |
+| Git hooks Windows compatibility | 38936046688 | success |
+
+Full CI's Linux stable job passed all-target/all-feature checks, tests, Clippy
+and release fault-seam exclusion; Linux MSRV 1.85.0 passed check, both test
+modes and Clippy; Windows P7 Gate C and macOS Intel/ARM64 validation passed.
+Native validation's stable and Rust 1.85.0 jobs passed across available Linux,
+macOS and Windows targets, including release builds and synthetic Core/Host
+startup and child-process lifecycle probes. Cross-architecture SQLite
+generated databases on ARM64 and Intel and opened each on the opposite Mac
+architecture. No CI-observed defect required a source fix.
+
+**Resume point:** branch `p8b/overnight-2026-10-17`, PR #26, exact head
+`27f3b14...` (base PR #25, `73e38fdd...`), clean local worktree. The next
+independent work requires an unblocked test-only falsification slice or an
+Owner decision on proposed contract details. Keep candidate migrations
+out-of-catalog and production invoke, Receipt, retry, and canonical retention
+authority fail-closed. Do not alter or merge PRs #19–#25.

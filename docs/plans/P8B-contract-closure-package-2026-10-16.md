@@ -112,6 +112,12 @@ worker loss after synthetic Intent commit and before fake invoke; independent
 reopen preserves the Intent and confirms the effect ledger remains empty
 without replay. It does not terminate a real OS process.
 
+The Storage composition probe now takes a private test-only readiness enum.
+`Unknown` and `Unavailable` refuse before the write transaction and leave P6
+Grant-use/Intent/Event state empty. Its `SyntheticReadyForCompositionOnly`
+variant exists only to test transaction composition; it is not produced by the
+Capability resolver and is not a production readiness source.
+
 ## B. Provider availability
 
 ### Accepted

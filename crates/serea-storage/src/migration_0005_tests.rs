@@ -4118,6 +4118,13 @@ fn p8_candidate_request_event(request_id: &str, now: EpochMillis) -> SereaEvent 
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum P8TestProviderReadiness {
+    Unknown,
+    Unavailable,
+    SyntheticReadyForCompositionOnly,
+}
+
 /// This persists a candidate Intent in the same transaction as P6 consumption
 /// and a protocol Event. All values are synthetic test inputs; no result is
 /// exposed as a callable production dispatch API.
@@ -4126,6 +4133,26 @@ fn p8_real_storage_commit_probe(
     fail_after_grant: bool,
     fail_after_intent: bool,
 ) -> Result<(), StoreError> {
+    p8_real_storage_commit_probe_with_readiness(
+        store,
+        P8TestProviderReadiness::SyntheticReadyForCompositionOnly,
+        fail_after_grant,
+        fail_after_intent,
+    )
+}
+
+fn p8_real_storage_commit_probe_with_readiness(
+    store: &Store,
+    readiness: P8TestProviderReadiness,
+    fail_after_grant: bool,
+    fail_after_intent: bool,
+) -> Result<(), StoreError> {
+    // The synthetic ready variant exists only to exercise database composition
+    // in this cfg(test) helper. Unknown or unavailable readiness fails before
+    // the candidate transaction; no Provider trait or runtime is involved.
+    if readiness != P8TestProviderReadiness::SyntheticReadyForCompositionOnly {
+        return Err(StoreError::ConstraintViolation);
+    }
     let now = EpochMillis::new(301).unwrap();
     let request_id = "req_00000000000000000000000070";
     store.transact(|tx| {
@@ -4269,6 +4296,22 @@ fn assert_p8_candidate_probe_rolled_back(path: &Path) {
         .unwrap(),
         0
     );
+}
+
+#[test]
+fn real_storage_candidate_provider_readiness_unknown_or_unavailable_fails_closed() {
+    for readiness in [
+        P8TestProviderReadiness::Unknown,
+        P8TestProviderReadiness::Unavailable,
+    ] {
+        let (path, store) = p8_real_storage_fixture();
+        assert_eq!(
+            p8_real_storage_commit_probe_with_readiness(&store, readiness, false, false),
+            Err(StoreError::ConstraintViolation)
+        );
+        drop(store);
+        assert_p8_candidate_probe_rolled_back(&path.0);
+    }
 }
 
 #[test]

@@ -390,6 +390,11 @@ worktrees were clean and left untouched at branch creation.
   participant exercise. It is not accepted as the semantic P8 Intent event;
   no new EventKind was added. The contract package records this gap and the
   required acceptance test before Protocol/runtime integration.
+- Added a private `P8TestProviderReadiness` enum to the test-only Storage
+  probe. Unknown and unavailable readiness refuse before `Store::transact`;
+  reopened P6 Grant-use/Intent/Event tables remain empty. The explicit
+  synthetic-ready variant permits only the test composition case and is not
+  wired to CapabilityProvider or Host authority.
 - Extended the existing `p8_synthetic_recovery_tests` simulator with an
   independent synthetic Intent ledger. New tests reopen Intent and Effect
   SQLite files after ACK loss, check exact RequestId/IDK matching without

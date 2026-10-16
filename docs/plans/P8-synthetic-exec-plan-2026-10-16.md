@@ -190,7 +190,19 @@ D, real credentials/providers and real external effects remain unauthorized.
 
 ## Handoff
 
-Last dependency head is the #19 SHA above. Local work branch is
-`p8/approved-contract-candidate`. The task-owned clone has Codex local identity
-and repository hooks. The branch must remain a Draft stacked on
-`codex/post-gate-c-review` until #19 is merged through protected procedure.
+The active chain is Draft PR #19 → Draft PR #20 → Draft PR #21 → Draft PR #22.
+PR #20 is `p8/approved-contract-candidate` at
+`5f78762e1b358ac928a42aab43d8bb215089194a`, based on PR #19. PR #21 is
+`p7/schema-v9-candidate` at
+`a56c7e204f854dd4382339cb43f7fe1396f85137`, based on PR #20. PR #22 is
+`p8/durable-dispatch-schema-candidate`; its schema/test commit is
+`9ea1e8911cd211f27c6e56848501c96d255915b4`, with follow-up contract proposal
+documentation on top. PR #22 is based on PR #21. The P7 and P8 candidates are
+not independently applicable to main and remain outside the production
+migration catalog.
+
+The dedicated clone/worktree retains Codex local identity and repository
+hooks. All PRs remain Draft. PR #19 cannot be readied or merged until main's
+required review and protection conditions are independently verifiable and
+the normal protected procedure can be followed. No PR other than #19 may be
+merged; PR #14 remains untouched.

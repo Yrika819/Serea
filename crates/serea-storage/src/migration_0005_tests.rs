@@ -17,9 +17,9 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::json;
 use serea_protocol::{
     Actor, ActorId, ActorKind, ApprovalId, Authorization, CapabilityId, Clock, DataClass, Digest,
-    EnvelopeVersion, EpochMillis, EventId, EventKind, GrantId, ProtocolError, RequestedBy,
-    LeaseOwner, RiskClass, SemVer, Seq, SereaEvent, SideEffectClass, StepId, TaskId, TaskKind, TaskOriginKind,
-    TaskState, Timestamp, Trace, WireSurface, digest_of,
+    EnvelopeVersion, EpochMillis, EventId, EventKind, GrantId, LeaseOwner, ProtocolError,
+    RequestedBy, RiskClass, SemVer, Seq, SereaEvent, SideEffectClass, StepId, TaskId, TaskKind,
+    TaskOriginKind, TaskState, Timestamp, Trace, WireSurface, digest_of,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -4022,10 +4022,14 @@ fn p8_real_storage_fixture() -> (TempDb, Store) {
     let store = approval_store(&path.0);
     {
         let conn = store.conn.lock().unwrap();
-        conn.execute_batch(include_str!("../migrations/candidates/0009_p7_memory_schema_candidate.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../migrations/candidates/0010_p8_dispatch_candidate.sql"))
-            .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/candidates/0009_p7_memory_schema_candidate.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/candidates/0010_p8_dispatch_candidate.sql"
+        ))
+        .unwrap();
         conn.execute(
             "INSERT INTO owners(owner_id,epoch,state,created_at_ms) VALUES ('own_synthetic_p8',1,'ACTIVE',0)",
             [],
@@ -4222,11 +4226,24 @@ fn p8_real_storage_commit_probe(
 fn assert_p8_candidate_probe_rolled_back(path: &Path) {
     let reopened = Store::open(path, &FixedClock).unwrap();
     let conn = reopened.conn.lock().unwrap();
-    assert_eq!(scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(), 0);
-    assert_eq!(scalar(&conn, "SELECT uses_remaining FROM approval_grants").unwrap(), 1);
-    assert_eq!(scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(), 0);
     assert_eq!(
-        scalar(&conn, "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'").unwrap(),
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT uses_remaining FROM approval_grants").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'"
+        )
+        .unwrap(),
         0
     );
 }
@@ -4249,16 +4266,27 @@ fn real_storage_p6_grant_intent_and_event_join_one_sqlite_transaction() {
     assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
     // Existing TaskEngine deletion delegates to Tx::delete_task. The candidate
     // FK makes an unresolved Intent deletion fail closed on the real Store DB.
-    assert!(store
-        .transact(|tx| tx.delete_task(&TaskId::new(TASK).unwrap()))
-        .is_err());
+    assert!(
+        store
+            .transact(|tx| tx.delete_task(&TaskId::new(TASK).unwrap()))
+            .is_err()
+    );
     drop(store);
     let reopened = Store::open(&path.0, &FixedClock).unwrap();
     reopened.verify_integrity().unwrap();
     let conn = reopened.conn.lock().unwrap();
-    assert_eq!(scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(), 1);
-    assert_eq!(scalar(&conn, "SELECT uses_remaining FROM approval_grants").unwrap(), 0);
-    assert_eq!(scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(), 1);
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT uses_remaining FROM approval_grants").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        1
+    );
     assert_eq!(
         scalar(
             &conn,
@@ -4268,7 +4296,11 @@ fn real_storage_p6_grant_intent_and_event_join_one_sqlite_transaction() {
         1
     );
     assert_eq!(
-        scalar(&conn, "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'").unwrap(),
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'"
+        )
+        .unwrap(),
         1
     );
 }
@@ -4339,10 +4371,21 @@ fn real_storage_boundary_fails_closed_on_event_failure_revocation_policy_and_lea
     drop(store);
     let reopened = Store::open(&path.0, &FixedClock).unwrap();
     let conn = reopened.conn.lock().unwrap();
-    assert_eq!(scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(), 0);
-    assert_eq!(scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(), 0);
     assert_eq!(
-        text(&conn, "SELECT status FROM approval_grants WHERE grant_id=?1", GRANT).unwrap(),
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        0
+    );
+    assert_eq!(
+        text(
+            &conn,
+            "SELECT status FROM approval_grants WHERE grant_id=?1",
+            GRANT
+        )
+        .unwrap(),
         "REVOKED"
     );
     drop(conn);
@@ -4356,8 +4399,11 @@ fn real_storage_boundary_fails_closed_on_event_failure_revocation_policy_and_lea
         insert_revision(&conn, 2, false);
         insert_rule(&conn, 2, "p8_policy_change", "ALLOW");
         activate_seed_revision(&conn, 2);
-        conn.execute("UPDATE policy_state SET active_revision_id=2 WHERE singleton=1", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE policy_state SET active_revision_id=2 WHERE singleton=1",
+            [],
+        )
+        .unwrap();
     }
     assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
     drop(store);
@@ -4370,7 +4416,10 @@ fn real_storage_boundary_fails_closed_on_event_failure_revocation_policy_and_lea
         .conn
         .lock()
         .unwrap()
-        .execute("UPDATE tasks SET deadline_at_ms=301 WHERE task_id=?1", [TASK])
+        .execute(
+            "UPDATE tasks SET deadline_at_ms=301 WHERE task_id=?1",
+            [TASK],
+        )
         .unwrap();
     assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
     drop(store);
@@ -4420,10 +4469,20 @@ fn independent_connections_admit_at_most_one_real_storage_candidate_intent() {
     let reopened = Store::open(&path.0, &FixedClock).unwrap();
     reopened.verify_integrity().unwrap();
     let conn = reopened.conn.lock().unwrap();
-    assert_eq!(scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(), 1);
-    assert_eq!(scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(), 1);
     assert_eq!(
-        scalar(&conn, "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'").unwrap(),
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE message_id='evt_00000000000000000000000070'"
+        )
+        .unwrap(),
         1
     );
 }

@@ -54,7 +54,7 @@ Workstreams 1–5 are complete. Only normal commit and dedicated Draft PR public
 
 ### Publication state
 
-- Dedicated branch `codex/post-gate-c-review` was pushed after a fresh explicit-target preflight; it contains normal commit `7472f8cc323297a49c2b52550721cb28b4420bfb`. No force push or main update was used.
-- Draft PR #19 is OPEN/DRAFT, base `main` at `e0acb0254820c381dd97828824bef86a1db5176c`, head `7472f8cc323297a49c2b52550721cb28b4420bfb`: https://github.com/Yrika819/Serea/pull/19. It is blocked as expected while Draft.
-- PR checks started at 2026-10-16 11:51 UTC: Fast `38896599970`, Full `38896599868`, Native `38896599790`, SQLite portability `38896599963`, Git hooks Windows `38896599679`. At last read, Fast and Git hooks were in progress; Full, Native and SQLite runs were queued. Recheck before closing this ExecPlan.
+- Dedicated branch `codex/post-gate-c-review` was pushed after fresh explicit-target preflights using normal commits `7472f8cc323297a49c2b52550721cb28b4420bfb` and `159759382beb8ada80810356ef3e53fad79037fa`. The second commit only records PR/check state; no force push or main update was used.
+- Draft PR #19 is OPEN/DRAFT, base `main` at `e0acb0254820c381dd97828824bef86a1db5176c`, current head `159759382beb8ada80810356ef3e53fad79037fa`: https://github.com/Yrika819/Serea/pull/19. It is blocked as expected while Draft.
+- First-head PR checks: Fast `38896599970` and Git hooks Windows `38896599679` succeeded; its Cross-architecture SQLite run `38896599963` was cancelled when the progress-only commit updated the branch. For current head `1597593`, PR checks started at 2026-10-16 11:53 UTC: Fast `38896731563`, Full `38896731725`, Native `38896731509`, SQLite portability `38896731501`, Git hooks Windows `38896731507`. At last read, Ubuntu Git hooks passed; the other checks were pending/in progress. Recheck current-head checks before closing this ExecPlan.
 - Next autonomous work: monitor these exact PR runs, record any failure and diagnose it without relaxing gates; keep PR #19 Draft and do not merge. Owner review is still required for P8 D01–D07 and any proposed migration/protocol change.

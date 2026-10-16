@@ -9,7 +9,7 @@
 - PR #14: GitHub PR endpoint reports OPEN, DRAFT, UNMERGED at head `cb4df7178a4dc74b124006c4bf2c020cd626aa5e`. Its checks on that head report Linux stable, Linux MSRV 1.85.0 and SQLite cross-architecture checks passing. The dedicated P5 activation fix remains unmerged.
 - PR #15: MERGED to the baseline above. Its description records the synthetic Gate C work and remaining production blockers.
 - Main's latest workflows at inspection: Fast `38887469390`, Full `38887469433`, Native platform `38887469455`, SQLite portability `38887469452`; all successful on `e0acb025...`. Native validation ran Windows/Linux x86_64 and ARM64 plus macOS x86_64/ARM64; portability ran Intel↔ARM64 DB production/open in both directions. These CI results are GitHub evidence, not tests from this branch.
-- This review is published as Draft PR #19, head `7472f8cc323297a49c2b52550721cb28b4420bfb`. Its Fast/Full/Native/SQLite/Git Hooks Windows workflows are pending; the baseline results above must not be mistaken for PR #19 checks.
+- This review is published as Draft PR #19, current head `159759382beb8ada80810356ef3e53fad79037fa` (the progress-only update followed review commit `7472f8cc323297a49c2b52550721cb28b4420bfb`). Current-head Fast/Full/Native/SQLite/Git Hooks Windows workflows are pending; the baseline results above must not be mistaken for PR #19 checks.
 - No `AGENTS.md` exists in the repository. `docs/git-safety.md` requires repository-local Codex identity, preflight before commit/push, hooks, explicit branch targets, and forbids implicit/force pushes.
 
 ## P8A Owner review summary
@@ -87,6 +87,6 @@ The historical independent-review handoff describes cooperating locks and CI cov
 
 ## Execution record
 
-- Focused commands and results are retained in `ExecPlan-post-gate-c-2026-10-16.md`; stable Workspace all-target and all-feature suites, focused IR tests, Rust 1.85 all-target/all-feature check, Clippy, formatting and docs checks passed. Draft PR #19 is open; its GitHub CI is pending.
+- Focused commands and results are retained in `ExecPlan-post-gate-c-2026-10-16.md`; stable Workspace all-target and all-feature suites, focused IR tests, Rust 1.85 all-target/all-feature check, Clippy, formatting and docs checks passed. Draft PR #19 is open; its GitHub CI for head `1597593` is pending.
 - No source-code fix has been made because the scoped findings are either unresolved Owner choices, explicitly unapproved production guarantees, or already covered synthetic regression behavior. Any newly discovered implementation defect must be reproduced and corrected against an Accepted invariant before closing.
 - Owner review remains required for P8 D01–D07, the ADR-0043 version reservation if considering option B, and any proposed Protocol/ADR amendment.

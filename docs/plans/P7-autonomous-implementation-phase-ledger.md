@@ -1,7 +1,7 @@
 # P7 synthetic implementation campaign ledger
 
-**Branch:** `p7/implementation-synthetic-prototype`  
-**Base:** PR #12 clean HEAD `865dcadad1750f6ba8f4928eb44a29cfa97f2f4c`  
+**Branch:** `p7/implementation-synthetic-prototype`
+**Base:** PR #12 clean HEAD `865dcadad1750f6ba8f4928eb44a29cfa97f2f4c`
 **Status:** Experimental, synthetic-only. No production entry point or real data integration is authorized. The migration and API require a unit-test build plus the explicit feature; optimized feature builds are rejected.
 
 ## Campaign status

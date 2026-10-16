@@ -32,6 +32,13 @@ This conservative candidate rule is not a canonical retention or Forget
 contract. It must remain out of the normal catalog pending Owner approval of
 the retention/Forget interaction.
 
+The candidate SQL's trailing Task deletion comment now states this behavior
+explicitly: its `ON DELETE RESTRICT` edge prevents deletion while an Intent
+references the Task. The earlier comment said Task deletion remained possible;
+that was inconsistent with the actual FK. The corrected wording still describes
+only a fail-closed candidate constraint, not an accepted retention duration or
+Forget exception.
+
 ## PROPOSED blockers; no runtime authority
 
 The prototype does not establish a callable dispatch transaction. Exact tool-budget accounting, grant use alongside budget consumption, live Policy and Grant revalidation, Task/Step/Lease admissibility, provider availability evidence, Registry/Overlay revalidation semantics, event append atomicity, commit-to-invoke eligibility, and definite versus ambiguous outcomes remain unresolved at the runtime boundary. No public Storage intent-write API exists. No TaskEngine path calls `CapabilityProvider::invoke`.

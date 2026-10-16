@@ -289,3 +289,58 @@ only; no automatic same-Step retry or canonical late Receipt exists. Production
 Memory, OS Owner authentication, key custody, rollback-resistant authority,
 real credentials/accounts/providers and Gate D remain disabled and
 unauthorized.
+
+## P8B real Storage boundary follow-up (2026-10-16)
+
+**Branch:** `p8/real-storage-boundary-prototype`, based on PR #23 head
+`b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16`; dependent on PR #23 → #22 → #21 →
+#20 → #19. Worktree: `/workspace/Serea-p8-real-storage`.
+
+- Corrected the trailing comment in candidate 0010: Task deletion is refused
+  while an Intent remains because the FK is `ON DELETE RESTRICT`. The former
+  comment claimed Task deletion remained possible. The SQL still is a candidate
+  only; this does not settle retention or Forget policy.
+- Added a `#[cfg(test)]` Storage boundary probe to the existing P6 migration
+  test module. Its disposable file DB applies candidate 0009/0010 SQL outside
+  the migration catalog, seeds a synthetic Owner binding, and creates an actual
+  P6 approval Grant using the typed Storage API. It acquires a real Storage
+  Lease, then in one `Store::transact` calls `Tx::consume_grant_use`, checks
+  current Task/Step/Lease/Policy/Registry/Overlay rows, inserts a candidate
+  Intent, and appends an existing Protocol Event. It uses no public Intent
+  writer and is unreachable outside test builds.
+- Fault probes return errors after Grant consumption and after Intent insert;
+  an SQLite trigger also fails event persistence. They check Grant-use,
+  `uses_remaining`, Intent and Event state after dropping and reopening the
+  file-backed Store. A success probe checks all four persisted records and then
+  verifies duplicate same-Step use and Task deletion fail without removing the
+  unresolved Intent.
+- Additional refusal probes use actual Storage cancellation and P6 Grant
+  revocation paths, change the active Policy revision, and reclaim the Lease
+  under a second owner/generation. Deadline equality also refuses. Each refuses
+  before candidate Intent commit. A two-connection race allows at most one
+  Grant-use/Intent/Event transaction to commit.
+- The test intentionally does **not** claim P8 authorization. Budget accounting
+  has no accepted durable call counter; provider availability has no accepted
+  durable authority source; TaskEngine has no dispatch entry point; the test
+  does not create a commit-to-invoke path. Candidate Owner binding is synthetic
+  and is not OS authentication. The probe demonstrates transaction composition
+  and revalidation boundaries only.
+- Local verification environment has no `cargo`, `rustc`, or `rustfmt` binary,
+  so Rust test/format execution is NOT RUN locally. The existing build caches
+  were left intact. Python SQLite applied migrations 0001–0008 followed by
+  candidate 0009/0010 with `foreign_key_check` empty; this is SQL parser/schema
+  evidence only, not the Rust integration-test result.
+- RED/GREEN evidence is therefore pending exact-head CI. Do not mark this slice
+  complete until CI compiles and runs the new P6/P8 tests, and run formatting,
+  all-target/all-feature, MSRV and Clippy gates on this branch head.
+
+### Restart point and owner decisions
+
+Resume by checking this branch's exact-head Fast/Full/Native/SQLite/Git Hooks
+workflows and correcting any concrete compile/test failure without widening
+the candidate schema. If they pass, review real TaskEngine/Storage reachability
+again and add only test-only cases supported by existing authority APIs.
+Runtime integration remains blocked pending an accepted Budget source and
+accounting rule, Provider availability evidence, and commit-to-invoke/recovery
+eligibility. Retention/Forget, Receipt authority, retry and late-outcome rules
+remain fail-closed as recorded above.

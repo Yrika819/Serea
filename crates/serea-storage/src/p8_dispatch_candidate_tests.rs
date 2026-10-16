@@ -200,6 +200,14 @@ fn p8_v10_candidate_requires_grant_and_rejects_unresolved_intent_deletion() {
     );
     assert!(
         conn.execute(
+            "DELETE FROM dispatch_intents WHERE request_id='req_00000000000000000000000051'",
+            [],
+        )
+        .is_err(),
+        "direct deletion must not erase unresolved intent or its budget evidence"
+    );
+    assert!(
+        conn.execute(
             "DELETE FROM approval_grant_uses WHERE grant_id='grt_synthetic' AND step_id=?1",
             [step],
         )

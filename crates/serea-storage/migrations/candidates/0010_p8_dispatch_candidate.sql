@@ -58,3 +58,11 @@ CREATE TABLE dispatch_intents (
 CREATE TRIGGER dispatch_intent_no_update
 BEFORE UPDATE ON dispatch_intents
 BEGIN SELECT RAISE(ABORT, 'P8 dispatch intent is immutable'); END;
+
+-- A committed intent is the only candidate-local durable count of a P8
+-- provider dispatch. Until Forget/retention is accepted, direct deletion
+-- would erase both recovery evidence and that count, so this development
+-- candidate refuses it. This is not a production retention guarantee.
+CREATE TRIGGER dispatch_intent_no_delete
+BEFORE DELETE ON dispatch_intents
+BEGIN SELECT RAISE(ABORT, 'P8 dispatch intent deletion is not defined'); END;

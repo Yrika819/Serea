@@ -93,6 +93,52 @@ impl EffectLedger {
             |row| row.get(0),
         )
     }
+
+    fn count_pair(&self, request_id: &str, idempotency_key: &str) -> rusqlite::Result<i64> {
+        let conn = Connection::open(&self.path)?;
+        conn.query_row(
+            "SELECT count(*) FROM effects WHERE request_id=?1 AND idempotency_key=?2",
+            params![request_id, idempotency_key],
+            |row| row.get(0),
+        )
+    }
+}
+
+/// Minimal independent SQLite ledger for committed synthetic Intent identity.
+/// It is deliberately not the production Storage schema or dispatch API.
+struct IntentLedger {
+    path: PathBuf,
+}
+
+impl IntentLedger {
+    fn open(path: PathBuf) -> rusqlite::Result<Self> {
+        let conn = Connection::open(&path)?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS intents(
+                 request_id TEXT PRIMARY KEY,
+                 idempotency_key TEXT NOT NULL UNIQUE
+             ) STRICT;",
+        )?;
+        Ok(Self { path })
+    }
+
+    fn commit(&self, request: &SyntheticRequest) -> rusqlite::Result<()> {
+        let conn = Connection::open(&self.path)?;
+        conn.execute(
+            "INSERT INTO intents(request_id,idempotency_key) VALUES(?1,?2)",
+            params![request.request_id, request.idempotency_key],
+        )?;
+        Ok(())
+    }
+
+    fn matches(&self, request: &SyntheticRequest) -> rusqlite::Result<bool> {
+        let conn = Connection::open(&self.path)?;
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM intents WHERE request_id=?1 AND idempotency_key=?2)",
+            params![request.request_id, request.idempotency_key],
+            |row| row.get(0),
+        )
+    }
 }
 
 struct ScriptedFakeProvider {
@@ -147,6 +193,10 @@ impl TempLedger {
         std::fs::create_dir(&dir).unwrap();
         Self(dir.join("effects.sqlite"))
     }
+
+    fn intent_path(&self) -> PathBuf {
+        self.0.parent().unwrap().join("intents.sqlite")
+    }
 }
 
 impl Drop for TempLedger {
@@ -180,6 +230,105 @@ fn fake_provider_ack_loss_survives_independent_ledger_reopen_without_retry() {
     // V1 has no automatic same-Step effect retry. Recovery observes AMBIGUOUS
     // and leaves the effect count unchanged instead of invoking a second time.
     assert_eq!(reopened.count(&request.request_id).unwrap(), 1);
+}
+
+#[test]
+fn committed_intent_and_independent_effect_ledger_correlate_after_ack_loss() {
+    let db = TempLedger::new();
+    let request = SyntheticRequest {
+        request_id: "req_synthetic_correlated".into(),
+        idempotency_key: "idk_synthetic_correlated".into(),
+    };
+    let intent = IntentLedger::open(db.intent_path()).unwrap();
+    intent.commit(&request).unwrap();
+    let mut provider = ScriptedFakeProvider::new(
+        EffectLedger::open(db.0.clone()).unwrap(),
+        [Script::ApplyThenLoseAcknowledgement],
+    );
+    assert_eq!(
+        provider.invoke(&request, ManualClock(10), 20).unwrap(),
+        SimulatedOutcome::Ambiguous
+    );
+    drop(provider);
+    drop(intent);
+
+    // These two files are reopened independently. Recovery can correlate the
+    // exact committed RequestId/IDK but it does not call the provider again.
+    let reopened_intent = IntentLedger::open(db.intent_path()).unwrap();
+    let reopened_effects = EffectLedger::open(db.0.clone()).unwrap();
+    assert!(reopened_intent.matches(&request).unwrap());
+    assert_eq!(reopened_effects.count(&request.request_id).unwrap(), 1);
+    assert_eq!(
+        reopened_effects
+            .count_pair(&request.request_id, &request.idempotency_key)
+            .unwrap(),
+        1
+    );
+    assert_eq!(reopened_effects.count(&request.request_id).unwrap(), 1);
+}
+
+#[test]
+fn committed_intent_reopen_without_invoke_never_starts_effect_during_recovery() {
+    let db = TempLedger::new();
+    let request = SyntheticRequest {
+        request_id: "req_synthetic_preinvoke_crash".into(),
+        idempotency_key: "idk_synthetic_preinvoke_crash".into(),
+    };
+    IntentLedger::open(db.intent_path())
+        .unwrap()
+        .commit(&request)
+        .unwrap();
+    // Simulate loss of the worker after commit and before invoking the fake.
+    // This is an independent-ledger reopen test, not an OS process-kill test.
+
+    let reopened_intent = IntentLedger::open(db.intent_path()).unwrap();
+    let reopened_effects = EffectLedger::open(db.0.clone()).unwrap();
+    assert!(reopened_intent.matches(&request).unwrap());
+    assert_eq!(reopened_effects.count(&request.request_id).unwrap(), 0);
+    // Recovery intentionally has no code path that invokes a committed Intent.
+    assert_eq!(reopened_effects.count(&request.request_id).unwrap(), 0);
+}
+
+#[test]
+fn effect_ledger_pair_mismatch_is_not_receipt_evidence() {
+    let db = TempLedger::new();
+    let committed = SyntheticRequest {
+        request_id: "req_synthetic_mismatch".into(),
+        idempotency_key: "idk_synthetic_committed".into(),
+    };
+    let observed = SyntheticRequest {
+        request_id: committed.request_id.clone(),
+        idempotency_key: "idk_synthetic_wrong".into(),
+    };
+    let intent = IntentLedger::open(db.intent_path()).unwrap();
+    intent.commit(&committed).unwrap();
+    let mut provider = ScriptedFakeProvider::new(
+        EffectLedger::open(db.0.clone()).unwrap(),
+        [Script::ApplyAndAcknowledge],
+    );
+    let SimulatedOutcome::Acknowledged(response) =
+        provider.invoke(&observed, ManualClock(10), 20).unwrap()
+    else {
+        panic!("scripted response expected")
+    };
+
+    assert_eq!(response.request_id, committed.request_id);
+    assert!(!intent.matches(&observed).unwrap());
+    let reopened = EffectLedger::open(db.0.clone()).unwrap();
+    assert_eq!(reopened.count(&committed.request_id).unwrap(), 1);
+    assert_eq!(
+        reopened
+            .count_pair(&committed.request_id, &committed.idempotency_key)
+            .unwrap(),
+        0,
+        "an IDK mismatch cannot be accepted as the committed Intent's outcome"
+    );
+    assert_eq!(
+        reopened
+            .count_pair(&observed.request_id, &observed.idempotency_key)
+            .unwrap(),
+        1
+    );
 }
 
 #[test]

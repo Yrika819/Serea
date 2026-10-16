@@ -38,11 +38,12 @@ needed before a runtime dispatch API can be implemented.
   Grant-use deletion while the Intent exists. Its new development-only
   `dispatch_intent_no_delete` trigger also blocks direct deletion; this does
   not define a production retention or Forget policy.
-- PR #24's Storage probe appends the existing `CapabilityRequested` Protocol
-  Event only to exercise the event participant atomically. That Event does not
-  define the semantics of a committed P8 Intent; there is no accepted
-  Intent-committed EventKind/payload yet. The probe proves row atomicity only,
-  not complete or correctly named P8 audit evidence.
+- Event Protocol §3.3 already assigns `CAPABILITY_REQUESTED` the meaning
+  "Future P8 dispatch intent was durably committed." ADR-0044 separately
+  states that Intent commit is authority for the dispatch attempt, not proof
+  that provider IO or an external effect happened. The current Storage probe
+  uses the accepted kind in its atomic transaction, but its minimal test
+  payload does not establish a complete canonical P8 correlation payload.
 
 ## A. Budget accounting
 
@@ -255,6 +256,96 @@ Do not add a retention clock or tombstone cleanup without an Owner decision.
    payload deletion, retained evidence fields, Owner isolation and restore
    quarantine. This test is blocked until decisions 1–3 are accepted.
 
+## E. P8 Intent event semantics
+
+### Accepted facts
+
+- The Dispatch Transaction must append its required Event in the same SQLite
+  write transaction as the applicable Grant-use, budget reservation, RequestId,
+  IDK and Intent. An Event write or commit failure leaves none of those writes
+  durable.
+- Event Protocol §3.3 defines `CAPABILITY_REQUESTED` as the durable-Intent
+  commit event for future P8. ADR-0044 limits what that event proves: it does
+  not prove that provider IO started, an effect occurred, or a Receipt exists.
+- The current Storage probe writes this accepted EventKind in the same test
+  transaction. Its payload carries RequestId and StepId; TaskId is in the
+  correlation/trace fields. It does not yet prove a full agreed payload with
+  IDK digest, OwnerId, ProviderId, and pinned registry identity.
+- Event Protocol payloads are bounded, canonicalized, and cannot contain
+  SECRET/CREDENTIAL content. Event content has an independently enforced
+  retention deadline in Storage.
+
+### Proposed selected clause
+
+Use the already accepted `CAPABILITY_REQUESTED` kind to record the transaction
+that committed the dispatch Intent and its budget/Grant-use participants. The
+event must not imply Provider invocation, effect success, or Receipt authority.
+Propose a minimal correlation payload containing TaskId, StepId, RequestId, an
+IDK digest, OwnerId, ProviderId, pinned registry generation/descriptor digest,
+and the Intent's event identifier. It must omit raw arguments, credentials,
+provider responses, and personal content. Exact payload field names and
+retention interaction remain proposed until their protocol wording is
+reviewed.
+
+### Alternatives
+
+1. **Recommended:** retain `CAPABILITY_REQUESTED` and specify its bounded
+   correlation payload. This preserves Event Protocol §3.3 and separates
+   committed authority from subsequent provider/effect events.
+2. Add `DISPATCH_INTENT_COMMITTED` only through an explicit Owner-approved
+   Protocol change. A new kind may improve naming but changes the frozen
+   EventKind enum and consumers.
+3. Store no semantic Event and rely on the Intent row alone. This conflicts
+   with the accepted requirement for an Event participant in the atomic
+   transaction and weakens event-driven audit visibility.
+
+### Attack scenarios
+
+- A committed database row with the wrong EventKind is incorrectly presented
+  as proof of authorization or invocation.
+- An Event payload copies arguments, credentials, response data, or other
+  sensitive values into an independently retained stream.
+- Event insert, validation, or commit fails after Grant-use/Intent insertion
+  and leaves partial authority rows.
+- Event pruning removes the correlation record and an operator mistakes that
+  absence for proof the Intent or external effect never existed.
+
+### Precise API and schema impact
+
+- Define and validate the bounded `CAPABILITY_REQUESTED` P8 payload only after
+  exact field names, requiredness, and privacy limits are reviewed. Keep the
+  EventKind enum and protocol version bounds unchanged in this slice.
+- A dedicated event requires a separate Owner-approved protocol change and
+  compatibility review; it is not necessary to satisfy the current accepted
+  EventKind semantics.
+- Have the future TaskEngine dispatch transaction append this event through
+  the existing transaction participant. Do not add an independently callable
+  production Intent writer or event-only authority path.
+- Keep the candidate Intent/Event correlation identifier non-FK if approved
+  event pruning must remain independent. Event retention must not erase or
+  mutate the Intent evidence.
+
+### Executable tests
+
+1. Event insertion failure and pre-commit failure roll back Grant-use,
+   RequestId/IDK, budget and Intent on a reopened real Store.
+2. Successful commit writes exactly one Intent and one event with the exact
+   approved correlation fields and no secret/raw argument fields.
+3. The event itself does not assert provider invoke, effect success, or
+   Receipt creation.
+4. Expiring the event content leaves the unresolved Intent and its RequestId/
+   IDK evidence unchanged. Current candidate coverage is synthetic and does
+   not define a canonical retention policy.
+
+### Residual risks and Owner decision
+
+The accepted event can be pruned independently, and SQLite cannot make it a
+rollback-proof external audit anchor. The EventKind semantics already
+distinguish committed Intent from provider invocation; its exact P8 payload is
+not specified. Owner decision: approve the minimal payload fields above, choose
+an alternative, or defer payload closure while keeping runtime integration
+blocked. A new EventKind is not proposed as the default.
+
 ## Minimal API sketch and implementation gate
 
 The only acceptable production entry is a TaskEngine-owned operation returning
@@ -282,7 +373,8 @@ the production signature until that evidence boundary is resolved.
 
 The PR #25 branch adds only a test-only budget check over actual Task
 `max_tool_calls` plus committed candidate Intents, and a candidate-only
-no-delete trigger. Rust tests require exact-head GitHub CI because the local
-filesystem has 106 MiB free and the existing shared Cargo target occupies 5.2
-GiB; shared build caches were not deleted. Provider dispatch remains absent
-from TaskEngine and normal Host builds.
+no-delete trigger. The follow-up independent-Store deletion/event-expiry test
+is development-only and does not promote a retention contract. Cargo results
+and local build storage are recorded in the current ExecPlan so earlier
+environment observations are not mistaken for current validation. Provider
+dispatch remains absent from TaskEngine and normal Host builds.

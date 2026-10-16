@@ -441,3 +441,221 @@ horizon or production authority was implemented.
 child branch, fix any compile/test defects, then continue test-only availability
 and recovery cross-checks. Keep the provider invocation path blocked until the
 Permit, readiness and cancellation contracts are accepted and implementable.
+
+## Overnight continuation — PR #25 follow-up (2026-10-17)
+
+This entry supersedes earlier environment observations above where they differ.
+Work is on a dedicated clean clone `/workspace/Serea-overnight`, branch
+`p8b/overnight-2026-10-17`, created at PR #25 head
+`73e38fddf4a203582f728eff2cf675cc35e46b2b`. The user's `/workspace/Serea`
+clone remains untouched. The dedicated clone has local-only Codex identity
+(`Codex <noreply@github.com>`), `push.default=nothing`, installed repository
+hooks, and a passing commit preflight. No existing branch history is rewritten.
+
+Live GitHub audit at this continuation:
+
+- `main`: `e0acb0254820c381dd97828824bef86a1db5176c`.
+- Draft/open dependency chain: #19 `4032f1e2dfaa374e70da7777a141092057cb05dc`
+  → #20 `5f78762e1b358ac928a42aab43d8bb215089194a` → #21
+  `a56c7e204f854dd4382339cb43f7fe1396f85137` → #22
+  `58944dd02f498894567ec92b7440270a9985e5ec` → #23
+  `b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16` → #24
+  `fab5ee91c3942e8e601338774492600e9853dad2` → #25
+  `73e38fddf4a203582f728eff2cf675cc35e46b2b`.
+- #25 remains Draft/open with base #24 at `fab5ee91c3942e8e601338774492600e9853dad2`.
+  Exact-head Fast `38925789524`, Full `38925789470`, Native `38925789362`,
+  SQLite portability `38925790040`, and Git Hooks `38925789317` are all
+  completed success. Native finished after the initial poll; no pending job is
+  being counted as success.
+- #24's exact-head Native `38921134154` and SQLite `38921134163` later completed
+  success, joining its Fast `38921134228`, Full `38921134186`, and Hooks
+  `38921134153`. These are historical parent-HEAD results, not validation of
+  new source.
+
+| Wave | Status | Evidence / boundary |
+| --- | --- | --- |
+| A — adversarial review | PARTIAL | Reviewed #23–#25 transaction, migration-candidate and Fake Recovery code. Existing candidate direct-delete flaw has prior RED/GREEN evidence below; no new accepted-contract production defect found. |
+| B — Storage Budget | PASS, test-only | Added real-Store candidate probe with two independently leased and approved Steps racing at `max_tool_calls=1`; only one Grant-use/Intent/Event commits after reopen. Existing `max_tool_calls=0` refusal still leaves all rows absent after reopen. No production counter or write API. |
+| C — availability | PARTIAL | Existing real-Store candidate test rejects Unknown/Unavailable before writing. Resolver health/overlay snapshots remain point-in-time evidence; no durable or live invoke authority was added. Provider instance identity and commit-gap readiness remain proposed/blocked. |
+| D — commit-to-invoke | PARTIAL | Existing independent Intent/Effect ledger tests cover ACK-loss and commit-before-invoke reopen with no automatic re-invoke. A proposed non-serializable Permit now exists only in the synthetic test module and binds exact RequestId/IDK, Step, lease generation, Owner and provider instance; production authorization and post-commit disposition remain blocked. |
+| E — retention/Forget | PASS for candidate guard only | Added second-Store connection check: `PRAGMA foreign_keys=1`; Task, Step, consumed Grant-use, and direct Intent deletion fail; normal Event expiry removes Event content while RequestId/IDK Intent remains after another reopen. Not a canonical Forget rule. |
+| F — Event meaning | PARTIAL | Exact Protocol review found Event Protocol §3.3 already defines `CAPABILITY_REQUESTED` as durable P8 Intent commit. The accepted kind is reused; its full bounded P8 payload remains proposed. No EventKind or protocol version change. |
+| G — Fake Provider recovery | PARTIAL | Storage P8 selector passes 13/13, including mismatch, ACK-loss and pre-invoke crash simulations. These use independent SQLite ledgers, not a child-process kill or a TaskEngine invoke path. |
+| H — integration stack | PASS for read-only audit | #19–#25 heads, bases, draft state and ancestry match the stack. No migrations 0001–0008 or normal catalog changed; no PR merge/close. |
+| I — hostile regression | RUNNING | Added focused candidate boundary and concurrency tests; further review/validation follows. |
+| J — local/CI gates | PASS locally; new-head CI pending | Rust 1.85.0 all-target suite: 1,347 passed, 0 failed/ignored; all-features: 1,514 passed, 0 failed, 2 manual resource benchmarks ignored; all-target/all-feature `check` and Clippy `-D warnings` pass. Exact-head CI for the new branch awaits commit/push. |
+
+### New executable evidence on this branch
+
+- `crates/serea-storage/src/migration_0005_tests.rs` adds
+  `real_storage_task_budget_limit_one_serializes_two_eligible_steps`. The
+  fixture uses the actual Store, task/step rows, P6 Grant-use API, leases,
+  SQLite transaction and the separate 0010 candidate. Two independent Store
+  connections race distinct eligible Steps on one Task at limit 1. The
+  post-reopen assertion requires exactly one Intent, Grant-use and correlated
+  candidate Event; the refused contender leaves no partial Event. This tests
+  candidate composition only and does not establish a canonical budget
+  schema or production dispatch authorization.
+- The same file adds
+  `real_storage_unresolved_intent_survives_second_store_deletes_and_event_expiry`.
+  It confirms each reopened Store has foreign keys enabled, Task/Step/consumed
+  Grant-use/direct Intent delete fail, and configured Event content expiry
+  does not erase the unresolved candidate Intent's RequestId/IDK evidence.
+- `docs/plans/P8B-contract-closure-package-2026-10-16.md` now includes section
+  E for P8 Intent Event semantics, with accepted facts, a proposed payload
+  clause, alternatives, attack cases, API/schema impact, tests, residual risks,
+  and Owner choice. Exact review corrected an earlier package assertion:
+  Event Protocol §3.3 already assigns `CAPABILITY_REQUESTED` to committed P8
+  Intent. It records commit, not provider invocation, effect success, or
+  Receipt. Exact payload fields remain proposed; no EventKind/protocol change.
+- RED/GREEN from the earlier P8B slice remains specific: PR #24 candidate SQL
+  allowed direct Intent deletion after parent-row RESTRICT checks (RED); the
+  out-of-catalog candidate no-delete trigger caused the same deletion attempt
+  to fail while preserving the row (GREEN). This does not claim production
+  retention safety.
+
+### Current verification checkpoint
+
+- Rust 1.85.0 focused Storage `p8_` selector: PASS, 15 passed, 0 failed,
+  622 filtered, 0 ignored. Includes child-process exits at commit-before-invoke
+  and after fake effect/before ACK; reopened intent/effect ledgers match exact
+  RequestId/IDK and repeated reopen adds no effect.
+- RED/GREEN mutation evidence for the distinct-Step Budget guard: temporarily
+  changed the test-only check from `committed_dispatches >= max_tool_calls` to
+  `>`; the new two-connection test failed with two successful commits where one
+  was expected (RED, exit 101). Restored `>=`; the same test passed (GREEN).
+  This shows the acceptance test detects the exact-limit off-by-one, not a
+  production runtime fix.
+- `cargo +1.85.0 test --workspace --all-targets --locked --offline`: PASS,
+  1,347 passed across 69 test binaries, 0 failed, 0 ignored. The full log
+  includes the new child-process crash/reopen cases.
+- `cargo +1.85.0 test --workspace --all-features --locked --offline`: PASS,
+  1,514 passed across 79 test binaries, 0 failed, 2 ignored manual resource
+  benchmarks (`measure_checkpoint_advance_and_reopen_history_growth` and
+  `measure_ledger_append_replay_and_history_growth`). The full run includes
+  P7 Gate C, P8 candidate, Fake Recovery and child-process tests.
+- `cargo +1.85.0 check --workspace --all-targets --all-features --locked
+  --offline`: PASS, exit 0.
+- `cargo +1.85.0 clippy --workspace --all-targets --all-features --locked
+  --offline -- -D warnings`: PASS, exit 0.
+- The initial offline targeted test attempt had no cached `jsonschema` crate;
+  `cargo +1.85.0 fetch --locked` completed and all later offline gates passed.
+- Rust 1.85.0 real-Storage selector: PASS, 7 passed, 0 failed, 628 filtered,
+  0 ignored. Includes the two newly added cases.
+- `cargo +1.85.0 fmt --all -- --check` and `git diff --check`: PASS after
+  formatting the test file.
+- `tools/validate_docs.py docs`: PASS, 145 Markdown files scanned.
+- `tests/workspace_smoke_tests.py`: PASS, 82 tests. Synthetic Host static
+  boundary: PASS. Core API boundary compile check: PASS; an external consumer
+  cannot access the removed synthetic-registry fixture API.
+- Local requested Rust gates are complete. New branch Actions are not yet
+  submitted because this checkpoint has not been committed/pushed.
+- At audit time, dedicated checkout started with 30 GiB free. Cargo target and
+  temporary boundary build are isolated to this clone and `/tmp`; shared
+  caches in `/workspace/Serea` were not modified or deleted.
+
+**Current safe boundary:** only test code and decision-support documentation
+are changed. Production Storage migrations/catalog, TaskEngine/Host Provider
+invocation, Credentials, OS Owner authentication, production Memory, canonical
+Receipt, retry authority and schema versions remain unchanged/fail-closed.
+
+**Next checkpoint:** finish workspace/MSRV/Clippy/boundary validation; record
+all outcomes and exact new HEAD in this plan; run Git Safety preflight; create a
+normal commit on `p8b/overnight-2026-10-17`. Push only this new branch and open a
+Draft PR stacked on PR #25 to obtain exact-head CI; never update or rewrite PR
+#25's branch. If CI reveals a reproducible code defect, record RED, fix
+minimally, rerun focused and full regressions, and update this plan before the
+next commit.
+
+### Overnight continuation checkpoint — synthetic one-shot permit
+
+The first normal commit is `acd1dc5e3c8c990bb7795917d0fb9ffb31f3fff6`
+(`test(p8): deepen budget and recovery boundaries`), parented on PR #25's exact
+head `73e38fddf4a203582f728eff2cf675cc35e46b2b`. Draft PR #26 is open against
+`p8/contract-closure-prototype`. The first commit's exact-head Actions are:
+
+| Workflow | Run | Status at this checkpoint |
+| --- | ---: | --- |
+| Fast CI | 38935044346 | success |
+| Git hooks Windows compatibility | 38935044413 | success |
+| Full CI | 38935044416 | in progress |
+| Native platform validation | 38935044857 | queued |
+| Cross-architecture SQLite portability | 38935044264 | queued |
+
+Added an explicitly proposed, non-serializable `SyntheticDispatchPermit` to
+`p8_synthetic_recovery_tests.rs`. It is isolated to the test module and
+consumes itself before calling the scripted Fake Provider. The regression
+checks mismatched RequestId and IDK, Step, lease generation, Owner, and
+provider instance all refuse with zero provider effects; one exact binding
+may invoke once, an ambiguous outcome consumes the permit, and a repeat is
+refused. It does not establish production authorization, durable permit
+semantics, or an actual TaskEngine/Host invoke path.
+
+After this addition, the focused Storage `p8_` selector passes 16/16 (622
+filtered, 0 ignored); Storage Clippy with `-D warnings` passes; format and
+`git diff --check` pass. Full workspace Clippy is being rerun against this
+working tree. The full workspace test/check results above predate this final
+test-only addition. The synthetic Permit is currently uncommitted and not yet
+included in PR #26 CI; it will be recorded in the next normal commit, after
+which exact-head CI must run again.
+
+**Resume:** finish full Clippy and documentation/boundary gates, update this
+checkpoint with exact results, commit the permit test and plan normally, push
+only `p8b/overnight-2026-10-17`, then wait on all five workflows for the new
+PR #26 head. Continue safe independent review while they run. Keep Wave D
+PARTIAL and all production invocation/Receipt/retry authority fail-closed.
+
+#### Final pre-commit verification for the permit slice
+
+- `cargo +1.85.0 clippy --workspace --all-targets --all-features --locked
+  --offline -- -D warnings`: PASS after the Permit addition.
+- `cargo +1.85.0 test --workspace --all-targets --locked --offline`: PASS
+  after the Permit addition. Relative to the previous checkpoint, the exact
+  new Permit regression is included; no failure occurred.
+- `cargo +1.85.0 test -p serea-storage --all-targets --all-features --locked
+  --offline`: PASS, 638 unit tests plus 6 integration tests passed, 2 manual
+  resource benchmarks ignored, 0 failures. The test command completed in
+  114.71 seconds for the unit-test binary.
+- Docs validation scanned 145 Markdown files and passed. Formatting,
+  `git diff --check`, external Core API boundary, Synthetic Host boundary,
+  and reachable commit identity checks all passed.
+- Git commit preflight was run while the two intended files were still
+  unstaged and correctly refused that state. It must be rerun after staging;
+  no commit was made at that point.
+- First-head PR #26 run `38935044416` remains in progress after successful
+  Fast CI and Git Hooks. At the last job-level inspection, the Windows P7 Gate
+  C and macOS arm64 jobs were successful; Linux MSRV, Linux stable full, and
+  macOS Intel were still running. Native `38935044857` and cross-architecture
+  SQLite `38935044264` remained queued. These refer to the earlier exact head
+  `acd1dc5...`; the Permit slice still requires its own pushed-head Actions.
+
+### Exact-head CI completion — `27f3b14cdd8fdf58764d0b7e34196a1c9b916462`
+
+The one-shot Permit regression was committed as `27f3b14` and pushed to Draft
+PR #26. All five workflows completed success against that exact SHA; no
+queued, skipped, cancelled, or running result is counted as a pass. This CI
+checkpoint is recorded in the present ExecPlan update:
+
+| Workflow | Run | Final result |
+| --- | ---: | --- |
+| Fast CI | 38936046309 | success |
+| Full CI | 38936046460 | success |
+| Native platform validation | 38936046279 | success, all target jobs |
+| Cross-architecture SQLite portability | 38936046530 | success, both cross-open directions |
+| Git hooks Windows compatibility | 38936046688 | success |
+
+Full CI's Linux stable job passed all-target/all-feature checks, tests, Clippy
+and release fault-seam exclusion; Linux MSRV 1.85.0 passed check, both test
+modes and Clippy; Windows P7 Gate C and macOS Intel/ARM64 validation passed.
+Native validation's stable and Rust 1.85.0 jobs passed across available Linux,
+macOS and Windows targets, including release builds and synthetic Core/Host
+startup and child-process lifecycle probes. Cross-architecture SQLite
+generated databases on ARM64 and Intel and opened each on the opposite Mac
+architecture. No CI-observed defect required a source fix.
+
+**Resume point:** branch `p8b/overnight-2026-10-17`, PR #26, exact head
+`27f3b14...` (base PR #25, `73e38fdd...`), clean local worktree. The next
+independent work requires an unblocked test-only falsification slice or an
+Owner decision on proposed contract details. Keep candidate migrations
+out-of-catalog and production invoke, Receipt, retry, and canonical retention
+authority fail-closed. Do not alter or merge PRs #19–#25.

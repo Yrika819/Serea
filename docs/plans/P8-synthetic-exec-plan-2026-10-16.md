@@ -361,3 +361,77 @@ Runtime integration remains blocked pending an accepted Budget source and
 accounting rule, Provider availability evidence, and commit-to-invoke/recovery
 eligibility. Retention/Forget, Receipt authority, retry and late-outcome rules
 remain fail-closed as recorded above.
+
+## P8B contract closure follow-up (2026-10-16)
+
+**Development branch:** `p8/contract-closure-prototype`, created from the
+latest PR #24 head `fab5ee91c3942e8e601338774492600e9853dad2`. It is intended
+to remain stacked on PR #24 → #23 → #22 → #21 → #20 → #19. The other
+worktrees were clean and left untouched at branch creation.
+
+- Added [the contract closure package](P8B-contract-closure-package-2026-10-16.md)
+  classifying current facts as ACCEPTED, PROPOSED or BLOCKED and narrowing
+  Owner choices for Budget, Provider availability, commit-to-invoke and
+  Intent retention/Forget. It provides recommended clauses, alternatives,
+  API shape and executable acceptance cases. No ADR, Protocol or production
+  migration was promoted or edited.
+- Code audit confirmed that ADR-0036 accepts one `max_tool_calls` unit per
+  committed provider dispatch Intent, while migrations 0001–0008 have no
+  durable tool-call use counter. Migration 0003's `model_call_count` is model
+  accounting and `max_attempts_per_step` counts lease/attempt lifecycle facts;
+  neither substitutes for P8 provider Intent accounting.
+- Added a test-only budget guard that counts candidate Intents and reads the
+  actual Task `max_tool_calls` within the same `Store::transact` write
+  transaction. A zero-budget disposable Task must refuse before Grant use;
+  after Store reopen all grant-use, Intent and event rows must remain absent.
+  The candidate-only count depends on immutable Intents and is not yet a
+  canonical retention design.
+- The Storage test appends `CapabilityRequested` only as an atomic Event
+  participant exercise. It is not accepted as the semantic P8 Intent event;
+  no new EventKind was added. The contract package records this gap and the
+  required acceptance test before Protocol/runtime integration.
+- Extended the existing `p8_synthetic_recovery_tests` simulator with an
+  independent synthetic Intent ledger. New tests reopen Intent and Effect
+  SQLite files after ACK loss, check exact RequestId/IDK matching without
+  replay, detect a same RequestId with wrong IDK as a mismatch, and crash
+  after Intent commit/before fake invoke with no recovery replay. This remains
+  simulator-only and does not claim canonical Receipt validation.
+- RED/GREEN finding: on the PR #24 candidate SQL, a direct `DELETE FROM
+  dispatch_intents` removed the only Intent despite Task/Step/Grant-use
+  `ON DELETE RESTRICT`. Added a candidate-only no-delete trigger and a Storage
+  schema test. A Python SQLite replay of migrations 0001–0008 plus candidates
+  0009/0010 reproduced deletion on parent `fab5ee9` (RED) and confirmed the
+  changed candidate rejects deletion and retains the row (GREEN). The trigger
+  is not a production Forget guarantee.
+- PR #24 exact-head Fast `38921134228`, Full `38921134186`, and Git Hooks
+  `38921134153` succeeded. Native `38921134154` and SQLite portability
+  `38921134163` remained queued at the latest poll; they are pending, not PASS.
+  PR #24 base/head remain unchanged. These runs do not validate this follow-up
+  branch.
+- The environment has Rust 1.85.0/stable toolchains but only 106 MiB disk
+  free; shared Cargo target uses 5.2 GiB. To avoid damaging shared caches or
+  exhausting the filesystem, Cargo build/tests and Clippy were NOT RUN. The
+  Core API boundary script was attempted but is NOT RUN because its subprocess
+  could not find `cargo` on PATH. Direct stable `rustfmt --check` on all three
+  changed Rust files passed. Documentation validation, Synthetic Host
+  boundary, workspace dependency smoke and `git diff --check` passed.
+  Exact-head child PR CI must compile/run the tests.
+- Scope review: the source changes are candidate SQL and `#[cfg(test)]` code
+  only. The TaskEngine still has no dispatch/invoke method. No Fake readiness
+  becomes authorization, no Provider call is added, and no normal migration
+  catalog or production feature is changed.
+
+**Remaining Owner decisions:** explicitly confirm whether OBSERVE provider
+dispatches consume `max_tool_calls` (recommended: yes, as the unqualified
+accepted “provider dispatch intent” rule); whether a post-commit one-shot
+Permit may invoke despite later cancellation/revocation (recommended: commit
+linearizes this Intent; post-commit cancellation stops later work); what
+authoritative live readiness means when the current health snapshot is
+non-durable; and how unresolved versus resolved Intents survive Task expiry
+and authenticated Forget. No new state transitions, retry, Receipt, retention
+horizon or production authority was implemented.
+
+**Restart point:** run exact-head Fast/Full/Native/SQLite/Git Hooks on the
+child branch, fix any compile/test defects, then continue test-only availability
+and recovery cross-checks. Keep the provider invocation path blocked until the
+Permit, readiness and cancellation contracts are accepted and implementable.

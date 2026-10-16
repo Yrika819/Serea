@@ -2227,13 +2227,20 @@ fn approval_expired_event(draft: &ApprovalRequestStorageDraft, now: EpochMillis)
 }
 
 fn approval_store(path: &Path) -> Store {
+    approval_store_with_tool_budget(path, 24)
+}
+
+fn approval_store_with_tool_budget(path: &Path, max_tool_calls: i64) -> Store {
     seed_v4(path);
     {
         let conn = Connection::open(path).unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         seed_registry_and_task(&conn);
-        conn.execute("UPDATE tasks SET plan_revision=1 WHERE task_id=?1", [TASK])
-            .unwrap();
+        conn.execute(
+            "UPDATE tasks SET plan_revision=1,max_tool_calls=?2 WHERE task_id=?1",
+            rusqlite::params![TASK, max_tool_calls],
+        )
+        .unwrap();
         conn.execute(
             "UPDATE task_steps SET plan_revision=1 WHERE task_id=?1",
             [TASK],
@@ -4018,8 +4025,12 @@ fn independent_connections_cannot_both_consume_one_step_through_typed_api() {
 /// does not authorize dispatch: budget semantics and durable Provider
 /// availability are absent, and TaskEngine has no dispatch entry point.
 fn p8_real_storage_fixture() -> (TempDb, Store) {
+    p8_real_storage_fixture_with_tool_budget(24)
+}
+
+fn p8_real_storage_fixture_with_tool_budget(max_tool_calls: i64) -> (TempDb, Store) {
     let path = TempDb::new();
-    let store = approval_store(&path.0);
+    let store = approval_store_with_tool_budget(&path.0, max_tool_calls);
     {
         let conn = store.conn.lock().unwrap();
         conn.execute_batch(include_str!(
@@ -4118,10 +4129,10 @@ fn p8_real_storage_commit_probe(
     let now = EpochMillis::new(301).unwrap();
     let request_id = "req_00000000000000000000000070";
     store.transact(|tx| {
-        let task: (String, Option<i64>, Option<i64>, i64, i64) = tx.inner.query_row(
-            "SELECT state,cancelled_at_ms,deadline_at_ms,plan_revision,state_revision FROM tasks WHERE task_id=?1",
+        let task: (String, Option<i64>, Option<i64>, i64, i64, i64) = tx.inner.query_row(
+            "SELECT state,cancelled_at_ms,deadline_at_ms,plan_revision,state_revision,max_tool_calls FROM tasks WHERE task_id=?1",
             [TASK],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         )?;
         if task.0 != "EXECUTING"
             || task.1.is_some()
@@ -4130,6 +4141,18 @@ fn p8_real_storage_commit_probe(
             || task.4 <= 0
         {
             return Err(StoreError::InvalidApprovalResponse);
+        }
+        // ADR-0036 accepts one max_tool_calls unit per durably committed
+        // provider dispatch intent. Count inside this write transaction so
+        // competing workers serialize. Candidate intents are append-only
+        // because retention/Forget semantics are still unresolved.
+        let committed_dispatches: i64 = tx.inner.query_row(
+            "SELECT count(*) FROM dispatch_intents WHERE task_id=?1",
+            [TASK],
+            |row| row.get(0),
+        )?;
+        if committed_dispatches >= task.5 {
+            return Err(StoreError::ConstraintViolation);
         }
         let step: (String, i64, String, String, i64) = tx.inner.query_row(
             "SELECT status,plan_revision,input_digest,idempotency_key,lease_generation FROM task_steps WHERE task_id=?1 AND step_id=?2",
@@ -4261,6 +4284,15 @@ fn real_storage_p6_grant_intent_and_event_join_one_sqlite_transaction() {
 
     let (path, store) = p8_real_storage_fixture();
     p8_real_storage_commit_probe(&store, false, false).unwrap();
+    assert_eq!(
+        scalar(
+            &store.conn.lock().unwrap(),
+            "SELECT count(*) FROM dispatch_intents WHERE task_id='tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA'",
+        )
+        .unwrap(),
+        1,
+        "the committed intent is the candidate's durable tool-call unit"
+    );
     // The already-used Grant is a past operation record, never authority to
     // create a second intent for the same Step.
     assert!(p8_real_storage_commit_probe(&store, false, false).is_err());
@@ -4269,6 +4301,17 @@ fn real_storage_p6_grant_intent_and_event_join_one_sqlite_transaction() {
     assert!(
         store
             .transact(|tx| tx.delete_task(&TaskId::new(TASK).unwrap()))
+            .is_err()
+    );
+    assert!(
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "DELETE FROM dispatch_intents WHERE request_id='req_00000000000000000000000070'",
+                [],
+            )
             .is_err()
     );
     drop(store);
@@ -4303,6 +4346,26 @@ fn real_storage_p6_grant_intent_and_event_join_one_sqlite_transaction() {
         .unwrap(),
         1
     );
+}
+
+#[test]
+fn real_storage_candidate_budget_exhaustion_rolls_back_grant_and_all_dispatch_rows() {
+    let (path, store) = p8_real_storage_fixture_with_tool_budget(0);
+
+    assert_eq!(
+        scalar(
+            &store.conn.lock().unwrap(),
+            "SELECT max_tool_calls FROM tasks WHERE task_id='tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA'",
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        p8_real_storage_commit_probe(&store, false, false),
+        Err(StoreError::ConstraintViolation)
+    );
+    drop(store);
+    assert_p8_candidate_probe_rolled_back(&path.0);
 }
 
 #[test]

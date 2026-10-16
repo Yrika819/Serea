@@ -327,8 +327,15 @@ fn text_pair(conn: &Connection, sql: &str, first: &str, second: &str) -> rusqlit
 #[test]
 fn migration_catalog_appends_p6b_without_rewriting_any_prior_migration() {
     let catalog = Migrations::embedded();
-    assert_eq!(Migrations::LATEST, 8);
-    assert_eq!(catalog.len(), 8);
+    assert_eq!(
+        Migrations::LATEST,
+        if cfg!(feature = "p7-experimental") {
+            9
+        } else {
+            8
+        }
+    );
+    assert_eq!(catalog.len(), Migrations::LATEST as usize);
     assert_eq!(
         (catalog[4].version, catalog[4].name),
         (5, "0005_policy_approval")
@@ -372,6 +379,11 @@ fn migration_catalog_appends_p6b_without_rewriting_any_prior_migration() {
         (catalog[7].version, catalog[7].name),
         (8, "0008_approval_lifecycle_routing")
     );
+    #[cfg(feature = "p7-experimental")]
+    assert_eq!(
+        (catalog[8].version, catalog[8].name),
+        (9, "0009_p7_synthetic_memory")
+    );
     assert_eq!(
         Migrations::checksum(catalog[6].sql).as_str(),
         "sha256:48f2f1805d59f4eec215963ac5109007294a0dfe015b9a4b4e7e69c14f9197eb"
@@ -379,9 +391,9 @@ fn migration_catalog_appends_p6b_without_rewriting_any_prior_migration() {
 }
 
 #[test]
-fn fresh_store_applies_the_whole_p6_schema_at_v8() {
+fn fresh_store_applies_the_whole_schema_at_v9() {
     let store = Store::open_in_memory(&FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), Migrations::LATEST);
     let conn = store.conn.lock().unwrap();
     for table in [
         "policy_revisions",
@@ -394,6 +406,17 @@ fn fresh_store_applies_the_whole_p6_schema_at_v8() {
         "approval_grant_uses",
         "approval_grant_seals",
     ] {
+        let strict: i64 = conn
+            .query_row(
+                "SELECT strict FROM pragma_table_list WHERE name=?1",
+                params![table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(strict, 1, "{table} must be STRICT");
+    }
+    #[cfg(feature = "p7-experimental")]
+    for table in ["p7_owners", "p7_memory_items", "p7_resource_accounting"] {
         let strict: i64 = conn
             .query_row(
                 "SELECT strict FROM pragma_table_list WHERE name=?1",
@@ -490,7 +513,7 @@ fn existing_schema_v4_upgrades_through_v5_to_v8_and_keeps_its_rows() {
     }
 
     let store = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), Migrations::LATEST);
     let conn = store.conn.lock().unwrap();
     assert_eq!(
         scalar(
@@ -528,7 +551,7 @@ fn existing_schema_v5_upgrades_to_v8_without_rewriting_migration_0005() {
     seed_v5(&temp.0);
     let before = Migrations::checksum(Migrations::embedded()[4].sql);
     let store = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 8);
+    assert_eq!(store.schema_version().unwrap(), Migrations::LATEST);
     store.verify_integrity().unwrap();
     let conn = store.conn.lock().unwrap();
     let checksum: String = conn
@@ -558,7 +581,7 @@ fn altered_p6b_migration_bytes_are_refused_as_a_checksum_mismatch() {
     let temp = TempDb::new();
     {
         let store = Store::open(&temp.0, &FixedClock).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 8);
+        assert_eq!(store.schema_version().unwrap(), Migrations::LATEST);
     }
     // Rewriting an applied migration's bytes is exactly what the checksum
     // guard is for. No reset, no force: the store refuses and stays intact.
@@ -1940,7 +1963,7 @@ fn a_closed_store_reopens_with_the_same_authoritative_policy_and_approval_state(
     assert!(!temp.0.with_extension("sqlite-wal").exists());
 
     let reopened = Store::open(&temp.0, &FixedClock).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 8);
+    assert_eq!(reopened.schema_version().unwrap(), Migrations::LATEST);
     reopened.verify_integrity().unwrap();
     let conn = reopened.conn.lock().unwrap();
     assert_eq!(
@@ -4489,4 +4512,20 @@ fn independent_connections_replay_of_same_grant_is_idempotent_without_double_eve
     assert_eq!(count_kind_store(&conn, "APPROVAL_GRANTED"), 1);
     drop(conn);
     reopened.verify_integrity().unwrap();
+}
+
+#[cfg(not(feature = "p7-experimental"))]
+#[test]
+fn default_build_does_not_apply_or_expose_p7_experimental_schema() {
+    let store = Store::open_in_memory(&FixedClock).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 8);
+    let conn = store.conn.lock().unwrap();
+    let p7: i64 = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='p7_memory_items')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(p7, 0);
 }

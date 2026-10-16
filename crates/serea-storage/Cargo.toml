@@ -13,10 +13,12 @@ publish.workspace = true
 # A build that explicitly opts into this feature contains the seam; the release
 # proof records that boundary in `docs/plans/P2H-review-and-closure.md`.
 p2h-fault-injection = []
+# Explicit synthetic prototype only. Forbidden in optimized builds.
+p7-experimental = []
 
 [dependencies]
 serea-protocol.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, features = ["hooks"] }
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

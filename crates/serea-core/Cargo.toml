@@ -16,4 +16,3 @@ serea-scheduler = { workspace = true }
 
 [dev-dependencies]
 serea-testkit = { workspace = true }
-

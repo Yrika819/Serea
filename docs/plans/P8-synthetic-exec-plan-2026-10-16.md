@@ -243,16 +243,18 @@ Draft PR #23: <https://github.com/Yrika819/Serea/pull/23>, base PR #22.
   synthetic disposable SQLite probe confirms Grant-less insert rejection and
   refusal of Task/Step/Grant-use deletion while an unresolved Intent is present.
   This is not an accepted retention or Forget policy.
-- Added test-only transaction mechanics prototype and crash/recovery simulator
+- Added test-only transaction mechanics prototype and recovery simulator
   in `p8_authority_transaction_tests.rs` and
-  `p8_synthetic_recovery_tests.rs`. Nine P8-focused tests pass, including
+  `p8_synthetic_recovery_tests.rs`. Ten P8-focused tests pass, including
   separate-connection rollback visibility, one-transaction write grouping,
-  dynamic synthetic fact checks, duplicate reservation refusal, independent
-  effect-ledger reopen, ack loss, no automatic replay and deterministic deadline
-  control. The simulator neither implements the provider trait nor calls
-  TaskEngine. These tests do not represent production authority.
+  synthetic Task/Step/Lease/Policy/Grant/Registry/Overlay/Provider/Budget fact
+  checks, Grant expiry/revocation, duplicate reservation refusal, two independent
+  dispatcher connections with one winner, independent effect-ledger reopen, ack
+  loss, no automatic replay and deterministic deadline control. The simulator
+  neither implements the provider trait nor calls TaskEngine. These tests do not
+  represent production authority.
 - `cargo test -p serea-storage --all-targets --all-features --locked --offline`:
-  PASS, 624 unit tests, 6 integration tests passed, 2 manual resource tests
+  PASS, 625 unit tests, 6 integration tests passed, 2 manual resource tests
   ignored. Includes the P8 prototypes and the existing P7 candidate coverage.
 - Workspace `cargo check --workspace --all-targets --all-features --locked
   --offline`: PASS. Rust `1.85.0` workspace check: PASS. Workspace Clippy with
@@ -264,15 +266,14 @@ Draft PR #23: <https://github.com/Yrika819/Serea/pull/23>, base PR #22.
 - PR #21 exact-head Actions all succeeded: Fast `38908107229`, Full
   `38908107318`, Native `38908107246`, SQLite `38908107819`, Git Hooks
   `38908107508`.
-- PR #22 exact-head: Fast `38910579631`, Full `38910579688`, SQLite
-  `38910579894`, Git Hooks `38910580008` succeeded. Native `38910579808` was
-  still running its Stable/Windows Release builds at last poll. These runs do
-  not validate PR #23.
-- PR #23 initial implementation HEAD `dfd9f5158fbdd62049ff79d1a7aaf3c527c41c1f`:
-  Fast `38914572426` succeeded; Full `38914571879`, Native `38914571950`,
-  SQLite `38914572339`, Git Hooks `38914572828` were queued at last poll.
-  These IDs bind that exact head; all must complete on the final PR head before
-  their workflows can be reported as successful.
+- PR #22 exact-head all succeeded: Fast `38910579631`, Full `38910579688`,
+  Native `38910579808`, SQLite `38910579894`, Git Hooks `38910580008`. These
+  runs do not validate PR #23.
+- PR #23 documentation HEAD `0a23a9d7ebc729f26fe7271ebb619b2ff9a3dfb5`:
+  Fast `38914990830` and Git Hooks `38914990583` succeeded; Native
+  `38914990758` was in progress; Full `38914990535` and SQLite `38914990627`
+  were queued at last poll. The current source follow-up will create a newer
+  head, so those checks do not validate that newer head.
 - No cloud-environment skill was available in the active tool catalog; the
   environment was inspected through Git, Rust/Cargo and GitHub connector
   observations.

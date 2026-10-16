@@ -39,7 +39,7 @@ struct DispatchAttempt<'a> {
     overlay_revision: i64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Refusal {
     TaskUnavailable,
     Cancelled,
@@ -308,48 +308,67 @@ fn p8_test_transaction_commits_authority_rows_and_event_together() {
 
 #[test]
 fn p8_test_transaction_revalidates_cancellation_deadline_lease_policy_registry_and_budget() {
-    let cases: [(&str, &str, i64); 6] = [
+    let cases: [(&str, &str, Refusal); 11] = [
         (
             "cancelled",
             "UPDATE tasks SET cancelled=1 WHERE task_id='task-a'",
-            100,
+            Refusal::Cancelled,
+        ),
+        (
+            "terminal_task",
+            "UPDATE tasks SET state='CANCELLED' WHERE task_id='task-a'",
+            Refusal::TaskUnavailable,
         ),
         (
             "deadline",
             "UPDATE tasks SET deadline_ms=100 WHERE task_id='task-a'",
-            100,
+            Refusal::Deadline,
         ),
         (
             "lease",
             "UPDATE steps SET lease_generation=5 WHERE step_id='step-a'",
-            100,
+            Refusal::LeaseMismatch,
         ),
-        ("policy", "UPDATE policies SET revision=12", 100),
+        (
+            "policy",
+            "UPDATE policies SET revision=12",
+            Refusal::PolicyMismatch,
+        ),
+        (
+            "revoked_grant",
+            "UPDATE grants SET status='REVOKED' WHERE grant_id='grant-a'",
+            Refusal::GrantUnavailable,
+        ),
+        (
+            "expired_grant",
+            "UPDATE grants SET expires_ms=100 WHERE grant_id='grant-a'",
+            Refusal::GrantUnavailable,
+        ),
         (
             "registry",
             "UPDATE registry SET descriptor_digest='sha256:changed'",
-            100,
+            Refusal::RegistryMismatch,
+        ),
+        (
+            "provider",
+            "UPDATE registry SET available=0",
+            Refusal::ProviderUnavailable,
+        ),
+        (
+            "overlay",
+            "DELETE FROM overlays WHERE revision=5",
+            Refusal::OverlayMismatch,
         ),
         (
             "budget",
             "UPDATE budgets SET used_count=2 WHERE task_id='task-a'",
-            100,
+            Refusal::BudgetExceeded,
         ),
     ];
-    for (name, update, now) in cases {
+    for (name, update, expected) in cases {
         let db = AuthorityDb::new();
         db.connect().execute_batch(update).unwrap();
-        let mut a = attempt();
-        a.now_ms = now;
-        let expected = match name {
-            "cancelled" => Refusal::Cancelled,
-            "deadline" => Refusal::Deadline,
-            "lease" => Refusal::LeaseMismatch,
-            "policy" => Refusal::PolicyMismatch,
-            "registry" => Refusal::RegistryMismatch,
-            "budget" => Refusal::BudgetExceeded,
-            _ => unreachable!(),
-        };
+        let a = attempt();
         assert_eq!(
             db.commit(&a, FaultPoint::None),
             Err(expected),
@@ -360,4 +379,29 @@ fn p8_test_transaction_revalidates_cancellation_deadline_lease_policy_registry_a
             (2, if name == "budget" { 2 } else { 0 }, 0, 0, 0)
         );
     }
+}
+
+#[test]
+fn p8_test_transaction_serializes_two_independent_dispatchers() {
+    let db = std::sync::Arc::new(AuthorityDb::new());
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let workers = [0, 1].map(|_| {
+        let db = db.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            let request = attempt();
+            barrier.wait();
+            db.commit(&request, FaultPoint::None)
+        })
+    });
+    let outcomes = workers.map(|worker| worker.join().unwrap());
+    assert_eq!(outcomes.iter().filter(|o| **o == Ok(())).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| **o == Err(Refusal::Duplicate))
+            .count(),
+        1
+    );
+    assert_eq!(db.counts(), (1, 1, 1, 1, 1));
 }

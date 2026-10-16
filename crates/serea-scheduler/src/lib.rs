@@ -5,6 +5,8 @@ mod event_predicate;
 mod recurrence;
 mod runtime;
 mod task_template;
+#[cfg(feature = "test-hooks")]
+mod test_hooks;
 
 pub use event_predicate::{
     EventCausality, EventPredicateError, EventPredicateV1, matches_host_event,

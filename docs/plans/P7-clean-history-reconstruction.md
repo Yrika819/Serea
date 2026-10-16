@@ -1,6 +1,6 @@
 # P7 documentation history reconstruction record
 
-**Status:** Clean-history replacement prepared; remote-ref retirement pending owner authorization.  
+**Status:** Clean-history replacement prepared; remote-ref retirement pending owner authorization.
 **Scope:** Documentation only. No production code, migration, ADR body, or frozen protocol changed.
 
 ## Recorded Git state

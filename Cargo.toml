@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-event-bus", "crates/serea-task-engine", "crates/serea-scheduler", "crates/serea-testkit", "crates/serea-model-router", "crates/serea-capability", "crates/serea-policy"]
+members = ["crates/serea-protocol", "crates/serea-storage", "crates/serea-event-bus", "crates/serea-task-engine", "crates/serea-scheduler", "crates/serea-testkit", "crates/serea-model-router", "crates/serea-capability", "crates/serea-policy", "crates/serea-core", "crates/serea-host"]
 exclude = ["vendor/jsonschema-value", "vendor/serde_json"]
 
 [workspace.package]
@@ -26,6 +26,8 @@ serea-task-engine = { path = "crates/serea-task-engine" }
 serea-scheduler = { path = "crates/serea-scheduler" }
 serea-capability = { path = "crates/serea-capability" }
 serea-policy = { path = "crates/serea-policy" }
+serea-core = { path = "crates/serea-core" }
+serea-model-router = { path = "crates/serea-model-router" }
 
 # P2C: synchronous SQLite foundation, compiled from the bundled amalgamation.
 # No default cache/wasm adapters or optional runtime features.
@@ -33,6 +35,7 @@ rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled
 # Cooperative file locking for the explicitly gated synthetic P7 ledger only.
 fs2 = "=0.4.3"
 serea-testkit = { path = "crates/serea-testkit" }
+ctrlc = { version = "3.4.7", features = ["termination"] }
 
 # JSON (de)serialization for every wire surface. `std` has no JSON support and
 # Protocol Index §5 freezes JSON as the wire format, so a serializer is
@@ -55,6 +58,7 @@ jsonschema = { version = "=0.58.3", default-features = false }
 # Crate Map §6.1 require (providers are registered as trait objects by
 # `serea-core`). This is a proc macro only; it introduces no async runtime.
 async-trait = "0.1"
+getrandom = "=0.3.4"
 jiff = { version = "=0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 jiff-tzdb = "=0.1.9"
 

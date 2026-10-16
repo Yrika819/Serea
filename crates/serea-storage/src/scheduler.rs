@@ -416,6 +416,25 @@ pub struct SchedulerCursorSnapshot {
 }
 
 impl Tx<'_> {
+    /// Releases the Scheduler's singleton Event Bus lease after a completed
+    /// bounded recovery pass. The owner and generation fence prevent an old
+    /// Host from clearing a lease acquired by a replacement process.
+    pub fn release_scheduler_consumer(
+        &mut self,
+        lease: &SchedulerConsumerLease,
+    ) -> Result<(), StoreError> {
+        self.ensure_active()?;
+        let changed = self.inner.execute(
+            "UPDATE scheduler_consumer_state SET lease_owner=NULL,lease_expires_at_ms=NULL
+             WHERE singleton=1 AND lease_owner=?1 AND lease_generation=?2",
+            rusqlite::params![lease.owner, i64::from(lease.generation)],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::SchedulerLeaseFenced);
+        }
+        Ok(())
+    }
+
     /// Lists bounded expired calendar claims for startup reconciliation.
     /// Pending work is handled by the normal bounded due pass; unexpired claims
     /// are deliberately excluded.

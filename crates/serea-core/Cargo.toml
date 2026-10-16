@@ -1,0 +1,18 @@
+[package]
+name = "serea-core"
+description = "Serea Core process composition and lifecycle foundation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serea-protocol = { workspace = true }
+serea-storage = { workspace = true }
+serea-event-bus = { workspace = true }
+serea-task-engine = { workspace = true }
+serea-scheduler = { workspace = true }
+
+[dev-dependencies]
+serea-testkit = { workspace = true }

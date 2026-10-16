@@ -29,6 +29,33 @@ Every recommendation, matrix default, migration option, lifecycle rule, test gat
 
 ### P8-D01 — dedicated dispatch authorization and status matrix (**BLOCKER**)
 
+#### Dispatch linearization and state transition proposal
+
+This subsection makes the proposed state boundary explicit; it does not ratify a
+new Task or Step transition. `Store` writes use SQLite `BEGIN IMMEDIATE`, so a
+dispatch transaction and a cancellation transaction serialize. The proposed
+linearization point is the successful commit of one transaction that re-reads
+the Task, Step, plan revision, exact lease fence, and all authorization facts,
+then commits the dispatch intent and required accounting together. A candidate
+state transition is Task `READY` → `EXECUTING` (or remain `EXECUTING` for a
+permitted parallel Step) and Step `LEASED` → `EXECUTING`; the existing
+TaskEngine, not Storage or a provider, owns the Task transition. A `PLANNED`
+Step first needs its normal lease acquisition. `WAITING`, terminal Step states,
+and terminal/cancelled Tasks cannot enter a new dispatch intent. The existing
+protocol does not yet freeze this exact matrix, so it remains an Owner choice.
+
+If cancellation commits before dispatch admission, admission fails without an
+intent or grant use. If dispatch admission commits first, cancellation cannot
+erase or roll back that intent. There is still a real boundary between that
+commit and provider IO: the proposed conservative rule is to check cancellation,
+deadline, and live revocation immediately before invoke and never start IO after
+one is observed. The Owner must decide whether a committed-but-not-started
+intent is safely closed as not invoked or retained unresolved. A crash between
+recording an invoke-start marker and the external call cannot prove absence;
+recovery must treat it as possibly invoked. No SQLite transaction can include
+the external provider call, so the design must preserve this uncertainty rather
+than claim an atomic external effect.
+
 Policy explanation, approval planning, dispatch eligibility, retry eligibility and reconciliation eligibility are distinct outputs. A `PolicyEvaluation` or `AuthorizationEvidenceV1` is explanatory, point-in-time evidence and is never a dispatch permit.
 
 | Step status at request time | Policy explanation | Approval planning | New dispatch eligibility | Same-Step retry | Reconciliation |
@@ -73,7 +100,27 @@ Recommendation: narrow the meaning of a consumed grant to the one atomically com
 
 ### P8-D04 — AMBIGUOUS and replay/idempotency (**BLOCKER; protocol amendment may be required**)
 
-The Capability Protocol §8.1 table says `IDEMPOTENT` retry on AMBIGUOUS is “Allowed.” ADR-0036 separately freezes “AMBIGUOUS effect is never blindly retried.” Do not silently rewrite either Accepted text. Proposed reading: “allowed” can mean allowed only after the P8-specific same-action recovery gate and documented idempotency contract, not blind reinvocation. Owner must ratify a clarification/amendment before the first invoke.
+The Accepted texts conflict in more than one place. Capability Protocol §6.2 and
+ADR-0036 say an AMBIGUOUS effect is never blindly retried; Capability Protocol
+§8.1 says IDEMPOTENT retry on AMBIGUOUS is “Allowed”; Task Protocol §6 says an
+expired-lease IDEMPOTENT Step is re-issued with the same key. For CONDITIONAL,
+Capability Protocol §8.1 permits same-Step/same-key transport retry after
+confirmed no-effect, but its AMBIGUOUS cell says close the old attempt and use a
+new StepId/key after confirmed absence. These are frozen-contract conflicts,
+not implementation choices. Do not silently rewrite any Accepted text.
+
+**Recommendation (PROPOSED):** approve an explicit Protocol amendment before
+any provider invocation. Until then, P8 must not issue a provider call. The
+amendment should define `IDEMPOTENT` as effect semantics, not authorization to
+retry; forbid automatic re-invocation after AMBIGUOUS; permit only read-only,
+exact-intent reconciliation until an authoritative result exists; distinguish
+a retry proven to precede any possible provider effect from an AMBIGUOUS
+outcome; and resolve same-Step retry versus new-Step-after-absence, RequestId,
+IDK, grant-use, budget and fresh-approval rules together. Provider-native key
+retention and its expiry must be explicit; after that horizon the key gives no
+deduplication guarantee. Alternative: prohibit every replay after an
+invoke-start boundary and require reconciliation or human resolution, even for
+NATIVE/IDEMPOTENT. This is simpler and safer but may leave more Tasks blocked.
 
 #### Compatibility matrix
 
@@ -81,7 +128,7 @@ Each cell is a provisional safe default. `REPLAY` means same Step, same IDK-1, e
 
 | ReplaySafety \ IdempotencySupport | `NATIVE` | `EMULATED` | `NONE` |
 | --- | --- | --- | --- |
-| `IDEMPOTENT` | Same-key replay can be safe only if the provider contract guarantees deduplication for exact IDK across the declared retention horizon; after AMBIGUOUS, first reconcile or invoke an explicitly ratified same-key recovery operation. Not “blind retry.” | Host records IDK/dispatch uniquely and prevents second dispatch while prior intent may have reached provider. `RECONCILE`; host emulation alone cannot prove provider did not effect. | No duplicate guarantee; after invoke-started uncertainty, `RECONCILE`, never automatic replay. Confirmed absence → `FRESH`. |
+| `IDEMPOTENT` | Same-key replay can be safe only if the provider contract guarantees deduplication for exact IDK across the declared retention horizon; AMBIGUOUS remains reconcile-only until an explicit amendment authorizes a narrow operation. | Host records IDK/dispatch uniquely and prevents second dispatch while prior intent may have reached provider. `RECONCILE`; host emulation alone cannot prove provider did not effect. | No duplicate guarantee; after invoke-started uncertainty, `RECONCILE`, never automatic replay. Confirmed absence → `FRESH`. |
 | `CONDITIONAL` | Retry same Step/key only after authoritative no-effect confirmation, per Protocol §8.1. AMBIGUOUS → `RECONCILE`; confirmed absent closes old Step then `FRESH` under current policy/approval (must resolve the protocol's “same step transport retry” wording). | No-effect confirmation required; emulation blocks duplicate intent but cannot substitute for provider no-effect. AMBIGUOUS → `RECONCILE`, then `FRESH`. | Retry only after authoritative no-effect confirmation; otherwise `RECONCILE`/block; confirmed absent → `FRESH`. |
 | `NON_REPLAYABLE` | Never replay a provider effect; `RECONCILE` or block. Native key does not widen replay safety. | Never replay; `RECONCILE` or block. | Never replay; `RECONCILE` or block. |
 
@@ -132,6 +179,8 @@ The existing code does **not** support a late successful outcome on a cancelled 
 
 **Recommendation (PROPOSED / OWNER DECISION REQUIRED): Option A, with Option C as the fail-closed behavior until its schema/API and lifecycle contract are approved and implemented.** The design must add a dedicated typed reconciliation path and additive persistence, keep the Task permanently `CANCELLED`, authorize no new external effect, and preserve `side_effect_receipts` as the sole trusted Receipt authority with no more than one Receipt per Step. A late response is evidence to validate against the committed intent; it can never authorize another dispatch or create authority by itself. The late-result validation and Receipt eligibility rule require owner review; this package does not implement them or claim P2 already supports them.
 
+**Interim boundary (PROPOSED):** until the Owner approves the late-outcome lifecycle and its Task/Step Protocol changes, use Option C: retain only the exact unresolved intent and content-minimized integrity/reconciliation metadata; do not write a canonical Receipt, mark the Step `SUCCEEDED`, or mutate the cancelled Task. Option A is the preferred complete design, subject to a decision whether its canonical Receipt may attach to a non-SUCCEEDED Step or needs an explicitly approved separate terminal Step state. Option B is the simpler schema/API alternative but changes Task/Step aggregate semantics. The existing `side_effect_receipts` success trigger and Task Protocol's terminal-state/Forget cascade make neither path implementable by reusing ordinary P2 success code.
+
 For ordinary non-cancelled success, do not create a competing Receipt authority beside `side_effect_receipts`. Use an additive schema/API only after reviewing migration 0001's unique-Step binding and succeeded-Step trigger. A narrow success transaction validates exact `RequestId` ↔ dispatch intent ↔ Task/Step/IDK/capability; pinned-descriptor ActionResult schema; canonical output/digest; provider reference and Receipt provenance; and host-reviewed side-effect identity; then atomically stores result blob/reference, Receipt, Step `SUCCEEDED`, Task progress and events. Resolve trigger ordering through a reviewed migration/transaction protocol, never direct SQL bypass.
 
 Invalid/absent Receipt on an effecting success is failure/ambiguity, never success. Duplicate result is idempotent only if RequestId and canonical digest exactly match the prior persisted result; mismatch is integrity refusal with no overwrite. Crash during persistence leaves no partial result/Receipt/Step/events; after restart reconcile the exact original intent. Classification inherits the maximum of request, response, Receipt metadata and provider reference. PRIVATE fails closed under current ADR-0022; SECRET/CREDENTIAL never enters ActionResult, Receipt, event, logs or ordinary SQLite. Task/Receipt retention and shared-Blob rules may not erase unresolved-effect evidence before the owner-selected reconciliation hold expires.
@@ -166,6 +215,40 @@ Before any real provider, test only deterministic in-process fake providers with
 Named tests should be introduced in P8 implementation, not in this docs-only change: `p8_dispatch_state_matrix`, `p8_intent_grant_atomicity`, `p8_request_id_recovery`, `p8_r2_member_exhaustion`, `p8_ambiguous_replay_matrix`, `p8_receipt_success_atomicity`, `p8_late_result_after_cancel`, `p8_stale_lease_fencing`, `p8_policy_revoke_races`, `p8_fake_provider_restart_faults`, and `p8_credential_exclusion`. This is a test plan, not a claim those tests exist.
 
 ## Migration, compatibility, risk and exit criteria
+
+### P8B design verification that can start after approval
+
+No P8 schema or migration is present, so this is a validation plan rather than
+DDL evidence. Under currently Accepted ADR-0043, the authorized order is P7
+canonical migration `0009`, then P8 additive migrations `0010+`. P7's Task
+Owner binding is available to later P8 tables; any owner-scoped P8 row should
+carry `owner_id` and use an exact composite foreign key to the declared unique
+parent key in `p7_task_owner_bindings`, not infer ownership from task input or
+join through a non-unique prefix. Each proposed composite FK must be checked
+against `PRAGMA table_info`, `index_list`, `index_info`, and
+`foreign_key_list`; then adversarial inserts must show cross-Owner references
+fail with `foreign_keys=ON`. The standalone P7 fixture is not the canonical
+0009 and cannot be inserted in the normal catalog.
+
+After D01–D05 contract approval, isolated P8B work can build disposable SQLite
+fixtures and candidate additive SQL only: apply v8 → synthetic P7-owner fixture
+→ candidate P8 DDL; check old v8 Tasks are quarantined/unbound until P7's
+approved binding operation; validate fresh and pre-existing rows, checksums,
+all FK parent keys, `quick_check`, `foreign_key_check`, uniqueness, delete and
+retention behavior. Exercise transaction atomicity with separate connections
+and fault points before/after each write and COMMIT. A deterministic fake
+provider can live only in test code behind an explicit synthetic-only feature,
+with a manual clock, scripted effect ledger keyed by exact IDK/RequestId,
+separate SQLite connections, and process restart/fault hooks. It must have no
+network client, credential dependency, real Provider registration, or default
+feature reachability. P8B may test DDL and transaction mechanics after contract
+approval; it does not permit invoke-path implementation, even to the fake,
+until the Owner separately approves the P8B synthetic development scope.
+
+Migration order B (P8 `0009`, P7 later) remains an ADR-0043 amendment proposal
+only. It requires an Owner decision and a concrete dependency proof before any
+catalog edit; specifically, P8 must not assume OwnerId or P7 Task binding if
+those objects are later in the chain.
 
 | Decision | Impact |
 | --- | --- |

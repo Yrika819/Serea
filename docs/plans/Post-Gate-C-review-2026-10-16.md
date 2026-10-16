@@ -3,13 +3,48 @@
 **Purpose:** review evidence and prepare one Owner review across P8A, migration ordering, and P7 Gate C.
 **Status:** engineering review only. No new ADR/Protocol/contract is ratified here. P8 D01–D07 recommendations remain **PROPOSED / NOT RATIFIED**. This is not an independent security review or production approval.
 
+### PR #19 validation checkpoint — 2026-10-16 12:12 UTC
+
+The record below under “Live baseline” and its references to head `1597593…`
+are a historical snapshot taken before the documentation refresh commit
+`47dfe679fea08adcbeb3efb8622facb3c3bb1f25`. That current PR head has direct
+parent `159759382beb8ada80810356ef3e53fad79037fa`; the old SHA is not a stale
+unrelated branch or the current head. The PR still targets `main` at
+`e0acb0254820c381dd97828824bef86a1db5176c`, remains OPEN/DRAFT, and has three
+changed documentation files. Do not read the historical pending-check sentence
+below as current status.
+
+At this checkpoint, the five requested Actions runs were individually checked
+against PR #19, head `47dfe679…`, and base `e0acb025…`: Fast `38896877899`
+SUCCESS; Full `38896878303` SUCCESS; Native `38896877872` IN_PROGRESS; SQLite
+portability `38896877908` SUCCESS; Git Hooks `38896877938` SUCCESS. No failure
+was observed. Native is not PASS until its run completes. Because the owner
+package is being clarified after this checkpoint, the next PR head will need
+its own run-to-head comparison; these five results cannot be carried forward
+as proof for a later commit.
+
+The contract audit found a larger retry contradiction than the earlier
+snapshot described: Capability Protocol §§6.2 and 8.1 and ADR-0036 conflict on
+AMBIGUOUS retry; Task Protocol §6 also directs replay of expired-lease
+IDEMPOTENT Steps. CONDITIONAL same-Step transport retry conflicts with the
+new-Step-after-confirmed-absence wording. The package now records this whole
+conflict, proposes fail-closed no-invoke until an Owner-approved Protocol
+clarification, and describes the remaining post-intent/pre-invoke cancellation
+race. No Accepted contract was edited.
+
+P8B is still design preparation only. No P8 schema, canonical migration,
+runtime dispatch, or provider invocation was added. The package now defines a
+candidate disposable SQLite/FK validation sequence under currently authorized
+migration order A and a synthetic-only fake-provider boundary that requires a
+separate scope approval before invoke-path work.
+
 ## Live baseline
 
 - Repository baseline: `e0acb0254820c381dd97828824bef86a1db5176c`, fetched `origin/main` and used to create `codex/post-gate-c-review`.
 - PR #14: GitHub PR endpoint reports OPEN, DRAFT, UNMERGED at head `cb4df7178a4dc74b124006c4bf2c020cd626aa5e`. Its checks on that head report Linux stable, Linux MSRV 1.85.0 and SQLite cross-architecture checks passing. The dedicated P5 activation fix remains unmerged.
 - PR #15: MERGED to the baseline above. Its description records the synthetic Gate C work and remaining production blockers.
 - Main's latest workflows at inspection: Fast `38887469390`, Full `38887469433`, Native platform `38887469455`, SQLite portability `38887469452`; all successful on `e0acb025...`. Native validation ran Windows/Linux x86_64 and ARM64 plus macOS x86_64/ARM64; portability ran Intel↔ARM64 DB production/open in both directions. These CI results are GitHub evidence, not tests from this branch.
-- This review is published as Draft PR #19, current head `159759382beb8ada80810356ef3e53fad79037fa` (the progress-only update followed review commit `7472f8cc323297a49c2b52550721cb28b4420bfb`). Current-head Fast/Full/Native/SQLite/Git Hooks Windows workflows are pending; the baseline results above must not be mistaken for PR #19 checks.
+- This review was published as Draft PR #19 at historical head `159759382beb8ada80810356ef3e53fad79037fa` (the progress-only update followed review commit `7472f8cc323297a49c2b52550721cb28b4420bfb`). See the current checkpoint above for its direct successor and refreshed CI evidence.
 - No `AGENTS.md` exists in the repository. `docs/git-safety.md` requires repository-local Codex identity, preflight before commit/push, hooks, explicit branch targets, and forbids implicit/force pushes.
 
 ## P8A Owner review summary

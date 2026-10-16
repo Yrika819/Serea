@@ -177,6 +177,9 @@ effect/recovery path. The current TaskEngine has no provider invocation API;
 P8C remains blocked until the P8B transaction safely exists. The direct
 `CapabilityProvider::invoke` trait remains unreachable from TaskEngine. See
 [the candidate audit](P8-dispatch-0010-candidate-audit-2026-10-16.md).
+That audit includes concrete PROPOSED clauses for tool-budget counting,
+commit-to-invoke crash behavior, single-transaction revalidation, event
+correlation/retention, and result/Receipt handling. None is runtime authority.
 
 ## Production boundary evidence
 

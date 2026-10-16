@@ -235,8 +235,8 @@ merged; PR #14 remains untouched.
 on PR #22 head `58944dd02f498894567ec92b7440270a9985e5ec` and therefore
 stacked on PR #21 → #20 → #19. The dedicated worktree is
 `/workspace/Serea-p8-authority`; existing clones/worktrees were unchanged.
-This entry is being prepared with the implementation; final branch SHA and
-PR/CI IDs are added after push.
+Implementation commit: `dfd9f5158fbdd62049ff79d1a7aaf3c527c41c1f`.
+Draft PR #23: <https://github.com/Yrika819/Serea/pull/23>, base PR #22.
 
 - P8 0010 remains outside the normal catalog. Its development-only Task, Step,
   owner-binding and consumed-Grant-use delete references now use RESTRICT. A
@@ -261,12 +261,18 @@ PR/CI IDs are added after push.
 - Workspace all-target/all-feature test linking was attempted but the Cloud
   filesystem filled (0 bytes free; linker returned Bus error). This is recorded
   as NOT COMPLETED, not PASS. Storage's complete suite did pass independently.
-- PR #21 exact-head Actions: Fast `38908107229`, Full `38908107318`, SQLite
-  `38908107819`, Git Hooks `38908107508` succeeded; Native `38908107246` was
-  still in progress at last poll. PR #22 exact-head: Fast `38910579631`, Full
-  `38910579688`, Git Hooks `38910580008` succeeded; Native `38910579808` was
-  in progress and SQLite `38910579894` queued at last poll. These are prior
-  heads and do not validate the new branch.
+- PR #21 exact-head Actions all succeeded: Fast `38908107229`, Full
+  `38908107318`, Native `38908107246`, SQLite `38908107819`, Git Hooks
+  `38908107508`.
+- PR #22 exact-head: Fast `38910579631`, Full `38910579688`, SQLite
+  `38910579894`, Git Hooks `38910580008` succeeded. Native `38910579808` was
+  still running its Stable/Windows Release builds at last poll. These runs do
+  not validate PR #23.
+- PR #23 initial implementation HEAD `dfd9f5158fbdd62049ff79d1a7aaf3c527c41c1f`:
+  Fast `38914572426` succeeded; Full `38914571879`, Native `38914571950`,
+  SQLite `38914572339`, Git Hooks `38914572828` were queued at last poll.
+  These IDs bind that exact head; all must complete on the final PR head before
+  their workflows can be reported as successful.
 - No cloud-environment skill was available in the active tool catalog; the
   environment was inspected through Git, Rust/Cargo and GitHub connector
   observations.

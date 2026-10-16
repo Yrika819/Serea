@@ -107,9 +107,10 @@ The reused P8C simulator also now has test-only separate Intent and Effect
 SQLite ledgers. Added cases reopen both after ACK loss and verify exact
 RequestId/IDK correlation without replay, and detect a same-RequestId / wrong-
 IDK effect record as non-matching evidence. These tests do not wire the
-simulator to TaskEngine or make a canonical Receipt. A third case crashes
-after the synthetic Intent commit and before fake invoke; reopen preserves the
-Intent and confirms the effect ledger remains empty without replay.
+simulator to TaskEngine or make a canonical Receipt. A third case simulates
+worker loss after synthetic Intent commit and before fake invoke; independent
+reopen preserves the Intent and confirms the effect ledger remains empty
+without replay. It does not terminate a real OS process.
 
 ## B. Provider availability
 

@@ -394,8 +394,9 @@ worktrees were clean and left untouched at branch creation.
   independent synthetic Intent ledger. New tests reopen Intent and Effect
   SQLite files after ACK loss, check exact RequestId/IDK matching without
   replay, detect a same RequestId with wrong IDK as a mismatch, and crash
-  after Intent commit/before fake invoke with no recovery replay. This remains
-  simulator-only and does not claim canonical Receipt validation.
+  after Intent commit/before fake invoke with no recovery replay. This is a
+  reopen simulation, not an OS process-kill test. It remains simulator-only
+  and does not claim canonical Receipt validation.
 - RED/GREEN finding: on the PR #24 candidate SQL, a direct `DELETE FROM
   dispatch_intents` removed the only Intent despite Task/Step/Grant-use
   `ON DELETE RESTRICT`. Added a candidate-only no-delete trigger and a Storage

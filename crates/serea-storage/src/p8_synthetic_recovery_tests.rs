@@ -268,7 +268,7 @@ fn committed_intent_and_independent_effect_ledger_correlate_after_ack_loss() {
 }
 
 #[test]
-fn crash_after_intent_commit_before_invoke_never_starts_effect_during_recovery() {
+fn committed_intent_reopen_without_invoke_never_starts_effect_during_recovery() {
     let db = TempLedger::new();
     let request = SyntheticRequest {
         request_id: "req_synthetic_preinvoke_crash".into(),
@@ -278,7 +278,8 @@ fn crash_after_intent_commit_before_invoke_never_starts_effect_during_recovery()
         .unwrap()
         .commit(&request)
         .unwrap();
-    // Simulate process death before obtaining/calling the fake provider.
+    // Simulate loss of the worker after commit and before invoking the fake.
+    // This is an independent-ledger reopen test, not an OS process-kill test.
 
     let reopened_intent = IntentLedger::open(db.intent_path()).unwrap();
     let reopened_effects = EffectLedger::open(db.0.clone()).unwrap();

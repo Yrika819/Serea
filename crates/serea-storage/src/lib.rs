@@ -147,6 +147,9 @@ mod forget_model;
 mod p7_migration_tests;
 
 #[cfg(all(test, feature = "p7-experimental"))]
+mod p8_dispatch_candidate_tests;
+
+#[cfg(all(test, feature = "p7-experimental"))]
 mod p7_durable_recovery_tests;
 #[cfg(all(test, feature = "p7-experimental"))]
 mod p7_file_recovery_tests;

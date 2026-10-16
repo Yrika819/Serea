@@ -20,8 +20,8 @@ fail-closed.
 | 0 — PR #19 | BLOCKED, safely retained Draft | Exact base/head and all five workflows reverified below. Reviews list is empty. Branch-protection endpoint returned HTTP 403 `Resource not accessible by integration`, so required review and protection conditions could not be verified. No merge or Draft-to-ready transition. |
 | 1 — P8A direction record | DIRECTION RECORDED; exact contract closure IN PROGRESS | ADR-0044 records the approved direction; Capability/Task Protocol and ADR-0036 retry text and architecture index now align. Receipt/reconciliation/retention details remain proposed and runtime-blocked. |
 | 2 — P7 schema 0009 | PROTOTYPE REVIEW ONLY | Disposable v8→fixture suite passed 10/10. A distinct out-of-catalog candidate now passes 4 focused candidate checks and the full P7 migration selector passes 14/14. Existing migrations 0001–0008 remain byte-identical. Provisional caps, Owner authority, retention, FTS, provenance, Forget and quarantine-release policies block canonical promotion. See [candidate audit](P7-schema-0009-candidate-audit-2026-10-16.md). |
-| 3 — P8B 0010+ | NOT STARTED | Must stack on the reviewed P7 0009 candidate. No Storage write API may bypass the dispatch gate. |
-| 4 — P8C Fake Provider | NOT STARTED | No network, credentials or real accounts. Must use the canonical TaskEngine → Capability → Storage path. |
+| 3 — P8B 0010+ | DATA-SHAPE PROTOTYPE ONLY | A separate 0010 dispatch-intent candidate is being tested after the P7 candidate; it remains outside the ordinary catalog. There is no dispatch write API or provider call. Exact Budget accounting, commit-to-invoke eligibility and dynamic revalidation remain PROPOSED. |
+| 4 — P8C Fake Provider | BLOCKED ON P8B AUTHORITY GATE | Current TaskEngine has no CapabilityProvider invocation path. No fake effect is reachable until one atomic authorization transaction and the commit-to-invoke rule are implemented and tested. No network, credentials or real accounts. |
 | 5 — CI / hostile review | NOT STARTED | Runs must match each final SHA and its actual base. |
 
 ## Work completed on this branch
@@ -43,6 +43,12 @@ fail-closed.
 - Wave 2 added only a development candidate SQL file outside the migration
   catalog and test-only probes behind `p7-experimental`. It remains explicitly
   noncanonical; see the audit and the 14/14 selector result below.
+- Wave 3 added a development-only 0010 dispatch-intent schema candidate and a
+  migration-runner probe. The table captures request, Task/Step/Owner, Grant
+  use, Policy, registry, overlay, event and commit facts; it has unique
+  RequestId/IDK/Step keys and no mutable state or Receipt column. The probe
+  does not yet test a complete grant-authorized intent transaction or provider
+  effect. The ordinary migration catalog is unchanged.
 
 ## Local validation on current source state
 
@@ -136,17 +142,44 @@ no invented canonical Receipt.
    promoting a proposed policy.
 3. Add disposable v8→v9 schema probes and integrity/concurrency/rollback/reopen
    tests. Record the candidate as prototype if any normative detail remains.
-4. Only on the P7 candidate dependency branch, implement P8 0010+ additive
-   schema and typed atomic dispatch slices. No public intent write outside
-   current authorization validation; provider I/O is always outside SQLite
-   write transactions.
-5. Add Fake Provider tests at the canonical execution boundary. Assert
+4. Close the exact P8 authority blockers before exposing a write API: atomic
+   Policy/Grant/Lease/Task revalidation, bounded tool-budget semantics, and
+   the commit-to-invoke eligibility rule. Keep the 0010 candidate out of the
+   normal catalog meanwhile.
+5. Implement typed atomic dispatch only through TaskEngine once the above
+   checks are enforced by the SQLite transaction. Provider I/O must remain
+   outside SQLite write transactions.
+6. Add Fake Provider tests at the canonical execution boundary. Assert
    durable rows, effect ledger, event order, receipt cardinality and restart
    state. Tests that depend on unapproved lifecycle or retention semantics
    assert fail-closed behavior and are labeled accordingly.
-6. Before any PR, run the repository's Codex identity/history guards, exact
+7. Before any PR, run the repository's Codex identity/history guards, exact
    targeted and workspace validation, then record final SHA/base and precise
    CI. Draft PRs only; no PR other than #19 may be merged.
+
+## Wave 3 — P8 0010 dispatch schema candidate
+
+The separate candidate lives at
+`crates/serea-storage/migrations/candidates/0010_p8_dispatch_candidate.sql`.
+It is compiled/applied only by an explicit `p7-experimental` test against
+temporary SQLite after the separate P7 candidate. It is not embedded. The
+initial table shape records one immutable intent per Step with unique
+RequestId/IDK, owner and grant-use bindings, plan/task/lease revisions,
+  policy revision, registry descriptor, overlay revision, event correlation
+  identifier and
+commit time. It deliberately has no lifecycle state or Receipt authority.
+
+The first schema probe passed. This only proves that SQLite can apply and
+inspect the candidate schema and that its declared parent keys are valid. It
+does not prove the atomic grant+budget+intent+event transaction, live provider
+availability, Policy decision semantics, commit-to-invoke safety or any
+effect/recovery path. The current TaskEngine has no provider invocation API;
+P8C remains blocked until the P8B transaction safely exists. The direct
+`CapabilityProvider::invoke` trait remains unreachable from TaskEngine. See
+[the candidate audit](P8-dispatch-0010-candidate-audit-2026-10-16.md).
+That audit includes concrete PROPOSED clauses for tool-budget counting,
+commit-to-invoke crash behavior, single-transaction revalidation, event
+correlation/retention, and result/Receipt handling. None is runtime authority.
 
 ## Production boundary evidence
 
@@ -157,7 +190,19 @@ D, real credentials/providers and real external effects remain unauthorized.
 
 ## Handoff
 
-Last dependency head is the #19 SHA above. Local work branch is
-`p8/approved-contract-candidate`. The task-owned clone has Codex local identity
-and repository hooks. The branch must remain a Draft stacked on
-`codex/post-gate-c-review` until #19 is merged through protected procedure.
+The active chain is Draft PR #19 → Draft PR #20 → Draft PR #21 → Draft PR #22.
+PR #20 is `p8/approved-contract-candidate` at
+`5f78762e1b358ac928a42aab43d8bb215089194a`, based on PR #19. PR #21 is
+`p7/schema-v9-candidate` at
+`a56c7e204f854dd4382339cb43f7fe1396f85137`, based on PR #20. PR #22 is
+`p8/durable-dispatch-schema-candidate`; its schema/test commit is
+`9ea1e8911cd211f27c6e56848501c96d255915b4`, with follow-up contract proposal
+documentation on top. PR #22 is based on PR #21. The P7 and P8 candidates are
+not independently applicable to main and remain outside the production
+migration catalog.
+
+The dedicated clone/worktree retains Codex local identity and repository
+hooks. All PRs remain Draft. PR #19 cannot be readied or merged until main's
+required review and protection conditions are independently verifiable and
+the normal protected procedure can be followed. No PR other than #19 may be
+merged; PR #14 remains untouched.

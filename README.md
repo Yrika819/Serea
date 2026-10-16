@@ -25,12 +25,29 @@ cargo check --workspace --all-targets --all-features --offline
 cargo test --workspace --all-targets --offline
 cargo test --workspace --all-features --offline
 cargo clippy --workspace --all-targets --all-features --offline -- -D warnings
+cargo test -p serea-host --features synthetic --test host_lifecycle
 python3 tests/workspace_smoke.py
 python3 -m unittest discover -s tests -p workspace_smoke_tests.py
 python3 tools/validate_docs.py docs
 ```
 
 The offline Cargo commands assume dependencies were fetched first. To verify the declared MSRV, install Rust 1.85.0 and repeat the Cargo checks/tests/Clippy commands with `cargo +1.85.0`.
+
+## Synthetic Host process
+
+The optional Host command runs only in the `synthetic` feature build and never
+activates external capabilities. It requires an explicit data directory:
+
+```sh
+cargo run -p serea-host --features synthetic -- run --synthetic --data-dir ./serea-data
+cargo run -p serea-host --features synthetic -- stop --synthetic --data-dir ./serea-data
+```
+
+The Host uses schema v8, performs bounded startup recovery, and waits for the
+stop command without busy polling. See
+[`docs/plans/core-runtime-phase2-report.md`](docs/plans/core-runtime-phase2-report.md)
+for the current implementation scope, bounded Scheduler wake integration and
+remaining Host Model Router integration gaps.
 
 ## Evidence and limitations
 

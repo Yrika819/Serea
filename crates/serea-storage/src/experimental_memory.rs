@@ -141,11 +141,24 @@ struct SearchRequest<'a> {
     limit: usize,
 }
 /// Sealed owner context; only a deterministic unit-test authenticator can create it.
+/// The prototype type is deliberately absent from the public crate API.
+/// External callers cannot construct a Memory-capable handle:
+///
+/// ```compile_fail
+/// use serea_storage::P7ExperimentalMemory;
+/// ```
 #[derive(Debug, Clone)]
 pub struct P7ExperimentalMemory {
     owner_id: String,
     _test_auth_context: u64,
 }
+
+// The coordinator integration is nested here so it may exercise the fixture
+// internally without making P7ExperimentalMemory part of the crate API. The
+// only supported test composition is the coordinator in this child module.
+#[cfg(all(test, feature = "p7-experimental", feature = "p7-gate-c"))]
+#[path = "p7_integrated_recovery_tests.rs"]
+mod p7_integrated_recovery_tests;
 /// Provisional values supplied for synthetic testing only.
 pub const EXPERIMENTAL_PROVISIONAL: ExperimentalMemoryConfig = ExperimentalMemoryConfig {
     status: ProvisionalValue::TestOnly,
@@ -227,6 +240,11 @@ impl P7ExperimentalMemory {
             .checked_add(draft.kind.lifetime())
             .ok_or(StoreError::Sqlite)?;
         store.transact(|tx| { ensure_ready(tx,&self.owner_id)?;
+            let retired: bool = tx.inner.query_row(
+                "SELECT EXISTS(SELECT 1 FROM p7_memory_tombstones WHERE owner_id=?1 AND memory_id=?2)",
+                params![self.owner_id,draft.memory_id], |row| row.get(0),
+            )?;
+            if retired { return Err(StoreError::ConstraintViolation); }
             tx.inner.execute("INSERT INTO p7_memory_items(memory_id,owner_id,class_rank,kind,body,created_at_ms,expires_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![draft.memory_id,self.owner_id,draft.class.rank(),draft.kind.name(),draft.body,now.get(),expires])?;
             tx.inner.execute("INSERT INTO p7_memory_provenance(memory_id,owner_id,source_id,source_task_id,source_class_rank,metadata_bytes,recorded_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![draft.memory_id,self.owner_id,draft.provenance.source_id,draft.provenance.source_task_id,draft.provenance.source_class.rank(),draft.provenance.metadata_bytes as i64,now.get()])?;
             Ok(()) })
@@ -284,7 +302,7 @@ impl P7ExperimentalMemory {
         store.p7_read_only(|conn| {
             with_vm_budget(conn, vm_budget, || {
                 ensure_ready_conn(conn, &self.owner_id)?;
-                let mut s=conn.prepare("SELECT m.memory_id,m.class_rank,m.kind,m.body,m.expires_at_ms FROM p7_memory_fts f JOIN p7_memory_items m ON m.memory_id=f.memory_id WHERE p7_memory_fts MATCH ?1 AND f.owner_id=?2 AND f.class_rank=?3 AND m.owner_id=?2 AND m.class_rank=?3 AND m.active=1 AND m.expires_at_ms>?4 AND (?5 IS NULL OR m.memory_id>?5) ORDER BY m.memory_id COLLATE BINARY LIMIT ?6")?;
+                let mut s=conn.prepare("SELECT m.memory_id,m.class_rank,m.kind,m.body,m.expires_at_ms FROM p7_memory_fts f JOIN p7_memory_items m ON m.memory_id=f.memory_id AND m.owner_id=f.owner_id WHERE p7_memory_fts MATCH ?1 AND f.owner_id=?2 AND f.class_rank=?3 AND m.owner_id=?2 AND m.class_rank=?3 AND m.active=1 AND m.expires_at_ms>?4 AND (?5 IS NULL OR m.memory_id>?5) ORDER BY m.memory_id COLLATE BINARY LIMIT ?6")?;
                 let rows=s.query_map(params![literal,self.owner_id,request.class.rank(),request.now.get(),request.after,1001_i64],record_from_row)?;
                 let mut records = rows.collect::<Result<Vec<_>, _>>()?;
                 let has_more = records.len() > request.limit;
@@ -480,6 +498,65 @@ mod tests {
                 metadata_bytes: 16,
             },
         }
+    }
+    #[test]
+    fn memory_identity_is_owner_scoped_and_fts_joins_owner_identity() {
+        let s = store();
+        let a = actor(&s, "own_00000000000000000000000000000051", 51);
+        let b = actor(&s, "own_00000000000000000000000000000052", 52);
+        a.insert(
+            &s,
+            &draft("shared-id", "alpha synthetic fact", MemoryClass::Public),
+            EpochMillis::new(1000).unwrap(),
+        )
+        .unwrap();
+        b.insert(
+            &s,
+            &draft("shared-id", "beta synthetic fact", MemoryClass::Public),
+            EpochMillis::new(1000).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            a.get(&s, "shared-id", EpochMillis::new(1001).unwrap())
+                .unwrap()
+                .unwrap()
+                .body,
+            "alpha synthetic fact"
+        );
+        assert_eq!(
+            b.get(&s, "shared-id", EpochMillis::new(1001).unwrap())
+                .unwrap()
+                .unwrap()
+                .body,
+            "beta synthetic fact"
+        );
+        assert_eq!(
+            a.search(
+                &s,
+                MemoryClass::Public,
+                "alpha",
+                EpochMillis::new(1001).unwrap(),
+                None,
+                20
+            )
+            .unwrap()
+            .records
+            .len(),
+            1
+        );
+        assert!(
+            a.search(
+                &s,
+                MemoryClass::Public,
+                "beta",
+                EpochMillis::new(1001).unwrap(),
+                None,
+                20
+            )
+            .unwrap()
+            .records
+            .is_empty()
+        );
     }
     #[test]
     fn fts_japanese_isolation_class_expiry_and_literal_bounds() {

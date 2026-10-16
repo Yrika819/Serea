@@ -15,9 +15,13 @@ publish.workspace = true
 p2h-fault-injection = []
 # Explicit synthetic prototype only. Forbidden in optimized builds.
 p7-experimental = []
+# Gate C contract/ledger development surface. Explicit opt-in only and rejected
+# in optimized builds; this is not an ordinary runtime or production API.
+p7-gate-c = ["dep:fs2"]
 
 [dependencies]
 serea-protocol.workspace = true
+fs2 = { workspace = true, optional = true }
 rusqlite = { workspace = true, features = ["hooks"] }
 sha2.workspace = true
 serde.workspace = true

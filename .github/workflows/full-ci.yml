@@ -14,6 +14,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-p7-gate-c:
+    name: Windows P7 Gate C synthetic validation
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install exact MSRV
+        run: rustup toolchain install 1.85.0 --profile minimal
+
+      - name: Verify compiler
+        shell: pwsh
+        run: |
+          rustup run 1.85.0 rustc --version
+          rustup run 1.85.0 cargo --version
+
+      - name: Fetch locked dependencies
+        run: cargo +1.85.0 fetch --locked
+
+      - name: Feature gated Gate C tests
+        run: cargo +1.85.0 test -p serea-storage --lib --features p7-experimental,p7-gate-c p7_ --locked --offline
+
+      - name: Cross-process file lock and termination test
+        run: cargo +1.85.0 test -p serea-storage --test p7_gate_c_lock --features p7-gate-c --locked --offline
+
+      - name: Verify default optimized feature isolation
+        run: cargo +1.85.0 check -p serea-storage --release --locked --offline
+
+      - name: Verify optimized feature exclusion
+        shell: pwsh
+        run: |
+          cargo +1.85.0 check -p serea-storage --release --features p7-gate-c --locked --offline
+          if ($LASTEXITCODE -eq 0) { throw "optimized p7-gate-c unexpectedly compiled" }
+          Write-Host "optimized p7-gate-c was correctly rejected"
+          exit 0
+
   linux-stable:
     name: Linux stable full validation
     runs-on: ubuntu-latest

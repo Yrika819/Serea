@@ -44,6 +44,10 @@ mod model_accounting;
 mod model_call_tests;
 #[cfg(test)]
 mod model_cost_tests;
+#[cfg(all(test, feature = "p7-gate-c", feature = "p7-experimental"))]
+mod p7_extraction_fence_tests;
+#[cfg(feature = "p7-gate-c")]
+pub mod p7_gate_c;
 mod policy;
 #[cfg(test)]
 mod policy_tests;
@@ -85,11 +89,13 @@ pub use event::{
 #[cfg(all(feature = "p7-experimental", test))]
 pub use experimental_memory::{
     EXPERIMENTAL_PROVISIONAL, ExperimentalMemoryConfig, MemoryClass, MemoryDraft, MemoryKind,
-    MemoryPage, MemoryProvenance, MemoryRecord, P7ExperimentalMemory, ProvisionalValue,
+    MemoryPage, MemoryProvenance, MemoryRecord, ProvisionalValue,
 };
 
 #[cfg(all(feature = "p7-experimental", not(debug_assertions)))]
 compile_error!("p7-experimental is test/development-only and cannot be built optimized");
+#[cfg(all(feature = "p7-gate-c", not(debug_assertions)))]
+compile_error!("p7-gate-c is a disabled development surface and cannot be built optimized");
 pub use lease::{LeaseGuard, StepCommit, StepFailure, StepOutcome, TransitionContext};
 pub use lifecycle::{CancellationOutcome, DeletionOutcome};
 pub use migrate::{Migration, Migrations};

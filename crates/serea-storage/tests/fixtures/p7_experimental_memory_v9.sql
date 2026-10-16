@@ -58,7 +58,7 @@ CREATE TABLE p7_resource_accounting (
 ) STRICT;
 
 CREATE TABLE p7_memory_items (
-  memory_id TEXT PRIMARY KEY CHECK (length(memory_id) BETWEEN 1 AND 128),
+  memory_id TEXT NOT NULL CHECK (length(memory_id) BETWEEN 1 AND 128),
   owner_id TEXT NOT NULL REFERENCES p7_owners(owner_id) ON DELETE RESTRICT,
   class_rank INTEGER NOT NULL CHECK (class_rank IN (0,1)),
   kind TEXT NOT NULL CHECK (kind IN ('WORKING','EPISODIC','SEMANTIC','PREFERENCE')),
@@ -67,6 +67,7 @@ CREATE TABLE p7_memory_items (
   expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms BETWEEN -62167219200000 AND 253402300799999),
   renewals INTEGER NOT NULL DEFAULT 0 CHECK (renewals BETWEEN 0 AND 2),
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+  PRIMARY KEY(owner_id, memory_id),
   UNIQUE(memory_id, owner_id),
   CHECK (expires_at_ms > created_at_ms)
 ) STRICT;
@@ -74,13 +75,14 @@ CREATE INDEX p7_memory_owner_expiry ON p7_memory_items(owner_id, active, expires
 CREATE INDEX p7_memory_owner_class ON p7_memory_items(owner_id, class_rank, active, memory_id);
 
 CREATE TABLE p7_memory_provenance (
-  memory_id TEXT PRIMARY KEY,
+  memory_id TEXT NOT NULL,
   owner_id TEXT NOT NULL,
   source_id TEXT NOT NULL CHECK (length(CAST(source_id AS BLOB)) BETWEEN 1 AND 1024),
   source_task_id TEXT,
   source_class_rank INTEGER NOT NULL CHECK (source_class_rank IN (0,1)),
   metadata_bytes INTEGER NOT NULL CHECK (metadata_bytes BETWEEN 0 AND 4096),
   recorded_at_ms INTEGER NOT NULL CHECK (recorded_at_ms BETWEEN -62167219200000 AND 253402300799999),
+  PRIMARY KEY(owner_id,memory_id),
   FOREIGN KEY(memory_id, owner_id) REFERENCES p7_memory_items(memory_id, owner_id) ON DELETE CASCADE,
   CHECK (metadata_bytes + length(CAST(source_id AS BLOB)) + coalesce(length(CAST(source_task_id AS BLOB)),0) <= 4096)
 ) STRICT;
@@ -122,12 +124,44 @@ WHEN (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.prior_memory_id
      (SELECT class_rank FROM p7_memory_items WHERE memory_id=NEW.successor_memory_id AND owner_id=NEW.owner_id)
 BEGIN SELECT RAISE(ABORT, 'P7 supersession cannot lower classification'); END;
 
+-- Synthetic derivation lineage is distinct from supersession and provenance.
+-- Forget closure follows only this explicit relation (plus the selected roots).
+CREATE TABLE p7_memory_lineage (
+  owner_id TEXT NOT NULL,
+  parent_memory_id TEXT NOT NULL,
+  derived_memory_id TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN -62167219200000 AND 253402300799999),
+  PRIMARY KEY(owner_id,parent_memory_id,derived_memory_id),
+  CHECK(parent_memory_id <> derived_memory_id),
+  FOREIGN KEY(parent_memory_id,owner_id) REFERENCES p7_memory_items(memory_id,owner_id),
+  FOREIGN KEY(derived_memory_id,owner_id) REFERENCES p7_memory_items(memory_id,owner_id)
+) STRICT;
+CREATE INDEX p7_memory_lineage_child ON p7_memory_lineage(owner_id,derived_memory_id);
+CREATE TRIGGER p7_memory_lineage_immutable_update BEFORE UPDATE ON p7_memory_lineage
+BEGIN SELECT RAISE(ABORT, 'P7 Memory lineage is immutable'); END;
+CREATE TRIGGER p7_memory_lineage_immutable_delete BEFORE DELETE ON p7_memory_lineage
+WHEN NOT EXISTS (SELECT 1 FROM p7_memory_tombstones WHERE owner_id=OLD.owner_id AND memory_id=OLD.parent_memory_id)
+  OR NOT EXISTS (SELECT 1 FROM p7_memory_tombstones WHERE owner_id=OLD.owner_id AND memory_id=OLD.derived_memory_id)
+BEGIN SELECT RAISE(ABORT, 'P7 Memory lineage is immutable'); END;
+CREATE TRIGGER p7_memory_lineage_no_cycle BEFORE INSERT ON p7_memory_lineage
+BEGIN
+  SELECT CASE WHEN EXISTS (
+    WITH RECURSIVE descendants(id) AS (
+      SELECT derived_memory_id FROM p7_memory_lineage
+       WHERE owner_id=NEW.owner_id AND parent_memory_id=NEW.derived_memory_id
+      UNION
+      SELECT e.derived_memory_id FROM p7_memory_lineage e JOIN descendants d
+        ON e.owner_id=NEW.owner_id AND e.parent_memory_id=d.id
+    ) SELECT 1 FROM descendants WHERE id=NEW.parent_memory_id
+  ) THEN RAISE(ABORT, 'P7 Memory lineage cycle') END;
+END;
+
 CREATE TABLE p7_memory_blob_refs (
   memory_id TEXT NOT NULL,
   owner_id TEXT NOT NULL,
   digest TEXT NOT NULL,
   data_class_rank INTEGER NOT NULL CHECK (data_class_rank IN (0,1)),
-  PRIMARY KEY(memory_id, digest, data_class_rank),
+  PRIMARY KEY(owner_id, memory_id, digest, data_class_rank),
   FOREIGN KEY(memory_id, owner_id) REFERENCES p7_memory_items(memory_id, owner_id) ON DELETE CASCADE,
   FOREIGN KEY(digest, data_class_rank) REFERENCES blobs(digest, data_class_rank) ON DELETE RESTRICT
 ) STRICT;
@@ -187,13 +221,18 @@ CREATE TABLE p7_ledger_state (
   owner_id TEXT PRIMARY KEY REFERENCES p7_owners(owner_id) ON DELETE RESTRICT,
   generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
   checkpoint_digest TEXT,
-  read_state TEXT NOT NULL CHECK (read_state IN ('READY','QUARANTINED','RECOVERY_REQUIRED'))
+  read_state TEXT NOT NULL CHECK (read_state IN ('READY','QUARANTINED','RECOVERY_REQUIRED')),
+  pending_operation_id TEXT,
+  pending_generation INTEGER CHECK (pending_generation IS NULL OR pending_generation >= 0),
+  CHECK ((pending_operation_id IS NULL) = (pending_generation IS NULL))
 ) STRICT;
 
 -- All admission accounting is checked and updated in the same SQLite write
 -- transaction as item/provenance/FTS insertion. The limits are provisional test bounds.
 CREATE TRIGGER p7_memory_admission BEFORE INSERT ON p7_memory_items
 BEGIN
+  SELECT CASE WHEN EXISTS(SELECT 1 FROM p7_memory_tombstones WHERE owner_id=NEW.owner_id AND memory_id=NEW.memory_id)
+    THEN RAISE(ABORT, 'P7 forgotten Memory ID is permanently retired') END;
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM p7_resource_accounting WHERE owner_id=NEW.owner_id)
     THEN RAISE(ABORT, 'P7 quota row missing') END;
   SELECT CASE WHEN (SELECT retained_items FROM p7_resource_accounting WHERE owner_id=NEW.owner_id) >= 1000

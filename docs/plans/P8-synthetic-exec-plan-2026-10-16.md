@@ -20,9 +20,9 @@ fail-closed.
 | 0 — PR #19 | BLOCKED, safely retained Draft | Exact base/head and all five workflows reverified below. Reviews list is empty. Branch-protection endpoint returned HTTP 403 `Resource not accessible by integration`, so required review and protection conditions could not be verified. No merge or Draft-to-ready transition. |
 | 1 — P8A direction record | DIRECTION RECORDED; exact contract closure IN PROGRESS | ADR-0044 records the approved direction; Capability/Task Protocol and ADR-0036 retry text and architecture index now align. Receipt/reconciliation/retention details remain proposed and runtime-blocked. |
 | 2 — P7 schema 0009 | PROTOTYPE REVIEW ONLY | Disposable v8→fixture suite passed 10/10. A distinct out-of-catalog candidate now passes 4 focused candidate checks and the full P7 migration selector passes 14/14. Existing migrations 0001–0008 remain byte-identical. Provisional caps, Owner authority, retention, FTS, provenance, Forget and quarantine-release policies block canonical promotion. See [candidate audit](P7-schema-0009-candidate-audit-2026-10-16.md). |
-| 3 — P8B 0010+ | DATA-SHAPE PROTOTYPE ONLY | A separate 0010 dispatch-intent candidate is being tested after the P7 candidate; it remains outside the ordinary catalog. There is no dispatch write API or provider call. Exact Budget accounting, commit-to-invoke eligibility and dynamic revalidation remain PROPOSED. |
-| 4 — P8C Fake Provider | BLOCKED ON P8B AUTHORITY GATE | Current TaskEngine has no CapabilityProvider invocation path. No fake effect is reachable until one atomic authorization transaction and the commit-to-invoke rule are implemented and tested. No network, credentials or real accounts. |
-| 5 — CI / hostile review | NOT STARTED | Runs must match each final SHA and its actual base. |
+| 3 — P8B 0010+ | TEST-ONLY TRANSACTION PROTOTYPE; RUNTIME BLOCKED | Out-of-catalog 0010 candidate stays isolated. Synthetic `cfg(test)` transaction mechanics cover revalidation, atomic grant/budget/IDK/RequestId/Intent/Event writes, rollback injection and duplicate suppression. This is not the real Store/TaskEngine authority transaction; exact semantics and runtime gate remain PROPOSED. |
+| 4 — P8C Fake Provider | ISOLATED SIMULATOR READY; CANONICAL EXECUTION BLOCKED | Deterministic manual clock, scripted fake effects, independent SQLite ledger reopen, ack loss, rejection and duplicate invocation probes exist under `cfg(test)`. No `CapabilityProvider`/TaskEngine integration or provider invocation is claimed. |
+| 5 — CI / hostile review | IN PROGRESS | Exact-head PR #21/22 status rechecked; this branch requires targeted/workspace validation and its own Draft PR run. |
 
 ## Work completed on this branch
 
@@ -181,6 +181,28 @@ That audit includes concrete PROPOSED clauses for tool-budget counting,
 commit-to-invoke crash behavior, single-transaction revalidation, event
 correlation/retention, and result/Receipt handling. None is runtime authority.
 
+## Follow-up: fail-closed candidate and test-only prototypes
+
+On the isolated PR22-derived branch `p8/authority-transaction-prototype`,
+candidate 0010 now uses `ON DELETE RESTRICT` for Task, Step and consumed
+Grant-use references. The focused candidate test proves a missing Grant is
+rejected, and proves Task/Step/Grant-use deletion fails while a synthetic
+unresolved Intent remains. This is a conservative development-candidate guard,
+not a retention or Forget policy; it stays outside the normal migration
+catalog.
+
+`p8_authority_transaction_tests.rs` is a synthetic `cfg(test)` SQLite-only
+prototype exercising current-fact checks, atomic grant/budget/IDK/RequestId/
+Intent/Event writes and rollback at four injected boundaries. Separate
+connection assertions verify both all-or-nothing failure and all-at-once
+success. It is not wired to production Store/TaskEngine and is not complete
+authorization evidence. `p8_synthetic_recovery_tests.rs` supplies a manual
+clock and scripted simulated provider backed by an independently reopened
+SQLite effect ledger; it demonstrates visible duplicate invokes and no
+automatic replay after ack loss. It does not implement the provider trait or
+call TaskEngine. All remaining runtime, platform and contract gates remain
+open.
+
 ## Production boundary evidence
 
 This ExecPlan and any dependent PR are schema/test development only. They do
@@ -206,3 +228,57 @@ hooks. All PRs remain Draft. PR #19 cannot be readied or merged until main's
 required review and protection conditions are independently verifiable and
 the normal protected procedure can be followed. No PR other than #19 may be
 merged; PR #14 remains untouched.
+
+## P8B/P8C isolated follow-up (2026-10-16)
+
+**Development branch:** `p8/authority-transaction-prototype`, based directly
+on PR #22 head `58944dd02f498894567ec92b7440270a9985e5ec` and therefore
+stacked on PR #21 → #20 → #19. The dedicated worktree is
+`/workspace/Serea-p8-authority`; existing clones/worktrees were unchanged.
+This entry is being prepared with the implementation; final branch SHA and
+PR/CI IDs are added after push.
+
+- P8 0010 remains outside the normal catalog. Its development-only Task, Step,
+  owner-binding and consumed-Grant-use delete references now use RESTRICT. A
+  synthetic disposable SQLite probe confirms Grant-less insert rejection and
+  refusal of Task/Step/Grant-use deletion while an unresolved Intent is present.
+  This is not an accepted retention or Forget policy.
+- Added test-only transaction mechanics prototype and crash/recovery simulator
+  in `p8_authority_transaction_tests.rs` and
+  `p8_synthetic_recovery_tests.rs`. Nine P8-focused tests pass, including
+  separate-connection rollback visibility, one-transaction write grouping,
+  dynamic synthetic fact checks, duplicate reservation refusal, independent
+  effect-ledger reopen, ack loss, no automatic replay and deterministic deadline
+  control. The simulator neither implements the provider trait nor calls
+  TaskEngine. These tests do not represent production authority.
+- `cargo test -p serea-storage --all-targets --all-features --locked --offline`:
+  PASS, 624 unit tests, 6 integration tests passed, 2 manual resource tests
+  ignored. Includes the P8 prototypes and the existing P7 candidate coverage.
+- Workspace `cargo check --workspace --all-targets --all-features --locked
+  --offline`: PASS. Rust `1.85.0` workspace check: PASS. Workspace Clippy with
+  `-D warnings`: PASS. Format, documentation validator, Core API boundary,
+  Synthetic Host boundary and workspace dependency smoke check: PASS.
+- Workspace all-target/all-feature test linking was attempted but the Cloud
+  filesystem filled (0 bytes free; linker returned Bus error). This is recorded
+  as NOT COMPLETED, not PASS. Storage's complete suite did pass independently.
+- PR #21 exact-head Actions: Fast `38908107229`, Full `38908107318`, SQLite
+  `38908107819`, Git Hooks `38908107508` succeeded; Native `38908107246` was
+  still in progress at last poll. PR #22 exact-head: Fast `38910579631`, Full
+  `38910579688`, Git Hooks `38910580008` succeeded; Native `38910579808` was
+  in progress and SQLite `38910579894` queued at last poll. These are prior
+  heads and do not validate the new branch.
+- No cloud-environment skill was available in the active tool catalog; the
+  environment was inspected through Git, Rust/Cargo and GitHub connector
+  observations.
+
+## Remaining exact blockers
+
+The `cfg(test)` transaction uses synthetic tables and is deliberately not
+production Store code. Real grant-use schema, R2 membership, event participant,
+policy decision source, registry/overlay authorities, TaskEngine-only public
+entry and commit-to-invoke eligibility still require an integrated approved
+design. Provider IO remains unreachable. `AMBIGUOUS` remains reconciliation
+only; no automatic same-Step retry or canonical late Receipt exists. Production
+Memory, OS Owner authentication, key custody, rollback-resistant authority,
+real credentials/accounts/providers and Gate D remain disabled and
+unauthorized.

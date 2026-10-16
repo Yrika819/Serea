@@ -14,6 +14,24 @@ The prototype freezes one row per Task Step with unique RequestId, IDK, and Step
 
 The schema runner probe passed and verified the candidate checksum, required columns, no `state`/`receipt_id` columns, clean SQLite integrity/FK checks, and exclusion from `Migrations::embedded()`.
 
+## Grant-less and unresolved-intent deletion probes
+
+The candidate keeps `grant_id NOT NULL`. A focused SQLite probe attempts an
+INSERT without a Grant and observes the NOT NULL rejection; it does not mint a
+synthetic Grant for OBSERVE. Since no Owner-approved representation for
+Grant-less Dispatch exists, Grant-less/OBSERVE Dispatch stays refused.
+
+The original candidate's Task/Step/Grant-use `ON DELETE CASCADE` edges could
+erase an unresolved intent and its only correlation evidence. The development
+candidate now uses `ON DELETE RESTRICT` for those edges. A disposable-database
+probe seeds a synthetic unresolved Intent and confirms Task deletion, Step
+deletion, and deletion of the consumed Grant-use row all fail while the Intent
+remains. Seed-time FK/business-trigger bypass is limited to constructing this
+isolated schema probe; FK enforcement is enabled for every deletion assertion.
+This conservative candidate rule is not a canonical retention or Forget
+contract. It must remain out of the normal catalog pending Owner approval of
+the retention/Forget interaction.
+
 ## PROPOSED blockers; no runtime authority
 
 The prototype does not establish a callable dispatch transaction. Exact tool-budget accounting, grant use alongside budget consumption, live Policy and Grant revalidation, Task/Step/Lease admissibility, provider availability evidence, Registry/Overlay revalidation semantics, event append atomicity, commit-to-invoke eligibility, and definite versus ambiguous outcomes remain unresolved at the runtime boundary. No public Storage intent-write API exists. No TaskEngine path calls `CapabilityProvider::invoke`.
@@ -27,6 +45,26 @@ Concrete clause candidates remain **PROPOSED**, not Accepted:
 5. **Result and Receipt:** accept a result only for the exact RequestId and IDK after host validation. A response received after cancellation/deadline or with unresolved commit provenance does not complete the Task and creates no canonical Receipt (Option C). Duplicate or mismatched responses are quarantined/refused. Late reconciliation remains blocked pending Option A evidence and eligibility rules.
 
 Each clause above changes detailed semantics beyond the approved direction and requires Owner acceptance before becoming normative runtime behavior. Development probes may test rollback and uniqueness; they cannot authorize a provider effect.
+
+## Test-only implementation slices
+
+`p8_authority_transaction_tests.rs` contains a `cfg(test)` SQLite prototype
+with synthetic Task/Step/Grant/Policy/Registry/Overlay/Budget rows. It checks
+live fact revalidation and groups grant decrement, budget reservation, IDK,
+RequestId, Intent and Event writes in one `BEGIN IMMEDIATE` transaction. Four
+fault points verify rollback from a second connection; a success case verifies
+all rows commit together and duplicate IDK/RequestId/Step insertion is refused.
+This is executable transaction-mechanics evidence only: it is not wired to
+`Store`, the real approval model, TaskEngine, Host, or a provider, and it does
+not establish authority semantics for production.
+
+`p8_synthetic_recovery_tests.rs` contains a separately reopened SQLite effect
+ledger and deterministic manual clock with scripted apply/ack-loss/reject
+outcomes. It demonstrates that an applied effect remains after lost
+acknowledgement, repeated invocations are visible as duplicate ledger rows,
+and the test recovery path does not retry after AMBIGUOUS. It is an isolated
+simulator, does not implement `CapabilityProvider`, does not call TaskEngine,
+and carries no credentials or network access.
 
 Do not add this file to the normal migration catalog. Do not invoke a provider or construct a canonical Result/Receipt based on this candidate. The current safe runtime behavior is no capability effect. P8C is blocked until the atomic authorization and invoke boundary can be implemented with all accepted checks; unresolved transitions and late outcome authority remain fail-closed under ADR-0044.
 

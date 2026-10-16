@@ -477,7 +477,7 @@ Live GitHub audit at this continuation:
 | A — adversarial review | PARTIAL | Reviewed #23–#25 transaction, migration-candidate and Fake Recovery code. Existing candidate direct-delete flaw has prior RED/GREEN evidence below; no new accepted-contract production defect found. |
 | B — Storage Budget | PASS, test-only | Added real-Store candidate probe with two independently leased and approved Steps racing at `max_tool_calls=1`; only one Grant-use/Intent/Event commits after reopen. Existing `max_tool_calls=0` refusal still leaves all rows absent after reopen. No production counter or write API. |
 | C — availability | PARTIAL | Existing real-Store candidate test rejects Unknown/Unavailable before writing. Resolver health/overlay snapshots remain point-in-time evidence; no durable or live invoke authority was added. Provider instance identity and commit-gap readiness remain proposed/blocked. |
-| D — commit-to-invoke | PARTIAL | Existing independent Intent/Effect ledger tests cover ACK-loss and commit-before-invoke reopen with no automatic re-invoke. No production or serializable Permit exists; post-commit disposition remains blocked. |
+| D — commit-to-invoke | PARTIAL | Existing independent Intent/Effect ledger tests cover ACK-loss and commit-before-invoke reopen with no automatic re-invoke. A proposed non-serializable Permit now exists only in the synthetic test module and binds exact RequestId/IDK, Step, lease generation, Owner and provider instance; production authorization and post-commit disposition remain blocked. |
 | E — retention/Forget | PASS for candidate guard only | Added second-Store connection check: `PRAGMA foreign_keys=1`; Task, Step, consumed Grant-use, and direct Intent deletion fail; normal Event expiry removes Event content while RequestId/IDK Intent remains after another reopen. Not a canonical Forget rule. |
 | F — Event meaning | PARTIAL | Exact Protocol review found Event Protocol §3.3 already defines `CAPABILITY_REQUESTED` as durable P8 Intent commit. The accepted kind is reused; its full bounded P8 payload remains proposed. No EventKind or protocol version change. |
 | G — Fake Provider recovery | PARTIAL | Storage P8 selector passes 13/13, including mismatch, ACK-loss and pre-invoke crash simulations. These use independent SQLite ledgers, not a child-process kill or a TaskEngine invoke path. |
@@ -566,3 +566,65 @@ Draft PR stacked on PR #25 to obtain exact-head CI; never update or rewrite PR
 #25's branch. If CI reveals a reproducible code defect, record RED, fix
 minimally, rerun focused and full regressions, and update this plan before the
 next commit.
+
+### Overnight continuation checkpoint — synthetic one-shot permit
+
+The first normal commit is `acd1dc5e3c8c990bb7795917d0fb9ffb31f3fff6`
+(`test(p8): deepen budget and recovery boundaries`), parented on PR #25's exact
+head `73e38fddf4a203582f728eff2cf675cc35e46b2b`. Draft PR #26 is open against
+`p8/contract-closure-prototype`. The first commit's exact-head Actions are:
+
+| Workflow | Run | Status at this checkpoint |
+| --- | ---: | --- |
+| Fast CI | 38935044346 | success |
+| Git hooks Windows compatibility | 38935044413 | success |
+| Full CI | 38935044416 | in progress |
+| Native platform validation | 38935044857 | queued |
+| Cross-architecture SQLite portability | 38935044264 | queued |
+
+Added an explicitly proposed, non-serializable `SyntheticDispatchPermit` to
+`p8_synthetic_recovery_tests.rs`. It is isolated to the test module and
+consumes itself before calling the scripted Fake Provider. The regression
+checks mismatched RequestId and IDK, Step, lease generation, Owner, and
+provider instance all refuse with zero provider effects; one exact binding
+may invoke once, an ambiguous outcome consumes the permit, and a repeat is
+refused. It does not establish production authorization, durable permit
+semantics, or an actual TaskEngine/Host invoke path.
+
+After this addition, the focused Storage `p8_` selector passes 16/16 (622
+filtered, 0 ignored); Storage Clippy with `-D warnings` passes; format and
+`git diff --check` pass. Full workspace Clippy is being rerun against this
+working tree. The full workspace test/check results above predate this final
+test-only addition. The synthetic Permit is currently uncommitted and not yet
+included in PR #26 CI; it will be recorded in the next normal commit, after
+which exact-head CI must run again.
+
+**Resume:** finish full Clippy and documentation/boundary gates, update this
+checkpoint with exact results, commit the permit test and plan normally, push
+only `p8b/overnight-2026-10-17`, then wait on all five workflows for the new
+PR #26 head. Continue safe independent review while they run. Keep Wave D
+PARTIAL and all production invocation/Receipt/retry authority fail-closed.
+
+#### Final pre-commit verification for the permit slice
+
+- `cargo +1.85.0 clippy --workspace --all-targets --all-features --locked
+  --offline -- -D warnings`: PASS after the Permit addition.
+- `cargo +1.85.0 test --workspace --all-targets --locked --offline`: PASS
+  after the Permit addition. Relative to the previous checkpoint, the exact
+  new Permit regression is included; no failure occurred.
+- `cargo +1.85.0 test -p serea-storage --all-targets --all-features --locked
+  --offline`: PASS, 638 unit tests plus 6 integration tests passed, 2 manual
+  resource benchmarks ignored, 0 failures. The test command completed in
+  114.71 seconds for the unit-test binary.
+- Docs validation scanned 145 Markdown files and passed. Formatting,
+  `git diff --check`, external Core API boundary, Synthetic Host boundary,
+  and reachable commit identity checks all passed.
+- Git commit preflight was run while the two intended files were still
+  unstaged and correctly refused that state. It must be rerun after staging;
+  no commit was made at that point.
+- First-head PR #26 run `38935044416` remains in progress after successful
+  Fast CI and Git Hooks. At the last job-level inspection, the Windows P7 Gate
+  C and macOS arm64 jobs were successful; Linux MSRV, Linux stable full, and
+  macOS Intel were still running. Native `38935044857` and cross-architecture
+  SQLite `38935044264` remained queued. These refer to the earlier exact head
+  `acd1dc5...`; the Permit slice still requires its own pushed-head Actions.

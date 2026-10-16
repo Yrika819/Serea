@@ -40,6 +40,95 @@ struct SyntheticResponse {
     response_digest: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SyntheticProviderIdentity {
+    provider_id: &'static str,
+    instance_id: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyntheticPermitRefusal {
+    RequestMismatch,
+    StepMismatch,
+    LeaseGenerationMismatch,
+    OwnerMismatch,
+    ProviderInstanceMismatch,
+    AlreadyConsumed,
+    EffectLedgerFailure,
+}
+
+/// Proposed test-only shape for a non-serializable, local one-shot permit.
+/// This type is not a production authorization or provider API.
+struct SyntheticDispatchPermit {
+    request: SyntheticRequest,
+    step_id: String,
+    lease_generation: u32,
+    owner_id: String,
+    provider: SyntheticProviderIdentity,
+    consumed: bool,
+}
+
+struct SyntheticInvocation<'a> {
+    request: &'a SyntheticRequest,
+    step_id: &'a str,
+    lease_generation: u32,
+    owner_id: &'a str,
+    provider_identity: SyntheticProviderIdentity,
+    clock: ManualClock,
+    deadline_ms: i64,
+}
+
+impl SyntheticDispatchPermit {
+    fn new(
+        request: SyntheticRequest,
+        step_id: &str,
+        lease_generation: u32,
+        owner_id: &str,
+        provider: SyntheticProviderIdentity,
+    ) -> Self {
+        Self {
+            request,
+            step_id: step_id.to_owned(),
+            lease_generation,
+            owner_id: owner_id.to_owned(),
+            provider,
+            consumed: false,
+        }
+    }
+
+    fn invoke_once(
+        &mut self,
+        invocation: SyntheticInvocation<'_>,
+        provider: &mut ScriptedFakeProvider,
+    ) -> Result<SimulatedOutcome, SyntheticPermitRefusal> {
+        if self.consumed {
+            return Err(SyntheticPermitRefusal::AlreadyConsumed);
+        }
+        if invocation.request != &self.request {
+            return Err(SyntheticPermitRefusal::RequestMismatch);
+        }
+        if invocation.step_id != self.step_id {
+            return Err(SyntheticPermitRefusal::StepMismatch);
+        }
+        if invocation.lease_generation != self.lease_generation {
+            return Err(SyntheticPermitRefusal::LeaseGenerationMismatch);
+        }
+        if invocation.owner_id != self.owner_id {
+            return Err(SyntheticPermitRefusal::OwnerMismatch);
+        }
+        if invocation.provider_identity != self.provider {
+            return Err(SyntheticPermitRefusal::ProviderInstanceMismatch);
+        }
+
+        // Consume before crossing the fake provider boundary. A failure or
+        // ambiguous result cannot reuse this in-memory permit.
+        self.consumed = true;
+        provider
+            .invoke(invocation.request, invocation.clock, invocation.deadline_ms)
+            .map_err(|_| SyntheticPermitRefusal::EffectLedgerFailure)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Script {
     ApplyAndAcknowledge,
@@ -506,4 +595,170 @@ fn child_process_termination_preserves_commit_and_effect_ledgers_without_replay(
             "repeated reopen must not replay child mode {mode}"
         );
     }
+}
+
+#[test]
+fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_instance() {
+    let db = TempLedger::new();
+    let request = SyntheticRequest {
+        request_id: "req_synthetic_permit".into(),
+        idempotency_key: "idk_synthetic_permit".into(),
+    };
+    let committed_intents = IntentLedger::open(db.intent_path()).unwrap();
+    committed_intents.commit(&request).unwrap();
+    assert!(committed_intents.matches(&request).unwrap());
+    let provider_identity = SyntheticProviderIdentity {
+        provider_id: "calendar",
+        instance_id: 41,
+    };
+    let mismatch_cases = [
+        (
+            "request",
+            SyntheticRequest {
+                request_id: "req_synthetic_wrong".into(),
+                idempotency_key: request.idempotency_key.clone(),
+            },
+            "step-a",
+            7,
+            "owner-a",
+            provider_identity,
+            SyntheticPermitRefusal::RequestMismatch,
+        ),
+        (
+            "idempotency key",
+            SyntheticRequest {
+                request_id: request.request_id.clone(),
+                idempotency_key: "idk_synthetic_wrong".into(),
+            },
+            "step-a",
+            7,
+            "owner-a",
+            provider_identity,
+            SyntheticPermitRefusal::RequestMismatch,
+        ),
+        (
+            "step",
+            request.clone(),
+            "step-b",
+            7,
+            "owner-a",
+            provider_identity,
+            SyntheticPermitRefusal::StepMismatch,
+        ),
+        (
+            "lease generation",
+            request.clone(),
+            "step-a",
+            8,
+            "owner-a",
+            provider_identity,
+            SyntheticPermitRefusal::LeaseGenerationMismatch,
+        ),
+        (
+            "owner",
+            request.clone(),
+            "step-a",
+            7,
+            "owner-b",
+            provider_identity,
+            SyntheticPermitRefusal::OwnerMismatch,
+        ),
+        (
+            "provider instance",
+            request.clone(),
+            "step-a",
+            7,
+            "owner-a",
+            SyntheticProviderIdentity {
+                provider_id: "calendar",
+                instance_id: 42,
+            },
+            SyntheticPermitRefusal::ProviderInstanceMismatch,
+        ),
+    ];
+
+    for (index, (label, presented_request, step, lease, owner, instance, expected)) in
+        mismatch_cases.into_iter().enumerate()
+    {
+        let mut permit = SyntheticDispatchPermit::new(
+            request.clone(),
+            "step-a",
+            7,
+            "owner-a",
+            provider_identity,
+        );
+        let mut fake = ScriptedFakeProvider::new(
+            EffectLedger::open(
+                db.0.parent()
+                    .unwrap()
+                    .join(format!("mismatch-{index}.sqlite")),
+            )
+            .unwrap(),
+            [Script::ApplyAndAcknowledge],
+        );
+        assert_eq!(
+            permit.invoke_once(
+                SyntheticInvocation {
+                    request: &presented_request,
+                    step_id: step,
+                    lease_generation: lease,
+                    owner_id: owner,
+                    provider_identity: instance,
+                    clock: ManualClock(1),
+                    deadline_ms: 10,
+                },
+                &mut fake,
+            ),
+            Err(expected),
+            "mismatch case {label}"
+        );
+        assert_eq!(
+            fake.ledger.count(&request.request_id).unwrap(),
+            0,
+            "mismatch case {label} must not create an effect"
+        );
+    }
+
+    let mut permit =
+        SyntheticDispatchPermit::new(request.clone(), "step-a", 7, "owner-a", provider_identity);
+    let mut fake = ScriptedFakeProvider::new(
+        EffectLedger::open(db.0.parent().unwrap().join("matched.sqlite")).unwrap(),
+        [
+            Script::ApplyThenLoseAcknowledgement,
+            Script::ApplyAndAcknowledge,
+        ],
+    );
+    assert_eq!(
+        permit
+            .invoke_once(
+                SyntheticInvocation {
+                    request: &request,
+                    step_id: "step-a",
+                    lease_generation: 7,
+                    owner_id: "owner-a",
+                    provider_identity,
+                    clock: ManualClock(1),
+                    deadline_ms: 10,
+                },
+                &mut fake,
+            )
+            .unwrap(),
+        SimulatedOutcome::Ambiguous
+    );
+    assert_eq!(
+        permit.invoke_once(
+            SyntheticInvocation {
+                request: &request,
+                step_id: "step-a",
+                lease_generation: 7,
+                owner_id: "owner-a",
+                provider_identity,
+                clock: ManualClock(1),
+                deadline_ms: 10,
+            },
+            &mut fake,
+        ),
+        Err(SyntheticPermitRefusal::AlreadyConsumed)
+    );
+    assert_eq!(fake.ledger.count(&request.request_id).unwrap(), 1);
 }

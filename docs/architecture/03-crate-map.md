@@ -1,6 +1,6 @@
 # Crate Map
 
-Architecture version: `serea-arch/2.6.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-08
+Architecture version: `serea-arch/2.8.0` · Status: **FROZEN current contract set** · Base ratified 2026-10-08; P8 V1 direction amendment 2026-10-16
 
 This document fixes how the Serea Core Rust workspace is divided, which crate
 may depend on which, and which planned crates this architecture declines to

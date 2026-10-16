@@ -1,6 +1,6 @@
 # P7–P8 cross-phase contract and test plan
 
-**Status:** Owner-ratified P7 architectural directions; technical details pending; P7B implementation not authorized. See [ADR-0042](../decisions/ADR-0042-p7-owner-ratified-directions.md) and [ratification record](P7-owner-ratification-record.md). P8-D01..D07 remain unapproved.
+**Status:** Owner-ratified P7 architectural directions; technical details pending; P7B implementation authority is limited to the synthetic schema candidate in the 2026-10-16 mandate. See [ADR-0042](../decisions/ADR-0042-p7-owner-ratified-directions.md), [ratification record](P7-owner-ratification-record.md), and the [P8 Owner authorization record](P8-owner-authorized-directions-2026-10-16.md). P8-D01..D07 directions are approved; unresolved exact lifecycle, Receipt, retention and retry clauses remain proposed and fail-closed.
 **Scope:** P7 durable Memory and P8 synthetic provider execution remain independently useful and may not introduce a cyclic dependency.
 
 ## Accepted layering and phase boundary

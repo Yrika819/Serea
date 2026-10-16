@@ -1,6 +1,6 @@
 # ADR-0036: P5 preparation, P6 authorization, and P8 dispatch
 
-Status: **Accepted** · Date: 2026-10-08 · Architecture: `serea-arch/2.6.0`
+Status: **Accepted as amended by ADR-0044** · Original decision: 2026-10-08 · Amendment: 2026-10-16 · Current architecture: `serea-arch/2.8.0`
 
 ## Decision
 
@@ -30,14 +30,19 @@ write transaction spans provider IO. Recovery centers on DISPATCH_INTENT,
 COMPLETED, FAILED, and AMBIGUOUS. No exactly-once claim.
 
 RequestId is per actual provider dispatch attempt and minted by P8 for each
-committed dispatch intent. Same-Step retry retains TaskId, StepId, capability/
-version, arguments, digest, and IDK-1, but has a new RequestId. IDK-1 omits
-provider, implementation, RequestId, and attempt. Alternate implementations
-of one logical capability/version preserve the same logical idempotency meaning.
+committed dispatch intent. Under the Owner-approved initial P8 V1 direction
+(2026-10-16), an already consumed Grant and committed intent do not authorize a
+second effecting attempt for the same Step. There is no automatic same-Step
+effect retry. A new logical action requires a new Step, a new IDK-1 and current
+authorization. Any later same-Step effect retry requires a separate Owner
+decision and protocol reconciliation. IDK-1 omits provider, implementation,
+RequestId, and attempt. Alternate implementations of one logical capability/
+version preserve the same logical idempotency meaning.
 
 `max_tool_calls_per_task` is consumed once per durably committed provider
-dispatch intent, including primary invoke, same-Step retry, and reconciliation
-invoke. Proposal validation/preparation, policy denial, approval pending/
+dispatch intent. Budget treatment of any future retry or read-only
+reconciliation remains **PROPOSED** and cannot grant effect retry authority.
+Proposal validation/preparation, policy denial, approval pending/
 denial/expiry, duplicate suppression, pre-dispatch refusal, and unavailable
 provider consume no unit. A committed intent is never refunded. Migration 0004
 has no tool-call count column.

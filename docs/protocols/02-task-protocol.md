@@ -1,6 +1,6 @@
 # Task Protocol
 
-Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current architecture `serea-arch/2.6.0`**
+Protocol ID: `PROTO-TASK` · Surface: `serea.task/2` · Status: **FROZEN current architecture `serea-arch/2.8.0`**
 
 The `AssistantTask` is Serea's unit of durable work. It is **not** GoalLatch's
 `Goal`. The two are different concepts with different lifecycles, different
@@ -175,7 +175,7 @@ values on raw and owned/borrowed Value paths; it reserves no new wire names.
 
 | Field | Why it exists |
 | --- | --- |
-| `idempotency_key` | Lets a post-crash re-issue be recognized as the same action, not a new one. |
+| `idempotency_key` | Stable identity for one logical action and exact-intent lookup; it does not authorize re-issue. Initial P8 V1 recovery never automatically re-invokes a committed intent. |
 | `attempt` | Bounds retries; distinguishes the crash-recovered attempt from a deliberate retry. |
 | `input_digest` | Duplicate detection without retaining full arguments. |
 | `result_digest` | Detects result corruption or partial writes on recovery. |
@@ -325,9 +325,9 @@ invariant-violation error rather than persisting an illegal state.
    hope.
 2. **One effecting step at a time** per task.
 3. **Lease before execute.** A worker takes a lease (`lease_owner`,
-   `lease_expires_at`) before invoking a provider. An expired lease means the
-   prior worker is presumed dead and the step is reclaimable — reconciled via
-   idempotency key.
+   `lease_expires_at`) before invoking a provider. For initial P8 V1, an
+   expired lease is only a stale-worker signal; it does not authorize provider
+   re-invocation. Recovery must inspect the exact committed dispatch intent.
 4. **Ambiguity blocks, never guesses.** See
    [Capability Protocol §6.2](01-capability-protocol.md#62-the-ambiguous-rule).
 5. **Cancellation is cooperative.** A cancelled task stops taking new steps;
@@ -340,14 +340,18 @@ On startup the host:
 
 1. Opens durable storage and applies pending migrations.
 2. Loads tasks whose state is non-terminal.
-3. For each `EXECUTING` task with an expired lease, reconciles the
-   in-flight step:
-   - No receipt and `replay_safety: IDEMPOTENT` → re-issue with the same
-     idempotency key.
-   - No receipt and `NON_REPLAYABLE`/`CONDITIONAL` → re-issue only under the
-     §6.2 reconciliation rule.
-   - Receipt present → treat as succeeded; ensure the state transition is
-     committed.
+3. For each `EXECUTING` task with an expired lease, inspect the exact durable
+   P8 dispatch intent and its `RequestId`:
+   - An unresolved committed intent is reconcile-only in initial P8 V1. Do not
+     re-invoke it, even with `IDEMPOTENT` replay safety or `NATIVE`
+     idempotency support.
+   - Absence of a committed intent is not itself dispatch authority. A new
+     dispatch must pass the complete current TaskEngine authorization gate and
+     commit its own intent before provider IO.
+   - A validated existing canonical Receipt may follow the existing success
+     path only when its Task/Step eligibility is valid. A late result for a
+     `CANCELLED` Task remains outside that path under the fail-closed interim;
+     it does not revive the Task or create a Receipt.
 4. For each `WAITING_APPROVAL` task, re-renders the pending approval against
    the live device roster. Approvals for absent devices remain pending, never
    auto-granted and never auto-denied.
@@ -417,3 +421,4 @@ They must not be reported implemented or tested from these docs-only changes.
   coordinator records current final workspace/MSRV validation, test counts,
   review and integration status in the [closure record](../plans/P2A-review-and-closure.md).
   Full fencing remains Proposed.
+- 2026-10-16: P8 V1 recovery is narrowed by [ADR-0044](../decisions/ADR-0044-p8-durable-dispatch-v1-directions.md): an expired lease does not authorize effect re-invocation; unresolved committed intents are reconciliation-only; an absent intent still requires the current dispatch gate. No new Task/Step transition or late Receipt authority is defined. Architecture advances to `serea-arch/2.8.0`; wire major remains unchanged.

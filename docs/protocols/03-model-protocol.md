@@ -1,6 +1,6 @@
 # Model Protocol
 
-Protocol ID: `PROTO-MODEL` · Surface: `serea.model/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.6.0`
+Protocol ID: `PROTO-MODEL` · Surface: `serea.model/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.8.0`
 
 This protocol defines the seam between Serea and any language model. Its
 purpose is to make model choice a **configuration** decision rather than an

@@ -1,9 +1,9 @@
 # Serea Protocol Index
 
-Status: **FROZEN current contract set** · Architecture version `serea-arch/2.6.0` · Ratified on 2026-10-08
+Status: **FROZEN current contract set** · Architecture version `serea-arch/2.8.0` · Ratified on 2026-10-16
 
 P0/P1 implementation baseline was `serea-arch/0.2.0`; the current frozen registry
-is architecture/2.6, task/2, action/2, device/2, event/1, scheduler/1 and
+is architecture/2.8, task/2, action/2, device/2, event/1, scheduler/1 and
 envelope version 1. Three corrected
 independent subagent documentation gate reviews under the coordinator are GREEN;
 owner direction ratified the design contingent on GREEN. P2A slices are
@@ -12,8 +12,9 @@ test counts, bounded regression review and integration status in the
 [P2A closure record](../plans/P2A-review-and-closure.md); this index makes no
 separate final-count or closure claim.
 ADR-0034 through ADR-0036 close P5 owner decisions as architecture-minor
-semantics. P5 runtime has not started; P6 and P8 remain future phases.
-Architectural acceptance does not claim registry/runtime delivery.
+semantics. ADR-0044 records limited P8 V1 authority and recovery directions;
+synthetic development remains in progress and does not authorize a production
+provider. Architectural acceptance does not claim runtime delivery.
 
 This document is the naming and versioning authority for every other Serea
 contract. When a type, field, or enum appears in more than one place in the
@@ -48,6 +49,9 @@ Policy, Approval, Event, Data Classification, and Bounds Protocols, and accepted
 [ADR-0034](../decisions/ADR-0034-capability-manifest-registry-and-pinning.md),
 [ADR-0035](../decisions/ADR-0035-tool-proposal-schema-and-prepared-action.md),
 and [ADR-0036](../decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md).
+Initial P8 V1 authority directions are recorded in
+[ADR-0044](../decisions/ADR-0044-p8-durable-dispatch-v1-directions.md); they do
+not authorize production provider execution.
 
 ---
 
@@ -154,8 +158,10 @@ architecture to `serea-arch/2.4.0`; `serea.event/1`, `serea.scheduler/1`,
 
 ADR-0031 through ADR-0033 advance the architecture to `serea-arch/2.5.0`.
 ADR-0034 through ADR-0036 add accepted P5 owner decisions and advance it to
-`serea-arch/2.6.0`. They do not change `serea.action/2` or another wire major;
-ToolCallProposalV1 and PreparedActionV1 are internal handoff values.
+`serea-arch/2.6.0`. ADR-0042/0043 record the P7 directions at 2.7.0; ADR-0044
+advances the architecture to `serea-arch/2.8.0` with the P8 V1 direction
+amendment. These changes do not alter a wire major; ToolCallProposalV1 and
+PreparedActionV1 remain internal handoff values.
 
 ### 4.2 Compatibility rules
 
@@ -278,9 +284,16 @@ rejected at review.
 
 - Trust boundaries and the authority model:
   [Trust Boundaries](../architecture/02-trust-boundaries.md)
+
 - Assets, adversaries, and mitigations: [Threat Model Index](../threat-model/README.md)
 - Where each decision is recorded: [Decision Index](../decisions/README.md)
+
 ## 9. Changelog
+
+- 2026-10-16: ADR-0044 accepts the bounded P8 V1 directions and reconciles
+  Capability Protocol §8.1, Task Protocol §6 and ADR-0036 retry authority.
+  Exact late-result Receipt, retention and additional lifecycle details remain
+  proposed. Architecture advances from 2.7.0 to 2.8.0; wire majors are unchanged.
 
 - 2026-10-07: ADR-0030 adds closed approval lifecycle routing identity and a
   durable Scheduler-to-P6 wake handoff. Architecture advances to

@@ -1,8 +1,19 @@
 # P8A owner decision package — provider execution contract
 
-**Status:** PREIMPLEMENTATION. P8-D01–D07 are **PROPOSED / NOT RATIFIED**; no decision below is ratified.
+**Status:** PREIMPLEMENTATION. Owner-approved directions D01–D07 are recorded in the [2026-10-16 authorization record](P8-owner-authorized-directions-2026-10-16.md). Exact clauses and implementation details not entailed by those directions remain **PROPOSED / NOT ACCEPTED**.
 **Boundary:** P8 alone may invoke a provider, and only after a dedicated dispatch authorization transaction commits. This document does not implement or enable provider execution.
 **Severity:** BLOCKER prevents first invoke; MAJOR is a high-risk contract choice; MINOR is bounded; NOTE records a known limitation.
+
+## 2026-10-16 Owner mandate addendum
+
+The Owner selected the restrictive P8A directions in the linked authorization
+record, including Option B, no automatic same-Step effect retry, AMBIGUOUS
+reconcile-only, Option A as the late-outcome target with Option C interim, and
+no production credentials/providers. This supersedes the earlier statement in
+this package that D01–D07 as a whole await a direction decision. It does not
+accept every matrix cell, state transition or alternative described below.
+Clause-level unresolved details remain marked `PROPOSED`; runtime paths that
+would require one of those details stay fail-closed.
 
 ## Accepted existing contract
 
@@ -84,11 +95,17 @@ Failure before commit means no durable intent, grant use, budget decrement, IDK 
 
 ### P8-D03 — grant consumption and same-Step recovery (**BLOCKER**)
 
+The Owner-approved initial V1 rule in [ADR-0044](../decisions/ADR-0044-p8-durable-dispatch-v1-directions.md)
+supersedes any same-Step retry suggestion in this historical option analysis:
+there is no automatic same-Step effect retry. A new logical operation requires
+a new Step, IDK-1 and current authorization. The table below records the
+approved direction and remaining details; it does not grant a retry exception.
+
 | Case | Proposed rule |
 | --- | --- |
 | Initial dispatch | Consume exactly one R2 member use with intent in same transaction; `UNIQUE(step_id)` remains binding. |
-| Transport retry before provider may have observed request | Reuse same Task/Step/IDK; new RequestId only with a newly committed retry intent if provider semantics and protocol permit. The existing grant use does not create a second use row. |
-| Repeated RequestId issuance | Never mint twice for the same committed intent. A new committed attempt gets a new RequestId and retains same Step IDK. |
+| Transport retry before provider may have observed request | No automatic same-Step effect retry in initial V1. Any later exception is a separate Owner decision. |
+| Repeated RequestId issuance | Never mint twice for the same committed intent. A different logical operation requires a new Step and IDK. |
 | IDK-1 reuse | Same logical Step only. No fresh Step or semantically changed arguments reuse it. New Step after confirmed absence has new key. |
 | Previously consumed grant | A use row proves historical authorization for the one committed logical action only. It does not authorize an unrelated second effect, retry after revocation/policy change, changed args, or new Step. |
 | Grant expired/revoked | Blocks a **new** dispatch/retry intent. It does not erase the committed old intent; recovery may inspect/reconcile that exact action without new external effect. Whether a native same-IDK duplicate-return query counts as an effecting retry needs explicit P8 policy. |
@@ -96,40 +113,27 @@ Failure before commit means no durable intent, grant use, budget decrement, IDK 
 | Task cancellation | Blocks new intent/retry and never reactivates Task. Preserve exact unresolved intent; delayed result cannot enter the normal outcome/Receipt path and remains non-authoritative until P8-D05's approved reconciliation path exists. |
 | New Step after confirmed absence | New StepId/IDK and fresh Policy/Approval; any R2 grant membership is exact to its old enumerated Step and cannot transfer. |
 
-Recommendation: narrow the meaning of a consumed grant to the one atomically committed dispatch intent/member. A new provider effect after that intent requires a separately authorized retry path. If a retry is itself a provider dispatch under the existing ADR-0036 RequestId contract, require a fresh authorization check and decide whether fresh approval is required; never infer permission from `uses_remaining` having been decremented or from the prior member row.
+Approved direction: narrow the meaning of a consumed grant to the one atomically committed dispatch intent/member. A new provider effect cannot be inferred from `uses_remaining` or the prior member row. Any future retry exception, including fresh approval and budget rules, remains **PROPOSED**.
 
-### P8-D04 — AMBIGUOUS and replay/idempotency (**BLOCKER; protocol amendment may be required**)
+### P8-D04 — AMBIGUOUS and replay/idempotency (**Owner direction approved; runtime remains blocked pending implementation and exact reconciliation details**)
 
-The Accepted texts conflict in more than one place. Capability Protocol §6.2 and
-ADR-0036 say an AMBIGUOUS effect is never blindly retried; Capability Protocol
-§8.1 says IDEMPOTENT retry on AMBIGUOUS is “Allowed”; Task Protocol §6 says an
-expired-lease IDEMPOTENT Step is re-issued with the same key. For CONDITIONAL,
-Capability Protocol §8.1 permits same-Step/same-key transport retry after
-confirmed no-effect, but its AMBIGUOUS cell says close the old attempt and use a
-new StepId/key after confirmed absence. These are frozen-contract conflicts,
-not implementation choices. Do not silently rewrite any Accepted text.
-
-**Recommendation (PROPOSED):** approve an explicit Protocol amendment before
-any provider invocation. Until then, P8 must not issue a provider call. The
-amendment should define `IDEMPOTENT` as effect semantics, not authorization to
-retry; forbid automatic re-invocation after AMBIGUOUS; permit only read-only,
-exact-intent reconciliation until an authoritative result exists; distinguish
-a retry proven to precede any possible provider effect from an AMBIGUOUS
-outcome; and resolve same-Step retry versus new-Step-after-absence, RequestId,
-IDK, grant-use, budget and fresh-approval rules together. Provider-native key
-retention and its expiry must be explicit; after that horizon the key gives no
-deduplication guarantee. Alternative: prohibit every replay after an
-invoke-start boundary and require reconciliation or human resolution, even for
-NATIVE/IDEMPOTENT. This is simpler and safer but may leave more Tasks blocked.
+The 2026-10-16 Owner direction resolves the V1 permission conflict: AMBIGUOUS
+is reconcile-only, regardless of `ReplaySafety` or `IdempotencySupport`, and
+there is no automatic same-Step effect retry. The Capability and Task Protocols
+and ADR-0036 now state this restriction. The clauses below that describe
+provider reconciliation and outcome handling remain proposals until their
+authority, evidence, retention and Task/Step lifecycle are specified.
 
 #### Compatibility matrix
 
-Each cell is a provisional safe default. `REPLAY` means same Step, same IDK-1, exact args/binding and new RequestId only for a separately committed retry intent; `RECONCILE` means no provider reinvocation until host-reviewed/provider-authoritative resolution; `FRESH` means old Step closed confirmed-absent and a new Step/IDK with fresh Policy/Approval. The provider's IdempotencySupport never overrides ReplaySafety.
+The current V1 disposition is **RECONCILE** for every AMBIGUOUS combination.
+`FRESH` means a future new logical action uses a new Step/IDK and current
+authorization; it does not follow automatically from provider absence.
 
 | ReplaySafety \ IdempotencySupport | `NATIVE` | `EMULATED` | `NONE` |
 | --- | --- | --- | --- |
-| `IDEMPOTENT` | Same-key replay can be safe only if the provider contract guarantees deduplication for exact IDK across the declared retention horizon; AMBIGUOUS remains reconcile-only until an explicit amendment authorizes a narrow operation. | Host records IDK/dispatch uniquely and prevents second dispatch while prior intent may have reached provider. `RECONCILE`; host emulation alone cannot prove provider did not effect. | No duplicate guarantee; after invoke-started uncertainty, `RECONCILE`, never automatic replay. Confirmed absence → `FRESH`. |
-| `CONDITIONAL` | Retry same Step/key only after authoritative no-effect confirmation, per Protocol §8.1. AMBIGUOUS → `RECONCILE`; confirmed absent closes old Step then `FRESH` under current policy/approval (must resolve the protocol's “same step transport retry” wording). | No-effect confirmation required; emulation blocks duplicate intent but cannot substitute for provider no-effect. AMBIGUOUS → `RECONCILE`, then `FRESH`. | Retry only after authoritative no-effect confirmation; otherwise `RECONCILE`/block; confirmed absent → `FRESH`. |
+| `IDEMPOTENT` | `RECONCILE`; no automatic effect replay, including with `NATIVE`. | `RECONCILE`; host emulation cannot establish provider absence. | `RECONCILE`; no duplicate guarantee. |
+| `CONDITIONAL` | `RECONCILE`; no automatic effect replay. | `RECONCILE`; host emulation cannot establish provider absence. | `RECONCILE`; no duplicate guarantee. |
 | `NON_REPLAYABLE` | Never replay a provider effect; `RECONCILE` or block. Native key does not widen replay safety. | Never replay; `RECONCILE` or block. | Never replay; `RECONCILE` or block. |
 
 #### Failure-stage compatibility
@@ -148,7 +152,10 @@ Each cell is a provisional safe default. `REPLAY` means same Step, same IDK-1, e
 | Policy changed | Fresh intent recomputes current policy. Existing committed intent recovery is limited to that intent; an explicit deny blocks new external effects. |
 | Task cancelled | No new intent/effect. Do not revive Task. Delayed outcomes use only the proposed P8-D05 reconciliation path; until that exists, remain unresolved and do not claim a canonical Receipt. |
 
-Same-Step transport retry and recovery of one committed dispatch are distinct from a fresh action. A retry is a new provider IO and needs an explicit compatibility path; recovery that reads/query-resolves the old RequestId/IDK without issuing another effect is not a retry. A fresh action is a new Step with new IDK and fresh approvals. Required amendment candidate: clarify Capability Protocol §8.1 ambiguous retry cell, same-Step retry language, conditional retry Step identity, and interaction with ADR-0036. No amendment is Accepted here.
+Read-only reconciliation of an existing RequestId/IDK is conceptually distinct
+from a new provider effect, but exact read authority and provider evidence remain
+**PROPOSED**. A fresh action is a new Step with new IDK and current Policy and
+Approval. The initial V1 protocol restriction is recorded in ADR-0044.
 
 ### P8-D05 — receipt, result and success transaction (**BLOCKER**)
 
@@ -278,11 +285,11 @@ The owner must separately resolve details not implied by these recommendations: 
 
 ### Phase gates (proposed; no implementation gate is complete)
 
-**P8A — contract ratification gate.** Owner reviews and ratifies or explicitly defers D01–D07; exact Task/Step/deadline/lease dispatch boundary and one-way provider IO boundary are specified; ADR-0039 Option B remains unchanged; same-Step retry versus new-Step execution and replay-safety wording are resolved, with any separate protocol/ADR amendment identified for owner approval; result/Receipt identity, duplicate authority and cancelled-Task late-result contract are selected; credential-custody boundary and fake-provider requirements are defined sufficiently for their respective future scopes. Conceptual review of constraints and API responsibilities belongs here. P8A does **not** require executable migrations, runtime implementation, or implementation tests to pass.
+**P8A — contract gate.** Owner directions D01–D07 and migration Option A are recorded in ADR-0044. Exact Task/Step/deadline/lease transitions, post-commit cancellation behavior, reconciliation authority, Receipt identity/eligibility, unresolved-intent retention and Forget interaction remain proposed. These do not authorize the paths that depend on them. ADR-0039 Option B is preserved; AMBIGUOUS is reconcile-only and initial V1 has no automatic same-Step effect retry. P8A does not require executable migrations or runtime implementation to pass.
 
-**P8B — schema implementation gate.** Before treating P8 persistence as validated, require actual additive migration validation; matching UNIQUE/PRIMARY KEY parent proof for every composite FK; runtime SQLite integrity and duplicate-intent/RequestId/Receipt constraints; grant-use+intent atomicity; cancellation/late-result/forget retention constraints; rollback and fault-injection evidence. No P8B gate is complete here.
+**P8B — schema implementation gate.** The Owner authorized isolated synthetic candidate work. Before treating P8 persistence as validated, require actual additive migration validation; matching UNIQUE/PRIMARY KEY parent proof for every composite FK; runtime SQLite integrity and duplicate-intent/RequestId/Receipt constraints; grant-use+intent atomicity; cancellation/late-result/forget retention constraints; rollback and fault-injection evidence. Unresolved normative details keep affected schema/runtime paths prototype-only and fail-closed.
 
-**P8C+ — runtime and adversarial closure.** Require the single dispatch API, current Policy/Approval/lease/deadline/availability checks, provider-IO-after-commit proof, deterministic fake-provider matrix, exact result/Receipt validation, late-result and unresolved-effect recovery, restart/concurrency/revocation tests, credential exclusion, and independent adversarial review before any separately authorized real-provider slice. No P8C+ gate is complete here.
+**P8C+ — runtime and adversarial closure.** Synthetic Fake Provider work is authorized only through the canonical TaskEngine → Capability → Storage gate, with no network or credentials. Require current Policy/Approval/lease/deadline/availability checks, provider-IO-after-commit proof, deterministic fault matrix, exact result validation, fail-closed late-result and unresolved-effect recovery, restart/concurrency/revocation tests, credential exclusion, and adversarial review. This does not authorize any real-provider slice.
 
 Owner approval selects a contract; conceptual proof reviews the proposal; executable migration proof validates real DDL/keys; runtime validation tests implementation; production readiness additionally requires adversarial, recovery, portability and operational evidence. These evidence levels are distinct. No implementation gate is marked complete, and contract preparation alone permits no provider invocation.
 

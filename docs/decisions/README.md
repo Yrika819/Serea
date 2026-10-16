@@ -1,6 +1,6 @@
 # Serea Decision Index
 
-Current frozen architecture: `serea-arch/2.7.0`; P0/P1 baseline
+Current frozen architecture: `serea-arch/2.8.0`; P0/P1 baseline
 `serea-arch/0.2.0` remains historical. P2 is closed. P3 is closed on the open
 `main` branch. Current P3 validation results and scope limits belong in the
 [P3 closure record](../plans/P3-closure.md). ADR-0021 remains Proposed as an
@@ -69,7 +69,8 @@ ADR-0041 are Accepted. Their acceptance does not by itself authorize runtime wor
 | [ADR-0033](ADR-0033-structured-validation-repair-and-fallback-v1.md) | Structured validation, repair, and fallback V1 | **Accepted**; architecture `serea-arch/2.5.0`; model and bounds surfaces unchanged |
 | [ADR-0034](ADR-0034-capability-manifest-registry-and-pinning.md) | Host manifest, immutable registry generations, descriptor/implementation pinning and overlays | **Accepted**; architecture `serea-arch/2.6.0`; no wire-major change |
 | [ADR-0035](ADR-0035-tool-proposal-schema-and-prepared-action.md) | Closed tool proposal, trusted schema catalog, classification and PreparedActionV1 | **Accepted**; architecture `serea-arch/2.6.0`; action/2 unchanged |
-| [ADR-0036](ADR-0036-p5-p6-p8-authorization-and-dispatch.md) | P5/P6/P8 boundary, RequestId, accounting and execution deferral | **Accepted**; architecture `serea-arch/2.6.0`; P8 decisions are not P5 blockers |
+| [ADR-0036](ADR-0036-p5-p6-p8-authorization-and-dispatch.md) | P5/P6/P8 boundary, RequestId, accounting and execution deferral | **Accepted as amended by ADR-0044**; P8 retry authority is narrowed for initial V1 |
+| [ADR-0044](ADR-0044-p8-durable-dispatch-v1-directions.md) | Initial P8 V1 dispatch authority, atomic intent, no automatic same-Step effect retry, reconcile-only AMBIGUOUS, late outcome fail-closed interim | **Accepted within scope**; architecture `serea-arch/2.8.0`; synthetic development only; production provider and Gate D not authorized |
 
 ## P2 decision disposition
 

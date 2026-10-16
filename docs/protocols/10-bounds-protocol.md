@@ -1,6 +1,6 @@
 # Bounds Protocol
 
-Protocol ID: `PROTO-BOUNDS` · Surface: `serea.bounds/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.6.0`
+Protocol ID: `PROTO-BOUNDS` · Surface: `serea.bounds/1` · Status: **FROZEN current contract set** · Architecture: `serea-arch/2.8.0`
 
 This protocol makes "bounded orchestration" concrete. It owns every bound the
 host enforces on models, tools, retries, tasks, approvals, and the device link.

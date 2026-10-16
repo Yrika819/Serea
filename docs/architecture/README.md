@@ -1,6 +1,6 @@
 # Serea Architecture
 
-Architecture version: `serea-arch/2.6.0` · Status: **FROZEN current contract set** · Ratified on 2026-10-08
+Architecture version: `serea-arch/2.8.0` · Status: **FROZEN current contract set** · Base ratified 2026-10-08; P8 V1 direction amendment 2026-10-16
 
 This directory is the architecture package for Serea Core. It describes how the
 frozen protocols in [`docs/protocols/`](../protocols/00-protocol-index.md) are
@@ -56,9 +56,9 @@ Neither is allowed to quietly widen the other.
 
 **Three version axes, never collapsed** ([Protocol Index §4](../protocols/00-protocol-index.md#4-versioning)):
 
-| Axis | Current value at `serea-arch/2.6.0` | Governs |
+| Axis | Current value at `serea-arch/2.8.0` | Governs |
 | --- | --- | --- |
-| Architecture version | `serea-arch/2.6.0` | The whole contract set, including this package |
+| Architecture version | `serea-arch/2.8.0` | The whole contract set, including this package |
 | Capability version | Per-descriptor SemVer, e.g. `calendar.events.list` at `1.2.0` | One capability's input/output contract |
 | Wire protocol version | `serea.action/2`, `serea.task/2`; `serea.model/1`, `serea.policy/1`, `serea.approval/1`, `serea.event/1`, `serea.device/2`, `serea.goallatch/1`, `serea.data/1`, `serea.bounds/1`, `serea.scheduler/1` | One transport or serialization surface; envelope version stays 1 |
 
@@ -126,11 +126,20 @@ and bounds wire surfaces remained unchanged at that version.
 
 Accepted ADR-0034 through ADR-0036 close P5 owner decisions: host manifest and
 immutable registry generations, closed tool proposal and trusted schema/
-classification, PreparedActionV1, and the P5/P6/P8 boundary. Architecture
-advances to `serea-arch/2.6.0`; `serea.action/2` and other wire majors remain
-unchanged. P5 runtime, migration 0004, and provider invocation have not started.
-P8 result/receipt/evidence/reconciliation details are deferred and are not P5
-blockers.
+classification, PreparedActionV1, and the P5/P6/P8 boundary. Those decisions
+advanced the architecture to `serea-arch/2.6.0`; `serea.action/2` and other wire
+majors remained unchanged. P8 result/receipt/evidence/reconciliation details
+were deferred and were not P5 blockers.
+
+### 3.9 Current architecture/2.8 contract
+
+Accepted ADR-0044 records the initial P8 V1 dispatch authority and recovery
+restrictions. Grant consumption remains atomic with intent per ADR-0039 Option
+B; consumed Grant history does not authorize another effect; same-Step effect
+retry is not automatic; and AMBIGUOUS is reconcile-only. Late-outcome Receipt
+authority, unresolved-intent retention and exact recovery state transitions
+remain proposed. This version authorizes synthetic development only and does
+not authorize provider credentials, production Memory or real provider calls.
 
 ## 4. Identifier discipline in this package
 

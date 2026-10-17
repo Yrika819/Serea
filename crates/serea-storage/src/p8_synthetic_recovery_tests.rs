@@ -56,6 +56,7 @@ struct SyntheticRegistryPin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyntheticPermitRefusal {
     RequestMismatch,
+    TaskMismatch,
     StepMismatch,
     LeaseGenerationMismatch,
     OwnerMismatch,
@@ -63,25 +64,26 @@ enum SyntheticPermitRefusal {
     RegistryGenerationMismatch,
     DescriptorDigestMismatch,
     OverlayRevisionMismatch,
-    AlreadyConsumed,
     EffectLedgerFailure,
 }
 
-/// Proposed test-only shape for a non-serializable, local one-shot permit.
-/// This type is not a production authorization or provider API.
+/// Test-only shape for a non-serializable, local one-shot permit.
+/// This type is not a production authorization or provider API. Calling
+/// `invoke_once` consumes it even when binding validation refuses the call.
 struct SyntheticDispatchPermit {
     request: SyntheticRequest,
+    task_id: String,
     step_id: String,
     lease_generation: u32,
     owner_id: String,
     provider: SyntheticProviderIdentity,
     registry_pin: SyntheticRegistryPin,
-    consumed: bool,
 }
 
 #[derive(Clone, Copy)]
 struct SyntheticInvocation<'a> {
     request: &'a SyntheticRequest,
+    task_id: &'a str,
     step_id: &'a str,
     lease_generation: u32,
     owner_id: &'a str,
@@ -94,6 +96,7 @@ struct SyntheticInvocation<'a> {
 impl SyntheticDispatchPermit {
     fn new(
         request: SyntheticRequest,
+        task_id: &str,
         step_id: &str,
         lease_generation: u32,
         owner_id: &str,
@@ -102,25 +105,25 @@ impl SyntheticDispatchPermit {
     ) -> Self {
         Self {
             request,
+            task_id: task_id.to_owned(),
             step_id: step_id.to_owned(),
             lease_generation,
             owner_id: owner_id.to_owned(),
             provider,
             registry_pin,
-            consumed: false,
         }
     }
 
     fn invoke_once(
-        &mut self,
+        self,
         invocation: SyntheticInvocation<'_>,
         provider: &mut ScriptedFakeProvider,
     ) -> Result<SimulatedOutcome, SyntheticPermitRefusal> {
-        if self.consumed {
-            return Err(SyntheticPermitRefusal::AlreadyConsumed);
-        }
         if invocation.request != &self.request {
             return Err(SyntheticPermitRefusal::RequestMismatch);
+        }
+        if invocation.task_id != self.task_id {
+            return Err(SyntheticPermitRefusal::TaskMismatch);
         }
         if invocation.step_id != self.step_id {
             return Err(SyntheticPermitRefusal::StepMismatch);
@@ -146,7 +149,6 @@ impl SyntheticDispatchPermit {
 
         // Consume before crossing the fake provider boundary. A failure or
         // ambiguous result cannot reuse this in-memory permit.
-        self.consumed = true;
         provider
             .invoke(invocation.request, invocation.clock, invocation.deadline_ms)
             .map_err(|_| SyntheticPermitRefusal::EffectLedgerFailure)
@@ -625,7 +627,7 @@ fn child_process_termination_preserves_commit_and_effect_ledgers_without_replay(
 }
 
 #[test]
-fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_instance() {
+fn synthetic_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_instance() {
     let db = TempLedger::new();
     let request = SyntheticRequest {
         request_id: "req_synthetic_permit".into(),
@@ -650,6 +652,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
                 request_id: "req_synthetic_wrong".into(),
                 idempotency_key: request.idempotency_key.clone(),
             },
+            "task-a",
             "step-a",
             7,
             "owner-a",
@@ -663,6 +666,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
                 request_id: request.request_id.clone(),
                 idempotency_key: "idk_synthetic_wrong".into(),
             },
+            "task-a",
             "step-a",
             7,
             "owner-a",
@@ -673,6 +677,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         (
             "step",
             request.clone(),
+            "task-a",
             "step-b",
             7,
             "owner-a",
@@ -683,6 +688,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         (
             "lease generation",
             request.clone(),
+            "task-a",
             "step-a",
             8,
             "owner-a",
@@ -693,6 +699,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         (
             "owner",
             request.clone(),
+            "task-a",
             "step-a",
             7,
             "owner-b",
@@ -703,6 +710,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         (
             "provider instance",
             request.clone(),
+            "task-a",
             "step-a",
             7,
             "owner-a",
@@ -716,6 +724,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         (
             "registry generation",
             request.clone(),
+            "task-a",
             "step-a",
             7,
             "owner-a",
@@ -729,6 +738,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         (
             "descriptor digest",
             request.clone(),
+            "task-a",
             "step-a",
             7,
             "owner-a",
@@ -742,6 +752,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         (
             "overlay revision",
             request.clone(),
+            "task-a",
             "step-a",
             7,
             "owner-a",
@@ -752,15 +763,27 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             },
             SyntheticPermitRefusal::OverlayRevisionMismatch,
         ),
+        (
+            "task",
+            request.clone(),
+            "task-b",
+            "step-a",
+            7,
+            "owner-a",
+            provider_identity,
+            registry_pin,
+            SyntheticPermitRefusal::TaskMismatch,
+        ),
     ];
 
     for (
         index,
-        (label, presented_request, step, lease, owner, instance, presented_pin, expected),
+        (label, presented_request, task, step, lease, owner, instance, presented_pin, expected),
     ) in mismatch_cases.into_iter().enumerate()
     {
-        let mut permit = SyntheticDispatchPermit::new(
+        let permit = SyntheticDispatchPermit::new(
             request.clone(),
+            "task-a",
             "step-a",
             7,
             "owner-a",
@@ -780,6 +803,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             permit.invoke_once(
                 SyntheticInvocation {
                     request: &presented_request,
+                    task_id: task,
                     step_id: step,
                     lease_generation: lease,
                     owner_id: owner,
@@ -800,8 +824,9 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         );
     }
 
-    let mut permit = SyntheticDispatchPermit::new(
+    let permit = SyntheticDispatchPermit::new(
         request.clone(),
+        "task-a",
         "step-a",
         7,
         "owner-a",
@@ -820,6 +845,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             .invoke_once(
                 SyntheticInvocation {
                     request: &request,
+                    task_id: "task-a",
                     step_id: "step-a",
                     lease_generation: 7,
                     owner_id: "owner-a",
@@ -833,22 +859,8 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             .unwrap(),
         SimulatedOutcome::Ambiguous
     );
-    assert_eq!(
-        permit.invoke_once(
-            SyntheticInvocation {
-                request: &request,
-                step_id: "step-a",
-                lease_generation: 7,
-                owner_id: "owner-a",
-                provider_identity,
-                registry_pin,
-                clock: ManualClock(1),
-                deadline_ms: 10,
-            },
-            &mut fake,
-        ),
-        Err(SyntheticPermitRefusal::AlreadyConsumed)
-    );
+    // By-value invocation makes a second attempt impossible at this call
+    // site: `permit` was moved whether the result was ACK or AMBIGUOUS.
     assert_eq!(fake.ledger.count(&request.request_id).unwrap(), 1);
 }
 
@@ -870,8 +882,9 @@ fn provider_unavailability_after_intent_commit_consumes_permit_without_effect_or
         descriptor_digest: "sha256:descriptor-ready-at-commit",
         overlay_revision: 12,
     };
-    let mut permit = SyntheticDispatchPermit::new(
+    let permit = SyntheticDispatchPermit::new(
         request.clone(),
+        "task-a",
         "step-unavailable",
         3,
         "owner-synthetic",
@@ -887,6 +900,7 @@ fn provider_unavailability_after_intent_commit_consumes_permit_without_effect_or
     );
     let invocation = SyntheticInvocation {
         request: &request,
+        task_id: "task-a",
         step_id: "step-unavailable",
         lease_generation: 3,
         owner_id: "owner-synthetic",
@@ -906,11 +920,8 @@ fn provider_unavailability_after_intent_commit_consumes_permit_without_effect_or
             .unwrap(),
         0
     );
-    assert_eq!(
-        permit.invoke_once(invocation, &mut fake),
-        Err(SyntheticPermitRefusal::AlreadyConsumed),
-        "readiness loss after commit cannot enable a second attempt"
-    );
+    // `permit` was consumed by the unavailable attempt. No new token is
+    // reconstructed from the committed Intent on this path.
     assert_eq!(fake.ledger.count(&request.request_id).unwrap(), 0);
     drop(intents);
     assert!(
@@ -922,7 +933,7 @@ fn provider_unavailability_after_intent_commit_consumes_permit_without_effect_or
 }
 
 #[test]
-fn mismatched_attempt_does_not_consume_permit_before_a_later_exact_binding() {
+fn mismatched_attempt_burns_by_value_permit_without_effect() {
     let db = TempLedger::new();
     let request = SyntheticRequest {
         request_id: "req_mismatch_then_valid".into(),
@@ -937,8 +948,9 @@ fn mismatched_attempt_does_not_consume_permit_before_a_later_exact_binding() {
         descriptor_digest: "sha256:descriptor-mismatch-probe",
         overlay_revision: 14,
     };
-    let mut permit = SyntheticDispatchPermit::new(
+    let permit = SyntheticDispatchPermit::new(
         request.clone(),
+        "task-a",
         "step-mismatch-probe",
         6,
         "owner-synthetic",
@@ -957,6 +969,7 @@ fn mismatched_attempt_does_not_consume_permit_before_a_later_exact_binding() {
         permit.invoke_once(
             SyntheticInvocation {
                 request: &wrong_request,
+                task_id: "task-a",
                 step_id: "step-mismatch-probe",
                 lease_generation: 6,
                 owner_id: "owner-synthetic",
@@ -970,26 +983,8 @@ fn mismatched_attempt_does_not_consume_permit_before_a_later_exact_binding() {
         Err(SyntheticPermitRefusal::RequestMismatch)
     );
     assert_eq!(fake.ledger.count(&request.request_id).unwrap(), 0);
-    assert!(matches!(
-        permit.invoke_once(
-            SyntheticInvocation {
-                request: &request,
-                step_id: "step-mismatch-probe",
-                lease_generation: 6,
-                owner_id: "owner-synthetic",
-                provider_identity,
-                registry_pin,
-                clock: ManualClock(2),
-                deadline_ms: 10,
-            },
-            &mut fake,
-        ),
-        Ok(SimulatedOutcome::Acknowledged(_))
-    ));
-    assert_eq!(
-        fake.ledger
-            .count_pair(&request.request_id, &request.idempotency_key)
-            .unwrap(),
-        1
-    );
+    // `permit` is moved into the rejected attempt. A subsequent use of that
+    // binding is rejected by Rust's ownership checker (E0382); minting a new
+    // Permit would require a distinct authorization path.
+    assert_eq!(fake.ledger.count(&request.request_id).unwrap(), 0);
 }

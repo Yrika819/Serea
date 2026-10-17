@@ -45,6 +45,20 @@ ADR-0041 are Accepted. Their acceptance does not by itself authorize runtime wor
 | --- | --- | --- |
 | [ADR-0043](ADR-0043-p7-gate-b-limited-v1-and-gate-c-authorization.md) | Explicit 2026-10-12 limited V1 resource/retention direction; host-authenticated Owner and authenticated Forget/ledger contracts; backup/sync deferred; Gate C disabled engineering authorization | **Accepted within scope; Gate D not authorized** |
 
+## P8B Owner-ratified directions (2026-10-17)
+
+[ADR-0045](ADR-0045-p8b-owner-ratified-dispatch-boundaries.md) records the
+Owner-approved D1, D2, D3 and D5 directions and D4 interim unresolved-Intent
+preservation only. It is a draft transcription; the ratification does not
+select the authority-owning crate, durable counter/schema, readiness details,
+Receipt/reconciliation rules, retention policy or exact Event payload. No
+production dispatch or effect is authorized. See the
+[resumable execution plan](../plans/P8B-owner-ratified-execution-plan.md).
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [ADR-0045](ADR-0045-p8b-owner-ratified-dispatch-boundaries.md) | D1 committed-Intent accounting direction; D2 Host-owned live Provider identity/readiness direction; D3 by-value one-shot Permit; D4 interim unresolved evidence preservation; D5 existing `CAPABILITY_REQUESTED` for committed Intent | **Owner-ratified directions only; technical details and runtime gates pending** |
+
 ## Accepted decisions
 
 | ADR | Decision | Status |

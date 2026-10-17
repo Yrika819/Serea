@@ -3803,6 +3803,63 @@ fn full_grant_probe_effect_counts(store: &Store) -> (i64, i64, i64) {
     )
 }
 
+fn full_sqlite_table_rows(
+    store: &Store,
+) -> std::collections::BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
+    let conn = store.conn.lock().unwrap();
+    let tables: Vec<String> = {
+        let mut statement = conn
+            .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    tables
+        .into_iter()
+        .filter(|table| !table.starts_with("sqlite_"))
+        .map(|table| {
+            let escaped = table.replace('"', "\"\"");
+            let columns: Vec<String> = {
+                let mut statement = conn
+                    .prepare(&format!("PRAGMA table_info(\"{escaped}\")"))
+                    .unwrap();
+                statement
+                    .query_map([], |row| row.get(1))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap()
+            };
+            let order = columns
+                .iter()
+                .map(|column| format!("\"{}\"", column.replace('"', "\"\"")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = if order.is_empty() {
+                format!("SELECT * FROM \"{escaped}\"")
+            } else {
+                format!("SELECT * FROM \"{escaped}\" ORDER BY {order}")
+            };
+            let rows = {
+                let mut statement = conn.prepare(&sql).unwrap();
+                let column_count = statement.column_count();
+                statement
+                    .query_map([], |row| {
+                        (0..column_count)
+                            .map(|column| row.get(column))
+                            .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
+                    })
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            };
+            (table, rows)
+        })
+        .collect()
+}
+
 #[test]
 fn test_only_full_grant_set_probe_checks_subset_and_rejects_corruption() {
     fn setup(two: bool) -> (TempDb, Store, GrantId) {
@@ -3893,6 +3950,7 @@ fn test_only_full_grant_set_probe_checks_subset_and_rejects_corruption() {
         vec![STEP_A, STEP_B]
     );
     let before = full_grant_probe_effect_counts(&multi);
+    let before_rows = full_sqlite_table_rows(&multi);
     multi
         .transact(|tx| {
             probe_grant_full_set(
@@ -3908,6 +3966,11 @@ fn test_only_full_grant_set_probe_checks_subset_and_rejects_corruption() {
     assert_eq!(
         before, after,
         "probe is read-only: no Grant use, Event or Request rows"
+    );
+    assert_eq!(
+        before_rows,
+        full_sqlite_table_rows(&multi),
+        "probe is read-only across every ordinary SQLite table row"
     );
     assert!(
         multi
@@ -3990,6 +4053,10 @@ fn test_only_full_grant_set_probe_checks_subset_and_rejects_corruption() {
         (
             "scope-digest",
             "DROP TRIGGER approval_grant_member_no_update; UPDATE approval_grant_members SET scope_digest='sha256:0000000000000000000000000000000000000000000000000000000000000000' WHERE position=0",
+        ),
+        (
+            "request-action",
+            "DROP TRIGGER approval_request_action_no_update; UPDATE approval_request_actions SET arguments_digest='sha256:0000000000000000000000000000000000000000000000000000000000000000' WHERE position=0",
         ),
         (
             "seal",
@@ -4094,6 +4161,13 @@ fn full_set_probe_is_serialized_with_an_independent_sqlite_writer() {
         (path, store, grant)
     };
     let second = Store::open(&path.0, &FixedClock).unwrap();
+    // Prove lock ownership directly before relying on the competing typed
+    // writer's behavior. This connection cannot wait for the Store default
+    // busy timeout, so success here means SQLite itself reports the held lock.
+    let mut lock_witness = Connection::open(&path.0).unwrap();
+    lock_witness
+        .busy_timeout(std::time::Duration::ZERO)
+        .unwrap();
     let (start_tx, start_rx) = std::sync::mpsc::channel();
     let (attempting_tx, attempting_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -4125,6 +4199,16 @@ fn full_set_probe_is_serialized_with_an_independent_sqlite_writer() {
                 )?
                 .len(),
                 2
+            );
+            let lock_attempt = lock_witness
+                .transaction_with_behavior(TransactionBehavior::Immediate);
+            assert!(
+                matches!(
+                    lock_attempt,
+                    Err(rusqlite::Error::SqliteFailure(ref error, _))
+                        if matches!(error.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                ),
+                "independent zero-timeout connection directly witnesses the held writer lock"
             );
             start_tx.send(()).unwrap();
             attempting_rx.recv().unwrap();

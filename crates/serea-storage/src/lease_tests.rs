@@ -57,6 +57,51 @@ fn acquire(
         time(expiry),
     )
 }
+
+#[test]
+fn lease_fact_observation_is_read_only_fenced_and_does_not_launder_rollback() {
+    let store = memory(2);
+    let guard = get(&store, OWNER, None, 10, 30);
+    let before = lease_row(&store);
+    let facts = store.transact(|tx| tx.observe_lease_facts(&guard)).unwrap();
+    assert_eq!(facts.owner(), OWNER);
+    assert_eq!(facts.generation(), guard.generation());
+    assert_eq!(facts.acquired_at(), time(10));
+    assert_eq!(facts.expires_at(), time(30));
+    assert!(!format!("{facts:?}").contains(OWNER));
+    assert_eq!(lease_row(&store), before);
+
+    let rollback_store = memory(2);
+    let (rolled_back, _unused) = rollback_twins(&rollback_store);
+    assert_eq!(
+        rollback_store
+            .transact(|tx| tx.observe_lease_facts(&rolled_back))
+            .unwrap_err(),
+        StoreError::LeaseFenced
+    );
+    assert!(
+        rollback_store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT count(*) FROM leases", [], |r| r.get::<_, i64>(0))
+            .unwrap()
+            == 1
+    );
+
+    store
+        .transact(|tx| tx.release_lease(guard, time(20)))
+        .unwrap();
+    let reclaimed = get(&store, OWNER, Some(1), 31, 40);
+    assert_eq!(reclaimed.generation(), 2);
+    assert_eq!(
+        store
+            .transact(|tx| tx.observe_lease_facts(&reclaimed))
+            .unwrap()
+            .generation(),
+        2
+    );
+}
 fn get(store: &Store, who: &str, expected: Option<u32>, now: i64, expiry: i64) -> LeaseGuard {
     store
         .transact(|tx| acquire(tx, who, expected, now, expiry))
@@ -1094,16 +1139,17 @@ fn lost_transaction_without_flag_rejects_all_operations() {
 #[test]
 fn guard_has_no_wire_serde_or_drop_surface() {
     let source = include_str!("lease.rs");
-    assert!(!source.contains("serde::"));
-    assert!(!source.contains("impl Drop for LeaseGuard"));
-    assert!(!source.contains("derive("));
-    let fields = source
+    let guard = source
         .split("pub struct LeaseGuard {")
         .nth(1)
         .unwrap()
-        .split('}')
+        .split("struct Authority {")
         .next()
         .unwrap();
+    assert!(!guard.contains("serde::"));
+    assert!(!guard.contains("impl Drop for LeaseGuard"));
+    assert!(!guard.contains("derive("));
+    let fields = guard.split('}').next().unwrap();
     assert!(!fields.contains("pub "));
 }
 

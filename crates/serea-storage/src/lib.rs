@@ -68,7 +68,7 @@ pub use approval::{
     ApprovalAutomationContext, ApprovalRequestActionDraft, ApprovalRequestStorageDraft,
     ApprovalResponseDecisionStorage, ApprovalResponseStorageDraft, ApprovalResponseStorageOutcome,
     ApprovalRevocationOutcome, ApprovalRevocationStorageDraft, GrantConsumptionOutcome,
-    action_set_digest as approval_action_set_digest,
+    GrantFactSnapshot, GrantFactStatus, action_set_digest as approval_action_set_digest,
 };
 pub use audit::{
     AuditOperation, DurableTransition, EventDraft, EventParticipant, JournalKind, JournalRecord,
@@ -96,7 +96,9 @@ pub use experimental_memory::{
 compile_error!("p7-experimental is test/development-only and cannot be built optimized");
 #[cfg(all(feature = "p7-gate-c", not(debug_assertions)))]
 compile_error!("p7-gate-c is a disabled development surface and cannot be built optimized");
-pub use lease::{LeaseGuard, StepCommit, StepFailure, StepOutcome, TransitionContext};
+pub use lease::{
+    LeaseFactSnapshot, LeaseGuard, StepCommit, StepFailure, StepOutcome, TransitionContext,
+};
 pub use lifecycle::{CancellationOutcome, DeletionOutcome};
 pub use migrate::{Migration, Migrations};
 pub use model_accounting::{

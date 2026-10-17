@@ -29,7 +29,7 @@ mod recovery;
 mod transition;
 mod types;
 
-pub use engine::TaskEngine;
+pub use engine::{DurableFactMismatch, L1FactObservation, TaskEngine};
 pub use error::EngineError;
 pub use journal::TaskJournal;
 pub use recovery::{RecoveryDecision, RecoveryReport};

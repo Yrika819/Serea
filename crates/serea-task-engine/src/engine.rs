@@ -8,9 +8,83 @@ use serea_protocol::{
     TaskId, TaskKind, TaskOriginKind, TaskState, Timestamp,
 };
 use serea_storage::{
-    ApprovalLifecycleWake, ApprovalWakeApplyOutcome, DeviceSessionResumeWake, EventDraft,
-    PlanWrite, ScheduleOccurrenceLease, StepInput, Store, StoreError,
+    ApprovalLifecycleWake, ApprovalWakeApplyOutcome, CapabilityOverlay, DescriptorRevision,
+    DeviceSessionResumeWake, EventDraft, GrantFactSnapshot, LeaseFactSnapshot, PlanWrite,
+    PolicyRevisionSnapshot, RegistryGeneration, ScheduleOccurrenceLease, StepCapabilityBinding,
+    StepInput, Store, StoreError, TaskSnapshot,
 };
+
+/// A mismatch between caller selectors and facts reloaded from SQLite.
+/// These comparisons report stale or inconsistent pins; they are not a policy
+/// decision and never imply permission to execute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DurableFactMismatch {
+    TaskId,
+    StepId,
+    StepPlanRevision,
+    StepKind,
+    StepInputDigest,
+    RegistryGeneration,
+    RegistryManifestDigest,
+    DescriptorDigest,
+    CapabilityId,
+    CapabilityVersion,
+    ProviderId,
+    ImplementationId,
+    DescriptorProperties,
+    LeaseTaskOrStep,
+    GrantPin,
+    GrantMemberSet,
+    GrantTaskOrMemberDigest,
+}
+
+/// Read-only facts and exact pin comparison results rebuilt in one SQLite
+/// `BEGIN IMMEDIATE` transaction. This is intentionally not an authorization
+/// result, PolicyEvaluation, commit proof, or Permit. Host-authenticated
+/// provenance and a trusted clock are not present in this snapshot.
+pub struct L1FactObservation {
+    task: TaskSnapshot,
+    generation: Option<RegistryGeneration>,
+    binding: Option<StepCapabilityBinding>,
+    descriptor: Option<DescriptorRevision>,
+    overlay: Option<CapabilityOverlay>,
+    policy: Option<PolicyRevisionSnapshot>,
+    lease: LeaseFactSnapshot,
+    grant: Option<GrantFactSnapshot>,
+    mismatches: Vec<DurableFactMismatch>,
+}
+
+impl L1FactObservation {
+    pub fn task(&self) -> &TaskSnapshot {
+        &self.task
+    }
+    pub fn generation(&self) -> Option<&RegistryGeneration> {
+        self.generation.as_ref()
+    }
+    pub fn binding(&self) -> Option<&StepCapabilityBinding> {
+        self.binding.as_ref()
+    }
+    pub fn descriptor(&self) -> Option<&DescriptorRevision> {
+        self.descriptor.as_ref()
+    }
+    pub fn overlay(&self) -> Option<&CapabilityOverlay> {
+        self.overlay.as_ref()
+    }
+    pub fn policy(&self) -> Option<&PolicyRevisionSnapshot> {
+        self.policy.as_ref()
+    }
+    pub fn lease(&self) -> &LeaseFactSnapshot {
+        &self.lease
+    }
+    pub fn grant(&self) -> Option<&GrantFactSnapshot> {
+        self.grant.as_ref()
+    }
+    /// Empty means only that these durable pins matched their selectors. It
+    /// says nothing about missing Host trust roots or execution authority.
+    pub fn mismatches(&self) -> &[DurableFactMismatch] {
+        &self.mismatches
+    }
+}
 
 /// Owns lifecycle orchestration, not identifier entropy, clocks or effect execution.
 /// A successful mutation result is published only after the outer commit succeeds.
@@ -22,6 +96,165 @@ pub struct TaskEngine {
 impl TaskEngine {
     pub fn new(store: Store, event_bus: EventBus) -> Self {
         Self { store, event_bus }
+    }
+
+    /// Rebuilds the durable Task/Step/Plan, Registry, Descriptor, Overlay,
+    /// Policy, Lease and optional Grant facts under one SQLite write
+    /// transaction. `PreparedActionV1` and IDs are selectors/comparison
+    /// targets only. Caller-supplied policy facts are not evaluated here.
+    ///
+    /// An empty mismatch list means the compared durable pins agree. It does
+    /// not authenticate Owner/Worker, establish trusted time or Provider
+    /// readiness, decide whether a Grant is currently unexpired, or authorize
+    /// an effect. The callback performs reads only; no event, Grant use,
+    /// Intent, budget, IDK, RequestId, or Provider call is created.
+    pub fn observe_l1_facts(
+        &self,
+        prepared: &serea_capability::PreparedActionV1,
+        lease_guard: &LeaseGuard,
+        grant_id: Option<&serea_protocol::GrantId>,
+    ) -> Result<L1FactObservation, EngineError> {
+        use serea_protocol::StepKind;
+
+        self.store
+            .transact(|tx| {
+                let task = tx.load_task(prepared.task_id())?;
+                let step = task
+                    .steps
+                    .iter()
+                    .find(|item| item.step.step_id == *prepared.step_id())
+                    .ok_or(StoreError::TaskNotFound)?;
+                let task_generation = tx.get_task_registry_generation(prepared.task_id())?;
+                let generation = task_generation
+                    .map(|id| tx.get_registry_generation(id))
+                    .transpose()?
+                    .flatten();
+                let binding =
+                    tx.get_step_capability_binding(prepared.task_id(), prepared.step_id())?;
+                let descriptor = tx.get_descriptor_revision(prepared.descriptor_digest())?;
+                let overlay = tx.get_capability_overlay(prepared.capability_id())?;
+                let policy = tx.current_policy_revision()?;
+                let lease = tx.observe_lease_facts(lease_guard)?;
+                let grant = grant_id
+                    .map(|id| tx.observe_grant_facts(id, prepared.task_id(), prepared.step_id()))
+                    .transpose()?
+                    .flatten();
+
+                let mut mismatches = Vec::new();
+                if task.task.task_id != *prepared.task_id() {
+                    mismatches.push(DurableFactMismatch::TaskId);
+                }
+                if step.step.step_id != *prepared.step_id() {
+                    mismatches.push(DurableFactMismatch::StepId);
+                }
+                if step.plan_revision != task.plan_revision {
+                    mismatches.push(DurableFactMismatch::StepPlanRevision);
+                }
+                if step.step.kind != StepKind::Capability {
+                    mismatches.push(DurableFactMismatch::StepKind);
+                }
+                if step.step.input_digest != *prepared.arguments_digest() {
+                    mismatches.push(DurableFactMismatch::StepInputDigest);
+                }
+                if task_generation != Some(prepared.generation_id()) {
+                    mismatches.push(DurableFactMismatch::RegistryGeneration);
+                }
+                if lease.task_id() != prepared.task_id() || lease.step_id() != prepared.step_id() {
+                    mismatches.push(DurableFactMismatch::LeaseTaskOrStep);
+                }
+                if let Some(generation) = &generation {
+                    if generation.activated_at().is_none() {
+                        mismatches.push(DurableFactMismatch::RegistryGeneration);
+                    }
+                    if generation.manifest_digest() != prepared.generation_digest() {
+                        mismatches.push(DurableFactMismatch::RegistryManifestDigest);
+                    }
+                } else {
+                    mismatches.push(DurableFactMismatch::RegistryGeneration);
+                }
+                if let Some(binding) = &binding {
+                    if binding.generation_id() != prepared.generation_id() {
+                        mismatches.push(DurableFactMismatch::RegistryGeneration);
+                    }
+                    if binding.descriptor_digest() != prepared.descriptor_digest() {
+                        mismatches.push(DurableFactMismatch::DescriptorDigest);
+                    }
+                    if binding.capability_id() != prepared.capability_id() {
+                        mismatches.push(DurableFactMismatch::CapabilityId);
+                    }
+                    if binding.capability_version() != prepared.capability_version() {
+                        mismatches.push(DurableFactMismatch::CapabilityVersion);
+                    }
+                    if binding.provider_id() != prepared.provider_id() {
+                        mismatches.push(DurableFactMismatch::ProviderId);
+                    }
+                    if binding.implementation_id() != prepared.implementation_id() {
+                        mismatches.push(DurableFactMismatch::ImplementationId);
+                    }
+                } else {
+                    mismatches.push(DurableFactMismatch::DescriptorDigest);
+                }
+                if let Some(descriptor) = &descriptor {
+                    let d = descriptor.descriptor();
+                    if descriptor.descriptor_digest() != prepared.descriptor_digest() {
+                        mismatches.push(DurableFactMismatch::DescriptorDigest);
+                    }
+                    if d.id() != prepared.capability_id() {
+                        mismatches.push(DurableFactMismatch::CapabilityId);
+                    }
+                    if d.version() != prepared.capability_version() {
+                        mismatches.push(DurableFactMismatch::CapabilityVersion);
+                    }
+                    if d.provider_id() != prepared.provider_id() {
+                        mismatches.push(DurableFactMismatch::ProviderId);
+                    }
+                    if d.implementation_id() != prepared.implementation_id() {
+                        mismatches.push(DurableFactMismatch::ImplementationId);
+                    }
+                    if d.risk_class() != prepared.risk_class()
+                        || d.side_effect_class() != prepared.side_effect_class()
+                        || d.required_authorization() != prepared.required_authorization()
+                        || d.root_requirement() != prepared.root_requirement()
+                        || prepared.data_class().rank() > d.data_class().rank()
+                    {
+                        mismatches.push(DurableFactMismatch::DescriptorProperties);
+                    }
+                } else {
+                    mismatches.push(DurableFactMismatch::DescriptorDigest);
+                }
+                if overlay.capability_id() != prepared.capability_id() {
+                    mismatches.push(DurableFactMismatch::CapabilityId);
+                }
+                if let Some(grant) = &grant {
+                    if grant.generation_id() != prepared.generation_id()
+                        || grant.descriptor_digest() != prepared.descriptor_digest()
+                        || grant.capability_id() != prepared.capability_id()
+                        || grant.capability_version() != prepared.capability_version()
+                    {
+                        mismatches.push(DurableFactMismatch::GrantPin);
+                    }
+                    if !grant.sealed() || grant.member_count() != grant.action_count() {
+                        mismatches.push(DurableFactMismatch::GrantMemberSet);
+                    }
+                    if grant.task_id() != prepared.task_id()
+                        || grant.member_arguments_digest() != Some(prepared.arguments_digest())
+                    {
+                        mismatches.push(DurableFactMismatch::GrantTaskOrMemberDigest);
+                    }
+                }
+                Ok(L1FactObservation {
+                    task,
+                    generation,
+                    binding,
+                    descriptor,
+                    overlay: Some(overlay),
+                    policy,
+                    lease,
+                    grant,
+                    mismatches,
+                })
+            })
+            .map_err(EngineError::from)
     }
 
     /// Evaluates a prepared capability action against its current durable Task,

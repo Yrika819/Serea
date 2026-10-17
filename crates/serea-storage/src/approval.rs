@@ -43,6 +43,25 @@ type ExistingGrantResponseRow = (
     i64,
     String,
 );
+type GrantFactRow = (
+    String,
+    String,
+    i64,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    i64,
+    String,
+    i64,
+    i64,
+    Option<String>,
+    Option<String>,
+    bool,
+    i64,
+    bool,
+);
 
 fn read_gate_action_members(
     tx: &mut Tx<'_>,
@@ -229,6 +248,98 @@ pub enum GrantConsumptionOutcome {
     Exhausted,
 }
 
+/// Durable Grant lifecycle value returned by the read-only fact projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrantFactStatus {
+    Active,
+    Revoked,
+    Expired,
+    Exhausted,
+}
+
+/// Bounded, read-only Grant and selected-member facts observed in a `Tx`.
+///
+/// The expiry is not evaluated because Storage has no trusted clock. A
+/// successful read does not consume a use and does not authorize execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantFactSnapshot {
+    grant_id: GrantId,
+    approval_id: ApprovalId,
+    task_id: TaskId,
+    plan_revision: u32,
+    capability_id: CapabilityId,
+    capability_version: SemVer,
+    generation_id: i64,
+    descriptor_digest: Digest,
+    action_set_digest: Digest,
+    action_count: u32,
+    member_count: u32,
+    sealed: bool,
+    status: GrantFactStatus,
+    uses_remaining: u32,
+    expires_at: EpochMillis,
+    member_arguments_digest: Option<Digest>,
+    member_scope_digest: Option<Digest>,
+    already_used: bool,
+}
+
+impl GrantFactSnapshot {
+    pub fn grant_id(&self) -> &GrantId {
+        &self.grant_id
+    }
+    pub fn approval_id(&self) -> &ApprovalId {
+        &self.approval_id
+    }
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+    pub const fn plan_revision(&self) -> u32 {
+        self.plan_revision
+    }
+    pub fn capability_id(&self) -> &CapabilityId {
+        &self.capability_id
+    }
+    pub fn capability_version(&self) -> &SemVer {
+        &self.capability_version
+    }
+    pub const fn generation_id(&self) -> i64 {
+        self.generation_id
+    }
+    pub fn descriptor_digest(&self) -> &Digest {
+        &self.descriptor_digest
+    }
+    pub fn action_set_digest(&self) -> &Digest {
+        &self.action_set_digest
+    }
+    pub const fn action_count(&self) -> u32 {
+        self.action_count
+    }
+    pub const fn member_count(&self) -> u32 {
+        self.member_count
+    }
+    pub const fn sealed(&self) -> bool {
+        self.sealed
+    }
+    pub const fn status(&self) -> GrantFactStatus {
+        self.status
+    }
+    pub const fn uses_remaining(&self) -> u32 {
+        self.uses_remaining
+    }
+    pub const fn expires_at(&self) -> EpochMillis {
+        self.expires_at
+    }
+    pub fn member_arguments_digest(&self) -> Option<&Digest> {
+        self.member_arguments_digest.as_ref()
+    }
+    pub fn member_scope_digest(&self) -> Option<&Digest> {
+        self.member_scope_digest.as_ref()
+    }
+    pub const fn already_used(&self) -> bool {
+        self.already_used
+    }
+}
+
 /// Result of the separate authenticated grant-revocation operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalRevocationOutcome {
@@ -348,6 +459,89 @@ impl Store {
 }
 
 impl Tx<'_> {
+    /// Reads a Grant and its membership/use facts for one exact Task/Step.
+    ///
+    /// No use is consumed. Missing Grant returns `None`; malformed durable
+    /// values fail closed. The caller must compare the projected pins and
+    /// member digest to the transaction-loaded Task/Step/Registry facts. This
+    /// projection is explanatory only and cannot authorize dispatch.
+    pub fn observe_grant_facts(
+        &self,
+        grant_id: &GrantId,
+        task_id: &TaskId,
+        step_id: &StepId,
+    ) -> Result<Option<GrantFactSnapshot>, StoreError> {
+        self.ensure_active()?;
+        let row: Option<GrantFactRow> = self.inner.query_row(
+            "SELECT g.approval_id,g.task_id,g.plan_revision,g.capability_id,g.capability_version,
+                    g.generation_id,g.descriptor_digest,g.action_set_digest,g.action_count,g.status,
+                    g.uses_remaining,g.expires_at_ms,m.arguments_digest,m.scope_digest,
+                    EXISTS(SELECT 1 FROM approval_grant_uses u WHERE u.grant_id=g.grant_id AND u.step_id=?3),
+                    (SELECT count(*) FROM approval_grant_members all_members WHERE all_members.grant_id=g.grant_id),
+                    EXISTS(SELECT 1 FROM approval_grant_seals s WHERE s.grant_id=g.grant_id)
+             FROM approval_grants g
+             LEFT JOIN approval_grant_members m ON m.grant_id=g.grant_id AND m.step_id=?3
+             WHERE g.grant_id=?1 AND g.task_id=?2",
+            params![grant_id.as_str(), task_id.as_str(), step_id.as_str()],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get(15)?,r.get(16)?)),
+        ).optional()?;
+        let Some((
+            approval,
+            task,
+            plan,
+            capability,
+            version,
+            generation,
+            descriptor,
+            action_set,
+            count,
+            status,
+            remaining,
+            expiry,
+            member_args,
+            member_scope,
+            already_used,
+            member_count,
+            sealed,
+        )) = row
+        else {
+            return Ok(None);
+        };
+        let status = match status.as_str() {
+            "ACTIVE" => GrantFactStatus::Active,
+            "REVOKED" => GrantFactStatus::Revoked,
+            "EXPIRED" => GrantFactStatus::Expired,
+            "EXHAUSTED" => GrantFactStatus::Exhausted,
+            _ => return Err(StoreError::CorruptRow),
+        };
+        Ok(Some(GrantFactSnapshot {
+            grant_id: grant_id.clone(),
+            approval_id: ApprovalId::new(approval).map_err(|_| StoreError::CorruptRow)?,
+            task_id: TaskId::new(task).map_err(|_| StoreError::CorruptRow)?,
+            plan_revision: u32::try_from(plan).map_err(|_| StoreError::CorruptRow)?,
+            capability_id: CapabilityId::new(capability).map_err(|_| StoreError::CorruptRow)?,
+            capability_version: SemVer::new(version).map_err(|_| StoreError::CorruptRow)?,
+            generation_id: generation,
+            descriptor_digest: Digest::new(descriptor).map_err(|_| StoreError::CorruptRow)?,
+            action_set_digest: Digest::new(action_set).map_err(|_| StoreError::CorruptRow)?,
+            action_count: u32::try_from(count).map_err(|_| StoreError::CorruptRow)?,
+            member_count: u32::try_from(member_count).map_err(|_| StoreError::CorruptRow)?,
+            sealed,
+            status,
+            uses_remaining: u32::try_from(remaining).map_err(|_| StoreError::CorruptRow)?,
+            expires_at: EpochMillis::new(expiry).map_err(|_| StoreError::CorruptRow)?,
+            member_arguments_digest: member_args
+                .map(Digest::new)
+                .transpose()
+                .map_err(|_| StoreError::CorruptRow)?,
+            member_scope_digest: member_scope
+                .map(Digest::new)
+                .transpose()
+                .map_err(|_| StoreError::CorruptRow)?,
+            already_used,
+        }))
+    }
+
     /// Completes a planned approval gate as NOT_REQUIRED only while its exact
     /// enumerated action group, active Policy revision, Task and gate remain
     /// current. The normal lease/attempt/result lifecycle supplies the required

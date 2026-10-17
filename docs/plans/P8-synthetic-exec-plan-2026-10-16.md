@@ -778,10 +778,21 @@ attempt burns the Permit. Separate P7 blockers remain synthetic Owner issuer
 authentication, 0009 canonical policy/schema approval and independent security
 review. None is implied approved by this unattended engineering instruction.
 
-**Resume point:** rerun final formatting/docs/boundary/preflight checks after
-all docs edits; normal
-commit on `p8b/authority-boundary-2026-10-17`; push this new branch only; open
-one Draft PR stacked on `p8b/overnight-2026-10-17` (PR #26) and capture exact
-new-head Fast/Full/Native/SQLite/Hooks run IDs, attempts and results. Keep
-PRs #19–#26 unchanged and do not merge or close any PR. Continue only with
-safe test-only slices; runtime invoke and all blocked contracts remain closed.
+#### Normal commit checkpoint
+
+The cohesive code slice was committed normally as `132d2d6`
+(`test(p8): pin synthetic permit readiness boundaries`), parented directly on
+PR #26 head `72be5ac56d01765b8c9dea79ee3e4f9d1fc5bbc4`. It contains only the
+Storage test-only Permit/readiness coverage. The current uncommitted change to
+this ExecPlan records the complete local evidence; it will be committed as a
+second normal checkpoint after format/docs/boundary validation. The original
+clone is untouched. No remote ref has been pushed and no new PR has yet been
+created at this checkpoint.
+
+**Resume point:** finish this plan-only checkpoint commit on
+`p8b/authority-boundary-2026-10-17`, fetch/review the #26 base, run explicit
+Git pre-push safety checks, and push this branch only. Open at most one Draft
+PR with base `p8b/overnight-2026-10-17` (PR #26), then capture exact new-head
+Fast/Full/Native/SQLite/Hooks run IDs, attempts and results. Keep PRs #19–#26
+unchanged and do not merge or close any PR. Continue only with safe test-only
+slices; runtime invoke and all blocked contracts remain closed.

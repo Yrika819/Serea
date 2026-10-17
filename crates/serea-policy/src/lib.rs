@@ -430,6 +430,24 @@ impl PolicyRevision {
     }
 }
 
+/// Revalidates P6 against a typed snapshot read by a caller's active Storage
+/// transaction and returns the ordinary non-authorizing policy explanation.
+///
+/// The snapshot's canonical rule digest is verified using the same conversion
+/// path as [`load_active_revision`]. When called from `Store::transact`, the
+/// caller can evaluate the revision read under that transaction's
+/// `BEGIN IMMEDIATE` lock. This function does not commit an Intent, consume a
+/// Grant, or produce execution authority. A caller-created snapshot is only
+/// suitable for explanation and is not evidence of current durable state.
+pub fn evaluate_storage_snapshot(
+    facts: PolicyInputDraft,
+    snapshot: &PolicyRevisionSnapshot,
+) -> Result<PolicyEvaluation, PolicyError> {
+    let revision = PolicyRevision::from_storage(snapshot)?;
+    let input = PolicyInputV1::new(facts, &revision)?;
+    Ok(evaluate_with_evidence(&input, &revision))
+}
+
 /// Persists a complete unactivated revision through Storage's typed authority port.
 pub fn prepare_revision(
     store: &Store,

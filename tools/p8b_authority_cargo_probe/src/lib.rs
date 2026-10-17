@@ -81,3 +81,21 @@ pub fn caller_relabels_policy_evaluation(
         evidence,
     }
 }
+
+/// A downstream crate can read the active Policy snapshot from the same real
+/// Storage transaction and call the pure P6 evaluator before that transaction
+/// exits. The caller still supplies the facts, and the returned explanation
+/// is not an Intent, CommitProof, or Permit.
+pub fn external_transaction_scoped_policy_evaluation(
+    store: &Store,
+    facts: serea_policy::PolicyInputDraft,
+) -> Result<Option<serea_policy::PolicyEvaluation>, StoreError> {
+    store.transact(|tx| {
+        let Some(snapshot) = tx.current_policy_revision()? else {
+            return Ok(None);
+        };
+        serea_policy::evaluate_storage_snapshot(facts, &snapshot)
+            .map(Some)
+            .map_err(|_| StoreError::InvalidPolicyRevision)
+    })
+}

@@ -59,6 +59,16 @@ production dispatch or effect is authorized. See the
 | --- | --- | --- |
 | [ADR-0045](ADR-0045-p8b-owner-ratified-dispatch-boundaries.md) | D1 committed-Intent accounting direction; D2 Host-owned live Provider identity/readiness direction; D3 by-value one-shot Permit; D4 interim unresolved evidence preservation; D5 existing `CAPABILITY_REQUESTED` for committed Intent | **Owner-ratified directions only; technical details and runtime gates pending** |
 
+## P8B authority architecture (2026-10-17)
+
+[ADR-0046](ADR-0046-p8b-authority-ownership.md) compares TaskEngine, Storage,
+and Host ownership based on the executable Cargo/SQLite proof. Candidate C is
+proposed for Owner selection; no topology or runtime API is accepted.
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [ADR-0046](ADR-0046-p8b-authority-ownership.md) | Proposed Host binary coordinator with typed TaskEngine/Storage commit seam | **PROPOSED / NOT RATIFIED** |
+
 ## Accepted decisions
 
 | ADR | Decision | Status |

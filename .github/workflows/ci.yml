@@ -57,6 +57,9 @@ jobs:
       - name: Validate documentation
         run: python3 tools/validate_docs.py docs
 
+      - name: External P8B authority API probes
+        run: python3 tools/p8b_authority_cargo_probe/run.py
+
       - name: Check formatting
         run: cargo +stable fmt --all -- --check
 

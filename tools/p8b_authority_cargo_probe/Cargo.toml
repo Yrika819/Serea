@@ -1,0 +1,17 @@
+[package]
+name = "serea-p8b-authority-external-consumer-probe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace]
+
+[dependencies]
+async-trait = "=0.1.92"
+serea-capability = { path = "../../crates/serea-capability" }
+serea-core = { path = "../../crates/serea-core" }
+serea-policy = { path = "../../crates/serea-policy" }
+serea-protocol = { path = "../../crates/serea-protocol" }
+serea-storage = { path = "../../crates/serea-storage" }
+serea-task-engine = { path = "../../crates/serea-task-engine" }

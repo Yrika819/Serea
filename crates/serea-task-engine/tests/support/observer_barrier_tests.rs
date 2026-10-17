@@ -315,7 +315,7 @@ fn run_race(
             .observe_l1_facts_while_transaction_held(&prepared, &guard, None, |facts| {
                 held_tx.send(()).map_err(|_| StoreError::Sqlite)?;
                 release_rx
-                    .recv_timeout(Duration::from_secs(10))
+                    .recv_timeout(Duration::from_secs(60))
                     .map_err(|_| StoreError::Sqlite)?;
                 if facts.mismatches().is_empty() {
                     Ok(())
@@ -340,13 +340,13 @@ fn run_race(
         let first = writer(&writer_store);
         blocked_tx.send(first.is_err()).unwrap();
         writer_release_rx
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(Duration::from_secs(60))
             .unwrap();
         let retry = Store::open(&writer_path, &FixedClock).unwrap();
         writer(&retry).unwrap();
     });
     assert!(
-        blocked_rx.recv_timeout(Duration::from_secs(7)).unwrap(),
+        blocked_rx.recv_timeout(Duration::from_secs(30)).unwrap(),
         "writer unexpectedly committed under observer lock"
     );
     release_tx.send(()).unwrap();

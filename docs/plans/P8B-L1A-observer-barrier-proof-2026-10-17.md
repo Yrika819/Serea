@@ -35,13 +35,15 @@ The initial full-workspace attempt caught the test-only `CapabilityProvider` and
 
 Observer-specific regression sensitivity was checked in detached scratch worktree `/workspace/Serea-p8b-scratch` with independent `CARGO_TARGET_DIR=/tmp/serea-p8b-red-target`. Mutating the Storage transaction behavior from `Immediate` to `Deferred` caused the Overlay observer test to fail at the lock-witness assertion (`unwrap_err` received `Ok(())`), exit 101 (**RED**). Restoring `Immediate` made the same test pass, 1 passed/0 failed, exit 0 (**GREEN**). The scratch source was restored and `git status` was clean before removing the scratch worktree.
 
+The first Native validation on commit `c06ac369339db7f089263b5e3d1083b152be4507` exposed a bounded-test-timeout issue on Rust 1.85 macOS ARM64: all four observer tests timed out waiting for the competing writer's SQLite busy result at the 7-second receive timeout, while the independent lock witness had succeeded. The observer/writer protocol was not failing its state assertions; the timeout was too short under that runner's parallel test load. The test now waits up to 30 seconds for the writer result and up to 60 seconds for barrier cleanup/release. Stable and 1.85.0 local observer tests both pass with the revised bounds. New-HEAD CI must confirm the cross-platform fix.
+
 The previous standalone Storage and policy transaction tests are adjacent evidence only and do not satisfy this table. No category is marked PASS until the observer's actual transaction is held.
 
 ## Remaining owner/test work and CI
 
 1. Add a normal-path Grant fixture and exercise authenticated revocation through the same observer barrier. Do not use forced SQL updates. Until this exists, overall L1-A remains PARTIAL.
 2. Complete remaining observer-specific negative checks where the fixture/API supports them: mismatched pins, missing Grant, tampered caller `PolicyEvaluation`, and explicit Grant-use/Event/Budget/RequestId/IDK before/after accounting. The external probe confirms caller-mutable policy surface and mutation composition but does not itself instrument an observer runtime ledger.
-3. The new branch still needs GitHub Actions Fast, Full, Native, SQLite, and Hooks at its exact pushed HEAD. The prior PR #31 Actions runs are not evidence for this commit; report pending/absent jobs honestly.
+3. The latest pushed commit must pass GitHub Actions Fast, Full, Native, SQLite, and Hooks at its exact SHA. CI on the superseded `c06ac36…` commit is diagnostic only; the revised 30/60-second test bounds need final-HEAD Native validation.
 
 ## Classification rule
 

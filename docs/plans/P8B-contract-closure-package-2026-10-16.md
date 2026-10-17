@@ -80,12 +80,12 @@ For canonical schema, a counter on Task is easier to retain after Intent
 terminalization, but its lifecycle must be specified together with Task
 deletion.
 
-The atomic Event's type and minimal payload also need an accepted Protocol
-clause. Do not reuse `CapabilityRequested` to claim that a provider dispatch
-was authorized or invoked: request, committed authority, and effect start are
-separate facts. Until a `DispatchIntentCommitted`-style event is accepted,
-event tests should assert transaction rollback/commit mechanics only, not
-semantic completeness.
+Event Protocol §3.3 already assigns `CAPABILITY_REQUESTED` to a durably
+committed P8 Dispatch Intent. That event proves Intent commit only; it does not
+prove provider invocation, effect success, billing, or Receipt. Reuse this
+accepted EventKind by default. Its exact bounded P8 payload is still a
+proposed Owner decision, and transaction tests must not claim payload
+completeness before that decision.
 
 ### Acceptance tests
 
@@ -99,10 +99,14 @@ semantic completeness.
 5. No-intent duplicate suppression and policy/approval/lease refusal consume
    zero. Reconciliation accounting remains NOT RUN / blocked until separately
    accepted.
+6. `max_tool_calls=2`: two distinct approved Steps commit exactly two Intent,
+   Grant-use and Event rows; the reopened Task limit and durable count agree.
 
-The test-only PR #25 follow-up currently implements the zero-limit rollback
-case against the actual Task row and Storage transaction. It does not add a
-production counter or API.
+The test-only PR #25 follow-up implements zero-limit rollback and a limit-one
+race against the actual Task row and Storage transaction. The
+2026-10-17 continuation adds two distinct concurrent eligible Steps that
+commit exactly the two allowed units and asserts the reopened rows. These
+remain test-only candidate mechanics; no production counter or API is added.
 
 The reused P8C simulator also now has test-only separate Intent and Effect
 SQLite ledgers. Added cases reopen both after ACK loss and verify exact
@@ -161,6 +165,24 @@ PROPOSED; no Fake readiness may be treated as production authority.
 4. A Fake provider's readiness values are type-separated from Host runtime
    readiness and never enter production authorization APIs.
 
+### Additional test-only evidence — 2026-10-17
+
+The Storage `cfg(test)` Permit model now pins registry generation,
+descriptor digest and overlay revision in addition to RequestId/IDK,
+Task/Step/Owner, Lease generation and provider instance. A deliberate mutation
+that removed those three comparisons caused the focused test to fail on a
+registry-generation mismatch after the Fake ledger recorded an effect (RED);
+restoring the comparisons passed the Storage P8 selector (GREEN). A separate
+test commits the synthetic Intent, then makes the Fake Provider unavailable
+before the effect write: the Intent remains, the effect ledger stays at zero,
+and the consumed Permit rejects a second call. This does not establish live
+Host readiness or production invocation authority.
+
+The prototype still does not model durable availability. A persisted Ready
+Boolean would not fix the time-of-check/time-of-use gap; a concrete in-process
+provider instance with fresh checks and these revision pins is the recommended
+synthetic boundary, subject to Owner ratification.
+
 ## C. Commit-to-invoke and recovery
 
 ### Accepted
@@ -205,6 +227,19 @@ runtime invoke is connected.
    reconciliation-only after repeated restarts.
 5. Invoke result arrives after cancellation: no Task revival, no canonical
    Receipt, exact RequestId mismatch rejected.
+
+### Unresolved Permit mismatch consumption detail
+
+The current private test simulator checks the presented bindings before
+marking its mutable Permit consumed. A wrong IDK attempt produces no effect,
+and the same Permit can then be used once with the exact RequestId/IDK and
+other bindings. The test `mismatched_attempt_does_not_consume_permit_before_a_later_exact_binding`
+records that behavior. The accepted contracts do not specify whether a
+mismatched call burns the Permit. For a future Rust API, the recommendation is
+to pass a non-Clone Permit by value to `invoke_once`, so every attempted use,
+including a mismatched one, consumes that in-process token; Owner should
+approve or reject this detail before runtime integration. It remains a
+test-only implementation question and creates no current invoke route.
 
 ## D. Intent retention and Forget
 
@@ -378,3 +413,12 @@ is development-only and does not promote a retention contract. Cargo results
 and local build storage are recorded in the current ExecPlan so earlier
 environment observations are not mistaken for current validation. Provider
 dispatch remains absent from TaskEngine and normal Host builds.
+
+The 2026-10-17 continuation adds three revision pins to the private synthetic
+Permit and tests pre-invoke provider unavailability after commit. Guard-removal
+mutation is RED and restored guard is GREEN; exact commands and test totals are
+in the ExecPlan. A further test demonstrates that a mismatched attempt leaves
+the current mutable test Permit reusable for one later exact invocation. The
+future move-consuming API is recommended but remains an Owner decision. No
+Protocol, normal migration, production Storage API, Host/TaskEngine invoke,
+Receipt or retry behavior changed.

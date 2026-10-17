@@ -4666,6 +4666,94 @@ fn real_storage_task_budget_limit_one_serializes_two_eligible_steps() {
 }
 
 #[test]
+fn real_storage_task_budget_limit_two_commits_exactly_two_eligible_steps() {
+    let (path, setup) = p8_real_storage_fixture_with_two_eligible_steps(2);
+    drop(setup);
+
+    let workers = [
+        (
+            STEP_A,
+            "req_00000000000000000000000070",
+            "evt_00000000000000000000000070",
+        ),
+        (
+            STEP_B,
+            "req_00000000000000000000000071",
+            "evt_00000000000000000000000071",
+        ),
+    ];
+    let barrier = Arc::new(Barrier::new(3));
+    let joins = workers.map(|(step_id, request_id, event_id)| {
+        let store = Store::open(&path.0, &FixedClock).unwrap();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            p8_real_storage_commit_probe_for_step(
+                &store,
+                step_id,
+                request_id,
+                event_id,
+                P8TestProviderReadiness::SyntheticReadyForCompositionOnly,
+                false,
+                false,
+            )
+        })
+    });
+    barrier.wait();
+    let outcomes = joins.map(|join| join.join().unwrap());
+    assert_eq!(
+        outcomes.iter().filter(|result| result.is_ok()).count(),
+        2,
+        "both distinct approved Steps should fit exactly within budget 2: {outcomes:?}"
+    );
+
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    reopened.verify_integrity().unwrap();
+    let conn = reopened.conn.lock().unwrap();
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT max_tool_calls FROM tasks WHERE task_id='tsk_01JQ8Z9K3M7QWXR4V2T6YH0BNA'"
+        )
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM dispatch_intents").unwrap(),
+        2
+    );
+    assert_eq!(
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        2
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT uses_remaining FROM approval_grants WHERE grant_id=?1",
+            [GRANT],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(*) FROM event_content WHERE message_id IN ('evt_00000000000000000000000070','evt_00000000000000000000000071')"
+        )
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        scalar(
+            &conn,
+            "SELECT count(DISTINCT step_id) FROM dispatch_intents"
+        )
+        .unwrap(),
+        2
+    );
+}
+
+#[test]
 fn real_storage_boundary_fails_closed_on_event_failure_revocation_policy_and_lease_change() {
     // Event persistence failure after the P6 use and candidate Intent has
     // started must roll the entire SQLite transaction back.

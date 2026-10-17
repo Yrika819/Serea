@@ -105,6 +105,135 @@ fn prepared_revision_activates_with_audited_event_and_evaluates_from_sqlite_snap
         PolicyDecision::Allow
     );
     assert_eq!(load_active_revision(&store).unwrap().unwrap(), activated);
+
+    let facts = sample_input(&activated).facts().clone();
+    let transaction_evaluation = store
+        .transact(|tx| {
+            let snapshot = tx
+                .current_policy_revision()?
+                .ok_or(serea_storage::StoreError::InvalidPolicyRevision)?;
+            crate::evaluate_storage_snapshot(facts, &snapshot)
+                .map_err(|_| serea_storage::StoreError::InvalidPolicyRevision)
+        })
+        .unwrap();
+    assert_eq!(
+        transaction_evaluation,
+        crate::evaluate_with_evidence(&sample_input(&activated), &activated)
+    );
+
+    let snapshot = store.current_policy_revision().unwrap().unwrap();
+    let mut tampered = snapshot.clone();
+    tampered.rules_digest =
+        serea_protocol::Digest::new(format!("sha256:{}", "0".repeat(64))).unwrap();
+    assert!(
+        crate::evaluate_storage_snapshot(sample_input(&activated).facts().clone(), &tampered)
+            .is_err()
+    );
+}
+
+#[test]
+fn active_policy_change_waits_for_transaction_scoped_p6_evaluation() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let path = std::env::temp_dir().join(format!(
+        "serea-policy-transaction-{}-{}.sqlite",
+        std::process::id(),
+        EpochMillis::new(2_000).unwrap().get()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let bus = event_bus();
+    let setup = Store::open(&path, &TestClock::default()).unwrap();
+    let allow = prepare(&setup);
+    let active = activate_revision(
+        &setup,
+        &bus,
+        &allow,
+        EpochMillis::new(2_000).unwrap(),
+        serea_protocol::SemVer::new("0.1.0").unwrap(),
+    )
+    .unwrap();
+    let facts = sample_input(&active).facts().clone();
+    let deny = PolicyRule::new(
+        "deny_mail_read",
+        100,
+        true,
+        RuleMatch {
+            capability_id: Some(CapabilityId::from_str("mail.messages.list").unwrap()),
+            risk_class: Some(RiskClass::Observe),
+            ..RuleMatch::default()
+        },
+        RuleDecision::Deny(crate::DenyReason::PolicyRuleDenied),
+    )
+    .unwrap();
+    let pending_deny = prepare_revision(
+        &setup,
+        vec![deny],
+        EpochMillis::new(3_000).unwrap(),
+        PolicyActorClass::Host,
+        ActorId::new("serea-core").unwrap(),
+        ReasonCode::new("POLICY_IMPORT").unwrap(),
+    )
+    .unwrap();
+    let pending_deny_id = pending_deny.revision_id();
+    drop(setup);
+
+    let reader_store = Store::open(&path, &TestClock::default()).unwrap();
+    let writer_store = Store::open(&path, &TestClock::default()).unwrap();
+    let (held_tx, held_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (writer_started_tx, writer_started_rx) = mpsc::channel();
+    let (writer_done_tx, writer_done_rx) = mpsc::channel();
+    let writer_bus = bus;
+    let reader = std::thread::spawn(move || {
+        reader_store
+            .transact(|tx| {
+                let snapshot = tx
+                    .current_policy_revision()?
+                    .ok_or(serea_storage::StoreError::InvalidPolicyRevision)?;
+                let decision = crate::evaluate_storage_snapshot(facts, &snapshot)
+                    .map_err(|_| serea_storage::StoreError::InvalidPolicyRevision)?
+                    .decision;
+                held_tx.send(decision).unwrap();
+                release_rx.recv().unwrap();
+                Ok(decision)
+            })
+            .unwrap()
+    });
+    assert_eq!(held_rx.recv().unwrap(), PolicyDecision::Allow);
+    let writer = std::thread::spawn(move || {
+        writer_started_tx.send(()).unwrap();
+        let result = activate_revision(
+            &writer_store,
+            &writer_bus,
+            &pending_deny,
+            EpochMillis::new(4_000).unwrap(),
+            serea_protocol::SemVer::new("0.1.0").unwrap(),
+        );
+        writer_done_tx.send(result.is_ok()).unwrap();
+    });
+    writer_started_rx.recv().unwrap();
+    assert!(
+        writer_done_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+    release_tx.send(()).unwrap();
+    assert_eq!(reader.join().unwrap(), PolicyDecision::Allow);
+    assert!(writer_done_rx.recv_timeout(Duration::from_secs(5)).unwrap());
+    writer.join().unwrap();
+
+    let reopened = Store::open(&path, &TestClock::default()).unwrap();
+    let current = load_active_revision(&reopened).unwrap().unwrap();
+    assert_eq!(current.revision_id(), pending_deny_id);
+    assert_eq!(
+        evaluate(&sample_input(&current), &current),
+        PolicyDecision::Deny(crate::DenyReason::PolicyRuleDenied)
+    );
+    drop(reopened);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
 }
 
 #[test]

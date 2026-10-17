@@ -2,9 +2,9 @@
 
 ## Executive summary
 
-**Status: L1-B feasibility remains PARTIAL / NOT RATIFIED; production dispatch is disabled.** The only code change is in the private Storage test module: a test-only Request-action corruption case and an independent SQLite lock witness were added. The full Grant probe remains disconnected from runtime authorization. ADR-0046 remains PROPOSED / NOT RATIFIED.
+**Status: L1-B feasibility remains PARTIAL / NOT RATIFIED; production dispatch is disabled.** The code changes are confined to the private Storage test module: a test-only Request-action corruption case, an independent SQLite lock witness, and a before/after snapshot comparison of every ordinary SQLite table row were added. The full Grant probe remains disconnected from runtime authorization. ADR-0046 remains PROPOSED / NOT RATIFIED.
 
-PR #35 was verified at its expected HEAD and the new branch was based directly on it. Its five required Actions workflows were successful on that exact baseline SHA. No change was made to PR #35, PR #34, `main`, or the source checkout. A single stacked Draft PR is intended only after final local validation; record the URL/HEAD below if publication succeeds.
+PR #35 was verified at its expected HEAD and the new branch was based directly on it. Its five required Actions workflows were successful on that exact baseline SHA. No change was made to PR #35, PR #34, `main`, or the source checkout. A single stacked Draft PR #36 was published at https://github.com/Yrika819/Serea/pull/36, based on PR #35. Its first published SHA (4cc1fd545336fb4693080e1d18761bdd391f53f8) preceded the all-table snapshot follow-up; the handoff report records the final branch HEAD and exact-SHA Actions.
 
 ## 1. Completion and repository state
 
@@ -13,7 +13,7 @@ PR #35 was verified at its expected HEAD and the new branch was based directly o
 - PR #34 HEAD: `f3804a643e6334bc4f1dddfea1a0c096c1fd7a13`, ancestor of PR #35. `main`: `e0acb0254820c381dd97828824bef86a1db5176c`.
 - No PR #36 was present at initial audit.
 - Isolated worktree: `/workspace/Serea-overnight`; branch `codex/p8b-overnight-2026-10-18`, based at PR #35 HEAD. Source checkout `/workspace/Serea` stayed clean and on branch `work` at the start.
-- Final branch HEAD / Draft PR / CI summary: **fill after final commit and Actions completion**.
+- Final branch HEAD will be recorded in the handoff after the final commit and exact-SHA Actions complete.
 - Changed files: `crates/serea-storage/src/migration_0005_tests.rs`; this report; `docs/plans/P8B-overnight-campaign-2026-10-18.md`.
 - Production code, public APIs, migrations, schema catalog, ADR-0046 status, PR #35, PR #34, and `main` were not changed.
 
@@ -56,9 +56,9 @@ Existing hostile fixtures cover missing Grant member, position gap/reordering, m
 
 ### Read-only and RED/GREEN
 
-The existing fixture compares Grant-use/Event/Request counts around the probe and tests rollback/reopen/integrity; this counter assertion alone does not establish all-table byte-for-byte invariance. The probe implementation is SELECT-only, and no runtime use path calls it.
+The fixture compares Grant-use/Event/Request counts and snapshots every ordinary SQLite table row before and after the probe, establishing row-level read-only behavior for the exercised database image. It orders rows by all declared columns so it also works with rowid-less FTS shadow tables. This does not establish byte-for-byte file invariance (SQLite may change journaling metadata), cover schema objects or internal tables, or provide a general attacker-proof audit. The probe implementation is SELECT-only, and no runtime use path calls it.
 
-The real predicate `member_arguments != action.arguments_digest.as_str()` was temporarily mutated to `false` in the isolated branch. The full-set corruption test failed at the `digest` hostile fixture, demonstrating that it detects this actual validation-logic mutation. The original predicate was restored and the same test passed GREEN. Scratch mutation was not committed.
+The real predicate `member_arguments != action.arguments_digest.as_str()` was temporarily mutated to `false` in the isolated branch. The full-set corruption test failed at the `digest` hostile fixture, demonstrating that it detects this actual validation-logic mutation. The original predicate was restored and the same test passed GREEN. The fixture also compares all ordinary table rows before and after successful probing. Scratch mutation was not committed.
 
 Status when all final commands pass: `G_FULL_SET_TEST_ONLY_PROVEN`; runtime Grant authorization unchanged.
 
@@ -90,10 +90,11 @@ PR #35 exact HEAD's Native run `39044878224` passed all 12 Stable/MSRV × Linux/
 |---|---|
 | `cargo +stable test -p serea-storage --lib full_set_probe_is_serialized_with_an_independent_sqlite_writer --locked` | PASS, 1 test; direct lock witness and typed writer release path |
 | `cargo +stable test -p serea-storage --lib test_only_full_grant_set_probe_checks_subset_and_rejects_corruption --locked` | PASS, 1 test after Request-action hostile fixture |
-| Same Grant corruption test with real arguments predicate temporarily disabled | Expected RED: failed at `digest` hostile fixture; source restored; restored source then passed GREEN |
+| Same Grant corruption test with real arguments predicate temporarily disabled | Expected RED: failed at `digest` hostile fixture; source restored; restored source then passed GREEN. Mutation log saved outside repo at `/workspace/.serea-build/grant-red-green.log` |
 | `cargo +stable fmt --all -- --check` | PASS |
-| `cargo +stable test --workspace --all-targets --all-features --locked` | PASS on isolated retry; 647 Storage unit tests passed, all other reported test binaries completed without failure. First attempt hit 4.9 GiB `/tmp` quota during parallel linking; retry used workspace overlay and `CARGO_BUILD_JOBS=2`. Two manual resource benchmarks are marked ignored by the project. |
-| `cargo +1.85.0 test --workspace --all-targets --all-features --locked` | PASS; 647 Storage unit tests passed, all other reported test binaries completed without failure. Two manual resource benchmarks are marked ignored by the project. |
+| Targeted Grant corruption and independent SQLite writer tests | PASS under Stable and Rust 1.85.0 after final helper fix; each test passed individually |
+| `cargo +stable test --workspace --all-targets --all-features --locked --offline` | PASS on final code; 647 Storage unit tests passed, all other test binaries completed without failure. First attempt hit 4.9 GiB `/tmp` quota during parallel linking; retry used workspace overlay and `CARGO_BUILD_JOBS=2`. An intermediate all-table snapshot attempt exposed the rowid-less FTS shadow-table case; helper now orders by every declared column and both targeted tests plus the full suite pass. Two manual resource benchmarks are marked ignored by the project. |
+| `cargo +1.85.0 test --workspace --all-targets --all-features --locked --offline` | PASS on final code; 647 Storage unit tests passed, all other test binaries completed without failure. Two manual resource benchmarks are marked ignored by the project. |
 | Stable workspace `check` and `clippy -- -D warnings` | PASS |
 | Rust 1.85.0 workspace `check` and `clippy -- -D warnings` | PASS |
 | `cargo +stable check -p serea-host --release --no-default-features --locked --offline` | PASS |
@@ -105,15 +106,15 @@ PR #35 exact HEAD's Native run `39044878224` passed all 12 Stable/MSRV × Linux/
 
 ### Final exact HEAD Actions
 
-Record every workflow and exact run ID for the final pushed HEAD. Do not copy baseline SHA outcomes into this section.
+The first published SHA `4cc1fd545336fb4693080e1d18761bdd391f53f8` is preliminary: Fast CI and Git hooks completed successfully; Full CI, Native and SQLite portability remained queued at the time of the next local audit. It predates the all-table snapshot follow-up. The handoff records the exact final-SHA workflow run IDs and conclusions. Do not copy baseline SHA outcomes into that record.
 
 | Workflow | Run ID | Head SHA | Conclusion |
 |---|---:|---|---|
-| Fast CI | pending | pending | pending |
-| Full CI | pending | pending | pending |
-| Native platform validation (12 jobs) | pending | pending | pending |
-| Cross-architecture SQLite portability | pending | pending | pending |
-| Git hooks Windows compatibility | pending | pending | pending |
+| Fast CI | 39053418119 | 4cc1fd545336fb4693080e1d18761bdd391f53f8 | success (preliminary SHA) |
+| Full CI | 39053418085 | 4cc1fd545336fb4693080e1d18761bdd391f53f8 | queued at next audit; preliminary SHA |
+| Native platform validation (12 jobs) | 39053418122 | 4cc1fd545336fb4693080e1d18761bdd391f53f8 | queued at next audit; preliminary SHA |
+| Cross-architecture SQLite portability | 39053418124 | 4cc1fd545336fb4693080e1d18761bdd391f53f8 | queued at next audit; preliminary SHA |
+| Git hooks Windows compatibility | 39053418118 | 4cc1fd545336fb4693080e1d18761bdd391f53f8 | success (preliminary SHA) |
 
 No failing code-level CI is considered fixed without a reproducer, log-based cause, bounded correction and successful final-SHA rerun. Keep queued/runner-unavailable jobs as pending.
 

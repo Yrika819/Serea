@@ -23,15 +23,15 @@ The threat model covers untrusted API inputs and arbitrary downstream Cargo cons
 
 | Attack | Expected refusal / evidence | State |
 |---|---|---|
-| Relabel Allow, replay old evidence, override REQUIRE/DENY | evaluate from verified current rules; stale/mismatch is typed denial | pending |
-| Caller chooses time, Owner, Task/Step, Lease, Provider, readiness, registry pin | derived/reloaded facts or fail closed; caller-only values cannot mint proof | pending |
-| Grant-use + Event only | reachable public API is documented; no Intent/Permit follows | pending |
-| Public Intent writer / arbitrary RequestId or IDK | absent API or typed invariant refusal | pending |
-| Policy mutation, Grant revoke/expiry, Task cancel, Plan/Lease/Registry/Overlay race | transaction ordering and stale facts refuse | pending |
-| Swap/remove same-ID Host Provider, stale Ready, Overlay change | exact instance/generation check refuses; no effect | pending |
-| Crash after commit/before Permit, before invoke, effect/ACK loss, restart | no restored/replayed Permit; no automatic effect retry | pending |
-| Permit construction/Clone/Serde/Default/From/unsafe | private constructor, ownership, compile denial; no unsafe | pending |
-| Prune Event / delete or restore unresolved Intent | intent evidence retained or unknown DB quarantined; no replay | pending |
+| Relabel Allow, replay old evidence, override REQUIRE/DENY | External consumer compiles public outer `PolicyEvaluation.decision` relabeling; new C1 path always recomputes from typed snapshot rules and rejects digest tampering | Caller can still supply facts and typed snapshots; no authority consumer exists to reject its fabricated explanation. REQUIRE/DENY mutation cases were not all tied to transaction commit. |
+| Caller chooses time, Owner, Task/Step, Lease, Provider, readiness, registry pin | Existing public Grant-use takes caller `now`; downstream provider implements trait/default Ready; these are compiled by external consumer | These values are not coupled to a genuine P8 commit. Full Host binding/refusal not exercised. |
+| Grant-use + Event only | Both operations compose in external public `Store::transact` and compile | Neither creates Intent/Permit. The test is compile reachability, not durable runtime authorization. |
+| Public Intent writer / arbitrary RequestId or IDK | No normal P8 writer/Permit/proof type exists in these crates; external imports for `CommitProof` and synthetic Permit fail E0432 | Future proof writer/schema/replay semantics are unimplemented, so cannot claim runtime invariant denial. |
+| Policy mutation, Grant revoke/expiry, Task cancel, Plan/Lease/Registry/Overlay race | Current-policy two-Store race is serialized under `BEGIN IMMEDIATE`; baseline candidate Storage suites exercise several refusal cases | Grant/task/Plan/Lease/Registry/Overlay cases were not joined to the new P6 evaluation in one authoritative transaction. |
+| Swap/remove same-ID Host Provider, stale Ready, Overlay change | Existing capability API permits downstream Ready; Host is binary-only | No actual Host-private coordinator, instance identity pin, readiness recheck or invoke was implemented. |
+| Crash after commit/before Permit, before invoke, effect/ACK loss, restart | Existing Storage-only synthetic tests exercise rollback/reopen/no replay | No genuine commit result exists, so no commit-to-Permit crash boundary is joined or claimed. |
+| Permit construction/Clone/Serde/Default/From/unsafe | No current public `CommitProof`/Permit symbol (E0432); no new public factory and no unsafe introduced | Cannot claim Clone/Serde resistance of a future Permit from an unresolved import. |
+| Prune Event / delete or restore unresolved Intent | Baseline PR #29 candidate Storage tests cover candidate row retention/event expiry | Not connected to the new Policy/Host seam; restore quarantine and production Forget remain unimplemented. |
 
 ## Plan and evidence log
 
@@ -76,4 +76,4 @@ The threat model covers untrusted API inputs and arbitrary downstream Cargo cons
 
 ## Results and unresolved Owner decisions
 
-No architecture selection or production activation is implied by this plan. Preserve ADR-0046 as Proposed. Preliminary result is `C1_C2_PROOF_PARTIAL`: transaction-scoped evaluation of the existing immutable P6 rule snapshot is demonstrated, but evaluator crate extraction, full authoritative transaction inputs, public bypass closure, and commit-to-Host-private-Permit issuance are not. RED/GREEN and release/default isolation now pass. Final classification still awaits exact-head Actions. Remaining Owner decisions include authority crate/API owner, Host instance/readiness contract, durable D1 budget/schema and OBSERVE shape, D5 exact Event schema, D4 retention/restore/Forget, and separate Receipt/reconciliation/P7 gates.
+No architecture selection or production activation is implied by this plan. Preserve ADR-0046 as Proposed. Final source-level classification is `C1_C2_PROOF_PARTIAL`: transaction-scoped evaluation of the existing immutable P6 rule snapshot is demonstrated, but evaluator crate extraction, full authoritative transaction inputs, public bypass closure, and commit-to-Host-private-Permit issuance are not. RED/GREEN and release/default isolation pass. Exact-head GitHub Actions will be checked after the Draft PR head is created; their run IDs and conclusions are reported with the final handoff. Remaining Owner decisions include authority crate/API owner, Host instance/readiness contract, durable D1 budget/schema and OBSERVE shape, D5 exact Event schema, D4 retention/restore/Forget, and separate Receipt/reconciliation/P7 gates.

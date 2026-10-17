@@ -16,7 +16,8 @@
 - PR #30: open Draft、head `ba16eaa7c45e51e30aa3185bd6f6a96484ba3c42`、base branch `p8b/authority-architecture-proof-2026-10-17`。PR #29 head `bb4c4d2b8a3bf015d735ab0ad519523f6b961299` は祖先。
 - 元checkout `/workspace/Serea`: mainでcleanのまま。
 - 隔離worktree: `/workspace/Serea-p8b-l1a`、branch `codex/p8b-l1a-facts-proof-2026-10-17`。作業開始HEADはPR #30 exact HEAD。
-- 作業ブランチの最終commit、push SHA、Draft PR URL、exact-head Actionsはpush後に記録する。
+- 実装commit: `5ceb23b53e9341af2d6af78c053a7abba20d98d6` (`feat(p8b): observe transaction-scoped durable L1 facts`)。
+- Draft PR #31: https://github.com/Yrika819/Serea/pull/31。head branch `codex/p8b-l1a-facts-proof-2026-10-17`、baseはPR #30 branch。
 - #31以降のopen Draftはintake時に存在しなかった。#14と#19–#30はopen Draft。branch protection APIは403で状態不明。#30の既存Fast/Full/Native 12/SQLite 4/Git Hooksは全成功だが、今回の検証ではない。
 
 ## 実装
@@ -73,7 +74,7 @@
 - 両toolchain `cargo metadata --locked --offline --format-version 1`: PASS。
 - 最終ソースでworkspace all-targets/all-features testはStableとRust 1.85.0両方exit 0。Stable/MSRV fmt、workspace check、Clippy `-D warnings`、release Host `--no-default-features` checkもPASS。全featuresはdevelopment test surfacesを含むQA設定であり、production Provider/Memoryを有効化していない。
 - docs validator: 152 Markdown PASS。workspace smoke PASS。unittest 82 PASS。static Synthetic Host boundary PASS。Core API boundaryはPATH未設定の初回を明示的Rust PATHで再実行してPASS。`git diff --check`: PASS。
-- 今回branchのexact-head GitHub Actions: push後に追記。main/PR #30の既存workflow結果は今回のHEADの検証に転用しない。
+- 実装commit `5ceb23b53e9341af2d6af78c053a7abba20d98d6` exact-head Actionsは全成功: Fast CI `39017188986`、Full CI `39017188975`、Native platform validation (12 jobs) `39017188954`、Cross-architecture SQLite portability (4 jobs) `39017188930`、Git hooks Windows compatibility `39017188973`。main/PR #30の既存workflow結果は今回のHEADの検証に転用していない。
 
 ## 未証明事項とOwner判断
 
@@ -90,5 +91,6 @@
 ## Git / 再開点
 
 - ADR-0046はProposedのまま。schema/migration/catalog/feature/architecture versionに変更なし。
-- Final branch HEAD / commit / Draft PR / exact-head workflow run IDsはpush後に記録する。
+- 実装branch HEAD: `5ceb23b53e9341af2d6af78c053a7abba20d98d6`。Draft PR #31はOPEN/DRAFT、exact-head workflow IDsはLocal QA / CI節を参照。
+- この報告の追記後はdocs-only commitとなるため、その新しいfinal HEADのworkflow結果を最終引渡しに記録する。
 - 再開worktree: `/workspace/Serea-p8b-l1a`。基点HEAD: PR #30 `ba16eaa7c45e51e30aa3185bd6f6a96484ba3c42`。次の対象: `TaskEngine::observe_l1_facts`、`Tx::observe_lease_facts`、`Tx::observe_grant_facts`、および前項のOwner判断。

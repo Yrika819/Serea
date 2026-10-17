@@ -167,12 +167,14 @@ unknown provenance blocked.
 | Same-transaction cross-fact observation | Completed, non-authorizing | `TaskEngine::observe_l1_facts`; external trust facts remain unavailable |
 | Real SQLite adversarial/race/reopen evidence | Partial | File-backed observation and Grant reopen; existing adjacent independent-Store races pass; observation-specific held-writer race remains pending |
 | External consumer and RED/GREEN | Completed, synthetic | Stable/MSRV probes and one exact digest comparison RED/GREEN |
-| Stable/MSRV QA and final workflow | Local complete; exact-head workflow pending | Final pushed SHA required before GitHub conclusions can be recorded |
+| Stable/MSRV QA and exact-head workflow | Implementation commit complete; all GitHub Actions passed | Fast `39017188986`, Full `39017188975`, Native 12 jobs `39017188954`, SQLite portability 4 jobs `39017188930`, Git hooks `39017188973`; all success on `5ceb23b53e9341af2d6af78c053a7abba20d98d6` |
 
 ## Next restart point
 
 If further work is requested, resume from the final pushed SHA recorded in the
-Japanese report and `/workspace/Serea-p8b-l1a`. Start with the observer-specific
+Japanese report and `/workspace/Serea-p8b-l1a`. The current implementation commit
+is `5ceb23b53e9341af2d6af78c053a7abba20d98d6`; a docs-only evidence update may
+advance the final branch HEAD. Start with the observer-specific
 second-Store barrier race in `crates/serea-task-engine/tests/p5e_capability_binding.rs`,
 then only proceed after Owner resolves the four trust roots in the table above.
 Do not claim a Permit or complete P8B L1 authorization.

@@ -3992,6 +3992,10 @@ fn test_only_full_grant_set_probe_checks_subset_and_rejects_corruption() {
             "DROP TRIGGER approval_grant_member_no_update; UPDATE approval_grant_members SET scope_digest='sha256:0000000000000000000000000000000000000000000000000000000000000000' WHERE position=0",
         ),
         (
+            "request-action",
+            "DROP TRIGGER approval_request_action_no_update; UPDATE approval_request_actions SET arguments_digest='sha256:0000000000000000000000000000000000000000000000000000000000000000' WHERE position=0",
+        ),
+        (
             "seal",
             "DROP TRIGGER approval_grant_seal_no_delete; DELETE FROM approval_grant_seals",
         ),
@@ -4094,6 +4098,13 @@ fn full_set_probe_is_serialized_with_an_independent_sqlite_writer() {
         (path, store, grant)
     };
     let second = Store::open(&path.0, &FixedClock).unwrap();
+    // Prove lock ownership directly before relying on the competing typed
+    // writer's behavior. This connection cannot wait for the Store default
+    // busy timeout, so success here means SQLite itself reports the held lock.
+    let mut lock_witness = Connection::open(&path.0).unwrap();
+    lock_witness
+        .busy_timeout(std::time::Duration::ZERO)
+        .unwrap();
     let (start_tx, start_rx) = std::sync::mpsc::channel();
     let (attempting_tx, attempting_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -4125,6 +4136,16 @@ fn full_set_probe_is_serialized_with_an_independent_sqlite_writer() {
                 )?
                 .len(),
                 2
+            );
+            let lock_attempt = lock_witness
+                .transaction_with_behavior(TransactionBehavior::Immediate);
+            assert!(
+                matches!(
+                    lock_attempt,
+                    Err(rusqlite::Error::SqliteFailure(ref error, _))
+                        if matches!(error.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                ),
+                "independent zero-timeout connection directly witnesses the held writer lock"
             );
             start_tx.send(()).unwrap();
             attempting_rx.recv().unwrap();

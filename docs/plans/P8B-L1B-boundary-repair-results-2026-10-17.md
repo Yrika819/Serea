@@ -46,6 +46,11 @@ passes for the application-level corruptions while the probe rejects them.
 Those direct-SQL fixtures model local DB/schema tampering and do not claim that
 normal typed APIs can create malformed Grants.
 
+Both writer-contention tests start the competing connection only after the
+first `Store::transact` closure has entered its real writer-reserved
+transaction. This handshake makes the ordering assertion deterministic across
+OS schedulers.
+
 ## Other trust roots
 
 | Track | Established by code/tests | Still unproved or bypassable |

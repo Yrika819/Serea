@@ -4094,10 +4094,12 @@ fn full_set_probe_is_serialized_with_an_independent_sqlite_writer() {
         (path, store, grant)
     };
     let second = Store::open(&path.0, &FixedClock).unwrap();
+    let (start_tx, start_rx) = std::sync::mpsc::channel();
     let (attempting_tx, attempting_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let worker_grant = grant.clone();
     let worker = std::thread::spawn(move || {
+        start_rx.recv().unwrap();
         attempting_tx.send(()).unwrap();
         let result = second.transact(|tx| {
             probe_grant_full_set(
@@ -4124,6 +4126,7 @@ fn full_set_probe_is_serialized_with_an_independent_sqlite_writer() {
                 .len(),
                 2
             );
+            start_tx.send(()).unwrap();
             attempting_rx.recv().unwrap();
             assert!(
                 done_rx
@@ -4147,9 +4150,11 @@ fn transaction_closure_clock_sample_occurs_only_after_writer_reservation() {
     let second = Store::open(&path.0, &FixedClock).unwrap();
     let samples = Arc::new(AtomicUsize::new(0));
     let worker_samples = Arc::clone(&samples);
+    let (start_tx, start_rx) = std::sync::mpsc::channel();
     let (attempting_tx, attempting_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
+        start_rx.recv().unwrap();
         attempting_tx.send(()).unwrap();
         let sampled = second.transact(|_tx| {
             worker_samples.fetch_add(1, Ordering::SeqCst);
@@ -4159,6 +4164,7 @@ fn transaction_closure_clock_sample_occurs_only_after_writer_reservation() {
     });
     first
         .transact(|_tx| {
+            start_tx.send(()).unwrap();
             attempting_rx.recv().unwrap();
             assert_eq!(
                 samples.load(Ordering::SeqCst),

@@ -114,6 +114,29 @@ impl TaskEngine {
         lease_guard: &LeaseGuard,
         grant_id: Option<&serea_protocol::GrantId>,
     ) -> Result<L1FactObservation, EngineError> {
+        self.observe_l1_facts_inner(prepared, lease_guard, grant_id, |_| Ok(()))
+    }
+
+    /// Private unit-test seam. The callback runs after all observer reads and
+    /// comparisons, while Store::transact still owns BEGIN IMMEDIATE.
+    #[cfg(test)]
+    fn observe_l1_facts_while_transaction_held(
+        &self,
+        prepared: &serea_capability::PreparedActionV1,
+        lease_guard: &LeaseGuard,
+        grant_id: Option<&serea_protocol::GrantId>,
+        while_held: impl FnOnce(&L1FactObservation) -> Result<(), StoreError>,
+    ) -> Result<L1FactObservation, EngineError> {
+        self.observe_l1_facts_inner(prepared, lease_guard, grant_id, while_held)
+    }
+
+    fn observe_l1_facts_inner(
+        &self,
+        prepared: &serea_capability::PreparedActionV1,
+        lease_guard: &LeaseGuard,
+        grant_id: Option<&serea_protocol::GrantId>,
+        while_held: impl FnOnce(&L1FactObservation) -> Result<(), StoreError>,
+    ) -> Result<L1FactObservation, EngineError> {
         use serea_protocol::StepKind;
 
         self.store
@@ -242,7 +265,7 @@ impl TaskEngine {
                         mismatches.push(DurableFactMismatch::GrantTaskOrMemberDigest);
                     }
                 }
-                Ok(L1FactObservation {
+                let observation = L1FactObservation {
                     task,
                     generation,
                     binding,
@@ -252,7 +275,9 @@ impl TaskEngine {
                     lease,
                     grant,
                     mismatches,
-                })
+                };
+                while_held(&observation)?;
+                Ok(observation)
             })
             .map_err(EngineError::from)
     }
@@ -1225,6 +1250,10 @@ impl TaskEngine {
             .map_err(EngineError::from)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/observer_barrier_tests.rs"]
+mod observer_barrier_tests;
 
 fn task_from_spec(spec: crate::NewTask) -> AssistantTask {
     AssistantTask {

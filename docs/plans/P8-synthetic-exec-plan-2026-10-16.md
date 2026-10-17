@@ -826,7 +826,7 @@ recorded in normal commit `558791db03312e7933769ec859b49fc5e1e9aeb4`, pushed
 to the same branch, and the existing Draft PR #27 description was updated.
 That commit supersedes the initial-head CI results.
 
-**Current resume point:** PR #27 remains Open/Draft, based directly on PR #26,
+**Checkpoint before the final Storage rerun:** PR #27 remained Open/Draft, based directly on PR #26,
 with remote head `558791db03312e7933769ec859b49fc5e1e9aeb4`. At the last
 checkpoint, exact-head Git Hooks `38984901012` had completed success; Fast
 `38984900980` and SQLite `38984900983` were in progress; Full `38984900981`
@@ -836,3 +836,22 @@ was clean after the push. No further code task is authorized without an
 approved runtime contract; preserve fail-closed behavior and record any new
 safe independent test opportunity in this plan before changing scope. Keep
 PRs #19–#26 untouched and do not create another PR.
+
+#### Final Storage regression rerun — 2026-10-17
+
+After the budget-limit-two test was added, the complete command
+`cargo +1.85.0 test -p serea-storage --all-targets --all-features --locked --offline`
+was rerun locally: **641 unit tests and 6 integration tests passed, 0 failed;
+2 manual resource benchmarks were ignored**. This includes the process-death
+and crash-recovery suites; several child-process tests exceeded 60 seconds
+before completing successfully. The focused real-Storage budget selector also
+passed both limit-one and limit-two concurrency cases. Formatting passed after
+these reruns. No runtime authority or schema changed.
+
+The preceding PR head `18182a5eadc0dcca54526cd3a154a8aa35ab5a15` had latest
+workflow IDs Fast `38985010024`, Full `38985009991`, Native `38985009990`,
+SQLite `38985009972`, and Git Hooks `38985009961`; statuses were still
+in-progress, pending, queued, pending, and in-progress respectively when last
+queried. A documentation-only checkpoint records this rerun and supersedes
+that head, so re-fetch PR #27's current head and use only its exact-SHA runs
+for the final CI disposition.

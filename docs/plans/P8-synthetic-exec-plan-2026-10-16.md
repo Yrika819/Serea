@@ -820,13 +820,19 @@ effect.
 
 The initial PR #27 head `371d7a00d1351b5db1940aa718ab593e8ffa812c` had Fast
 `38984492101` and Git Hooks `38984492069` completed success when inspected;
-Full `38984492097`, Native `38984492091`, and SQLite `38984492077` were not yet
-complete. This follow-up test and documentation correction are being carried
-in a normal commit on the same PR branch; the new head needs its own complete
-CI evidence and supersedes these partial checks.
+Full `38984492097`, Native `38984492091`, and SQLite `38984492077` were
+incomplete or later cancelled. The budget test and Event correction were
+recorded in normal commit `558791db03312e7933769ec859b49fc5e1e9aeb4`, pushed
+to the same branch, and the existing Draft PR #27 description was updated.
+That commit supersedes the initial-head CI results.
 
-**Next checkpoint:** finish focused Storage Clippy and final docs/format/Git
-checks, commit this bounded-budget test plus the Event correction and ExecPlan
-update normally, push only `p8b/authority-boundary-2026-10-17`, update the
-existing Draft PR #27 description if needed, and capture all five workflows
-for the new exact head. Do not create another PR or modify #19–#26.
+**Current resume point:** PR #27 remains Open/Draft, based directly on PR #26,
+with remote head `558791db03312e7933769ec859b49fc5e1e9aeb4`. At the last
+checkpoint, exact-head Git Hooks `38984901012` had completed success; Fast
+`38984900980` and SQLite `38984900983` were in progress; Full `38984900981`
+and Native `38984900996` were pending. Query these five runs again and record
+their final attempts/conclusions before treating CI as complete. The worktree
+was clean after the push. No further code task is authorized without an
+approved runtime contract; preserve fail-closed behavior and record any new
+safe independent test opportunity in this plan before changing scope. Keep
+PRs #19–#26 untouched and do not create another PR.

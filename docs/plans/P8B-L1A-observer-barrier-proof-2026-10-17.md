@@ -1,6 +1,6 @@
 # P8B L1-A observer barrier closure plan
 
-**Status: IN PROGRESS.** Branch starts at PR #31 HEAD `1adb8e2662e80134d055cbef54a037ad1e076538`; PR #31 base is `p8b/authority-architecture-proof-2026-10-17` at `bb4c4d2b8a3bf015d735ab0ad519523f6b961299`. The worktree is `/workspace/Serea-p8b-worktree`; the original `/workspace/Serea` checkout remains on `work` at main HEAD `e0acb0254820c381dd97828824bef86a1db5176c` and was not edited.
+**Status: `L1A_OBSERVER_BARRIER_PARTIAL`; `L1B_DECISION_PACKAGE_COMPLETE`; `NATIVE_ROOT_CAUSE_UNCONFIRMED`.** Branch starts at PR #31 HEAD `1adb8e2662e80134d055cbef54a037ad1e076538`; PR #31 base is `p8b/authority-architecture-proof-2026-10-17` at `bb4c4d2b8a3bf015d735ab0ad519523f6b961299`. The worktree is `/workspace/Serea-p8b-worktree`; the original `/workspace/Serea` checkout remains on `work` at main HEAD `e0acb0254820c381dd97828824bef86a1db5176c` and was not edited.
 
 ## Scope and gates
 
@@ -13,7 +13,7 @@ The production method delegates to a private transaction helper. A `#[cfg(test)]
 - Live GitHub PR snapshot agrees with the mandate: #31 Open/Draft, head `1adb8e2…`, base PR #29 branch at `bb4c4d2…`; #30 Open/Draft head `ba16eaa…`, same base.
 - `git merge-base --is-ancestor refs/remotes/origin/pr/30/head refs/remotes/origin/pr/31/head` succeeds. #31 contains #30's four commits and adds two commits (the 5ceb23b feature and 1adb8e2 evidence); the tree delta `#30..#31` is 12 files, 1052 insertions, 0 deletions. The full `#29..#31` tree delta is 16 files, 1296 insertions, 12 deletions. Retargeting #31 to #30 is only simulated; no existing PR metadata or history is changed.
 - A simulated stacked review therefore shows only the four L1-A feature/evidence commits after #30. Suggested merge order is #29, then #30, then #31 after independent review and branch-protection checks. Do not retarget or merge as part of this work.
-- Native run `39019193381`, attempt 1 job `117357401817` is Stable Windows ARM64 on Windows 11 ARM64 runner image `20261013.183.4`. Cargo test fails at `crates/serea-host/tests/host_lifecycle.rs:659` in `model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine`; the test's `Command::output().expect` succeeds, and the child reports only `stdout= stderr=`. The original assertion does not print `ExitStatus` or `status.code()`, so the child exit code and Windows exception status are unavailable from this log. Attempt 2 passed, which does not establish a cause. The assertion now reports `ExitStatus`, decimal/hex `status.code()`, output byte counts, truncation markers, and up to 4096 bytes of each stream. Root cause remains unconfirmed unless new evidence identifies it.
+- Native run `39019193381`, attempt 1 job `117357401817` is Stable Windows ARM64 on Windows 11 ARM64 runner image `20261013.183.4`. Cargo test fails at `crates/serea-host/tests/host_lifecycle.rs:659` in `model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine`; the test's `Command::output().expect` succeeds, and the child reports only `stdout= stderr=`. The original assertion does not print `ExitStatus` or `status.code()`, so the child exit code and Windows exception status are unavailable from this log. Latest-attempt job `117362868585` (attempt 2) is success; a rerun pass does not establish a cause. The assertion now reports `ExitStatus`, decimal/hex `status.code()`, output byte counts, truncation markers, and up to 4096 bytes of each stream. Root cause remains unconfirmed.
 
 ## Observer race evidence to collect
 
@@ -33,14 +33,15 @@ Stable and Rust 1.85.0: `cargo test -p serea-task-engine --lib observer_barrier_
 
 The initial full-workspace attempt caught the test-only `CapabilityProvider` and `Instant::now()` because static scans inspect every source path; moving the fixture under `tests/support` resolved the source-closure issue. Clippy then rejected the test's elapsed-time check (`Instant::now`); it was removed. Final full-workspace tests and Clippy were rerun after these corrections and passed. The lock witness is direct `SQLITE_BUSY` evidence; the typed writer's bounded error while held, followed by successful retry and post-commit projection, corroborates the competing operation.
 
+Observer-specific regression sensitivity was checked in detached scratch worktree `/workspace/Serea-p8b-scratch` with independent `CARGO_TARGET_DIR=/tmp/serea-p8b-red-target`. Mutating the Storage transaction behavior from `Immediate` to `Deferred` caused the Overlay observer test to fail at the lock-witness assertion (`unwrap_err` received `Ok(())`), exit 101 (**RED**). Restoring `Immediate` made the same test pass, 1 passed/0 failed, exit 0 (**GREEN**). The scratch source was restored and `git status` was clean before removing the scratch worktree.
+
 The previous standalone Storage and policy transaction tests are adjacent evidence only and do not satisfy this table. No category is marked PASS until the observer's actual transaction is held.
 
-## Remaining verification
+## Remaining owner/test work and CI
 
 1. Add a normal-path Grant fixture and exercise authenticated revocation through the same observer barrier. Do not use forced SQL updates. Until this exists, overall L1-A remains PARTIAL.
-2. In an isolated scratch worktree and target directory, mutate the observer's immediate transaction behavior so the lock witness/assertion detects the regression (RED), restore it (GREEN), record the exact scratch diff, and remove only the scratch worktree after verifying it is clean.
-3. Complete remaining observer-specific negative checks where the fixture/API supports them: mismatched pins, missing Grant, tampered caller `PolicyEvaluation`, and explicit Grant-use/Event/Budget/RequestId/IDK before/after accounting. The current external probe confirms the caller-mutable surface but not an observer runtime effect ledger.
-4. Push the new branch, create at most one Draft PR based on the current PR #31 branch, then query final-HEAD GitHub Actions Fast, Full, Native, SQLite, and Hooks. Report absent/in-progress jobs honestly.
+2. Complete remaining observer-specific negative checks where the fixture/API supports them: mismatched pins, missing Grant, tampered caller `PolicyEvaluation`, and explicit Grant-use/Event/Budget/RequestId/IDK before/after accounting. The external probe confirms caller-mutable policy surface and mutation composition but does not itself instrument an observer runtime ledger.
+3. The new branch still needs GitHub Actions Fast, Full, Native, SQLite, and Hooks at its exact pushed HEAD. The prior PR #31 Actions runs are not evidence for this commit; report pending/absent jobs honestly.
 
 ## Classification rule
 

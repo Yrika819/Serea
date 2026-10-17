@@ -850,10 +850,15 @@ fn p3_public_method_inventory_exposes_only_the_fixed_participant_composition() {
         [
             "acquire_lease",
             "generation",
+            "observe_lease_facts",
+            "owner",
             "release_lease",
-            "renew_lease"
+            "renew_lease",
+            "step_id",
+            "task_id"
         ]
     );
+    assert!(include_str!("approval.rs").contains("pub fn observe_grant_facts("));
     assert_eq!(
         public_methods(include_str!("outcome.rs")),
         [

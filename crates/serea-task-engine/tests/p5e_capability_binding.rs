@@ -1678,7 +1678,7 @@ fn task_engine_policy_input_is_derived_from_current_pinned_durable_facts() {
     )
     .unwrap();
 
-    let evaluation = engine.evaluate_prepared_action(&prepared_action).unwrap();
+    let mut evaluation = engine.evaluate_prepared_action(&prepared_action).unwrap();
     assert!(matches!(
         evaluation.decision,
         serea_policy::PolicyDecision::RequireApproval(_)
@@ -1688,6 +1688,69 @@ fn task_engine_policy_input_is_derived_from_current_pinned_durable_facts() {
     assert_eq!(
         evaluation.evidence.input_facts().requested_by,
         RequestedBy::Model
+    );
+    // This caller-mutable explanation is deliberately not an input to the
+    // transaction-scoped durable fact observation.
+    evaluation.decision = serea_policy::PolicyDecision::Allow;
+    let lease_guard = store
+        .transact(|tx| {
+            tx.acquire_lease(
+                tid(1),
+                sid(1),
+                LeaseOwner::new("worker-fixture").unwrap(),
+                None,
+                at(31),
+                at(100),
+            )
+        })
+        .unwrap();
+    let observed = engine
+        .observe_l1_facts(&prepared_action, &lease_guard, None)
+        .unwrap();
+    assert!(observed.mismatches().is_empty());
+    assert_eq!(observed.task().task.task_id, tid(1));
+    assert_eq!(observed.task().plan_revision, 1);
+    assert_eq!(observed.lease().generation(), lease_guard.generation());
+    assert_eq!(
+        observed.generation().unwrap().generation_id(),
+        prepared_action.generation_id()
+    );
+    assert_eq!(observed.binding().unwrap().step_id(), &sid(1));
+    assert_eq!(
+        observed.descriptor().unwrap().descriptor_digest(),
+        prepared_action.descriptor_digest()
+    );
+    assert!(observed.policy().unwrap().activated_at.is_some());
+    assert!(observed.grant().is_none());
+    assert_eq!(
+        observed.overlay().unwrap().state(),
+        serea_storage::CapabilityOverlayState::Enabled
+    );
+    let mut alternate = serde_json::Map::new();
+    alternate.insert(
+        "calendar".into(),
+        serde_json::Value::String("attacker".into()),
+    );
+    let alternate_args =
+        serea_capability::ClassifiedArgumentsV1::new_trusted(alternate, DataClass::Personal);
+    let mismatched_action = serea_capability::prepare_action(
+        &availability,
+        d.id(),
+        tid(1),
+        sid(1),
+        &alternate_args,
+        RequestedBy::Model,
+        None,
+        None,
+    )
+    .unwrap();
+    let mismatch = engine
+        .observe_l1_facts(&mismatched_action, &lease_guard, None)
+        .unwrap();
+    assert!(
+        mismatch
+            .mismatches()
+            .contains(&DurableFactMismatch::StepInputDigest)
     );
     store
         .transact(|tx| {
@@ -1704,6 +1767,30 @@ fn task_engine_policy_input_is_derived_from_current_pinned_durable_facts() {
         disabled.decision,
         serea_policy::PolicyDecision::Deny(serea_policy::DenyReason::CapabilityDisabled)
     );
+    let disabled_observation = engine
+        .observe_l1_facts(&prepared_action, &lease_guard, None)
+        .unwrap();
+    assert!(disabled_observation.mismatches().is_empty());
+    assert_eq!(
+        disabled_observation.overlay().unwrap().state(),
+        serea_storage::CapabilityOverlayState::Disabled
+    );
+    assert_eq!(
+        disabled_observation.policy().unwrap().revision_id,
+        observed.policy().unwrap().revision_id,
+        "overlay observation reports its live value without fabricating a Policy decision"
+    );
+    drop(engine);
+    drop(lease_guard);
+    drop(store);
+    let reopened = temp.open();
+    let durable = reopened.load_task(&tid(1)).unwrap();
+    assert_eq!(durable.plan_revision, 1);
+    assert_eq!(
+        reopened.get_capability_overlay(d.id()).unwrap().state(),
+        serea_storage::CapabilityOverlayState::Disabled
+    );
+    reopened.verify_integrity().unwrap();
 }
 
 #[test]

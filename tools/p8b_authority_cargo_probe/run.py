@@ -65,6 +65,20 @@ def main() -> int:
     cases = [
         (SOURCE.read_text(), None),
         (
+            "use serea_protocol::{GrantId, StepId, TaskId};\n"
+            "use serea_storage::{LeaseGuard, Tx};\n"
+            "pub fn read_only(tx: &Tx<'_>, lease: &LeaseGuard, grant: &GrantId, task: &TaskId, step: &StepId) {\n"
+            "    let _ = tx.observe_lease_facts(lease);\n"
+            "    let _ = tx.observe_grant_facts(grant, task, step);\n"
+            "}\n",
+            None,
+        ),
+        (
+            "use serea_task_engine::L1FactObservation;\n"
+            "pub fn forge() { let _ = L1FactObservation { task: todo!() }; }\n",
+            "private fields",
+        ),
+        (
             "use serea_storage::Tx;\n"
             "pub fn bypass(tx: &Tx<'_>) { let _ = &tx.inner; }\n",
             "E0616",

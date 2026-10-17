@@ -92,6 +92,54 @@ struct Authority {
     released_at: Option<i64>,
 }
 
+/// Read-only durable lease row observed for an origin-validated guard.
+///
+/// This is evidence about the SQLite row only. It does not authenticate the
+/// Owner/Worker or the caller's clock, and it is not an execution capability.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LeaseFactSnapshot {
+    task_id: TaskId,
+    step_id: StepId,
+    owner: String,
+    generation: u32,
+    acquired_at: EpochMillis,
+    expires_at: EpochMillis,
+}
+
+impl fmt::Debug for LeaseFactSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LeaseFactSnapshot")
+            .field("task_id", &self.task_id)
+            .field("step_id", &self.step_id)
+            .field("owner", &"<redacted>")
+            .field("generation", &self.generation)
+            .field("acquired_at", &self.acquired_at)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
+}
+
+impl LeaseFactSnapshot {
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+    pub fn step_id(&self) -> &StepId {
+        &self.step_id
+    }
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+    pub const fn generation(&self) -> u32 {
+        self.generation
+    }
+    pub const fn acquired_at(&self) -> EpochMillis {
+        self.acquired_at
+    }
+    pub const fn expires_at(&self) -> EpochMillis {
+        self.expires_at
+    }
+}
+
 fn authority(
     conn: &Connection,
     task: &TaskId,
@@ -130,6 +178,25 @@ fn matching(tx: &Tx<'_>, guard: &LeaseGuard) -> Result<Authority, StoreError> {
 }
 
 impl Tx<'_> {
+    /// Reads the current durable lease row matching this guard without writing.
+    ///
+    /// The guard's origin marker, task/step, owner, generation and unreleased
+    /// state are checked by the same private fence used by lease mutations.
+    /// Expiry is returned as a fact because this API has no trusted clock. A
+    /// caller-supplied time comparison is not authorization.
+    pub fn observe_lease_facts(&self, guard: &LeaseGuard) -> Result<LeaseFactSnapshot, StoreError> {
+        self.ensure_active()?;
+        let row = matching(self, guard)?;
+        Ok(LeaseFactSnapshot {
+            task_id: guard.task_id.clone(),
+            step_id: guard.step_id.clone(),
+            owner: row.owner,
+            generation: row.generation,
+            acquired_at: EpochMillis::new(row.acquired_at).map_err(|_| StoreError::CorruptRow)?,
+            expires_at: EpochMillis::new(row.expires_at).map_err(|_| StoreError::CorruptRow)?,
+        })
+    }
+
     /// Acquires first authority or reclaims released/expired authority.
     /// `None` means never leased (SQL0); `Some(n)` must be the exact previously
     /// observed positive step generation. Same owner strings get no exemption.

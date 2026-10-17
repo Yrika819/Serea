@@ -3344,6 +3344,109 @@ fn grant_consumption_is_member_bound_single_use_and_durable_after_reopen() {
 }
 
 #[test]
+fn read_only_grant_fact_projection_observes_member_and_use_without_consuming() {
+    let path = TempDb::new();
+    let store = approval_store(&path.0);
+    let request = typed_request_draft();
+    store
+        .create_approval_request(request.clone(), approval_required_event(&request))
+        .unwrap();
+    let response = authenticated_grant_storage_draft();
+    let grant_id = response.grant_id.clone().unwrap();
+    store
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+
+    let before = {
+        let conn = store.conn.lock().unwrap();
+        (
+            scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+            scalar(&conn, "SELECT count(*) FROM event_content").unwrap(),
+        )
+    };
+    let observed = store
+        .transact(|tx| {
+            let member = tx.observe_grant_facts(
+                &grant_id,
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+            )?;
+            let nonmember = tx.observe_grant_facts(
+                &grant_id,
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_B).unwrap(),
+            )?;
+            Ok((member, nonmember))
+        })
+        .unwrap();
+    let member = observed.0.unwrap();
+    assert_eq!(member.grant_id(), &grant_id);
+    assert_eq!(member.task_id(), &TaskId::new(TASK).unwrap());
+    assert_eq!(member.status(), crate::GrantFactStatus::Active);
+    assert_eq!(member.uses_remaining(), 1);
+    assert_eq!(member.expires_at(), EpochMillis::new(1_800_000).unwrap());
+    assert_eq!(
+        member.member_arguments_digest(),
+        Some(&Digest::new(ARGS_A).unwrap())
+    );
+    assert!(!member.already_used());
+    let nonmember = observed.1.unwrap();
+    assert_eq!(nonmember.member_arguments_digest(), None);
+    assert_eq!(nonmember.member_scope_digest(), None);
+    assert!(!nonmember.already_used());
+    {
+        let conn = store.conn.lock().unwrap();
+        assert_eq!(
+            scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+            before.0
+        );
+        assert_eq!(
+            scalar(&conn, "SELECT count(*) FROM event_content").unwrap(),
+            before.1
+        );
+    }
+
+    store
+        .consume_grant_use(
+            &grant_id,
+            &TaskId::new(TASK).unwrap(),
+            &StepId::new(STEP_A).unwrap(),
+            EpochMillis::new(301).unwrap(),
+        )
+        .unwrap();
+    let used = store
+        .transact(|tx| {
+            tx.observe_grant_facts(
+                &grant_id,
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(used.status(), crate::GrantFactStatus::Exhausted);
+    assert_eq!(used.uses_remaining(), 0);
+    assert!(used.already_used());
+    drop(store);
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    let reopened_facts = reopened
+        .transact(|tx| {
+            tx.observe_grant_facts(
+                &grant_id,
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    assert!(reopened_facts.already_used());
+    reopened.verify_integrity().unwrap();
+}
+
+#[test]
 fn request_expiration_uses_inclusive_boundary_and_is_event_atomic() {
     let path = TempDb::new();
     let store = approval_store(&path.0);
@@ -3667,6 +3770,19 @@ fn authenticated_revocation_is_grant_only_atomic_and_preserves_prior_consumption
             .unwrap(),
         ApprovalRevocationOutcome::AlreadyRevoked
     );
+    let revoked = store
+        .transact(|tx| tx.observe_grant_facts(&grant, &task, &StepId::new(STEP_B).unwrap()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(revoked.status(), crate::GrantFactStatus::Revoked);
+    assert_eq!(revoked.uses_remaining(), 1);
+    assert!(revoked.sealed());
+    assert_eq!(revoked.member_count(), 2);
+    assert_eq!(
+        revoked.member_arguments_digest(),
+        Some(&Digest::new(ARGS_B).unwrap())
+    );
+    assert!(!revoked.already_used());
     assert_eq!(
         store
             .consume_grant_use(

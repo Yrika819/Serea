@@ -49,6 +49,19 @@ def run(source: str, expected: str | None) -> tuple[int, str]:
 
 
 def main() -> int:
+    fetch = subprocess.run(
+        ["cargo", "fetch", "--manifest-path", str(MANIFEST), "--locked"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if fetch.returncode != 0:
+        print("FAIL: fetch locked external-consumer dependencies")
+        for line in fetch.stdout.splitlines()[-16:]:
+            print(f"  {line.strip()}")
+        return 1
+
     cases = [
         (SOURCE.read_text(), None),
         (

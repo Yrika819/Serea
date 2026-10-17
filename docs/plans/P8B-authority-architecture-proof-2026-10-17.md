@@ -255,7 +255,10 @@ positive/negative compiler behavior runs on the PR head. Its first Fast CI
 attempt then exposed that an external Cargo workspace does not inherit the
 root workspace's local `[patch.crates-io]` entries when Cargo runs offline.
 The fixture now pins its own vendor paths and serde_json version; stable and
-MSRV external compile probes both pass after that correction.
+MSRV external compile probes both pass after that correction. The first CI
+retry then found that Actions had not fetched every crate in the external lock
+(`bitflags 2.13.2`); the probe now runs its own locked `cargo fetch` before
+offline compilations. That change also passes locally.
 
 ## Exact-head GitHub refresh
 
@@ -267,10 +270,11 @@ workflow from those older heads is evidence for this new branch; a new Draft PR
 must be checked at its own exact head before this proof is closed.
 
 PR #29 is the single permitted new Draft PR, based on #28's exact HEAD. Its
-first Fast run failed only at external probe dependency resolution as described
-above. That fixture was corrected and re-run locally on both supported compiler
-versions. Final exact-head CI run IDs and statuses must be added here before
-classifying this spike as proved or partial.
+first two Fast runs exposed external dependency setup gaps as described above.
+The fixture fetches its own locked dependencies before offline compiles and
+passes locally on both supported compiler versions. The latest branch head
+must have all five relevant Actions workflows checked before classification;
+the exact-head statuses are reported in the completion response.
 
 ## Proposed architecture package and restart point
 

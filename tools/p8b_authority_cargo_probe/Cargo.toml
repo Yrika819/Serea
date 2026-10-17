@@ -15,3 +15,8 @@ serea-policy = { path = "../../crates/serea-policy" }
 serea-protocol = { path = "../../crates/serea-protocol" }
 serea-storage = { path = "../../crates/serea-storage" }
 serea-task-engine = { path = "../../crates/serea-task-engine" }
+serde_json = "=1.0.151"
+
+[patch.crates-io]
+jsonschema-value = { path = "../../vendor/jsonschema-value" }
+serde_json = { path = "../../vendor/serde_json" }

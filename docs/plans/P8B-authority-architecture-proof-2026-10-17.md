@@ -134,7 +134,11 @@ set:
 - Negative `Tx.inner`: expected `E0616`, private field.
 - Negative `Tx.execute_batch`: expected `E0599`, no raw SQL method.
 - Negative `serea_storage::SyntheticDispatchPermit`: expected `E0432`, no
-  public symbol (the existing type is `#[cfg(test)]` private).
+  public symbol (the existing type is `#[cfg(test)]` private). The same
+  external source attempts construction, `Clone`, `Copy`, and serde
+  serialization/deserialization; Rust rejects the import before any of these
+  operations can type-check. This demonstrates there is no currently
+  reachable Permit type; it does not establish traits of a future type.
 - Negative `serea_storage::CommitProof`: expected `E0432`, no current public
   proof type.
 
@@ -247,7 +251,11 @@ version in the Serea workspace lock was changed. The Core API boundary script
 also failed once when run under the MSRV override because its generated
 external lock selected the same incompatible `sha2 0.11.1`; rerunning it under
 stable succeeded. The new external Cargo probe is added to Fast CI so its
-positive/negative compiler behavior runs on the PR head.
+positive/negative compiler behavior runs on the PR head. Its first Fast CI
+attempt then exposed that an external Cargo workspace does not inherit the
+root workspace's local `[patch.crates-io]` entries when Cargo runs offline.
+The fixture now pins its own vendor paths and serde_json version; stable and
+MSRV external compile probes both pass after that correction.
 
 ## Exact-head GitHub refresh
 
@@ -257,6 +265,12 @@ successful Fast, Full, Native, SQLite portability, and Git Hooks workflows.
 PR #28 reference head runs are listed above. Main remains the SHA above. No
 workflow from those older heads is evidence for this new branch; a new Draft PR
 must be checked at its own exact head before this proof is closed.
+
+PR #29 is the single permitted new Draft PR, based on #28's exact HEAD. Its
+first Fast run failed only at external probe dependency resolution as described
+above. That fixture was corrected and re-run locally on both supported compiler
+versions. Final exact-head CI run IDs and statuses must be added here before
+classifying this spike as proved or partial.
 
 ## Proposed architecture package and restart point
 

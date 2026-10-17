@@ -23,6 +23,7 @@ def run(source: str, expected: str | None) -> tuple[int, str]:
         (project / "src").mkdir(parents=True)
         manifest = MANIFEST.read_text()
         manifest = manifest.replace("../../crates", str(ROOT / "crates"))
+        manifest = manifest.replace("../../vendor", str(ROOT / "vendor"))
         (project / "Cargo.toml").write_text(manifest)
         shutil.copy(LOCK, project / "Cargo.lock")
         (project / "src" / "lib.rs").write_text(source)
@@ -57,7 +58,14 @@ def main() -> int:
         ),
         (
             "use serea_storage::SyntheticDispatchPermit;\n"
-            "pub fn forge() { let _ = core::mem::size_of::<SyntheticDispatchPermit>(); }\n",
+            "pub fn forge() {\n"
+            "    let permit = SyntheticDispatchPermit::new();\n"
+            "    let cloned = permit.clone();\n"
+            "    let copied = permit;\n"
+            "    let _ = (cloned, copied);\n"
+            "    let _ = serde_json::to_string(&permit);\n"
+            "    let _: SyntheticDispatchPermit = serde_json::from_str(\"{}\").unwrap();\n"
+            "}\n",
             "E0432",
         ),
         (

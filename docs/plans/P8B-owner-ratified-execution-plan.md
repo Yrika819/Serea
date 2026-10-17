@@ -30,10 +30,10 @@ Non-authorizations: production Memory/provider/credentials/effects/Receipt/retry
 1. **Intake** — complete. GitHub baseline, clean state, PRs, workflows, toolchain and isolated worktree captured above.
 2. **ADR incorporation** — complete in this branch. ADR-0045 number was unused on the fetched starting head. The file and decision index describe direction-only ratification and exclusions. Docs validator passes.
 3. **A/B authority boundary** — initial code/manifest review complete; architecture gate remains open. Evidence and matrix below. No public candidate API exists to externally forge, so no false compile-fail evidence is claimed.
-4. **D3 Permit slice** — implementation and focused tests complete; final reviewer/regression pass pending. `invoke_once(self, ...)` consumes before binding checks; no consumed flag and no `Clone`/`Copy` derive. The synthetic binding covers RequestId+IDK, TaskId/StepId, Owner, Lease generation, ProviderId+instance, Registry generation, descriptor digest and Overlay revision. The old mismatch-then-reuse test is replaced by `mismatched_attempt_burns_by_value_permit_without_effect`.
-5. **Synthetic regression / independent audit** — pending. Run allowed local validation only; inspect feature gates, migrations, and replay/forget/event claims. Do not fill missing contract details.
-6. **GitHub** — pending. At most one new Draft PR after cohesive verified work. Never alter existing PRs or main. Exact-head Fast/Full/Native/SQLite/Git Hooks required; current SHA results count only after final push.
-7. **Handoff** — pending. Update this file with commands, outcomes, risks and exact next slice. Report in Japanese.
+4. **D3 Permit slice** — complete. `invoke_once(self, ...)` consumes before binding checks; no consumed flag and no `Clone`/`Copy` derive. The synthetic binding covers RequestId+IDK, TaskId/StepId, Owner, Lease generation, ProviderId+instance, Registry generation, descriptor digest and Overlay revision. The old mismatch-then-reuse test is replaced by `mismatched_attempt_burns_by_value_permit_without_effect`.
+5. **Synthetic regression / independent audit** — complete for this bounded test-only slice. Focused RED/GREEN probes and local regression suites pass. The independent audit found the mutable-permit mismatch reuse defect and verified its fix; no public production Permit or dispatch write surface was introduced. A/B authority architecture, schema and production gates remain open as listed below.
+6. **GitHub** — complete. One new Draft PR #28 was opened from the isolated branch, based on PR #27; no existing PR/main mutation, merge, force push, or protection bypass. The exact code SHA `75816637f18c8f80a12eefd841644ab975ff02a9` passed Fast, Full, Native, SQLite portability and Git Hooks. A plan-only documentation follow-up will record these run IDs; the final HEAD including that record is also being sent through all five workflows.
+7. **Handoff** — this plan records the comparison, implementation boundary, red/green evidence, observed Actions results, remaining Owner decisions and next architectural gate. See the Japanese handoff for the final plan-only HEAD's Actions results.
 
 ## A/B review rubric
 
@@ -78,3 +78,26 @@ Append exact command, working directory, toolchain, exit code and concise output
 - `cargo +stable check --workspace --all-targets --all-features --locked --offline` — PASS, 18.07s.
 - `cargo +stable clippy --workspace --all-targets --all-features --locked --offline -- -D warnings` — PASS, 9.45s. A deprecated `usize::max_value` warning appears while compiling vendored serde_json dependency, but Clippy completes successfully.
 - `cargo +1.85.0` verification is fmt check + focused P8 synthetic recovery tests only; full 1.85 workspace test is delegated to exact-head Native/Full CI.
+
+### Independent audit and boundaries
+
+- **Verified defect fixed:** the prior mutable Synthetic Permit test contract allowed a binding-mismatch attempt followed by a successful attempt on the same Permit. D3 supersedes that contract. The by-value receiver consumes the Permit before checks; a mismatch has zero Fake effects and the value cannot be reused.
+- **No production surface:** the helper remains private inside `#[cfg(test)]`; an external Cargo consumer fails to import `SyntheticDispatchPermit` with E0432. This establishes current API absence only; it is not evidence for a future authority crate or public factory.
+- **No durable/production activation:** canonical migration files/catalog were not changed; candidate P8 migrations remain outside the normal catalog. No production Provider, credentials, Memory dispatch, Receipt, retry, or external effect was enabled.
+- **A/B remains unresolved:** A is an investigation direction, not a selected architecture. TaskEngine coordination alone has not proved Host instance/readiness ownership and atomic authorization. B is blocked under the present crate graph because Storage cannot recompute Policy without a dependency cycle or prove Host live readiness, and public `Store::transact` remains a mutation surface to constrain. A real crate-level authority spike and API audit are required.
+- **Remaining Owner decisions:** exact task/budget schema and accounting/reconciliation; A/B authority and P6 proof ownership; Host identity/readiness freshness interval, lifecycle race and postcommit disposition; exact D5 event schema and privacy/retention validation; D4 complete forget/restore/tombstone and retention policy; P7 schema plus OS-user/security boundary; typed result/Receipt and any retry/replay design. D4 is interim deletion refusal only. No production retention duration, override, runtime enablement, or architecture choice is inferred.
+- Branch-protection settings could not be read: the GitHub REST endpoint returned 403 `Resource not accessible by integration`. No bypass was attempted.
+
+### Exact-head GitHub Actions results (code SHA `75816637f18c8f80a12eefd841644ab975ff02a9`)
+
+All listed runs completed successfully with zero failed jobs. Native covered Stable and Rust 1.85.0 on Linux x86_64/ARM64, Windows x86_64/ARM64, and macOS x86_64/ARM64.
+
+| Workflow | Run ID | Result |
+|---|---:|---|
+| Fast | `38992402871` | PASS |
+| Full | `38992402907` | PASS (Linux MSRV and stable, Windows P7 synthetic, macOS Intel and ARM64) |
+| Native | `38992402868` | PASS (12/12 platform/toolchain jobs) |
+| SQLite portability | `38992402870` | PASS (4/4 cross-architecture produce/open jobs) |
+| Git Hooks | `38992402902` | PASS (Ubuntu, macOS, Windows Python fallback) |
+
+These runs validate the source commit containing all code changes. The subsequent commit changes only this execution plan to persist outcomes; all five workflows are being rerun for that final HEAD. No code or runtime behavior changes are included in the plan-only follow-up.

@@ -659,3 +659,129 @@ independent work requires an unblocked test-only falsification slice or an
 Owner decision on proposed contract details. Keep candidate migrations
 out-of-catalog and production invoke, Receipt, retry, and canonical retention
 authority fail-closed. Do not alter or merge PRs #19–#25.
+
+### Autonomous continuation — PR #26 authority boundary (2026-10-17)
+
+This continuation starts from the live PR #26 head `72be5ac56d01765b8c9dea79ee3e4f9d1fc5bbc4`,
+base branch `p8/contract-closure-prototype` at PR #25 head
+`73e38fddf4a203582f728eff2cf675cc35e46b2b`. A separate clone
+`/workspace/Serea-codex` and branch `p8b/authority-boundary-2026-10-17` were
+created; the original `/workspace/Serea` worktree remains clean and unchanged.
+The new branch begins exactly at #26 head. PRs #19–#26 were re-fetched and
+remain Open/Draft/unmerged with their current bases and heads; #24–#26 exact
+head status checks are complete success, subject to the Windows ARM64 attempt
+history below.
+
+Live CI audit at this continuation:
+
+| PR / exact head | Base | Workflow run | Result / attempt |
+| --- | --- | ---: | --- |
+| #24 `fab5ee91` | `p8/authority-transaction-prototype` | Fast `38921134228`; Full `38921134186`; Native `38921134154`; SQLite `38921134163`; Hooks `38921134153` | All completed success, attempt 1 |
+| #25 `73e38fdd` | `p8/real-storage-boundary-prototype` | Fast `38925789524`; Full `38925789470`; Native `38925789362`; SQLite `38925790040`; Hooks `38925789317` | All completed success, attempt 1 |
+| #26 `72be5ac5` | `p8/contract-closure-prototype` | Fast `38940339170`; Full `38940339177`; Native `38940339189`; SQLite `38940339248`; Hooks `38940391991` | All latest check runs completed success; Native run attempt 2 |
+
+For Native run `38940339189`, API metadata reports `run_attempt=2`, overall
+success on #26 SHA `72be5ac...`. Attempt 1 failed job
+`117106059399`, `Stable Windows ARM64 (aarch64-pc-windows-msvc)`, at step 8,
+`Test all workspace features`; all earlier setup/dependency/default checks
+passed and subsequent release/Host steps were skipped. Attempt 2's corresponding
+Stable Windows ARM64 job `117120563141` succeeded. Rust 1.85.0 Windows ARM64
+job `117106059966` also succeeded. The attempt-1 job-log endpoint returned
+403 and `gh run view --attempt 1 --job 117106059399 --log` exposed no body, so
+the exact test name, assertion, output and exit signature remain unavailable.
+No Windows ARM64 host exists in this execution environment. Disposition:
+**UNRESOLVED / monitor**; do not infer a transient runner failure or claim
+reproduction. Do not restart CI solely to improve appearance.
+
+#### Test-only Permit binding RED/GREEN
+
+`p8_synthetic_recovery_tests.rs` now binds the proposed private synthetic
+Permit to `SyntheticRegistryPin { generation, descriptor_digest,
+overlay_revision }` alongside existing RequestId/IDK, Step, Lease generation,
+Owner and provider instance bindings. The acceptance matrix changes each new
+pin independently and expects its exact typed refusal and zero external Fake
+ledger effects.
+
+- **RED:** temporarily removed all three new equality guards. The focused test
+  failed on the Registry generation case: it returned an acknowledged result
+  and wrote one Fake effect where `RegistryGenerationMismatch` and zero effect
+  were required. The file was restored immediately from the saved GREEN copy;
+  no mutant remains.
+- **GREEN:** with all guards restored, the Storage `p8_` selector passed 16
+  tests, 518 filtered, 0 ignored. The separately run guard-removal mutant was
+  not counted as a product/test failure.
+- Added `provider_unavailability_after_intent_commit_consumes_permit_without_effect_or_replay`.
+  It commits the independent synthetic Intent, scripts Provider unavailability
+  before the ledger write, observes the exact RequestId/IDK Intent still
+  present, counts zero matching effect rows through a separately opened ledger
+  query, and confirms a second attempt returns `AlreadyConsumed` with zero
+  effects. This is simulator behavior, not a Host readiness guarantee.
+- Added `mismatched_attempt_does_not_consume_permit_before_a_later_exact_binding`.
+  Current private mutable test Permit rejects wrong IDK with zero effects,
+  remains unconsumed, then permits exactly one later matching call (one effect).
+  The accepted contract does not say whether a mismatched attempted use should
+  burn the token. The decision package recommends a future non-Clone, by-value
+  `invoke_once(self, ...)` that consumes on every attempted use; that API detail
+  remains `PROPOSED` for Owner ratification and is not implemented in runtime.
+
+The decision package now records these behaviors and their Owner choices.
+Provider availability remains an in-memory snapshot with unavoidable
+post-commit TOCTOU; a persisted Ready bit would not be authority. No production
+Provider API, TaskEngine/Host call path, Credentials, Receipt, retry permission,
+canonical migration or state transition was added. Existing migrations
+0001–0008, the ordinary migration catalog and candidate SQL files are unchanged.
+
+#### Local validation on this continuation branch
+
+Rust 1.85.0 was installed in the dedicated execution account because the
+provided environment initially had no `cargo`, `rustc` or `rustup` on PATH.
+Locked dependencies were fetched with `cargo +1.85.0 fetch --locked`; all
+subsequent Cargo commands used the clone-local target directory and offline
+mode. Exact observed gates:
+
+- `cargo +1.85.0 test -p serea-storage --all-targets --locked --offline p8_`:
+  PASS 16, failed 0, filtered 518, ignored 0.
+- `cargo +1.85.0 test -p serea-storage --all-targets --all-features --locked --offline`:
+  PASS 640 unit + 6 integration tests, failed 0; 2 manual resource benchmarks
+  ignored. This run includes the new RED/GREEN regression in its restored state.
+- `cargo +1.85.0 check --workspace --all-targets --all-features --locked --offline`:
+  PASS.
+- `cargo +1.85.0 clippy --workspace --all-targets --all-features --locked --offline -- -D warnings`:
+  PASS.
+- `cargo +1.85.0 fmt --all -- --check`, `git diff --check`,
+  `python3 tools/validate_docs.py docs` (145 Markdown files),
+  `python3 tests/workspace_smoke.py`,
+  `python3 -m unittest discover -s tests -p workspace_smoke_tests.py` (82),
+  `python3 tools/check_synthetic_host_boundary.py`: PASS.
+- `tools/check_core_api_boundary.py`: PASS using a separate external consumer;
+  expected `no method named install_synthetic_registry_generation` refusal.
+- `cargo +1.85.0 test --workspace --all-targets --locked --offline` was
+  executed; every emitted suite completed without a failure, including the
+  P8 Storage and TaskEngine recovery/lifecycle suites. The tool session closed
+  before its final summary/exit code could be captured, so retain this as
+  **PASS by observed suites, final aggregate exit code unavailable**.
+- `cargo +1.85.0 test --workspace --all-features --locked --offline`:
+  **PASS**, exit 0, 79 test/doctest summaries, 1,517 passed, 0 failed, 2
+  ignored manual benchmarks. The separate all-features Storage command above
+  includes `--all-targets`; workspace all-features run completed all binaries,
+  integration suites and doctests.
+
+#### Owner decisions still blocking runtime integration
+
+Keep the existing five decision groups and their recommended selections in
+the [contract closure package](P8B-contract-closure-package-2026-10-16.md):
+provider Budget classification; concrete provider availability and pinning;
+commit-to-invoke Permit and cancellation/revocation ordering; unresolved and
+resolved Intent retention/Forget; and bounded `CAPABILITY_REQUESTED` payload.
+The current extra unresolved detail is whether a mismatched in-process Permit
+attempt burns the Permit. Separate P7 blockers remain synthetic Owner issuer
+authentication, 0009 canonical policy/schema approval and independent security
+review. None is implied approved by this unattended engineering instruction.
+
+**Resume point:** rerun final formatting/docs/boundary/preflight checks after
+all docs edits; normal
+commit on `p8b/authority-boundary-2026-10-17`; push this new branch only; open
+one Draft PR stacked on `p8b/overnight-2026-10-17` (PR #26) and capture exact
+new-head Fast/Full/Native/SQLite/Hooks run IDs, attempts and results. Keep
+PRs #19–#26 unchanged and do not merge or close any PR. Continue only with
+safe test-only slices; runtime invoke and all blocked contracts remain closed.

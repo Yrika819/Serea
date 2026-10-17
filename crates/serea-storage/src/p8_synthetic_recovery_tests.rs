@@ -47,12 +47,22 @@ struct SyntheticProviderIdentity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SyntheticRegistryPin {
+    generation: u64,
+    descriptor_digest: &'static str,
+    overlay_revision: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyntheticPermitRefusal {
     RequestMismatch,
     StepMismatch,
     LeaseGenerationMismatch,
     OwnerMismatch,
     ProviderInstanceMismatch,
+    RegistryGenerationMismatch,
+    DescriptorDigestMismatch,
+    OverlayRevisionMismatch,
     AlreadyConsumed,
     EffectLedgerFailure,
 }
@@ -65,15 +75,18 @@ struct SyntheticDispatchPermit {
     lease_generation: u32,
     owner_id: String,
     provider: SyntheticProviderIdentity,
+    registry_pin: SyntheticRegistryPin,
     consumed: bool,
 }
 
+#[derive(Clone, Copy)]
 struct SyntheticInvocation<'a> {
     request: &'a SyntheticRequest,
     step_id: &'a str,
     lease_generation: u32,
     owner_id: &'a str,
     provider_identity: SyntheticProviderIdentity,
+    registry_pin: SyntheticRegistryPin,
     clock: ManualClock,
     deadline_ms: i64,
 }
@@ -85,6 +98,7 @@ impl SyntheticDispatchPermit {
         lease_generation: u32,
         owner_id: &str,
         provider: SyntheticProviderIdentity,
+        registry_pin: SyntheticRegistryPin,
     ) -> Self {
         Self {
             request,
@@ -92,6 +106,7 @@ impl SyntheticDispatchPermit {
             lease_generation,
             owner_id: owner_id.to_owned(),
             provider,
+            registry_pin,
             consumed: false,
         }
     }
@@ -119,6 +134,15 @@ impl SyntheticDispatchPermit {
         if invocation.provider_identity != self.provider {
             return Err(SyntheticPermitRefusal::ProviderInstanceMismatch);
         }
+        if invocation.registry_pin.generation != self.registry_pin.generation {
+            return Err(SyntheticPermitRefusal::RegistryGenerationMismatch);
+        }
+        if invocation.registry_pin.descriptor_digest != self.registry_pin.descriptor_digest {
+            return Err(SyntheticPermitRefusal::DescriptorDigestMismatch);
+        }
+        if invocation.registry_pin.overlay_revision != self.registry_pin.overlay_revision {
+            return Err(SyntheticPermitRefusal::OverlayRevisionMismatch);
+        }
 
         // Consume before crossing the fake provider boundary. A failure or
         // ambiguous result cannot reuse this in-memory permit.
@@ -134,6 +158,7 @@ enum Script {
     ApplyAndAcknowledge,
     ApplyThenLoseAcknowledgement,
     RejectBeforeEffect,
+    UnavailableBeforeEffect,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -141,6 +166,7 @@ enum SimulatedOutcome {
     Acknowledged(SyntheticResponse),
     Ambiguous,
     RejectedBeforeEffect,
+    UnavailableBeforeEffect,
     TimedOutBeforeEffect,
 }
 
@@ -267,6 +293,7 @@ impl ScriptedFakeProvider {
                 Ok(SimulatedOutcome::Ambiguous)
             }
             Some(Script::RejectBeforeEffect) | None => Ok(SimulatedOutcome::RejectedBeforeEffect),
+            Some(Script::UnavailableBeforeEffect) => Ok(SimulatedOutcome::UnavailableBeforeEffect),
         }
     }
 }
@@ -611,6 +638,11 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         provider_id: "calendar",
         instance_id: 41,
     };
+    let registry_pin = SyntheticRegistryPin {
+        generation: 3,
+        descriptor_digest: "sha256:descriptor-a",
+        overlay_revision: 9,
+    };
     let mismatch_cases = [
         (
             "request",
@@ -622,6 +654,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             7,
             "owner-a",
             provider_identity,
+            registry_pin,
             SyntheticPermitRefusal::RequestMismatch,
         ),
         (
@@ -634,6 +667,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             7,
             "owner-a",
             provider_identity,
+            registry_pin,
             SyntheticPermitRefusal::RequestMismatch,
         ),
         (
@@ -643,6 +677,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             7,
             "owner-a",
             provider_identity,
+            registry_pin,
             SyntheticPermitRefusal::StepMismatch,
         ),
         (
@@ -652,6 +687,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             8,
             "owner-a",
             provider_identity,
+            registry_pin,
             SyntheticPermitRefusal::LeaseGenerationMismatch,
         ),
         (
@@ -661,6 +697,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             7,
             "owner-b",
             provider_identity,
+            registry_pin,
             SyntheticPermitRefusal::OwnerMismatch,
         ),
         (
@@ -673,12 +710,54 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
                 provider_id: "calendar",
                 instance_id: 42,
             },
+            registry_pin,
             SyntheticPermitRefusal::ProviderInstanceMismatch,
+        ),
+        (
+            "registry generation",
+            request.clone(),
+            "step-a",
+            7,
+            "owner-a",
+            provider_identity,
+            SyntheticRegistryPin {
+                generation: 4,
+                ..registry_pin
+            },
+            SyntheticPermitRefusal::RegistryGenerationMismatch,
+        ),
+        (
+            "descriptor digest",
+            request.clone(),
+            "step-a",
+            7,
+            "owner-a",
+            provider_identity,
+            SyntheticRegistryPin {
+                descriptor_digest: "sha256:descriptor-b",
+                ..registry_pin
+            },
+            SyntheticPermitRefusal::DescriptorDigestMismatch,
+        ),
+        (
+            "overlay revision",
+            request.clone(),
+            "step-a",
+            7,
+            "owner-a",
+            provider_identity,
+            SyntheticRegistryPin {
+                overlay_revision: 10,
+                ..registry_pin
+            },
+            SyntheticPermitRefusal::OverlayRevisionMismatch,
         ),
     ];
 
-    for (index, (label, presented_request, step, lease, owner, instance, expected)) in
-        mismatch_cases.into_iter().enumerate()
+    for (
+        index,
+        (label, presented_request, step, lease, owner, instance, presented_pin, expected),
+    ) in mismatch_cases.into_iter().enumerate()
     {
         let mut permit = SyntheticDispatchPermit::new(
             request.clone(),
@@ -686,6 +765,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
             7,
             "owner-a",
             provider_identity,
+            registry_pin,
         );
         let mut fake = ScriptedFakeProvider::new(
             EffectLedger::open(
@@ -704,6 +784,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
                     lease_generation: lease,
                     owner_id: owner,
                     provider_identity: instance,
+                    registry_pin: presented_pin,
                     clock: ManualClock(1),
                     deadline_ms: 10,
                 },
@@ -719,8 +800,14 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         );
     }
 
-    let mut permit =
-        SyntheticDispatchPermit::new(request.clone(), "step-a", 7, "owner-a", provider_identity);
+    let mut permit = SyntheticDispatchPermit::new(
+        request.clone(),
+        "step-a",
+        7,
+        "owner-a",
+        provider_identity,
+        registry_pin,
+    );
     let mut fake = ScriptedFakeProvider::new(
         EffectLedger::open(db.0.parent().unwrap().join("matched.sqlite")).unwrap(),
         [
@@ -737,6 +824,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
                     lease_generation: 7,
                     owner_id: "owner-a",
                     provider_identity,
+                    registry_pin,
                     clock: ManualClock(1),
                     deadline_ms: 10,
                 },
@@ -753,6 +841,7 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
                 lease_generation: 7,
                 owner_id: "owner-a",
                 provider_identity,
+                registry_pin,
                 clock: ManualClock(1),
                 deadline_ms: 10,
             },
@@ -761,4 +850,146 @@ fn proposed_one_shot_permit_is_bound_to_request_step_lease_owner_and_provider_in
         Err(SyntheticPermitRefusal::AlreadyConsumed)
     );
     assert_eq!(fake.ledger.count(&request.request_id).unwrap(), 1);
+}
+
+#[test]
+fn provider_unavailability_after_intent_commit_consumes_permit_without_effect_or_replay() {
+    let db = TempLedger::new();
+    let request = SyntheticRequest {
+        request_id: "req_provider_unavailable_after_commit".into(),
+        idempotency_key: "idk_provider_unavailable_after_commit".into(),
+    };
+    let intents = IntentLedger::open(db.intent_path()).unwrap();
+    intents.commit(&request).unwrap();
+    let provider_identity = SyntheticProviderIdentity {
+        provider_id: "calendar",
+        instance_id: 52,
+    };
+    let registry_pin = SyntheticRegistryPin {
+        generation: 4,
+        descriptor_digest: "sha256:descriptor-ready-at-commit",
+        overlay_revision: 12,
+    };
+    let mut permit = SyntheticDispatchPermit::new(
+        request.clone(),
+        "step-unavailable",
+        3,
+        "owner-synthetic",
+        provider_identity,
+        registry_pin,
+    );
+    // The Fake Provider becomes unavailable after the Intent is committed and
+    // after the host has prepared its process-local Permit, but before an
+    // effect is written. This models a boundary, not production readiness.
+    let mut fake = ScriptedFakeProvider::new(
+        EffectLedger::open(db.0.clone()).unwrap(),
+        [Script::UnavailableBeforeEffect],
+    );
+    let invocation = SyntheticInvocation {
+        request: &request,
+        step_id: "step-unavailable",
+        lease_generation: 3,
+        owner_id: "owner-synthetic",
+        provider_identity,
+        registry_pin,
+        clock: ManualClock(10),
+        deadline_ms: 20,
+    };
+    assert!(intents.matches(&request).unwrap());
+    assert_eq!(
+        permit.invoke_once(invocation, &mut fake),
+        Ok(SimulatedOutcome::UnavailableBeforeEffect)
+    );
+    assert_eq!(
+        fake.ledger
+            .count_pair(&request.request_id, &request.idempotency_key)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        permit.invoke_once(invocation, &mut fake),
+        Err(SyntheticPermitRefusal::AlreadyConsumed),
+        "readiness loss after commit cannot enable a second attempt"
+    );
+    assert_eq!(fake.ledger.count(&request.request_id).unwrap(), 0);
+    drop(intents);
+    assert!(
+        IntentLedger::open(db.intent_path())
+            .unwrap()
+            .matches(&request)
+            .unwrap()
+    );
+}
+
+#[test]
+fn mismatched_attempt_does_not_consume_permit_before_a_later_exact_binding() {
+    let db = TempLedger::new();
+    let request = SyntheticRequest {
+        request_id: "req_mismatch_then_valid".into(),
+        idempotency_key: "idk_mismatch_then_valid".into(),
+    };
+    let provider_identity = SyntheticProviderIdentity {
+        provider_id: "calendar",
+        instance_id: 61,
+    };
+    let registry_pin = SyntheticRegistryPin {
+        generation: 5,
+        descriptor_digest: "sha256:descriptor-mismatch-probe",
+        overlay_revision: 14,
+    };
+    let mut permit = SyntheticDispatchPermit::new(
+        request.clone(),
+        "step-mismatch-probe",
+        6,
+        "owner-synthetic",
+        provider_identity,
+        registry_pin,
+    );
+    let mut fake = ScriptedFakeProvider::new(
+        EffectLedger::open(db.0.clone()).unwrap(),
+        [Script::ApplyAndAcknowledge],
+    );
+    let wrong_request = SyntheticRequest {
+        request_id: request.request_id.clone(),
+        idempotency_key: "idk_wrong_binding".into(),
+    };
+    assert_eq!(
+        permit.invoke_once(
+            SyntheticInvocation {
+                request: &wrong_request,
+                step_id: "step-mismatch-probe",
+                lease_generation: 6,
+                owner_id: "owner-synthetic",
+                provider_identity,
+                registry_pin,
+                clock: ManualClock(1),
+                deadline_ms: 10,
+            },
+            &mut fake,
+        ),
+        Err(SyntheticPermitRefusal::RequestMismatch)
+    );
+    assert_eq!(fake.ledger.count(&request.request_id).unwrap(), 0);
+    assert!(matches!(
+        permit.invoke_once(
+            SyntheticInvocation {
+                request: &request,
+                step_id: "step-mismatch-probe",
+                lease_generation: 6,
+                owner_id: "owner-synthetic",
+                provider_identity,
+                registry_pin,
+                clock: ManualClock(2),
+                deadline_ms: 10,
+            },
+            &mut fake,
+        ),
+        Ok(SimulatedOutcome::Acknowledged(_))
+    ));
+    assert_eq!(
+        fake.ledger
+            .count_pair(&request.request_id, &request.idempotency_key)
+            .unwrap(),
+        1
+    );
 }

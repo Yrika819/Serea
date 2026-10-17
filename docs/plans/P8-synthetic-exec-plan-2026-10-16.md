@@ -687,8 +687,9 @@ success on #26 SHA `72be5ac...`. Attempt 1 failed job
 passed and subsequent release/Host steps were skipped. Attempt 2's corresponding
 Stable Windows ARM64 job `117120563141` succeeded. Rust 1.85.0 Windows ARM64
 job `117106059966` also succeeded. The attempt-1 job-log endpoint returned
-403 and `gh run view --attempt 1 --job 117106059399 --log` exposed no body, so
-the exact test name, assertion, output and exit signature remain unavailable.
+403 and `gh run view --attempt 1 --job 117106059399 --log` exposed no body.
+The check annotation reports only the generic `Process completed with exit
+code 1`; the test name, assertion and stderr remain unavailable.
 No Windows ARM64 host exists in this execution environment. Disposition:
 **UNRESOLVED / monitor**; do not infer a transient runner failure or claim
 reproduction. Do not restart CI solely to improve appearance.
@@ -796,3 +797,36 @@ PR with base `p8b/overnight-2026-10-17` (PR #26), then capture exact new-head
 Fast/Full/Native/SQLite/Hooks run IDs, attempts and results. Keep PRs #19–#26
 unchanged and do not merge or close any PR. Continue only with safe test-only
 slices; runtime invoke and all blocked contracts remain closed.
+
+#### Follow-up Budget and contract-text audit — 2026-10-17
+
+After creating Draft PR #27, an additional safe test gap was closed locally:
+`real_storage_task_budget_limit_two_commits_exactly_two_eligible_steps` races
+two distinct approved Steps through separate real `Store` connections with
+`max_tool_calls=2`. After reopen it requires exactly two Intent rows, two P6
+Grant-use rows, two Event-content rows and two distinct Steps; the Task limit
+is 2, the Grant has zero uses remaining, and `verify_integrity()` succeeds.
+Rust 1.85.0 focused test passed (1 passed, 640 filtered); the adjacent
+`real_storage_task_budget_` selector passed both limit-one refusal and limit-
+two exact-fill tests. This completes zero, one, and N=2 boundary cases without
+adding a production counter or API.
+
+Hostile document review found stale §A text in the Owner package implying a
+new `DISPATCH_INTENT_COMMITTED` EventKind was still required. This contradicted
+Event Protocol §3.3 and the package's own §E. The stale text is corrected to
+reuse the already accepted `CAPABILITY_REQUESTED` for durable Intent commit;
+payload details remain proposed and the kind does not prove invocation or
+effect.
+
+The initial PR #27 head `371d7a00d1351b5db1940aa718ab593e8ffa812c` had Fast
+`38984492101` and Git Hooks `38984492069` completed success when inspected;
+Full `38984492097`, Native `38984492091`, and SQLite `38984492077` were not yet
+complete. This follow-up test and documentation correction are being carried
+in a normal commit on the same PR branch; the new head needs its own complete
+CI evidence and supersedes these partial checks.
+
+**Next checkpoint:** finish focused Storage Clippy and final docs/format/Git
+checks, commit this bounded-budget test plus the Event correction and ExecPlan
+update normally, push only `p8b/authority-boundary-2026-10-17`, update the
+existing Draft PR #27 description if needed, and capture all five workflows
+for the new exact head. Do not create another PR or modify #19–#26.

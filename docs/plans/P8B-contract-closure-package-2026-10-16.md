@@ -80,12 +80,12 @@ For canonical schema, a counter on Task is easier to retain after Intent
 terminalization, but its lifecycle must be specified together with Task
 deletion.
 
-The atomic Event's type and minimal payload also need an accepted Protocol
-clause. Do not reuse `CapabilityRequested` to claim that a provider dispatch
-was authorized or invoked: request, committed authority, and effect start are
-separate facts. Until a `DispatchIntentCommitted`-style event is accepted,
-event tests should assert transaction rollback/commit mechanics only, not
-semantic completeness.
+Event Protocol §3.3 already assigns `CAPABILITY_REQUESTED` to a durably
+committed P8 Dispatch Intent. That event proves Intent commit only; it does not
+prove provider invocation, effect success, billing, or Receipt. Reuse this
+accepted EventKind by default. Its exact bounded P8 payload is still a
+proposed Owner decision, and transaction tests must not claim payload
+completeness before that decision.
 
 ### Acceptance tests
 
@@ -99,10 +99,14 @@ semantic completeness.
 5. No-intent duplicate suppression and policy/approval/lease refusal consume
    zero. Reconciliation accounting remains NOT RUN / blocked until separately
    accepted.
+6. `max_tool_calls=2`: two distinct approved Steps commit exactly two Intent,
+   Grant-use and Event rows; the reopened Task limit and durable count agree.
 
-The test-only PR #25 follow-up currently implements the zero-limit rollback
-case against the actual Task row and Storage transaction. It does not add a
-production counter or API.
+The test-only PR #25 follow-up implements zero-limit rollback and a limit-one
+race against the actual Task row and Storage transaction. The
+2026-10-17 continuation adds two distinct concurrent eligible Steps that
+commit exactly the two allowed units and asserts the reopened rows. These
+remain test-only candidate mechanics; no production counter or API is added.
 
 The reused P8C simulator also now has test-only separate Intent and Effect
 SQLite ledgers. Added cases reopen both after ACK loss and verify exact

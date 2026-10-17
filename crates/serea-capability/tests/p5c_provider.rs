@@ -107,6 +107,34 @@ fn exact_advertised_descriptor_accepted() {
 }
 
 #[test]
+fn replacement_registry_can_hold_a_distinct_instance_with_the_same_provider_id() {
+    // ProviderId and descriptors can stay identical while the Host-side
+    // registry is rebuilt around a different Arc allocation. Registry facts
+    // alone do not pin the exact live object checked earlier.
+    let first: Arc<dyn serea_protocol::CapabilityProvider> =
+        Arc::new(serea_testkit::MockCapabilityProvider::new(
+            ProviderId::new("calendar").unwrap(),
+            Vec::new(),
+        ));
+    let previous = ProviderRegistry::build(vec![first]).unwrap();
+    let replacement: Arc<dyn serea_protocol::CapabilityProvider> =
+        Arc::new(serea_testkit::MockCapabilityProvider::new(
+            ProviderId::new("calendar").unwrap(),
+            Vec::new(),
+        ));
+    let current = ProviderRegistry::build(vec![replacement]).unwrap();
+
+    assert_eq!(
+        previous.providers()[0].provider_id(),
+        current.providers()[0].provider_id()
+    );
+    assert!(!Arc::ptr_eq(
+        &previous.providers()[0],
+        &current.providers()[0]
+    ));
+}
+
+#[test]
 fn missing_provider_is_not_manifest_failure() {
     let m = manifest();
     let d = descriptor("gmail.messages.send", "1.0.0", "gmail", None);

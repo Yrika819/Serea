@@ -13,7 +13,7 @@ use crate::{
     JournalRecord, JournalRecords, Migrations, Store, StoreError, TaskAuditParticipant,
     TransitionContext, Tx, approval_action_set_digest,
 };
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::json;
 use serea_protocol::{
     Actor, ActorId, ActorKind, ApprovalId, Authorization, CapabilityId, Clock, DataClass, Digest,
@@ -3510,6 +3510,676 @@ fn grant_fact_projection_does_not_reject_a_corrupted_sealed_member_set() {
     // complete-set invariant after trigger removal and row corruption.
     let reopened = Store::open(&path.0, &FixedClock).unwrap();
     reopened.verify_integrity().unwrap();
+}
+
+/// Experimental, test-only full-set validator. It runs on the same real
+/// `BEGIN IMMEDIATE` transaction as Storage operations and deliberately exposes
+/// no runtime authorization result or public constructor.
+fn probe_grant_full_set(
+    tx: &Tx<'_>,
+    grant_id: &GrantId,
+    approval_id: &ApprovalId,
+    task_id: &TaskId,
+    selected_step: &StepId,
+) -> Result<Vec<(i64, StepId, Digest, Digest)>, StoreError> {
+    type GrantRequestIntegrityRow = (
+        String,
+        String,
+        i64,
+        String,
+        String,
+        i64,
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        String,
+        String,
+        String,
+        i64,
+        String,
+        String,
+        i64,
+        String,
+        String,
+        i64,
+    );
+    let row: Option<GrantRequestIntegrityRow> = tx
+        .inner
+        .query_row(
+            "SELECT g.approval_id,g.task_id,g.plan_revision,g.capability_id,
+                g.capability_version,g.generation_id,g.descriptor_digest,
+                g.action_set_digest,g.action_count,g.max_uses,g.uses_remaining,
+                g.status,r.status,r.task_id,r.plan_revision,r.capability_id,
+                r.capability_version,r.generation_id,r.descriptor_digest,
+                r.action_set_digest,r.action_count
+           FROM approval_grants g JOIN approval_requests r ON r.approval_id=g.approval_id
+          WHERE g.grant_id=?1",
+            [grant_id.as_str()],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                    r.get(9)?,
+                    r.get(10)?,
+                    r.get(11)?,
+                    r.get(12)?,
+                    r.get(13)?,
+                    r.get(14)?,
+                    r.get(15)?,
+                    r.get(16)?,
+                    r.get(17)?,
+                    r.get(18)?,
+                    r.get(19)?,
+                    r.get(20)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        g_approval,
+        g_task,
+        g_plan,
+        g_cap,
+        g_version,
+        g_generation,
+        g_descriptor,
+        g_digest,
+        g_count,
+        g_max,
+        g_remaining,
+        g_status,
+        r_status,
+        r_task,
+        r_plan,
+        r_cap,
+        r_version,
+        r_generation,
+        r_descriptor,
+        r_digest,
+        r_count,
+    )) = row
+    else {
+        return Err(StoreError::InvalidApprovalResponse);
+    };
+    if g_approval != approval_id.as_str()
+        || g_task != task_id.as_str()
+        || r_status != "APPROVED"
+        || r_task != g_task
+        || r_plan != g_plan
+        || r_cap != g_cap
+        || r_version != g_version
+        || r_generation != g_generation
+        || r_descriptor != g_descriptor
+        || !(1..=8).contains(&g_count)
+        || r_count < g_count
+        || g_max != g_count
+        || g_remaining < 0
+        || g_remaining > g_max
+        || !matches!(
+            g_status.as_str(),
+            "ACTIVE" | "EXHAUSTED" | "REVOKED" | "EXPIRED"
+        )
+    {
+        return Err(StoreError::InvalidApprovalResponse);
+    }
+    // The Request digest covers the complete requested set. Grant.action_set_digest
+    // is a second digest over the approved subset, as apply_response currently
+    // writes it. Recompute them independently; neither stored hash is keyed.
+    let request_rows: Vec<(i64, String, String, String, String)> = {
+        let mut statement = tx.inner.prepare(
+            "SELECT position,step_id,arguments_digest,scope,scope_digest
+               FROM approval_request_actions WHERE approval_id=?1 ORDER BY position ASC",
+        )?;
+        statement
+            .query_map([approval_id.as_str()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })?
+            .collect::<Result<_, _>>()?
+    };
+    if request_rows.len() as i64 != r_count || request_rows.len() > 8 {
+        return Err(StoreError::InvalidApprovalResponse);
+    }
+    let mut request_by_step = std::collections::BTreeMap::new();
+    let mut previous_request_step: Option<String> = None;
+    let mut request_action_set = Vec::with_capacity(request_rows.len());
+    for (position, step, arguments, scope, scope_digest) in request_rows {
+        let action = ApprovalRequestActionDraft {
+            step_id: StepId::new(step).map_err(|_| StoreError::InvalidApprovalResponse)?,
+            arguments_digest: Digest::new(arguments)
+                .map_err(|_| StoreError::InvalidApprovalResponse)?,
+            scope_json: scope,
+            scope_digest: Digest::new(scope_digest)
+                .map_err(|_| StoreError::InvalidApprovalResponse)?,
+        };
+        if position != request_by_step.len() as i64
+            || previous_request_step
+                .as_ref()
+                .is_some_and(|prior| prior.as_bytes() >= action.step_id.as_str().as_bytes())
+            || digest_of(&action.scope_json).map_err(|_| StoreError::InvalidApprovalResponse)?
+                != action.scope_digest
+            || request_by_step
+                .insert(action.step_id.to_string(), action.clone())
+                .is_some()
+        {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+        previous_request_step = Some(action.step_id.to_string());
+        request_action_set.push(action);
+    }
+    if approval_action_set_digest(&request_action_set)
+        .map_err(|_| StoreError::InvalidApprovalResponse)?
+        .as_str()
+        != r_digest
+    {
+        return Err(StoreError::InvalidApprovalResponse);
+    }
+
+    let seal_count: i64 = tx.inner.query_row(
+        "SELECT count(*) FROM approval_grant_seals WHERE grant_id=?1",
+        [grant_id.as_str()],
+        |r| r.get(0),
+    )?;
+    if seal_count != 1 {
+        return Err(StoreError::InvalidApprovalResponse);
+    }
+    let uses: Vec<(String, String)> = {
+        let mut statement = tx.inner.prepare(
+            "SELECT step_id,task_id FROM approval_grant_uses WHERE grant_id=?1 ORDER BY step_id",
+        )?;
+        statement
+            .query_map([grant_id.as_str()], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?
+    };
+    if uses.len() as i64 != g_max - g_remaining
+        || (g_status == "ACTIVE" && g_remaining == 0)
+        || (g_status == "EXHAUSTED" && g_remaining != 0)
+    {
+        return Err(StoreError::InvalidApprovalResponse);
+    }
+
+    let members: Vec<(i64, String, String, String, String)> = {
+        let mut statement = tx.inner.prepare(
+            "SELECT position,approval_id,step_id,arguments_digest,scope_digest
+               FROM approval_grant_members WHERE grant_id=?1 ORDER BY position ASC",
+        )?;
+        statement
+            .query_map([grant_id.as_str()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })?
+            .collect::<Result<_, _>>()?
+    };
+    if members.len() as i64 != g_count || members.len() > 8 {
+        return Err(StoreError::InvalidApprovalResponse);
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut result = Vec::with_capacity(members.len());
+    let mut grant_subset = Vec::with_capacity(members.len());
+    let mut selected = false;
+    for (
+        expected_position,
+        (position, member_approval, member_step, member_arguments, member_scope),
+    ) in members.into_iter().enumerate()
+    {
+        if position != expected_position as i64
+            || member_approval != approval_id.as_str()
+            || !seen.insert(member_step.clone())
+        {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+        let step = StepId::new(member_step).map_err(|_| StoreError::InvalidApprovalResponse)?;
+        let Some(action) = request_by_step.get(step.as_str()) else {
+            return Err(StoreError::InvalidApprovalResponse);
+        };
+        if member_arguments != action.arguments_digest.as_str()
+            || member_scope != action.scope_digest.as_str()
+        {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+        let step_facts: Option<(String, i64, String, String)> = tx
+            .inner
+            .query_row(
+                "SELECT s.task_id,s.plan_revision,s.capability_id,s.capability_version
+               FROM task_steps s WHERE s.step_id=?1",
+                [step.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        if step_facts != Some((g_task.clone(), g_plan, g_cap.clone(), g_version.clone())) {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+        let binding: Option<(i64, String)> = tx
+            .inner
+            .query_row(
+                "SELECT generation_id,descriptor_digest FROM step_capability_bindings
+              WHERE task_id=?1 AND step_id=?2",
+                rusqlite::params![task_id.as_str(), step.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if binding != Some((g_generation, g_descriptor.clone())) {
+            return Err(StoreError::InvalidApprovalResponse);
+        }
+        selected |= &step == selected_step;
+        result.push((
+            position,
+            step,
+            Digest::new(member_arguments).map_err(|_| StoreError::InvalidApprovalResponse)?,
+            action.scope_digest.clone(),
+        ));
+        grant_subset.push(action.clone());
+    }
+    if !selected
+        || uses
+            .iter()
+            .any(|(used_step, used_task)| used_task != &g_task || !seen.contains(used_step))
+    {
+        return Err(StoreError::InvalidApprovalResponse);
+    }
+    if approval_action_set_digest(&grant_subset)
+        .map_err(|_| StoreError::InvalidApprovalResponse)?
+        .as_str()
+        != g_digest
+    {
+        return Err(StoreError::InvalidApprovalResponse);
+    }
+    Ok(result)
+}
+
+fn full_grant_probe_effect_counts(store: &Store) -> (i64, i64, i64) {
+    let conn = store.conn.lock().unwrap();
+    (
+        scalar(&conn, "SELECT count(*) FROM approval_grant_uses").unwrap(),
+        scalar(&conn, "SELECT count(*) FROM event_content").unwrap(),
+        scalar(&conn, "SELECT count(*) FROM approval_requests").unwrap(),
+    )
+}
+
+#[test]
+fn test_only_full_grant_set_probe_checks_subset_and_rejects_corruption() {
+    fn setup(two: bool) -> (TempDb, Store, GrantId) {
+        let path = TempDb::new();
+        let store = approval_store(&path.0);
+        let request = if two {
+            two_action_request_draft()
+        } else {
+            typed_request_draft()
+        };
+        store
+            .create_approval_request(request.clone(), approval_required_event(&request))
+            .unwrap();
+        let response = if two {
+            two_action_grant_storage_draft()
+        } else {
+            authenticated_grant_storage_draft()
+        };
+        let grant = response.grant_id.clone().unwrap();
+        store
+            .respond_to_approval(
+                response.clone(),
+                approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+            )
+            .unwrap();
+        (path, store, grant)
+    }
+    let (_single_path, single, single_grant) = setup(false);
+    let one = single
+        .transact(|tx| {
+            probe_grant_full_set(
+                tx,
+                &single_grant,
+                &ApprovalId::new(APPROVAL).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+            )
+        })
+        .unwrap();
+    assert_eq!(one.len(), 1);
+    let (_subset_path, subset_store, subset_grant) = {
+        let path = TempDb::new();
+        let store = approval_store(&path.0);
+        let request = two_action_request_draft();
+        store
+            .create_approval_request(request.clone(), approval_required_event(&request))
+            .unwrap();
+        let mut response = authenticated_grant_storage_draft();
+        response.request_action_set_digest = request.action_set_digest.clone();
+        let grant = response.grant_id.clone().unwrap();
+        store
+            .respond_to_approval(
+                response.clone(),
+                approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+            )
+            .unwrap();
+        (path, store, grant)
+    };
+    assert_eq!(
+        subset_store
+            .transact(|tx| probe_grant_full_set(
+                tx,
+                &subset_grant,
+                &ApprovalId::new(APPROVAL).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+            ))
+            .unwrap()
+            .len(),
+        1,
+        "Grant subset is one member from a two-action Request"
+    );
+    let (_multi_path, multi, multi_grant) = setup(true);
+    let both = multi
+        .transact(|tx| {
+            probe_grant_full_set(
+                tx,
+                &multi_grant,
+                &ApprovalId::new(APPROVAL).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_B).unwrap(),
+            )
+        })
+        .unwrap();
+    assert_eq!(both.len(), 2);
+    assert_eq!(
+        both.iter().map(|m| m.1.as_str()).collect::<Vec<_>>(),
+        vec![STEP_A, STEP_B]
+    );
+    let before = full_grant_probe_effect_counts(&multi);
+    multi
+        .transact(|tx| {
+            probe_grant_full_set(
+                tx,
+                &multi_grant,
+                &ApprovalId::new(APPROVAL).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+            )
+        })
+        .unwrap();
+    let after = full_grant_probe_effect_counts(&multi);
+    assert_eq!(
+        before, after,
+        "probe is read-only: no Grant use, Event or Request rows"
+    );
+    assert!(
+        multi
+            .transact(|tx| probe_grant_full_set(
+                tx,
+                &multi_grant,
+                &ApprovalId::new(APPROVAL).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_C).unwrap()
+            ))
+            .is_err()
+    );
+    // A surrounding transaction error rolls back normally; the probe itself
+    // performs only SELECTs and changes no Grant/event facts.
+    assert!(
+        multi
+            .transact(|tx| {
+                probe_grant_full_set(
+                    tx,
+                    &multi_grant,
+                    &ApprovalId::new(APPROVAL).unwrap(),
+                    &TaskId::new(TASK).unwrap(),
+                    &StepId::new(STEP_A).unwrap(),
+                )?;
+                tx.inner.execute(
+                    "UPDATE approval_grants SET status='REVOKED' WHERE grant_id=?1",
+                    [multi_grant.as_str()],
+                )?;
+                Err::<(), _>(StoreError::ConstraintViolation)
+            })
+            .is_err()
+    );
+    assert_eq!(
+        text(
+            &multi.conn.lock().unwrap(),
+            "SELECT status FROM approval_grants WHERE grant_id=?1",
+            multi_grant.as_str()
+        )
+        .unwrap(),
+        "ACTIVE"
+    );
+    let (before_uses, before_events, _) = full_grant_probe_effect_counts(&multi);
+    assert_eq!((before_uses, before_events), (0, 2));
+    drop(multi);
+    let reopened = Store::open(&_multi_path.0, &FixedClock).unwrap();
+    assert_eq!(
+        reopened
+            .transact(|tx| probe_grant_full_set(
+                tx,
+                &multi_grant,
+                &ApprovalId::new(APPROVAL).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap()
+            ))
+            .unwrap()
+            .len(),
+        2
+    );
+    reopened.verify_integrity().unwrap();
+
+    // Direct SQL is confined to adversarial fixtures: drop immutable-row
+    // triggers to represent a local database/schema attacker.
+    for (damage, sql) in [
+        (
+            "missing",
+            "DROP TRIGGER approval_grant_member_no_delete; DELETE FROM approval_grant_members WHERE position=0",
+        ),
+        (
+            "position",
+            "DROP TRIGGER approval_grant_member_no_update; UPDATE approval_grant_members SET position=7 WHERE position=0",
+        ),
+        (
+            "reordered",
+            "DROP TRIGGER approval_grant_member_no_update; UPDATE approval_grant_members SET position=7 WHERE position=0; UPDATE approval_grant_members SET position=0 WHERE position=1; UPDATE approval_grant_members SET position=1 WHERE position=7",
+        ),
+        (
+            "digest",
+            "DROP TRIGGER approval_grant_member_no_update; UPDATE approval_grant_members SET arguments_digest='sha256:0000000000000000000000000000000000000000000000000000000000000000' WHERE position=0",
+        ),
+        (
+            "scope-digest",
+            "DROP TRIGGER approval_grant_member_no_update; UPDATE approval_grant_members SET scope_digest='sha256:0000000000000000000000000000000000000000000000000000000000000000' WHERE position=0",
+        ),
+        (
+            "seal",
+            "DROP TRIGGER approval_grant_seal_no_delete; DELETE FROM approval_grant_seals",
+        ),
+    ] {
+        let (path, store, grant) = setup(true);
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(sql).unwrap();
+        }
+        assert!(
+            store
+                .transact(|tx| probe_grant_full_set(
+                    tx,
+                    &grant,
+                    &ApprovalId::new(APPROVAL).unwrap(),
+                    &TaskId::new(TASK).unwrap(),
+                    &StepId::new(STEP_A).unwrap()
+                ))
+                .is_err(),
+            "{damage}"
+        );
+        assert_eq!(
+            scalar(
+                &store.conn.lock().unwrap(),
+                "SELECT count(*) FROM approval_grant_uses"
+            )
+            .unwrap(),
+            0
+        );
+        drop(store);
+        let reopened = Store::open(&path.0, &FixedClock).unwrap();
+        assert!(
+            reopened
+                .transact(|tx| probe_grant_full_set(
+                    tx,
+                    &grant,
+                    &ApprovalId::new(APPROVAL).unwrap(),
+                    &TaskId::new(TASK).unwrap(),
+                    &StepId::new(STEP_A).unwrap()
+                ))
+                .is_err(),
+            "{damage} after reopen"
+        );
+        reopened.verify_integrity().unwrap();
+    }
+    let (_path, constrained, grant) = setup(true);
+    let conn = constrained.conn.lock().unwrap();
+    assert!(
+        conn.execute(
+            "UPDATE approval_grants SET action_count=1 WHERE grant_id=?1",
+            [grant.as_str()]
+        )
+        .is_err(),
+        "SQLite CHECK max_uses=action_count rejects count-only corruption"
+    );
+    drop(conn);
+    assert_eq!(
+        constrained
+            .transact(|tx| probe_grant_full_set(
+                tx,
+                &grant,
+                &ApprovalId::new(APPROVAL).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap()
+            ))
+            .unwrap()
+            .len(),
+        2
+    );
+    for sql in [
+        "DROP TRIGGER approval_grant_member_no_delete; DROP TRIGGER approval_grant_member_no_insert_after_seal; DELETE FROM approval_grant_members WHERE position=1; INSERT INTO approval_grant_members(grant_id,position,approval_id,step_id,arguments_digest,scope_digest) SELECT grant_id,1,approval_id,step_id,arguments_digest,scope_digest FROM approval_grant_members WHERE position=0",
+        "DROP TRIGGER approval_grant_member_no_delete; DROP TRIGGER approval_grant_member_no_insert_after_seal; DELETE FROM approval_grant_members WHERE position=1; INSERT INTO approval_grant_members(grant_id,position,approval_id,step_id,arguments_digest,scope_digest) SELECT grant_id,0,approval_id,'stp_01JQ8Z9M5T9WXK2H4BNPQ7RDST','sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee2',scope_digest FROM approval_grant_members WHERE position=0",
+    ] {
+        let (_path, store, _grant) = setup(true);
+        let conn = store.conn.lock().unwrap();
+        assert!(
+            conn.execute_batch(sql).is_err(),
+            "duplicate Step or position remains SQLite-constrained"
+        );
+    }
+}
+
+#[test]
+fn full_set_probe_is_serialized_with_an_independent_sqlite_writer() {
+    let (path, first, grant) = {
+        let path = TempDb::new();
+        let store = approval_store(&path.0);
+        let request = two_action_request_draft();
+        store
+            .create_approval_request(request.clone(), approval_required_event(&request))
+            .unwrap();
+        let response = two_action_grant_storage_draft();
+        let grant = response.grant_id.clone().unwrap();
+        store
+            .respond_to_approval(
+                response.clone(),
+                approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+            )
+            .unwrap();
+        (path, store, grant)
+    };
+    let second = Store::open(&path.0, &FixedClock).unwrap();
+    let (attempting_tx, attempting_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let worker_grant = grant.clone();
+    let worker = std::thread::spawn(move || {
+        attempting_tx.send(()).unwrap();
+        let result = second.transact(|tx| {
+            probe_grant_full_set(
+                tx,
+                &worker_grant,
+                &ApprovalId::new(APPROVAL).unwrap(),
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+            )
+            .map(|rows| rows.len())
+        });
+        done_tx.send(result).unwrap();
+    });
+    first
+        .transact(|tx| {
+            assert_eq!(
+                probe_grant_full_set(
+                    tx,
+                    &grant,
+                    &ApprovalId::new(APPROVAL).unwrap(),
+                    &TaskId::new(TASK).unwrap(),
+                    &StepId::new(STEP_A).unwrap()
+                )?
+                .len(),
+                2
+            );
+            attempting_rx.recv().unwrap();
+            assert!(
+                done_rx
+                    .recv_timeout(std::time::Duration::from_millis(100))
+                    .is_err(),
+                "second connection must wait behind BEGIN IMMEDIATE"
+            );
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(done_rx.recv().unwrap().unwrap(), 2);
+    worker.join().unwrap();
+    first.verify_integrity().unwrap();
+}
+
+#[test]
+fn transaction_closure_clock_sample_occurs_only_after_writer_reservation() {
+    use std::sync::atomic::AtomicUsize;
+    let path = TempDb::new();
+    let first = approval_store(&path.0);
+    let second = Store::open(&path.0, &FixedClock).unwrap();
+    let samples = Arc::new(AtomicUsize::new(0));
+    let worker_samples = Arc::clone(&samples);
+    let (attempting_tx, attempting_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        attempting_tx.send(()).unwrap();
+        let sampled = second.transact(|_tx| {
+            worker_samples.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        done_tx.send(sampled).unwrap();
+    });
+    first
+        .transact(|_tx| {
+            attempting_rx.recv().unwrap();
+            assert_eq!(
+                samples.load(Ordering::SeqCst),
+                0,
+                "closure must not run while another connection owns the writer reservation"
+            );
+            assert!(
+                done_rx
+                    .recv_timeout(std::time::Duration::from_millis(100))
+                    .is_err()
+            );
+            Ok(())
+        })
+        .unwrap();
+    done_rx.recv().unwrap().unwrap();
+    worker.join().unwrap();
+    assert_eq!(
+        samples.load(Ordering::SeqCst),
+        1,
+        "one caller-owned sample occurred after BEGIN IMMEDIATE"
+    );
 }
 
 #[test]

@@ -101,6 +101,11 @@ def main() -> int:
             "E0432",
         ),
         (
+            "use serea_storage::migration_0005_tests::probe_grant_full_set;\n"
+            "pub fn call_probe() { let _ = probe_grant_full_set; }\n",
+            "E0432",
+        ),
+        (
             "use serea_storage::Tx;\n"
             "pub fn bypass(tx: &mut Tx<'_>) { let _ = tx.execute_batch(\"DELETE FROM tasks\"); }\n",
             "E0599",

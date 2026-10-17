@@ -11,6 +11,49 @@ use serea_protocol::{
 };
 use serea_storage::{GrantConsumptionOutcome, Store, StoreError, Tx};
 
+/// A downstream crate can create durable lease authority directly from a
+/// caller-chosen owner string and caller-chosen time. This proves the public
+/// durable operation is reachable, not that the caller is an admitted Worker.
+pub fn external_lease_acquisition(
+    tx: &mut Tx<'_>,
+    task: &TaskId,
+    step: &StepId,
+    now: EpochMillis,
+    expires_at: EpochMillis,
+) {
+    let _ = tx.acquire_lease(
+        task.clone(),
+        step.clone(),
+        serea_protocol::LeaseOwner::new("external-unverified-worker").unwrap(),
+        None,
+        now,
+        expires_at,
+    );
+}
+
+/// Any downstream crate can provide a verifier that always accepts and mint
+/// the wrapper type named "authenticated". This is type-flow evidence only;
+/// the wrapper does not prove that an Owner or Host verifier ran.
+pub struct ExternalAcceptApproval;
+
+impl serea_policy::ApprovalAuthenticationVerifier for ExternalAcceptApproval {
+    fn verify(
+        &self,
+        _candidate: &serea_policy::ApprovalResponseCandidateV1,
+    ) -> Result<(), serea_policy::ApprovalAuthenticationError> {
+        Ok(())
+    }
+}
+
+pub fn external_mint_authenticated_approval_wrapper(
+    candidate: serea_policy::ApprovalResponseCandidateV1,
+) -> Result<serea_policy::AuthenticatedApprovalResponseV1, serea_policy::ApprovalAuthenticationError> {
+    serea_policy::AuthenticatedApprovalResponseV1::authenticate(
+        candidate,
+        &ExternalAcceptApproval,
+    )
+}
+
 /// Arbitrary consumers can compose a valid public P6 grant-use operation in
 /// the public transaction callback without calling TaskEngine or Policy.
 /// This consumes an enumerated Grant member only; it does not create an Intent

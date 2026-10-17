@@ -105,6 +105,17 @@ def main() -> int:
             "pub fn bypass(tx: &mut Tx<'_>) { let _ = tx.execute_batch(\"DELETE FROM tasks\"); }\n",
             "E0599",
         ),
+        (
+            "use serea_policy::{ApprovalAuthenticationError, ApprovalAuthenticationVerifier, ApprovalResponseCandidateV1};\n"
+            "pub struct HostVerifier;\n"
+            "impl ApprovalAuthenticationVerifier for HostVerifier {\n"
+            "    fn verify(&self, candidate: &ApprovalResponseCandidateV1) -> Result<(), ApprovalAuthenticationError> {\n"
+            "        let _session = candidate.session_id();\n"
+            "        Ok(())\n"
+            "    }\n"
+            "}\n",
+            "no method named `session_id`",
+        ),
     ]
     failures = 0
     for source, expected in cases:

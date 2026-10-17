@@ -3447,6 +3447,72 @@ fn read_only_grant_fact_projection_observes_member_and_use_without_consuming() {
 }
 
 #[test]
+fn grant_fact_projection_does_not_reject_a_corrupted_sealed_member_set() {
+    // Adversarial corruption fixture only: remove the SQLite write fences to
+    // model a local file/schema attacker. The normal Grant writer is used to
+    // create the real sealed row before corruption.
+    let path = TempDb::new();
+    let store = approval_store(&path.0);
+    let request = typed_request_draft();
+    store
+        .create_approval_request(request.clone(), approval_required_event(&request))
+        .unwrap();
+    let response = authenticated_grant_storage_draft();
+    let grant_id = response.grant_id.clone().unwrap();
+    store
+        .respond_to_approval(
+            response.clone(),
+            approval_response_event(&response, EventKind::ApprovalGranted, STEP_A),
+        )
+        .unwrap();
+
+    {
+        let conn = store.conn.lock().unwrap();
+        conn.execute_batch(
+            "DROP TRIGGER approval_grant_member_no_delete;
+             DROP TRIGGER approval_grant_seal_no_delete;",
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM approval_grant_members WHERE grant_id=?1 AND step_id=?2",
+            params![grant_id.as_str(), STEP_A],
+        )
+        .unwrap();
+    }
+
+    let facts = store
+        .transact(|tx| {
+            tx.observe_grant_facts(
+                &grant_id,
+                &TaskId::new(TASK).unwrap(),
+                &StepId::new(STEP_A).unwrap(),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    // The existing projection reports inconsistent facts instead of failing
+    // closed. No use, event, or intent is created by this read-only probe.
+    assert!(facts.sealed());
+    assert_eq!(facts.member_count(), 0);
+    assert_eq!(facts.action_count(), 1);
+    assert_eq!(facts.member_arguments_digest(), None);
+    assert_eq!(
+        scalar(
+            &store.conn.lock().unwrap(),
+            "SELECT count(*) FROM approval_grant_uses"
+        )
+        .unwrap(),
+        0
+    );
+    drop(store);
+
+    // SQLite's structural check does not attest the application-level Grant
+    // complete-set invariant after trigger removal and row corruption.
+    let reopened = Store::open(&path.0, &FixedClock).unwrap();
+    reopened.verify_integrity().unwrap();
+}
+
+#[test]
 fn request_expiration_uses_inclusive_boundary_and_is_event_atomic() {
     let path = TempDb::new();
     let store = approval_store(&path.0);

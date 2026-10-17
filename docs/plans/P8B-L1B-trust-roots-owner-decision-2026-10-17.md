@@ -102,3 +102,9 @@ Choice B costs bounded reads proportional to the Grant's declared maximum member
 ## Explicit no-go items and ADR status
 
 This proposal does not accept ADR-0046, add an Intent writer or `CommitProof`, create a Permit, invoke a Provider, persist Credentials/Memory/Receipts/Retry state, add a canonical migration, or authorize external effects. Each trust root above remains `PROPOSED / NOT RATIFIED` pending explicit Owner decisions.
+
+## Isolated language-level feasibility note (2026-10-17)
+
+An isolated `/tmp` Rust sketch was compiled with stable `rustc` and run. A private module modeled a non-Clone `WorkerPrincipal`, a lease binding to principal incarnation plus owner text and generation, and a revocation bit. Assertions confirmed that a separately admitted principal with the same owner text, a stale generation, and a revoked principal do not satisfy the local predicate. A small expiry predicate treated `now == expires_at` and `now > expires_at` as expired, and `now < expires_at` as live.
+
+This validates only that the proposed shape is expressible in Rust. It does not use Serea's `LeaseGuard`, prove an authenticated issuer, exercise SQLite, establish OS identity, validate clock sampling around transaction acquisition, or defend against Host compromise. The toy issuer is reachable only inside its private module in the sketch; production visibility and mint authority still require explicit Owner approval. No recommendation above changes and this note does not ratify any contract.

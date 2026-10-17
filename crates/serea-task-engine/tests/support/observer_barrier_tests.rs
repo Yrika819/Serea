@@ -55,6 +55,44 @@ impl Drop for TempDb {
     }
 }
 
+/// Test-only logical snapshot of every ordinary SQLite table and value. This
+/// is used to prove that observation changes no durable row, not just counts.
+fn database_fingerprint(path: &std::path::Path) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let mut tables = connection
+        .prepare(
+            "SELECT name FROM sqlite_schema
+             WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .unwrap();
+    let names = tables
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    drop(tables);
+
+    names
+        .into_iter()
+        .map(|name| {
+            let quoted = format!("\"{}\"", name.replace('"', "\"\""));
+            let mut statement = connection
+                .prepare(&format!("SELECT * FROM {quoted}"))
+                .unwrap();
+            let column_count = statement.column_count();
+            let mut rows = statement.query([]).unwrap();
+            let mut values = Vec::new();
+            while let Some(row) = rows.next().unwrap() {
+                let row_values = (0..column_count)
+                    .map(|index| row.get::<_, rusqlite::types::Value>(index).unwrap())
+                    .collect();
+                values.push(row_values);
+            }
+            (name, values)
+        })
+        .collect()
+}
+
 fn event_bus() -> EventBus {
     let source = u64::from(std::process::id()) * 10_000 + NEXT.fetch_add(1, Ordering::Relaxed);
     EventBus::new(DeterministicUlidSource::starting_at(1_700_000_000_000 + source).unwrap())
@@ -77,6 +115,30 @@ fn descriptor() -> CapabilityDescriptor {
         data_class: DataClass::Personal,
         root_requirement: RootRequirement::NotRequired,
         idempotency_support: IdempotencySupport::None,
+        max_duration_ms: 5_000,
+        cost_class: CostClass::Free,
+        experimental: false,
+    })
+    .unwrap()
+}
+
+fn grant_descriptor() -> CapabilityDescriptor {
+    CapabilityDescriptor::new(CapabilityDescriptorDraft {
+        id: CapabilityId::new("calendar.events.read").unwrap(),
+        version: SemVer::new("1.0.0").unwrap(),
+        title: DescriptorTitle::new("Read events").unwrap(),
+        description: DescriptorDescription::new("Grant observer race fixture").unwrap(),
+        provider_id: ProviderId::new("calendar").unwrap(),
+        implementation_id: None,
+        input_schema: JsonSchemaRef::new(format!("{SCHEMA}cal-input.json")).unwrap(),
+        output_schema: JsonSchemaRef::new(format!("{SCHEMA}cal-output.json")).unwrap(),
+        side_effect_class: SideEffectClass::ExternalWrite,
+        risk_class: RiskClass::ExternalWrite,
+        required_authorization: Authorization::ScopedGrant,
+        replay_safety: ReplaySafety::Idempotent,
+        data_class: DataClass::Personal,
+        root_requirement: RootRequirement::NotRequired,
+        idempotency_support: IdempotencySupport::Native,
         max_duration_ms: 5_000,
         cost_class: CostClass::Free,
         experimental: false,
@@ -135,10 +197,24 @@ fn setup(
     serea_capability::PreparedActionV1,
     LeaseGuard,
     EventBus,
+    CapabilityAvailabilitySnapshotV1,
+) {
+    setup_for(temp, descriptor(), RiskClass::Observe)
+}
+
+fn setup_for(
+    temp: &TempDb,
+    descriptor: CapabilityDescriptor,
+    task_policy_class: RiskClass,
+) -> (
+    TaskEngine,
+    serea_capability::PreparedActionV1,
+    LeaseGuard,
+    EventBus,
+    CapabilityAvailabilitySnapshotV1,
 ) {
     let store = temp.open();
     let events = event_bus();
-    let descriptor = descriptor();
     let mut documents = BTreeMap::new();
     documents.insert(
             format!("{SCHEMA}cal-input.json"),
@@ -188,7 +264,7 @@ fn setup(
                     extensions: [].into(),
                 },
                 data_class: DataClass::Personal,
-                policy_class: RiskClass::Observe,
+                policy_class: task_policy_class,
                 attempt_budget: AttemptBudget {
                     max_model_calls: 2,
                     max_tool_calls: 2,
@@ -267,7 +343,7 @@ fn setup(
             )
         })
         .unwrap();
-    (engine, prepared, guard, events)
+    (engine, prepared, guard, events, availability)
 }
 
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -292,11 +368,58 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 
+#[test]
+fn observer_success_and_fact_mismatch_leave_every_durable_row_unchanged() {
+    let temp = TempDb::new();
+    let (engine, prepared, guard, _, availability) = setup(&temp);
+    let before = database_fingerprint(&temp.0);
+
+    let observed = engine.observe_l1_facts(&prepared, &guard, None).unwrap();
+    assert!(observed.mismatches().is_empty());
+    assert!(observed.grant().is_none());
+
+    let mut alternate = serde_json::Map::new();
+    alternate.insert(
+        "calendar".into(),
+        serde_json::Value::String("observer-mismatch".into()),
+    );
+    let alternate_args =
+        serea_capability::ClassifiedArgumentsV1::new_trusted(alternate, DataClass::Personal);
+    let mismatched = serea_capability::prepare_action(
+        &availability,
+        &CapabilityId::new("calendar.events.read").unwrap(),
+        task_id(),
+        step_id(),
+        &alternate_args,
+        RequestedBy::Model,
+        None,
+        None,
+    )
+    .unwrap();
+    let mismatch = engine.observe_l1_facts(&mismatched, &guard, None).unwrap();
+    assert!(
+        mismatch
+            .mismatches()
+            .contains(&DurableFactMismatch::StepInputDigest)
+    );
+
+    let rollback = engine.observe_l1_facts_while_transaction_held(&prepared, &guard, None, |_| {
+        Err(StoreError::Sqlite)
+    });
+    assert!(rollback.is_err());
+
+    assert_eq!(before, database_fingerprint(&temp.0));
+    let reopened = temp.open();
+    reopened.verify_integrity().unwrap();
+    assert_eq!(before, database_fingerprint(&temp.0));
+}
+
 fn run_race(
     temp: &TempDb,
     engine: TaskEngine,
     prepared: serea_capability::PreparedActionV1,
     guard: LeaseGuard,
+    grant_id: Option<serea_protocol::GrantId>,
     writer: impl Fn(&Store) -> Result<(), StoreError> + Send + 'static,
     recheck_old_guard: bool,
 ) -> (
@@ -308,21 +431,28 @@ fn run_race(
     let writer_path = temp.0.clone();
     let witness = rusqlite::Connection::open(&temp.0).unwrap();
     witness.busy_timeout(Duration::ZERO).unwrap();
+    let durable_before = database_fingerprint(&temp.0);
     let (held_tx, held_rx) = mpsc::sync_channel(1);
     let (release_tx, release_rx) = mpsc::sync_channel(1);
+    let observer_grant_id = grant_id.clone();
     let observer = std::thread::spawn(move || {
         let observation = engine
-            .observe_l1_facts_while_transaction_held(&prepared, &guard, None, |facts| {
-                held_tx.send(()).map_err(|_| StoreError::Sqlite)?;
-                release_rx
-                    .recv_timeout(Duration::from_secs(60))
-                    .map_err(|_| StoreError::Sqlite)?;
-                if facts.mismatches().is_empty() {
-                    Ok(())
-                } else {
-                    Err(StoreError::InvalidPolicyRevision)
-                }
-            })
+            .observe_l1_facts_while_transaction_held(
+                &prepared,
+                &guard,
+                observer_grant_id.as_ref(),
+                |facts| {
+                    held_tx.send(()).map_err(|_| StoreError::Sqlite)?;
+                    release_rx
+                        .recv_timeout(Duration::from_secs(60))
+                        .map_err(|_| StoreError::Sqlite)?;
+                    if facts.mismatches().is_empty() {
+                        Ok(())
+                    } else {
+                        Err(StoreError::InvalidPolicyRevision)
+                    }
+                },
+            )
             .unwrap();
         (observation, prepared, guard)
     });
@@ -338,22 +468,32 @@ fn run_race(
     let (writer_release_tx, writer_release_rx) = mpsc::sync_channel(1);
     let writer_thread = std::thread::spawn(move || {
         let first = writer(&writer_store);
-        blocked_tx.send(first.is_err()).unwrap();
+        // Storage preserves SQLITE_BUSY/LOCKED as StoreError::Busy. Keep the
+        // actual typed result across the barrier so a fixture error cannot be
+        // mistaken for contention.
+        blocked_tx.send(first).unwrap();
         writer_release_rx
             .recv_timeout(Duration::from_secs(60))
             .unwrap();
         let retry = Store::open(&writer_path, &FixedClock).unwrap();
         writer(&retry).unwrap();
     });
-    assert!(
-        blocked_rx.recv_timeout(Duration::from_secs(30)).unwrap(),
-        "writer unexpectedly committed under observer lock"
-    );
+    let blocked_result = blocked_rx.recv_timeout(Duration::from_secs(30)).unwrap();
+    let durable_unchanged_while_blocked = durable_before == database_fingerprint(&temp.0);
     release_tx.send(()).unwrap();
     let (old_observation, prepared, guard) = observer.join().unwrap();
     assert!(old_observation.mismatches().is_empty());
     writer_release_tx.send(()).unwrap();
     writer_thread.join().unwrap();
+    assert_eq!(
+        blocked_result,
+        Err(StoreError::Busy),
+        "typed writer must fail specifically because the observer holds SQLite's writer lock"
+    );
+    assert!(
+        durable_unchanged_while_blocked,
+        "observer and blocked writer must leave every durable row unchanged"
+    );
 
     let reopened = temp.open();
     reopened.verify_integrity().unwrap();
@@ -361,7 +501,7 @@ fn run_race(
     if recheck_old_guard {
         let fresh_engine = TaskEngine::new(temp.open(), event_bus());
         let fresh = fresh_engine
-            .observe_l1_facts(&prepared, &guard, None)
+            .observe_l1_facts(&prepared, &guard, grant_id.as_ref())
             .unwrap();
         assert!(fresh.mismatches().is_empty());
     }
@@ -371,12 +511,13 @@ fn run_race(
 #[test]
 fn overlay_writer_is_blocked_by_observer_transaction_and_commits_after_release() {
     let temp = TempDb::new();
-    let (engine, prepared, guard, _) = setup(&temp);
+    let (engine, prepared, guard, _, _) = setup(&temp);
     let (old_observation, _, _) = run_race(
         &temp,
         engine,
         prepared,
         guard,
+        None,
         |store| {
             store.transact(|tx| {
                 tx.set_capability_overlay(
@@ -415,13 +556,14 @@ fn overlay_writer_is_blocked_by_observer_transaction_and_commits_after_release()
 #[test]
 fn cancellation_writer_is_blocked_by_observer_transaction() {
     let temp = TempDb::new();
-    let (engine, prepared, guard, events) = setup(&temp);
+    let (engine, prepared, guard, events, _) = setup(&temp);
     let context = Context::new();
     let (old, _, _) = run_race(
         &temp,
         engine,
         prepared,
         guard,
+        None,
         move |store| {
             store.transact_with_participants(&crate::journal::TaskJournal, &events, |tx| {
                 tx.cancel_task(
@@ -449,7 +591,7 @@ fn cancellation_writer_is_blocked_by_observer_transaction() {
 #[test]
 fn policy_activation_writer_is_blocked_by_observer_transaction() {
     let temp = TempDb::new();
-    let (engine, prepared, guard, events) = setup(&temp);
+    let (engine, prepared, guard, events, _) = setup(&temp);
     let policy_store = temp.open();
     let pending = serea_policy::prepare_revision(
         &policy_store,
@@ -477,6 +619,7 @@ fn policy_activation_writer_is_blocked_by_observer_transaction() {
         engine,
         prepared,
         guard,
+        None,
         move |store| {
             serea_policy::activate_revision(
                 store,
@@ -486,7 +629,10 @@ fn policy_activation_writer_is_blocked_by_observer_transaction() {
                 SemVer::new("0.2.0").unwrap(),
             )
             .map(|_| ())
-            .map_err(|_| StoreError::Sqlite)
+            .map_err(|error| match error {
+                serea_policy::PolicyError::Storage(storage_error) => storage_error,
+                _ => StoreError::Sqlite,
+            })
         },
         true,
     );
@@ -502,7 +648,7 @@ fn policy_activation_writer_is_blocked_by_observer_transaction() {
 #[test]
 fn expired_lease_reclaim_is_blocked_by_observer_transaction_and_advances_fence() {
     let temp = TempDb::new();
-    let (engine, prepared, guard, _) = setup(&temp);
+    let (engine, prepared, guard, _, _) = setup(&temp);
     let old_generation = guard.generation();
     let new_generation = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let record_generation = new_generation.clone();
@@ -511,6 +657,7 @@ fn expired_lease_reclaim_is_blocked_by_observer_transaction_and_advances_fence()
         engine,
         prepared,
         guard,
+        None,
         move |store| {
             let new_guard = store.transact(|tx| {
                 tx.acquire_lease(
@@ -542,4 +689,221 @@ fn expired_lease_reclaim_is_blocked_by_observer_transaction_and_advances_fence()
             .observe_l1_facts(&prepared, &old_guard, None)
             .is_err()
     );
+}
+
+#[test]
+fn authenticated_grant_revocation_is_blocked_by_grant_observer_transaction() {
+    let temp = TempDb::new();
+    let (engine, prepared, guard, events, _) =
+        setup_for(&temp, grant_descriptor(), RiskClass::ExternalWrite);
+    let approval_id = ApprovalId::new("apr_01JQ8ZB8H2XKM9P4QW7NRT5YCD").unwrap();
+    let grant_id = GrantId::new("grt_01JQ8ZB8H2XKM9P4QW7NRT5YCE").unwrap();
+    let actor = ActorId::new("user-observer-fixture").unwrap();
+    let device = DeviceId::new("dev_01JQ8ZB8H2XKM9P4QW7NRT5YCD").unwrap();
+    let session = SessionId::new("ses_01JQ8ZB8H2XKM9P4QW7NRT5YCD").unwrap();
+    let action = serea_policy::ApprovalActionV1::new(
+        step_id(),
+        prepared.arguments_digest().clone(),
+        serde_json::json!({"calendar":"work"}),
+        DataClass::Personal,
+    )
+    .unwrap();
+    let request = serea_policy::ApprovalRequestV1::new(serea_policy::ApprovalRequestDraftV1 {
+        approval_id: approval_id.clone(),
+        task_id: task_id(),
+        task_kind: TaskKind::UserRequest,
+        plan_revision: 1,
+        capability_id: prepared.capability_id().clone(),
+        capability_version: prepared.capability_version().clone(),
+        registry_generation: prepared.generation_id(),
+        descriptor_digest: prepared.descriptor_digest().clone(),
+        risk_class: RiskClass::ExternalWrite,
+        side_effect_class: SideEffectClass::ExternalWrite,
+        authorization: Authorization::ScopedGrant,
+        data_class: DataClass::Personal,
+        requested_by: RequestedBy::Model,
+        actions: serea_policy::ApprovalActionSetV1::new(vec![action]).unwrap(),
+        summary: serea_policy::SafeApprovalSummaryV1::from_host_builder(
+            "calendar.events.read",
+            "Read calendar events",
+            DataClass::Personal,
+        )
+        .unwrap(),
+        raised_at: at(24),
+        expires_at: at(1_000),
+    })
+    .unwrap();
+    let required_event = events
+        .draft_approval_lifecycle(
+            serea_event_bus::ApprovalLifecycleKindV1::Required,
+            &approval_id,
+            &task_id(),
+            &step_id(),
+            ActorKind::Host,
+            ActorId::new("observer-test-host").unwrap(),
+            SemVer::new("0.2.0").unwrap(),
+            at(24),
+        )
+        .unwrap();
+    let store = temp.open();
+    store
+        .create_approval_request(request.storage_draft(), required_event)
+        .unwrap();
+
+    struct AcceptResponse;
+    impl serea_policy::ApprovalAuthenticationVerifier for AcceptResponse {
+        fn verify(
+            &self,
+            _: &serea_policy::ApprovalResponseCandidateV1,
+        ) -> Result<(), serea_policy::ApprovalAuthenticationError> {
+            Ok(())
+        }
+    }
+    let candidate = serea_policy::ApprovalResponseCandidateV1::new(
+        approval_id.clone(),
+        serea_policy::ApprovalResponseDecisionV1::Grant,
+        serea_policy::ApprovalPrincipalV1::User,
+        Some(device.clone()),
+        Some(session.clone()),
+        serea_policy::ApprovalAuthenticationStrengthV1::Session,
+        at(25),
+        None,
+        vec![step_id()],
+        Some(1),
+        Some(at(900)),
+    );
+    let authenticated =
+        serea_policy::AuthenticatedApprovalResponseV1::authenticate(candidate, &AcceptResponse)
+            .unwrap();
+    let response = authenticated.validate_for(&request, at(26)).unwrap();
+    let response_actor = actor.clone();
+    let grant_event = events
+        .draft_approval_lifecycle(
+            serea_event_bus::ApprovalLifecycleKindV1::Granted,
+            &approval_id,
+            &task_id(),
+            &step_id(),
+            ActorKind::User,
+            response_actor.clone(),
+            SemVer::new("0.2.0").unwrap(),
+            at(26),
+        )
+        .unwrap();
+    store
+        .respond_to_approval(
+            response.storage_draft(Some(grant_id.clone()), response_actor),
+            grant_event,
+        )
+        .unwrap();
+
+    let active = engine
+        .observe_l1_facts(&prepared, &guard, Some(&grant_id))
+        .unwrap();
+    assert!(active.mismatches().is_empty());
+    let active_grant = active.grant().unwrap();
+    assert_eq!(
+        active_grant.status(),
+        serea_storage::GrantFactStatus::Active
+    );
+    assert_eq!(active_grant.action_count(), 1);
+    assert_eq!(active_grant.member_count(), 1);
+    assert!(active_grant.sealed());
+    assert!(!active_grant.already_used());
+    assert_eq!(active_grant.uses_remaining(), 1);
+
+    struct AcceptRevocation;
+    impl serea_policy::ApprovalRevocationAuthenticationVerifier for AcceptRevocation {
+        fn verify(
+            &self,
+            _: &serea_policy::ApprovalRevocationCandidateV1,
+        ) -> Result<(), serea_policy::ApprovalAuthenticationError> {
+            Ok(())
+        }
+    }
+    let revocation = serea_policy::AuthenticatedApprovalRevocationV1::authenticate(
+        serea_policy::ApprovalRevocationCandidateV1::new(
+            approval_id.clone(),
+            grant_id.clone(),
+            serea_policy::ApprovalPrincipalV1::User,
+            actor.clone(),
+            Some(device.clone()),
+            Some(session.clone()),
+            at(30),
+        ),
+        &AcceptRevocation,
+    )
+    .unwrap()
+    .validate_for(&approval_id, &grant_id, at(31))
+    .unwrap();
+    let revoke_events = events.clone();
+    let revoke_actor = actor;
+    let revoke_approval_id = approval_id.clone();
+    let revoke_grant_id = grant_id.clone();
+    let before_revoke = database_fingerprint(&temp.0);
+    let connection = rusqlite::Connection::open(&temp.0).unwrap();
+    let events_before: i64 = connection
+        .query_row("SELECT count(*) FROM event_content", [], |row| row.get(0))
+        .unwrap();
+    let uses_before: i64 = connection
+        .query_row("SELECT count(*) FROM approval_grant_uses", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(uses_before, 0);
+    drop(connection);
+
+    let (old_observation, _, _) = run_race(
+        &temp,
+        engine,
+        prepared,
+        guard,
+        Some(grant_id.clone()),
+        move |store| {
+            let event = revoke_events
+                .draft_approval_revoked(
+                    &revoke_approval_id,
+                    &revoke_grant_id,
+                    &task_id(),
+                    &step_id(),
+                    "USER",
+                    revoke_actor.clone(),
+                    ActorKind::User,
+                    Some(&device),
+                    Some(&session),
+                    SemVer::new("0.2.0").unwrap(),
+                    at(30),
+                )
+                .unwrap();
+            store
+                .revoke_approval_grant(revocation.storage_draft(), event)
+                .map(|_| ())
+        },
+        true,
+    );
+    let old_grant = old_observation.grant().unwrap();
+    assert_eq!(old_grant.status(), serea_storage::GrantFactStatus::Active);
+    assert_eq!(old_grant.uses_remaining(), 1);
+    assert!(!old_grant.already_used());
+
+    let reopened = temp.open();
+    reopened.verify_integrity().unwrap();
+    let fresh = reopened
+        .transact(|tx| tx.observe_grant_facts(&grant_id, &task_id(), &step_id()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(fresh.status(), serea_storage::GrantFactStatus::Revoked);
+    assert_eq!(fresh.uses_remaining(), 1);
+    assert!(!fresh.already_used());
+    let connection = rusqlite::Connection::open(&temp.0).unwrap();
+    let events_after: i64 = connection
+        .query_row("SELECT count(*) FROM event_content", [], |row| row.get(0))
+        .unwrap();
+    let uses_after: i64 = connection
+        .query_row("SELECT count(*) FROM approval_grant_uses", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(events_after, events_before + 1);
+    assert_eq!(uses_after, uses_before);
+    assert_ne!(before_revoke, database_fingerprint(&temp.0));
 }

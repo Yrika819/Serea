@@ -52,6 +52,12 @@ is **PROPOSED / NOT RATIFIED**. It defines a standalone Android boundary and
 does not amend the frozen `serea.device/2` protocol or approve production AI,
 credentials, OAuth, history persistence, or PC synchronization.
 
+ADR-0045, [Android encrypted history and bounded cloud probe](ADR-0045-android-phase2-encrypted-history-and-cloud-probe.md),
+is **PROPOSED / NOT RATIFIED**. Its implementation candidate keeps ordinary
+chat local and limits cloud traffic to an explicit fixed public contract probe;
+it does not approve user-message egress, production provider selection, or
+release distribution.
+
 ## Accepted decisions
 
 | ADR | Decision | Status |

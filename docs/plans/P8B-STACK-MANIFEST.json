@@ -1,0 +1,3170 @@
+{
+  "repository": "Yrika819/Serea",
+  "sourceHead": "bfe47522d808388f82b55c67793184726273600d",
+  "mainHead": "e0acb0254820c381dd97828824bef86a1db5176c",
+  "observedOpenDrafts": 19,
+  "pullRequests": [
+    {
+      "baseRefName": "main",
+      "headRefName": "p5/concurrent-manifest-install-idempotency",
+      "headRefOid": "cb4df7178a4dc74b124006c4bf2c020cd626aa5e",
+      "isDraft": true,
+      "number": 14,
+      "state": "OPEN",
+      "title": "Fix concurrent identical P5 capability activation",
+      "url": "https://github.com/Yrika819/Serea/pull/14",
+      "baseSha": "e0acb0254820c381dd97828824bef86a1db5176c",
+      "mergeBase": "f70f34c1f683df1b175b612ba100ce6bb6979811",
+      "aheadOfBase": 114,
+      "baseOnlyCommits": 1,
+      "commitRange": [
+        "cb4df7178a4dc74b124006c4bf2c020cd626aa5e",
+        "cb4df7178a4dc74b124006c4bf2c020cd626aa5e"
+      ],
+      "commits": [
+        {
+          "oid": "cb4df7178a4dc74b124006c4bf2c020cd626aa5e",
+          "messageHeadline": "fix(storage): reuse concurrent identical registry activation"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/src/capability_registry.rs"
+      ],
+      "fileCount": 1,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "BEHIND",
+      "classification": "SUPERSEDED_OR_REDUNDANT",
+      "classificationReason": "Local no-commit merge rehearsal onto current main resolved to an identical tree; the PR commit is not an ancestor, but its content is already represented. Confirm and close only by Owner decision."
+    },
+    {
+      "baseRefName": "main",
+      "headRefName": "codex/post-gate-c-review",
+      "headRefOid": "4032f1e2dfaa374e70da7777a141092057cb05dc",
+      "isDraft": true,
+      "number": 19,
+      "state": "OPEN",
+      "title": "Draft: Post-Gate-C P8A and migration review",
+      "url": "https://github.com/Yrika819/Serea/pull/19",
+      "baseSha": "e0acb0254820c381dd97828824bef86a1db5176c",
+      "mergeBase": "e0acb0254820c381dd97828824bef86a1db5176c",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 4,
+      "commitRange": [
+        "7472f8cc323297a49c2b52550721cb28b4420bfb",
+        "4032f1e2dfaa374e70da7777a141092057cb05dc"
+      ],
+      "commits": [
+        {
+          "oid": "7472f8cc323297a49c2b52550721cb28b4420bfb",
+          "messageHeadline": "docs: record post Gate C review"
+        },
+        {
+          "oid": "159759382beb8ada80810356ef3e53fad79037fa",
+          "messageHeadline": "docs: record draft review publication state"
+        },
+        {
+          "oid": "47dfe679fea08adcbeb3efb8622facb3c3bb1f25",
+          "messageHeadline": "docs: refresh PR validation checkpoint"
+        },
+        {
+          "oid": "4032f1e2dfaa374e70da7777a141092057cb05dc",
+          "messageHeadline": "docs: finalize P8 owner validation package"
+        }
+      ],
+      "changedFiles": [
+        "docs/plans/ExecPlan-post-gate-c-2026-10-16.md",
+        "docs/plans/P8A-owner-decision-package.md",
+        "docs/plans/Post-Gate-C-review-2026-10-16.md"
+      ],
+      "fileCount": 3,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Execution and migration review package; research context."
+    },
+    {
+      "baseRefName": "codex/post-gate-c-review",
+      "headRefName": "p8/approved-contract-candidate",
+      "headRefOid": "5f78762e1b358ac928a42aab43d8bb215089194a",
+      "isDraft": true,
+      "number": 20,
+      "state": "OPEN",
+      "title": "[P8A] Record approved dispatch V1 directions",
+      "url": "https://github.com/Yrika819/Serea/pull/20",
+      "baseSha": "4032f1e2dfaa374e70da7777a141092057cb05dc",
+      "mergeBase": "4032f1e2dfaa374e70da7777a141092057cb05dc",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 1,
+      "commitRange": [
+        "5f78762e1b358ac928a42aab43d8bb215089194a",
+        "5f78762e1b358ac928a42aab43d8bb215089194a"
+      ],
+      "commits": [
+        {
+          "oid": "5f78762e1b358ac928a42aab43d8bb215089194a",
+          "messageHeadline": "Record approved P8 V1 dispatch directions"
+        }
+      ],
+      "changedFiles": [
+        "docs/architecture/01-system-overview.md",
+        "docs/architecture/02-trust-boundaries.md",
+        "docs/architecture/03-crate-map.md",
+        "docs/architecture/04-execution-pipeline.md",
+        "docs/architecture/README.md",
+        "docs/decisions/ADR-0036-p5-p6-p8-authorization-and-dispatch.md",
+        "docs/decisions/ADR-0044-p8-durable-dispatch-v1-directions.md",
+        "docs/decisions/README.md",
+        "docs/plans/P7-P8-cross-phase-contract-and-test-plan.md",
+        "docs/plans/P8-owner-authorized-directions-2026-10-16.md",
+        "docs/plans/P8-synthetic-exec-plan-2026-10-16.md",
+        "docs/plans/P8A-owner-decision-package.md",
+        "docs/protocols/00-protocol-index.md",
+        "docs/protocols/01-capability-protocol.md",
+        "docs/protocols/02-task-protocol.md",
+        "docs/protocols/03-model-protocol.md",
+        "docs/protocols/05-approval-protocol.md",
+        "docs/protocols/06-event-protocol.md",
+        "docs/protocols/07-device-protocol.md",
+        "docs/protocols/08-goallatch-adapter-protocol.md",
+        "docs/protocols/10-bounds-protocol.md",
+        "docs/protocols/11-scheduler-protocol.md"
+      ],
+      "fileCount": 22,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "MERGE_CANDIDATE",
+      "classificationReason": "ADR direction docs; review exact scope after #19 reconciliation."
+    },
+    {
+      "baseRefName": "p8/approved-contract-candidate",
+      "headRefName": "p7/schema-v9-candidate",
+      "headRefOid": "a56c7e204f854dd4382339cb43f7fe1396f85137",
+      "isDraft": true,
+      "number": 21,
+      "state": "OPEN",
+      "title": "[P7] Probe isolated schema 0009 candidate",
+      "url": "https://github.com/Yrika819/Serea/pull/21",
+      "baseSha": "5f78762e1b358ac928a42aab43d8bb215089194a",
+      "mergeBase": "5f78762e1b358ac928a42aab43d8bb215089194a",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 1,
+      "commitRange": [
+        "a56c7e204f854dd4382339cb43f7fe1396f85137",
+        "a56c7e204f854dd4382339cb43f7fe1396f85137"
+      ],
+      "commits": [
+        {
+          "oid": "a56c7e204f854dd4382339cb43f7fe1396f85137",
+          "messageHeadline": "test(storage): probe isolated P7 schema 0009 candidate"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/migrations/candidates/0009_p7_memory_schema_candidate.sql",
+        "crates/serea-storage/src/p7_migration_tests.rs",
+        "docs/plans/P7-schema-0009-candidate-audit-2026-10-16.md",
+        "docs/plans/P8-synthetic-exec-plan-2026-10-16.md"
+      ],
+      "fileCount": 4,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REQUIRES_REDESIGN",
+      "classificationReason": "Disposable schema 0009 candidate; canonical migration not authorized."
+    },
+    {
+      "baseRefName": "p7/schema-v9-candidate",
+      "headRefName": "p8/durable-dispatch-schema-candidate",
+      "headRefOid": "58944dd02f498894567ec92b7440270a9985e5ec",
+      "isDraft": true,
+      "number": 22,
+      "state": "OPEN",
+      "title": "[P8B] Probe isolated dispatch intent schema",
+      "url": "https://github.com/Yrika819/Serea/pull/22",
+      "baseSha": "a56c7e204f854dd4382339cb43f7fe1396f85137",
+      "mergeBase": "a56c7e204f854dd4382339cb43f7fe1396f85137",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 3,
+      "commitRange": [
+        "9ea1e8911cd211f27c6e56848501c96d255915b4",
+        "58944dd02f498894567ec92b7440270a9985e5ec"
+      ],
+      "commits": [
+        {
+          "oid": "9ea1e8911cd211f27c6e56848501c96d255915b4",
+          "messageHeadline": "test(storage): prototype P8 dispatch schema candidate"
+        },
+        {
+          "oid": "4d178791ef20302ad66ac18a4aa6984d16b9bcc7",
+          "messageHeadline": "docs(plan): spell out P8 dispatch contract proposals"
+        },
+        {
+          "oid": "58944dd02f498894567ec92b7440270a9985e5ec",
+          "messageHeadline": "docs(plan): persist P8 stacked PR handoff"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/migrations/candidates/0010_p8_dispatch_candidate.sql",
+        "crates/serea-storage/src/lib.rs",
+        "crates/serea-storage/src/p8_dispatch_candidate_tests.rs",
+        "docs/plans/P8-dispatch-0010-candidate-audit-2026-10-16.md",
+        "docs/plans/P8-synthetic-exec-plan-2026-10-16.md"
+      ],
+      "fileCount": 5,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Disposable 0010 Intent schema candidate; no canonical registration."
+    },
+    {
+      "baseRefName": "p8/durable-dispatch-schema-candidate",
+      "headRefName": "p8/authority-transaction-prototype",
+      "headRefOid": "b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16",
+      "isDraft": true,
+      "number": 23,
+      "state": "OPEN",
+      "title": "[P8B/P8C] Add isolated authority transaction and recovery prototypes",
+      "url": "https://github.com/Yrika819/Serea/pull/23",
+      "baseSha": "58944dd02f498894567ec92b7440270a9985e5ec",
+      "mergeBase": "58944dd02f498894567ec92b7440270a9985e5ec",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 3,
+      "commitRange": [
+        "dfd9f5158fbdd62049ff79d1a7aaf3c527c41c1f",
+        "b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16"
+      ],
+      "commits": [
+        {
+          "oid": "dfd9f5158fbdd62049ff79d1a7aaf3c527c41c1f",
+          "messageHeadline": "test(p8): prototype atomic dispatch recovery boundaries"
+        },
+        {
+          "oid": "0a23a9d7ebc729f26fe7271ebb619b2ff9a3dfb5",
+          "messageHeadline": "docs(p8): record stacked prototype and CI state"
+        },
+        {
+          "oid": "b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16",
+          "messageHeadline": "test(p8): cover authority revocation and dispatch races"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/migrations/candidates/0010_p8_dispatch_candidate.sql",
+        "crates/serea-storage/src/lib.rs",
+        "crates/serea-storage/src/p8_authority_transaction_tests.rs",
+        "crates/serea-storage/src/p8_dispatch_candidate_tests.rs",
+        "crates/serea-storage/src/p8_synthetic_recovery_tests.rs",
+        "docs/plans/P8-dispatch-0010-candidate-audit-2026-10-16.md",
+        "docs/plans/P8-synthetic-exec-plan-2026-10-16.md"
+      ],
+      "fileCount": 7,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Synthetic transaction/recovery prototype only."
+    },
+    {
+      "baseRefName": "p8/authority-transaction-prototype",
+      "headRefName": "p8/real-storage-boundary-prototype",
+      "headRefOid": "fab5ee91c3942e8e601338774492600e9853dad2",
+      "isDraft": true,
+      "number": 24,
+      "state": "OPEN",
+      "title": "[P8B] Probe real Storage grant and intent transaction boundary",
+      "url": "https://github.com/Yrika819/Serea/pull/24",
+      "baseSha": "b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16",
+      "mergeBase": "b6667d19fd4b7082ed7b8d8e61d3fa56ee194f16",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 3,
+      "commitRange": [
+        "75017d7be38eddb30eaa93037f1b6510f9c0b463",
+        "fab5ee91c3942e8e601338774492600e9853dad2"
+      ],
+      "commits": [
+        {
+          "oid": "75017d7be38eddb30eaa93037f1b6510f9c0b463",
+          "messageHeadline": "test(p8): integrate dispatch probe with real storage"
+        },
+        {
+          "oid": "99b945e271c6773e54c66ef393c1e4a75dd9ab98",
+          "messageHeadline": "style(storage): format P8 boundary probes"
+        },
+        {
+          "oid": "fab5ee91c3942e8e601338774492600e9853dad2",
+          "messageHeadline": "docs(plan): record P8 real storage CI checkpoint"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/migrations/candidates/0010_p8_dispatch_candidate.sql",
+        "crates/serea-storage/src/migration_0005_tests.rs",
+        "docs/plans/P8-dispatch-0010-candidate-audit-2026-10-16.md",
+        "docs/plans/P8-synthetic-exec-plan-2026-10-16.md"
+      ],
+      "fileCount": 4,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Synthetic Storage transaction tests; no production writer."
+    },
+    {
+      "baseRefName": "p8/real-storage-boundary-prototype",
+      "headRefName": "p8/contract-closure-prototype",
+      "headRefOid": "73e38fddf4a203582f728eff2cf675cc35e46b2b",
+      "isDraft": true,
+      "number": 25,
+      "state": "OPEN",
+      "title": "[P8B] Close budget and intent evidence test gaps",
+      "url": "https://github.com/Yrika819/Serea/pull/25",
+      "baseSha": "fab5ee91c3942e8e601338774492600e9853dad2",
+      "mergeBase": "fab5ee91c3942e8e601338774492600e9853dad2",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 3,
+      "commitRange": [
+        "9f026e179e79f69ed11b89e663084e53a4d580a7",
+        "73e38fddf4a203582f728eff2cf675cc35e46b2b"
+      ],
+      "commits": [
+        {
+          "oid": "9f026e179e79f69ed11b89e663084e53a4d580a7",
+          "messageHeadline": "test(p8): close budget and intent evidence gaps"
+        },
+        {
+          "oid": "df553568088b1116926f0992cb094382fb243b67",
+          "messageHeadline": "test(p8): label simulated reopen boundary precisely"
+        },
+        {
+          "oid": "73e38fddf4a203582f728eff2cf675cc35e46b2b",
+          "messageHeadline": "test(p8): fail closed on unknown readiness"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/migrations/candidates/0010_p8_dispatch_candidate.sql",
+        "crates/serea-storage/src/migration_0005_tests.rs",
+        "crates/serea-storage/src/p8_dispatch_candidate_tests.rs",
+        "crates/serea-storage/src/p8_synthetic_recovery_tests.rs",
+        "docs/plans/P8-synthetic-exec-plan-2026-10-16.md",
+        "docs/plans/P8B-contract-closure-package-2026-10-16.md"
+      ],
+      "fileCount": 6,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Synthetic budget/Intent evidence and decision package."
+    },
+    {
+      "baseRefName": "p8/contract-closure-prototype",
+      "headRefName": "p8b/overnight-2026-10-17",
+      "headRefOid": "72be5ac56d01765b8c9dea79ee3e4f9d1fc5bbc4",
+      "isDraft": true,
+      "number": 26,
+      "state": "OPEN",
+      "title": "[P8B] Add Storage budget race and Fake crash evidence",
+      "url": "https://github.com/Yrika819/Serea/pull/26",
+      "baseSha": "73e38fddf4a203582f728eff2cf675cc35e46b2b",
+      "mergeBase": "73e38fddf4a203582f728eff2cf675cc35e46b2b",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 3,
+      "commitRange": [
+        "acd1dc5e3c8c990bb7795917d0fb9ffb31f3fff6",
+        "72be5ac56d01765b8c9dea79ee3e4f9d1fc5bbc4"
+      ],
+      "commits": [
+        {
+          "oid": "acd1dc5e3c8c990bb7795917d0fb9ffb31f3fff6",
+          "messageHeadline": "test(p8): deepen budget and recovery boundaries"
+        },
+        {
+          "oid": "27f3b14cdd8fdf58764d0b7e34196a1c9b916462",
+          "messageHeadline": "test(p8): bind synthetic one-shot dispatch permit"
+        },
+        {
+          "oid": "72be5ac56d01765b8c9dea79ee3e4f9d1fc5bbc4",
+          "messageHeadline": "docs(plan): record exact-head P8 CI results"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/src/migration_0005_tests.rs",
+        "crates/serea-storage/src/p8_synthetic_recovery_tests.rs",
+        "docs/plans/P8-synthetic-exec-plan-2026-10-16.md",
+        "docs/plans/P8B-contract-closure-package-2026-10-16.md"
+      ],
+      "fileCount": 4,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Synthetic race/crash/one-shot Permit test evidence."
+    },
+    {
+      "baseRefName": "p8b/overnight-2026-10-17",
+      "headRefName": "p8b/authority-boundary-2026-10-17",
+      "headRefOid": "c08615aa08b91abcd67f7ca4a3ac7a0512d7cb95",
+      "isDraft": true,
+      "number": 27,
+      "state": "OPEN",
+      "title": "[P8B] Pin synthetic Permit to registry and overlay identity",
+      "url": "https://github.com/Yrika819/Serea/pull/27",
+      "baseSha": "72be5ac56d01765b8c9dea79ee3e4f9d1fc5bbc4",
+      "mergeBase": "72be5ac56d01765b8c9dea79ee3e4f9d1fc5bbc4",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 5,
+      "commitRange": [
+        "132d2d65362716a989003902a844fb13e8df2514",
+        "c08615aa08b91abcd67f7ca4a3ac7a0512d7cb95"
+      ],
+      "commits": [
+        {
+          "oid": "132d2d65362716a989003902a844fb13e8df2514",
+          "messageHeadline": "test(p8): pin synthetic permit readiness boundaries"
+        },
+        {
+          "oid": "371d7a00d1351b5db1940aa718ab593e8ffa812c",
+          "messageHeadline": "docs(plan): record P8 authority boundary checkpoint"
+        },
+        {
+          "oid": "558791db03312e7933769ec859b49fc5e1e9aeb4",
+          "messageHeadline": "test(p8): exercise multi-unit storage budget boundary"
+        },
+        {
+          "oid": "18182a5eadc0dcca54526cd3a154a8aa35ab5a15",
+          "messageHeadline": "docs(plan): record budget CI resume checkpoint"
+        },
+        {
+          "oid": "c08615aa08b91abcd67f7ca4a3ac7a0512d7cb95",
+          "messageHeadline": "docs(plan): record full storage regression rerun"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/src/migration_0005_tests.rs",
+        "crates/serea-storage/src/p8_synthetic_recovery_tests.rs",
+        "docs/plans/P8-synthetic-exec-plan-2026-10-16.md",
+        "docs/plans/P8B-contract-closure-package-2026-10-16.md"
+      ],
+      "fileCount": 4,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Synthetic registry/overlay Permit pin prototype."
+    },
+    {
+      "baseRefName": "p8b/authority-boundary-2026-10-17",
+      "headRefName": "p8b/owner-ratified-boundary-2026-10-17",
+      "headRefOid": "067c5e4e53034c797c0c87a3de55f9f1400d68b0",
+      "isDraft": true,
+      "number": 28,
+      "state": "OPEN",
+      "title": "[P8B] Ratify dispatch directions and consume Synthetic Permit by value",
+      "url": "https://github.com/Yrika819/Serea/pull/28",
+      "baseSha": "c08615aa08b91abcd67f7ca4a3ac7a0512d7cb95",
+      "mergeBase": "c08615aa08b91abcd67f7ca4a3ac7a0512d7cb95",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 2,
+      "commitRange": [
+        "75816637f18c8f80a12eefd841644ab975ff02a9",
+        "067c5e4e53034c797c0c87a3de55f9f1400d68b0"
+      ],
+      "commits": [
+        {
+          "oid": "75816637f18c8f80a12eefd841644ab975ff02a9",
+          "messageHeadline": "feat(p8b): ratify owner boundaries and burn synthetic permits"
+        },
+        {
+          "oid": "067c5e4e53034c797c0c87a3de55f9f1400d68b0",
+          "messageHeadline": "docs(p8b): record owner boundary verification results"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/src/p8_synthetic_recovery_tests.rs",
+        "docs/decisions/ADR-0045-p8b-owner-ratified-dispatch-boundaries.md",
+        "docs/decisions/README.md",
+        "docs/plans/P8B-owner-ratified-execution-plan.md"
+      ],
+      "fileCount": 4,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "MERGE_CANDIDATE",
+      "classificationReason": "ADR-0045 directional clauses and test-only Permit evidence; extract cleanly."
+    },
+    {
+      "baseRefName": "p8b/owner-ratified-boundary-2026-10-17",
+      "headRefName": "p8b/authority-architecture-proof-2026-10-17",
+      "headRefOid": "bb4c4d2b8a3bf015d735ab0ad519523f6b961299",
+      "isDraft": true,
+      "number": 29,
+      "state": "OPEN",
+      "title": "[P8B] Prove authority ownership boundary with external Cargo consumer",
+      "url": "https://github.com/Yrika819/Serea/pull/29",
+      "baseSha": "067c5e4e53034c797c0c87a3de55f9f1400d68b0",
+      "mergeBase": "067c5e4e53034c797c0c87a3de55f9f1400d68b0",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 3,
+      "commitRange": [
+        "5f02d9eed106586ad80445a6e05788634f9e50fc",
+        "bb4c4d2b8a3bf015d735ab0ad519523f6b961299"
+      ],
+      "commits": [
+        {
+          "oid": "5f02d9eed106586ad80445a6e05788634f9e50fc",
+          "messageHeadline": "docs(p8b): prove authority ownership boundary"
+        },
+        {
+          "oid": "1591abb57c7e3e127fba3977f3ef0b35c87dc4f9",
+          "messageHeadline": "fix(p8b): vendor external probe dependencies"
+        },
+        {
+          "oid": "bb4c4d2b8a3bf015d735ab0ad519523f6b961299",
+          "messageHeadline": "fix(ci): fetch external probe lockfile"
+        }
+      ],
+      "changedFiles": [
+        ".github/workflows/ci.yml",
+        "docs/decisions/ADR-0046-p8b-authority-ownership.md",
+        "docs/decisions/README.md",
+        "docs/plans/P8B-authority-architecture-proof-2026-10-17.md",
+        "tools/p8b_authority_cargo_probe/Cargo.lock",
+        "tools/p8b_authority_cargo_probe/Cargo.toml",
+        "tools/p8b_authority_cargo_probe/run.py",
+        "tools/p8b_authority_cargo_probe/src/lib.rs"
+      ],
+      "fileCount": 8,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "BLOCKED_OWNER_DECISION",
+      "classificationReason": "ADR-0046 proposed; adoption needs Owner decision; probes/docs remain research."
+    },
+    {
+      "baseRefName": "p8b/authority-architecture-proof-2026-10-17",
+      "headRefName": "codex/p8b-c1-c2-proof-2026-10-17",
+      "headRefOid": "ba16eaa7c45e51e30aa3185bd6f6a96484ba3c42",
+      "isDraft": true,
+      "number": 30,
+      "state": "OPEN",
+      "title": "[P8B] Prove transaction-scoped P6 snapshot evaluation",
+      "url": "https://github.com/Yrika819/Serea/pull/30",
+      "baseSha": "bb4c4d2b8a3bf015d735ab0ad519523f6b961299",
+      "mergeBase": "bb4c4d2b8a3bf015d735ab0ad519523f6b961299",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 4,
+      "commitRange": [
+        "ac38db3ec95213051724c97829a85a5b7dedd697",
+        "ba16eaa7c45e51e30aa3185bd6f6a96484ba3c42"
+      ],
+      "commits": [
+        {
+          "oid": "ac38db3ec95213051724c97829a85a5b7dedd697",
+          "messageHeadline": "test(p8b): prove transaction-scoped policy snapshot boundary"
+        },
+        {
+          "oid": "65b395ee5b2f5fa41f8d7d984f218c335c56d89c",
+          "messageHeadline": "docs(p8b): record authority proof limits and QA"
+        },
+        {
+          "oid": "6c683fd1d9ba221ff950fd13425eac523f44e912",
+          "messageHeadline": "docs(p8b): link bounded proof draft review"
+        },
+        {
+          "oid": "ba16eaa7c45e51e30aa3185bd6f6a96484ba3c42",
+          "messageHeadline": "docs(p8b): complete dependency and release evidence"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-policy/src/lib.rs",
+        "crates/serea-policy/src/storage_tests.rs",
+        "docs/plans/P8B-C1-C2-bounded-crate-proof-2026-10-17.md",
+        "tools/p8b_authority_cargo_probe/src/lib.rs"
+      ],
+      "fileCount": 4,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "SUPERSEDED_OR_REDUNDANT",
+      "classificationReason": "#31 history includes all #30 commits; do not integrate separately."
+    },
+    {
+      "baseRefName": "p8b/authority-architecture-proof-2026-10-17",
+      "headRefName": "codex/p8b-l1a-facts-proof-2026-10-17",
+      "headRefOid": "1adb8e2662e80134d055cbef54a037ad1e076538",
+      "isDraft": true,
+      "number": 31,
+      "state": "OPEN",
+      "title": "[P8B] Add transaction-scoped L1 fact observation",
+      "url": "https://github.com/Yrika819/Serea/pull/31",
+      "baseSha": "bb4c4d2b8a3bf015d735ab0ad519523f6b961299",
+      "mergeBase": "bb4c4d2b8a3bf015d735ab0ad519523f6b961299",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 6,
+      "commitRange": [
+        "ac38db3ec95213051724c97829a85a5b7dedd697",
+        "1adb8e2662e80134d055cbef54a037ad1e076538"
+      ],
+      "commits": [
+        {
+          "oid": "ac38db3ec95213051724c97829a85a5b7dedd697",
+          "messageHeadline": "test(p8b): prove transaction-scoped policy snapshot boundary"
+        },
+        {
+          "oid": "65b395ee5b2f5fa41f8d7d984f218c335c56d89c",
+          "messageHeadline": "docs(p8b): record authority proof limits and QA"
+        },
+        {
+          "oid": "6c683fd1d9ba221ff950fd13425eac523f44e912",
+          "messageHeadline": "docs(p8b): link bounded proof draft review"
+        },
+        {
+          "oid": "ba16eaa7c45e51e30aa3185bd6f6a96484ba3c42",
+          "messageHeadline": "docs(p8b): complete dependency and release evidence"
+        },
+        {
+          "oid": "5ceb23b53e9341af2d6af78c053a7abba20d98d6",
+          "messageHeadline": "feat(p8b): observe transaction-scoped durable L1 facts"
+        },
+        {
+          "oid": "1adb8e2662e80134d055cbef54a037ad1e076538",
+          "messageHeadline": "docs(p8b): record L1-A exact-head evidence"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-policy/src/lib.rs",
+        "crates/serea-policy/src/storage_tests.rs",
+        "crates/serea-storage/src/approval.rs",
+        "crates/serea-storage/src/blob_tests.rs",
+        "crates/serea-storage/src/lease.rs",
+        "crates/serea-storage/src/lease_tests.rs",
+        "crates/serea-storage/src/lib.rs",
+        "crates/serea-storage/src/migration_0005_tests.rs",
+        "crates/serea-task-engine/src/engine.rs",
+        "crates/serea-task-engine/src/lib.rs",
+        "crates/serea-task-engine/tests/p5e_capability_binding.rs",
+        "docs/plans/P8B-C1-C2-bounded-crate-proof-2026-10-17.md",
+        "docs/plans/P8B-L1A-transaction-facts-proof-2026-10-17.md",
+        "docs/plans/P8B-L1A-transaction-facts-report-2026-10-17.md",
+        "tools/p8b_authority_cargo_probe/run.py",
+        "tools/p8b_authority_cargo_probe/src/lib.rs"
+      ],
+      "fileCount": 16,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Successor evidence contains #30 plus L1A fact observer; test/docs only."
+    },
+    {
+      "baseRefName": "codex/p8b-l1a-facts-proof-2026-10-17",
+      "headRefName": "p8b/l1a-observer-barrier-2026-10-17",
+      "headRefOid": "17d8d5e5059c720edb68d307a28282914b537b9a",
+      "isDraft": true,
+      "number": 32,
+      "state": "OPEN",
+      "title": "[P8B] Prove observer-held SQLite writer races",
+      "url": "https://github.com/Yrika819/Serea/pull/32",
+      "baseSha": "1adb8e2662e80134d055cbef54a037ad1e076538",
+      "mergeBase": "1adb8e2662e80134d055cbef54a037ad1e076538",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 3,
+      "commitRange": [
+        "afaea047d3d74c1172a09f87b15564da8371eca3",
+        "17d8d5e5059c720edb68d307a28282914b537b9a"
+      ],
+      "commits": [
+        {
+          "oid": "afaea047d3d74c1172a09f87b15564da8371eca3",
+          "messageHeadline": "test(p8b): prove observer-held SQLite writer races"
+        },
+        {
+          "oid": "c06ac369339db7f089263b5e3d1083b152be4507",
+          "messageHeadline": "docs(p8b): record observer barrier evidence and limits"
+        },
+        {
+          "oid": "17d8d5e5059c720edb68d307a28282914b537b9a",
+          "messageHeadline": "test(p8b): allow bounded observer race wait under CI load"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-host/tests/host_lifecycle.rs",
+        "crates/serea-task-engine/src/engine.rs",
+        "crates/serea-task-engine/tests/support/observer_barrier_tests.rs",
+        "docs/plans/P8B-L1A-observer-barrier-proof-2026-10-17.md",
+        "docs/plans/P8B-L1B-trust-roots-owner-decision-2026-10-17.md"
+      ],
+      "fileCount": 5,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Test-only observer barrier evidence."
+    },
+    {
+      "baseRefName": "p8b/l1a-observer-barrier-2026-10-17",
+      "headRefName": "codex/p8b-l1a-grant-closure-2026-10-17",
+      "headRefOid": "a8210bca8177b9fbc523f7c8561287b59ccd522b",
+      "isDraft": true,
+      "number": 33,
+      "state": "OPEN",
+      "title": "[P8B] Close Grant observer revocation race",
+      "url": "https://github.com/Yrika819/Serea/pull/33",
+      "baseSha": "17d8d5e5059c720edb68d307a28282914b537b9a",
+      "mergeBase": "17d8d5e5059c720edb68d307a28282914b537b9a",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 1,
+      "commitRange": [
+        "a8210bca8177b9fbc523f7c8561287b59ccd522b",
+        "a8210bca8177b9fbc523f7c8561287b59ccd522b"
+      ],
+      "commits": [
+        {
+          "oid": "a8210bca8177b9fbc523f7c8561287b59ccd522b",
+          "messageHeadline": "test: prove grant observer revocation race"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-task-engine/tests/support/observer_barrier_tests.rs",
+        "docs/plans/P8B-L1A-grant-observer-closure-2026-10-17.md",
+        "docs/plans/P8B-L1B-trust-roots-owner-decision-2026-10-17.md"
+      ],
+      "fileCount": 3,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Test-only Grant revocation race; accepting fixture is not Owner auth."
+    },
+    {
+      "baseRefName": "codex/p8b-l1a-grant-closure-2026-10-17",
+      "headRefName": "codex/p8b-l1b-trust-root-2026-10-17",
+      "headRefOid": "f3804a643e6334bc4f1dddfea1a0c096c1fd7a13",
+      "isDraft": true,
+      "number": 34,
+      "state": "OPEN",
+      "title": "[P8B] Record real-crate L1-B trust-root evidence",
+      "url": "https://github.com/Yrika819/Serea/pull/34",
+      "baseSha": "a8210bca8177b9fbc523f7c8561287b59ccd522b",
+      "mergeBase": "a8210bca8177b9fbc523f7c8561287b59ccd522b",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 1,
+      "commitRange": [
+        "f3804a643e6334bc4f1dddfea1a0c096c1fd7a13",
+        "f3804a643e6334bc4f1dddfea1a0c096c1fd7a13"
+      ],
+      "commits": [
+        {
+          "oid": "f3804a643e6334bc4f1dddfea1a0c096c1fd7a13",
+          "messageHeadline": "test: document L1-B trust-root feasibility gaps"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-capability/tests/p5c_provider.rs",
+        "crates/serea-storage/src/migration_0005_tests.rs",
+        "docs/plans/P8B-L1B-real-crate-trust-root-campaign-2026-10-17.md",
+        "tools/p8b_authority_cargo_probe/run.py",
+        "tools/p8b_authority_cargo_probe/src/lib.rs"
+      ],
+      "fileCount": 5,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "FAILURE"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "UNSTABLE",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Trust-root external probe and Native failure evidence; retain for diagnosis."
+    },
+    {
+      "baseRefName": "codex/p8b-l1b-trust-root-2026-10-17",
+      "headRefName": "codex/p8b-l1b-boundary-repair-2026-10-17",
+      "headRefOid": "b9a0ef070bbec396f107ccb2b5a43925b0e22ed0",
+      "isDraft": true,
+      "number": 35,
+      "state": "OPEN",
+      "title": "[P8B] Probe complete Grant member integrity",
+      "url": "https://github.com/Yrika819/Serea/pull/35",
+      "baseSha": "f3804a643e6334bc4f1dddfea1a0c096c1fd7a13",
+      "mergeBase": "f3804a643e6334bc4f1dddfea1a0c096c1fd7a13",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 2,
+      "commitRange": [
+        "6f81d0e28ed210a4babab0bc2df3b18b0237af90",
+        "b9a0ef070bbec396f107ccb2b5a43925b0e22ed0"
+      ],
+      "commits": [
+        {
+          "oid": "6f81d0e28ed210a4babab0bc2df3b18b0237af90",
+          "messageHeadline": "test(storage): probe full grant member integrity"
+        },
+        {
+          "oid": "b9a0ef070bbec396f107ccb2b5a43925b0e22ed0",
+          "messageHeadline": "test(storage): synchronize writer contention probes"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/src/migration_0005_tests.rs",
+        "docs/plans/P8B-L1B-boundary-repair-results-2026-10-17.md",
+        "tools/p8b_authority_cargo_probe/run.py"
+      ],
+      "fileCount": 3,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Full Grant member test evidence only; no runtime authorization."
+    },
+    {
+      "baseRefName": "codex/p8b-l1b-boundary-repair-2026-10-17",
+      "headRefName": "codex/p8b-overnight-2026-10-18",
+      "headRefOid": "bfe47522d808388f82b55c67793184726273600d",
+      "isDraft": true,
+      "number": 36,
+      "state": "OPEN",
+      "title": "[P8B] Strengthen Grant full-set and SQLite lock evidence",
+      "url": "https://github.com/Yrika819/Serea/pull/36",
+      "baseSha": "b9a0ef070bbec396f107ccb2b5a43925b0e22ed0",
+      "mergeBase": "b9a0ef070bbec396f107ccb2b5a43925b0e22ed0",
+      "aheadOfBase": 0,
+      "baseOnlyCommits": 2,
+      "commitRange": [
+        "4cc1fd545336fb4693080e1d18761bdd391f53f8",
+        "bfe47522d808388f82b55c67793184726273600d"
+      ],
+      "commits": [
+        {
+          "oid": "4cc1fd545336fb4693080e1d18761bdd391f53f8",
+          "messageHeadline": "test(storage): strengthen full Grant boundary evidence"
+        },
+        {
+          "oid": "bfe47522d808388f82b55c67793184726273600d",
+          "messageHeadline": "test(storage): snapshot full SQLite grant probe state"
+        }
+      ],
+      "changedFiles": [
+        "crates/serea-storage/src/migration_0005_tests.rs",
+        "docs/plans/P8B-overnight-campaign-2026-10-18.md",
+        "docs/plans/P8B-overnight-report-2026-10-18.md"
+      ],
+      "fileCount": 3,
+      "checks": [
+        {
+          "name": "Produce closed DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux fast checks",
+          "workflowName": "Fast CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows P7 Gate C synthetic validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "ubuntu-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "FAILURE"
+        },
+        {
+          "name": "macos-latest Git hook regression",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Stable Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Produce closed DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux stable full validation",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Windows x64 Git hooks with python fallback",
+          "workflowName": "Git hooks Windows compatibility",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows x86_64 (x86_64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Windows ARM64 (aarch64-pc-windows-msvc)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS x86_64 (x86_64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 macOS ARM64 (aarch64-apple-darwin)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux x86_64 (x86_64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Rust 1.85.0 Linux ARM64 (aarch64-unknown-linux-gnu)",
+          "workflowName": "Native platform validation",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open Intel DB on macOS arm64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Linux MSRV 1.85.0",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "Open arm64 DB on macOS Intel x86_64",
+          "workflowName": "Cross-architecture SQLite portability",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS Intel x86_64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "macOS arm64",
+          "workflowName": "Full CI",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "UNSTABLE",
+      "classification": "REVIEW_ONLY_RESEARCH",
+      "classificationReason": "Additional lock/full-set test evidence only; Stable ARM64 failure remains."
+    }
+  ],
+  "auditedAtUtc": "2026-10-18 (GitHub data retrieved during campaign)"
+}

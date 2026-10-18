@@ -244,7 +244,7 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            set -euo pipefail
+            set -eu
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest

@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# Explicit opt-in for the non-authorizing Candidate C observation experiment.
+candidate-c-c1-test-only = ["serea-storage/candidate-c-c1-test-only"]
+
 [dependencies]
 serea-protocol.workspace = true
 serea-storage.workspace = true

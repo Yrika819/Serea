@@ -77,6 +77,35 @@ pub struct Tx<'conn> {
 }
 
 impl Tx<'_> {
+    /// Validates a Grant's full request/member structure for the explicitly
+    /// enabled Candidate C test-only observation. It does not authorize or use
+    /// a Grant and exposes no SQL capability.
+    #[cfg(feature = "candidate-c-c1-test-only")]
+    pub fn observe_candidate_c_grant_members(
+        &self,
+        grant_id: &serea_protocol::GrantId,
+        approval_id: &serea_protocol::ApprovalId,
+        task_id: &serea_protocol::TaskId,
+        selected_step: &serea_protocol::StepId,
+    ) -> Result<
+        Vec<(
+            i64,
+            serea_protocol::StepId,
+            serea_protocol::Digest,
+            serea_protocol::Digest,
+        )>,
+        crate::StoreError,
+    > {
+        self.ensure_active()?;
+        crate::candidate_c_test_only::probe_grant_full_set(
+            self,
+            grant_id,
+            approval_id,
+            task_id,
+            selected_step,
+        )
+    }
+
     /// Failure-atomic envelope for storage whole operations. Unwind cleanup also
     /// protects a caller that catches the panic inside the outer transaction.
     pub(crate) fn operation_savepoint<T>(

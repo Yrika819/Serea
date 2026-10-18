@@ -841,7 +841,13 @@ fn p3_public_method_inventory_exposes_only_the_fixed_participant_composition() {
         public_methods(include_str!("blob.rs")),
         ["class", "digest", "get_blob", "new", "put_blob"]
     );
-    assert!(public_methods(include_str!("tx.rs")).is_empty());
+    let tx_source = include_str!("tx.rs");
+    assert_eq!(
+        public_methods(tx_source),
+        ["observe_candidate_c_grant_members"]
+    );
+    assert!(tx_source.contains("#[cfg(feature = \"candidate-c-c1-test-only\")]\n    pub fn observe_candidate_c_grant_members"));
+    assert!(tx_source.contains("It does not authorize or use"));
     // P2E authority is unchanged. P2F added audited whole operations and P3
     // adds only the fixed audit+event composition, never an arbitrary
     // participant collection or SQL escape capability.

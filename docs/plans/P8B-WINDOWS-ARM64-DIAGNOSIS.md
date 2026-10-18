@@ -9,8 +9,8 @@ new Windows execution. Source baseline: PR #36 HEAD
 
 | PR / run / job | Exact head | Stable Windows ARM64 result | Failure position | Controls |
 |---|---|---|---:|---|
-| #34 / `39036558000` / `117407503289` | `f3804a643e6334bc4f1dddfea1a0c096c1fd7a13` | All-feature test stage failed in `model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine`; child exit decimal `3221225794` / signed `-1073741502` / `0xC0000142`; stdout/stderr each 0 bytes | 0 | Rust 1.85.0 ARM64 job `117407503223` passed; Windows x64 jobs passed |
-| #36 / `39054682137` / `117460408311` | `bfe47522d808388f82b55c67793184726273600d` | Same test and same exit/status/empty streams | 9 | Rust 1.85.0 ARM64 job `117460408219` and Stable Windows x64 job `117460408021` passed |
+| #34 / `39036558000` / `117407503289` | `f3804a643e6334bc4f1dddfea1a0c096c1fd7a13` | All-feature test stage failed in `model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine`; child exit decimal `3221225794` / signed `-1073741502` / `0xC0000142`; stdout/stderr each 0 bytes | 9 | Rust 1.85.0 ARM64 job `117407503223` passed; Windows x64 jobs passed |
+| #36 / `39054682137` / `117460408311` | `bfe47522d808388f82b55c67793184726273600d` | Same test and same exit/status/empty streams | 0 | Rust 1.85.0 ARM64 job `117460408219` and Stable Windows x64 job `117460408021` passed |
 | #33 / `39030546016` / `117389941104` | `a8210bca8177b9fbc523f7c8561287b59ccd522b` | Stable ARM64 all-feature suite passed, including all 12 Host lifecycle tests | — | Successful same-workflow control |
 | #35 / `39044878224` / `117431513197` | `b9a0ef070bbec396f107ccb2b5a43925b0e22ed0` | Stable ARM64 passed | — | Successful same-workflow control |
 
@@ -34,7 +34,7 @@ tests in parallel. In `crates/serea-host/src/main.rs:105-149`, `model-smoke`
 uses an in-process synthetic provider; no real model/provider subprocess is
 started.
 
-The failure moves from child index 0 to 9. That is compatible with transient
+The failure moves from child index 9 on PR #34 to index 0 on PR #36. That is compatible with transient
 startup/resource state during parallel process churn, but it does not establish
 resource pressure. Stable ARM64 is the only failing configuration in the
 observed #34/#36 matrices; MSRV ARM64 and Stable x64 passed. Runner IDs differ,

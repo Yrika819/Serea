@@ -20,6 +20,8 @@
 mod approval;
 mod audit;
 mod blob;
+#[cfg(any(test, feature = "candidate-c-c1-test-only"))]
+mod candidate_c_test_only;
 mod capability_registry;
 #[cfg(test)]
 mod capability_registry_tests;

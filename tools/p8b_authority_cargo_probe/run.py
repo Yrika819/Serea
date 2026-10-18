@@ -17,13 +17,23 @@ LOCK = Path(__file__).resolve().parent / "Cargo.lock"
 TARGET = Path(tempfile.gettempdir()) / "serea-p8b-authority-cargo-target"
 
 
-def run(source: str, expected: str | None) -> tuple[int, str]:
+def run(
+    source: str,
+    expected: str | None,
+    candidate_c_feature: bool = False,
+) -> tuple[int, str]:
     with tempfile.TemporaryDirectory(prefix="serea-p8b-external-") as temp:
         project = Path(temp) / "consumer"
         (project / "src").mkdir(parents=True)
         manifest = MANIFEST.read_text()
         manifest = manifest.replace("../../crates", str(ROOT / "crates"))
         manifest = manifest.replace("../../vendor", str(ROOT / "vendor"))
+        if candidate_c_feature:
+            manifest = manifest.replace(
+                f'serea-task-engine = {{ path = "{ROOT / "crates/serea-task-engine"}" }}',
+                f'serea-task-engine = {{ path = "{ROOT / "crates/serea-task-engine"}", '
+                'features = ["candidate-c-c1-test-only"] }',
+            )
         (project / "Cargo.toml").write_text(manifest)
         shutil.copy(LOCK, project / "Cargo.lock")
         (project / "src" / "lib.rs").write_text(source)
@@ -126,6 +136,20 @@ def main() -> int:
     for source, expected in cases:
         code, _ = run(source, expected)
         failures += code != 0
+    observation_call = (
+        "use serea_capability::PreparedActionV1;\n"
+        "use serea_protocol::{Clock, GrantId};\n"
+        "use serea_storage::LeaseGuard;\n"
+        "use serea_task_engine::TaskEngine;\n"
+        "pub fn observe(engine: &TaskEngine, action: &PreparedActionV1, lease: &LeaseGuard, "
+        "grant: Option<&GrantId>, clock: &dyn Clock) {\n"
+        "    let _ = engine.observe_candidate_c_c1_test_only(action, lease, grant, clock);\n"
+        "}\n"
+    )
+    code, _ = run(observation_call, "no method named `observe_candidate_c_c1_test_only`")
+    failures += code != 0
+    code, _ = run(observation_call, None, candidate_c_feature=True)
+    failures += code != 0
     return int(failures != 0)
 
 

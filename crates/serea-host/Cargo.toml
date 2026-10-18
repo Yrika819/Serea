@@ -27,6 +27,10 @@ ctrlc = { workspace = true, optional = true }
 default = []
 synthetic = ["dep:serea-testkit", "dep:serea-capability", "dep:serea-storage", "dep:serea-scheduler", "dep:serea-model-router", "dep:async-trait", "dep:serde_json", "dep:fs2", "dep:getrandom", "dep:ctrlc"]
 synthetic-test-hooks = ["synthetic", "serea-scheduler/test-hooks"]
+candidate-c-c1-test-only = ["synthetic", "serea-task-engine/candidate-c-c1-test-only"]
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
+
+[dev-dependencies]
+rusqlite = { workspace = true }

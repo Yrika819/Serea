@@ -51,6 +51,15 @@ pub struct L1FactObservation {
     policy: Option<PolicyRevisionSnapshot>,
     lease: LeaseFactSnapshot,
     grant: Option<GrantFactSnapshot>,
+    #[cfg(feature = "candidate-c-c1-test-only")]
+    grant_members: Option<
+        Vec<(
+            i64,
+            serea_protocol::StepId,
+            serea_protocol::Digest,
+            serea_protocol::Digest,
+        )>,
+    >,
     mismatches: Vec<DurableFactMismatch>,
 }
 
@@ -78,6 +87,21 @@ impl L1FactObservation {
     }
     pub fn grant(&self) -> Option<&GrantFactSnapshot> {
         self.grant.as_ref()
+    }
+    /// Full typed Grant subset observed in the same transaction. Available
+    /// only in the explicit Candidate C test-only feature.
+    #[cfg(feature = "candidate-c-c1-test-only")]
+    pub fn candidate_c_grant_members(
+        &self,
+    ) -> Option<
+        &[(
+            i64,
+            serea_protocol::StepId,
+            serea_protocol::Digest,
+            serea_protocol::Digest,
+        )],
+    > {
+        self.grant_members.as_deref()
     }
     /// Empty means only that these durable pins matched their selectors. It
     /// says nothing about missing Host trust roots or execution authority.
@@ -115,6 +139,31 @@ impl TaskEngine {
         grant_id: Option<&serea_protocol::GrantId>,
     ) -> Result<L1FactObservation, EngineError> {
         self.observe_l1_facts_inner(prepared, lease_guard, grant_id, |_| Ok(()))
+    }
+
+    /// Candidate C test-only seam: takes one Storage-owned BEGIN IMMEDIATE,
+    /// reuses the typed L1 reader, validates every Grant member in that Tx, and
+    /// samples the injected clock before Storage commits. The result is a
+    /// non-authorizing observation and cannot invoke Providers or write rows.
+    #[cfg(feature = "candidate-c-c1-test-only")]
+    pub fn observe_candidate_c_c1_test_only(
+        &self,
+        prepared: &serea_capability::PreparedActionV1,
+        lease_guard: &LeaseGuard,
+        grant_id: Option<&serea_protocol::GrantId>,
+        clock: &dyn serea_protocol::Clock,
+    ) -> Result<(L1FactObservation, serea_protocol::EpochMillis), EngineError> {
+        use std::cell::Cell;
+        let sampled_at = Cell::new(None);
+        let observation = self.observe_l1_facts_inner(prepared, lease_guard, grant_id, |_| {
+            let now = clock.now_ms().map_err(|_| StoreError::Sqlite)?;
+            sampled_at.set(Some(now));
+            Ok(())
+        })?;
+        Ok((
+            observation,
+            sampled_at.get().ok_or(EngineError::InvalidPlan)?,
+        ))
     }
 
     /// Private unit-test seam. The callback runs after all observer reads and
@@ -162,6 +211,17 @@ impl TaskEngine {
                     .map(|id| tx.observe_grant_facts(id, prepared.task_id(), prepared.step_id()))
                     .transpose()?
                     .flatten();
+                #[cfg(feature = "candidate-c-c1-test-only")]
+                let grant_members = match (grant_id, grant.as_ref()) {
+                    (Some(grant_id), Some(grant)) => Some(tx.observe_candidate_c_grant_members(
+                        grant_id,
+                        grant.approval_id(),
+                        prepared.task_id(),
+                        prepared.step_id(),
+                    )?),
+                    (Some(_), None) => return Err(StoreError::InvalidApprovalResponse),
+                    (None, _) => None,
+                };
 
                 let mut mismatches = Vec::new();
                 if task.task.task_id != *prepared.task_id() {
@@ -274,6 +334,8 @@ impl TaskEngine {
                     policy,
                     lease,
                     grant,
+                    #[cfg(feature = "candidate-c-c1-test-only")]
+                    grant_members,
                     mismatches,
                 };
                 while_held(&observation)?;

@@ -925,6 +925,7 @@ dependencies = [
  "ctrlc",
  "fs2",
  "getrandom",
+ "rusqlite",
  "serde_json",
  "serea-capability",
  "serea-core",

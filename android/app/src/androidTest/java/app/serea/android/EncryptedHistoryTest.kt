@@ -98,6 +98,46 @@ class EncryptedHistoryTest {
         Unit
     }
 
+    @Test fun oneHundredConversationCreateReadAndDeleteStress() = runBlocking {
+        (0 until 100).forEach { index ->
+            val id = "stress-conversation-${index.toString().padStart(3, '0')}"
+            repository.create(id, "Stress conversation $index", now = index.toLong() + 1)
+            repository.addMessage(StoredMessage(
+                "stress-message-$index", id, MessageRole.USER,
+                if (index == 0) "long-${"x".repeat(10_000)}" else "message-$index",
+                DataClassification.UNKNOWN, index.toLong() + 2, "COMPLETED",
+            ))
+        }
+        assertEquals(100, repository.list().size)
+        assertEquals("long-${"x".repeat(10_000)}", repository.get("stress-conversation-000")!!.messages.single().text)
+        (0 until 100 step 2).forEach { index -> repository.delete("stress-conversation-${index.toString().padStart(3, '0')}") }
+        val remaining = repository.list()
+        assertEquals(50, remaining.size)
+        assertTrue(remaining.all { it.id.endsWith("1") || it.id.endsWith("3") || it.id.endsWith("5") || it.id.endsWith("7") || it.id.endsWith("9") })
+        assertTrue((0 until 100 step 2).all { index -> repository.get("stress-conversation-${index.toString().padStart(3, '0')}") == null })
+    }
+
+    @Test fun assistantAndCompletedStatusCommitTogetherAndCannotCompleteTwice() = runBlocking {
+        repository.create("atomic-turn", "Atomic turn", now = 1)
+        repository.addMessage(StoredMessage(
+            "atomic-user", "atomic-turn", MessageRole.USER, "question", DataClassification.UNKNOWN, 2, "PENDING",
+        ))
+        repository.completeTurn("atomic-user", StoredMessage(
+            "atomic-assistant", "atomic-turn", MessageRole.ASSISTANT, "answer", DataClassification.UNKNOWN, 3, "COMPLETED",
+        ))
+        val completed = repository.get("atomic-turn")!!.messages
+        assertEquals(listOf("COMPLETED", "COMPLETED"), completed.map { it.status })
+        assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT), completed.map { it.role })
+        assertThrows<IllegalArgumentException> {
+            kotlinx.coroutines.runBlocking {
+                repository.completeTurn("atomic-user", StoredMessage(
+                    "duplicate-assistant", "atomic-turn", MessageRole.ASSISTANT, "duplicate", DataClassification.UNKNOWN, 4, "COMPLETED",
+                ))
+            }
+        }
+        assertEquals(listOf("atomic-user", "atomic-assistant"), repository.get("atomic-turn")!!.messages.map { it.id })
+    }
+
     @Test fun lateInsertRacingWithDeleteCannotReappearWhenConversationIdIsReused() = runBlocking {
         repository.create("racing-delete", "Race", now = 1)
         val start = CompletableDeferred<Unit>()

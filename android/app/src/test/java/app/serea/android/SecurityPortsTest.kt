@@ -54,4 +54,37 @@ class SecurityPortsTest {
         } catch (_: ModelChatFailure) { }
         assertEquals(0, calls)
     }
+
+    @Test fun sensitiveClassificationInPriorHistoryBlocksWholeRequest() = runBlocking {
+        var calls = 0
+        val gated = EgressCheckedModelChatPort(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                calls += 1
+                return ModelChatResponse("unexpected")
+            }
+        })
+        val prior = ContextMessage(MessageRole.USER, "private historical content", DataClassification.PRIVATE, "message-1")
+        try {
+            gated.send(ModelChatRequest("conversation", "a public probe", classification = DataClassification.PUBLIC,
+                context = listOf(prior)))
+            throw AssertionError("private history must not reach the provider")
+        } catch (_: ModelChatFailure) { }
+        assertEquals(0, calls)
+    }
+
+    @Test fun overLimitContextIsRejectedBeforeDelegate() = runBlocking {
+        var calls = 0
+        val gated = EgressCheckedModelChatPort(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                calls += 1
+                return ModelChatResponse("unexpected")
+            }
+        })
+        try {
+            gated.send(ModelChatRequest("conversation", "prompt", classification = DataClassification.PUBLIC,
+                context = listOf(ContextMessage(MessageRole.USER, "x".repeat(ChatContextBuilder.MAX_CONTEXT_CHARS + 1), DataClassification.PUBLIC, "large"))))
+            throw AssertionError("oversized context must not reach the provider")
+        } catch (_: ModelChatFailure) { }
+        assertEquals(0, calls)
+    }
 }

@@ -207,7 +207,7 @@ jobs:
           grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
           lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:'
           command -v kvm-ok >/dev/null && sudo kvm-ok || echo 'kvm-ok unavailable or reported failure'
-          emulator -accel-check 2>&1; echo "emulator_accel_check_exit=$?"
+          "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1; echo "emulator_accel_check_exit=$?"
           {
             echo '```text'
             id
@@ -216,7 +216,7 @@ jobs:
             stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1
             grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
             lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:'
-            emulator -accel-check 2>&1
+            "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           set -e
@@ -231,7 +231,7 @@ jobs:
           fi
           stat -Lc 'post-rule device=%n owner=%U group=%G mode=%a' /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
-          emulator -accel-check
+          "$ANDROID_HOME/emulator/emulator" -accel-check
       - name: Run API 35 Pixel emulator and all instrumentation tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         timeout-minutes: 55

@@ -143,19 +143,21 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
       - name: Start API 35 Pixel emulator
         id: emulator
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
-          if [ ! -r /dev/kvm ]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "### Android emulator smoke: NOT_RUN" >> "$GITHUB_STEP_SUMMARY"
-            echo "The runner does not expose readable /dev/kvm; instrumentation APK compilation still runs in the build job." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          if [ -r /dev/kvm ]; then
+            accel_mode=auto
+            echo "The runner exposes /dev/kvm; starting hardware-accelerated API 35 emulator." >> "$GITHUB_STEP_SUMMARY"
+          else
+            accel_mode=off
+            echo "### Android emulator smoke: software acceleration fallback" >> "$GITHUB_STEP_SUMMARY"
+            echo "The runner does not expose readable /dev/kvm. Trying software CPU emulation; this may be slower." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo no | avdmanager create avd --force --name serea-api35 --package 'system-images;android-35;google_apis;x86_64' --device pixel_7
           adb start-server
-          emulator -avd serea-api35 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -accel auto > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          emulator -avd serea-api35 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -accel "$accel_mode" > "$RUNNER_TEMP/emulator.log" 2>&1 &
           emulator_pid=$!
-          deadline=$((SECONDS + 600))
+          deadline=$((SECONDS + 900))
           booted=false
           while [ "$SECONDS" -lt "$deadline" ]; do
             if ! kill -0 "$emulator_pid" 2>/dev/null; then
@@ -175,6 +177,7 @@ jobs:
             exit 1
           fi
           echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "API 35 Pixel emulator booted with -accel $accel_mode." >> "$GITHUB_STEP_SUMMARY"
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0

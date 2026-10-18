@@ -2,16 +2,9 @@ name: Android
 
 on:
   pull_request:
-    paths:
-      - 'android/**'
-      - 'docs/decisions/ADR-0044-*'
-      - '.github/workflows/android.yml'
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
-    paths:
-      - 'android/**'
-      - 'docs/decisions/ADR-0044-*'
-      - '.github/workflows/android.yml'
 
 permissions:
   contents: read
@@ -21,7 +14,91 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  android:
+  android-changes:
+    name: Android Change Scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      android: ${{ steps.scope.outputs.android }}
+      docs: ${{ steps.scope.outputs.docs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - id: scope
+        name: Classify changed files
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = pull_request ]; then
+            git fetch --no-tags origin "$PR_BASE_SHA" "$PR_HEAD_SHA"
+            changed=$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")
+          elif [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --quiet "$PUSH_BEFORE_SHA" "$PUSH_AFTER_SHA" -- && changed="" || changed=$(git diff --name-only "$PUSH_BEFORE_SHA" "$PUSH_AFTER_SHA")
+          else
+            changed=$(git show --pretty=format: --name-only "$PUSH_AFTER_SHA")
+          fi
+          printf '%s\n' "$changed"
+          android_changed=false
+          while IFS= read -r path; do
+            case "$path" in
+              android/README.md|docs/*) ;;
+              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tests/android_instrumentation_results_tests.py) android_changed=true ;;
+            esac
+          done <<< "$changed"
+          echo "android=$android_changed" >> "$GITHUB_OUTPUT"
+          if printf '%s\n' "$changed" | grep -Eq '^(docs/|android/README\.md$)'; then
+            echo 'docs=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'docs=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  android-build:
+    name: Android Build, Lint, and Instrumentation Compile
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build debug, release, and instrumentation APKs
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleDebugAndroidTest
+      - name: Android lint
+        working-directory: android
+        run: ./gradlew --no-daemon lintDebug
+      - name: Upload APKs and lint report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-phase2-build
+          if-no-files-found: warn
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/androidTest/**/*.apk
+            android/app/build/reports/lint-results-debug.html
+
+  android-unit:
+    name: Android Unit
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -30,25 +107,265 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
+      - name: ViewModel state and cancellation tests
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest --tests '*ChatViewModelTest'
+      - name: Instrumentation JUnit verifier regression tests
+        run: python3 -m unittest discover -s tests -p android_instrumentation_results_tests.py
+      - name: Upload unit JUnit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-unit-junit
+          if-no-files-found: warn
+          path: android/app/build/test-results/testDebugUnitTest/*.xml
+
+  android-integration:
+    name: Android Integration
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Mock HTTP provider contract tests
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest --tests '*OllamaCloudAdapterTest'
+      - name: Upload provider JUnit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-integration-junit
+          if-no-files-found: warn
+          path: android/app/build/test-results/testDebugUnitTest/*.xml
+
+  android-security:
+    name: Android Security Tests
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Egress allow and deny contract tests
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest --tests '*SecurityPortsTest'
+      - name: Upload security JUnit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-security-junit
+          if-no-files-found: warn
+          path: android/app/build/test-results/testDebugUnitTest/*.xml
+
+  android-storage-emulator:
+    name: Android Storage and Emulator
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    outputs:
+      instrumentation: ${{ steps.instrumentation.outputs.result }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools
-      - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Assemble debug APK
-        working-directory: android
-        run: ./gradlew --no-daemon --stacktrace assembleDebug
-      - name: Assemble release APK
-        working-directory: android
-        run: ./gradlew --no-daemon assembleRelease
-      - name: Unit tests
-        working-directory: android
-        run: ./gradlew --no-daemon testDebugUnitTest
-      - name: Lint
-        working-directory: android
-        run: ./gradlew --no-daemon lintDebug
-      - name: Upload debug APK
+      - name: Install API 35 emulator and Google APIs image
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+      - name: Diagnose KVM before permission changes
+        run: |
+          set +e
+          echo '### KVM pre-change diagnostics' >> "$GITHUB_STEP_SUMMARY"
+          id
+          printf 'groups: '; id -nG
+          if [ -e /dev/kvm ]; then
+            stat -Lc 'device=%n owner=%U group=%G mode=%a major=%t minor=%T' /dev/kvm
+            test -r /dev/kvm; echo "runner_readable=$?"
+            test -w /dev/kvm; echo "runner_writable=$?"
+          else
+            echo '/dev/kvm: absent'
+          fi
+          grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+          lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:'
+          command -v kvm-ok >/dev/null && sudo kvm-ok || echo 'kvm-ok unavailable or reported failure'
+          "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1; echo "emulator_accel_check_exit=$?"
+          {
+            echo '```text'
+            id
+            id -nG
+            ls -l /dev/kvm 2>&1
+            stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1
+            grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+            lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:'
+            "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          set -e
+      - name: Apply official KVM udev permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if [ ! -e /dev/kvm ]; then
+            echo '### Emulator BLOCKED: /dev/kvm is absent on this Ubuntu 24.04 hosted runner.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          stat -Lc 'post-rule device=%n owner=%U group=%G mode=%a' /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+      - name: Run API 35 Pixel emulator and all instrumentation tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
+        timeout-minutes: 55
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          working-directory: android
+          script: |
+            set -eu
+            adb devices -l
+            adb shell getprop ro.build.version.sdk
+            ./gradlew --no-daemon connectedDebugAndroidTest
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 13
+            echo 'result=PASS' >> "$GITHUB_OUTPUT"
+        id: instrumentation
+      - name: Mark required emulator failure in summary
+        if: failure()
+        run: |
+          echo '### Android Emulator Required Gate: FAIL (emulator or Instrumentation Test did not complete successfully)' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload emulator evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: serea-android-demo-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: serea-android-emulator-evidence
+          if-no-files-found: warn
+          path: |
+            android/app/build/outputs/androidTest-results/connected/**/*.xml
+            android/app/build/reports/androidTests/connected/**/*.html
+            ${{ runner.temp }}/emulator.log
+
+  android-documentation:
+    name: Android Documentation
+    needs: android-changes
+    if: needs.android-changes.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate documentation and links
+        run: python3 tools/validate_docs.py docs
+
+  android-dependency-audit:
+    name: Android Dependency Audit
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Resolve locked Android dependencies
+        working-directory: android
+        run: ./gradlew --no-daemon :app:dependencies :app:generateLicenseReport > "$RUNNER_TEMP/android-dependency-audit.log" 2>&1
+      - name: Scan Android dependency vulnerabilities
+        uses: google/osv-scanner-action/osv-scanner-action@8018483926dd235b3013d8c88023e644b9f8e09e # v2.3.3
+        with:
+          scan-args: |-
+            --format=json
+            --output=osv-android-dependencies.json
+            --recursive
+            android/
+      - name: Upload dependency audit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-dependency-audit
+          if-no-files-found: warn
+          path: |
+            osv-android-dependencies.json
+            android/app/build/reports/dependency-license/**
+            ${{ runner.temp }}/android-dependency-audit.log
+
+  android-emulator-required-gate:
+    name: Android Emulator Required Gate
+    if: always()
+    needs:
+      - android-changes
+      - android-build
+      - android-unit
+      - android-integration
+      - android-security
+      - android-storage-emulator
+      - android-documentation
+      - android-dependency-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require Android checks and executed instrumentation results
+        env:
+          CHANGE_RESULT: ${{ needs.android-changes.result }}
+          ANDROID_CHANGED: ${{ needs.android-changes.outputs.android }}
+          DOCS_CHANGED: ${{ needs.android-changes.outputs.docs }}
+          BUILD_RESULT: ${{ needs.android-build.result }}
+          UNIT_RESULT: ${{ needs.android-unit.result }}
+          INTEGRATION_RESULT: ${{ needs.android-integration.result }}
+          SECURITY_RESULT: ${{ needs.android-security.result }}
+          EMULATOR_RESULT: ${{ needs.android-storage-emulator.result }}
+          DOCS_RESULT: ${{ needs.android-documentation.result }}
+          AUDIT_RESULT: ${{ needs.android-dependency-audit.result }}
+          INSTRUMENTATION_RESULT: ${{ needs.android-storage-emulator.outputs.instrumentation }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGE_RESULT" != success ]; then
+            echo 'FAIL: Android change-scope detection did not complete.'
+            exit 1
+          fi
+          if [ "$ANDROID_CHANGED" != true ]; then
+            if [ "$DOCS_CHANGED" = true ] && [ "$DOCS_RESULT" != success ]; then
+              echo 'FAIL: documentation-only validation did not pass.'
+              exit 1
+            fi
+            echo 'PASS: no Android implementation/configuration change requires emulator execution.'
+            exit 0
+          fi
+          for check in "build:$BUILD_RESULT" "unit:$UNIT_RESULT" "integration:$INTEGRATION_RESULT" "security:$SECURITY_RESULT" "emulator:$EMULATOR_RESULT" "dependency-audit:$AUDIT_RESULT"; do
+            if [ "${check#*:}" != success ]; then
+              echo "FAIL: required Android check $check. Emulator status is NOT_RUN or incomplete until its full test result succeeds."
+              exit 1
+            fi
+          done
+          if [ "$INSTRUMENTATION_RESULT" != PASS ]; then
+            echo 'FAIL: Android Instrumentation Test result is NOT_RUN; no passing JUnit evidence was recorded.'
+            exit 1
+          fi
+          if [ "$DOCS_CHANGED" = true ] && [ "$DOCS_RESULT" != success ]; then
+            echo 'FAIL: changed documentation validation did not pass.'
+            exit 1
+          fi
+          echo 'PASS: emulator booted, connectedDebugAndroidTest completed, and JUnit evidence passed the minimum test count.'

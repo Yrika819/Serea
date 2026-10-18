@@ -345,7 +345,9 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                         scope.launch {
                             runCatching { credentials?.store(secret.toCharArray()) }
                                 .onSuccess { credentialReady = credentials?.isConfigured() == true; settingsMessage = "API keyを暗号化保存しました。Cloud送信は無効のままです。" }
-                                .onFailure { settingsMessage = "API keyを安全に保存できませんでした。" }
+                                .onFailure { error -> settingsMessage = if (error is HardwareBackedKeyRequiredException)
+                                    "Cloud API keyにはHardware-backed Android Keystoreが必要です。この端末ではキーを保存しません。"
+                                else "API keyを安全に保存できませんでした。" }
                         }
                     }, enabled = secretText.isNotEmpty() && credentials != null) { Text("保存") }
                     TextButton(onClick = {

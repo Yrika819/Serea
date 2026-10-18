@@ -84,6 +84,14 @@ class EncryptedHistoryTest {
     @Test fun credentialsAreEncryptedReplaceableAndDeleted() = runBlocking {
         val credentials = CredentialRepository(context)
         credentials.currentHandle()?.let { credentials.delete(it) }
+        if (!credentials.isHardwareBacked()) {
+            val rejected = "test-key-never-a-real-secret".toCharArray()
+            assertThrows<HardwareBackedKeyRequiredException> { runBlocking { credentials.store(rejected) } }
+            assertTrue(rejected.all { it == '\u0000' })
+            assertFalse(credentials.isConfigured())
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("serea-cloud-credential-v1") }
+            return@runBlocking
+        }
         val original = "test-key-never-a-real-secret".toCharArray()
         val firstHandle = credentials.store(original)
         assertTrue(original.all { it == '\u0000' })
@@ -102,6 +110,7 @@ class EncryptedHistoryTest {
 
     @Test fun missingKeystoreKeyDoesNotSilentlyDiscardEncryptedCredential() = runBlocking {
         val credentials = CredentialRepository(context)
+        org.junit.Assume.assumeTrue("key invalidation requires hardware-backed Android Keystore", credentials.isHardwareBacked())
         credentials.currentHandle()?.let { credentials.delete(it) }
         credentials.store("temporary-test-key".toCharArray())
         KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("serea-cloud-credential-v1") }

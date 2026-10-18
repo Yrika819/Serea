@@ -21,11 +21,15 @@ send user conversations or select a production service.
 - The Android egress gate denies UNKNOWN, PRIVATE, SECRET, CREDENTIAL, and all
   PERSONAL input. A caller cannot construct an approved payload from arbitrary
   strings. Provider composition does not expose an unguarded general chat API.
-- Credential ciphertext is app-private and protected with AES-GCM under a
-  non-exportable Android Keystore key. History titles and message bodies use
-  authenticated AES-GCM with record identity as associated data. Backup is
-  disabled. If a required key is unavailable or data fails authentication,
-  the app reports unavailable data and does not reset it silently.
+- Cloud credential ciphertext is app-private and protected with AES-GCM under
+  a non-exportable Android Keystore key. Saving or reading a provider key is
+  refused unless the actual key security level reports StrongBox/TEE hardware
+  backing; software-backed Android Keystore remains disabled for this path
+  until Owner approval. History titles and message bodies use authenticated
+  AES-GCM with record identity as associated data and display the actual
+  security profile. Backup is disabled. If a required key is unavailable or
+  data fails authentication, the app reports unavailable data and does not
+  reset it silently.
 - Room owns Android-only history. Database schema version 1 is exported;
   destructive migration fallback is not configured. Deletion removes rows and
   stops repository reads; cryptographic physical erasure is not claimed.

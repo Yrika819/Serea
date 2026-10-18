@@ -22,11 +22,12 @@ blocked until a class and preparation contract is approved.
 
 ## P0 — Credential and history policy
 
-**Recommendation:** retain Keystore AES-GCM and backup exclusion; decide whether
-software-backed Android Keystore is supported or cloud candidate must require
-hardware backing. Decide recovery behavior on key loss, retention period,
-delete-all semantics, and whether local database metadata is acceptable in
-plaintext. Current code encrypts title/body, but conversation IDs, model,
+**Recommendation:** retain Keystore AES-GCM and backup exclusion. The Cloud
+credential path now refuses software-backed Keystore and requires the observed
+StrongBox/TEE profile. Decide whether to keep that requirement or approve a
+software-backed fallback. Decide recovery behavior on key loss, retention
+period, delete-all semantics, and whether local database metadata is acceptable
+in plaintext. Current code encrypts title/body, but conversation IDs, model,
 classification, status, and timestamps are metadata in Room.
 
 **Risk:** Keystore does not protect against a live compromised OS, screenshots,

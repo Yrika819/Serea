@@ -78,6 +78,7 @@ internal class KeystoreAesGcm(private val alias: String) {
 }
 
 class HistoryUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class HardwareBackedKeyRequiredException : Exception("Cloud credentials require hardware-backed Android Keystore protection.")
 
 @Entity(tableName = "conversations")
 data class ConversationRow(
@@ -191,6 +192,7 @@ internal class CredentialRepository(context: Context) : CredentialPort, Credenti
         require(secret.isNotEmpty() && secret.size <= 512)
         val bytes = Charsets.UTF_8.encode(java.nio.CharBuffer.wrap(secret)).let { buffer -> ByteArray(buffer.remaining()).also(buffer::get) }
         try {
+            requireHardwareBackedKey()
             val encrypted = cipher.encrypt(bytes, CREDENTIAL_AAD)
             val handle = CredentialHandle(java.util.UUID.randomUUID().toString())
             check(prefs.edit().putString(KEY, encrypted).putString(HANDLE_KEY, handle.value).commit())
@@ -205,11 +207,21 @@ internal class CredentialRepository(context: Context) : CredentialPort, Credenti
     fun isConfigured(): Boolean = prefs.contains(KEY) && prefs.contains(HANDLE_KEY)
     fun currentHandle(): CredentialHandle? = prefs.getString(HANDLE_KEY, null)?.let(::CredentialHandle)
     fun securityProfile(): String = cipher.securityProfile()
+    fun isHardwareBacked(): Boolean = securityProfile() in setOf(
+        "StrongBox", "Hardware-backed TEE", "Hardware-backed Android Keystore",
+    )
 
     override fun readForRequest(): String {
         val encrypted = prefs.getString(KEY, null) ?: throw IllegalStateException("credential missing")
+        try { requireHardwareBackedKey() } catch (error: HardwareBackedKeyRequiredException) {
+            throw HistoryUnavailableException("Cloud credentials require hardware-backed Android Keystore protection.", error)
+        }
         val bytes = cipher.decrypt(encrypted, CREDENTIAL_AAD)
         return try { bytes.toString(Charsets.UTF_8) } finally { bytes.fill(0) }
+    }
+
+    private fun requireHardwareBackedKey() {
+        if (!isHardwareBacked()) throw HardwareBackedKeyRequiredException()
     }
 
     companion object {

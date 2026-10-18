@@ -32,18 +32,22 @@ probe. Do not enter a real key or enable the probe until the Owner has approved
 the provider/account terms, model, region, billing controls, and probe request.
 If approval is recorded and a test key is intentionally provided by the owner:
 
-1. Enter the key in Settings and save it. Verify it remains masked, the UI
-   reports encrypted storage and the actual Keystore security profile, and the
-   key never appears in chat history.
-2. Close and reopen Settings; verify the key is reported as configured without
+1. In Settings, inspect the reported Keystore security profile. If it is
+   software-backed or unavailable, attempt a test value and verify the app
+   refuses to save it and reports that hardware-backed protection is required.
+   Do not proceed to a network probe on that device.
+2. If the profile is StrongBox or TEE and Owner approval is recorded, enter
+   the Owner-provided test key and save it. Verify it remains masked, the UI
+   reports the actual Keystore level, and the key never appears in history.
+3. Close and reopen Settings; verify the key is reported as configured without
    being revealed. Delete it and verify the UI reports no configured key.
-3. With the candidate disabled or no key configured, verify the probe button
+4. With the candidate disabled or no key configured, verify the probe button
    is unavailable. With approved test conditions, enable the candidate and
    run one fixed PUBLIC probe. Verify the model/usage result or a safe mapped
    error. Do not send a user message through this probe.
-4. While the probe streams, cancel it. Verify the UI says provider-side
+5. While the probe streams, cancel it. Verify the UI says provider-side
    completion may still occur and does not automatically retry.
-5. Turn on airplane mode and repeat once. Verify a bounded network error is
+6. Turn on airplane mode and repeat once. Verify a bounded network error is
    shown, with no error body or credential displayed. Restore normal network.
 
 ## Evidence to record

@@ -21,7 +21,9 @@ migrations, or frozen protocols.
   timeout/error mapping, disabled redirects, model allowlisting, and local
   response limits. It never retries automatically.
 - Android Keystore AES-GCM protects the credential and encrypted history title
-  and body. Room stores Android-only metadata and ciphertext. Backup is
+  and body. Cloud credential save/read requires actual StrongBox/TEE hardware
+  backing; software-backed Android Keystore is refused for that path pending
+  Owner approval. Room stores Android-only metadata and ciphertext. Backup is
   disabled and no destructive migration fallback is used.
 - UI supports Demo conversations, history navigation/deletion, masked key
   configuration, provider probe, and pending/failure/cancellation states.

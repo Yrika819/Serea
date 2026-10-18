@@ -1,0 +1,52 @@
+name: Android
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'docs/decisions/ADR-0044-*'
+      - '.github/workflows/android.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'docs/decisions/ADR-0044-*'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - name: Install Android SDK packages
+        run: yes | sdkmanager --licenses && sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+      - name: Assemble release APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest
+      - name: Lint
+        working-directory: android
+        run: ./gradlew --no-daemon lintDebug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-demo-debug
+          path: android/app/build/outputs/apk/debug/*.apk

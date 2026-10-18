@@ -18,6 +18,9 @@ p7-experimental = []
 # Gate C contract/ledger development surface. Explicit opt-in only and rejected
 # in optimized builds; this is not an ordinary runtime or production API.
 p7-gate-c = ["dep:fs2"]
+# Explicit Candidate C single-transaction observation experiment. Non-default;
+# feature-enabled builds expose read-only diagnostic structure only.
+candidate-c-c1-test-only = []
 
 [dependencies]
 serea-protocol.workspace = true

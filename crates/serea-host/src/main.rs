@@ -534,3 +534,6 @@ fn seed_synthetic_schedule(
     );
     Ok(())
 }
+
+#[cfg(all(test, feature = "synthetic-test-hooks"))]
+mod candidate_c_test_only;

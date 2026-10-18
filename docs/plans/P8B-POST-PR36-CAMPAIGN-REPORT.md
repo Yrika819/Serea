@@ -28,8 +28,8 @@ is updated before publication. **Native result:**
 
 | Evidence | Result |
 |---|---|
-| PR #34 Native run `39036558000`, Stable ARM64 job `117407503289`, head `f3804a643e6334bc4f1dddfea1a0c096c1fd7a13` | All-feature tests failed in `model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine`; child `0xC0000142`, exit decimal `3221225794` / signed `-1073741502`, 0 stdout and 0 stderr; failure at loop index 0. |
-| PR #36 Native run `39054682137`, Stable ARM64 job `117460408311`, head `bfe47522d808388f82b55c67793184726273600d` | Same test, status and empty streams; failure at loop index 9. |
+| PR #34 Native run `39036558000`, Stable ARM64 job `117407503289`, head `f3804a643e6334bc4f1dddfea1a0c096c1fd7a13` | All-feature tests failed in `model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine`; child `0xC0000142`, exit decimal `3221225794` / signed `-1073741502`, 0 stdout and 0 stderr; failure at loop index 9 ([job log](https://github.com/Yrika819/Serea/actions/runs/39036558000/job/117407503289)). |
+| PR #36 Native run `39054682137`, Stable ARM64 job `117460408311`, head `bfe47522d808388f82b55c67793184726273600d` | Same test, status and empty streams; failure at loop index 0 ([job log](https://github.com/Yrika819/Serea/actions/runs/39054682137/job/117460408311)). |
 | Controls | PR #33 Stable ARM64 job `117389941104` passed all 12 Host lifecycle tests; PR #35 Stable ARM64 job `117431513197` passed. PR #34/#36 Rust 1.85.0 ARM64 jobs `117407503223` / `117460408219` passed; #36 Stable x64 job `117460408021` passed. |
 | Runner evidence | GitHub-hosted `windows-11-arm` was ephemeral. No live shell, WER/Application Error module, ETW image-load, loader event, or resource sample was available. |
 

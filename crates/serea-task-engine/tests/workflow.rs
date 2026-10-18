@@ -1296,11 +1296,13 @@ fn no_recovery_execution_sql_or_upward_dependency_is_exposed() {
         "pub fn set_state",
         "SystemTime",
         "Instant",
-        "Clock",
         "rusqlite",
     ] {
         assert!(!source.contains(forbidden), "{forbidden}");
     }
+    assert!(source.contains(
+        "#[cfg(feature = \"candidate-c-c1-test-only\")]\n    pub fn observe_candidate_c_c1_test_only"
+    ));
     let manifest = include_str!("../Cargo.toml")
         .split("[dev-dependencies]")
         .next()

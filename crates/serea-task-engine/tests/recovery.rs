@@ -2318,9 +2318,9 @@ fn race_c_barrier_two_recovery_callers() {
 }
 
 // A conservative source guard, not a claim of compiler-derived call-graph proof.
-// Strip standalone comments/doctests and cfg(test) items so fixture APIs cannot
-// masquerade as runtime calls. Scan every remaining storage source file: this
-// deliberately over-approximates the entire recovery call closure and its context.
+// Strip standalone comments, cfg(test) items, and the explicitly non-default
+// Candidate C test-only feature so fixture APIs cannot masquerade as recovery
+// runtime calls. Scan every remaining source file as a conservative closure.
 fn runtime_source(source: &str) -> String {
     let mut output = String::new();
     let mut test_item = false;
@@ -2331,7 +2331,7 @@ fn runtime_source(source: &str) -> String {
         if line.starts_with("//") {
             continue;
         }
-        if line == "#[cfg(test)]" {
+        if line == "#[cfg(test)]" || line == "#[cfg(feature = \"candidate-c-c1-test-only\")]" {
             test_item = true;
             opened = false;
             braces = 0;
@@ -2659,6 +2659,7 @@ fn m21_explicit_now_is_the_only_recovery_clock_no_retained_or_ambient_clock() {
     let mut sources = Vec::new();
     rust_sources(&root.join("src"), &mut sources);
     for (path, source) in sources {
+        let source = runtime_source(&source);
         for forbidden in [
             "SystemTime",
             "Instant::now",

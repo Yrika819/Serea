@@ -1,14 +1,13 @@
 package app.serea.android
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.isEditable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNode
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
 import org.junit.Assert.assertEquals
@@ -22,7 +21,9 @@ class ChatScreenTest {
 
     private fun awaitComposerEnabled() {
         compose.waitUntil(5_000) {
-            runCatching { compose.onNode(isEditable()).assertIsEnabled() }.isSuccess
+            compose.onAllNodes(isEditable()).fetchSemanticsNodes().any {
+                !it.config.contains(SemanticsProperties.Disabled)
+            }
         }
     }
 
@@ -30,7 +31,7 @@ class ChatScreenTest {
         compose.onNodeWithText("DEMO · Mock chat · No cloud AI").assertIsDisplayed()
         compose.onNodeWithText("端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。").assertIsDisplayed()
         awaitComposerEnabled()
-        compose.onNode(isEditable()).performTextInput("hello")
+        compose.onNodeWithText("Message").performTextInput("hello")
         compose.onNodeWithText("送信").performClick()
         compose.onNodeWithText("You", substring = true).assertIsDisplayed()
         compose.waitUntil(5_000) {
@@ -45,7 +46,7 @@ class ChatScreenTest {
 
     @Test fun completedDemoConversationSurvivesActivityRecreation() {
         awaitComposerEnabled()
-        compose.onNode(isEditable()).performTextInput("rotation-check")
+        compose.onNodeWithText("Message").performTextInput("rotation-check")
         compose.onNodeWithText("送信").performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodes(androidx.compose.ui.test.hasText("Demo response: I received “rotation-check”. No cloud AI was contacted."))

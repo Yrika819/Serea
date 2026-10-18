@@ -34,7 +34,8 @@ class ChatScreenTest {
         compose.waitUntil(5_000) {
             compose.onAllNodes(androidx.compose.ui.test.hasText("Demo response: I received “hello”. No cloud AI was contacted.")).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("Demo response: I received “hello”. No cloud AI was contacted.").assertTextContains("No cloud AI")
+        compose.onNodeWithText("Demo response: I received “hello”. No cloud AI was contacted.")
+            .assertTextContains("No cloud AI", substring = true)
         compose.onNodeWithText("履歴").performClick()
         compose.onNodeWithText("保存された会話").assertIsDisplayed()
         compose.onNodeWithText("Conversation", substring = true).assertIsDisplayed()

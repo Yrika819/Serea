@@ -133,15 +133,14 @@ class EncryptedHistoryTest {
     @Test fun aesKeyInfoUsesAndroidKeystoreSecretKeyFactoryAndFailsClosed() {
         val cipher = KeystoreAesGcm("serea-key-info-${UUID.randomUUID()}")
         val profile = cipher.securityProfile()
-        assertTrue(profile in setOf(
-            "StrongBox", "Hardware-backed TEE", "Hardware-backed Android Keystore",
-            "Software-backed Android Keystore", "Android Keystore level unavailable",
-        ))
+        val supportedProfiles = if (android.os.Build.VERSION.SDK_INT >= 31) setOf(
+            "StrongBox", "Hardware-backed TEE", "Software-backed Android Keystore",
+        ) else setOf("Hardware-backed Android Keystore", "Software-backed Android Keystore")
+        assertTrue("AES KeyInfo lookup returned no supported security level: $profile", profile in supportedProfiles)
+        val hardwareBacked = profile in setOf("StrongBox", "Hardware-backed TEE", "Hardware-backed Android Keystore")
+        assertEquals(hardwareBacked, CredentialRepository(context).isHardwareBacked())
         val sealed = cipher.encrypt("key-info-check".toByteArray(), "aad".toByteArray())
         assertEquals("key-info-check", cipher.decrypt(sealed, "aad".toByteArray()).toString(Charsets.UTF_8))
-        if (profile == "Software-backed Android Keystore" || profile == "Android Keystore level unavailable") {
-            assertFalse(CredentialRepository(context).isHardwareBacked())
-        }
     }
 
     @Test fun credentialsAreEncryptedReplaceableAndDeleted() = runBlocking {

@@ -161,6 +161,17 @@ jobs:
           booted=false
           while [ "$SECONDS" -lt "$deadline" ]; do
             if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              if [ "$accel_mode" = "off" ]; then
+                echo "ready=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo "### Android emulator smoke: NOT_RUN"
+                  echo "No KVM is exposed by the runner and the software-accelerated emulator exited before boot. The APK compile job remains the available Android platform check. Emulator log tail:"
+                  echo '```text'
+                  tail -n 15 "$RUNNER_TEMP/emulator.log"
+                  echo '```'
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
               echo "Android emulator exited before boot completed. Diagnostic log follows:" >&2
               cat "$RUNNER_TEMP/emulator.log" >&2
               exit 1
@@ -172,6 +183,17 @@ jobs:
             sleep 3
           done
           if [ "$booted" != "true" ]; then
+            if [ "$accel_mode" = "off" ]; then
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              {
+                echo "### Android emulator smoke: NOT_RUN"
+                echo "No KVM is exposed by the runner and software CPU emulation did not reach boot completion within 15 minutes. The APK compile job remains the available Android platform check. Emulator log tail:"
+                echo '```text'
+                tail -n 15 "$RUNNER_TEMP/emulator.log"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             echo "Android emulator did not reach sys.boot_completed before the startup deadline. Diagnostic log follows:" >&2
             cat "$RUNNER_TEMP/emulator.log" >&2
             exit 1

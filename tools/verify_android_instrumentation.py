@@ -70,10 +70,30 @@ def collect_results(directory: Path) -> Results:
     return Results(*totals, files=used_files)
 
 
+def collect_class_counts(directory: Path) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for file in sorted(directory.rglob("*.xml")):
+        try:
+            root = ET.parse(file).getroot()
+        except (ET.ParseError, OSError):
+            continue  # collect_results reports malformed JUnit XML with the path.
+        for case in root.iter():
+            if case.tag.rsplit("}", 1)[-1] != "testcase":
+                continue
+            class_name = case.get("classname")
+            if class_name:
+                counts[class_name] = counts.get(class_name, 0) + 1
+    return counts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path, help="Gradle connected Android test results directory")
     parser.add_argument("--minimum", type=int, default=9, help="minimum number of executed tests (default: 9)")
+    parser.add_argument(
+        "--require-class", action="append", default=[], metavar="CLASS=COUNT",
+        help="require an exact executed testcase count for this fully qualified test class",
+    )
     args = parser.parse_args()
     if args.minimum < 1:
         parser.error("--minimum must be at least 1")
@@ -100,6 +120,22 @@ def main() -> int:
     if results.failures or results.errors or results.skipped:
         print("FAIL: every instrumentation test must pass without failures, errors, or skips.", file=sys.stderr)
         return 1
+    class_counts = collect_class_counts(args.results)
+    for requirement in args.require_class:
+        try:
+            class_name, count_text = requirement.rsplit("=", 1)
+            expected = int(count_text)
+            if not class_name or expected < 1:
+                raise ValueError
+        except ValueError:
+            parser.error(f"invalid --require-class value: {requirement!r}")
+        actual = class_counts.get(class_name, 0)
+        if actual != expected:
+            print(
+                f"FAIL: {class_name} recorded {actual} tests; expected exactly {expected}.",
+                file=sys.stderr,
+            )
+            return 1
     print("PASS: instrumentation JUnit evidence meets the required threshold.")
     return 0
 

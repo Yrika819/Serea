@@ -16,6 +16,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.random.Random
 
 class OllamaCloudAdapterTest {
     private val server = MockWebServer().apply { start() }
@@ -42,6 +43,24 @@ class OllamaCloudAdapterTest {
         val body = request.body.readUtf8()
         assertTrue(body.contains("Serea cloud contract probe"))
         assertFalse(body.contains(key))
+    }
+
+    @Test fun streamsSeededManyShortDeltasAcrossFragmentedTransportChunks() = runBlocking {
+        val seed = 0x5E2EA
+        val chunks = (0 until 256).map { index ->
+            "{\"model\":\"gemma4:31b\",\"message\":{\"role\":\"assistant\",\"content\":\"$index,\"},\"done\":false}\n"
+        } + "{\"model\":\"gemma4:31b\",\"message\":{\"role\":\"assistant\",\"content\":\"done\"},\"done\":true}\n"
+        val expected = (0 until 256).joinToString(separator = "") { "$it," } + "done"
+        val body = chunks.joinToString(separator = "")
+        val transportChunkBytes = Random(seed).nextInt(1, 12)
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/x-ndjson")
+            .setChunkedBody(body, transportChunkBytes))
+
+        val deltas = mutableListOf<String>()
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) { deltas += it }
+        assertEquals(expected, result.text)
+        assertEquals(expected, deltas.joinToString(separator = ""))
+        assertEquals(1, server.requestCount)
     }
 
     @Test fun missingCredentialDoesNotCreateHttpRequest() = runBlocking {

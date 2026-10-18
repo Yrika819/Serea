@@ -64,7 +64,9 @@ review. Never infer execution from compilation or a successful emulator boot.
   remain open.
 - **AND-05:** streaming, transport error mapping, cancellation and fixed-probe
   behavior exist from Phase 2; process-death, API 26 and repeated stress
-  evidence must pass before their reliability claims can be closed.
+  evidence must pass before their reliability claims can be closed. A fixed
+  seed fragmented-stream stress case exercises 256 short deltas locally and in
+  the provider Mock HTTP suite.
 - **AND-06:** emulator and regression gates are extended to validate API 35 and
   API 26 JUnit evidence. Coverage measurement and CI evidence for this commit
   remain pending.

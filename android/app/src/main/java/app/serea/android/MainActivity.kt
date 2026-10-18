@@ -77,7 +77,7 @@ class MainActivity : ComponentActivity() {
         ConversationRepository(database.historyDao(), KeystoreAesGcm("serea-history-v1"))
     }
     private val credentials by lazy { CredentialRepository(this) }
-    private val chatViewModel: ChatViewModel by viewModels {
+    internal val chatViewModel: ChatViewModel by viewModels {
         ChatViewModel.factory(MockModelChatPort(), history)
     }
 

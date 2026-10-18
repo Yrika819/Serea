@@ -36,10 +36,22 @@ class ChatScreenTest {
         val response = compose.onAllNodes(hasText(text, substring = true))
         val failure = compose.onAllNodes(hasText("Demo response failed.", substring = true))
         val unknownOutcome = compose.onAllNodes(hasText("request timed out", substring = true))
-        compose.waitUntil(30_000) {
-            response.fetchSemanticsNodes().isNotEmpty() ||
-                failure.fetchSemanticsNodes().isNotEmpty() ||
-                unknownOutcome.fetchSemanticsNodes().isNotEmpty()
+        try {
+            compose.waitUntil(30_000) {
+                response.fetchSemanticsNodes().isNotEmpty() ||
+                    failure.fetchSemanticsNodes().isNotEmpty() ||
+                    unknownOutcome.fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
+            var snapshot: ChatUiState? = null
+            compose.activityRule.scenario.onActivity { snapshot = it.chatViewModel.state.value }
+            val state = requireNotNull(snapshot)
+            throw AssertionError(
+                "No terminal mock response became visible; loading=${state.isLoading}, " +
+                    "restoring=${state.isRestoring}, history=${state.showingHistory}, " +
+                    "messages=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
+                timeout,
+            )
         }
         assertTrue(
             "Chat did not complete normally; failed=${failure.fetchSemanticsNodes().isNotEmpty()}, " +

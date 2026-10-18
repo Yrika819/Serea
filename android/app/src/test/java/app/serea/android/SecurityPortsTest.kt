@@ -10,8 +10,8 @@ class SecurityPortsTest {
         assertEquals(EgressDecision.DENY_UNPREPARED, ChatEgressGate.decide(DataClassification.PERSONAL))
     }
 
-    @Test fun preparedPersonalMayPass() {
-        assertEquals(EgressDecision.ALLOW, ChatEgressGate.decide(DataClassification.PERSONAL, PreparedPersonalData("redacted")))
+    @Test fun preparationMarkerCannotAuthorizePersonalData() {
+        assertEquals(EgressDecision.DENY_UNPREPARED, ChatEgressGate.decide(DataClassification.PERSONAL, PreparedPersonalData("redacted")))
     }
 
     @Test fun privateSecretCredentialAndUnknownNeverPass() {
@@ -39,16 +39,19 @@ class SecurityPortsTest {
         assertEquals(0, calls)
     }
 
-    @Test fun preparedPersonalSendsOnlyPreparedContent() = runBlocking {
-        var sentMessage: String? = null
+    @Test fun preparationMarkerNeverReachesProvider() = runBlocking {
+        var calls = 0
         val gated = EgressCheckedModelChatPort(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest): ModelChatResponse {
-                sentMessage = request.message
+                calls += 1
                 return ModelChatResponse("ok")
             }
         })
-        gated.send(ModelChatRequest("conversation", "raw private text", classification = DataClassification.PERSONAL,
-            preparedPersonal = PreparedPersonalData("minimized and redacted")))
-        assertEquals("minimized and redacted", sentMessage)
+        try {
+            gated.send(ModelChatRequest("conversation", "raw private text", classification = DataClassification.PERSONAL,
+                preparedPersonal = PreparedPersonalData("minimized and redacted")))
+            throw AssertionError("Personal data must be denied until a trusted preparation policy exists")
+        } catch (_: ModelChatFailure) { }
+        assertEquals(0, calls)
     }
 }

@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -138,8 +139,8 @@ class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChat
         kotlinx.coroutines.delay(responseDelayMillis)
         val turns = request.context.size / 2
         val prior = request.context.lastOrNull { it.role == MessageRole.USER }?.text
-        val historyNote = prior?.let { " I remember your previous message: “$it”." }.orEmpty()
-        return ModelChatResponse("Demo response: I received “${request.message}”.$historyNote Context turns: $turns. No cloud AI was contacted.")
+        val contextNote = prior?.let { " I remember your previous message: “$it”." }.orEmpty()
+        return ModelChatResponse("Demo response: I received “${request.message}”.$contextNote Context turns: $turns. No cloud AI was contacted.")
     }
 }
 
@@ -476,7 +477,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }) }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
-                    modifier = Modifier.weight(1f), label = { Text("Message") },
+                    modifier = Modifier.weight(1f).testTag("chat-composer"), label = { Text("Message") },
                     enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                     maxLines = 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),

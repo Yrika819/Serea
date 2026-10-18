@@ -1,13 +1,14 @@
 package app.serea.android
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.isEditable
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
 import org.junit.Assert.assertEquals
@@ -19,11 +20,11 @@ import org.junit.runner.RunWith
 class ChatScreenTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    private fun composer() = compose.onNodeWithTag("chat-composer")
+
     private fun awaitComposerEnabled() {
         compose.waitUntil(5_000) {
-            compose.onAllNodes(isEditable()).fetchSemanticsNodes().any {
-                !it.config.contains(SemanticsProperties.Disabled)
-            }
+            runCatching { composer().assertIsEnabled() }.isSuccess
         }
     }
 
@@ -31,14 +32,13 @@ class ChatScreenTest {
         compose.onNodeWithText("DEMO · Mock chat · No cloud AI").assertIsDisplayed()
         compose.onNodeWithText("端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。").assertIsDisplayed()
         awaitComposerEnabled()
-        compose.onNodeWithText("Message").performTextInput("hello")
+        composer().performTextInput("hello")
         compose.onNodeWithText("送信").performClick()
         compose.onNodeWithText("You", substring = true).assertIsDisplayed()
-        compose.waitUntil(5_000) {
-            compose.onAllNodes(androidx.compose.ui.test.hasText("Demo response: I received “hello”. No cloud AI was contacted.")).fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithText("Demo response: I received “hello”. No cloud AI was contacted.")
-            .assertTextContains("No cloud AI", substring = true)
+        val response = compose.onAllNodes(hasText("Demo response: I received “hello”.", substring = true))
+        compose.waitUntil(5_000) { response.fetchSemanticsNodes().isNotEmpty() }
+        response.assertCountEquals(1)
+        response.onFirst().assertTextContains("No cloud AI", substring = true)
         compose.onNodeWithText("履歴").performClick()
         compose.onNodeWithText("保存された会話").assertIsDisplayed()
         compose.onNodeWithText("Conversation", substring = true).assertIsDisplayed()
@@ -46,15 +46,14 @@ class ChatScreenTest {
 
     @Test fun completedDemoConversationSurvivesActivityRecreation() {
         awaitComposerEnabled()
-        compose.onNodeWithText("Message").performTextInput("rotation-check")
+        composer().performTextInput("rotation-check")
         compose.onNodeWithText("送信").performClick()
-        compose.waitUntil(5_000) {
-            compose.onAllNodes(androidx.compose.ui.test.hasText("Demo response: I received “rotation-check”. No cloud AI was contacted."))
-                .fetchSemanticsNodes().isNotEmpty()
-        }
+        val response = compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true))
+        compose.waitUntil(5_000) { response.fetchSemanticsNodes().isNotEmpty() }
+        response.assertCountEquals(1)
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("rotation-check").assertIsDisplayed()
-        compose.onNodeWithText("Demo response: I received “rotation-check”. No cloud AI was contacted.").assertIsDisplayed()
+        compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true)).assertCountEquals(1)
     }
 
     @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {

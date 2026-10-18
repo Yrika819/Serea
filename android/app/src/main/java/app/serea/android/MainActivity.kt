@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -64,6 +65,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -342,8 +344,11 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     var cloudJob by remember { mutableStateOf<Job?>(null) }
     LaunchedEffect(state.conversation.messages.size, state.isLoading, state.showingHistory, settingsVisible) {
         if (!state.showingHistory && !settingsVisible) {
-            val lastVisibleItem = state.conversation.messages.size + if (state.isLoading) 1 else 0
-            if (lastVisibleItem > 0) listState.animateScrollToItem(lastVisibleItem - 1)
+            val targetIndex = state.conversation.messages.size + if (state.isLoading) 1 else 0
+            if (targetIndex > 0) {
+                snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it >= targetIndex }
+                listState.animateScrollToItem(targetIndex - 1)
+            }
         }
     }
     SideEffect {

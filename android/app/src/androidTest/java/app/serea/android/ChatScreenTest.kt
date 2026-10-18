@@ -49,7 +49,7 @@ class ChatScreenTest {
             throw AssertionError(
                 "No terminal mock response became visible; loading=${state.isLoading}, " +
                     "restoring=${state.isRestoring}, history=${state.showingHistory}, " +
-                    "messages=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
+                    "messages=${state.conversation.messages.map { it.role.name + ":" + it.status + ":" + it.text }}",
                 timeout,
             )
         }

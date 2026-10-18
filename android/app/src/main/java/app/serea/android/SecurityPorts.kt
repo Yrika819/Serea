@@ -28,11 +28,15 @@ object ChatEgressGate {
 /** Mandatory wrapper for any future cloud adapter. Rejected requests never reach its delegate. */
 class EgressCheckedModelChatPort(private val delegate: ModelChatPort) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
-        when (ChatEgressGate.decide(request.classification, request.preparedPersonal)) {
-            EgressDecision.ALLOW -> return delegate.send(request)
-            EgressDecision.DENY_UNCLASSIFIED -> throw ModelChatFailure("Unclassified data cannot be sent.")
-            EgressDecision.DENY_UNPREPARED -> throw ModelChatFailure("Personal data is not prepared for egress.")
-            EgressDecision.DENY_SENSITIVE -> throw ModelChatFailure("Sensitive data cannot be sent.")
+        val decisions = sequenceOf(request.classification) + request.context.asSequence().map { it.classification }
+        for (classification in decisions) {
+            when (ChatEgressGate.decide(classification, request.preparedPersonal)) {
+                EgressDecision.ALLOW -> Unit
+                EgressDecision.DENY_UNCLASSIFIED -> throw ModelChatFailure("Unclassified data cannot be sent.")
+                EgressDecision.DENY_UNPREPARED -> throw ModelChatFailure("Personal data is not prepared for egress.")
+                EgressDecision.DENY_SENSITIVE -> throw ModelChatFailure("Sensitive data cannot be sent.")
+            }
         }
+        return delegate.send(request)
     }
 }

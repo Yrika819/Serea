@@ -98,6 +98,27 @@ class EncryptedHistoryTest {
         Unit
     }
 
+    @Test fun assistantAndCompletedStatusCommitTogetherAndCannotCompleteTwice() = runBlocking {
+        repository.create("atomic-turn", "Atomic turn", now = 1)
+        repository.addMessage(StoredMessage(
+            "atomic-user", "atomic-turn", MessageRole.USER, "question", DataClassification.UNKNOWN, 2, "PENDING",
+        ))
+        repository.completeTurn("atomic-user", StoredMessage(
+            "atomic-assistant", "atomic-turn", MessageRole.ASSISTANT, "answer", DataClassification.UNKNOWN, 3, "COMPLETED",
+        ))
+        val completed = repository.get("atomic-turn")!!.messages
+        assertEquals(listOf("COMPLETED", "COMPLETED"), completed.map { it.status })
+        assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT), completed.map { it.role })
+        assertThrows<IllegalArgumentException> {
+            kotlinx.coroutines.runBlocking {
+                repository.completeTurn("atomic-user", StoredMessage(
+                    "duplicate-assistant", "atomic-turn", MessageRole.ASSISTANT, "duplicate", DataClassification.UNKNOWN, 4, "COMPLETED",
+                ))
+            }
+        }
+        assertEquals(listOf("atomic-user", "atomic-assistant"), repository.get("atomic-turn")!!.messages.map { it.id })
+    }
+
     @Test fun lateInsertRacingWithDeleteCannotReappearWhenConversationIdIsReused() = runBlocking {
         repository.create("racing-delete", "Race", now = 1)
         val start = CompletableDeferred<Unit>()

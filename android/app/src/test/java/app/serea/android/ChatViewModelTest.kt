@@ -39,6 +39,55 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.isLoading)
     }
 
+    @Test fun mockConversationUsesPreviousTurnsInTheNextRequestContext() = runTest(dispatcher) {
+        val requests = mutableListOf<ModelChatRequest>()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                requests += request
+                return MockModelChatPort(0).send(request)
+            }
+        })
+        vm.updateInput("first turn")
+        vm.sendMessage()
+        advanceUntilIdle()
+        vm.updateInput("second turn")
+        vm.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals(2, requests.size)
+        assertTrue(requests[0].context.isEmpty())
+        assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT), requests[1].context.map { it.role })
+        assertEquals("first turn", requests[1].context.first().text)
+        assertTrue(vm.state.value.conversation.messages.last().text.contains("previous message: “first turn”"))
+    }
+
+    @Test fun contextIsBoundedAndKeepsSourceClassification() {
+        val input = ChatMessage("user-1", MessageRole.USER, "a".repeat(25_000), java.time.Instant.EPOCH,
+            DataClassification.PRIVATE, "COMPLETED")
+        val pending = input.copy(id = "pending", text = "must not become context", status = "PENDING")
+        val context = ChatContextBuilder.build(listOf(input, pending))
+        assertEquals(1, context.size)
+        assertTrue(context.single().text.length <= ChatContextBuilder.MAX_CONTEXT_TOKENS * 4)
+        assertEquals(DataClassification.PRIVATE, context.single().classification)
+        assertEquals("user-1", context.single().sourceMessageId)
+    }
+
+    @Test fun oversizedInputIsRejectedWithoutDispatch() = runTest(dispatcher) {
+        var calls = 0
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                calls += 1
+                return ModelChatResponse("unexpected")
+            }
+        })
+        vm.updateInput("x".repeat(ChatContextBuilder.MAX_INPUT_CHARS + 1))
+        vm.sendMessage()
+        advanceUntilIdle()
+        assertEquals(0, calls)
+        assertTrue(vm.state.value.errorMessage!!.contains("local limit"))
+        assertTrue(vm.state.value.conversation.messages.isEmpty())
+    }
+
     @Test fun modelFailureIsShownAndLoadingEnds() = runTest(dispatcher) {
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest): ModelChatResponse = throw ModelChatFailure("offline")

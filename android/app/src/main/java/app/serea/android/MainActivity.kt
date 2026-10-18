@@ -121,6 +121,7 @@ data class ModelChatRequest(
     val timeoutMillis: Long = 15_000,
     val classification: DataClassification = DataClassification.UNKNOWN,
     val preparedPersonal: PreparedPersonalData? = null,
+    val context: List<ContextMessage> = emptyList(),
 )
 data class ModelChatResponse(val text: String)
 
@@ -135,7 +136,10 @@ class ModelChatFailure(message: String) : Exception(message)
 class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         kotlinx.coroutines.delay(responseDelayMillis)
-        return ModelChatResponse("Demo response: I received “${request.message}”. No cloud AI was contacted.")
+        val turns = request.context.size / 2
+        val prior = request.context.lastOrNull { it.role == MessageRole.USER }?.text
+        val historyNote = prior?.let { " I remember your previous message: “$it”." }.orEmpty()
+        return ModelChatResponse("Demo response: I received “${request.message}”.$historyNote Context turns: $turns. No cloud AI was contacted.")
     }
 }
 
@@ -153,6 +157,10 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
         val snapshot = mutableState.value
         val messageText = snapshot.input.trim()
         if (messageText.isEmpty() || snapshot.isLoading || snapshot.isRestoring || snapshot.showingHistory) return
+        if (messageText.length > ChatContextBuilder.MAX_INPUT_CHARS) {
+            mutableState.update { it.copy(errorMessage = "Message exceeds the ${ChatContextBuilder.MAX_INPUT_CHARS}-character local limit.") }
+            return
+        }
         val conversationId = snapshot.conversation.id
         val userMessage = ChatMessage(UUID.randomUUID().toString(), MessageRole.USER, messageText, nextMessageTime(snapshot.conversation), status = "PENDING")
         activeMessageId = userMessage.id
@@ -162,12 +170,14 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
         activeJob = viewModelScope.launch {
             try {
                 persist(userMessage, conversationId)
-                val request = ModelChatRequest(conversationId, messageText)
+                val context = ChatContextBuilder.build(snapshot.conversation.messages, messageText)
+                val request = ModelChatRequest(conversationId, messageText, context = context)
                 val reply = withTimeout(request.timeoutMillis) { modelChat.send(request) }
                 val assistant = ChatMessage(UUID.randomUUID().toString(), MessageRole.ASSISTANT, reply.text,
                     nextMessageTime(snapshot.conversation.copy(messages = snapshot.conversation.messages + userMessage)))
-                persist(assistant, conversationId)
-                historyRepository?.updateStatus(userMessage.id, conversationId, "COMPLETED")
+                if (historyRepository != null) {
+                    historyRepository.completeTurn(userMessage.id, assistant.toStoredMessage(conversationId))
+                }
                 mutableState.update { current ->
                     if (current.conversation.id != conversationId) current
                     else current.copy(conversation = current.conversation.copy(messages = current.conversation.messages
@@ -270,8 +280,7 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
     }
 
     private suspend fun persist(message: ChatMessage, conversationId: String) {
-        historyRepository?.addMessage(StoredMessage(message.id, conversationId, message.role, message.text,
-            message.classification, message.createdAt.toEpochMilli(), message.status))
+        historyRepository?.addMessage(message.toStoredMessage(conversationId))
     }
     private fun nextMessageTime(conversation: Conversation): Instant = maxOf(
         Instant.now(), (conversation.messages.maxOfOrNull { it.createdAt } ?: Instant.EPOCH).plusMillis(1),
@@ -297,6 +306,10 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
         }
     }
 }
+
+private fun ChatMessage.toStoredMessage(conversationId: String) = StoredMessage(
+    id, conversationId, role, text, classification, createdAt.toEpochMilli(), status,
+)
 
 private fun StoredMessage.toChatMessage() = ChatMessage(id, role, text, Instant.ofEpochMilli(createdAt), classification, status)
 

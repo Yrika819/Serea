@@ -33,6 +33,10 @@ send user conversations or select a production service.
 - Room owns Android-only history. Database schema version 1 is exported;
   destructive migration fallback is not configured. Deletion removes rows and
   stops repository reads; cryptographic physical erasure is not claimed.
+- While the settings screen exposes the API-key field, Compose applies Android
+  `FLAG_SECURE` to suppress ordinary screenshots and recent-app thumbnails.
+  This does not prevent accessibility capture, camera capture, a compromised
+  OS, or transient exposure through the keyboard or process memory.
 
 ## Provider contract evidence
 

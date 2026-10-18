@@ -1,6 +1,9 @@
 package app.serea.android
 
+import android.app.Activity
+import android.content.ContextWrapper
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -33,10 +36,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -299,6 +304,12 @@ private fun StoredMessage.toChatMessage() = ChatMessage(id, role, text, Instant.
 internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmodel.compose.viewModel(), credentials: CredentialRepository? = null) {
     val state by chatViewModel.state.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
+    val hostActivity = remember(context) {
+        var current: android.content.Context? = context
+        while (current != null && current !is Activity) current = (current as? ContextWrapper)?.baseContext
+        current as? Activity
+    }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var settingsVisible by remember { mutableStateOf(false) }
@@ -309,6 +320,12 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     var cloudOutput by remember { mutableStateOf("") }
     var cloudWorking by remember { mutableStateOf(false) }
     var cloudJob by remember { mutableStateOf<Job?>(null) }
+    SideEffect {
+        hostActivity?.window?.let { window ->
+            if (settingsVisible) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
     val keystoreProfile = remember(credentials, settingsVisible) {
         if (settingsVisible) runCatching { credentials?.securityProfile() }.getOrNull() ?: "未確認" else "未確認"
     }
@@ -337,7 +354,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 OutlinedTextField(value = secretText, onValueChange = { secretText = it },
                     modifier = Modifier.fillMaxWidth(), label = { Text("Ollama Cloud API key") },
                     visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-                    singleLine = true, supportingText = { Text("端末内に暗号化保存します。キーは会話・Saved State・ログへ保存しません。") })
+                    singleLine = true, supportingText = { Text("端末内に暗号化保存します。キーは会話・Saved State・ログへ保存しません。設定を開いている間は画面キャプチャを無効にします。") })
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
                         val secret = secretText

@@ -27,6 +27,11 @@ migrations, or frozen protocols.
   disabled and no destructive migration fallback is used.
 - UI supports Demo conversations, history navigation/deletion, masked key
   configuration, provider probe, and pending/failure/cancellation states.
+  Android's `FLAG_SECURE` is applied while settings expose the credential field
+  and is removed when settings close. This blocks ordinary screenshots and
+  recent-app thumbnails in that window; it cannot prevent accessibility
+  capture, a compromised OS, camera capture, or transient keyboard/memory
+  exposure.
 
 ## Important limits
 
@@ -48,7 +53,7 @@ The combined Gradle command passed `assembleDebug`, `assembleRelease`,
 `testDebugUnitTest`, `assembleDebugAndroidTest`, `lintDebug`, and the license
 report task before the final CI submission. The latest local JVM JUnit XML has
 22 tests: ViewModel 5/5, provider Mock HTTP 12/12, and egress security 5/5.
-Storage, Keystore, Compose instrumentation (8 tests), and emulator execution
+Storage, Keystore, Compose instrumentation (9 tests), and emulator execution
 are `NOT_RUN` locally because the workspace has no emulator binary or system
 image and `adb devices -l` reports no attached device. SDK platform-tools adb
 is installed. The instrumentation APK compiled successfully.

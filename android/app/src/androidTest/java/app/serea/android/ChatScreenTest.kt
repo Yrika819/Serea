@@ -7,6 +7,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import android.view.WindowManager
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,5 +42,17 @@ class ChatScreenTest {
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("rotation-check").assertIsDisplayed()
         compose.onNodeWithText("Demo response: I received “rotation-check”. No cloud AI was contacted.").assertIsDisplayed()
+    }
+
+    @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
+        compose.onNodeWithText("設定").performClick()
+        compose.runOnIdle {
+            assertEquals(WindowManager.LayoutParams.FLAG_SECURE,
+                compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        compose.onNodeWithText("設定を閉じる").performClick()
+        compose.runOnIdle {
+            assertEquals(0, compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 }

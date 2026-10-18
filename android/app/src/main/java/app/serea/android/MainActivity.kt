@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -339,6 +340,12 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     var cloudOutput by remember { mutableStateOf("") }
     var cloudWorking by remember { mutableStateOf(false) }
     var cloudJob by remember { mutableStateOf<Job?>(null) }
+    LaunchedEffect(state.conversation.messages.size, state.isLoading, state.showingHistory, settingsVisible) {
+        if (!state.showingHistory && !settingsVisible) {
+            val lastVisibleItem = state.conversation.messages.size + if (state.isLoading) 1 else 0
+            if (lastVisibleItem > 0) listState.animateScrollToItem(lastVisibleItem - 1)
+        }
+    }
     SideEffect {
         hostActivity?.window?.let { window ->
             if (settingsVisible) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)

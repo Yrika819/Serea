@@ -38,7 +38,9 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
-          packages: 'platforms;android-35,build-tools;35.0.0,platform-tools'
+          packages: platform-tools
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug, release, and instrumentation APKs
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug assembleRelease assembleDebugAndroidTest
@@ -136,7 +138,9 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
-          packages: 'platform-tools,emulator,platforms;android-35,build-tools;35.0.0,system-images;android-35;google_apis;x86_64'
+          packages: platform-tools
+      - name: Install Android emulator and API 35 packages
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
       - name: Start API 35 Pixel emulator
         timeout-minutes: 15
         run: |

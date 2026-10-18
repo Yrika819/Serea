@@ -187,7 +187,7 @@ jobs:
           cache: gradle
       - name: Resolve locked Android dependencies
         working-directory: android
-        run: ./gradlew --no-daemon :app:dependencies :app:generateLicenseReport
+        run: ./gradlew --no-daemon :app:dependencies :app:generateLicenseReport > "$RUNNER_TEMP/android-dependency-audit.log" 2>&1
       - name: Scan Android dependency vulnerabilities
         uses: google/osv-scanner-action/osv-scanner-action@8018483926dd235b3013d8c88023e644b9f8e09e # v2.3.3
         with:
@@ -205,3 +205,4 @@ jobs:
           path: |
             osv-android-dependencies.json
             android/app/build/reports/dependency-license/**
+            ${{ runner.temp }}/android-dependency-audit.log

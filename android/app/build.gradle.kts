@@ -70,6 +70,25 @@ ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 dependencyLocking { lockAllConfigurations() }
 
+// AGP 8.9's Android Test Platform configurations resolve older protobuf/Netty
+// versions. Keep their test-runner transport dependencies on patched compatible
+// lines; this does not add either library to the app runtime unless requested by
+// a runtime dependency.
+configurations.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "com.google.protobuf" && requested.name in setOf(
+                "protobuf-java", "protobuf-javalite", "protobuf-java-util", "protobuf-kotlin",
+            )) {
+            useVersion("3.25.9")
+            because("CVE-2024-7254 affects older protobuf releases")
+        }
+        if (requested.group == "io.netty") {
+            useVersion("4.1.139.Final")
+            because("patched 4.1 series for Android Test Platform transport dependencies")
+        }
+    }
+}
+
 licenseReport {
     configurations = arrayOf(
         "debugRuntimeClasspath",

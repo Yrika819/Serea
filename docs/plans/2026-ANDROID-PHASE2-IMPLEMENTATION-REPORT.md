@@ -61,6 +61,17 @@ claim. Emulator/Keystore and latest-HEAD Actions evidence must be added after
 the GitHub run. Pixel 7a remains `NOT_RUN` until a physical device is attached
 and exercised.
 
+The first GitHub dependency scan found vulnerable Android Test Platform
+transitives in the lockfile: protobuf 3.24.4 (CVE-2024-7254, CVSS 8.7) and
+Netty 4.1.93.Final. OSV returned 43 vulnerable package/advisory pairs, including
+protobuf's two artifact entries and affected Netty 4.1 modules.
+Gradle now resolves protobuf to 3.25.9 and Netty to 4.1.139.Final for these
+tooling configurations. A locally run, checksum-verified OSV Scanner v2.3.3
+scan of the updated lockfile returned zero findings. The dependency license
+report covers release, unit-test, and Android-test runtime configurations,
+with 134 license records and no unknown/unlicensed entries in the generated
+report. GitHub must confirm both reports on the final PR commit.
+
 Manual install, Demo/history/delete, rotation, backup, offline, and
 Owner-approved fixed-probe checks are in the
 [Pixel 7a checklist](2026-ANDROID-PHASE2-PIXEL7A-TEST-CHECKLIST.md).

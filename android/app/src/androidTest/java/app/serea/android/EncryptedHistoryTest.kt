@@ -71,6 +71,7 @@ class EncryptedHistoryTest {
         reopened.close()
         context.deleteDatabase(name)
         KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
+        Unit
     }
 
     @Test fun oneHundredMessagesKeepOrderAfterDatabaseReopen() = runBlocking {
@@ -94,6 +95,7 @@ class EncryptedHistoryTest {
         reopened.close()
         context.deleteDatabase(name)
         KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
+        Unit
     }
 
     @Test fun lateInsertRacingWithDeleteCannotReappearWhenConversationIdIsReused() = runBlocking {
@@ -186,6 +188,7 @@ class EncryptedHistoryTest {
             assertFalse(credentials.isConfigured())
             KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("serea-cloud-credential-v1") }
         }
+        Unit
     }
 
     @Test fun invalidCredentialInputIsClearedWithoutWritingPreferences() = runBlocking {

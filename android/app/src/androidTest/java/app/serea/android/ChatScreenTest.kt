@@ -17,13 +17,28 @@ class ChatScreenTest {
 
     @Test fun demoLabelAndConversationAreVisible() {
         compose.onNodeWithText("DEMO · Mock chat · No cloud AI").assertIsDisplayed()
-        compose.onNodeWithText("Start a demo conversation. Messages stay in memory and are cleared when the app process ends.").assertIsDisplayed()
+        compose.onNodeWithText("端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。").assertIsDisplayed()
         compose.onNodeWithText("Message").performTextInput("hello")
-        compose.onNodeWithText("Send").performClick()
+        compose.onNodeWithText("送信").performClick()
         compose.onNodeWithText("You").assertIsDisplayed()
         compose.waitUntil(5_000) {
             compose.onAllNodes(androidx.compose.ui.test.hasText("Demo response: I received “hello”. No cloud AI was contacted.")).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Demo response: I received “hello”. No cloud AI was contacted.").assertTextContains("No cloud AI")
+        compose.onNodeWithText("履歴").performClick()
+        compose.onNodeWithText("保存された会話").assertIsDisplayed()
+        compose.onNodeWithText("Conversation", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun completedDemoConversationSurvivesActivityRecreation() {
+        compose.onNodeWithText("Message").performTextInput("rotation-check")
+        compose.onNodeWithText("送信").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodes(androidx.compose.ui.test.hasText("Demo response: I received “rotation-check”. No cloud AI was contacted."))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("rotation-check").assertIsDisplayed()
+        compose.onNodeWithText("Demo response: I received “rotation-check”. No cloud AI was contacted.").assertIsDisplayed()
     }
 }

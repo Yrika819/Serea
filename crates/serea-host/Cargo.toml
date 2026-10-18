@@ -30,3 +30,6 @@ synthetic-test-hooks = ["synthetic", "serea-scheduler/test-hooks"]
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
+
+[dev-dependencies]
+rusqlite = { workspace = true }

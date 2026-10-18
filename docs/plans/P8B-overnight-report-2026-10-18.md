@@ -78,7 +78,7 @@ The capability registry test `replacement_registry_can_hold_a_distinct_instance_
 
 ## 6. Windows ARM64 `0xC0000142`
 
-Historical PR #34 run `39036558000`, Stable Windows ARM64 job `117407503289`, failed during “Test all workspace features.” Its output reported the ninth repeated `model-smoke` child exited with `0xC0000142 / STATUS_DLL_INIT_FAILED` and zero stdout/stderr, indicating failure before the Rust child handler wrote output. Other jobs in that run passed, including Rust 1.85.0 Windows ARM64 (`117407503223`). Parallel all-feature tests and child-process starts make loader/resource pressure a hypothesis only; no runner resource telemetry or DLL-load trace establishes it.
+Historical PR #34 run `39036558000`, Stable Windows ARM64 job `117407503289`, failed during “Test all workspace features.” Its output reported the repeated `model-smoke` child at loop index 9 exited with `0xC0000142 / STATUS_DLL_INIT_FAILED` and zero stdout/stderr, indicating failure before the Rust child handler wrote output. Other jobs in that run passed, including Rust 1.85.0 Windows ARM64 (`117407503223`). Parallel all-feature tests and child-process starts make loader/resource pressure a hypothesis only; no runner resource telemetry or DLL-load trace establishes it.
 
 PR #35 exact HEAD's Native run `39044878224` passed all 12 Stable/MSRV × Linux/macOS/Windows × x86_64/ARM64 jobs, including Stable Windows ARM64 `117431513197` and Rust 1.85.0 Windows ARM64 `117431513238`. This non-recurrence does not resolve the root cause. No sleep/retry/skip/CI exclusion or dependency substitution was introduced. Final branch Native results must be filled below. Preserve `NATIVE_DLL_INIT_ROOT_CAUSE_UNCONFIRMED` unless direct reproduction and loader evidence are obtained.
 

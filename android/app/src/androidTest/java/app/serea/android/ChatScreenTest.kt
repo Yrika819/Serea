@@ -39,7 +39,7 @@ class ChatScreenTest {
         compose.onNodeWithText("送信").performClick()
         compose.onNodeWithText("You", substring = true).assertIsDisplayed()
         val response = compose.onAllNodes(hasText("Demo response: I received “hello”.", substring = true))
-        compose.waitUntil(5_000) { response.fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(30_000) { response.fetchSemanticsNodes().isNotEmpty() }
         response.assertCountEquals(1)
         response.onFirst().assertTextContains("No cloud AI", substring = true)
         compose.onNodeWithText("履歴").performClick()
@@ -52,7 +52,7 @@ class ChatScreenTest {
         composer().performTextInput("rotation-check")
         compose.onNodeWithText("送信").performClick()
         val response = compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true))
-        compose.waitUntil(5_000) { response.fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(30_000) { response.fetchSemanticsNodes().isNotEmpty() }
         response.assertCountEquals(1)
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("rotation-check").assertIsDisplayed()

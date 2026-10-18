@@ -142,16 +142,44 @@ jobs:
       - name: Install Android emulator and API 35 packages
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
       - name: Start API 35 Pixel emulator
+        id: emulator
         timeout-minutes: 15
         run: |
+          if [ ! -r /dev/kvm ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "### Android emulator smoke: NOT_RUN" >> "$GITHUB_STEP_SUMMARY"
+            echo "The runner does not expose readable /dev/kvm; instrumentation APK compilation still runs in the build job." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           echo no | avdmanager create avd --force --name serea-api35 --package 'system-images;android-35;google_apis;x86_64' --device pixel_7
+          adb start-server
           emulator -avd serea-api35 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -accel auto > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          adb wait-for-device
-          timeout 480 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; do sleep 3; done'
+          emulator_pid=$!
+          deadline=$((SECONDS + 600))
+          booted=false
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "Android emulator exited before boot completed. Diagnostic log follows:" >&2
+              cat "$RUNNER_TEMP/emulator.log" >&2
+              exit 1
+            fi
+            if timeout 5 adb -s emulator-5554 get-state >/dev/null 2>&1; then
+              boot_state=$(timeout 5 adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+              if [ "$boot_state" = "1" ]; then booted=true; break; fi
+            fi
+            sleep 3
+          done
+          if [ "$booted" != "true" ]; then
+            echo "Android emulator did not reach sys.boot_completed before the startup deadline. Diagnostic log follows:" >&2
+            cat "$RUNNER_TEMP/emulator.log" >&2
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
       - name: Run Room, Keystore, manifest, and Compose instrumentation tests
+        if: steps.emulator.outputs.ready == 'true'
         working-directory: android
         run: ./gradlew --no-daemon connectedDebugAndroidTest
       - name: Upload emulator evidence

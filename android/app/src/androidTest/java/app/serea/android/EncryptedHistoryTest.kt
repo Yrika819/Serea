@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -72,6 +73,54 @@ class EncryptedHistoryTest {
         KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
     }
 
+    @Test fun oneHundredMessagesKeepOrderAfterDatabaseReopen() = runBlocking {
+        val name = "history-hundred-${UUID.randomUUID()}.db"
+        val alias = "history-hundred-${UUID.randomUUID()}"
+        val firstDb = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name).build()
+        val first = ConversationRepository(firstDb.historyDao(), KeystoreAesGcm(alias))
+        first.create("conversation", "Bulk history", now = 1)
+        (1..100).forEach { index ->
+            first.addMessage(StoredMessage(
+                "message-${index.toString().padStart(3, '0')}", "conversation", MessageRole.USER,
+                "body-$index", DataClassification.UNKNOWN, index.toLong() + 1, "COMPLETED",
+            ))
+        }
+        firstDb.close()
+
+        val reopened = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name).build()
+        val restored = ConversationRepository(reopened.historyDao(), KeystoreAesGcm(alias)).get("conversation")!!
+        assertEquals(100, restored.messages.size)
+        assertEquals((1..100).map { "message-${it.toString().padStart(3, '0')}" }, restored.messages.map { it.id })
+        reopened.close()
+        context.deleteDatabase(name)
+        KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
+    }
+
+    @Test fun lateInsertRacingWithDeleteCannotReappearWhenConversationIdIsReused() = runBlocking {
+        repository.create("racing-delete", "Race", now = 1)
+        val start = CompletableDeferred<Unit>()
+        val lateWrite = async(Dispatchers.IO) {
+            start.await()
+            runCatching {
+                repository.addMessage(StoredMessage(
+                    "late-response", "racing-delete", MessageRole.ASSISTANT, "late body",
+                    DataClassification.UNKNOWN, 2, "COMPLETED",
+                ))
+            }
+        }
+        val deletion = async(Dispatchers.IO) { start.await(); repository.delete("racing-delete", now = 3) }
+        start.complete(Unit)
+        val insertResult = lateWrite.await()
+        val insertFailure = insertResult.exceptionOrNull()
+        if (insertFailure != null) assertTrue(insertFailure is IllegalArgumentException)
+        deletion.await()
+        assertNull(repository.get("racing-delete"))
+
+        repository.create("racing-delete", "Reused id", now = 4)
+        assertTrue(repository.get("racing-delete")!!.messages.isEmpty())
+        assertTrue(database.historyDao().messages("racing-delete").isEmpty())
+    }
+
     @Test fun authenticationTagRejectsTamperingAndWrongAssociatedData() {
         val cipher = KeystoreAesGcm("serea-test-aad-${UUID.randomUUID()}")
         val sealed = cipher.encrypt("secret body".toByteArray(), "message:id".toByteArray())
@@ -79,6 +128,20 @@ class EncryptedHistoryTest {
         val tampered = sealed.dropLast(2) + if (sealed.last() == 'A') "B=" else "A="
         assertThrows<HistoryUnavailableException> { cipher.decrypt(tampered, "message:id".toByteArray()) }
         assertThrows<HistoryUnavailableException> { cipher.decrypt(sealed, "message:other".toByteArray()) }
+    }
+
+    @Test fun aesKeyInfoUsesAndroidKeystoreSecretKeyFactoryAndFailsClosed() {
+        val cipher = KeystoreAesGcm("serea-key-info-${UUID.randomUUID()}")
+        val profile = cipher.securityProfile()
+        assertTrue(profile in setOf(
+            "StrongBox", "Hardware-backed TEE", "Hardware-backed Android Keystore",
+            "Software-backed Android Keystore", "Android Keystore level unavailable",
+        ))
+        val sealed = cipher.encrypt("key-info-check".toByteArray(), "aad".toByteArray())
+        assertEquals("key-info-check", cipher.decrypt(sealed, "aad".toByteArray()).toString(Charsets.UTF_8))
+        if (profile == "Software-backed Android Keystore" || profile == "Android Keystore level unavailable") {
+            assertFalse(CredentialRepository(context).isHardwareBacked())
+        }
     }
 
     @Test fun credentialsAreEncryptedReplaceableAndDeleted() = runBlocking {
@@ -110,13 +173,29 @@ class EncryptedHistoryTest {
 
     @Test fun missingKeystoreKeyDoesNotSilentlyDiscardEncryptedCredential() = runBlocking {
         val credentials = CredentialRepository(context)
-        org.junit.Assume.assumeTrue("key invalidation requires hardware-backed Android Keystore", credentials.isHardwareBacked())
         credentials.currentHandle()?.let { credentials.delete(it) }
-        credentials.store("temporary-test-key".toCharArray())
-        KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("serea-cloud-credential-v1") }
-        assertThrows<HistoryUnavailableException> { credentials.readForRequest() }
-        assertTrue(credentials.isConfigured())
+        if (credentials.isHardwareBacked()) {
+            credentials.store("temporary-test-key".toCharArray())
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("serea-cloud-credential-v1") }
+            assertThrows<HistoryUnavailableException> { credentials.readForRequest() }
+            assertTrue(credentials.isConfigured())
+            credentials.currentHandle()?.let { credentials.delete(it) }
+        } else {
+            val candidate = "temporary-test-key".toCharArray()
+            assertThrows<HardwareBackedKeyRequiredException> { runBlocking { credentials.store(candidate) } }
+            assertTrue(candidate.all { it == '\u0000' })
+            assertFalse(credentials.isConfigured())
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("serea-cloud-credential-v1") }
+        }
+    }
+
+    @Test fun invalidCredentialInputIsClearedWithoutWritingPreferences() = runBlocking {
+        val credentials = CredentialRepository(context)
         credentials.currentHandle()?.let { credentials.delete(it) }
+        val oversized = CharArray(513) { 'x' }
+        assertThrows<IllegalArgumentException> { runBlocking { credentials.store(oversized) } }
+        assertTrue(oversized.all { it == '\u0000' })
+        assertFalse(credentials.isConfigured())
     }
 
     @Test fun applicationDisablesBackupAndCleartextTraffic() {

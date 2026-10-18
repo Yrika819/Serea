@@ -19,8 +19,8 @@ import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
-import java.security.KeyFactory
 import android.security.keystore.KeyInfo
 
 /** AES-GCM backed by a non-exportable Android Keystore key. Ciphertext includes IV and tag. */
@@ -63,15 +63,25 @@ internal class KeystoreAesGcm(private val alias: String) {
 
     @Suppress("DEPRECATION") // Used only on API 26–30; API 31+ reports the exact security level above.
     fun securityProfile(): String {
-        val secretKey = key
-        val info = KeyFactory.getInstance(secretKey.algorithm, "AndroidKeyStore")
-            .getKeySpec(secretKey, KeyInfo::class.java)
-        return if (Build.VERSION.SDK_INT >= 31) when (info.securityLevel) {
-            KeyProperties.SECURITY_LEVEL_STRONGBOX -> "StrongBox"
-            KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "Hardware-backed TEE"
-            KeyProperties.SECURITY_LEVEL_SOFTWARE -> "Software-backed Android Keystore"
-            else -> "Android Keystore level unavailable"
-        } else if (info.isInsideSecureHardware) "Hardware-backed Android Keystore" else "Software-backed Android Keystore"
+        return try {
+            val secretKey = key
+            val info = SecretKeyFactory.getInstance(secretKey.algorithm, "AndroidKeyStore")
+                .getKeySpec(secretKey, KeyInfo::class.java) as? KeyInfo
+                ?: return "Android Keystore level unavailable"
+            if (Build.VERSION.SDK_INT >= 31) when (info.getSecurityLevel()) {
+                KeyProperties.SECURITY_LEVEL_STRONGBOX -> "StrongBox"
+                KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT -> "Hardware-backed TEE"
+                KeyProperties.SECURITY_LEVEL_SOFTWARE -> "Software-backed Android Keystore"
+                else -> "Android Keystore level unavailable"
+            } else if (info.isInsideSecureHardware()) {
+                "Hardware-backed Android Keystore"
+            } else {
+                "Software-backed Android Keystore"
+            }
+        } catch (_: Exception) {
+            // KeyInfo lookup failures are unknown protection, never evidence of hardware backing.
+            "Android Keystore level unavailable"
+        }
     }
 
     companion object { private const val GCM_IV_BYTES = 12; private const val GCM_TAG_BITS = 128 }
@@ -110,6 +120,13 @@ interface HistoryDao {
     @Query("SELECT * FROM messages WHERE conversationId = :id ORDER BY createdAt, id") suspend fun messages(id: String): List<MessageRow>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putConversation(row: ConversationRow)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putMessage(row: MessageRow)
+    @Transaction
+    suspend fun putMessageIfConversationIsActive(row: MessageRow) {
+        val conversation = conversation(row.conversationId)
+            ?: throw IllegalArgumentException("Conversation does not exist")
+        putMessage(row)
+        putConversation(conversation.copy(updatedAt = maxOf(conversation.updatedAt, row.createdAt)))
+    }
     @Query("UPDATE conversations SET deletedAt = :at, updatedAt = :at WHERE id = :id") suspend fun deleteConversation(id: String, at: Long)
     @Query("DELETE FROM conversations") suspend fun deleteAllConversations()
     @Query("DELETE FROM messages WHERE conversationId = :id") suspend fun deleteMessages(id: String)
@@ -150,13 +167,9 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
     suspend fun list(): List<StoredConversation> = dao.conversations().map { load(it) }
     suspend fun get(id: String): StoredConversation? = dao.conversation(id)?.let { load(it) }
     suspend fun addMessage(message: StoredMessage) {
-        if (dao.conversation(message.conversationId) == null) throw IllegalArgumentException("Conversation does not exist")
-        dao.putMessage(MessageRow(message.id, message.conversationId, message.role.name,
+        dao.putMessageIfConversationIsActive(MessageRow(message.id, message.conversationId, message.role.name,
             encrypt(message.text, "message:${message.id}:body"), message.classification.name,
             message.createdAt, message.status))
-        dao.conversations().firstOrNull { it.id == message.conversationId }?.let {
-            dao.putConversation(it.copy(updatedAt = message.createdAt))
-        }
     }
     suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
         val old = dao.messages(conversationId).firstOrNull { it.id == messageId } ?: return
@@ -189,15 +202,23 @@ internal class CredentialRepository(context: Context) : CredentialPort, Credenti
     private val cipher = KeystoreAesGcm(CREDENTIAL_KEY_ALIAS)
 
     override suspend fun store(secret: CharArray): CredentialHandle {
-        require(secret.isNotEmpty() && secret.size <= 512)
-        val bytes = Charsets.UTF_8.encode(java.nio.CharBuffer.wrap(secret)).let { buffer -> ByteArray(buffer.remaining()).also(buffer::get) }
+        var encoded: java.nio.ByteBuffer? = null
+        var bytes: ByteArray? = null
         try {
+            require(secret.isNotEmpty() && secret.size <= 512)
+            encoded = Charsets.UTF_8.newEncoder().encode(java.nio.CharBuffer.wrap(secret))
+            val clearBytes = ByteArray(encoded.remaining()).also(encoded::get)
+            bytes = clearBytes
             requireHardwareBackedKey()
-            val encrypted = cipher.encrypt(bytes, CREDENTIAL_AAD)
+            val encrypted = cipher.encrypt(clearBytes, CREDENTIAL_AAD)
             val handle = CredentialHandle(java.util.UUID.randomUUID().toString())
             check(prefs.edit().putString(KEY, encrypted).putString(HANDLE_KEY, handle.value).commit())
             return handle
-        } finally { bytes.fill(0); secret.fill('\u0000') }
+        } finally {
+            bytes?.fill(0)
+            encoded?.takeIf { it.hasArray() }?.array()?.fill(0)
+            secret.fill('\u0000')
+        }
     }
     override suspend fun delete(handle: CredentialHandle) {
         require(prefs.getString(HANDLE_KEY, null) == handle.value) { "credential reference is stale" }

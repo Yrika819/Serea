@@ -2,20 +2,9 @@ name: Android
 
 on:
   pull_request:
-    paths:
-      - 'android/**'
-      - 'docs/decisions/ADR-0044-*'
-      - 'docs/decisions/ADR-0045-*'
-      - 'docs/plans/2026-ANDROID-PHASE2-*'
-      - '.github/workflows/android.yml'
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
-    paths:
-      - 'android/**'
-      - 'docs/decisions/ADR-0044-*'
-      - 'docs/decisions/ADR-0045-*'
-      - 'docs/plans/2026-ANDROID-PHASE2-*'
-      - '.github/workflows/android.yml'
 
 permissions:
   contents: read
@@ -25,8 +14,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  android-changes:
+    name: Android Change Scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      android: ${{ steps.scope.outputs.android }}
+      docs: ${{ steps.scope.outputs.docs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - id: scope
+        name: Classify changed files
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = pull_request ]; then
+            git fetch --no-tags origin "$PR_BASE_SHA" "$PR_HEAD_SHA"
+            changed=$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")
+          elif [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --quiet "$PUSH_BEFORE_SHA" "$PUSH_AFTER_SHA" -- && changed="" || changed=$(git diff --name-only "$PUSH_BEFORE_SHA" "$PUSH_AFTER_SHA")
+          else
+            changed=$(git show --pretty=format: --name-only "$PUSH_AFTER_SHA")
+          fi
+          printf '%s\n' "$changed"
+          android_changed=false
+          while IFS= read -r path; do
+            case "$path" in
+              android/README.md|docs/*) ;;
+              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tests/android_instrumentation_results_tests.py) android_changed=true ;;
+            esac
+          done <<< "$changed"
+          echo "android=$android_changed" >> "$GITHUB_OUTPUT"
+          if printf '%s\n' "$changed" | grep -Eq '^(docs/|android/README\.md$)'; then
+            echo 'docs=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'docs=false' >> "$GITHUB_OUTPUT"
+          fi
+
   android-build:
     name: Android Build, Lint, and Instrumentation Compile
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -61,6 +97,8 @@ jobs:
 
   android-unit:
     name: Android Unit
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -73,6 +111,8 @@ jobs:
       - name: ViewModel state and cancellation tests
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest --tests '*ChatViewModelTest'
+      - name: Instrumentation JUnit verifier regression tests
+        run: python3 -m unittest discover -s tests -p android_instrumentation_results_tests.py
       - name: Upload unit JUnit report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -83,6 +123,8 @@ jobs:
 
   android-integration:
     name: Android Integration
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -105,6 +147,8 @@ jobs:
 
   android-security:
     name: Android Security Tests
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -127,10 +171,16 @@ jobs:
 
   android-storage-emulator:
     name: Android Storage and Emulator
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
+    outputs:
+      instrumentation: ${{ steps.instrumentation.outputs.result }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -138,77 +188,73 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
-          packages: platform-tools
-      - name: Install Android emulator and API 35 packages
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
-      - name: Start API 35 Pixel emulator
-        id: emulator
-        timeout-minutes: 20
+          packages: platform-tools platforms;android-35 build-tools;35.0.0 emulator system-images;android-35;google_apis;x86_64
+      - name: Diagnose KVM before permission changes
         run: |
-          if [ -r /dev/kvm ]; then
-            accel_mode=auto
-            echo "The runner exposes /dev/kvm; starting hardware-accelerated API 35 emulator." >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          echo '### KVM pre-change diagnostics' >> "$GITHUB_STEP_SUMMARY"
+          id
+          printf 'groups: '; id -nG
+          if [ -e /dev/kvm ]; then
+            stat -Lc 'device=%n owner=%U group=%G mode=%a major=%t minor=%T' /dev/kvm
+            test -r /dev/kvm; echo "runner_readable=$?"
+            test -w /dev/kvm; echo "runner_writable=$?"
           else
-            accel_mode=off
-            echo "### Android emulator smoke: software acceleration fallback" >> "$GITHUB_STEP_SUMMARY"
-            echo "The runner does not expose readable /dev/kvm. Trying software CPU emulation; this may be slower." >> "$GITHUB_STEP_SUMMARY"
+            echo '/dev/kvm: absent'
           fi
-          echo no | avdmanager create avd --force --name serea-api35 --package 'system-images;android-35;google_apis;x86_64' --device pixel_7
-          adb start-server
-          emulator -avd serea-api35 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -accel "$accel_mode" > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          emulator_pid=$!
-          deadline=$((SECONDS + 900))
-          booted=false
-          while [ "$SECONDS" -lt "$deadline" ]; do
-            if ! kill -0 "$emulator_pid" 2>/dev/null; then
-              if [ "$accel_mode" = "off" ]; then
-                echo "ready=false" >> "$GITHUB_OUTPUT"
-                {
-                  echo "### Android emulator smoke: NOT_RUN"
-                  echo "No KVM is exposed by the runner and the software-accelerated emulator exited before boot. The APK compile job remains the available Android platform check. Emulator log tail:"
-                  echo '```text'
-                  tail -n 15 "$RUNNER_TEMP/emulator.log"
-                  echo '```'
-                } >> "$GITHUB_STEP_SUMMARY"
-                exit 0
-              fi
-              echo "Android emulator exited before boot completed. Diagnostic log follows:" >&2
-              cat "$RUNNER_TEMP/emulator.log" >&2
-              exit 1
-            fi
-            if timeout 5 adb -s emulator-5554 get-state >/dev/null 2>&1; then
-              boot_state=$(timeout 5 adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
-              if [ "$boot_state" = "1" ]; then booted=true; break; fi
-            fi
-            sleep 3
-          done
-          if [ "$booted" != "true" ]; then
-            if [ "$accel_mode" = "off" ]; then
-              echo "ready=false" >> "$GITHUB_OUTPUT"
-              {
-                echo "### Android emulator smoke: NOT_RUN"
-                echo "No KVM is exposed by the runner and software CPU emulation did not reach boot completion within 15 minutes. The APK compile job remains the available Android platform check. Emulator log tail:"
-                echo '```text'
-                tail -n 15 "$RUNNER_TEMP/emulator.log"
-                echo '```'
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            echo "Android emulator did not reach sys.boot_completed before the startup deadline. Diagnostic log follows:" >&2
-            cat "$RUNNER_TEMP/emulator.log" >&2
+          grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+          lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:'
+          command -v kvm-ok >/dev/null && sudo kvm-ok || echo 'kvm-ok unavailable or reported failure'
+          emulator -accel-check 2>&1; echo "emulator_accel_check_exit=$?"
+          {
+            echo '```text'
+            id
+            id -nG
+            ls -l /dev/kvm 2>&1
+            stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1
+            grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+            lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:'
+            emulator -accel-check 2>&1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          set -e
+      - name: Apply official KVM udev permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if [ ! -e /dev/kvm ]; then
+            echo '### Emulator BLOCKED: /dev/kvm is absent on this Ubuntu 24.04 hosted runner.' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          echo "ready=true" >> "$GITHUB_OUTPUT"
-          echo "API 35 Pixel emulator booted with -accel $accel_mode." >> "$GITHUB_STEP_SUMMARY"
-          adb shell settings put global window_animation_scale 0
-          adb shell settings put global transition_animation_scale 0
-          adb shell settings put global animator_duration_scale 0
-      - name: Run Room, Keystore, manifest, and Compose instrumentation tests
-        if: steps.emulator.outputs.ready == 'true'
-        working-directory: android
-        run: ./gradlew --no-daemon connectedDebugAndroidTest
+          stat -Lc 'post-rule device=%n owner=%U group=%G mode=%a' /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          emulator -accel-check
+      - name: Run API 35 Pixel emulator and all instrumentation tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
+        timeout-minutes: 55
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          working-directory: android
+          script: |
+            set -euo pipefail
+            adb devices -l
+            adb shell getprop ro.build.version.sdk
+            ./gradlew --no-daemon connectedDebugAndroidTest
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 13
+            echo 'result=PASS' >> "$GITHUB_OUTPUT"
+        id: instrumentation
+      - name: Mark required emulator failure in summary
+        if: failure()
+        run: |
+          echo '### Android Emulator Required Gate: FAIL (emulator or Instrumentation Test did not complete successfully)' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload emulator evidence
-        if: ${{ !cancelled() }}
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-emulator-evidence
@@ -220,6 +266,8 @@ jobs:
 
   android-documentation:
     name: Android Documentation
+    needs: android-changes
+    if: needs.android-changes.outputs.docs == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -229,6 +277,8 @@ jobs:
 
   android-dependency-audit:
     name: Android Dependency Audit
+    needs: android-changes
+    if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -259,3 +309,61 @@ jobs:
             osv-android-dependencies.json
             android/app/build/reports/dependency-license/**
             ${{ runner.temp }}/android-dependency-audit.log
+
+  android-emulator-required-gate:
+    name: Android Emulator Required Gate
+    if: always()
+    needs:
+      - android-changes
+      - android-build
+      - android-unit
+      - android-integration
+      - android-security
+      - android-storage-emulator
+      - android-documentation
+      - android-dependency-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require Android checks and executed instrumentation results
+        env:
+          CHANGE_RESULT: ${{ needs.android-changes.result }}
+          ANDROID_CHANGED: ${{ needs.android-changes.outputs.android }}
+          DOCS_CHANGED: ${{ needs.android-changes.outputs.docs }}
+          BUILD_RESULT: ${{ needs.android-build.result }}
+          UNIT_RESULT: ${{ needs.android-unit.result }}
+          INTEGRATION_RESULT: ${{ needs.android-integration.result }}
+          SECURITY_RESULT: ${{ needs.android-security.result }}
+          EMULATOR_RESULT: ${{ needs.android-storage-emulator.result }}
+          DOCS_RESULT: ${{ needs.android-documentation.result }}
+          AUDIT_RESULT: ${{ needs.android-dependency-audit.result }}
+          INSTRUMENTATION_RESULT: ${{ needs.android-storage-emulator.outputs.instrumentation }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGE_RESULT" != success ]; then
+            echo 'FAIL: Android change-scope detection did not complete.'
+            exit 1
+          fi
+          if [ "$ANDROID_CHANGED" != true ]; then
+            if [ "$DOCS_CHANGED" = true ] && [ "$DOCS_RESULT" != success ]; then
+              echo 'FAIL: documentation-only validation did not pass.'
+              exit 1
+            fi
+            echo 'PASS: no Android implementation/configuration change requires emulator execution.'
+            exit 0
+          fi
+          for check in "build:$BUILD_RESULT" "unit:$UNIT_RESULT" "integration:$INTEGRATION_RESULT" "security:$SECURITY_RESULT" "emulator:$EMULATOR_RESULT" "dependency-audit:$AUDIT_RESULT"; do
+            if [ "${check#*:}" != success ]; then
+              echo "FAIL: required Android check $check. Emulator status is NOT_RUN or incomplete until its full test result succeeds."
+              exit 1
+            fi
+          done
+          if [ "$INSTRUMENTATION_RESULT" != PASS ]; then
+            echo 'FAIL: Android Instrumentation Test result is NOT_RUN; no passing JUnit evidence was recorded.'
+            exit 1
+          fi
+          if [ "$DOCS_CHANGED" = true ] && [ "$DOCS_RESULT" != success ]; then
+            echo 'FAIL: changed documentation validation did not pass.'
+            exit 1
+          fi
+          echo 'PASS: emulator booted, connectedDebugAndroidTest completed, and JUnit evidence passed the minimum test count.'

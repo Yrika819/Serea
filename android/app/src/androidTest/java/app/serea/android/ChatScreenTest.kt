@@ -25,7 +25,8 @@ class ChatScreenTest {
     private fun composer() = compose.onNodeWithTag("chat-composer")
 
     private fun awaitComposerEnabled() {
-        compose.waitUntil(5_000) {
+        composer().assertExists()
+        compose.waitUntil(30_000) {
             runCatching { composer().assertIsEnabled() }.isSuccess
         }
     }

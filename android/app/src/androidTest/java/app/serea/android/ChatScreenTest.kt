@@ -246,6 +246,7 @@ class ChatScreenTest {
         compose.activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         compose.waitForIdle()
         compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+        awaitComposerEnabled()
         compose.onNodeWithText("設定").assertIsDisplayed()
         openOverflow()
         compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
@@ -264,6 +265,13 @@ class ChatScreenTest {
                 widthDp in 300..340
             }
             compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+            awaitComposerEnabled()
+            openOverflow()
+            compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("キャンセル").performClick()
+            composer().performClick()
+            compose.waitForIdle()
             openOverflow()
             compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
             compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
@@ -285,6 +293,7 @@ class ChatScreenTest {
                 fontScale >= 1.99f
             }
             compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+            awaitComposerEnabled()
             openOverflow()
             compose.onNodeWithText("この会話を削除").assertIsDisplayed().performClick()
             compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()

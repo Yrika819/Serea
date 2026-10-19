@@ -70,7 +70,7 @@ class ChatScreenTest {
         compose.onNodeWithText("履歴").performClick()
         compose.waitUntil(30_000) { stateSnapshot().showingHistory }
         compose.onNodeWithText("保存された会話").assertIsDisplayed()
-        compose.onNodeWithText("Conversation", substring = true).assertIsDisplayed()
+        compose.onAllNodes(hasText("Conversation", substring = true)).onFirst().assertIsDisplayed()
     }
 
     @Test fun completedDemoConversationSurvivesActivityRecreation() {

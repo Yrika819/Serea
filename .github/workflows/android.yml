@@ -347,6 +347,32 @@ jobs:
             echo "process_death_api26=$api26_death"
             echo 'overall_android_emulator_required_gate=see workflow run summary'
           } > "$bundle/android-ci-results.txt"
+          cat > "$bundle/pixel7a-reacceptance.md" <<'EOF'
+          # Serea Pixel 7a reacceptance packet
+
+          - Draft PR: #49, based on PR #47 head branch.
+          - Candidate APK: `serea-debug.apk`; source SHA and APK SHA-256 are in `provenance.txt`.
+          - This is a new APK built by GitHub Actions. It is not the earlier PR #47 Mac APK.
+          - Physical Pixel 7a reacceptance is pending the Mac Local MCP v3 agent; emulator results are in `tests/` and `android-ci-results.txt`.
+
+          ## Signature and data preservation
+
+          Compare the installed `app.serea.android.demo` APK certificate fingerprint with the candidate using `apksigner verify --print-certs`. The installed APK path can be read with `adb shell pm path app.serea.android.demo` and pulled with `adb pull`. If fingerprints match, use `adb install -r serea-debug.apk`. If they differ, stop and request Owner direction; do not uninstall the app or clear data automatically.
+
+          ## Device steps
+
+          1. Launch the candidate and confirm the DEMO / Mock / no-cloud label and restored encrypted history.
+          2. In portrait, tap New Conversation, History, Settings, and Other Actions. Open the overflow menu and confirm both deletion actions are visible and tappable.
+          3. Open Delete Current and Delete All, then Cancel each. Confirm the conversation list and current messages remain unchanged.
+          4. Confirm Delete Current, then separately confirm Delete All. Confirm only the selected conversation is removed, and Delete All leaves no saved history. Relaunch and verify deleted conversations do not return.
+          5. Repeat operation reachability in landscape, at Android font scale 2.0, and at a small-screen setting. Open the IME and confirm the overflow action remains reachable.
+          6. In Settings, try empty, zero, negative, nonnumeric, `9223372036854775808`, daily requests above monthly requests, and daily tokens above monthly tokens. Confirm each is rejected visibly and cannot overwrite saved limits. Correct the values, save, close Settings, reopen it, and relaunch to verify persistence.
+          7. Confirm TalkBack identifies Other Actions, both delete actions, and each confirmation button by its Japanese label.
+
+          ## PASS / FAIL
+
+          PASS requires all controls to be visibly reachable and successfully tappable in the listed configurations, Cancel to preserve history, confirmed deletions to remain deleted after relaunch, invalid Soft Limits to preserve previous settings, corrected values to persist, and no app crash or unexpected network/provider request. Any clipped or untappable action, unintended deletion, resurrected history, rejected valid value, changed data after Cancel, or crash is FAIL. Record physical device results separately from the emulator JUnit results.
+          EOF
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

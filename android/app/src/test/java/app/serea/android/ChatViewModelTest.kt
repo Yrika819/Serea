@@ -83,6 +83,39 @@ class ChatViewModelTest {
         assertEquals("conversation-current", context.single().conversationId)
     }
 
+    @Test fun softLimitValidationRejectsEmptyZeroAndNegativeValues() {
+        assertTrue(runCatching { validateUsageLimits("", "2", "10", "20") }.isFailure)
+        assertTrue(runCatching { validateUsageLimits("0", "2", "10", "20") }.isFailure)
+        assertTrue(runCatching { validateUsageLimits("-1", "2", "10", "20") }.isFailure)
+    }
+
+    @Test fun softLimitValidationRejectsNonNumericAndLongOverflow() {
+        assertTrue(runCatching { validateUsageLimits("abc", "2", "10", "20") }.isFailure)
+        assertTrue(runCatching { validateUsageLimits("9223372036854775808", "2", "10", "20") }.isFailure)
+    }
+
+    @Test fun softLimitValidationRejectsDailyRequestsAboveMonthlyRequests() {
+        assertTrue(runCatching { validateUsageLimits("11", "2", "10", "20") }.isFailure)
+    }
+
+    @Test fun softLimitValidationRejectsDailyTokensAboveMonthlyTokens() {
+        assertTrue(runCatching { validateUsageLimits("1", "21", "10", "20") }.isFailure)
+    }
+
+    @Test fun softLimitValidationAcceptsCorrectedPositiveLongValues() {
+        assertEquals(UsageLimits(10, 20, 10, 20), validateUsageLimits("10", "20", "10", "20"))
+    }
+
+    @Test fun staleConversationIdCannotDeleteCurrentConversation() = runTest(dispatcher) {
+        val selected = Conversation(id = "selected-conversation")
+        val vm = ChatViewModel(MockModelChatPort(0), initialConversation = selected)
+        vm.deleteCurrentConversation("different-conversation")
+        advanceUntilIdle()
+        assertEquals(selected.id, vm.state.value.conversation.id)
+        assertTrue(vm.state.value.errorMessage!!.contains("会話が切り替わった"))
+        assertFalse(vm.state.value.isRestoring)
+    }
+
     @Test fun oversizedInputIsRejectedWithoutDispatch() = runTest(dispatcher) {
         var calls = 0
         val vm = ChatViewModel(object : ModelChatPort {

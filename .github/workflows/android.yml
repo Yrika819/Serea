@@ -83,16 +83,38 @@ jobs:
       - name: Android lint
         working-directory: android
         run: ./gradlew --no-daemon lintDebug
+      - name: Record Pixel 7a reacceptance APK provenance
+        env:
+          BUILD_TOOLS_VERSION: 35.0.0
+        run: |
+          set -euo pipefail
+          apk='android/app/build/outputs/apk/debug/app-debug.apk'
+          bundle='android/app/build/outputs/pixel7a-reacceptance'
+          mkdir -p "$bundle"
+          cp "$apk" "$bundle/serea-debug.apk"
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "github_run_id=${GITHUB_RUN_ID}"
+            echo "github_run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "workflow=${GITHUB_WORKFLOW}"
+            echo "package=$($ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+            echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
+            echo 'build_lint_instrumentation_compile=PASS'
+            echo 'full_android_ci=see Android Emulator Required Gate and workflow run'
+            echo 'signature_verification:'
+            "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose --print-certs "$apk"
+          } > "$bundle/provenance.txt"
       - name: Upload APKs and lint report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: serea-android-phase2-build
+          name: serea-android-pixel7a-ui-reliability
           if-no-files-found: warn
           path: |
             android/app/build/outputs/apk/debug/*.apk
             android/app/build/outputs/apk/release/*.apk
             android/app/build/outputs/apk/androidTest/**/*.apk
+            android/app/build/outputs/pixel7a-reacceptance/*
             android/app/build/reports/lint-results-debug.html
             android/app/schemas/**/*.json
 
@@ -249,10 +271,10 @@ jobs:
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 23 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=5 --require-class app.serea.android.ChatHttpE2ETest=2
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
             mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
             EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh
-            echo '### Android API 35 Instrumentation: PASS (23 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            echo '### Android API 35 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
         id: instrumentation
       - name: Install API 26 emulator image
@@ -276,9 +298,9 @@ jobs:
             adb devices -l
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 23 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=5 --require-class app.serea.android.ChatHttpE2ETest=2
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
             EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh
-            echo '### Android API 26 Instrumentation: PASS (23 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            echo '### Android API 26 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: Mark required emulator failure in summary
         if: failure()
         run: |

@@ -189,8 +189,8 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools
-      - name: Install API 35 and API 26 emulator images
-        run: sdkmanager 'platforms;android-35' 'platforms;android-26' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64' 'system-images;android-26;google_apis;x86'
+      - name: Install API 35 emulator image
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
       - name: Diagnose KVM before permission changes
         run: |
           set +e
@@ -253,7 +253,11 @@ jobs:
             echo '### Android API 35 Instrumentation: PASS (15 tests, zero failures/errors/skips)' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
         id: instrumentation
+      - name: Install API 26 emulator image
+        if: steps.instrumentation.outputs.result == 'PASS'
+        run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
       - name: Run API 26 Pixel emulator and all instrumentation tests
+        if: steps.instrumentation.outputs.result == 'PASS'
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         timeout-minutes: 45
         with:

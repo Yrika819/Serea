@@ -58,6 +58,8 @@ class ChatScreenTest {
 
     @Test fun demoLabelAndConversationAreVisible() {
         awaitComposerEnabled()
+        compose.onNodeWithText("新しい会話").performClick()
+        awaitComposerEnabled()
         compose.onNodeWithText("DEMO · Mock chat · No cloud AI").assertIsDisplayed()
         compose.onNodeWithText("端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。").assertIsDisplayed()
         composer().performTextInput("hello")
@@ -93,7 +95,7 @@ class ChatScreenTest {
             assertEquals(WindowManager.LayoutParams.FLAG_SECURE,
                 compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
-        compose.onNodeWithText("設定を閉じる").performClick()
+        compose.onNodeWithText("設定").performClick()
         compose.runOnIdle {
             assertEquals(0, compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }

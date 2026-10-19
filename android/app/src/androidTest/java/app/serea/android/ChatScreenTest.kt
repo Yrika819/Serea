@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -154,7 +155,7 @@ class ChatScreenTest {
     }
 
     private fun openOverflow() {
-        compose.onNodeWithText("その他の操作").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("その他の操作").assertIsDisplayed().performClick()
     }
 
     private fun shell(command: String): String {
@@ -164,6 +165,13 @@ class ChatScreenTest {
 
     @Test fun portraitPrimaryActionsAndOverflowAreReachableAndTappable() {
         awaitComposerEnabled()
+        compose.waitUntil(10_000) {
+            var isPortrait = false
+            compose.activityRule.scenario.onActivity {
+                isPortrait = it.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+            }
+            isPortrait
+        }
         val initialId = stateSnapshot().conversation.id
         compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
         compose.waitUntil(10_000) { stateSnapshot().conversation.id != initialId && !stateSnapshot().isRestoring }
@@ -244,7 +252,13 @@ class ChatScreenTest {
     @Test fun landscapeKeepsPrimaryAndOverflowActionsTappable() {
         awaitComposerEnabled()
         compose.activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        compose.waitForIdle()
+        compose.waitUntil(10_000) {
+            var isLandscape = false
+            compose.activityRule.scenario.onActivity {
+                isLandscape = it.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            }
+            isLandscape
+        }
         compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
         awaitComposerEnabled()
         compose.onNodeWithText("設定").assertIsDisplayed()

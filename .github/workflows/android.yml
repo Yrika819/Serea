@@ -377,7 +377,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: serea-android-pixel7a-ui-reliability
+          name: serea-android-emulator-evidence
           if-no-files-found: warn
           path: |
             android/app/build/outputs/pixel7a-final-campaign/**
@@ -429,6 +429,101 @@ jobs:
             android/app/build/reports/dependency-license/**
             ${{ runner.temp }}/android-dependency-audit.log
 
+  android-reacceptance-bundle:
+    name: Android Pixel 7a Reacceptance Bundle
+    needs:
+      - android-changes
+      - android-build
+      - android-unit
+      - android-integration
+      - android-security
+      - android-storage-emulator
+      - android-dependency-audit
+    if: always() && needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download Debug APK and provenance
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-android-pixel7a-debug-apk-candidate
+          path: ${{ runner.temp }}/serea-candidate
+      - name: Download API 26/35 emulator evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-android-emulator-evidence
+          path: ${{ runner.temp }}/serea-emulator
+      - name: Download Android Unit JUnit report
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-android-unit-junit
+          path: ${{ runner.temp }}/serea-unit
+      - name: Download Android Integration JUnit report
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-android-integration-junit
+          path: ${{ runner.temp }}/serea-integration
+      - name: Download Android Security JUnit report
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-android-security-junit
+          path: ${{ runner.temp }}/serea-security
+      - name: Assemble CI result manifest and reacceptance bundle
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          BUILD_RESULT: ${{ needs.android-build.result }}
+          UNIT_RESULT: ${{ needs.android-unit.result }}
+          INTEGRATION_RESULT: ${{ needs.android-integration.result }}
+          SECURITY_RESULT: ${{ needs.android-security.result }}
+          EMULATOR_RESULT: ${{ needs.android-storage-emulator.result }}
+          AUDIT_RESULT: ${{ needs.android-dependency-audit.result }}
+          INSTRUMENTATION_RESULT: ${{ needs.android-storage-emulator.outputs.instrumentation }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/serea-pixel7a-final-bundle"
+          mkdir -p "$bundle/build" "$bundle/android-ci" "$bundle/api-tests-and-process-death"
+          cp -R "$RUNNER_TEMP/serea-candidate/." "$bundle/build/"
+          for pair in 'serea-emulator:api-tests-and-process-death' 'serea-unit:unit' 'serea-integration:integration' 'serea-security:security'; do
+            source_dir="${pair%%:*}"
+            dest_dir="${pair#*:}"
+            if [ -d "$RUNNER_TEMP/$source_dir" ]; then
+              mkdir -p "$bundle/android-ci/$dest_dir"
+              cp -R "$RUNNER_TEMP/$source_dir/." "$bundle/android-ci/$dest_dir/"
+            fi
+          done
+          {
+            echo "source_commit=$SOURCE_SHA"
+            echo "github_run_id=$RUN_ID"
+            echo "android_build=$BUILD_RESULT"
+            echo "android_unit=$UNIT_RESULT"
+            echo "android_integration=$INTEGRATION_RESULT"
+            echo "android_security=$SECURITY_RESULT"
+            echo "api26_and_api35_emulator_job=$EMULATOR_RESULT"
+            echo "android_dependency_audit=$AUDIT_RESULT"
+            echo "instrumentation_gate_output=$INSTRUMENTATION_RESULT"
+            echo 'api26_expected_junit_cases=34'
+            echo 'api35_expected_junit_cases=34'
+            echo 'physical_pixel7a_reacceptance=NOT_RUN (Mac Local MCP v3 handoff required)'
+            echo 'apk_source_sha256_and_certificate=search for provenance.txt in build/ and api-tests-and-process-death/'
+            echo 'device_steps_and_pass_fail=search for pixel7a-reacceptance.md in api-tests-and-process-death/'
+          } > "$bundle/android-ci-results.txt"
+      - name: Upload final Pixel 7a reacceptance bundle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-pixel7a-ui-reliability
+          if-no-files-found: error
+          path: ${{ runner.temp }}/serea-pixel7a-final-bundle/**
+
   android-emulator-required-gate:
     name: Android Emulator Required Gate
     if: always()
@@ -441,6 +536,7 @@ jobs:
       - android-storage-emulator
       - android-documentation
       - android-dependency-audit
+      - android-reacceptance-bundle
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -456,6 +552,7 @@ jobs:
           EMULATOR_RESULT: ${{ needs.android-storage-emulator.result }}
           DOCS_RESULT: ${{ needs.android-documentation.result }}
           AUDIT_RESULT: ${{ needs.android-dependency-audit.result }}
+          BUNDLE_RESULT: ${{ needs.android-reacceptance-bundle.result }}
           INSTRUMENTATION_RESULT: ${{ needs.android-storage-emulator.outputs.instrumentation }}
         run: |
           set -euo pipefail
@@ -471,7 +568,7 @@ jobs:
             echo 'PASS: no Android implementation/configuration change requires emulator execution.'
             exit 0
           fi
-          for check in "build:$BUILD_RESULT" "unit:$UNIT_RESULT" "integration:$INTEGRATION_RESULT" "security:$SECURITY_RESULT" "emulator:$EMULATOR_RESULT" "dependency-audit:$AUDIT_RESULT"; do
+          for check in "build:$BUILD_RESULT" "unit:$UNIT_RESULT" "integration:$INTEGRATION_RESULT" "security:$SECURITY_RESULT" "emulator:$EMULATOR_RESULT" "dependency-audit:$AUDIT_RESULT" "reacceptance-bundle:$BUNDLE_RESULT"; do
             if [ "${check#*:}" != success ]; then
               echo "FAIL: required Android check $check. Emulator status is NOT_RUN or incomplete until its full test result succeeds."
               exit 1

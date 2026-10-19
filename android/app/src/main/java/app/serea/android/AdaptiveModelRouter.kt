@@ -146,7 +146,11 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
                 }
             }
         } else {
-            val viable = choices.mapNotNull { item -> rejection(item, request, policy, task)?.let { excluded.add(CandidateExclusion(item.id, it)); null } ?: item }
+            val viable = choices.filter { item ->
+                val reason = rejection(item, request, policy, task)
+                if (reason != null) excluded.add(CandidateExclusion(item.id, reason))
+                reason == null
+            }
             val currencies = viable.mapNotNull { it.pricing.currencyCode.knownString() }.distinct()
             if (policy.autoPolicy == AutoRoutingPolicy.QUALITY_PRIORITY || currencies.size != 1 ||
                 viable.any { it.pricing.currencyCode.knownString() == null }) {

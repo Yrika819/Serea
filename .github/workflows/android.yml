@@ -248,10 +248,7 @@ jobs:
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected \
-              --minimum 15 \
-              --require-class app.serea.android.EncryptedHistoryTest=12 \
-              --require-class app.serea.android.ChatScreenTest=3
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 15 --require-class app.serea.android.EncryptedHistoryTest=12 --require-class app.serea.android.ChatScreenTest=3
             mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
             echo '### Android API 35 Instrumentation: PASS (15 tests, zero failures/errors/skips)' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
@@ -273,10 +270,7 @@ jobs:
             adb devices -l
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected \
-              --minimum 15 \
-              --require-class app.serea.android.EncryptedHistoryTest=12 \
-              --require-class app.serea.android.ChatScreenTest=3
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 15 --require-class app.serea.android.EncryptedHistoryTest=12 --require-class app.serea.android.ChatScreenTest=3
             echo '### Android API 26 Instrumentation: PASS (15 tests, zero failures/errors/skips)' >> "$GITHUB_STEP_SUMMARY"
       - name: Mark required emulator failure in summary
         if: failure()

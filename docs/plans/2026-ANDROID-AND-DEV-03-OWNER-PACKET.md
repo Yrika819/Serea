@@ -28,21 +28,35 @@ provider, or grant ordinary user-message egress.
   the same instrumentation suite on API 26 and validates JUnit XML and the
   expected history and Compose test-class counts separately for each API.
 
-## Validation ledger for this branch
+## Validation ledger
 
-Update these values from the final commit's local and GitHub evidence before
-review. Never infer execution from compilation or a successful emulator boot.
+GitHub evidence below is from Android run
+[39182801325](https://github.com/Yrika819/Serea/actions/runs/39182801325)
+on code SHA `473a8d8707f30da1046105266db84e837e9ff196`. The final documentation
+commit will trigger the complete PR check set again; do not treat a queued or
+skipped job as a pass.
 
 | Area | Result |
 | --- | --- |
-| JVM/ViewModel tests | NOT_RUN in the current Codex environment: Gradle distribution download failed; SDK is absent. |
-| Mock HTTP/provider tests | NOT_RUN in the current Codex environment. |
-| Egress/security tests | NOT_RUN in the current Codex environment. |
-| API 35 instrumentation | NOT_RUN locally; required GitHub Actions evidence pending for the final branch. |
-| API 26 instrumentation | NOT_RUN locally; candidate GitHub Actions evidence pending for the final branch. |
-| Process death | NOT_RUN; DB reopen and Activity recreation do not prove OS process-death recovery. |
+| Android JVM tests | PASS, 28 test methods across ViewModel, Provider Adapter and Egress contract suites (`Android Unit`). |
+| Mock HTTP/provider tests | PASS, 13 test methods, including fragmented fixed-seed streaming, redirect, TLS, timeout and error mapping (`Android Integration`). |
+| Egress/security tests | PASS, 7 contract tests (`Android Security Tests`). |
+| API 35 instrumentation | PASS, 15 tests; JUnit XML: failures 0, errors 0, skipped 0. Required class counts: EncryptedHistory 12, ChatScreen 3. |
+| API 26 instrumentation | PASS, 15 tests; JUnit XML: failures 0, errors 0, skipped 0. Required class counts: EncryptedHistory 12, ChatScreen 3. |
+| Conversation/lifecycle stress | PASS in the instrumentation suite: 100 conversation create/read/delete operations, 100-message ordered restore, concurrent write isolation, late insert versus delete, and Activity recreation. |
+| Streaming stress | PASS: fixed-seed 256 short deltas across fragmented Mock HTTP chunks. |
+| OS Process Death | NOT_RUN. Database reopen and Activity recreation do not prove recovery after actual process death. |
 | Branch coverage | NOT_MEASURED. |
+| Local verifier/docs checks | PASS: 5 verifier regression tests and 145 Markdown files validated locally. |
 | Live Ollama Cloud request | NOT_RUN; no API key or user data was supplied. |
+
+Failure-and-repair history: run `39180509846` exposed two API 26 screen-test
+assumptions; run `39181121873` exposed history-dependent UI assertions; run
+`39182084749` showed that a combined SDK image installation could block both
+API test levels; and run `39182369691` caught an ambiguous history row
+assertion. Tests and workflow were corrected. The passing API evidence is from
+run `39182801325`; the required gate remains strict and keeps the API 35 job
+name unchanged.
 
 ## Owner decisions before production cloud chat
 
@@ -63,13 +77,12 @@ review. Never infer execution from compilation or a successful emulator boot.
   classification, retention, credential, cost and distribution decisions
   remain open.
 - **AND-05:** streaming, transport error mapping, cancellation and fixed-probe
-  behavior exist from Phase 2; process-death, API 26 and repeated stress
-  evidence must pass before their reliability claims can be closed. A fixed
-  seed fragmented-stream stress case exercises 256 short deltas locally and in
-  the provider Mock HTTP suite.
-- **AND-06:** emulator and regression gates are extended to validate API 35 and
-  API 26 JUnit evidence. Coverage measurement and CI evidence for this commit
-  remain pending.
+  behavior have Mock HTTP evidence. API 35 and API 26 passed this run. Actual
+  process-death recovery and longer repeated stress runs remain open.
+- **AND-06:** the emulator gate validates API 35 and API 26 JUnit XML,
+  per-class expected test counts, and zero failure/error/skip results. Full CI,
+  native platform validation and SQLite portability are independent checks and
+  must also finish successfully on the final documentation commit.
 - **2026-11-08 AI connection target:** no ordinary cloud chat can be enabled
   until Owner decisions, live credential custody and a separate approved
   connection check are complete. Mock work alone does not make this target

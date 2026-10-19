@@ -129,9 +129,21 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
             val id = policy.manualModelId
             val item = choices.firstOrNull { it.id == id }
             when {
-                id == null -> excluded.add(CandidateExclusion("", "Manualモデルが未指定")); null
-                item == null -> excluded.add(CandidateExclusion(id, "Catalog未登録")); null
-                else -> { val reason = rejection(item, request, policy, task); if (reason != null) excluded.add(CandidateExclusion(id, reason)); else item }
+                id == null -> {
+                    excluded.add(CandidateExclusion("", "Manualモデルが未指定"))
+                    null
+                }
+                item == null -> {
+                    excluded.add(CandidateExclusion(id, "Catalog未登録"))
+                    null
+                }
+                else -> {
+                    val reason = rejection(item, request, policy, task)
+                    if (reason != null) {
+                        excluded.add(CandidateExclusion(id, reason))
+                        null
+                    } else item
+                }
             }
         } else {
             val viable = choices.mapNotNull { item -> rejection(item, request, policy, task)?.let { excluded.add(CandidateExclusion(item.id, it)); null } ?: item }

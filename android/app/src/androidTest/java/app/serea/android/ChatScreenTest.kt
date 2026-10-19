@@ -57,9 +57,9 @@ class ChatScreenTest {
     }
 
     @Test fun demoLabelAndConversationAreVisible() {
+        awaitComposerEnabled()
         compose.onNodeWithText("DEMO · Mock chat · No cloud AI").assertIsDisplayed()
         compose.onNodeWithText("端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。").assertIsDisplayed()
-        awaitComposerEnabled()
         composer().performTextInput("hello")
         compose.onNodeWithText("送信").performClick()
         compose.onNodeWithText("You", substring = true).assertIsDisplayed()

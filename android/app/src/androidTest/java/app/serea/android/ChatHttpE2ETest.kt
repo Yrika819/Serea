@@ -14,6 +14,8 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.tls.HandshakeCertificates
+import okhttp3.tls.HeldCertificate
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,7 +32,14 @@ import java.util.concurrent.TimeUnit
 class ChatHttpE2ETest {
     @get:Rule val compose = createComposeRule()
     private val context = ApplicationProvider.getApplicationContext<Context>()
-    private val server = MockWebServer().apply { start() }
+    private val loopbackCertificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+    private val serverCertificates = HandshakeCertificates.Builder().heldCertificate(loopbackCertificate).build()
+    private val clientCertificates = HandshakeCertificates.Builder()
+        .addTrustedCertificate(loopbackCertificate.certificate).build()
+    private val server = MockWebServer().apply {
+        useHttps(serverCertificates.sslSocketFactory(), false)
+        start()
+    }
     private val db = Room.inMemoryDatabaseBuilder(context, SereaHistoryDatabase::class.java).build()
     private val alias = "http-e2e-${UUID.randomUUID()}"
     private val history = ConversationRepository(db.historyDao(), KeystoreAesGcm(alias))
@@ -47,7 +56,7 @@ class ChatHttpE2ETest {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"second answer"},"done":true,"prompt_eval_count":11,"eval_count":3}"""))
         val conversationId = "http-e2e-conversation"
         runBlocking { history.create(conversationId, "HTTP E2E") }
-        activeVm = ChatViewModel(UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat")), usage),
+        activeVm = ChatViewModel(UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), usage),
             history, usage, Conversation(conversationId))
         compose.setContent { SereaTheme { ChatScreen(activeVm, usage = usage) } }
 

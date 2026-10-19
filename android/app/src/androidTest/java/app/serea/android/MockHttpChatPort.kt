@@ -10,14 +10,16 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.tls.HandshakeCertificates
 import java.util.concurrent.TimeUnit
 
 /** Test-only HTTP provider. It accepts loopback MockWebServer endpoints and has no credentials. */
-internal class MockHttpChatPort(endpoint: HttpUrl) : ModelChatPort {
+internal class MockHttpChatPort(endpoint: HttpUrl, certificates: HandshakeCertificates) : ModelChatPort {
     private val endpoint = endpoint.also {
-        require(!it.isHttps && it.host in setOf("127.0.0.1", "localhost"))
+        require(it.isHttps && it.host in setOf("127.0.0.1", "localhost"))
     }
     private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+        .sslSocketFactory(certificates.sslSocketFactory(), certificates.trustManager)
         .callTimeout(10, TimeUnit.SECONDS).build()
 
     override suspend fun send(request: ModelChatRequest): ModelChatResponse = withContext(Dispatchers.IO) {

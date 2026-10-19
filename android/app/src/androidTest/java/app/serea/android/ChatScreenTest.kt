@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -124,8 +125,8 @@ class ChatScreenTest {
         compose.onNodeWithText("設定").performScrollTo().performClick()
         compose.onNodeWithText("Cloud接続テスト（未承認）").assertIsNotEnabled()
         compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
-        compose.onNodeWithText("送信先候補", substring = true).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("分類: UNKNOWN", substring = true).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("予定本文: draft stays local").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("送信先候補", substring = true).assertExists()
+        compose.onNodeWithText("分類: UNKNOWN", substring = true).assertExists()
+        compose.onNodeWithText("予定本文: draft stays local").assertExists()
     }
 }

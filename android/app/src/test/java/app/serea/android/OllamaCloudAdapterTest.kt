@@ -45,6 +45,63 @@ class OllamaCloudAdapterTest {
         assertFalse(body.contains(key))
     }
 
+    @Test fun acceptsDocumentedNonStreamingJsonResponseAndUsage() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json")
+            .setBody("""{"model":"gemma4:31b","message":{"role":"assistant","content":"single response"},"done":true,"prompt_eval_count":8,"eval_count":3}"""))
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
+        assertEquals("single response", result.text)
+        assertEquals(ProviderUsage(8, 3), result.usage)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun missingProviderUsageRemainsUnknown() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"answer"},"done":true}"""))
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
+        assertEquals("answer", result.text)
+        assertNull(result.usage)
+    }
+
+    @Test fun approvedMultiTurnConversationIsSentAsOneMockHttpRequest() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/x-ndjson")
+            .setBody("""{"message":{"content":"second answer"},"done":true,"prompt_eval_count":19,"eval_count":3}
+"""))
+        val now = 10_000L
+        val context = listOf(ContextMessage(MessageRole.USER, "first question", DataClassification.PUBLIC,
+            "source-1", DataOrigin.USER_AUTHORED, conversationId = "conversation-1"))
+        val contract = EgressContract("conversation-1", "send-2", DataOrigin.USER_AUTHORED,
+            DataClassification.PUBLIC, "https://ollama.com/api/chat", "second question", context,
+            PayloadPreparation.RAW, now, now + 30_000)
+        val request = ModelChatRequest("conversation-1", "second question", sendId = "send-2",
+            classification = DataClassification.PUBLIC, context = context, egressContract = contract)
+        val result = OllamaModelChatPort(adapter(), { now }).send(request)
+        assertEquals("second answer", result.text)
+        assertEquals(ProviderUsage(19, 3), result.usage)
+        val sent = server.takeRequest()
+        val body = sent.body.readUtf8()
+        assertTrue(body.contains("first question"))
+        assertTrue(body.contains("second question"))
+        assertTrue(body.contains("\"role\":\"user\""))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun egressRejectionDoesNotReadCredentialOrCreateHttpRequest() = runBlocking {
+        var credentialReads = 0
+        val port = OllamaModelChatPort(adapter(reader = object : CredentialReader {
+            override fun readForRequest(): String { credentialReads++; return key }
+        }), { 20_000 })
+        val context = listOf(ContextMessage(MessageRole.USER, "private prior", DataClassification.PRIVATE,
+            "source-private", DataOrigin.USER_AUTHORED))
+        val contract = EgressContract("c", "s", DataOrigin.USER_AUTHORED, DataClassification.PUBLIC,
+            "https://ollama.com/api/chat", "current", context, PayloadPreparation.RAW, 10_000, 30_000)
+        try {
+            port.send(ModelChatRequest("c", "current", sendId = "s", classification = DataClassification.PUBLIC,
+                context = context, egressContract = contract))
+            throw AssertionError("private context must be denied")
+        } catch (_: ModelChatFailure) { }
+        assertEquals(0, credentialReads)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun streamsSeededManyShortDeltasAcrossFragmentedTransportChunks() = runBlocking {
         val seed = 0x5E2EA
         val chunks = (0 until 256).map { index ->
@@ -61,6 +118,14 @@ class OllamaCloudAdapterTest {
         assertEquals(expected, result.text)
         assertEquals(expected, deltas.joinToString(separator = ""))
         assertEquals(1, server.requestCount)
+    }
+
+    @Test fun fragmentedUtf8CodePointIsDecodedWithoutCorruption() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/x-ndjson")
+            .setChunkedBody("""{"message":{"content":"🌱"},"done":true,"prompt_eval_count":1,"eval_count":1}
+""", 1))
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe())
+        assertEquals("🌱", result.text)
     }
 
     @Test fun missingCredentialDoesNotCreateHttpRequest() = runBlocking {

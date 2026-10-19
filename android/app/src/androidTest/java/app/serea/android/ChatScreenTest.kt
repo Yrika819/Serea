@@ -2,6 +2,7 @@ package app.serea.android
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
@@ -11,6 +12,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
@@ -114,5 +116,16 @@ class ChatScreenTest {
         compose.runOnIdle {
             assertEquals(0, compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
+    }
+
+    @Test fun previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled() {
+        awaitComposerEnabled()
+        composer().performTextInput("draft stays local")
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("Cloud接続テスト（未承認）").assertIsNotEnabled()
+        compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
+        compose.onAllNodes(hasText("送信先候補", substring = true)).assertCountEquals(1)
+        compose.onAllNodes(hasText("分類: UNKNOWN", substring = true)).assertCountEquals(1)
+        compose.onAllNodes(hasText("予定本文: draft stays local")).assertCountEquals(1)
     }
 }

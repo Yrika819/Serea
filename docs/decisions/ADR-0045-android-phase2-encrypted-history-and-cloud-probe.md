@@ -12,9 +12,10 @@ send user conversations or select a production service.
 ## Proposed implementation boundary
 
 - Demo chat is local and has no network path.
-- A separate Cloud Candidate setting can call only Ollama Cloud's fixed HTTPS
-  `/api/chat` host and only with a fixed, non-personal contract probe. Ordinary
-  user text, saved history, Calendar, and Gmail are not sent.
+- The adapter can call only Ollama Cloud's fixed HTTPS `/api/chat` host. The
+  current shipped UI exposes no live Cloud action. Mock HTTP is loopback-only.
+  The fixed, non-personal contract probe remains an isolated candidate payload;
+  ordinary user text, saved history, Calendar, and Gmail are not sent.
 - The adapter rejects disabled mode, unsupported model IDs, absent/invalid
   credentials, oversized responses, redirects, and invalid streams. It does
   not log request content or provider error bodies and does not retry.
@@ -62,8 +63,8 @@ need updating as provider models change.
 
 ## Owner decisions required before enabling ordinary cloud chat or release
 
-1. Approve a provider and deployment model: direct mobile connection or an
-   authenticated backend.
+1. Confirm provider eligibility and terms for the Owner-selected direct mobile
+   architecture, and decide the provider and model roster.
 2. Define which user-authored text can be sent, the trusted preparation and
    data-classification contract, confirmation UX, and refusal behavior.
 3. Approve retention, deletion, encryption-key loss/recovery, backup, and

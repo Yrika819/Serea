@@ -6,6 +6,7 @@ import android.security.keystore.KeyProperties
 import android.os.Build
 import android.util.Base64
 import androidx.room.Dao
+import androidx.room.ColumnInfo
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
@@ -15,6 +16,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -111,6 +114,7 @@ data class MessageRow(
     val status: String,
     val inputTokens: Int? = null,
     val outputTokens: Int? = null,
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val origin: String = "UNKNOWN",
 )
 
 @Dao
@@ -160,15 +164,30 @@ interface HistoryDao {
     }
 }
 
-@Database(entities = [ConversationRow::class, MessageRow::class], version = 1, exportSchema = true)
+@Database(entities = [ConversationRow::class, MessageRow::class, UsageWindowRow::class, UsageReservationRow::class, UsageSettingsRow::class], version = 3, exportSchema = true)
 abstract class SereaHistoryDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
+    abstract fun usageDao(): UsageDao
 
     companion object {
         @Volatile private var instance: SereaHistoryDatabase? = null
         fun open(context: Context): SereaHistoryDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SereaHistoryDatabase::class.java, "serea-history.db")
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build().also { instance = it }
+        }
+
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("CREATE TABLE IF NOT EXISTS usage_windows (windowKey TEXT NOT NULL, requests INTEGER NOT NULL, inputTokens INTEGER NOT NULL, outputTokens INTEGER NOT NULL, PRIMARY KEY(windowKey))")
+                database.execSQL("CREATE TABLE IF NOT EXISTS usage_reservations (requestId TEXT NOT NULL, dayKey TEXT NOT NULL, monthKey TEXT NOT NULL, inputTokens INTEGER NOT NULL, outputTokens INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY(requestId))")
+                database.execSQL("CREATE TABLE IF NOT EXISTS usage_settings (id INTEGER NOT NULL, dailyRequests INTEGER NOT NULL, dailyTokens INTEGER NOT NULL, monthlyRequests INTEGER NOT NULL, monthlyTokens INTEGER NOT NULL, lastObservedAt INTEGER NOT NULL, PRIMARY KEY(id))")
+            }
+        }
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'UNKNOWN'")
+            }
         }
     }
 }
@@ -176,6 +195,7 @@ abstract class SereaHistoryDatabase : RoomDatabase() {
 data class StoredMessage(
     val id: String, val conversationId: String, val role: MessageRole, val text: String,
     val classification: DataClassification, val createdAt: Long, val status: String,
+    val origin: DataOrigin = DataOrigin.UNKNOWN,
 )
 data class StoredConversation(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val modelId: String, val messages: List<StoredMessage>)
 
@@ -188,14 +208,14 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
     suspend fun addMessage(message: StoredMessage) {
         dao.putMessageIfConversationIsActive(MessageRow(message.id, message.conversationId, message.role.name,
             encrypt(message.text, "message:${message.id}:body"), message.classification.name,
-            message.createdAt, message.status))
+            message.createdAt, message.status, origin = message.origin.name))
     }
     suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
         require(assistant.role == MessageRole.ASSISTANT && assistant.status == "COMPLETED")
         dao.completePendingTurn(userMessageId, MessageRow(
             assistant.id, assistant.conversationId, assistant.role.name,
             encrypt(assistant.text, "message:${assistant.id}:body"), assistant.classification.name,
-            assistant.createdAt, assistant.status,
+            assistant.createdAt, assistant.status, origin = assistant.origin.name,
         ))
     }
     suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
@@ -212,7 +232,8 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
             try {
                 StoredMessage(message.id, message.conversationId, MessageRole.valueOf(message.role),
                     decrypt(message.encryptedBody, "message:${message.id}:body"),
-                    DataClassification.valueOf(message.classification), message.createdAt, message.status)
+                    DataClassification.valueOf(message.classification), message.createdAt, message.status,
+                    DataOrigin.valueOf(message.origin))
             } catch (error: Exception) {
                 if (error is HistoryUnavailableException) throw error
                 throw HistoryUnavailableException("Saved history contains an invalid record.", error)

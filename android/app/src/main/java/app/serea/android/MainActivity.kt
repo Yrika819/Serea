@@ -298,9 +298,8 @@ internal class ChatViewModel(
         viewModelScope.launch {
             try {
                 historyRepository?.deleteAll()
-                val id = UUID.randomUUID().toString()
-                mutableState.update { it.copy(conversation = Conversation(id), input = "", showingHistory = false,
-                    isRestoring = false, history = emptyList(), errorMessage = null, statusMessage = "全会話履歴を削除しました。") }
+                newConversation()
+                mutableState.update { it.copy(history = emptyList(), statusMessage = "全会話履歴を削除しました。") }
             } catch (_: Exception) { mutableState.update { it.copy(errorMessage = "全会話履歴を削除できませんでした。", isRestoring = false) } }
         }
     }

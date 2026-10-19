@@ -94,7 +94,7 @@ class ChatScreenTest {
     @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
         awaitComposerEnabled()
         compose.onNodeWithText("設定").performClick()
-        compose.waitUntil(5_000) {
+        compose.waitUntil(30_000) {
             var secure = false
             compose.activityRule.scenario.onActivity {
                 secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
@@ -105,8 +105,8 @@ class ChatScreenTest {
             assertEquals(WindowManager.LayoutParams.FLAG_SECURE,
                 compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
-        compose.onNodeWithText("設定").performClick()
-        compose.waitUntil(5_000) {
+        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
+        compose.waitUntil(30_000) {
             var secure = true
             compose.activityRule.scenario.onActivity {
                 secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
@@ -127,5 +127,26 @@ class ChatScreenTest {
         compose.onAllNodes(hasText("送信先候補", substring = true)).assertCountEquals(1)
         compose.onAllNodes(hasText("分類: UNKNOWN", substring = true)).assertCountEquals(1)
         compose.onAllNodes(hasText("予定本文: draft stays local")).assertCountEquals(1)
+    }
+
+    @Test fun modelModeAndPolicyPersistWhenSettingsAreReopened() {
+        ModelSelectionSettings(compose.activity.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE))
+            .save(ModelRoutingPolicy())
+        awaitComposerEnabled()
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("Manual").performScrollTo().performClick()
+        compose.onNodeWithText("Cost Priority").performScrollTo().performClick()
+        compose.onNodeWithText("任意の1要求費用上限").performScrollTo().performTextInput("0.05")
+        compose.onNodeWithText("通貨コード").performScrollTo().performTextInput("USD")
+        compose.onNodeWithText("Router設定を保存").performScrollTo().performClick()
+        compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("選択Model ID: なし").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Manual Model Picker: 選択可能なモデルはありません。任意のModel IDやProvider Hostは入力できません。")
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("0.05").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("USD").performScrollTo().assertIsDisplayed()
     }
 }

@@ -22,8 +22,8 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                 runBlocking(Dispatchers.IO) {
                     when (intent.action) {
                         ACTION -> when (phase) {
-                            "prepare" -> prepare(repository)
-                            "verify" -> verify(repository)
+                            "prepare" -> prepare(context, repository, token)
+                            "verify" -> verify(context, repository, token)
                             "delete-all" -> repository.deleteAll()
                             "verify-empty" -> check(listOf("process-death-complete", "process-death-pending", "process-death-deleted")
                                 .all { repository.get(it) == null })
@@ -40,7 +40,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         }.start()
     }
 
-    private suspend fun prepare(repository: ConversationRepository) {
+    private suspend fun prepare(context: Context, repository: ConversationRepository, token: String) {
         val base = System.currentTimeMillis()
         repository.delete("process-death-complete")
         repository.delete("process-death-pending")
@@ -57,11 +57,17 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         repository.addMessage(StoredMessage("pd-deleted", "process-death-deleted", MessageRole.USER,
             "delete this", DataClassification.UNKNOWN, base + 21, "COMPLETED", DataOrigin.USER_AUTHORED))
         repository.delete("process-death-deleted", now = base + 30)
+        ModelSelectionSettings(context.getSharedPreferences("model_selection", Context.MODE_PRIVATE)).save(
+            ModelRoutingPolicy(ModelSelectionMode.MANUAL, AutoRoutingPolicy.COST_PRIORITY, "fixture/deleted-after-upgrade",
+                maxEstimatedCost = 0.25, budgetCurrencyCode = "USD"),
+        )
+        val database = SereaHistoryDatabase.open(context)
+        UsageRepository(database.usageDao()) { base }.reserve("process-death-usage-$token", 30)
         // A database read completes before the external force-stop boundary.
         check(repository.get("process-death-complete")?.messages?.size == 2)
     }
 
-    private suspend fun verify(repository: ConversationRepository) {
+    private suspend fun verify(context: Context, repository: ConversationRepository, token: String) {
         val completed = checkNotNull(repository.get("process-death-complete"))
         check(completed.messages.map { it.id } == listOf("pd-user", "pd-assistant"))
         check(completed.messages.last().text == "completed answer")
@@ -70,6 +76,15 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         // MainActivity startup must have converted the orphan and never retried it.
         check(pending.messages.single().status == "OUTCOME_UNKNOWN")
         check(repository.get("process-death-deleted") == null)
+        val selection = ModelSelectionSettings(context.getSharedPreferences("model_selection", Context.MODE_PRIVATE)).load()
+        check(selection.mode == ModelSelectionMode.MANUAL)
+        check(selection.autoPolicy == AutoRoutingPolicy.COST_PRIORITY)
+        check(selection.manualModelId == "fixture/deleted-after-upgrade")
+        check(selection.maxEstimatedCost == 0.25 && selection.budgetCurrencyCode == "USD")
+        check(AdaptiveModelRouter(LocalModelCatalog()).select(RoutingRequest("hello"), selection).model == null)
+        val usage = UsageRepository(SereaHistoryDatabase.open(context).usageDao())
+        check(usage.snapshot().uncertainRequests >= 1)
+        check(SereaHistoryDatabase.open(context).usageDao().reservation("process-death-usage-$token")?.state == "OUTCOME_UNKNOWN")
     }
 
     companion object {

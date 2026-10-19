@@ -131,6 +131,7 @@ data class ModelChatRequest(
     val preparedPersonal: PreparedPersonalData? = null,
     val context: List<ContextMessage> = emptyList(),
     val egressContract: EgressContract? = null,
+    val selectedModelId: String? = null,
 )
 data class ModelChatResponse(val text: String, val usage: ProviderUsage? = null)
 
@@ -338,6 +339,11 @@ private fun ChatMessage.toStoredMessage(conversationId: String) = StoredMessage(
     id, conversationId, role, text, classification, createdAt.toEpochMilli(), status, origin,
 )
 
+private fun <T> Knowledge<T>.displayValue(): String = when (this) {
+    Knowledge.UNKNOWN -> "UNKNOWN"
+    is Knowledge.Known<*> -> value.toString()
+}
+
 private fun StoredMessage.toChatMessage() = ChatMessage(id, role, text, Instant.ofEpochMilli(createdAt), classification,
     status, origin, conversationId)
 
@@ -363,6 +369,15 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     var monthlyRequestsText by remember { mutableStateOf("100") }
     var monthlyTokensText by remember { mutableStateOf("50000") }
     var usageSnapshot by remember { mutableStateOf<UsageSnapshot?>(null) }
+    val modelSettings = remember(context) { ModelSelectionSettings(context.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE)) }
+    val modelRouter = remember { AdaptiveModelRouter(LocalModelCatalog()) }
+    var modelPolicy by remember { mutableStateOf(modelSettings.load()) }
+    var budgetAmountText by remember { mutableStateOf(modelPolicy.maxEstimatedCost?.toString().orEmpty()) }
+    var budgetCurrencyText by remember { mutableStateOf(modelPolicy.budgetCurrencyCode.orEmpty()) }
+    val modelCatalog by remember { mutableStateOf(LocalModelCatalog().all()) }
+    val routePreview = remember(modelPolicy, state.input, state.conversation.messages.size) {
+        modelRouter.select(RoutingRequest(state.input.trim(), state.conversation.messages.sumOf { it.text.length }), modelPolicy)
+    }
     LaunchedEffect(settingsVisible) {
         if (settingsVisible) {
             usageSnapshot = runCatching { usage?.snapshot() }.getOrNull()
@@ -404,6 +419,70 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
             Text("Cloud未利用 · Provider利用条件/送信対象未承認 · 資格情報: ${if (credentialReady) "端末内に保存済み" else "未設定"} · OfflineでもDemo会話は利用できます。",
                 style = MaterialTheme.typography.bodySmall)
             if (settingsVisible) {
+                Text("Model Selection", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                Text("選択設定は端末内に保存されます。現在は検証済みCatalogが空のため、外部モデルは選択できません。Demo / Mock会話とCloud無効状態は維持されます。",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        modelPolicy = modelPolicy.copy(mode = ModelSelectionMode.AUTO, manualModelId = null)
+                        modelSettings.save(modelPolicy)
+                    }, enabled = modelPolicy.mode != ModelSelectionMode.AUTO) { Text("Auto") }
+                    Button(onClick = {
+                        modelPolicy = modelPolicy.copy(mode = ModelSelectionMode.MANUAL)
+                        modelSettings.save(modelPolicy)
+                    }, enabled = modelPolicy.mode != ModelSelectionMode.MANUAL) { Text("Manual") }
+                }
+                Text("Auto Policy", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AutoRoutingPolicy.entries.forEach { option ->
+                        TextButton(onClick = {
+                            modelPolicy = modelPolicy.copy(autoPolicy = option)
+                            modelSettings.save(modelPolicy)
+                        }, enabled = modelPolicy.autoPolicy != option) {
+                            Text(when (option) { AutoRoutingPolicy.BALANCED -> "Balanced"; AutoRoutingPolicy.COST_PRIORITY -> "Cost Priority"; AutoRoutingPolicy.QUALITY_PRIORITY -> "Quality Priority" })
+                        }
+                    }
+                }
+                Text("Mode: ${modelPolicy.mode} · Policy: ${modelPolicy.autoPolicy}", style = MaterialTheme.typography.bodyMedium)
+                Text("選択Model ID: ${routePreview.selectedModelId ?: "なし"}" +
+                    (modelPolicy.manualModelId?.let { " · 保存済み手動指定: $it" } ?: ""), style = MaterialTheme.typography.bodyMedium)
+                routePreview.estimatedCost?.let { cost ->
+                    Text("1要求の推定費用: ${cost.amount} ${cost.currencyCode} · 入力予約 ${cost.estimatedInputTokens} tokens / 出力予約 ${cost.reservedOutputTokens} tokens。Provider請求額ではありません。",
+                        style = MaterialTheme.typography.bodySmall)
+                } ?: Text("推定費用: 料金または通貨が未確認のため算出できません。", style = MaterialTheme.typography.bodySmall)
+                routePreview.model?.let { model ->
+                    Text("${model.displayName} · ${model.providerId} · Context ${model.contextWindow.knownInt()?.toString() ?: "UNKNOWN"} · 最大出力 ${model.maxOutput.knownInt()?.toString() ?: "UNKNOWN"} · 入力 ${model.capabilities.input.joinToString().ifEmpty { "UNKNOWN" }} · Tool ${model.capabilities.toolCalling.displayValue()} · Structured ${model.capabilities.structuredOutput.displayValue()} · Reasoning ${model.capabilities.reasoning.displayValue()} · 利用枠 ${model.contractLimits.displayValue()} · 利用可否 ${model.availability} · 最終確認 ${model.lastVerifiedAt ?: "UNKNOWN"} · 情報源 ${model.source ?: "UNKNOWN"}",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = budgetAmountText, onValueChange = { budgetAmountText = it.filter { c -> c.isDigit() || c == '.' } },
+                        modifier = Modifier.weight(2f), label = { Text("任意の1要求費用上限") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+                    OutlinedTextField(value = budgetCurrencyText, onValueChange = { budgetCurrencyText = it.filter(Char::isLetter).take(3).uppercase() },
+                        modifier = Modifier.weight(1f), label = { Text("通貨コード") }, singleLine = true)
+                }
+                Button(onClick = {
+                    val amount = budgetAmountText.trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull()
+                    val currency = budgetCurrencyText.trim().uppercase()
+                    runCatching {
+                        require(budgetAmountText.isBlank() || amount != null && amount.isFinite() && amount >= 0)
+                        require(amount == null || currency.matches(Regex("[A-Z]{3}")))
+                        modelPolicy.copy(maxEstimatedCost = amount, budgetCurrencyCode = currency.takeIf { amount != null })
+                    }.onSuccess { updated ->
+                        modelSettings.save(updated); modelPolicy = updated
+                        settingsMessage = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
+                    }.onFailure { settingsMessage = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。" }
+                }) { Text("Router設定を保存") }
+                Text(if (modelCatalog.isEmpty()) "利用可能なモデル: 0 · Catalog未取得または未確認" else "利用可能なモデル: ${modelCatalog.size}")
+                if (modelCatalog.isEmpty()) Text("Manual Model Picker: 選択可能なモデルはありません。任意のModel IDやProvider Hostは入力できません。",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("判定: ${routePreview.task} · ${routePreview.reason}", style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                Text("制約: ${routePreview.constraints.joinToString(" · ")}", style = MaterialTheme.typography.bodySmall)
+                Text("候補除外: ${routePreview.excluded.joinToString { it.reason }.ifEmpty { "なし" }} · 未確認: ${routePreview.unknownFields.joinToString().ifEmpty { "なし" }}",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("料金: 確認済みモデルがないため表示なし · Context: Catalog未確認 · 利用可否: 未確認 · 最終確認日時: なし · 本番Cloud: 無効",
+                    style = MaterialTheme.typography.bodySmall)
                 usageSnapshot?.let { usageState ->
                     Text("ローカルSoft Limit（UTC）: 今日 ${usageState.dailyRequests}/${usageState.limits.dailyRequests} requests · 予約推定 ${usageState.dailyEstimatedInputTokens + usageState.dailyEstimatedOutputTokens} / 実測 ${usageState.dailyProviderInputTokens + usageState.dailyProviderOutputTokens} tokens（上限 ${usageState.limits.dailyTokens}）",
                         style = MaterialTheme.typography.bodySmall)
@@ -457,10 +536,8 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 Text("Provider: Ollama Cloud（候補）", style = MaterialTheme.typography.titleMedium)
                 Text("利用条件: 公式Termsは18歳以上を要求します。利用資格を確認していないため、このアプリからのCloud通信を無効にしています。",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                Text("Model ID: gemma4:31b · 通常チャットのCloud送信: disabled",
+                Text("Cloud送信: disabled · 既存Provider候補のModel IDと価格情報は正式な推奨・既定値として扱いません。",
                     style = MaterialTheme.typography.bodyMedium)
-                Text("公開料金の表示: 入力 $0.14 / 出力 $0.40 per million tokens。最大出力512 tokens、料金とFree creditsはProvider側で変わります。",
-                    style = MaterialTheme.typography.bodySmall)
                 Text("API key: ${if (credentialReady) "設定済み" else "未設定"}", style = MaterialTheme.typography.bodyMedium)
                 Text("保存先: Android Keystoreで暗号化 · $keystoreProfile",
                     style = MaterialTheme.typography.bodySmall)

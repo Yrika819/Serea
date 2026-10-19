@@ -23,7 +23,7 @@ class OllamaCloudAdapterTest {
     private val key = "test-only-not-a-real-key"
     private fun adapter(enabled: Boolean = true, reader: CredentialReader = object : CredentialReader {
         override fun readForRequest() = key
-    }) = OllamaCloudAdapter(reader, CloudSettings(enabled), server.url("/api/chat"),
+    }) = OllamaCloudAdapter(reader, CloudSettings(enabled, "gemma4:31b"), server.url("/api/chat"),
         OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build())
 
     @After fun close() { server.shutdown() }
@@ -34,7 +34,7 @@ class OllamaCloudAdapterTest {
                 {"model":"gemma4:31b","message":{"role":"assistant","content":"there"},"done":true,"prompt_eval_count":7,"eval_count":2}
             """.trimIndent(), 5))
         val deltas = mutableListOf<String>()
-        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) { deltas += it }
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta = { deltas += it })
         assertEquals("Hello there", result.text)
         assertEquals(listOf("Hello ", "there"), deltas)
         assertEquals(ProviderUsage(7, 2), result.usage)
@@ -114,7 +114,7 @@ class OllamaCloudAdapterTest {
             .setChunkedBody(body, transportChunkBytes))
 
         val deltas = mutableListOf<String>()
-        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) { deltas += it }
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta = { deltas += it })
         assertEquals(expected, result.text)
         assertEquals(expected, deltas.joinToString(separator = ""))
         assertEquals(1, server.requestCount)
@@ -156,6 +156,16 @@ class OllamaCloudAdapterTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test fun historicalCandidateIsNotDefaultAndExplicitSelectionIsUsed() = runBlocking {
+        assertEquals("", CloudSettings().modelId)
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"ok"},"done":true}"""))
+        val configuredWithoutDefault = OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key },
+            CloudSettings(enabled = true), server.url("/api/chat"), OkHttpClient())
+        configuredWithoutDefault.send(EgressApprovedPayload.fixedPublicContractProbe(), selectedModelId = "gemma4:31b")
+        val request = server.takeRequest()
+        assertEquals("gemma4:31b", com.google.gson.JsonParser.parseString(request.body.readUtf8()).asJsonObject.get("model").asString)
+    }
+
     @Test fun unlistedModelIsRejectedBeforeNetwork() = runBlocking {
         val failure = capture {
             OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true, "not-a-listed-model"),
@@ -163,11 +173,14 @@ class OllamaCloudAdapterTest {
         }
         assertEquals(ProviderFailureKind.MODEL_UNAVAILABLE, failure.kind)
         assertEquals(0, server.requestCount)
+        val overrideFailure = capture { adapter().send(EgressApprovedPayload.fixedPublicContractProbe(), selectedModelId = "https://attacker.example") }
+        assertEquals(ProviderFailureKind.MODEL_UNAVAILABLE, overrideFailure.kind)
+        assertEquals(0, server.requestCount)
     }
 
     @Test fun arbitraryHttpsEndpointCannotBeConfigured() {
         try {
-            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true),
+            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true, "gemma4:31b"),
                 "https://attacker.example/api/chat".toHttpUrl(), OkHttpClient())
             throw AssertionError("arbitrary host must be rejected")
         } catch (_: IllegalArgumentException) { }
@@ -222,7 +235,7 @@ class OllamaCloudAdapterTest {
         val endpoint = server.url("/api/chat")
         server.shutdown()
         val failure = capture {
-            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true), endpoint,
+            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true, "gemma4:31b"), endpoint,
                 OkHttpClient.Builder().followRedirects(false).build()).send(EgressApprovedPayload.fixedPublicContractProbe())
         }
         assertEquals(ProviderFailureKind.NETWORK, failure.kind)
@@ -233,7 +246,7 @@ class OllamaCloudAdapterTest {
         val serverTrust = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         server.useHttps(serverTrust.sslSocketFactory(), false)
         val failure = capture {
-            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true),
+            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true, "gemma4:31b"),
                 server.url("/api/chat"), OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build())
                 .send(EgressApprovedPayload.fixedPublicContractProbe())
         }

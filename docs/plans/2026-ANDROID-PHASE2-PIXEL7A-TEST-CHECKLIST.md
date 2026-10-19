@@ -1,59 +1,76 @@
-# Pixel 7a Android Phase 2 acceptance checklist
+# Pixel 7a Android beta acceptance checklist
 
-State: `NOT_RUN` in Codex Cloud. The checklist is for a device owner with a
-Pixel 7a and Android SDK platform-tools. It does not require root access,
-changing OS security settings, or exporting personal data.
+State: **NOT_RUN** in Codex Cloud. Target: Pixel 7a, Android 17 Beta, rooted
+test device. Use synthetic content only. Do not add a Provider account or key;
+live Provider access remains disabled.
 
-## Install and local Demo
+## Build identity and install
 
 1. Download `app-debug.apk` from the Draft PR's `serea-android-phase2-build`
-   artifact. This is a debug-signed, installable APK; the release variant from
-   this branch is unsigned.
-2. Connect the Pixel 7a with USB debugging already enabled and confirm the
-   device using `adb devices -l`. Install with `adb install -r app-debug.apk`.
-3. Open Serea and verify the `DEMO · Mock chat · No cloud AI` label and
-   Japanese local-only notice. Send two messages and confirm Demo replies.
-4. Open History, select the conversation, then open Settings and return. The
-   conversation should remain available. Force-stop and reopen the app; verify
-   the same messages return.
-5. Rotate the device while viewing a long response. Confirm the current
-   conversation and text remain readable and controls are still reachable with
-   the keyboard open.
-6. Open a new conversation and verify it has no messages from the previous
-   conversation. Delete the current conversation and confirm it no longer
-   appears. Repeat with Delete all history and confirm the empty-history state.
-7. In Android App info, verify backup is unavailable/disabled for this app and
-   confirm it launches in airplane mode for local history browsing.
+   Actions artifact for the exact reviewed commit SHA. Confirm its SHA-256 with
+   `sha256sum app-debug.apk`; record both checksums and the commit SHA.
+2. The APK is the Android Gradle debug build signed with the standard
+   development debug key. Record `apksigner verify --print-certs app-debug.apk`
+   and `aapt dump badging app-debug.apk`. The release APK is not the install
+   candidate for this checklist.
+3. Connect the device with USB debugging already enabled. Run `adb devices -l`,
+   record the Android build fingerprint and API level, then install with
+   `adb install -r app-debug.apk`. Do not clear data during restore checks.
 
-## Credential and cloud probe
+## UI, history, selection, and local limits
 
-Cloud access remains a candidate and sends only the fixed public contract
-probe. Do not enter a real key or enable the probe until the Owner has approved
-the provider/account terms, model, region, billing controls, and probe request.
-If approval is recorded and a test key is intentionally provided by the owner:
+- Confirm `DEMO · Mock chat · No cloud AI` and the Cloud-disabled notice. Use
+  synthetic conversation text only; confirm Demo replies and encrypted history.
+- In Settings, switch Auto/Manual and Balanced/Cost Priority/Quality Priority.
+  Confirm values survive closing/reopening Settings, rotation, and an
+  `adb shell am force-stop app.serea.android.demo` followed by relaunch.
+- Confirm Catalog is empty, no model is preselected, Manual has no selectable
+  model, and an unavailable/deleted model does not silently fall back.
+- Confirm task explanation, no verified price, and no claim that the local
+  estimate is Provider usage or a billing cap.
+- Exercise history switching, read, delete-one, delete-all, and reopen after a
+  force-stop. Confirm pending requests are never replayed automatically.
+- Exercise daily/monthly UTC Soft Limits with synthetic values. Confirm the UI
+  distinguishes reservation estimates, Provider measured tokens, and unresolved
+  requests. Do not interpret this as account-side spend protection.
+- Rotate during a long synthetic response and while Settings is open. Test a
+  small window, large font scale, TalkBack labels/focus, keyboard IME resize,
+  and dark theme. Verify controls remain reachable and values remain legible.
+- Confirm `FLAG_SECURE` is active while credential controls/settings are open
+  and is cleared when Settings close; no real credential should be entered.
 
-1. In Settings, inspect the reported Keystore security profile. If it is
-   software-backed or unavailable, attempt a test value and verify the app
-   refuses to save it and reports that hardware-backed protection is required.
-   Do not proceed to a network probe on that device.
-2. If the profile is StrongBox or TEE and Owner approval is recorded, enter
-   the Owner-provided test key and save it. Verify it remains masked, the UI
-   reports the actual Keystore level, and the key never appears in history.
-3. Close and reopen Settings; verify the key is reported as configured without
-   being revealed. Delete it and verify the UI reports no configured key.
-4. With the candidate disabled or no key configured, verify the probe button
-   is unavailable. With approved test conditions, enable the candidate and
-   run one fixed PUBLIC probe. Verify the model/usage result or a safe mapped
-   error. Do not send a user message through this probe.
-5. While the probe streams, cancel it. Verify the UI says provider-side
-   completion may still occur and does not automatically retry.
-6. Turn on airplane mode and repeat once. Verify a bounded network error is
-   shown, with no error body or credential displayed. Restore normal network.
+## Process Death, logs, and device security observations
 
-## Evidence to record
+```sh
+adb shell am force-stop app.serea.android.demo
+adb shell monkey -p app.serea.android.demo 1
+adb logcat -c
+adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E
+adb logcat -d | grep -E 'Authorization:|api/chat|conversation body|api key'
+```
 
-Record Android OS build, app version, PR commit SHA, installation result,
-Demo/history/delete results, API-key storage profile, and any safe error
-category. Do not include the API key, conversation text, screenshots exposing
-the key, or unrelated personal data in the report. Mark each item PASS, FAIL,
-or NOT_RUN; emulator results do not replace this device acceptance.
+Use `adb shell am force-stop` to demonstrate OS process death; Activity
+recreation alone does not count. Verify settings, history, usage reservations,
+and deletion after relaunch. Record only the pass/fail outcome and safe error
+category, not conversation text.
+
+Record the reported Android Keystore security level from Settings. Rooting
+changes the device threat model: a reported TEE or StrongBox backed key does
+not establish that the rooted OS, app process, or device is trustworthy.
+
+## Result
+
+| Check | Result | Evidence / notes |
+| --- | --- | --- |
+| APK SHA-256 and commit match | NOT_RUN | |
+| Android build and install | NOT_RUN | |
+| Auto/Manual and policy restore | NOT_RUN | |
+| Empty Catalog and no fallback | NOT_RUN | |
+| History, delete, and process death | NOT_RUN | |
+| Soft Limit and unresolved usage | NOT_RUN | |
+| TalkBack, font scale, IME, rotation, dark theme | NOT_RUN | |
+| FLAG_SECURE and safe Logcat | NOT_RUN | |
+| Keystore level observed (not a device trust verdict) | NOT_RUN | |
+
+Physical-device acceptance: **NOT_RUN**. No live Provider request, real
+credential, subscription, or billing operation is part of this test.

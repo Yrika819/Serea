@@ -56,7 +56,14 @@ class ChatHttpE2ETest {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"second answer"},"done":true,"prompt_eval_count":11,"eval_count":3}"""))
         val conversationId = "http-e2e-conversation"
         runBlocking { history.create(conversationId, "HTTP E2E") }
-        activeVm = ChatViewModel(UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), usage),
+        val modelIds = listOf("fixture/first-model", "fixture/second-model")
+        val models = modelIds.map { id -> ModelDescriptor(id, "fixture", id, Knowledge.Known(8192), Knowledge.Known(512),
+            ModelCapabilities(setOf("text/plain")), ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE,
+            authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture") }
+        val router = AdaptiveModelRouter(LocalModelCatalog(models))
+        var policy = ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelIds.first(), allowedProviderIds = setOf("fixture"))
+        val routedPort = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) { policy }
+        activeVm = ChatViewModel(UsageControlledModelChatPort(routedPort, usage),
             history, usage, Conversation(conversationId))
         compose.setContent { SereaTheme { ChatScreen(activeVm, usage = usage) } }
 
@@ -66,20 +73,25 @@ class ChatHttpE2ETest {
         composer.performTextInput("first question")
         compose.onNodeWithText("送信").performClick()
         awaitAssistant("first answer")
+        policy = policy.copy(manualModelId = modelIds.last())
         composer.performTextInput("second question")
         compose.onNodeWithText("送信").performClick()
         awaitAssistant("second answer")
 
         val firstRequest = server.takeRequest(5, TimeUnit.SECONDS)!!
-        val firstMessages = JsonParser.parseString(firstRequest.body.readUtf8()).asJsonObject.getAsJsonArray("messages")
+        val firstPayload = JsonParser.parseString(firstRequest.body.readUtf8()).asJsonObject
+        val firstMessages = firstPayload.getAsJsonArray("messages")
         assertEquals(1, firstMessages.size())
         assertTrue(firstMessages[0].asJsonObject.get("content").asString == "first question")
+        assertEquals(modelIds.first(), firstPayload.get("model").asString)
 
         val secondRequest = server.takeRequest(5, TimeUnit.SECONDS)!!
-        val secondMessages = JsonParser.parseString(secondRequest.body.readUtf8()).asJsonObject.getAsJsonArray("messages")
+        val secondPayload = JsonParser.parseString(secondRequest.body.readUtf8()).asJsonObject
+        val secondMessages = secondPayload.getAsJsonArray("messages")
         assertEquals(3, secondMessages.size())
         assertEquals(listOf("first question", "first answer", "second question"),
             (0 until secondMessages.size()).map { secondMessages[it].asJsonObject.get("content").asString })
+        assertEquals(modelIds.last(), secondPayload.get("model").asString)
         assertTrue(secondMessages[0].asJsonObject.has("source_message_id"))
         assertEquals(2, server.requestCount)
 
@@ -91,6 +103,28 @@ class ChatHttpE2ETest {
         assertEquals(2L, total.dailyRequests)
         assertEquals(0L, total.dailyEstimatedInputTokens + total.dailyEstimatedOutputTokens)
         assertEquals(20L, total.dailyProviderInputTokens + total.dailyProviderOutputTokens)
+    }
+
+    @Test fun manualRouterSelectionIsPassedToMockHttpRequestAndNeverFallsBack() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"routed answer"},"done":true,"prompt_eval_count":3,"eval_count":2}"""))
+        val descriptor = ModelDescriptor("fixture/manual-v1", "fixture", "Fixture Manual",
+            Knowledge.Known(8192), Knowledge.Known(512), ModelCapabilities(setOf("text/plain")),
+            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture")
+        val router = AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor)))
+        val routed = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) {
+            ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "fixture/manual-v1", allowedProviderIds = setOf("fixture"))
+        }
+        val result = routed.send(ModelChatRequest("route-conversation", "hello"))
+        assertEquals("routed answer", result.text)
+        val sent = JsonParser.parseString(server.takeRequest(5, TimeUnit.SECONDS)!!.body.readUtf8()).asJsonObject
+        assertEquals("fixture/manual-v1", sent.get("model").asString)
+
+        val unavailable = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) {
+            ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "missing", allowedProviderIds = setOf("fixture"))
+        }
+        runCatching { unavailable.send(ModelChatRequest("route-conversation", "hello")) }
+            .onSuccess { throw AssertionError("missing manual model must fail") }
+        assertEquals("unavailable manual selection made no HTTP request", 1, server.requestCount)
     }
 
     private fun awaitAssistant(text: String) {

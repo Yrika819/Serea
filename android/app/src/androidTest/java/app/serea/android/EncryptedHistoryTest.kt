@@ -315,6 +315,7 @@ class EncryptedHistoryTest {
         assertEquals(1L, snapshot.uncertainRequests)
         reopenedDb.close()
         context.deleteDatabase(name)
+        Unit
     }
 
     @Test fun cancelledProviderAttemptRetainsReservationWithoutUsageRefund() = runBlocking {

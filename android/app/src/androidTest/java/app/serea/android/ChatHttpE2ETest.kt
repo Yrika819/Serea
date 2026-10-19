@@ -16,6 +16,8 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -83,10 +85,11 @@ class ChatHttpE2ETest {
     }
 
     private fun awaitAssistant(text: String) {
-        compose.waitUntil(30_000) {
-            val state = stateSnapshot()
-            !state.isLoading && state.conversation.messages.lastOrNull()?.text == text
-        }
+        compose.waitUntil(30_000) { !stateSnapshot().isLoading || stateSnapshot().errorMessage != null }
+        val completed = stateSnapshot()
+        assertFalse("Request remained active; requests=${server.requestCount}, state=$completed", completed.isLoading)
+        assertNull("Request failed; requests=${server.requestCount}, state=$completed", completed.errorMessage)
+        assertEquals(text, completed.conversation.messages.lastOrNull()?.text)
     }
 
     private fun stateSnapshot(): ChatUiState {

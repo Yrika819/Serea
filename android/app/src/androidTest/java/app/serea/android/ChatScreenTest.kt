@@ -121,9 +121,9 @@ class ChatScreenTest {
     @Test fun previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled() {
         awaitComposerEnabled()
         composer().performTextInput("draft stays local")
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("設定").performScrollTo().performClick()
         compose.onNodeWithText("Cloud接続テスト（未承認）").assertIsNotEnabled()
-        compose.onNodeWithText("送信予定内容をプレビュー").performClick()
+        compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
         compose.onNodeWithText("送信先候補", substring = true).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("分類: UNKNOWN", substring = true).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("予定本文: draft stays local").performScrollTo().assertIsDisplayed()

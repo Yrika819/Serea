@@ -68,6 +68,7 @@ class ChatScreenTest {
         compose.onAllNodes(hasText("Demo response: I received “hello”.", substring = true))
             .onFirst().assertTextContains("No cloud AI", substring = true)
         compose.onNodeWithText("履歴").performClick()
+        compose.waitUntil(30_000) { stateSnapshot().showingHistory }
         compose.onNodeWithText("保存された会話").assertIsDisplayed()
         compose.onNodeWithText("Conversation", substring = true).assertIsDisplayed()
     }
@@ -89,12 +90,27 @@ class ChatScreenTest {
     }
 
     @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
+        awaitComposerEnabled()
         compose.onNodeWithText("設定").performClick()
+        compose.waitUntil(5_000) {
+            var secure = false
+            compose.activityRule.scenario.onActivity {
+                secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
+            }
+            secure
+        }
         compose.runOnIdle {
             assertEquals(WindowManager.LayoutParams.FLAG_SECURE,
                 compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
         compose.onNodeWithText("設定").performClick()
+        compose.waitUntil(5_000) {
+            var secure = true
+            compose.activityRule.scenario.onActivity {
+                secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
+            }
+            !secure
+        }
         compose.runOnIdle {
             assertEquals(0, compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }

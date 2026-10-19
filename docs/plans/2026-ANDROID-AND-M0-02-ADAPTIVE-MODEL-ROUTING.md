@@ -60,8 +60,10 @@ Pixel acceptance NOT_RUN.
   URL-shaped ID rejection, source-verification requirements, and no Manual
   fallback. Input token budgeting uses the existing conservative four tokens per
   UTF-16 character estimate; it is not tokenizer output.
-- Mock HTTP instrumented case sends the chosen Manual model ID in the request
-  and proves unavailable Manual selection creates zero additional requests.
+- Multi-turn Mock HTTP instrumentation sends two distinct manually chosen
+  model IDs in consecutive request bodies while preserving the same conversation
+  history and usage accounting. A separate case proves unavailable Manual
+  selection creates zero additional requests.
 - The existing OS force-stop harness stages Auto/Manual settings, policy, a
   removed model ID, and an unresolved usage reservation, then verifies them
   after actual app process termination/restart. It also checks the removed

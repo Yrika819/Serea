@@ -56,7 +56,14 @@ class ChatHttpE2ETest {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"second answer"},"done":true,"prompt_eval_count":11,"eval_count":3}"""))
         val conversationId = "http-e2e-conversation"
         runBlocking { history.create(conversationId, "HTTP E2E") }
-        activeVm = ChatViewModel(UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), usage),
+        val modelIds = listOf("fixture/first-model", "fixture/second-model")
+        val models = modelIds.map { id -> ModelDescriptor(id, "fixture", id, Knowledge.Known(8192), Knowledge.Known(512),
+            ModelCapabilities(setOf("text/plain")), ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE,
+            authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture") }
+        val router = AdaptiveModelRouter(LocalModelCatalog(models))
+        var policy = ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelIds.first())
+        val routedPort = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) { policy }
+        activeVm = ChatViewModel(UsageControlledModelChatPort(routedPort, usage),
             history, usage, Conversation(conversationId))
         compose.setContent { SereaTheme { ChatScreen(activeVm, usage = usage) } }
 
@@ -66,20 +73,25 @@ class ChatHttpE2ETest {
         composer.performTextInput("first question")
         compose.onNodeWithText("送信").performClick()
         awaitAssistant("first answer")
+        policy = policy.copy(manualModelId = modelIds.last())
         composer.performTextInput("second question")
         compose.onNodeWithText("送信").performClick()
         awaitAssistant("second answer")
 
         val firstRequest = server.takeRequest(5, TimeUnit.SECONDS)!!
-        val firstMessages = JsonParser.parseString(firstRequest.body.readUtf8()).asJsonObject.getAsJsonArray("messages")
+        val firstPayload = JsonParser.parseString(firstRequest.body.readUtf8()).asJsonObject
+        val firstMessages = firstPayload.getAsJsonArray("messages")
         assertEquals(1, firstMessages.size())
         assertTrue(firstMessages[0].asJsonObject.get("content").asString == "first question")
+        assertEquals(modelIds.first(), firstPayload.get("model").asString)
 
         val secondRequest = server.takeRequest(5, TimeUnit.SECONDS)!!
-        val secondMessages = JsonParser.parseString(secondRequest.body.readUtf8()).asJsonObject.getAsJsonArray("messages")
+        val secondPayload = JsonParser.parseString(secondRequest.body.readUtf8()).asJsonObject
+        val secondMessages = secondPayload.getAsJsonArray("messages")
         assertEquals(3, secondMessages.size())
         assertEquals(listOf("first question", "first answer", "second question"),
             (0 until secondMessages.size()).map { secondMessages[it].asJsonObject.get("content").asString })
+        assertEquals(modelIds.last(), secondPayload.get("model").asString)
         assertTrue(secondMessages[0].asJsonObject.has("source_message_id"))
         assertEquals(2, server.requestCount)
 

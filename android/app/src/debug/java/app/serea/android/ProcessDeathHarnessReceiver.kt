@@ -58,7 +58,8 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
             "delete this", DataClassification.UNKNOWN, base + 21, "COMPLETED", DataOrigin.USER_AUTHORED))
         repository.delete("process-death-deleted", now = base + 30)
         ModelSelectionSettings(context.getSharedPreferences("model_selection", Context.MODE_PRIVATE)).save(
-            ModelRoutingPolicy(ModelSelectionMode.MANUAL, AutoRoutingPolicy.COST_PRIORITY, "fixture/deleted-after-upgrade"),
+            ModelRoutingPolicy(ModelSelectionMode.MANUAL, AutoRoutingPolicy.COST_PRIORITY, "fixture/deleted-after-upgrade",
+                maxEstimatedCost = 0.25, budgetCurrencyCode = "USD"),
         )
         val database = SereaHistoryDatabase.open(context)
         UsageRepository(database.usageDao()) { base }.reserve("process-death-usage-$token", 30)
@@ -79,6 +80,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         check(selection.mode == ModelSelectionMode.MANUAL)
         check(selection.autoPolicy == AutoRoutingPolicy.COST_PRIORITY)
         check(selection.manualModelId == "fixture/deleted-after-upgrade")
+        check(selection.maxEstimatedCost == 0.25 && selection.budgetCurrencyCode == "USD")
         check(AdaptiveModelRouter(LocalModelCatalog()).select(RoutingRequest("hello"), selection).model == null)
         val usage = UsageRepository(SereaHistoryDatabase.open(context).usageDao())
         check(usage.snapshot().uncertainRequests >= 1)

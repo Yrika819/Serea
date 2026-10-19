@@ -181,7 +181,7 @@ class ChatScreenTest {
         openOverflow()
         compose.onNodeWithText("この会話を削除").assertIsDisplayed()
         compose.onNodeWithText("全履歴を削除").assertIsDisplayed()
-        compose.onNodeWithText("キャンセル").performClick()
+        openOverflow()
         compose.onNodeWithText("設定").assertIsDisplayed().performClick()
         compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
     }

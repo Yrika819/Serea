@@ -76,20 +76,23 @@ Serea user data.
 
 ## Validation ledger
 
-Results must be updated using the final PR head only. On each API, JUnit XML
-must record at least 21 tests with zero failures, errors, or skips and exact
-class counts: EncryptedHistory 16, ChatScreen 4, ChatHttpE2E 1.
+Validation snapshot: code head `0cce771fc5927efb6b0fdf19739a6125e46d9827`
+(PR #45, before this validation-ledger-only documentation commit). Final PR
+head checks are rerun after this update; use those checks as the final evidence.
+On each API, JUnit XML must record at least 21 tests with zero failures,
+errors, or skips and exact class counts: EncryptedHistory 16, ChatScreen 4,
+ChatHttpE2E 1.
 
 | Area | Result |
 | --- | --- |
-| JVM / Android Unit | Pending candidate CI |
-| Mock HTTP / Android Integration | Pending candidate CI |
-| Egress / Android Security | Pending candidate CI |
-| API 35 instrumentation | Pending JUnit XML |
-| API 26 instrumentation | Pending JUnit XML |
-| Real OS Process Death | Pending ADB harness on both APIs |
-| 100 conversation / 100 message history stress | Existing coverage; rerun on candidate head |
-| Streaming fragmentation stress | Existing coverage; rerun on candidate head |
+| JVM / Android Unit | PASS — 9 tests, 0 failures/errors/skips (Android run 39227204386) |
+| Mock HTTP / Android Integration | PASS — 18 tests, 0 failures/errors/skips (Android run 39227204386) |
+| Egress / Android Security | PASS — 8 tests, 0 failures/errors/skips (Android run 39227204386) |
+| API 35 instrumentation | PASS — 21 tests: EncryptedHistory 16, ChatScreen 4, ChatHttpE2E 1; 0 failures/errors/skips (Android run 39227204386) |
+| API 26 instrumentation | PASS — 21 tests: EncryptedHistory 16, ChatScreen 4, ChatHttpE2E 1; 0 failures/errors/skips (Android run 39227204386) |
+| Real OS Process Death | PASS — API 26 and 35 each survived two host-issued force-stop/restart cycles; completed history restored, pending marked outcome-unknown without replay, and deletions persisted (Android run 39227204386) |
+| 100 conversation / 100 message history stress | PASS — both deterministic Room stress cases ran in EncryptedHistoryTest on API 26 and 35 (Android run 39227204386) |
+| Streaming fragmentation stress | PASS — Mock HTTP integration suite, including fragmented streaming response coverage (Android run 39227204386) |
 | Pixel 7a physical-device acceptance | NOT_RUN until a physical device is available |
 | Live Provider E2E | NOT_RUN / BLOCKED pending eligibility and Owner activation |
 
@@ -123,5 +126,8 @@ Physical-device result: **NOT_RUN** in the current Cloud Linux environment.
 - **2026-12-31 Beta:** remains conditional on the unapproved provider, data,
   retention, billing, device, and distribution decisions and final CI evidence.
 
-Next priority: finish candidate validation on its final PR head, then resolve
-the remaining owner decisions without enabling live egress by implication.
+Next priority: use final-head CI evidence to close the candidate validation,
+then resolve provider eligibility, data classification/minimization, retention,
+provider processing and budget, distribution, and production activation as
+separate Owner decisions. Keep live egress disabled while those decisions are
+open.

@@ -22,7 +22,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                 runBlocking(Dispatchers.IO) {
                     when (intent.action) {
                         ACTION -> when (phase) {
-                            "prepare" -> prepare(context, repository)
+                            "prepare" -> prepare(context, repository, token)
                             "verify" -> verify(context, repository, token)
                             "delete-all" -> repository.deleteAll()
                             "verify-empty" -> check(listOf("process-death-complete", "process-death-pending", "process-death-deleted")
@@ -40,7 +40,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         }.start()
     }
 
-    private suspend fun prepare(context: Context, repository: ConversationRepository) {
+    private suspend fun prepare(context: Context, repository: ConversationRepository, token: String) {
         val base = System.currentTimeMillis()
         repository.delete("process-death-complete")
         repository.delete("process-death-pending")

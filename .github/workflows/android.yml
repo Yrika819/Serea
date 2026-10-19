@@ -268,7 +268,7 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            set -euo pipefail
+            bash -euo pipefail <<'ANDROID_EMULATOR_SCRIPT'
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest
@@ -277,6 +277,7 @@ jobs:
             EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh 2>&1 | tee app/build/outputs/androidTest-results/process-death-api35.log
             echo '### Android API 35 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
+            ANDROID_EMULATOR_SCRIPT
         id: instrumentation
       - name: Install API 26 emulator image
         if: steps.instrumentation.outputs.result == 'PASS'
@@ -294,7 +295,7 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            set -euo pipefail
+            bash -euo pipefail <<'ANDROID_EMULATOR_SCRIPT'
             test ! -e app/build/outputs/androidTest-results/connected
             adb devices -l
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
@@ -302,6 +303,7 @@ jobs:
             python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
             EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh 2>&1 | tee app/build/outputs/androidTest-results/process-death-api26.log
             echo '### Android API 26 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            ANDROID_EMULATOR_SCRIPT
       - name: Mark required emulator failure in summary
         if: failure()
         run: |
@@ -322,8 +324,12 @@ jobs:
           set -euo pipefail
           bundle='android/app/build/outputs/pixel7a-final-campaign'
           mkdir -p "$bundle/tests"
-          cp android/app/build/outputs/pixel7a-candidate/apk/debug/app-debug.apk "$bundle/serea-debug.apk"
-          cp android/app/build/outputs/pixel7a-candidate/pixel7a-reacceptance/provenance.txt "$bundle/provenance.txt"
+          candidate='android/app/build/outputs/pixel7a-candidate'
+          apk_path="$(find "$candidate" -type f -name app-debug.apk -print -quit)"
+          provenance_path="$(find "$candidate" -type f -name provenance.txt -print -quit)"
+          test -n "$apk_path" && test -n "$provenance_path"
+          cp "$apk_path" "$bundle/serea-debug.apk"
+          cp "$provenance_path" "$bundle/provenance.txt"
           if [ -d android/app/build/outputs/androidTest-results/api35 ]; then
             cp -R android/app/build/outputs/androidTest-results/api35 "$bundle/tests/api35"
           fi

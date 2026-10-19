@@ -105,7 +105,7 @@ class ChatScreenTest {
             assertEquals(WindowManager.LayoutParams.FLAG_SECURE,
                 compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
         compose.waitUntil(30_000) {
             var secure = true
             compose.activityRule.scenario.onActivity {

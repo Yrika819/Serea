@@ -35,15 +35,21 @@ phase() {
   return 1
 }
 
+verify_database_file() {
+  local listing
+  listing=$(adb shell run-as "$package" ls -l databases | tr -d '\r')
+  printf '%s\n' "$listing"
+  printf '%s\n' "$listing" | awk '$5 ~ /^[0-9]+$/ && $5 > 0 && $NF == "serea-history.db" { found=1 } END { exit !found }'
+}
+
 phase prepare
 echo "Process-death harness: checking prepared encrypted database"
-adb shell run-as "$package" ls -la databases
-adb shell run-as "$package" test -s databases/serea-history.db
+verify_database_file
 echo "Process-death harness: force-stopping target app without clearing data"
 adb shell am force-stop "$package"
 after_path=$(adb shell pm path "$package" | tr -d '\r')
 test "$before_path" = "$after_path"
-adb shell run-as "$package" test -s databases/serea-history.db
+verify_database_file
 adb shell am start -W -n "$activity" >/dev/null
 sleep 2
 phase verify

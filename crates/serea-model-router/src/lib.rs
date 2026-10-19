@@ -2839,11 +2839,15 @@ mod tests {
             failure_reason: None,
             extensions: Default::default(),
         };
-        store
-            .transact_with_participants(&TestTaskAudit, &TestTaskEvents, |tx| {
-                tx.insert_task(&task, &transition).map(|_| ())
-            })
-            .is_ok()
+        match store.transact_with_participants(&TestTaskAudit, &TestTaskEvents, |tx| {
+            tx.insert_task(&task, &transition).map(|_| ())
+        }) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("budget task fixture insert failed for suffix {suffix}: {error:?}");
+                false
+            }
+        }
     }
 
     fn seed_terminal_task_model_calls(store: &Store, task_id: &TaskId, count: u8) {

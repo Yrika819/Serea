@@ -11,6 +11,7 @@ adb get-state >/dev/null
 test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${EXPECTED_API_LEVEL:?EXPECTED_API_LEVEL must be set}"
 before_path=$(adb shell pm path "$package" | tr -d '\r')
 if [ -z "$before_path" ]; then
+  ./gradlew --no-daemon :app:assembleDebug
   test -s app/build/outputs/apk/debug/app-debug.apk
   adb install app/build/outputs/apk/debug/app-debug.apk
   before_path=$(adb shell pm path "$package" | tr -d '\r')

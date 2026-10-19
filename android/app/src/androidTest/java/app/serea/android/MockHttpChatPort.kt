@@ -38,7 +38,7 @@ internal class MockHttpChatPort(endpoint: HttpUrl, certificates: HandshakeCertif
             })
         }
         val body = JsonObject().apply {
-            addProperty("model", "mock-http")
+            addProperty("model", request.selectedModelId ?: "mock-http")
             addProperty("stream", false)
             add("messages", messages)
         }.toString().toRequestBody("application/json; charset=utf-8".toMediaType())

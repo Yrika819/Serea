@@ -128,4 +128,20 @@ class ChatScreenTest {
         compose.onAllNodes(hasText("分類: UNKNOWN", substring = true)).assertCountEquals(1)
         compose.onAllNodes(hasText("予定本文: draft stays local")).assertCountEquals(1)
     }
+
+    @Test fun modelModeAndPolicyPersistWhenSettingsAreReopened() {
+        ModelSelectionSettings(compose.activity.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE))
+            .save(ModelRoutingPolicy())
+        awaitComposerEnabled()
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("Manual").performScrollTo().performClick()
+        compose.onNodeWithText("Cost Priority").performScrollTo().performClick()
+        compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("選択Model ID: なし").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Manual Model Picker: 選択可能なモデルはありません。任意のModel IDやProvider Hostは入力できません。")
+            .performScrollTo().assertIsDisplayed()
+    }
 }

@@ -268,16 +268,15 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            bash -euo pipefail <<'ANDROID_EMULATOR_SCRIPT'
+            test ! -e app/build/outputs/androidTest-results/connected
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest
             python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
             mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
-            EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh 2>&1 | tee app/build/outputs/androidTest-results/process-death-api35.log
+            EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh > app/build/outputs/androidTest-results/process-death-api35.log 2>&1; result=$?; cat app/build/outputs/androidTest-results/process-death-api35.log; test "$result" -eq 0
             echo '### Android API 35 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
-            ANDROID_EMULATOR_SCRIPT
         id: instrumentation
       - name: Install API 26 emulator image
         if: steps.instrumentation.outputs.result == 'PASS'
@@ -295,15 +294,13 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            bash -euo pipefail <<'ANDROID_EMULATOR_SCRIPT'
             test ! -e app/build/outputs/androidTest-results/connected
             adb devices -l
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
             ./gradlew --no-daemon connectedDebugAndroidTest
             python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
-            EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh 2>&1 | tee app/build/outputs/androidTest-results/process-death-api26.log
+            EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh > app/build/outputs/androidTest-results/process-death-api26.log 2>&1; result=$?; cat app/build/outputs/androidTest-results/process-death-api26.log; test "$result" -eq 0
             echo '### Android API 26 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
-            ANDROID_EMULATOR_SCRIPT
       - name: Mark required emulator failure in summary
         if: failure()
         run: |

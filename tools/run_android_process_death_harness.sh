@@ -5,6 +5,7 @@ package="app.serea.android.demo"
 activity="$package/app.serea.android.MainActivity"
 receiver="$package/app.serea.android.ProcessDeathHarnessReceiver"
 action="app.serea.android.action.PROCESS_DEATH_HARNESS"
+run_token="process-death-${EXPECTED_API_LEVEL:?EXPECTED_API_LEVEL must be set}-$$-$(date +%s)"
 
 command -v adb >/dev/null
 adb get-state >/dev/null
@@ -17,14 +18,13 @@ if [ -z "$before_path" ]; then
   before_path=$( (adb shell pm path "$package" || true) | tr -d '\r')
 fi
 test -n "$before_path"
-adb logcat -c
 
 phase() {
   echo "Process-death harness: starting phase $1"
-  adb shell am broadcast -n "$receiver" -a "$action" --es phase "$1"
+  adb shell am broadcast -n "$receiver" -a "$action" --es phase "$1" --es token "$run_token"
   for _ in $(seq 1 30); do
-    if adb logcat -d -s SereaProcessDeath:I | grep -F "PASS:$1" >/dev/null; then return 0; fi
-    if adb logcat -d -s SereaProcessDeath:E | grep -F "FAIL:$1:" >/dev/null; then
+    if adb logcat -d -s SereaProcessDeath:I | grep -F "PASS:$run_token:$1" >/dev/null; then return 0; fi
+    if adb logcat -d -s SereaProcessDeath:E | grep -F "FAIL:$run_token:$1:" >/dev/null; then
       adb logcat -d -s SereaProcessDeath:E
       return 1
     fi

@@ -12,12 +12,16 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val pending = goAsync()
         Thread {
+            val token = intent.getStringExtra("token") ?: "missing-token"
+            val phase = intent.getStringExtra("phase") ?: "missing-phase"
             try {
+                check(token != "missing-token")
+                check(phase != "missing-phase")
                 val database = SereaHistoryDatabase.open(context)
                 val repository = ConversationRepository(database.historyDao(), KeystoreAesGcm("serea-history-v1"))
                 runBlocking(Dispatchers.IO) {
                     when (intent.action) {
-                        ACTION -> when (intent.getStringExtra("phase")) {
+                        ACTION -> when (phase) {
                             "prepare" -> prepare(repository)
                             "verify" -> verify(repository)
                             "delete-all" -> repository.deleteAll()
@@ -27,9 +31,9 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                         }
                     }
                 }
-                Log.i(TAG, "PASS:${intent.getStringExtra("phase")}")
+                Log.i(TAG, "PASS:$token:$phase")
             } catch (error: Throwable) {
-                Log.e(TAG, "FAIL:${intent.getStringExtra("phase")}:${error.javaClass.simpleName}")
+                Log.e(TAG, "FAIL:$token:$phase:${error.javaClass.simpleName}")
             } finally {
                 pending.finish()
             }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euxo pipefail
 
 package="app.serea.android.demo"
 activity="$package/app.serea.android.MainActivity"
@@ -14,7 +14,8 @@ test -n "$before_path"
 adb logcat -c
 
 phase() {
-  adb shell am broadcast -n "$receiver" -a "$action" --es phase "$1" >/dev/null
+  echo "Process-death harness: starting phase $1"
+  adb shell am broadcast -n "$receiver" -a "$action" --es phase "$1"
   for _ in $(seq 1 30); do
     if adb logcat -d -s SereaProcessDeath:I | grep -F "PASS:$1" >/dev/null; then return 0; fi
     if adb logcat -d -s SereaProcessDeath:E | grep -F "FAIL:$1:" >/dev/null; then
@@ -29,7 +30,10 @@ phase() {
 }
 
 phase prepare
+echo "Process-death harness: checking prepared encrypted database"
+adb shell run-as "$package" ls -la databases
 adb shell run-as "$package" test -s databases/serea-history.db
+echo "Process-death harness: force-stopping target app without clearing data"
 adb shell am force-stop "$package"
 after_path=$(adb shell pm path "$package" | tr -d '\r')
 test "$before_path" = "$after_path"
@@ -40,6 +44,7 @@ phase verify
 
 # Verify Delete All survives a second real force-stop/relaunch boundary.
 phase delete-all
+echo "Process-death harness: force-stopping after Delete All"
 adb shell am force-stop "$package"
 adb shell am start -W -n "$activity" >/dev/null
 sleep 2

@@ -156,13 +156,17 @@ internal class ChatViewModel(
     private val modelChat: ModelChatPort,
     private val historyRepository: ConversationRepository? = null,
     private val usageRepository: UsageRepository? = null,
+    initialConversation: Conversation? = null,
 ) : ViewModel() {
-    private val mutableState = MutableStateFlow(ChatUiState(isRestoring = historyRepository != null))
+    private val mutableState = MutableStateFlow(ChatUiState(
+        conversation = initialConversation ?: Conversation(id = UUID.randomUUID().toString()),
+        isRestoring = historyRepository != null && initialConversation == null,
+    ))
     val state: StateFlow<ChatUiState> = mutableState.asStateFlow()
     private var activeJob: Job? = null
     private var activeMessageId: String? = null
 
-    init { if (historyRepository != null) restoreLatest() }
+    init { if (historyRepository != null && initialConversation == null) restoreLatest() }
 
     fun updateInput(value: String) = mutableState.update { it.copy(input = value, errorMessage = null) }
 

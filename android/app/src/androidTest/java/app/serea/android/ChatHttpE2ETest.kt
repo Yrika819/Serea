@@ -45,11 +45,12 @@ class ChatHttpE2ETest {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"second answer"},"done":true,"prompt_eval_count":11,"eval_count":3}"""))
         val conversationId = "http-e2e-conversation"
         runBlocking { history.create(conversationId, "HTTP E2E") }
-        activeVm = ChatViewModel(UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat")), usage), history, usage)
+        activeVm = ChatViewModel(UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat")), usage),
+            history, usage, Conversation(conversationId))
         compose.setContent { SereaTheme { ChatScreen(activeVm, usage = usage) } }
 
         val composer = compose.onNodeWithTag("chat-composer")
-        compose.waitUntil(30_000) { !activeVm.state.value.isRestoring }
+        assertEquals(conversationId, activeVm.state.value.conversation.id)
         compose.waitUntil(30_000) { runCatching { composer.assertIsEnabled() }.isSuccess }
         composer.performTextInput("first question")
         compose.onNodeWithText("送信").performClick()

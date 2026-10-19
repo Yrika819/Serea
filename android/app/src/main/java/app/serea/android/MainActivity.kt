@@ -36,12 +36,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -75,7 +78,7 @@ class MainActivity : ComponentActivity() {
         ConversationRepository(database.historyDao(), KeystoreAesGcm("serea-history-v1"))
     }
     private val credentials by lazy { CredentialRepository(this) }
-    private val chatViewModel: ChatViewModel by viewModels {
+    internal val chatViewModel: ChatViewModel by viewModels {
         ChatViewModel.factory(MockModelChatPort(), history)
     }
 
@@ -121,6 +124,7 @@ data class ModelChatRequest(
     val timeoutMillis: Long = 15_000,
     val classification: DataClassification = DataClassification.UNKNOWN,
     val preparedPersonal: PreparedPersonalData? = null,
+    val context: List<ContextMessage> = emptyList(),
 )
 data class ModelChatResponse(val text: String)
 
@@ -135,7 +139,10 @@ class ModelChatFailure(message: String) : Exception(message)
 class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         kotlinx.coroutines.delay(responseDelayMillis)
-        return ModelChatResponse("Demo response: I received “${request.message}”. No cloud AI was contacted.")
+        val turns = request.context.size / 2
+        val prior = request.context.lastOrNull { it.role == MessageRole.USER }?.text
+        val contextNote = prior?.let { " I remember your previous message: “$it”." }.orEmpty()
+        return ModelChatResponse("Demo response: I received “${request.message}”.$contextNote Context turns: $turns. No cloud AI was contacted.")
     }
 }
 
@@ -153,6 +160,10 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
         val snapshot = mutableState.value
         val messageText = snapshot.input.trim()
         if (messageText.isEmpty() || snapshot.isLoading || snapshot.isRestoring || snapshot.showingHistory) return
+        if (messageText.length > ChatContextBuilder.MAX_INPUT_CHARS) {
+            mutableState.update { it.copy(errorMessage = "Message exceeds the ${ChatContextBuilder.MAX_INPUT_CHARS}-character local limit.") }
+            return
+        }
         val conversationId = snapshot.conversation.id
         val userMessage = ChatMessage(UUID.randomUUID().toString(), MessageRole.USER, messageText, nextMessageTime(snapshot.conversation), status = "PENDING")
         activeMessageId = userMessage.id
@@ -162,12 +173,14 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
         activeJob = viewModelScope.launch {
             try {
                 persist(userMessage, conversationId)
-                val request = ModelChatRequest(conversationId, messageText)
+                val context = ChatContextBuilder.build(snapshot.conversation.messages, messageText)
+                val request = ModelChatRequest(conversationId, messageText, context = context)
                 val reply = withTimeout(request.timeoutMillis) { modelChat.send(request) }
                 val assistant = ChatMessage(UUID.randomUUID().toString(), MessageRole.ASSISTANT, reply.text,
                     nextMessageTime(snapshot.conversation.copy(messages = snapshot.conversation.messages + userMessage)))
-                persist(assistant, conversationId)
-                historyRepository?.updateStatus(userMessage.id, conversationId, "COMPLETED")
+                if (historyRepository != null) {
+                    historyRepository.completeTurn(userMessage.id, assistant.toStoredMessage(conversationId))
+                }
                 mutableState.update { current ->
                     if (current.conversation.id != conversationId) current
                     else current.copy(conversation = current.conversation.copy(messages = current.conversation.messages
@@ -217,6 +230,7 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
     }
 
     fun openConversation(id: String) {
+        cancelCurrent()
         viewModelScope.launch {
             try {
                 val saved = historyRepository?.get(id) ?: return@launch
@@ -233,16 +247,20 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
 
     fun deleteCurrentConversation() {
         val id = mutableState.value.conversation.id
+        cancelCurrent()
+        mutableState.update { it.copy(isRestoring = true, isLoading = false) }
         viewModelScope.launch {
             try { historyRepository?.delete(id); newConversation(); refreshHistory() }
-            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not delete this conversation.") } }
+            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not delete this conversation.", isRestoring = false) } }
         }
     }
 
     fun deleteAllHistory() {
+        cancelCurrent()
+        mutableState.update { it.copy(isRestoring = true, isLoading = false) }
         viewModelScope.launch {
             try { historyRepository?.deleteAll(); newConversation(); mutableState.update { it.copy(history = emptyList()) } }
-            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not delete saved history.") } }
+            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not delete saved history.", isRestoring = false) } }
         }
     }
 
@@ -270,8 +288,7 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
     }
 
     private suspend fun persist(message: ChatMessage, conversationId: String) {
-        historyRepository?.addMessage(StoredMessage(message.id, conversationId, message.role, message.text,
-            message.classification, message.createdAt.toEpochMilli(), message.status))
+        historyRepository?.addMessage(message.toStoredMessage(conversationId))
     }
     private fun nextMessageTime(conversation: Conversation): Instant = maxOf(
         Instant.now(), (conversation.messages.maxOfOrNull { it.createdAt } ?: Instant.EPOCH).plusMillis(1),
@@ -298,6 +315,10 @@ internal class ChatViewModel(private val modelChat: ModelChatPort, private val h
     }
 }
 
+private fun ChatMessage.toStoredMessage(conversationId: String) = StoredMessage(
+    id, conversationId, role, text, classification, createdAt.toEpochMilli(), status,
+)
+
 private fun StoredMessage.toChatMessage() = ChatMessage(id, role, text, Instant.ofEpochMilli(createdAt), classification, status)
 
 @Composable
@@ -320,6 +341,16 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     var cloudOutput by remember { mutableStateOf("") }
     var cloudWorking by remember { mutableStateOf(false) }
     var cloudJob by remember { mutableStateOf<Job?>(null) }
+    LaunchedEffect(state.conversation.messages.size, state.isLoading, state.showingHistory, settingsVisible) {
+        if (!state.showingHistory && !settingsVisible) {
+            val targetIndex = state.conversation.messages.size + if (state.isLoading) 1 else 0
+            if (targetIndex > 0) {
+                withFrameNanos { }
+                withFrameNanos { }
+                listState.scrollToItem(targetIndex - 1)
+            }
+        }
+    }
     SideEffect {
         hostActivity?.window?.let { window ->
             if (settingsVisible) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -435,7 +466,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                     Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else "端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。",
                         style = MaterialTheme.typography.bodyLarge)
                 }
-                LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(), state = listState,
+                LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().testTag("conversation-list"), state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(state.conversation.messages, key = { it.id }) { message ->
                         Surface(color = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
@@ -458,7 +489,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }) }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
-                    modifier = Modifier.weight(1f), label = { Text("Message") },
+                    modifier = Modifier.weight(1f).testTag("chat-composer"), label = { Text("Message") },
                     enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                     maxLines = 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),

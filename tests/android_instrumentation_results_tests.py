@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.verify_android_instrumentation import collect_results
+from tools.verify_android_instrumentation import collect_class_counts, collect_results
 
 
 class InstrumentationResultTests(unittest.TestCase):
@@ -42,6 +42,12 @@ class InstrumentationResultTests(unittest.TestCase):
             self.write_xml(root, "broken.xml", "<testsuite")
             with self.assertRaises(ValueError):
                 collect_results(root)
+
+    def test_counts_required_test_classes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_xml(root, "results.xml", '<testsuite tests="2"><testcase classname="a.Storage"/><testcase classname="a.Chat"/></testsuite>')
+            self.assertEqual({"a.Storage": 1, "a.Chat": 1}, collect_class_counts(root))
 
 
 if __name__ == "__main__":

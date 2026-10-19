@@ -120,12 +120,31 @@ interface HistoryDao {
     @Query("SELECT * FROM messages WHERE conversationId = :id ORDER BY createdAt, id") suspend fun messages(id: String): List<MessageRow>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putConversation(row: ConversationRow)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putMessage(row: MessageRow)
+    @Query("UPDATE messages SET status = :status WHERE id = :messageId AND conversationId = :conversationId AND status = 'PENDING'")
+    suspend fun transitionPendingMessage(messageId: String, conversationId: String, status: String): Int
     @Transaction
     suspend fun putMessageIfConversationIsActive(row: MessageRow) {
         val conversation = conversation(row.conversationId)
             ?: throw IllegalArgumentException("Conversation does not exist")
         putMessage(row)
         putConversation(conversation.copy(updatedAt = maxOf(conversation.updatedAt, row.createdAt)))
+    }
+    @Transaction
+    suspend fun completePendingTurn(userMessageId: String, assistant: MessageRow) {
+        val conversation = conversation(assistant.conversationId)
+            ?: throw IllegalArgumentException("Conversation does not exist")
+        val userMessage = messages(assistant.conversationId).firstOrNull { it.id == userMessageId }
+            ?: throw IllegalArgumentException("Pending user message does not exist")
+        require(userMessage.role == MessageRole.USER.name && userMessage.status == "PENDING") {
+            "Only a pending user message can be completed"
+        }
+        require(assistant.role == MessageRole.ASSISTANT.name && assistant.status == "COMPLETED")
+        require(assistant.id != userMessageId)
+        putMessage(assistant)
+        check(transitionPendingMessage(userMessageId, assistant.conversationId, "COMPLETED") == 1) {
+            "Pending message state changed before completion"
+        }
+        putConversation(conversation.copy(updatedAt = maxOf(conversation.updatedAt, assistant.createdAt)))
     }
     @Query("UPDATE conversations SET deletedAt = :at, updatedAt = :at WHERE id = :id") suspend fun deleteConversation(id: String, at: Long)
     @Query("DELETE FROM conversations") suspend fun deleteAllConversations()
@@ -171,9 +190,17 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
             encrypt(message.text, "message:${message.id}:body"), message.classification.name,
             message.createdAt, message.status))
     }
+    suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
+        require(assistant.role == MessageRole.ASSISTANT && assistant.status == "COMPLETED")
+        dao.completePendingTurn(userMessageId, MessageRow(
+            assistant.id, assistant.conversationId, assistant.role.name,
+            encrypt(assistant.text, "message:${assistant.id}:body"), assistant.classification.name,
+            assistant.createdAt, assistant.status,
+        ))
+    }
     suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
-        val old = dao.messages(conversationId).firstOrNull { it.id == messageId } ?: return
-        dao.putMessage(old.copy(status = status))
+        require(status in setOf("COMPLETED", "FAILED", "OUTCOME_UNKNOWN"))
+        dao.transitionPendingMessage(messageId, conversationId, status)
     }
     suspend fun delete(id: String, now: Long = System.currentTimeMillis()) {
         dao.deleteConversationAndMessages(id, now)

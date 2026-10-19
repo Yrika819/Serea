@@ -33,8 +33,10 @@ The `Android Emulator Required Gate` workflow job is emitted for every pull
 request. Android implementation, build, test, or security configuration changes
 require Android build, unit, mock HTTP, security, dependency audit, and API 35
 emulator jobs to succeed. The emulator job must run
-`connectedDebugAndroidTest` and produce JUnit XML for at least thirteen tests with
-zero failures, errors, or skipped tests. Missing emulator access or missing
+`connectedDebugAndroidTest` on both API 35 and API 26 and produce JUnit XML for
+at least fifteen tests on each image, including exactly twelve encrypted
+history tests and three Compose tests, with zero failures, errors, or skipped
+tests. Missing emulator access or missing
 JUnit output fails the gate. Android documentation-only changes run
 documentation validation without requiring an emulator.
 

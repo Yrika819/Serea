@@ -174,7 +174,7 @@ jobs:
     needs: android-changes
     if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 120
     outputs:
       instrumentation: ${{ steps.instrumentation.outputs.result }}
     steps:
@@ -189,7 +189,7 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools
-      - name: Install API 35 emulator and Google APIs image
+      - name: Install API 35 emulator image
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
       - name: Diagnose KVM before permission changes
         run: |
@@ -248,9 +248,34 @@ jobs:
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 13
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 15 --require-class app.serea.android.EncryptedHistoryTest=12 --require-class app.serea.android.ChatScreenTest=3
+            mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
+            echo '### Android API 35 Instrumentation: PASS (15 tests, zero failures/errors/skips)' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
         id: instrumentation
+      - name: Install API 26 emulator image
+        if: steps.instrumentation.outputs.result == 'PASS'
+        run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
+      - name: Run API 26 Pixel emulator and all instrumentation tests
+        if: steps.instrumentation.outputs.result == 'PASS'
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
+        timeout-minutes: 45
+        with:
+          api-level: 26
+          target: google_apis
+          arch: x86
+          profile: pixel
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          working-directory: android
+          script: |
+            set -eu
+            test ! -e app/build/outputs/androidTest-results/connected
+            adb devices -l
+            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
+            ./gradlew --no-daemon connectedDebugAndroidTest
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 15 --require-class app.serea.android.EncryptedHistoryTest=12 --require-class app.serea.android.ChatScreenTest=3
+            echo '### Android API 26 Instrumentation: PASS (15 tests, zero failures/errors/skips)' >> "$GITHUB_STEP_SUMMARY"
       - name: Mark required emulator failure in summary
         if: failure()
         run: |
@@ -262,6 +287,7 @@ jobs:
           name: serea-android-emulator-evidence
           if-no-files-found: warn
           path: |
+            android/app/build/outputs/androidTest-results/api35/**/*.xml
             android/app/build/outputs/androidTest-results/connected/**/*.xml
             android/app/build/reports/androidTests/connected/**/*.html
             ${{ runner.temp }}/emulator.log

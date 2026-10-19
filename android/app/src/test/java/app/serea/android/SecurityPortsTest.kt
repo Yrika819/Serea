@@ -5,6 +5,33 @@ import org.junit.Test
 import kotlinx.coroutines.runBlocking
 
 class SecurityPortsTest {
+    @Test fun modelRoutingCannotChangeClassificationOrBypassEgressGate() = runBlocking {
+        var providerCalls = 0
+        val descriptor = ModelDescriptor("fixture/public-only", "fixture", "Fixture",
+            Knowledge.Known(4096), Knowledge.Known(512), ModelCapabilities(setOf("text/plain")),
+            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "unit-test fixture")
+        val now = 50_000L
+        val provider = EgressCheckedModelChatPort(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                providerCalls += 1
+                return ModelChatResponse("unexpected")
+            }
+        }, { now })
+        val routed = RoutedModelChatPort(provider, AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor)))) {
+            ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = descriptor.id)
+        }
+        try {
+            val context = emptyList<ContextMessage>()
+            val sendId = "route-test"
+            routed.send(ModelChatRequest("conversation", "classified sensitive", sendId = sendId,
+                classification = DataClassification.SECRET, egressContract = EgressContract("conversation", sendId,
+                    DataOrigin.USER_AUTHORED, DataClassification.SECRET, "https://ollama.com/api/chat",
+                    "classified sensitive", context, PayloadPreparation.RAW, now, now + 30_000)))
+            throw AssertionError("routing cannot authorize SECRET data")
+        } catch (_: ModelChatFailure) { }
+        assertEquals(0, providerCalls)
+    }
+
     @Test fun publicMayPassAndUnpreparedPersonalFailsClosed() {
         assertEquals(EgressDecision.ALLOW, ChatEgressGate.decide(DataClassification.PUBLIC))
         assertEquals(EgressDecision.DENY_UNPREPARED, ChatEgressGate.decide(DataClassification.PERSONAL))

@@ -93,6 +93,28 @@ class ChatHttpE2ETest {
         assertEquals(20L, total.dailyProviderInputTokens + total.dailyProviderOutputTokens)
     }
 
+    @Test fun manualRouterSelectionIsPassedToMockHttpRequestAndNeverFallsBack() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"message":{"content":"routed answer"},"done":true,"prompt_eval_count":3,"eval_count":2}"""))
+        val descriptor = ModelDescriptor("fixture/manual-v1", "fixture", "Fixture Manual",
+            Knowledge.Known(8192), Knowledge.Known(512), ModelCapabilities(setOf("text/plain")),
+            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture")
+        val router = AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor)))
+        val routed = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) {
+            ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "fixture/manual-v1")
+        }
+        val result = routed.send(ModelChatRequest("route-conversation", "hello"))
+        assertEquals("routed answer", result.text)
+        val sent = JsonParser.parseString(server.takeRequest(5, TimeUnit.SECONDS)!!.body.readUtf8()).asJsonObject
+        assertEquals("fixture/manual-v1", sent.get("model").asString)
+
+        val unavailable = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) {
+            ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "missing")
+        }
+        runCatching { unavailable.send(ModelChatRequest("route-conversation", "hello")) }
+            .onSuccess { throw AssertionError("missing manual model must fail") }
+        assertEquals("unavailable manual selection made no HTTP request", 1, server.requestCount)
+    }
+
     private fun awaitAssistant(text: String) {
         compose.waitUntil(30_000) { !stateSnapshot().isLoading || stateSnapshot().errorMessage != null }
         val completed = stateSnapshot()

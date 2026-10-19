@@ -23,7 +23,7 @@ class OllamaCloudAdapterTest {
     private val key = "test-only-not-a-real-key"
     private fun adapter(enabled: Boolean = true, reader: CredentialReader = object : CredentialReader {
         override fun readForRequest() = key
-    }) = OllamaCloudAdapter(reader, CloudSettings(enabled), server.url("/api/chat"),
+    }) = OllamaCloudAdapter(reader, CloudSettings(enabled, "gemma4:31b"), server.url("/api/chat"),
         OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build())
 
     @After fun close() { server.shutdown() }
@@ -167,7 +167,7 @@ class OllamaCloudAdapterTest {
 
     @Test fun arbitraryHttpsEndpointCannotBeConfigured() {
         try {
-            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true),
+            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true, "gemma4:31b"),
                 "https://attacker.example/api/chat".toHttpUrl(), OkHttpClient())
             throw AssertionError("arbitrary host must be rejected")
         } catch (_: IllegalArgumentException) { }
@@ -222,7 +222,7 @@ class OllamaCloudAdapterTest {
         val endpoint = server.url("/api/chat")
         server.shutdown()
         val failure = capture {
-            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true), endpoint,
+            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true, "gemma4:31b"), endpoint,
                 OkHttpClient.Builder().followRedirects(false).build()).send(EgressApprovedPayload.fixedPublicContractProbe())
         }
         assertEquals(ProviderFailureKind.NETWORK, failure.kind)
@@ -233,7 +233,7 @@ class OllamaCloudAdapterTest {
         val serverTrust = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         server.useHttps(serverTrust.sslSocketFactory(), false)
         val failure = capture {
-            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true),
+            OllamaCloudAdapter(object : CredentialReader { override fun readForRequest() = key }, CloudSettings(true, "gemma4:31b"),
                 server.url("/api/chat"), OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build())
                 .send(EgressApprovedPayload.fixedPublicContractProbe())
         }

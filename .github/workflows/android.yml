@@ -111,7 +111,7 @@ jobs:
           cache: gradle
       - name: ViewModel state and cancellation tests
         working-directory: android
-        run: ./gradlew --no-daemon testDebugUnitTest --tests '*ChatViewModelTest'
+        run: ./gradlew --no-daemon testDebugUnitTest --tests '*ChatViewModelTest' --tests '*AdaptiveModelRouterTest'
       - name: Instrumentation JUnit verifier regression tests
         run: python3 -m unittest discover -s tests -p android_instrumentation_results_tests.py
       - name: Upload unit JUnit report
@@ -249,10 +249,10 @@ jobs:
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 21 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=4 --require-class app.serea.android.ChatHttpE2ETest=1
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 23 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=5 --require-class app.serea.android.ChatHttpE2ETest=2
             mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
             EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh
-            echo '### Android API 35 Instrumentation: PASS (21 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            echo '### Android API 35 Instrumentation: PASS (23 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
         id: instrumentation
       - name: Install API 26 emulator image
@@ -276,9 +276,9 @@ jobs:
             adb devices -l
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 21 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=4 --require-class app.serea.android.ChatHttpE2ETest=1
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 23 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=5 --require-class app.serea.android.ChatHttpE2ETest=2
             EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh
-            echo '### Android API 26 Instrumentation: PASS (21 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            echo '### Android API 26 Instrumentation: PASS (23 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: Mark required emulator failure in summary
         if: failure()
         run: |

@@ -22,7 +22,8 @@ import kotlin.coroutines.cancellation.CancellationException
 import java.util.concurrent.TimeUnit
 
 /** Cloud mode is deliberately off until the Owner ratifies the data-egress contract. */
-data class CloudSettings(val enabled: Boolean = false, val modelId: String = "gemma4:31b")
+/** The historical model string is not a default; callers must name an explicitly reviewed candidate. */
+data class CloudSettings(val enabled: Boolean = false, val modelId: String = "")
 internal interface CredentialReader { fun readForRequest(): String }
 
 data class ProviderUsage(val inputTokens: Int?, val outputTokens: Int?)
@@ -83,9 +84,10 @@ class OllamaCloudAdapter private constructor(
         },
     )
 
-    suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit = {}): CloudReply {
+    suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit = {}, selectedModelId: String? = null): CloudReply {
         if (!settings.enabled) throw ProviderFailure(ProviderFailureKind.DISABLED)
-        if (settings.modelId !in SUPPORTED_MODEL_IDS) {
+        val modelId = selectedModelId ?: settings.modelId
+        if (modelId !in SUPPORTED_MODEL_IDS) {
             throw ProviderFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
         }
         if (payload.messages.sumOf { it.first.length.toLong() + it.second.toByteArray(Charsets.UTF_8).size + 64L } > MAX_INPUT_BYTES) {
@@ -95,7 +97,7 @@ class OllamaCloudAdapter private constructor(
             val key = try { credentials.readForRequest() } catch (_: IllegalStateException) { throw ProviderFailure(ProviderFailureKind.CREDENTIAL_MISSING) }
             catch (_: HistoryUnavailableException) { throw ProviderFailure(ProviderFailureKind.CREDENTIAL_INVALID) }
             val requestJson = JsonObject().apply {
-                addProperty("model", settings.modelId)
+                addProperty("model", modelId)
                 add("messages", JsonArray().apply {
                     payload.messages.forEach { (role, content) -> add(JsonObject().apply { addProperty("role", role); addProperty("content", content) }) }
                 })
@@ -197,6 +199,7 @@ class OllamaCloudAdapter private constructor(
         private const val MAX_RESPONSE_BYTES = 1024 * 1024
         private const val MAX_LINE_BYTES = 64 * 1024
         private const val MAX_OUTPUT_TOKENS = 512
+        // Retained solely for the old fixed public contract probe. This is not a Catalog entry or recommendation.
         private val SUPPORTED_MODEL_IDS = setOf("gemma4:31b")
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
@@ -226,7 +229,7 @@ internal class OllamaModelChatPort(
         }
         val payload = evaluation.payload ?: throw ModelChatFailure("Cloud egress approval is unavailable.")
         return try {
-            adapter.send(payload).let { ModelChatResponse(it.text, it.usage) }
+            adapter.send(payload, selectedModelId = request.selectedModelId).let { ModelChatResponse(it.text, it.usage) }
         } catch (failure: ProviderFailure) {
             throw ModelChatFailure(failure.message ?: "Cloud request failed.")
         }

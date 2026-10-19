@@ -108,7 +108,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: serea-android-pixel7a-ui-reliability
+          name: serea-android-pixel7a-debug-apk-candidate
           if-no-files-found: warn
           path: |
             android/app/build/outputs/apk/debug/*.apk
@@ -194,8 +194,8 @@ jobs:
 
   android-storage-emulator:
     name: Android Storage and Emulator
-    needs: android-changes
-    if: needs.android-changes.outputs.android == 'true'
+    needs: [android-changes, android-build]
+    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     outputs:
@@ -267,13 +267,13 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            set -eu
+            set -euo pipefail
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest
             python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
             mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
-            EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh
+            EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh 2>&1 | tee app/build/outputs/androidTest-results/process-death-api35.log
             echo '### Android API 35 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
         id: instrumentation
@@ -293,29 +293,69 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            set -eu
+            set -euo pipefail
             test ! -e app/build/outputs/androidTest-results/connected
             adb devices -l
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
             ./gradlew --no-daemon connectedDebugAndroidTest
             python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
-            EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh
+            EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh 2>&1 | tee app/build/outputs/androidTest-results/process-death-api26.log
             echo '### Android API 26 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: Mark required emulator failure in summary
         if: failure()
         run: |
           echo '### Android Emulator Required Gate: FAIL (emulator or Instrumentation Test did not complete successfully)' >> "$GITHUB_STEP_SUMMARY"
+      - name: Download APK candidate and assemble Pixel 7a evidence bundle
+        if: always() && needs.android-build.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-android-pixel7a-debug-apk-candidate
+          path: android/app/build/outputs/pixel7a-candidate
+      - name: Add emulator reports to Pixel 7a evidence bundle
+        if: always() && needs.android-build.result == 'success'
+        env:
+          JOB_RESULT: ${{ job.status }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          bundle='android/app/build/outputs/pixel7a-final-campaign'
+          mkdir -p "$bundle/tests"
+          cp android/app/build/outputs/pixel7a-candidate/apk/debug/app-debug.apk "$bundle/serea-debug.apk"
+          cp android/app/build/outputs/pixel7a-candidate/pixel7a-reacceptance/provenance.txt "$bundle/provenance.txt"
+          if [ -d android/app/build/outputs/androidTest-results/api35 ]; then
+            cp -R android/app/build/outputs/androidTest-results/api35 "$bundle/tests/api35"
+          fi
+          if [ -d android/app/build/outputs/androidTest-results/connected ]; then
+            cp -R android/app/build/outputs/androidTest-results/connected "$bundle/tests/api26"
+          fi
+          mkdir -p "$bundle/process-death"
+          cp android/app/build/outputs/androidTest-results/process-death-api35.log "$bundle/process-death/api35.log" 2>/dev/null || true
+          cp android/app/build/outputs/androidTest-results/process-death-api26.log "$bundle/process-death/api26.log" 2>/dev/null || true
+          cp "$RUNNER_TEMP/emulator.log" "$bundle/process-death/emulator.log" 2>/dev/null || true
+          api35_death=NOT_RUN_OR_FAILED
+          api26_death=NOT_RUN_OR_FAILED
+          if grep -q 'PASS: Android OS Process Death recovery on API 35' "$bundle/process-death/api35.log" 2>/dev/null; then api35_death=PASS; fi
+          if grep -q 'PASS: Android OS Process Death recovery on API 26' "$bundle/process-death/api26.log" 2>/dev/null; then api26_death=PASS; fi
+          {
+            echo "source_commit=$SOURCE_SHA"
+            echo "github_run_id=$RUN_ID"
+            echo "android_storage_emulator_job=$JOB_RESULT"
+            echo "api35_junit_present=$([ -d "$bundle/tests/api35" ] && echo yes || echo no)"
+            echo "api26_junit_present=$([ -d "$bundle/tests/api26" ] && echo yes || echo no)"
+            echo "process_death_api35=$api35_death"
+            echo "process_death_api26=$api26_death"
+            echo 'overall_android_emulator_required_gate=see workflow run summary'
+          } > "$bundle/android-ci-results.txt"
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: serea-android-emulator-evidence
+          name: serea-android-pixel7a-ui-reliability
           if-no-files-found: warn
           path: |
-            android/app/build/outputs/androidTest-results/api35/**/*.xml
-            android/app/build/outputs/androidTest-results/connected/**/*.xml
+            android/app/build/outputs/pixel7a-final-campaign/**
             android/app/build/reports/androidTests/connected/**/*.html
-            ${{ runner.temp }}/emulator.log
 
   android-documentation:
     name: Android Documentation

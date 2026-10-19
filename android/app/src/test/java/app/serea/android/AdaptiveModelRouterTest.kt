@@ -49,6 +49,10 @@ class AdaptiveModelRouterTest {
         val request = RoutingRequest("hello")
         assertEquals("a", router.select(request, ModelRoutingPolicy()).selectedModelId)
         assertEquals("a", router.select(request, ModelRoutingPolicy()).selectedModelId)
+        val withinBudget = router.select(request, ModelRoutingPolicy(maxEstimatedCost = 0.0003, budgetCurrencyCode = "USD"))
+        assertEquals("a", withinBudget.selectedModelId)
+        assertEquals("USD", withinBudget.estimatedCost?.currencyCode)
+        assertNull(router.select(request, ModelRoutingPolicy(maxEstimatedCost = 0.0001, budgetCurrencyCode = "USD")).model)
         val unknown = model("unknown", 1.0).copy(pricing = ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN))
         val result = AdaptiveModelRouter(LocalModelCatalog(listOf(unknown))).select(request,
             ModelRoutingPolicy(autoPolicy = AutoRoutingPolicy.COST_PRIORITY))

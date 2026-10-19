@@ -136,6 +136,9 @@ class ChatScreenTest {
         compose.onNodeWithText("設定").performClick()
         compose.onNodeWithText("Manual").performScrollTo().performClick()
         compose.onNodeWithText("Cost Priority").performScrollTo().performClick()
+        compose.onNodeWithText("任意の1要求費用上限").performScrollTo().performTextInput("0.05")
+        compose.onNodeWithText("通貨コード").performScrollTo().performTextInput("USD")
+        compose.onNodeWithText("Router設定を保存").performScrollTo().performClick()
         compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("設定").performClick()
         compose.onNodeWithText("設定").performClick()
@@ -143,5 +146,7 @@ class ChatScreenTest {
         compose.onNodeWithText("選択Model ID: なし").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Manual Model Picker: 選択可能なモデルはありません。任意のModel IDやProvider Hostは入力できません。")
             .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("0.05").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("USD").performScrollTo().assertIsDisplayed()
     }
 }

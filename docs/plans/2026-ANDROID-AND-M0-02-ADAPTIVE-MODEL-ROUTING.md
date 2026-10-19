@@ -31,6 +31,12 @@ Pixel acceptance NOT_RUN.
   synchronously committed before reporting save completion. They do not share
   provider credential storage. No Room schema changed; schema remains v3 and no
   migration or destructive migration is introduced.
+- The optional per-request estimate cap and its three-letter currency are
+  persisted with the routing policy. The Router calculates an estimate only
+  from verified input/output prices and matching currency. Existing global UTC
+  soft-limit reservations remain separate; per-model actual usage/cost ledger
+  rows are not added in this step, and local estimates do not cap Provider
+  billing.
 - Routing is not an Egress decision. Existing typed egress contracts and
   `EgressCheckedModelChatPort` continue to govern provider dispatch. Classification
   and history metadata are not rewritten by the selection. UNKNOWN, PRIVATE,

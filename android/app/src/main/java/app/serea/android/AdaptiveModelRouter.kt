@@ -13,7 +13,7 @@ enum class ModelCapability { TEXT_INPUT, IMAGE_INPUT, TOOL_CALLING, STRUCTURED_O
 
 private fun validModelId(value: String) = value.matches(Regex("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")) && !value.contains("://")
 private fun Knowledge<Double>.knownNumber(): Double? = (this as? Knowledge.Known<*>)?.value as? Double
-private fun Knowledge<Int>.knownInt(): Int? = (this as? Knowledge.Known<*>)?.value as? Int
+internal fun Knowledge<Int>.knownInt(): Int? = (this as? Knowledge.Known<*>)?.value as? Int
 private fun Knowledge<String>.knownString(): String? = (this as? Knowledge.Known<*>)?.value as? String
 
 data class ModelPricing(
@@ -88,10 +88,11 @@ data class RoutingRequest(
     init { require(contextCharacters >= 0 && requestedOutputTokens > 0) }
 }
 data class CandidateExclusion(val modelId: String, val reason: String)
+data class EstimatedModelCost(val amount: Double, val currencyCode: String, val estimatedInputTokens: Long, val reservedOutputTokens: Int)
 data class ModelSelectionResult(
     val model: ModelDescriptor?, val mode: ModelSelectionMode, val task: ModelTask,
     val reason: String, val constraints: List<String>, val excluded: List<CandidateExclusion>,
-    val unknownFields: List<String>,
+    val unknownFields: List<String>, val estimatedCost: EstimatedModelCost?,
 ) {
     val selectedModelId: String? get() = model?.id
 }
@@ -131,6 +132,7 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
             } else viable.minWithOrNull(compareBy<ModelDescriptor>({ scoreCost(it, request) }, { it.id }))
         }
         val unknowns = selected?.let(::unknowns).orEmpty()
+        val estimatedCost = selected?.let { estimateCost(it, request) }
         val reason = if (selected == null) {
             if (policy.mode == ModelSelectionMode.MANUAL) "指定モデルは利用できません。別モデルへ自動切替はしません。"
             else "条件を満たす登録済みモデルがありません。利用可能なモデルを確認してください。"
@@ -138,7 +140,7 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
         if (policy.maxEstimatedCost != null) constraints += "推定費用上限 ${policy.maxEstimatedCost}"
         if (policy.maxInputTokens != null) constraints += "入力上限 ${policy.maxInputTokens} tokens"
         constraints += "要求出力 ${request.requestedOutputTokens} tokens"
-        return ModelSelectionResult(selected, policy.mode, task, reason, constraints, excluded, unknowns)
+        return ModelSelectionResult(selected, policy.mode, task, reason, constraints, excluded, unknowns, estimatedCost)
     }
 
     private fun rejection(m: ModelDescriptor, r: RoutingRequest, p: ModelRoutingPolicy, task: ModelTask): String? {
@@ -173,6 +175,15 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
             m.pricing.inputPerMillion.knownNumber() != null && m.pricing.outputPerMillion.knownNumber() != null && m.pricing.currencyCode.knownString() != null -> ((r.contextCharacters.toDouble() + r.text.length.toDouble()) * 4.0 * price + r.requestedOutputTokens * output) / 1_000_000
             else -> Double.POSITIVE_INFINITY
         }
+    }
+    private fun estimateCost(m: ModelDescriptor, r: RoutingRequest): EstimatedModelCost? {
+        val input = m.pricing.inputPerMillion.knownNumber() ?: return null
+        val output = m.pricing.outputPerMillion.knownNumber() ?: return null
+        val currency = m.pricing.currencyCode.knownString() ?: return null
+        val inputTokens = Math.multiplyExact(r.contextCharacters.toLong() + r.text.length, 4L)
+        val amount = inputTokens * input / 1_000_000 + r.requestedOutputTokens * output / 1_000_000
+        if (!amount.isFinite()) return null
+        return EstimatedModelCost(amount, currency, inputTokens, r.requestedOutputTokens)
     }
     private fun unknowns(m: ModelDescriptor) = buildList {
         if (m.contextWindow == Knowledge.UNKNOWN) add("Context Window")
@@ -212,11 +223,16 @@ class ModelSelectionSettings(private val preferences: android.content.SharedPref
     fun load(): ModelRoutingPolicy {
         val mode = runCatching { ModelSelectionMode.valueOf(preferences.getString("mode", null) ?: "AUTO") }.getOrDefault(ModelSelectionMode.AUTO)
         val policy = runCatching { AutoRoutingPolicy.valueOf(preferences.getString("policy", null) ?: "BALANCED") }.getOrDefault(AutoRoutingPolicy.BALANCED)
-        return ModelRoutingPolicy(mode, policy, preferences.getString("modelId", null)?.takeIf(::validModelId))
+        val currency = preferences.getString("budgetCurrency", null)?.takeIf { it.matches(Regex("[A-Z]{3}")) }
+        val amount = preferences.getString("maxEstimatedCost", null)?.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 }
+        return ModelRoutingPolicy(mode, policy, preferences.getString("modelId", null)?.takeIf(::validModelId),
+            maxEstimatedCost = amount?.takeIf { currency != null }, budgetCurrencyCode = currency?.takeIf { amount != null })
     }
     fun save(value: ModelRoutingPolicy) {
         require(value.manualModelId == null || validModelId(value.manualModelId))
+        require(value.maxEstimatedCost == null || value.budgetCurrencyCode?.matches(Regex("[A-Z]{3}")) == true)
         check(preferences.edit().putString("mode", value.mode.name).putString("policy", value.autoPolicy.name)
-            .putString("modelId", value.manualModelId).commit())
+            .putString("modelId", value.manualModelId).putString("maxEstimatedCost", value.maxEstimatedCost?.toString())
+            .putString("budgetCurrency", value.budgetCurrencyCode).commit())
     }
 }

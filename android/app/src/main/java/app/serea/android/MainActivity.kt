@@ -367,6 +367,8 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     val modelSettings = remember(context) { ModelSelectionSettings(context.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE)) }
     val modelRouter = remember { AdaptiveModelRouter(LocalModelCatalog()) }
     var modelPolicy by remember { mutableStateOf(modelSettings.load()) }
+    var budgetAmountText by remember { mutableStateOf(modelPolicy.maxEstimatedCost?.toString().orEmpty()) }
+    var budgetCurrencyText by remember { mutableStateOf(modelPolicy.budgetCurrencyCode.orEmpty()) }
     val modelCatalog by remember { mutableStateOf(LocalModelCatalog().all()) }
     val routePreview = remember(modelPolicy, state.input, state.conversation.messages.size) {
         modelRouter.select(RoutingRequest(state.input.trim(), state.conversation.messages.sumOf { it.text.length }), modelPolicy)
@@ -439,6 +441,33 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 Text("Mode: ${modelPolicy.mode} · Policy: ${modelPolicy.autoPolicy}", style = MaterialTheme.typography.bodyMedium)
                 Text("選択Model ID: ${routePreview.selectedModelId ?: "なし"}" +
                     (modelPolicy.manualModelId?.let { " · 保存済み手動指定: $it" } ?: ""), style = MaterialTheme.typography.bodyMedium)
+                routePreview.estimatedCost?.let { cost ->
+                    Text("1要求の推定費用: ${cost.amount} ${cost.currencyCode} · 入力予約 ${cost.estimatedInputTokens} tokens / 出力予約 ${cost.reservedOutputTokens} tokens。Provider請求額ではありません。",
+                        style = MaterialTheme.typography.bodySmall)
+                } ?: Text("推定費用: 料金または通貨が未確認のため算出できません。", style = MaterialTheme.typography.bodySmall)
+                routePreview.model?.let { model ->
+                    Text("${model.displayName} · ${model.providerId} · Context ${model.contextWindow.knownInt()?.toString() ?: "UNKNOWN"} · 最大出力 ${model.maxOutput.knownInt()?.toString() ?: "UNKNOWN"} · 入力 ${model.capabilities.input.joinToString().ifEmpty { "UNKNOWN" }} · Tool ${model.capabilities.toolCalling} · Structured ${model.capabilities.structuredOutput} · Reasoning ${model.capabilities.reasoning} · 最終確認 ${model.lastVerifiedAt ?: "UNKNOWN"}",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = budgetAmountText, onValueChange = { budgetAmountText = it.filter { c -> c.isDigit() || c == '.' } },
+                        modifier = Modifier.weight(2f), label = { Text("任意の1要求費用上限") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+                    OutlinedTextField(value = budgetCurrencyText, onValueChange = { budgetCurrencyText = it.filter(Char::isLetter).take(3).uppercase() },
+                        modifier = Modifier.weight(1f), label = { Text("通貨コード") }, singleLine = true)
+                }
+                Button(onClick = {
+                    val amount = budgetAmountText.trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull()
+                    val currency = budgetCurrencyText.trim().uppercase()
+                    runCatching {
+                        require(budgetAmountText.isBlank() || amount != null && amount.isFinite() && amount >= 0)
+                        require(amount == null || currency.matches(Regex("[A-Z]{3}")))
+                        modelPolicy.copy(maxEstimatedCost = amount, budgetCurrencyCode = currency.takeIf { amount != null })
+                    }.onSuccess { updated ->
+                        modelSettings.save(updated); modelPolicy = updated
+                        settingsMessage = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
+                    }.onFailure { settingsMessage = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。" }
+                }) { Text("Router設定を保存") }
                 Text(if (modelCatalog.isEmpty()) "利用可能なモデル: 0 · Catalog未取得または未確認" else "利用可能なモデル: ${modelCatalog.size}")
                 if (modelCatalog.isEmpty()) Text("Manual Model Picker: 選択可能なモデルはありません。任意のModel IDやProvider Hostは入力できません。",
                     style = MaterialTheme.typography.bodySmall)

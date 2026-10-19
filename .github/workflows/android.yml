@@ -86,6 +86,7 @@ jobs:
       - name: Record Pixel 7a reacceptance APK provenance
         env:
           BUILD_TOOLS_VERSION: 35.0.0
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           apk='android/app/build/outputs/apk/debug/app-debug.apk'
@@ -93,7 +94,8 @@ jobs:
           mkdir -p "$bundle"
           cp "$apk" "$bundle/serea-debug.apk"
           {
-            echo "source_commit=$(git rev-parse HEAD)"
+            echo "source_commit=$SOURCE_SHA"
+            echo "build_checkout_commit=$(git rev-parse HEAD)"
             echo "github_run_id=${GITHUB_RUN_ID}"
             echo "github_run_attempt=${GITHUB_RUN_ATTEMPT}"
             echo "workflow=${GITHUB_WORKFLOW}"

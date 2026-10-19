@@ -444,6 +444,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                     style = MaterialTheme.typography.bodySmall)
                 Text("判定: ${routePreview.task} · ${routePreview.reason}", style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                Text("制約: ${routePreview.constraints.joinToString(" · ")}", style = MaterialTheme.typography.bodySmall)
                 Text("候補除外: ${routePreview.excluded.joinToString { it.reason }.ifEmpty { "なし" }} · 未確認: ${routePreview.unknownFields.joinToString().ifEmpty { "なし" }}",
                     style = MaterialTheme.typography.bodySmall)
                 Text("料金: 確認済みモデルがないため表示なし · Context: Catalog未確認 · 利用可否: 未確認 · 最終確認日時: なし · 本番Cloud: 無効",

@@ -46,19 +46,26 @@ Pixel acceptance NOT_RUN.
 - JVM Router cases: empty catalog, task categories, SIMPLE/COMPLEX selection,
   capability and context exclusions, availability and authorization, explicit
   estimated-cost exclusion, deterministic selection, unknown-price handling,
-  and no Manual fallback.
+  URL-shaped ID rejection, source-verification requirements, and no Manual
+  fallback. Input token budgeting uses the existing conservative four tokens per
+  UTF-16 character estimate; it is not tokenizer output.
 - Mock HTTP instrumented case sends the chosen Manual model ID in the request
   and proves unavailable Manual selection creates zero additional requests.
 - The existing OS force-stop harness stages Auto/Manual settings, policy, a
   removed model ID, and an unresolved usage reservation, then verifies them
   after actual app process termination/restart. It also checks the removed
   model cannot be reselected from the empty catalog.
-- API 26/35 emulator verifier expectations are updated from 21 to 22 tests,
+- API 26/35 emulator verifier expectations are updated from 21 to 23 tests,
   with existing EncryptedHistory (16) and ChatScreen (4) retained and the
-  Mock HTTP class count raised from 1 to 2. `Android Emulator Required Gate`
+  Mock HTTP class count raised from 1 to 2. The persisted Model Selection
+  Compose case raises ChatScreen to 5, for 23 total. `Android Emulator Required Gate`
   stays the same required job.
 - Unit suite is run by the Android Unit CI job. Full CI and platform checks
   must be collected on this final head before calling it complete.
+
+Expected targeted JUnit totals on final head: Android Unit 16 (9 existing
+ViewModel plus 7 Router); Android Integration 19 (Mock Provider adapter); Android
+Security 9; API 26 23; API 35 23. Coverage is not measured by these workflows.
 
 ## Device handoff and decisions
 

@@ -59,11 +59,11 @@ class AdaptiveModelRouterTest {
         val request = RoutingRequest("x".repeat(200), contextCharacters = 8_000, requestedOutputTokens = 256, requiresTools = true)
         val candidates = listOf(
             model("context", .1, context = 1024, tools = true),
-            model("capability", .1, context = 16_384, tools = false),
-            model("unauthorized", .1, context = 16_384, tools = true).copy(authorized = false),
-            model("unavailable", .1, context = 16_384, tools = true).copy(availability = ModelAvailability.UNAVAILABLE),
-            model("expensive", 1_000.0, context = 16_384, tools = true),
-            model("short-output", .1, context = 16_384, tools = true).copy(maxOutput = Knowledge.Known(64)),
+            model("capability", .1, context = 65_536, tools = false),
+            model("unauthorized", .1, context = 65_536, tools = true).copy(authorized = false),
+            model("unavailable", .1, context = 65_536, tools = true).copy(availability = ModelAvailability.UNAVAILABLE),
+            model("expensive", 1_000.0, context = 65_536, tools = true),
+            model("short-output", .1, context = 65_536, tools = true).copy(maxOutput = Knowledge.Known(64)),
         )
         val result = AdaptiveModelRouter(LocalModelCatalog(candidates)).select(request,
             ModelRoutingPolicy(maxEstimatedCost = 0.000001, budgetCurrencyCode = "USD"))

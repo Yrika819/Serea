@@ -84,7 +84,9 @@ data class RoutingRequest(
     val requiresStructuredOutput: Boolean = false,
     val requiresTools: Boolean = false,
     val requiredInputFormat: String = "text/plain",
-)
+) {
+    init { require(contextCharacters >= 0 && requestedOutputTokens > 0) }
+}
 data class CandidateExclusion(val modelId: String, val reason: String)
 data class ModelSelectionResult(
     val model: ModelDescriptor?, val mode: ModelSelectionMode, val task: ModelTask,
@@ -107,7 +109,7 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
 
     fun select(request: RoutingRequest, policy: ModelRoutingPolicy): ModelSelectionResult {
         val task = classify(request)
-        val constraints = mutableListOf("端末内の決定的ルール", "利用可能かつ権限確認済み", "必要能力とContext/出力上限")
+        val constraints = mutableListOf("端末内の決定的ルール", "利用可能かつ権限確認済み", "必要能力とContext/出力上限", "入力Token数は文字数×4の保守推定")
         if (policy.autoPolicy == AutoRoutingPolicy.QUALITY_PRIORITY) constraints += "実測品質データなし: 品質スコアを作らずID順で決定"
         val excluded = mutableListOf<CandidateExclusion>()
         val choices = catalog.all().sortedBy { it.id }
@@ -144,9 +146,9 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
         if (m.availability != ModelAvailability.AVAILABLE) return "利用可否が${if (m.availability == ModelAvailability.UNKNOWN) "未確認" else "利用不可"}"
         if (!m.authorized) return "利用権限が未確認"
         if (r.requiredInputFormat !in m.capabilities.input) return "必要な入力形式が未確認または非対応"
-        val inputTokens = (r.contextCharacters + r.text.length + 3) / 4
+        val inputTokens = Math.multiplyExact(r.contextCharacters.toLong() + r.text.length, 4L)
         val context = m.contextWindow.knownInt() ?: return "Context上限が未確認"
-        if (p.maxInputTokens?.let { inputTokens > it } == true || inputTokens + r.requestedOutputTokens > context) return "Context上限不足"
+        if (p.maxInputTokens?.let { inputTokens > it } == true || inputTokens + r.requestedOutputTokens > context.toLong()) return "Context上限不足"
         val output = m.maxOutput.knownInt() ?: return "最大出力が未確認"
         if (r.requestedOutputTokens > output) return "最大出力不足"
         if (r.requiresTools && m.capabilities.toolCalling != Knowledge.Known(true)) return "Tool Calling能力が未確認または非対応"
@@ -159,7 +161,7 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
         if (p.autoPolicy == AutoRoutingPolicy.COST_PRIORITY && !priceKnown) return "料金が未確認のため安価と判断できない"
         if (p.maxEstimatedCost != null) {
             if (!priceKnown || currency != p.budgetCurrencyCode) return "料金または通貨が未確認のため予算適合を確認できない"
-            val estimate = ((r.contextCharacters + r.text.length + 3) / 4.0) * checkNotNull(inputPrice) / 1_000_000 + r.requestedOutputTokens * checkNotNull(outputPrice) / 1_000_000
+            val estimate = (r.contextCharacters.toDouble() + r.text.length.toDouble()) * 4.0 * checkNotNull(inputPrice) / 1_000_000 + r.requestedOutputTokens * checkNotNull(outputPrice) / 1_000_000
             if (estimate > p.maxEstimatedCost) return "推定費用上限超過"
         }
         return null
@@ -168,7 +170,7 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
         val price = m.pricing.inputPerMillion.knownNumber() ?: Double.POSITIVE_INFINITY
         val output = m.pricing.outputPerMillion.knownNumber() ?: Double.POSITIVE_INFINITY
         return when {
-            m.pricing.inputPerMillion.knownNumber() != null && m.pricing.outputPerMillion.knownNumber() != null && m.pricing.currencyCode.knownString() != null -> ((r.contextCharacters + r.text.length) / 4.0 * price + r.requestedOutputTokens * output) / 1_000_000
+            m.pricing.inputPerMillion.knownNumber() != null && m.pricing.outputPerMillion.knownNumber() != null && m.pricing.currencyCode.knownString() != null -> ((r.contextCharacters.toDouble() + r.text.length.toDouble()) * 4.0 * price + r.requestedOutputTokens * output) / 1_000_000
             else -> Double.POSITIVE_INFINITY
         }
     }
@@ -212,5 +214,9 @@ class ModelSelectionSettings(private val preferences: android.content.SharedPref
         val policy = runCatching { AutoRoutingPolicy.valueOf(preferences.getString("policy", null) ?: "BALANCED") }.getOrDefault(AutoRoutingPolicy.BALANCED)
         return ModelRoutingPolicy(mode, policy, preferences.getString("modelId", null)?.takeIf(::validModelId))
     }
-    fun save(value: ModelRoutingPolicy) { check(preferences.edit().putString("mode", value.mode.name).putString("policy", value.autoPolicy.name).putString("modelId", value.manualModelId).commit()) }
+    fun save(value: ModelRoutingPolicy) {
+        require(value.manualModelId == null || validModelId(value.manualModelId))
+        check(preferences.edit().putString("mode", value.mode.name).putString("policy", value.autoPolicy.name)
+            .putString("modelId", value.manualModelId).commit())
+    }
 }

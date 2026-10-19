@@ -34,7 +34,7 @@ class OllamaCloudAdapterTest {
                 {"model":"gemma4:31b","message":{"role":"assistant","content":"there"},"done":true,"prompt_eval_count":7,"eval_count":2}
             """.trimIndent(), 5))
         val deltas = mutableListOf<String>()
-        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) { deltas += it }
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta = { deltas += it })
         assertEquals("Hello there", result.text)
         assertEquals(listOf("Hello ", "there"), deltas)
         assertEquals(ProviderUsage(7, 2), result.usage)
@@ -114,7 +114,7 @@ class OllamaCloudAdapterTest {
             .setChunkedBody(body, transportChunkBytes))
 
         val deltas = mutableListOf<String>()
-        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe()) { deltas += it }
+        val result = adapter().send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta = { deltas += it })
         assertEquals(expected, result.text)
         assertEquals(expected, deltas.joinToString(separator = ""))
         assertEquals(1, server.requestCount)

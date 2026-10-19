@@ -40,15 +40,16 @@ class ChatHttpE2ETest {
         java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
     }
 
-    @Test fun twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp() = runBlocking {
+    @Test fun twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp() {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"first answer"},"done":true,"prompt_eval_count":4,"eval_count":2}"""))
         server.enqueue(MockResponse().setBody("""{"message":{"content":"second answer"},"done":true,"prompt_eval_count":11,"eval_count":3}"""))
         val conversationId = "http-e2e-conversation"
-        history.create(conversationId, "HTTP E2E", now = 1)
+        runBlocking { history.create(conversationId, "HTTP E2E") }
         activeVm = ChatViewModel(UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat")), usage), history, usage)
         compose.setContent { SereaTheme { ChatScreen(activeVm, usage = usage) } }
 
         val composer = compose.onNodeWithTag("chat-composer")
+        compose.waitUntil(30_000) { !activeVm.state.value.isRestoring }
         compose.waitUntil(30_000) { runCatching { composer.assertIsEnabled() }.isSuccess }
         composer.performTextInput("first question")
         compose.onNodeWithText("送信").performClick()
@@ -70,11 +71,11 @@ class ChatHttpE2ETest {
         assertTrue(secondMessages[0].asJsonObject.has("source_message_id"))
         assertEquals(2, server.requestCount)
 
-        val saved = history.get(conversationId)!!
+        val saved = runBlocking { history.get(conversationId)!! }
         assertEquals(listOf("COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED"), saved.messages.map { it.status })
         assertEquals(listOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT),
             saved.messages.map { it.origin })
-        val total = usage.snapshot()
+        val total = runBlocking { usage.snapshot() }
         assertEquals(2L, total.dailyRequests)
         assertEquals(0L, total.dailyEstimatedInputTokens + total.dailyEstimatedOutputTokens)
         assertEquals(20L, total.dailyProviderInputTokens + total.dailyProviderOutputTokens)

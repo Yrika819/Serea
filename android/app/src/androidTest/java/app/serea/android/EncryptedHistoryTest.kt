@@ -10,6 +10,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -23,8 +24,13 @@ import java.time.Instant
 @RunWith(AndroidJUnit4::class)
 class EncryptedHistoryTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
-    private val database = Room.inMemoryDatabaseBuilder(context, SereaHistoryDatabase::class.java).build()
-    private val repository = ConversationRepository(database.historyDao(), KeystoreAesGcm("serea-test-${UUID.randomUUID()}"))
+    private lateinit var database: SereaHistoryDatabase
+    private lateinit var repository: ConversationRepository
+
+    @Before fun setUp() {
+        database = Room.inMemoryDatabaseBuilder(context, SereaHistoryDatabase::class.java).build()
+        repository = ConversationRepository(database.historyDao(), KeystoreAesGcm("serea-test-${UUID.randomUUID()}"))
+    }
 
     @After fun close() { database.close() }
 

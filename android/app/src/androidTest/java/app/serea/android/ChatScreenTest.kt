@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
@@ -125,6 +126,6 @@ class ChatScreenTest {
         compose.onNodeWithText("送信予定内容をプレビュー").performClick()
         compose.onNodeWithText("送信先候補", substring = true).assertIsDisplayed()
         compose.onNodeWithText("分類: UNKNOWN", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("予定本文: draft stays local").assertIsDisplayed()
+        compose.onNodeWithText("予定本文: draft stays local").performScrollTo().assertIsDisplayed()
     }
 }

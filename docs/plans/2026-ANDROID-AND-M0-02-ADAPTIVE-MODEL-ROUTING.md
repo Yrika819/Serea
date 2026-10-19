@@ -36,10 +36,15 @@ Pixel acceptance NOT_RUN.
   and history metadata are not rewritten by the selection. UNKNOWN, PRIVATE,
   SECRET, CREDENTIAL and unapproved PERSONAL requests remain denied by that gate.
 - Cloud remains disabled. No provider account, credential, live request,
-  subscription, or billing operation was used. No model-list API was adopted;
-  production catalog sync waits for official provider documentation and a
-  separately approved source/refresh policy. The UI reports an empty catalog
-  instead of offering the legacy candidate.
+  subscription, or billing operation was used. Official documentation checked
+  on 2026-10-19: [Ollama Cloud](https://docs.ollama.com/cloud) says Cloud models
+  can be listed at `https://ollama.com/api/tags`, and API requests use a key.
+  The separate [List models](https://docs.ollama.com/api/tags) reference
+  documents `GET /api/tags` against `http://localhost:11434` for local Ollama;
+  the Cloud page is the evidence for the Cloud URL. No catalog request or
+  credential was used. Production sync waits for a separately approved source
+  and refresh policy. The UI reports an empty catalog instead of offering the
+  legacy candidate.
 
 ## Validation added
 

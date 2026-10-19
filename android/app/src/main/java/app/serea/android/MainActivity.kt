@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +25,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -48,6 +54,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -120,6 +127,7 @@ data class ChatUiState(
     val showingHistory: Boolean = false,
     val history: List<StoredConversation> = emptyList(),
     val errorMessage: String? = null,
+    val statusMessage: String? = null,
 )
 
 data class ModelChatRequest(
@@ -232,7 +240,7 @@ internal class ChatViewModel(
         cancelCurrent()
         val id = UUID.randomUUID().toString()
         mutableState.update { it.copy(conversation = Conversation(id), input = "", isLoading = false, showingHistory = false,
-            isRestoring = historyRepository != null, errorMessage = null) }
+            isRestoring = historyRepository != null, errorMessage = null, statusMessage = null) }
         viewModelScope.launch {
             try { historyRepository?.create(id, "Conversation ${id.take(8)}") }
             catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not save this conversation securely.") } }
@@ -264,22 +272,35 @@ internal class ChatViewModel(
         }
     }
 
-    fun deleteCurrentConversation() {
-        val id = mutableState.value.conversation.id
+    fun deleteCurrentConversation(expectedId: String) {
+        val current = mutableState.value
+        if (current.isRestoring || current.conversation.id != expectedId) {
+            mutableState.update { it.copy(errorMessage = "削除対象の会話が切り替わったため、削除を中止しました。") }
+            return
+        }
+        val id = expectedId
         cancelCurrent()
-        mutableState.update { it.copy(isRestoring = true, isLoading = false) }
+        mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
         viewModelScope.launch {
-            try { historyRepository?.delete(id); newConversation(); refreshHistory() }
-            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not delete this conversation.", isRestoring = false) } }
+            try {
+                historyRepository?.delete(id)
+                newConversation()
+                refreshHistory()
+                mutableState.update { it.copy(statusMessage = "この会話を削除しました。") }
+            } catch (_: Exception) { mutableState.update { it.copy(errorMessage = "この会話を削除できませんでした。", isRestoring = false) } }
         }
     }
 
     fun deleteAllHistory() {
+        if (mutableState.value.isRestoring) return
         cancelCurrent()
-        mutableState.update { it.copy(isRestoring = true, isLoading = false) }
+        mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
         viewModelScope.launch {
-            try { historyRepository?.deleteAll(); newConversation(); mutableState.update { it.copy(history = emptyList()) } }
-            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not delete saved history.", isRestoring = false) } }
+            try {
+                historyRepository?.deleteAll()
+                newConversation()
+                mutableState.update { it.copy(history = emptyList(), statusMessage = "全会話履歴を削除しました。") }
+            } catch (_: Exception) { mutableState.update { it.copy(errorMessage = "全会話履歴を削除できませんでした。", isRestoring = false) } }
         }
     }
 
@@ -335,6 +356,21 @@ internal class ChatViewModel(
     }
 }
 
+internal fun validateUsageLimits(dailyRequests: String, dailyTokens: String, monthlyRequests: String, monthlyTokens: String): UsageLimits {
+    fun positiveLong(raw: String, label: String): Long {
+        val value = raw.trim().toLongOrNull() ?: throw IllegalArgumentException("$label はLong範囲内の整数で入力してください。")
+        require(value > 0) { "$label は1以上で入力してください。" }
+        return value
+    }
+    val dailyRequestLimit = positiveLong(dailyRequests, "日次requests")
+    val dailyTokenLimit = positiveLong(dailyTokens, "日次tokens")
+    val monthlyRequestLimit = positiveLong(monthlyRequests, "月次requests")
+    val monthlyTokenLimit = positiveLong(monthlyTokens, "月次tokens")
+    require(dailyRequestLimit <= monthlyRequestLimit) { "日次requestsは月次requests以下にしてください。" }
+    require(dailyTokenLimit <= monthlyTokenLimit) { "日次tokensは月次tokens以下にしてください。" }
+    return UsageLimits(dailyRequestLimit, dailyTokenLimit, monthlyRequestLimit, monthlyTokenLimit)
+}
+
 private fun ChatMessage.toStoredMessage(conversationId: String) = StoredMessage(
     id, conversationId, role, text, classification, createdAt.toEpochMilli(), status, origin,
 )
@@ -363,6 +399,9 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     var previewVisible by remember { mutableStateOf(false) }
     var secretText by remember { mutableStateOf("") }
     var settingsMessage by remember { mutableStateOf("") }
+    var overflowExpanded by remember { mutableStateOf(false) }
+    var deleteConfirmation by rememberSaveable { mutableStateOf("") }
+    var deleteTargetId by rememberSaveable { mutableStateOf("") }
     var credentialReady by remember { mutableStateOf(credentials?.isConfigured() == true) }
     var dailyRequestsText by remember { mutableStateOf("20") }
     var dailyTokensText by remember { mutableStateOf("10000") }
@@ -494,22 +533,21 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 Text("このカウンターはProvider要求のみ対象です。ローカルDemoとMock HTTPテストは含みません。日次/月次はUTC境界です。",
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = dailyRequestsText, onValueChange = { dailyRequestsText = it.filter(Char::isDigit) },
+                    OutlinedTextField(value = dailyRequestsText, onValueChange = { dailyRequestsText = it; settingsMessage = "" },
                         modifier = Modifier.weight(1f), label = { Text("日次requests") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-                    OutlinedTextField(value = dailyTokensText, onValueChange = { dailyTokensText = it.filter(Char::isDigit) },
+                    OutlinedTextField(value = dailyTokensText, onValueChange = { dailyTokensText = it; settingsMessage = "" },
                         modifier = Modifier.weight(1f), label = { Text("日次tokens") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = monthlyRequestsText, onValueChange = { monthlyRequestsText = it.filter(Char::isDigit) },
+                    OutlinedTextField(value = monthlyRequestsText, onValueChange = { monthlyRequestsText = it; settingsMessage = "" },
                         modifier = Modifier.weight(1f), label = { Text("月次requests") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-                    OutlinedTextField(value = monthlyTokensText, onValueChange = { monthlyTokensText = it.filter(Char::isDigit) },
+                    OutlinedTextField(value = monthlyTokensText, onValueChange = { monthlyTokensText = it; settingsMessage = "" },
                         modifier = Modifier.weight(1f), label = { Text("月次tokens") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                 }
                 Button(onClick = {
                     scope.launch {
                         runCatching {
-                            val limits = UsageLimits(dailyRequestsText.toLong(), dailyTokensText.toLong(),
-                                monthlyRequestsText.toLong(), monthlyTokensText.toLong())
+                            val limits = validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText)
                             usage?.updateLimits(limits) ?: error("Usage settings unavailable")
                             limits
                         }.onSuccess { limits ->
@@ -523,15 +561,36 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                             settingsMessage = "Soft Limit設定を保存できません。日次/月次上限と正の数値を確認してください。"
                         }
                     }
-                }, enabled = usage != null) { Text("Soft Limitを保存") }
+                }, enabled = usage != null && runCatching {
+                    validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText)
+                }.isSuccess) { Text("Soft Limitを保存") }
+                runCatching { validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText) }
+                    .exceptionOrNull()?.message?.let { validationMessage ->
+                        Text(validationMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
+                    }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = chatViewModel::newConversation, enabled = !state.isRestoring) { Text("新しい会話") }
-                TextButton(onClick = chatViewModel::showHistory, enabled = !state.isRestoring) { Text("履歴") }
-                TextButton(onClick = { settingsVisible = !settingsVisible; secretText = "" }, enabled = !state.isRestoring) { Text("設定") }
-                TextButton(onClick = chatViewModel::deleteCurrentConversation, enabled = !state.isRestoring) { Text("この会話を削除") }
-                TextButton(onClick = chatViewModel::deleteAllHistory, enabled = !state.isRestoring) { Text("全履歴を削除") }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = chatViewModel::newConversation, enabled = !state.isRestoring, modifier = Modifier.weight(1f)) { Text("新しい会話") }
+                Button(onClick = chatViewModel::showHistory, enabled = !state.isRestoring, modifier = Modifier.weight(1f)) { Text("履歴") }
             }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { settingsVisible = !settingsVisible; secretText = "" }, enabled = !state.isRestoring,
+                    modifier = Modifier.weight(1f)) { Text("設定") }
+                Box(modifier = Modifier.weight(1f)) {
+                    TextButton(onClick = { overflowExpanded = true }, enabled = !state.isRestoring,
+                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "その他の操作" }) { Text("その他の操作") }
+                    DropdownMenu(expanded = overflowExpanded, onDismissRequest = { overflowExpanded = false }) {
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("この会話を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
+                            onClick = { overflowExpanded = false; deleteTargetId = state.conversation.id; deleteConfirmation = "current" })
+                        DropdownMenuItem(text = { Text("全履歴を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
+                            onClick = { overflowExpanded = false; deleteTargetId = ""; deleteConfirmation = "all" })
+                    }
+                }
+            }
+            state.statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
             if (settingsVisible) {
                 Text("Provider: Ollama Cloud（候補）", style = MaterialTheme.typography.titleMedium)
                 Text("利用条件: 公式Termsは18歳以上を要求します。利用資格を確認していないため、このアプリからのCloud通信を無効にしています。",
@@ -633,6 +692,31 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 else Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                     enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,
                     modifier = Modifier.padding(top = 8.dp)) { Text("送信") }
+            }
+            if (deleteConfirmation == "current") {
+                AlertDialog(
+                    onDismissRequest = { deleteConfirmation = ""; deleteTargetId = "" },
+                    title = { Text("この会話を削除しますか？") },
+                    text = { Text("選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。") },
+                    confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
+                        val confirmedId = deleteTargetId
+                        deleteConfirmation = ""
+                        deleteTargetId = ""
+                        chatViewModel.deleteCurrentConversation(confirmedId)
+                    }) { Text("この会話を削除") } },
+                    dismissButton = { TextButton(onClick = { deleteConfirmation = ""; deleteTargetId = "" }) { Text("キャンセル") } },
+                )
+            } else if (deleteConfirmation == "all") {
+                AlertDialog(
+                    onDismissRequest = { deleteConfirmation = "" },
+                    title = { Text("全会話履歴を削除しますか？") },
+                    text = { Text("すべてのローカル会話履歴が削除されます。この操作はアプリ内から取り消せません。") },
+                    confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
+                        deleteConfirmation = ""
+                        chatViewModel.deleteAllHistory()
+                    }) { Text("全履歴を削除") } },
+                    dismissButton = { TextButton(onClick = { deleteConfirmation = "" }) { Text("キャンセル") } },
+                )
             }
         }
     }

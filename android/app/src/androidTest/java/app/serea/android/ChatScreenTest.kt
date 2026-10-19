@@ -8,14 +8,18 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
+import android.os.ParcelFileDescriptor
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -148,5 +152,221 @@ class ChatScreenTest {
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("0.05").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("USD").performScrollTo().assertIsDisplayed()
+    }
+
+    private fun openOverflow() {
+        compose.onNodeWithContentDescription("その他の操作").assertIsDisplayed().performClick()
+    }
+
+    private fun shell(command: String): String {
+        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }.trim()
+    }
+
+    @Test fun portraitPrimaryActionsAndOverflowAreReachableAndTappable() {
+        awaitComposerEnabled()
+        compose.waitUntil(10_000) {
+            var isPortrait = false
+            compose.activityRule.scenario.onActivity {
+                isPortrait = it.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+            }
+            isPortrait
+        }
+        val initialId = stateSnapshot().conversation.id
+        compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+        compose.waitUntil(10_000) { stateSnapshot().conversation.id != initialId && !stateSnapshot().isRestoring }
+        compose.onNodeWithText("履歴").assertIsDisplayed().performClick()
+        compose.waitUntil(10_000) { stateSnapshot().showingHistory }
+        compose.onNodeWithText("その他の操作").assertIsDisplayed()
+        openOverflow()
+        compose.onNodeWithText("この会話を削除").assertIsDisplayed()
+        compose.onNodeWithText("全履歴を削除").assertIsDisplayed()
+        openOverflow()
+        compose.onNodeWithText("設定").assertIsDisplayed().performClick()
+        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
+    }
+
+    @Test fun currentConversationDeletionRequiresConfirmationAndCancelKeepsMessages() {
+        awaitComposerEnabled()
+        composer().performTextInput("keep on cancel")
+        compose.onNodeWithText("送信").performClick()
+        awaitResponse("Demo response: I received “keep on cancel”.")
+        val before = stateSnapshot()
+        openOverflow()
+        compose.onNodeWithText("この会話を削除").performClick()
+        compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        compose.onNodeWithText("選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。").assertIsDisplayed()
+        compose.onNodeWithText("キャンセル").performClick()
+        assertEquals(before.conversation.id, stateSnapshot().conversation.id)
+        assertEquals(before.conversation.messages, stateSnapshot().conversation.messages)
+    }
+
+    @Test fun confirmedCurrentConversationDeletionRemovesSelectedConversation() {
+        awaitComposerEnabled()
+        composer().performTextInput("delete this conversation")
+        compose.onNodeWithText("送信").performClick()
+        awaitResponse("Demo response: I received “delete this conversation”.")
+        val deletedId = stateSnapshot().conversation.id
+        openOverflow()
+        compose.onNodeWithText("この会話を削除").performClick()
+        compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        compose.onNodeWithText("この会話を削除").performClick()
+        compose.waitUntil(30_000) { !stateSnapshot().isRestoring && stateSnapshot().conversation.id != deletedId }
+        assertTrue(stateSnapshot().conversation.messages.isEmpty())
+        compose.onNodeWithText("この会話を削除しました。").assertIsDisplayed()
+    }
+
+    @Test fun deleteAllConfirmationCancelKeepsConversationAndConfirmClearsHistory() {
+        awaitComposerEnabled()
+        composer().performTextInput("history remains until confirmation")
+        compose.onNodeWithText("送信").performClick()
+        awaitResponse("Demo response: I received “history remains until confirmation”.")
+        val originalId = stateSnapshot().conversation.id
+        openOverflow()
+        compose.onNodeWithText("全履歴を削除").performClick()
+        compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        compose.onNodeWithText("キャンセル").performClick()
+        assertEquals(originalId, stateSnapshot().conversation.id)
+        assertTrue(stateSnapshot().conversation.messages.isNotEmpty())
+        openOverflow()
+        compose.onNodeWithText("全履歴を削除").performClick()
+        compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        compose.onNodeWithText("全履歴を削除").performClick()
+        compose.waitUntil(30_000) { stateSnapshot().history.isEmpty() && !stateSnapshot().isRestoring }
+        assertTrue(stateSnapshot().conversation.messages.isEmpty())
+        compose.onNodeWithText("全会話履歴を削除しました。").assertIsDisplayed()
+    }
+
+    @Test fun openDeletionConfirmationSurvivesActivityRecreationWithoutDeleting() {
+        awaitComposerEnabled()
+        val currentId = stateSnapshot().conversation.id
+        openOverflow()
+        compose.onNodeWithText("この会話を削除").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        assertEquals(currentId, stateSnapshot().conversation.id)
+        compose.onNodeWithText("キャンセル").performClick()
+        assertEquals(currentId, stateSnapshot().conversation.id)
+    }
+
+    @Test fun landscapeKeepsPrimaryAndOverflowActionsTappable() {
+        awaitComposerEnabled()
+        compose.activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        compose.waitUntil(10_000) {
+            var isLandscape = false
+            compose.activityRule.scenario.onActivity {
+                isLandscape = it.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            }
+            isLandscape
+        }
+        compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+        awaitComposerEnabled()
+        compose.onNodeWithText("設定").assertIsDisplayed()
+        openOverflow()
+        compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
+        compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        compose.onNodeWithText("キャンセル").performClick()
+    }
+
+    @Test fun smallScreenKeepsDeletionActionsReachableAndTappable() {
+        awaitComposerEnabled()
+        shell("wm size 320x640")
+        shell("wm density 160")
+        try {
+            compose.waitUntil(15_000) {
+                var widthDp = 0
+                compose.activityRule.scenario.onActivity { widthDp = it.resources.configuration.screenWidthDp }
+                widthDp in 300..340
+            }
+            compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+            awaitComposerEnabled()
+            openOverflow()
+            compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("キャンセル").performClick()
+            composer().performClick()
+            compose.waitForIdle()
+            openOverflow()
+            compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("キャンセル").performClick()
+        } finally {
+            shell("wm size reset")
+            shell("wm density reset")
+        }
+    }
+
+    @Test fun fontScaleTwoKeepsDeletionActionsReachableAndTappable() {
+        awaitComposerEnabled()
+        val originalScale = compose.activity.resources.configuration.fontScale
+        shell("settings put system font_scale 2.0")
+        try {
+            compose.waitUntil(15_000) {
+                var fontScale = 1f
+                compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
+                fontScale >= 1.99f
+            }
+            compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+            awaitComposerEnabled()
+            openOverflow()
+            compose.onNodeWithText("この会話を削除").assertIsDisplayed().performClick()
+            compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("キャンセル").performClick()
+        } finally {
+            shell("settings put system font_scale $originalScale")
+        }
+    }
+
+    @Test fun emptySoftLimitFieldShowsValidationAndDisablesSave() {
+        awaitComposerEnabled()
+        compose.onNodeWithText("設定").performClick()
+        val dailyRequests = compose.onNodeWithText("日次requests")
+        dailyRequests.performScrollTo()
+        dailyRequests.performTextClearance()
+        val error = compose.onNodeWithText("日次requests はLong範囲内の整数で入力してください。")
+        error.performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test fun correctedSoftLimitInputCanBeSavedAndRestored() {
+        awaitComposerEnabled()
+        compose.onNodeWithText("設定").performClick()
+        val dailyRequests = compose.onNodeWithText("日次requests")
+        dailyRequests.performScrollTo()
+        dailyRequests.performTextClearance()
+        dailyRequests.performTextInput("21")
+        compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsEnabled().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("Soft Limit設定を保存しました", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("日次requests").performScrollTo().assertTextContains("21")
+    }
+
+    @Test fun softLimitRejectsZeroNegativeNonNumericOverflowAndDailyMonthlyMismatch() {
+        awaitComposerEnabled()
+        compose.onNodeWithText("設定").performClick()
+        fun verifyInvalid(value: String, expectedError: String) {
+            val dailyRequests = compose.onNodeWithText("日次requests")
+            dailyRequests.performScrollTo()
+            dailyRequests.performTextClearance()
+            dailyRequests.performTextInput(value)
+            compose.onNodeWithText(expectedError).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsNotEnabled()
+        }
+        verifyInvalid("0", "日次requests は1以上で入力してください。")
+        verifyInvalid("-1", "日次requests は1以上で入力してください。")
+        verifyInvalid("abc", "日次requests はLong範囲内の整数で入力してください。")
+        verifyInvalid("9223372036854775808", "日次requests はLong範囲内の整数で入力してください。")
+        verifyInvalid("101", "日次requestsは月次requests以下にしてください。")
+        val dailyRequests = compose.onNodeWithText("日次requests")
+        dailyRequests.performScrollTo()
+        dailyRequests.performTextClearance()
+        dailyRequests.performTextInput("20")
+        val dailyTokens = compose.onNodeWithText("日次tokens")
+        dailyTokens.performScrollTo()
+        dailyTokens.performTextClearance()
+        dailyTokens.performTextInput("50001")
+        compose.onNodeWithText("日次tokensは月次tokens以下にしてください。").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsNotEnabled()
     }
 }

@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
 import org.junit.Assert.assertEquals
@@ -32,32 +33,26 @@ class ChatScreenTest {
         }
     }
 
+    private fun stateSnapshot(): ChatUiState {
+        var snapshot: ChatUiState? = null
+        compose.activityRule.scenario.onActivity { snapshot = it.chatViewModel.state.value }
+        return requireNotNull(snapshot)
+    }
+
     private fun awaitResponse(text: String) {
-        val response = compose.onAllNodes(hasText(text, substring = true))
-        val failure = compose.onAllNodes(hasText("Demo response failed.", substring = true))
-        val unknownOutcome = compose.onAllNodes(hasText("request timed out", substring = true))
-        try {
-            compose.waitUntil(30_000) {
-                response.fetchSemanticsNodes().isNotEmpty() ||
-                    failure.fetchSemanticsNodes().isNotEmpty() ||
-                    unknownOutcome.fetchSemanticsNodes().isNotEmpty()
-            }
-        } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
-            var snapshot: ChatUiState? = null
-            compose.activityRule.scenario.onActivity { snapshot = it.chatViewModel.state.value }
-            val state = requireNotNull(snapshot)
-            throw AssertionError(
-                "No terminal mock response became visible; loading=${state.isLoading}, " +
-                    "restoring=${state.isRestoring}, history=${state.showingHistory}, " +
-                    "messages=${state.conversation.messages.map { it.role.name + ":" + it.status + ":" + it.text }}",
-                timeout,
-            )
+        compose.waitUntil(30_000) {
+            val state = stateSnapshot()
+            !state.isLoading && (state.errorMessage != null || state.conversation.messages.lastOrNull()?.role == MessageRole.ASSISTANT)
         }
+        val state = stateSnapshot()
         assertTrue(
-            "Chat did not complete normally; failed=${failure.fetchSemanticsNodes().isNotEmpty()}, " +
-                "outcomeUnknown=${unknownOutcome.fetchSemanticsNodes().isNotEmpty()}",
-            response.fetchSemanticsNodes().isNotEmpty(),
+            "Chat did not complete normally; error=${state.errorMessage}, " +
+                "statuses=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
+            state.errorMessage == null && state.conversation.messages.lastOrNull()?.role == MessageRole.ASSISTANT,
         )
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(state.conversation.messages.lastIndex)
+        val response = compose.onAllNodes(hasText(text, substring = true))
+        compose.waitUntil(5_000) { response.fetchSemanticsNodes().isNotEmpty() }
         response.assertCountEquals(1)
     }
 
@@ -82,6 +77,12 @@ class ChatScreenTest {
         compose.onNodeWithText("送信").performClick()
         awaitResponse("Demo response: I received “rotation-check”.")
         compose.activityRule.scenario.recreate()
+        compose.waitUntil(30_000) {
+            val state = stateSnapshot()
+            !state.isRestoring && state.conversation.messages.any { it.text == "rotation-check" }
+        }
+        val restored = stateSnapshot()
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
         compose.onNodeWithText("rotation-check").assertIsDisplayed()
         compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true)).assertCountEquals(1)
     }

@@ -466,7 +466,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                     Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else "端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。",
                         style = MaterialTheme.typography.bodyLarge)
                 }
-                LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(), state = listState,
+                LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().testTag("conversation-list"), state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(state.conversation.messages, key = { it.id }) { message ->
                         Surface(color = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,

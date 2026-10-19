@@ -2,6 +2,7 @@ package app.serea.android
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
@@ -114,5 +115,16 @@ class ChatScreenTest {
         compose.runOnIdle {
             assertEquals(0, compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
+    }
+
+    @Test fun previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled() {
+        awaitComposerEnabled()
+        composer().performTextInput("draft stays local")
+        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithText("Cloud接続テスト（未承認）").assertIsNotEnabled()
+        compose.onNodeWithText("送信予定内容をプレビュー").performClick()
+        compose.onNodeWithText("送信先候補", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("分類: UNKNOWN", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("予定本文: draft stays local").assertIsDisplayed()
     }
 }

@@ -64,11 +64,15 @@ Direct Android-to-provider HTTP offers a smaller service footprint but exposes
 provider credentials to a distributed mobile client and makes cost limits,
 revocation, and policy enforcement harder. An authenticated backend centralizes
 provider secrets and policy but adds service availability, account, and data
-processing obligations. Neither option is selected. AND-04 must choose a
-provider/backend, retention and training terms, account/auth model, spending
-limits, timeout budget, cancellation semantics, privacy disclosures, and
-release channel before enabling network calls. All provider calls must flow
-through `ModelChatPort`, a credential port, and a fail-closed egress gate.
+processing obligations.
+
+On 2026-10-19 the Owner selected direct Android-to-provider as the target
+architecture and chose not to require a dedicated Serea backend. This is an
+architecture selection only. It does not approve provider eligibility, account
+or key operations, user-data egress, billing, distribution, or production
+activation. Ordinary cloud chat stays disabled until the remaining decisions
+below are approved and recorded. All provider calls must flow through
+`ModelChatPort`, a credential port, and a fail-closed egress gate.
 
 ### PC compatibility and authority
 
@@ -100,7 +104,7 @@ complete.
 
 ## Open decisions for the Owner
 
-1. Direct provider or authenticated backend; provider and model roster.
+1. Provider eligibility and terms, plus the provider and model roster.
 2. Which user message classes may be sent, and what trusted preparation can
    establish PERSONAL eligibility.
 3. History retention, local encryption, backup exclusion, deletion semantics,

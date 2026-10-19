@@ -18,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
 import java.security.KeyStore
+import java.time.Instant
 
 @RunWith(AndroidJUnit4::class)
 class EncryptedHistoryTest {
@@ -244,6 +245,86 @@ class EncryptedHistoryTest {
         val flags = context.packageManager.getApplicationInfo(context.packageName, 0).flags
         assertEquals(0, flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP)
         assertEquals(0, flags and android.content.pm.ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC)
+    }
+
+    @Test fun softLimitReservationsAreAtomicAndSettingsSurviveRepositoryRecreation() = runBlocking {
+        var now = Instant.parse("2026-10-19T23:59:00Z").toEpochMilli()
+        val first = UsageRepository(database.usageDao()) { now }
+        val limits = UsageLimits(dailyRequests = 1, dailyTokens = 600, monthlyRequests = 3, monthlyTokens = 1_800)
+        first.updateLimits(limits)
+        val outcomes = (0 until 8).map { index -> async(Dispatchers.IO) {
+            runCatching { first.reserve("concurrent-$index", 12) }
+        } }.awaitAll()
+        assertEquals(1, outcomes.count { it.isSuccess })
+        assertEquals(7, outcomes.count { it.exceptionOrNull() is UsageLimitExceededException })
+
+        val successfulId = outcomes.indexOfFirst { it.isSuccess }.let { "concurrent-$it" }
+        first.complete(successfulId, ProviderUsage(5, 2))
+        val restored = UsageRepository(database.usageDao()) { now }
+        val beforeBoundary = restored.snapshot()
+        assertEquals(limits, beforeBoundary.limits)
+        assertEquals(1L, beforeBoundary.dailyRequests)
+        assertEquals(0L, beforeBoundary.dailyEstimatedInputTokens + beforeBoundary.dailyEstimatedOutputTokens)
+        assertEquals(7L, beforeBoundary.dailyProviderInputTokens + beforeBoundary.dailyProviderOutputTokens)
+
+        now = Instant.parse("2026-10-20T00:00:00Z").toEpochMilli()
+        val nextDay = restored.snapshot()
+        assertEquals(0L, nextDay.dailyRequests)
+        assertEquals(1L, nextDay.monthlyRequests)
+        now = Instant.parse("2026-11-01T00:00:00Z").toEpochMilli()
+        val nextMonth = restored.snapshot()
+        assertEquals(0L, nextMonth.monthlyRequests)
+        now = Instant.parse("2026-10-18T00:00:00Z").toEpochMilli()
+        assertEquals(0L, restored.snapshot().monthlyRequests)
+    }
+
+    @Test fun ambiguousAndMissingUsageKeepReservedBudgetAndAreMarkedUnknown() = runBlocking {
+        val usage = UsageRepository(database.usageDao()) { Instant.parse("2026-10-19T12:00:00Z").toEpochMilli() }
+        usage.reserve("ambiguous", promptChars = 300, maxOutputTokens = 64)
+        usage.complete("ambiguous", providerUsage = null)
+        usage.recoverAfterProcessRestart()
+        val snapshot = usage.snapshot()
+        assertEquals(1L, snapshot.dailyRequests)
+        assertEquals(1_264L, snapshot.dailyEstimatedInputTokens + snapshot.dailyEstimatedOutputTokens)
+        assertEquals(1L, snapshot.uncertainRequests)
+    }
+
+    @Test fun usageSettingsAndUncertainReservationsRemainInRoomAfterDatabaseReopen() = runBlocking {
+        val name = "usage-reopen-${UUID.randomUUID()}.db"
+        val limits = UsageLimits(dailyRequests = 2, dailyTokens = 900, monthlyRequests = 8, monthlyTokens = 3_600)
+        val now = Instant.parse("2026-10-19T12:00:00Z").toEpochMilli()
+        val originalDb = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name).build()
+        val original = UsageRepository(originalDb.usageDao()) { now }
+        original.updateLimits(limits)
+        original.reserve("pending-before-death", 30, 40)
+        originalDb.close()
+
+        val reopenedDb = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name).build()
+        val reopened = UsageRepository(reopenedDb.usageDao()) { now }
+        reopened.recoverAfterProcessRestart()
+        val snapshot = reopened.snapshot()
+        assertEquals(limits, snapshot.limits)
+        assertEquals(1L, snapshot.dailyRequests)
+        assertEquals(160L, snapshot.dailyEstimatedInputTokens + snapshot.dailyEstimatedOutputTokens)
+        assertEquals(1L, snapshot.uncertainRequests)
+        reopenedDb.close()
+        context.deleteDatabase(name)
+    }
+
+    @Test fun cancelledProviderAttemptRetainsReservationWithoutUsageRefund() = runBlocking {
+        val usage = UsageRepository(database.usageDao()) { Instant.parse("2026-10-19T12:00:00Z").toEpochMilli() }
+        val port = UsageControlledModelChatPort(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse =
+                throw kotlinx.coroutines.CancellationException("test cancellation")
+        }, usage)
+        try {
+            port.send(ModelChatRequest("conversation", "question", sendId = "cancelled-send"))
+            throw AssertionError("expected cancellation")
+        } catch (_: kotlinx.coroutines.CancellationException) { }
+        val snapshot = usage.snapshot()
+        assertEquals(1L, snapshot.dailyRequests)
+        assertEquals(544L, snapshot.dailyEstimatedInputTokens + snapshot.dailyEstimatedOutputTokens)
+        assertEquals(1L, snapshot.uncertainRequests)
     }
 
     private inline fun <reified T : Throwable> assertThrows(block: () -> Unit) {

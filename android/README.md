@@ -2,9 +2,10 @@
 
 This is a standalone Kotlin + Jetpack Compose demo. The chat screen is labeled
 `DEMO · Mock chat · No cloud AI`; ordinary chat uses deterministic local replies
-and encrypted on-device history. A separately labeled Cloud Candidate can send
-only a fixed public contract probe through its egress gate. No Calendar access,
-PC pairing, or capability execution is included.
+and encrypted on-device history. Cloud controls are disabled until provider
+eligibility, data-egress conditions, and Owner activation are resolved. Mock
+HTTP tests use loopback only. No Calendar access, PC pairing, or capability
+execution is included.
 
 ## Build and checks
 
@@ -34,9 +35,11 @@ request. Android implementation, build, test, or security configuration changes
 require Android build, unit, mock HTTP, security, dependency audit, and API 35
 emulator jobs to succeed. The emulator job must run
 `connectedDebugAndroidTest` on both API 35 and API 26 and produce JUnit XML for
-at least fifteen tests on each image, including exactly twelve encrypted
-history tests and three Compose tests, with zero failures, errors, or skipped
-tests. Missing emulator access or missing
+at least twenty-one tests on each image, including exactly sixteen encrypted
+history tests, four Compose tests, and one Compose-to-Mock-HTTP E2E test, with
+zero failures, errors, or skipped tests. The ADB process-death harness also
+force-stops and relaunches the installed app on both API levels while verifying
+that app data remains present. Missing emulator access or missing
 JUnit output fails the gate. Android documentation-only changes run
 documentation validation without requiring an emulator.
 

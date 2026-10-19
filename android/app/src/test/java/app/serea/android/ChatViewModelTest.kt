@@ -72,6 +72,17 @@ class ChatViewModelTest {
         assertEquals("user-1", context.single().sourceMessageId)
     }
 
+    @Test fun contextKeepsOriginAndExcludesOtherConversationMessages() {
+        val current = ChatMessage("current", MessageRole.USER, "current text", java.time.Instant.EPOCH,
+            DataClassification.PERSONAL, "COMPLETED", DataOrigin.CALENDAR, "conversation-current")
+        val other = current.copy(id = "other", text = "other conversation", conversationId = "conversation-other")
+        val context = ChatContextBuilder.build(listOf(other, current), expectedConversationId = "conversation-current")
+        assertEquals(1, context.size)
+        assertEquals("current", context.single().sourceMessageId)
+        assertEquals(DataOrigin.CALENDAR, context.single().origin)
+        assertEquals("conversation-current", context.single().conversationId)
+    }
+
     @Test fun oversizedInputIsRejectedWithoutDispatch() = runTest(dispatcher) {
         var calls = 0
         val vm = ChatViewModel(object : ModelChatPort {
@@ -96,7 +107,7 @@ class ChatViewModelTest {
         vm.sendMessage()
         advanceUntilIdle()
         assertFalse(vm.state.value.isLoading)
-        assertTrue(vm.state.value.errorMessage!!.contains("failed"))
+        assertTrue(vm.state.value.errorMessage!!.contains("offline"))
     }
 
     @Test fun timeoutEndsLoadingWithoutAutomaticRetry() = runTest(dispatcher) {

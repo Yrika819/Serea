@@ -47,10 +47,13 @@ class ProviderFailure(val kind: ProviderFailureKind) : Exception(
 )
 
 /** A gate-issued value. There is no public constructor from arbitrary user text. */
-class EgressApprovedPayload private constructor(internal val text: String) {
+class EgressApprovedPayload private constructor(internal val messages: List<Pair<String, String>>) {
+    internal val text: String get() = messages.lastOrNull()?.second.orEmpty()
     companion object {
         internal fun fixedPublicContractProbe(): EgressApprovedPayload =
-            EgressApprovedPayload("Reply with exactly: Serea cloud contract probe passed.")
+            EgressApprovedPayload(listOf("user" to "Reply with exactly: Serea cloud contract probe passed."))
+        internal fun fromApprovedContract(messages: List<Pair<String, String>>): EgressApprovedPayload =
+            EgressApprovedPayload(messages.toList())
     }
 }
 
@@ -85,14 +88,17 @@ class OllamaCloudAdapter private constructor(
         if (settings.modelId !in SUPPORTED_MODEL_IDS) {
             throw ProviderFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
         }
-        if (payload.text.toByteArray(Charsets.UTF_8).size > MAX_INPUT_BYTES) throw ProviderFailure(ProviderFailureKind.LIMIT_EXCEEDED)
+        if (payload.messages.sumOf { it.first.length.toLong() + it.second.toByteArray(Charsets.UTF_8).size + 64L } > MAX_INPUT_BYTES) {
+            throw ProviderFailure(ProviderFailureKind.LIMIT_EXCEEDED)
+        }
         val request = withContext(Dispatchers.IO) {
             val key = try { credentials.readForRequest() } catch (_: IllegalStateException) { throw ProviderFailure(ProviderFailureKind.CREDENTIAL_MISSING) }
             catch (_: HistoryUnavailableException) { throw ProviderFailure(ProviderFailureKind.CREDENTIAL_INVALID) }
-            val userMessage = JsonObject().apply { addProperty("role", "user"); addProperty("content", payload.text) }
             val requestJson = JsonObject().apply {
                 addProperty("model", settings.modelId)
-                add("messages", JsonArray().apply { add(userMessage) })
+                add("messages", JsonArray().apply {
+                    payload.messages.forEach { (role, content) -> add(JsonObject().apply { addProperty("role", role); addProperty("content", content) }) }
+                })
                 addProperty("stream", true)
                 add("options", JsonObject().apply { addProperty("num_predict", MAX_OUTPUT_TOKENS) })
             }
@@ -200,4 +206,43 @@ class OllamaCloudAdapter private constructor(
 class CloudCandidatePort internal constructor(private val adapter: OllamaCloudAdapter) {
     suspend fun runFixedPublicContractProbe(onDelta: (String) -> Unit = {}): CloudReply =
         adapter.send(EgressApprovedPayload.fixedPublicContractProbe(), onDelta)
+}
+
+/** Ordinary chat path. An exact, fresh gate approval must exist before any credential or socket use. */
+internal class OllamaModelChatPort(
+    private val adapter: OllamaCloudAdapter,
+    private val clock: () -> Long = System::currentTimeMillis,
+) : ModelChatPort {
+    override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+        val contract = request.egressContract ?: throw ModelChatFailure("Cloud send intent has not been approved.")
+        if (contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
+            contract.plannedBody != request.message || contract.context != request.context ||
+            contract.classification != request.classification || contract.origin != DataOrigin.USER_AUTHORED) {
+            throw ModelChatFailure("The approved content no longer matches the request.")
+        }
+        val evaluation = ChatEgressGate.evaluate(contract, clock())
+        if (evaluation.decision != EgressContractDecision.APPROVED) {
+            throw ModelChatFailure("Cloud egress was denied: ${evaluation.decision.name.lowercase()}.")
+        }
+        val payload = evaluation.payload ?: throw ModelChatFailure("Cloud egress approval is unavailable.")
+        return try {
+            adapter.send(payload).let { ModelChatResponse(it.text, it.usage) }
+        } catch (failure: ProviderFailure) {
+            throw ModelChatFailure(failure.message ?: "Cloud request failed.")
+        }
+    }
+}
+
+/** Direct Android composition root: gate -> durable usage reservation -> typed adapter. */
+internal object DirectProviderChatComposition {
+    fun create(
+        credentials: CredentialReader,
+        usage: UsageRepository,
+        settings: CloudSettings = CloudSettings(),
+    ): ModelChatPort = EgressCheckedModelChatPort(
+        UsageControlledModelChatPort(
+            OllamaModelChatPort(OllamaCloudAdapter(credentials, settings)),
+            usage,
+        ),
+    )
 }

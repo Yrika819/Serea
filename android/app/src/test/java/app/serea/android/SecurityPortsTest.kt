@@ -87,4 +87,32 @@ class SecurityPortsTest {
         } catch (_: ModelChatFailure) { }
         assertEquals(0, calls)
     }
+
+    @Test fun typedEgressContractRequiresPublicClassificationOriginIntentAndFreshness() {
+        val now = 50_000L
+        fun contract(
+            origin: DataOrigin = DataOrigin.USER_AUTHORED,
+            classification: DataClassification = DataClassification.PUBLIC,
+            intent: Long? = now,
+            expiry: Long? = now + 30_000,
+            context: List<ContextMessage> = emptyList(),
+        ) = EgressContract("c", "m", origin, classification, "https://ollama.com/api/chat", "planned text",
+            context, PayloadPreparation.RAW, intent, expiry)
+
+        assertEquals(EgressContractDecision.APPROVED, ChatEgressGate.evaluate(contract(), now).decision)
+        assertEquals(EgressContractDecision.CLASSIFICATION_DENIED,
+            ChatEgressGate.evaluate(contract(classification = DataClassification.UNKNOWN), now).decision)
+        assertEquals(EgressContractDecision.ORIGIN_DENIED,
+            ChatEgressGate.evaluate(contract(origin = DataOrigin.CALENDAR), now).decision)
+        assertEquals(EgressContractDecision.MISSING_INTENT,
+            ChatEgressGate.evaluate(contract(intent = null), now).decision)
+        assertEquals(EgressContractDecision.EXPIRED_INTENT,
+            ChatEgressGate.evaluate(contract(intent = now - 60_001, expiry = now - 1), now).decision)
+        assertEquals(EgressContractDecision.CLASSIFICATION_DENIED, ChatEgressGate.evaluate(contract(context = listOf(
+            ContextMessage(MessageRole.USER, "private", DataClassification.PRIVATE, "source", DataOrigin.USER_AUTHORED),
+        )), now).decision)
+        assertEquals(EgressContractDecision.CONTENT_MISMATCH, ChatEgressGate.evaluate(contract(context = listOf(
+            ContextMessage(MessageRole.USER, "partial", DataClassification.PUBLIC, "source", DataOrigin.USER_AUTHORED, "PENDING"),
+        )), now).decision)
+    }
 }

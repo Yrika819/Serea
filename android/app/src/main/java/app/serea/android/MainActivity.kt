@@ -35,10 +35,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -65,7 +65,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -346,8 +345,9 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
         if (!state.showingHistory && !settingsVisible) {
             val targetIndex = state.conversation.messages.size + if (state.isLoading) 1 else 0
             if (targetIndex > 0) {
-                snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it >= targetIndex }
-                listState.animateScrollToItem(targetIndex - 1)
+                withFrameNanos { }
+                withFrameNanos { }
+                listState.scrollToItem(targetIndex - 1)
             }
         }
     }

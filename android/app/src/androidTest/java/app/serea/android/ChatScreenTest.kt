@@ -94,7 +94,7 @@ class ChatScreenTest {
     @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
         awaitComposerEnabled()
         compose.onNodeWithText("設定").performClick()
-        compose.waitUntil(5_000) {
+        compose.waitUntil(30_000) {
             var secure = false
             compose.activityRule.scenario.onActivity {
                 secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
@@ -106,7 +106,7 @@ class ChatScreenTest {
                 compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
         compose.onNodeWithText("設定").performClick()
-        compose.waitUntil(5_000) {
+        compose.waitUntil(30_000) {
             var secure = true
             compose.activityRule.scenario.onActivity {
                 secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0

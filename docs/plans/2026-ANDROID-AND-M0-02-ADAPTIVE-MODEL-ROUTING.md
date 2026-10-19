@@ -15,7 +15,9 @@ Pixel acceptance NOT_RUN.
   capability.
 - Unknown values remain `UNKNOWN`. Availability and user authorization must be
   positively confirmed. Capability requirements, context, output ceiling, and
-  explicit estimated budget are hard filters. Cost Priority excludes unknown
+  explicit estimated budget are hard filters. Provider IDs also require an
+  explicit local selection allowlist; this does not grant Egress permission.
+  Cost Priority excludes unknown
   prices; Balanced leaves price-unknown eligible when no budget constraint is
   requested and never calls it free. Quality Priority uses stable Model ID
   ordering because there is no measured quality evidence; it exposes this
@@ -76,8 +78,8 @@ Pixel acceptance NOT_RUN.
 - Unit suite is run by the Android Unit CI job. Full CI and platform checks
   must be collected on this final head before calling it complete.
 
-Expected targeted JUnit totals on final head: Android Unit 16 (9 existing
-ViewModel plus 7 Router); Android Integration 19 (Mock Provider adapter); Android
+Expected targeted JUnit totals on final head: Android Unit 17 (9 existing
+ViewModel plus 8 Router); Android Integration 19 (Mock Provider adapter); Android
 Security 9; API 26 23; API 35 23. Coverage is not measured by these workflows.
 
 ## Device handoff and decisions

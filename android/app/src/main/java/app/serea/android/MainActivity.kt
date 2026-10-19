@@ -339,6 +339,11 @@ private fun ChatMessage.toStoredMessage(conversationId: String) = StoredMessage(
     id, conversationId, role, text, classification, createdAt.toEpochMilli(), status, origin,
 )
 
+private fun <T> Knowledge<T>.displayValue(): String = when (this) {
+    Knowledge.UNKNOWN -> "UNKNOWN"
+    is Knowledge.Known<*> -> value.toString()
+}
+
 private fun StoredMessage.toChatMessage() = ChatMessage(id, role, text, Instant.ofEpochMilli(createdAt), classification,
     status, origin, conversationId)
 
@@ -446,7 +451,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                         style = MaterialTheme.typography.bodySmall)
                 } ?: Text("推定費用: 料金または通貨が未確認のため算出できません。", style = MaterialTheme.typography.bodySmall)
                 routePreview.model?.let { model ->
-                    Text("${model.displayName} · ${model.providerId} · Context ${model.contextWindow.knownInt()?.toString() ?: "UNKNOWN"} · 最大出力 ${model.maxOutput.knownInt()?.toString() ?: "UNKNOWN"} · 入力 ${model.capabilities.input.joinToString().ifEmpty { "UNKNOWN" }} · Tool ${model.capabilities.toolCalling} · Structured ${model.capabilities.structuredOutput} · Reasoning ${model.capabilities.reasoning} · 最終確認 ${model.lastVerifiedAt ?: "UNKNOWN"}",
+                    Text("${model.displayName} · ${model.providerId} · Context ${model.contextWindow.knownInt()?.toString() ?: "UNKNOWN"} · 最大出力 ${model.maxOutput.knownInt()?.toString() ?: "UNKNOWN"} · 入力 ${model.capabilities.input.joinToString().ifEmpty { "UNKNOWN" }} · Tool ${model.capabilities.toolCalling.displayValue()} · Structured ${model.capabilities.structuredOutput.displayValue()} · Reasoning ${model.capabilities.reasoning.displayValue()} · 利用枠 ${model.contractLimits.displayValue()} · 利用可否 ${model.availability} · 最終確認 ${model.lastVerifiedAt ?: "UNKNOWN"} · 情報源 ${model.source ?: "UNKNOWN"}",
                         style = MaterialTheme.typography.bodySmall)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

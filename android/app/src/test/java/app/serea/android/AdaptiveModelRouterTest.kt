@@ -4,6 +4,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AdaptiveModelRouterTest {
+    private fun allowFixture(policy: ModelRoutingPolicy = ModelRoutingPolicy()) = policy.copy(allowedProviderIds = setOf("fake"))
     private fun model(id: String, cost: Double, context: Int = 4096, tools: Boolean = false) = ModelDescriptor(
         id, "fake", id, Knowledge.Known(context), Knowledge.Known(1024),
         ModelCapabilities(setOf("text/plain"), Knowledge.Known(tools), Knowledge.Known(true), Knowledge.Known(false)),
@@ -38,8 +39,8 @@ class AdaptiveModelRouterTest {
         val reasoning = model("z-reasoning", .2).copy(capabilities = ModelCapabilities(
             setOf("text/plain"), Knowledge.Known(false), Knowledge.Known(true), Knowledge.Known(true)))
         val router = AdaptiveModelRouter(LocalModelCatalog(listOf(simple, reasoning)))
-        assertEquals("a-simple", router.select(RoutingRequest("hello"), ModelRoutingPolicy()).selectedModelId)
-        val complex = router.select(RoutingRequest("compare these options"), ModelRoutingPolicy())
+        assertEquals("a-simple", router.select(RoutingRequest("hello"), allowFixture()).selectedModelId)
+        val complex = router.select(RoutingRequest("compare these options"), allowFixture())
         assertEquals(ModelTask.COMPLEX, complex.task)
         assertEquals("z-reasoning", complex.selectedModelId)
         assertTrue(complex.excluded.any { it.modelId == "a-simple" && it.reason.contains("Reasoning") })
@@ -47,15 +48,15 @@ class AdaptiveModelRouterTest {
     @Test fun selectionIsDeterministicAndCostPolicyRequiresVerifiedPrices() {
         val router = AdaptiveModelRouter(LocalModelCatalog(listOf(model("z", 1.0), model("a", .2))))
         val request = RoutingRequest("hello")
-        assertEquals("a", router.select(request, ModelRoutingPolicy()).selectedModelId)
-        assertEquals("a", router.select(request, ModelRoutingPolicy()).selectedModelId)
-        val withinBudget = router.select(request, ModelRoutingPolicy(maxEstimatedCost = 0.0003, budgetCurrencyCode = "USD"))
+        assertEquals("a", router.select(request, allowFixture()).selectedModelId)
+        assertEquals("a", router.select(request, allowFixture()).selectedModelId)
+        val withinBudget = router.select(request, allowFixture(ModelRoutingPolicy(maxEstimatedCost = 0.0003, budgetCurrencyCode = "USD")))
         assertEquals("a", withinBudget.selectedModelId)
         assertEquals("USD", withinBudget.estimatedCost?.currencyCode)
-        assertNull(router.select(request, ModelRoutingPolicy(maxEstimatedCost = 0.0001, budgetCurrencyCode = "USD")).model)
+        assertNull(router.select(request, allowFixture(ModelRoutingPolicy(maxEstimatedCost = 0.0001, budgetCurrencyCode = "USD"))).model)
         val unknown = model("unknown", 1.0).copy(pricing = ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN))
         val result = AdaptiveModelRouter(LocalModelCatalog(listOf(unknown))).select(request,
-            ModelRoutingPolicy(autoPolicy = AutoRoutingPolicy.COST_PRIORITY))
+            allowFixture(ModelRoutingPolicy(autoPolicy = AutoRoutingPolicy.COST_PRIORITY)))
         assertNull(result.model)
         assertTrue(result.excluded.single().reason.contains("料金が未確認"))
     }
@@ -70,7 +71,7 @@ class AdaptiveModelRouterTest {
             model("short-output", .1, context = 65_536, tools = true).copy(maxOutput = Knowledge.Known(64)),
         )
         val result = AdaptiveModelRouter(LocalModelCatalog(candidates)).select(request,
-            ModelRoutingPolicy(maxEstimatedCost = 0.000001, budgetCurrencyCode = "USD"))
+            allowFixture(ModelRoutingPolicy(maxEstimatedCost = 0.000001, budgetCurrencyCode = "USD")))
         assertNull(result.model)
         assertEquals(6, result.excluded.size)
         assertTrue(result.excluded.any { it.reason.contains("Context") })
@@ -82,8 +83,14 @@ class AdaptiveModelRouterTest {
     }
     @Test fun manualUnavailableDoesNotFallback() {
         val router = AdaptiveModelRouter(LocalModelCatalog(listOf(model("a", .1), model("b", .2).copy(availability = ModelAvailability.UNAVAILABLE))))
-        val result = router.select(RoutingRequest("hello"), ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = "b"))
+        val result = router.select(RoutingRequest("hello"), allowFixture(ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = "b")))
         assertNull(result.model)
         assertTrue(result.reason.contains("自動切替はしません"))
+    }
+    @Test fun providerOutsideExplicitSelectionAllowlistIsExcluded() {
+        val descriptor = model("unapproved-provider", .1).copy(providerId = "elsewhere")
+        val result = AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor))).select(RoutingRequest("hello"), allowFixture())
+        assertNull(result.model)
+        assertTrue(result.excluded.single().reason.contains("Provider ID"))
     }
 }

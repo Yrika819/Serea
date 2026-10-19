@@ -18,7 +18,7 @@ class SecurityPortsTest {
             }
         }, { now })
         val routed = RoutedModelChatPort(provider, AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor)))) {
-            ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = descriptor.id)
+            ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = descriptor.id, allowedProviderIds = setOf("fixture"))
         }
         try {
             val context = emptyList<ContextMessage>()

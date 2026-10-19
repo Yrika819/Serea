@@ -26,6 +26,13 @@ data class ModelPricing(
         currencyCode.knownString()?.let { require(it.matches(Regex("[A-Z]{3}"))) }
     }
 }
+data class ModelContractLimits(
+    val requestsPerMinute: Long? = null,
+    val inputTokensPerMinute: Long? = null,
+    val monthlyRequests: Long? = null,
+) {
+    init { require(listOfNotNull(requestsPerMinute, inputTokensPerMinute, monthlyRequests).all { it > 0 }) }
+}
 data class ModelCapabilities(
     val input: Set<String> = emptySet(),
     val toolCalling: Knowledge<Boolean> = Knowledge.UNKNOWN,
@@ -44,6 +51,7 @@ data class ModelDescriptor(
     val authorized: Boolean = false,
     val lastVerifiedAt: String? = null,
     val source: String? = null,
+    val contractLimits: Knowledge<ModelContractLimits> = Knowledge.UNKNOWN,
 ) {
     init {
         require(validModelId(id)); require(providerId.matches(Regex("[a-z0-9-]{1,64}")))
@@ -70,11 +78,14 @@ data class ModelRoutingPolicy(
     val budgetCurrencyCode: String? = null,
     val maxInputTokens: Int? = null,
     val requestedOutputTokens: Int = 512,
+    /** Router filter only; provider egress still requires the independent typed gate. */
+    val allowedProviderIds: Set<String> = emptySet(),
 ) {
     init {
         require(maxEstimatedCost == null || (maxEstimatedCost.isFinite() && maxEstimatedCost >= 0))
         require(maxEstimatedCost == null || budgetCurrencyCode?.matches(Regex("[A-Z]{3}")) == true)
         require(maxInputTokens == null || maxInputTokens > 0); require(requestedOutputTokens > 0)
+        require(allowedProviderIds.all { it.matches(Regex("[a-z0-9-]{1,64}")) })
     }
 }
 data class RoutingRequest(
@@ -145,6 +156,7 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
 
     private fun rejection(m: ModelDescriptor, r: RoutingRequest, p: ModelRoutingPolicy, task: ModelTask): String? {
         if (m.source.isNullOrBlank() || m.lastVerifiedAt.isNullOrBlank()) return "情報源または最終確認日時が未確認"
+        if (m.providerId !in p.allowedProviderIds) return "Provider IDが選択ポリシーで許可されていない"
         if (m.availability != ModelAvailability.AVAILABLE) return "利用可否が${if (m.availability == ModelAvailability.UNKNOWN) "未確認" else "利用不可"}"
         if (!m.authorized) return "利用権限が未確認"
         if (r.requiredInputFormat !in m.capabilities.input) return "必要な入力形式が未確認または非対応"
@@ -194,6 +206,7 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
         if (m.capabilities.structuredOutput == Knowledge.UNKNOWN) add("Structured Output")
         if (m.pricing.inputPerMillion == Knowledge.UNKNOWN || m.pricing.outputPerMillion == Knowledge.UNKNOWN || m.pricing.currencyCode == Knowledge.UNKNOWN) add("料金/通貨")
         if (m.capabilities.reasoning == Knowledge.UNKNOWN) add("Reasoning情報")
+        if (m.contractLimits == Knowledge.UNKNOWN) add("契約利用枠")
         if (m.source == null || m.lastVerifiedAt == null) add("情報源/最終確認日時")
     }
     companion object { const val SIMPLE_CHARS = 120; const val COMPLEX_CHARS = 600; const val LONG_CONTEXT_CHARS = 12_000 }

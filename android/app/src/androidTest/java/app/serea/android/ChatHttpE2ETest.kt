@@ -61,7 +61,7 @@ class ChatHttpE2ETest {
             ModelCapabilities(setOf("text/plain")), ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE,
             authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture") }
         val router = AdaptiveModelRouter(LocalModelCatalog(models))
-        var policy = ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelIds.first())
+        var policy = ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelIds.first(), allowedProviderIds = setOf("fixture"))
         val routedPort = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) { policy }
         activeVm = ChatViewModel(UsageControlledModelChatPort(routedPort, usage),
             history, usage, Conversation(conversationId))
@@ -112,7 +112,7 @@ class ChatHttpE2ETest {
             ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture")
         val router = AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor)))
         val routed = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) {
-            ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "fixture/manual-v1")
+            ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "fixture/manual-v1", allowedProviderIds = setOf("fixture"))
         }
         val result = routed.send(ModelChatRequest("route-conversation", "hello"))
         assertEquals("routed answer", result.text)
@@ -120,7 +120,7 @@ class ChatHttpE2ETest {
         assertEquals("fixture/manual-v1", sent.get("model").asString)
 
         val unavailable = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) {
-            ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "missing")
+            ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "missing", allowedProviderIds = setOf("fixture"))
         }
         runCatching { unavailable.send(ModelChatRequest("route-conversation", "hello")) }
             .onSuccess { throw AssertionError("missing manual model must fail") }

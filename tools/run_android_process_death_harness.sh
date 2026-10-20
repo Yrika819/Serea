@@ -39,7 +39,7 @@ verify_database_file() {
   local listing
   listing=$(adb shell run-as "$package" ls -l databases | tr -d '\r')
   printf '%s\n' "$listing"
-  printf '%s\n' "$listing" | awk '$5 ~ /^[0-9]+$/ && $5 > 0 && $NF == "serea-history.db" { found=1 } END { exit !found }'
+  printf '%s\n' "$listing" | awk '$5 ~ /^[0-9]+$/ && $5 > 0 && ($NF == "serea-history.db" || $NF == "serea-tasks-process-death-harness.db") { found[$NF]=1 } END { exit !(found["serea-history.db"] && found["serea-tasks-process-death-harness.db"]) }'
 }
 
 phase prepare

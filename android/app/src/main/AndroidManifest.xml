@@ -9,6 +9,7 @@
         android:label="Serea Demo"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".tasks.TasksActivity" android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

@@ -1,0 +1,49 @@
+name: Android Calendar Read-only Tests
+
+on:
+  pull_request:
+    branches: [codex/android-m0-04-integration-candidate-2026-10-20]
+    paths:
+      - 'android/app/src/main/java/app/serea/android/calendar/**'
+      - 'android/app/src/test/java/app/serea/android/calendar/**'
+      - 'android/app/build.gradle.kts'
+      - 'android/gradle/**'
+      - '.github/workflows/android-calendar-readonly.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-calendar-readonly-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  calendar-unit-and-mock-integration:
+    name: Calendar Domain, Parser, Agenda, and Security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install Android compile SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Run Calendar unit, parser, agenda, fake integration, and security tests
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest --tests 'app.serea.android.calendar.*'
+      - name: Upload Calendar JUnit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-calendar-readonly-junit
+          if-no-files-found: warn
+          path: android/app/build/test-results/testDebugUnitTest/*.xml

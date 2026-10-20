@@ -313,6 +313,10 @@ class EncryptedHistoryTest {
         assertEquals(1L, snapshot.dailyRequests)
         assertEquals(160L, snapshot.dailyEstimatedInputTokens + snapshot.dailyEstimatedOutputTokens)
         assertEquals(1L, snapshot.uncertainRequests)
+        val restoredLedger = reopenedDb.usageDao().ledger("pending-before-death")!!
+        assertEquals("OUTCOME_UNKNOWN", restoredLedger.usageStatus)
+        assertEquals("UNKNOWN", restoredLedger.modelId)
+        assertEquals("UNKNOWN", restoredLedger.providerId)
         reopenedDb.close()
         context.deleteDatabase(name)
         Unit

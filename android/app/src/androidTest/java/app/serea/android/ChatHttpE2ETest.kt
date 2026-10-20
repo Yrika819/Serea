@@ -62,8 +62,18 @@ class ChatHttpE2ETest {
             authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture") }
         val router = AdaptiveModelRouter(LocalModelCatalog(models))
         var policy = ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelIds.first(), allowedProviderIds = setOf("fixture"))
-        val routedPort = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) { policy }
-        activeVm = ChatViewModel(UsageControlledModelChatPort(routedPort, usage),
+        val attribution = UsageAttributionResolver { request ->
+            val descriptor = models.firstOrNull { it.id == request.selectedModelId }
+            ModelUsageAttribution(
+                modelId = request.selectedModelId ?: ModelUsageAttribution.UNKNOWN_ATTRIBUTION,
+                providerId = descriptor?.providerId ?: ModelUsageAttribution.UNKNOWN_ATTRIBUTION,
+            )
+        }
+        val usagePort = UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), usage,
+            attributionResolver = attribution)
+        // Router must be outside accounting so its explicit selectedModelId reaches the atomic reservation.
+        val routedPort = RoutedModelChatPort(usagePort, router) { policy }
+        activeVm = ChatViewModel(routedPort,
             history, usage, Conversation(conversationId))
         compose.setContent { SereaTheme { ChatScreen(activeVm, usage = usage) } }
 
@@ -94,6 +104,11 @@ class ChatHttpE2ETest {
         assertEquals(modelIds.last(), secondPayload.get("model").asString)
         assertTrue(secondMessages[0].asJsonObject.has("source_message_id"))
         assertEquals(2, server.requestCount)
+        runBlocking {
+            assertEquals(1L, usage.modelUsage(modelIds.first()).single().requestCount)
+            assertEquals(1L, usage.modelUsage(modelIds.last()).single().requestCount)
+            assertEquals("fixture", usage.providerModelUsage("fixture", modelIds.first()).single().providerId)
+        }
 
         val saved = runBlocking { history.get(conversationId)!! }
         assertEquals(listOf("COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED"), saved.messages.map { it.status })

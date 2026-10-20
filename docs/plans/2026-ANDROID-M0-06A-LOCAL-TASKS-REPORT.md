@@ -115,7 +115,7 @@ failures have visible messages. Empty list and delete cancel/confirm states are
 covered by instrumentation tests. Existing SereaTheme and dark mode are reused.
 
 The ViewModel reloads from the independent persistent Room database after
-construction and does not treat an Activity recreation as persistence. A
+construction and invalidates older asynchronous list reads when a mutation begins and does not treat an Activity recreation as persistence. A
 debug-only process-death receiver and harness seed a dedicated task database
 and Keystore alias, force-stop the target app, relaunch it, and check the
 completed task, open task, deleted task, payload, and DB files. The harness is
@@ -133,7 +133,7 @@ and duplicate proposal approval.
 
 Instrumentation tests cover Room create/close/reopen, encrypted payload and
 absence of plaintext title/notes/metadata, tamper and cross-task ciphertext
-swap rejection, task key separation, missing-key error without row deletion,
+swap rejection, task key separation, unique proposal-receipt concurrency with rollback, missing-key error without row deletion,
 revision conflict, delete non-resurrection, completion/deletion persistence,
 and Compose empty/create/edit/complete/reopen/delete/validation flows.
 The debug process-death harness covers OS force-stop/relaunch on both API

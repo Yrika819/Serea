@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,10 +30,23 @@ data class TaskUiState(
 class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
     private val mutableState = MutableStateFlow(TaskUiState())
     val state: StateFlow<TaskUiState> = mutableState.asStateFlow()
+    private val listGeneration = AtomicLong(0)
 
     init { refresh() }
 
-    fun refresh() = launchTask { mutableState.value = mutableState.value.copy(loading = true); repository.list().also { mutableState.value = mutableState.value.copy(tasks = it, loading = false) } }
+    fun refresh() {
+        val generation = listGeneration.incrementAndGet()
+        mutableState.value = mutableState.value.copy(loading = true)
+        viewModelScope.launch {
+            try {
+                val latest = withContext(Dispatchers.IO) { repository.list() }
+                if (generation == listGeneration.get()) mutableState.value = mutableState.value.copy(tasks = latest, loading = false)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (generation == listGeneration.get()) showError(error.toTaskUserMessage())
+            }
+        }
+    }
     fun addTask() { mutableState.value = mutableState.value.copy(editing = null, editorVisible = true, error = null) }
     fun editTask(id: String) {
         val target = mutableState.value.tasks.firstOrNull { it.id == id } ?: return showError("Task no longer exists.")
@@ -72,17 +86,10 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
 
     fun clearMessage() { mutableState.value = mutableState.value.copy(message = null, error = null) }
 
-    private fun launchTask(block: suspend () -> Unit) = viewModelScope.launch {
-        try { withContext(Dispatchers.IO) { block() } }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) {
-            showError(error.toTaskUserMessage())
-            runCatching { withContext(Dispatchers.IO) { mutableState.value = mutableState.value.copy(tasks = repository.list(), loading = false) } }
-        }
-    }
 
     private fun launchMutation(block: suspend () -> Unit) {
         if (mutableState.value.saving) return
+        listGeneration.incrementAndGet() // invalidate any initial or user-triggered list read started before this mutation
         mutableState.value = mutableState.value.copy(saving = true)
         viewModelScope.launch {
             try { withContext(Dispatchers.IO) { block() }; mutableState.value = mutableState.value.copy(saving = false) }
@@ -103,7 +110,11 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
         else -> "Task operation failed. Please try again."
     }
 
-    private suspend fun refreshInline() { mutableState.value = mutableState.value.copy(tasks = repository.list(), loading = false) }
+    private suspend fun refreshInline() {
+        val generation = listGeneration.incrementAndGet()
+        val latest = repository.list()
+        if (generation == listGeneration.get()) mutableState.value = mutableState.value.copy(tasks = latest, loading = false)
+    }
     private fun showError(message: String) { mutableState.value = mutableState.value.copy(error = message, loading = false) }
 
     companion object {

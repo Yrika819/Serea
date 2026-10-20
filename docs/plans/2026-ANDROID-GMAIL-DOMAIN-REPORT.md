@@ -43,8 +43,8 @@ Status: 実装済み。新規 Draft PR 作成後の CI は GitHub Actions で確
 
 | 検証 | 結果 |
 |---|---|
-| `./gradlew --no-daemon testDebugUnitTest --tests 'app.serea.android.gmail.*'` | PASS: 13 tests、failures/errors/skips 0 |
-| `./gradlew --no-daemon testDebugUnitTest --tests '*SecurityPortsTest'` | PASS: `app.serea.android.gmail.GmailSecurityPortsTest` 13 tests、failures/errors/skips 0。Android workflow の既存 Security selector に含まれることを確認 |
+| `./gradlew --no-daemon testDebugUnitTest --tests 'app.serea.android.gmail.*'` | PASS: 12 tests、failures/errors/skips 0 |
+| `./gradlew --no-daemon testDebugUnitTest --tests '*SecurityPortsTest'` | PASS: `app.serea.android.gmail.GmailSecurityPortsTest` 12 tests、failures/errors/skips 0。Android workflow の既存 Security selector に含まれることを確認 |
 | `./gradlew --no-daemon assembleDebug` | PASS |
 | `./gradlew --no-daemon lintDebug` | PASS |
 | `git diff --check` | PASS |

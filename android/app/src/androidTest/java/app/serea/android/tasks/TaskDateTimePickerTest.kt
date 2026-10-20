@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.Role
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -41,16 +42,37 @@ class TaskDateTimePickerTest {
         val digits = NumberFormat.getIntegerInstance(locale).format(number)
         val exactNumber = Regex("(?<!\\p{N})${Regex.escape(digits)}(?!\\p{N})")
         return hasClickAction() and SemanticsMatcher("Material time picker dial choice for $number") { node ->
-            SemanticsProperties.ContentDescription in node.config &&
+            SemanticsProperties.TraversalIndex in node.config &&
+                SemanticsProperties.ContentDescription in node.config &&
                 node.config[SemanticsProperties.ContentDescription].any { description -> exactNumber.containsMatchIn(description) }
         }
+    }
+
+    private fun timeSelectorNumber(number: Int, locale: Locale): SemanticsMatcher {
+        val digits = NumberFormat.getIntegerInstance(locale).format(number)
+        val exactNumber = Regex("(?<!\\p{N})${Regex.escape(digits)}(?!\\p{N})")
+        return SemanticsMatcher("Material time picker hour/minute selector showing $number") { node ->
+            SemanticsProperties.Role in node.config &&
+                node.config[SemanticsProperties.Role] == Role.RadioButton &&
+                SemanticsProperties.ContentDescription in node.config &&
+                node.config[SemanticsProperties.ContentDescription].any { description -> exactNumber.containsMatchIn(description) }
+        }
+    }
+
+    private val unselectedTimeSelector = SemanticsMatcher("Unselected Material time picker hour/minute selector") { node ->
+        SemanticsProperties.Role in node.config &&
+            node.config[SemanticsProperties.Role] == Role.RadioButton &&
+            SemanticsProperties.Selected in node.config &&
+            !node.config[SemanticsProperties.Selected] &&
+            SemanticsProperties.ContentDescription in node.config
     }
 
     private fun selectedLocalizedPickerNumber(number: Int, locale: Locale): SemanticsMatcher {
         val digits = NumberFormat.getIntegerInstance(locale).format(number)
         val exactNumber = Regex("(?<!\\p{N})${Regex.escape(digits)}(?!\\p{N})")
         return SemanticsMatcher("Selected Material time picker dial choice for $number") { node ->
-            SemanticsProperties.ContentDescription in node.config &&
+            SemanticsProperties.TraversalIndex in node.config &&
+                SemanticsProperties.ContentDescription in node.config &&
                 node.config[SemanticsProperties.ContentDescription].any { description -> exactNumber.containsMatchIn(description) } &&
                 SemanticsProperties.Selected in node.config && node.config[SemanticsProperties.Selected]
         }
@@ -133,12 +155,18 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_add").performClick()
         compose.onNodeWithTag("task_title").performTextInput("Timed from picker")
         compose.onNodeWithTag("task_due_date").performTextInput("2026-10-20")
+        compose.onNodeWithTag("task_due_time").performTextInput("00:00")
         compose.onNodeWithTag("task_timezone").performTextClearance()
         compose.onNodeWithTag("task_timezone").performTextInput("Asia/Tokyo")
         compose.onNodeWithTag("task_time_picker_open").performClick()
         val pickerLocale = InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.locales[0]
         compose.onNode(localizedPickerNumber(9, pickerLocale)).performClick()
+        val hourSelector = compose.onNode(timeSelectorNumber(9, pickerLocale))
+        hourSelector.assertIsDisplayed()
+        hourSelector.performClick()
+        hourSelector.assertIsSelected()
         compose.onNode(selectedLocalizedPickerNumber(9, pickerLocale)).assertIsSelected()
+        compose.onNode(unselectedTimeSelector).performClick()
         val minute = compose.onNode(localizedPickerNumber(35, pickerLocale))
         compose.waitUntil(5_000) { compose.onAllNodes(localizedPickerNumber(35, pickerLocale)).fetchSemanticsNodes().isNotEmpty() }
         minute.performClick()

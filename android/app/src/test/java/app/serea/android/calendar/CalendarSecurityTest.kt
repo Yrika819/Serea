@@ -22,6 +22,7 @@ class CalendarSecurityTest {
         assertEquals(DataOrigin.CALENDAR, event.dataOrigin)
         assertNotEquals(DataClassification.PUBLIC, event.classification)
         assertFalse(CalendarPermissionPolicy.canSendToExternalModel(event.dataOrigin, DataClassification.PUBLIC))
+        assertFalse(CalendarPermissionPolicy.canSendToExternalModel(DataOrigin.UNKNOWN, DataClassification.PUBLIC))
 
         val context = listOf(ContextMessage(MessageRole.USER, "Fictional event title", DataClassification.PUBLIC, "calendar-event",
             origin = DataOrigin.CALENDAR, conversationId = "conversation"))

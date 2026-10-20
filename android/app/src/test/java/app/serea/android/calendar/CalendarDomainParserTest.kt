@@ -81,6 +81,9 @@ class CalendarDomainParserTest {
         val page = GoogleCalendarEventParser.parsePage("""{"items":[{"id":"x","newFutureField":{"ignored":true},"start":{"date":"2026-10-20"},"end":{"date":"2026-10-21"}}],"nextPageToken":"page-2","nextSyncToken":"future-sync-token"}""", calendarId, tokyo)
         assertEquals("page-2", page.nextPageToken)
         assertEquals(1, page.events.size)
+        val empty = GoogleCalendarEventParser.parsePage("""{"nextPageToken":"page-next"}""", calendarId, tokyo)
+        assertTrue(empty.events.isEmpty())
+        assertEquals("page-next", empty.nextPageToken)
     }
 
     @Test fun oversizedPayloadIsRejected() {

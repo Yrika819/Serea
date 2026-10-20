@@ -78,4 +78,26 @@ class CalendarAgendaTest {
         val service = CalendarAgendaService(FakeCalendarProvider(pageSize = 500), fixed, ZoneId.of("UTC"))
         assertTrue(service.nextUpcomingEvents(5, Duration.ofDays(2)).size <= 5)
     }
+
+    @Test fun localDateWindowsUseDstBoundariesInsteadOfTwentyFourHourAddition() = runBlocking {
+        val zone = ZoneId.of("America/New_York")
+        val start = LocalDate.parse("2026-03-08").atStartOfDay(zone).toInstant()
+        val end = LocalDate.parse("2026-03-09").atStartOfDay(zone).toInstant()
+        assertEquals(Duration.ofHours(23), Duration.between(start, end))
+        val descriptor = CalendarDescriptor(CalendarId("dst-calendar"), "Fictional DST", zone,
+            readPermission = CalendarReadPermission.MOCK_ONLY)
+        val event = CalendarEvent(CalendarEventKey(descriptor.id, EventId("dst-after-spring-forward")), "After DST jump", null, null,
+            EventTime.Timed(Instant.parse("2026-03-08T07:15:00Z"), Instant.parse("2026-03-08T07:45:00Z"), zone),
+            EventStatus.CONFIRMED, source = CalendarEventSource.MOCK)
+        val service = CalendarAgendaService(FakeCalendarProvider(calendars = listOf(descriptor), events = listOf(event)), fixed, zone)
+        assertEquals(listOf(event.key), service.eventsOnDate(LocalDate.parse("2026-03-08")).map { it.key })
+        assertTrue(service.eventsOnDate(LocalDate.parse("2026-03-09")).isEmpty())
+    }
+
+    @Test fun dstFallBackDateWindowCanBeTwentyFiveHours() {
+        val zone = ZoneId.of("America/New_York")
+        val start = LocalDate.parse("2026-11-01").atStartOfDay(zone).toInstant()
+        val end = LocalDate.parse("2026-11-02").atStartOfDay(zone).toInstant()
+        assertEquals(Duration.ofHours(25), Duration.between(start, end))
+    }
 }

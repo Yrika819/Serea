@@ -36,9 +36,11 @@ class FakeCalendarProvider(
         return calendars.toList()
     }
 
-    override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor =
-        calendars.firstOrNull { it.id == calendarId }
+    override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor {
+        if (options.permissionDenied) throw CalendarReadFailure(CalendarApiFailureCode.PERMISSION_DENIED, "Mock calendar permission denied.")
+        return calendars.firstOrNull { it.id == calendarId }
             ?: throw CalendarReadFailure(CalendarApiFailureCode.NOT_FOUND, "Mock calendar not found.")
+    }
 
     override suspend fun getEvent(key: CalendarEventKey): CalendarEvent {
         getCalendar(key.calendarId)
@@ -64,7 +66,7 @@ class FakeCalendarProvider(
         if (options.cancellationOnPageIndex == callIndex) throw CancellationException("Injected mock cancellation.")
         if (options.failureOnPageIndex == callIndex) throw CalendarReadFailure(CalendarApiFailureCode.PARTIAL_FAILURE, "Injected mock page failure.")
 
-        val matching = ordered.filter { it.key.calendarId == calendarId }
+        val matching = ordered.filter { it.key.calendarId == calendarId && overlaps(it, range) }
         val start = page * pageSize
         val end = minOf(start + pageSize, matching.size)
         val pageEvents = if (page in options.emptyPageIndexes) emptyList() else matching.subList(minOf(start, matching.size), end).toMutableList()
@@ -73,6 +75,19 @@ class FakeCalendarProvider(
     }
 
     override suspend fun status() = CalendarAuthorizationStatus(CalendarAuthorizationState.MOCK_ONLY)
+
+    private fun overlaps(event: CalendarEvent, range: CalendarDateRange): Boolean {
+        if (event.status != EventStatus.CANCELLED) return range.overlaps(event)
+        return when (val original = event.originalStartTime) {
+            is EventOriginalStart.Timed -> original.instant >= range.start && original.instant < range.endExclusive
+            is EventOriginalStart.AllDay -> {
+                val start = original.date.atStartOfDay(original.timeZone).toInstant()
+                val end = original.date.plusDays(1).atStartOfDay(original.timeZone).toInstant()
+                end.isAfter(range.start) && start.isBefore(range.endExclusive)
+            }
+            null -> false
+        }
+    }
 
     /** Small probe for tests asserting no API credential was supplied or retained. */
     fun containsCredentialState(): Boolean = false

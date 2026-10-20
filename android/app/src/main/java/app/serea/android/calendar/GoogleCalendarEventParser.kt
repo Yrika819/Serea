@@ -79,14 +79,14 @@ object GoogleCalendarEventParser {
         val root = parseRoot(json)
         try {
             val items = root.get("items")
-            if (items == null || !items.isJsonArray) throw IllegalArgumentException("items must be an array.")
+            if (items != null && !items.isJsonArray) throw IllegalArgumentException("items must be an array.")
             val token = optionalString(root, "nextPageToken")?.also {
                 if (it.isBlank() || it.length > 2048) throw IllegalArgumentException("Invalid nextPageToken.")
             }
-            val events = items.asJsonArray.map { element ->
+            val events = items?.asJsonArray?.map { element ->
                 if (!element.isJsonObject) throw IllegalArgumentException("Event item must be an object.")
                 parseEvent(element.toString(), calendarId, calendarTimeZone)
-            }
+            }.orEmpty()
             return CalendarEventPage(events, token)
         } catch (failure: CalendarReadFailure) {
             throw failure
@@ -110,6 +110,9 @@ object GoogleCalendarEventParser {
     }
 
     private fun parseTime(start: JsonObject, end: JsonObject, calendarZone: ZoneId): EventTime {
+        if ((start.has("date") && start.has("dateTime")) || (end.has("date") && end.has("dateTime"))) {
+            throw IllegalArgumentException("An event time cannot contain both date and dateTime.")
+        }
         val startDate = optionalString(start, "date")
         val endDate = optionalString(end, "date")
         if (startDate != null || endDate != null) {
@@ -129,6 +132,7 @@ object GoogleCalendarEventParser {
     }
 
     private fun parseOriginalStart(element: JsonObject, calendarZone: ZoneId): EventOriginalStart {
+        if (element.has("date") && element.has("dateTime")) throw IllegalArgumentException("originalStartTime cannot contain both date and dateTime.")
         optionalString(element, "date")?.let { raw ->
             val date = LocalDate.parse(raw)
             val zone = readZone(element, "timeZone") ?: calendarZone

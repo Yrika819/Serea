@@ -24,7 +24,7 @@ object CalendarPermissionPolicy {
 
     /** A calendar read grant never conveys AI egress authority. */
     fun canSendToExternalModel(origin: DataOrigin, classification: DataClassification): Boolean =
-        origin != DataOrigin.CALENDAR && classification == DataClassification.PUBLIC
+        origin in setOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT) && classification == DataClassification.PUBLIC
 
     fun assertCalendarEventSafe(event: CalendarEvent) {
         require(event.dataOrigin == DataOrigin.CALENDAR)

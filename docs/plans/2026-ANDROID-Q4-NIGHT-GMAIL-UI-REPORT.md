@@ -61,7 +61,7 @@ No Activity dependency is required by the new composables. The parent applies it
 - `:app:lintDebug`: PASS.
 - `:app:assembleDebugAndroidTest`: PASS (APK assembly only).
 - `git diff --cached --check`: PASS before the implementation commit; Git author identity was configured; no active custom hooks path was configured.
-- Hosted GitHub CI: **NOT_RUN at local verification time**. It is expected to start after the requested Draft PR is created; use the PR Checks page for its status.
+- Hosted GitHub CI: the first `gh pr checks` query after creating Draft PR #69, on HEAD `6908d085b264df2f1fa368ecab96f7d54b2901a9`, showed all listed jobs pending (0 completed). No repeated polling was done; use the PR Checks page for current status. The local build and test results above are complete.
 
 The 28 Gmail tests cover inbox success/empty; one/multiple pages and opaque tokens; duplicate IDs, empty pages, invalid/repeating tokens and limits; search success/empty/error/blank, A→B races, cancellation and navigation; detail ID/body fallback/missing body/long text; thread order, selection and ID consistency; permission denied, missing scope, expired/revoked/real authorization rejection; timeout, rate limit and retry; SavedState restoration without bodies/tokens; GMAIL origin/non-PUBLIC classification; and Fake-only request wiring plus the scoped compiled-reference check.
 

@@ -6,7 +6,9 @@
 - Required base branch: `codex/android-m0-08-abcd-integration-2026-10-20`.
 - Verified base SHA: `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf` (matches PR #58 head).
 - Work branch: `codex/android-q4-chat-history-ux-2026-10-20`, created from the verified SHA.
-- Draft PR URL, final HEAD, tree SHA, and GitHub Actions run IDs: recorded after publishing the branch and opening the draft PR.
+- Draft PR: https://github.com/Yrika819/Serea/pull/63 (Open, Draft).
+- Reported source commit before this report metadata update: `c86121f8a1958b88eb985649296e95c05852f7f8`; tree `ae934f357820ef92e8c5e6859b44193373a414f3`.
+- GitHub Actions initially queued on that source commit: Android `39432731277`, Fast CI `39432731264`, Full CI `39432730933`, Native platform validation `39432731448`, Cross-architecture SQLite portability `39432730713`, Windows hooks compatibility `39432730757`. These runs do not validate this report metadata commit; final-head runs are checked separately.
 
 ## Implementation
 

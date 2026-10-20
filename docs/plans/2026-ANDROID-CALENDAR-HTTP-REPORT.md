@@ -20,6 +20,7 @@ Implemented lane B on `codex/android-q4-calendar-http-2026-10-20`, based on the 
 - Clones an injected OkHttp client with redirects, SSL redirects, and connection retries disabled; a test injects a redirect-enabled client and verifies a second MockWebServer never receives the bearer token.
 - `events.get` honors a timezone embedded in `start`/`end`; RFC3339 offsets remain interpreted by the existing parser. If an all-day single-event payload omits its zone, this domain port has no calendar-zone input and the parser retains the documented UTC fallback. Resolving that case without requiring calendar-list scope needs an Owner-approved domain/API seam.
 - The follow-up adds five test methods beyond the original eleven; final suite size is 16 methods. The final-head test and CI results are recorded in the task handoff.
+- Calendar workflow run `39431755241` on the prior head `246e8171705a1dfef4730d0736ae679ec6752aa0` ran 33 tests and failed 2: the encoded-path assertion expected a specific percent spelling, and a call timeout was classified as cancellation. Follow-up changes now assert decoded path segments and classify `InterruptedIOException` as timeout before checking `Call.isCanceled()`. This old-head failure is not counted as final-head verification.
 
 ## Verification
 

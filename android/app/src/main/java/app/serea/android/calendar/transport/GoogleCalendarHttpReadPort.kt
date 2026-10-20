@@ -151,8 +151,8 @@ class GoogleCalendarHttpReadPort internal constructor(
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: java.io.IOException) {
                 if (continuation.isActive) {
-                    val mapped = if (call.isCanceled()) failure(CalendarApiFailureCode.CANCELLED, "Calendar request was cancelled.")
-                    else if (e is java.io.InterruptedIOException) failure(CalendarApiFailureCode.TIMEOUT, "Calendar request timed out.")
+                    val mapped = if (e is java.io.InterruptedIOException) failure(CalendarApiFailureCode.TIMEOUT, "Calendar request timed out.")
+                    else if (call.isCanceled()) failure(CalendarApiFailureCode.CANCELLED, "Calendar request was cancelled.")
                     else failure(CalendarApiFailureCode.UNAVAILABLE, "Calendar service is unavailable.")
                     runCatching { continuation.resumeWith(Result.failure(mapped)) }
                 }

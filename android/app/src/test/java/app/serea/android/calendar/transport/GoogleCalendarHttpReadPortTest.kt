@@ -79,7 +79,7 @@ class GoogleCalendarHttpReadPortTest {
         val page = port().listEventsPage(calendarId, range, "page +/=")
         assertEquals("event-id", page.events.single().key.eventId.value)
         val request = server.takeRequest()
-        assertEquals("/calendar/v3/calendars/fixture+calendar%40example.test/events", request.requestUrl!!.encodedPath)
+        assertEquals(listOf("calendar", "v3", "calendars", calendarId.value, "events"), request.requestUrl!!.pathSegments)
         assertEquals("true", request.requestUrl!!.queryParameter("singleEvents"))
         assertEquals("true", request.requestUrl!!.queryParameter("showDeleted"))
         assertEquals("startTime", request.requestUrl!!.queryParameter("orderBy"))
@@ -96,7 +96,7 @@ class GoogleCalendarHttpReadPortTest {
         port().getCalendar(calendarId)
         port().getEvent(CalendarEventKey(calendarId, EventId("event")))
         val calendarRequest = server.takeRequest()
-        assertEquals("GET /calendar/v3/users/me/calendarList/fixture+calendar%40example.test HTTP/1.1", calendarRequest.requestLine)
+        assertEquals(listOf("calendar", "v3", "users", "me", "calendarList", calendarId.value), calendarRequest.requestUrl!!.pathSegments)
         assertEquals("Bearer fixture-token-never-valid", calendarRequest.getHeader("Authorization"))
         assertTrue(server.takeRequest().requestLine!!.contains("/events/event "))
     }

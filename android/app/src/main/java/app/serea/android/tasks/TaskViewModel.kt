@@ -98,7 +98,7 @@ class TaskViewModel(
                     mutableState.value = mutableState.value.copy(editorVisible = false, editing = null, error = null, message = "Task saved.")
                 }
             },
-            onFailure = { message -> if (editorSession == editorGeneration.get()) showError(message) },
+            onFailure = { message -> if (editorSession == editorGeneration.get()) showError(message, clearLoading = false) },
             onRefreshFailure = {
                 if (editorSession == editorGeneration.get()) showError("Task operation completed, but the task list could not be refreshed.")
             },
@@ -119,7 +119,7 @@ class TaskViewModel(
                     mutableState.value = mutableState.value.copy(deleteTargetId = null, deleteTargetRevision = null, error = null, message = "Task deleted.")
                 }
             },
-            onFailure = { message -> if (deleteSession == deleteGeneration.get()) showError(message) },
+            onFailure = { message -> if (deleteSession == deleteGeneration.get()) showError(message, clearLoading = false) },
             onRefreshFailure = {
                 if (deleteSession == deleteGeneration.get()) showError("Task operation completed, but the task list could not be refreshed.")
             },
@@ -135,7 +135,11 @@ class TaskViewModel(
         val deleteSession = deleteGeneration.get()
         launchMutation(
             block = { if (target.status == TaskStatus.TODO) repository.complete(id, target.revision) else repository.reopen(id, target.revision) },
-            onFailure = { message -> if (editorSession == editorGeneration.get() && deleteSession == deleteGeneration.get()) showError(message) },
+            onFailure = { message ->
+                if (editorSession == editorGeneration.get() && deleteSession == deleteGeneration.get()) {
+                    showError(message, clearLoading = false)
+                }
+            },
             onRefreshFailure = {
                 if (editorSession == editorGeneration.get() && deleteSession == deleteGeneration.get()) {
                     showError("Task operation completed, but the task list could not be refreshed.")
@@ -155,7 +159,7 @@ class TaskViewModel(
     private fun launchMutation(
         block: suspend () -> Unit,
         onSuccess: () -> Unit = {},
-        onFailure: (String) -> Unit = ::showError,
+        onFailure: (String) -> Unit = { showError(it) },
         onRefreshFailure: () -> Unit = {},
         onCancelled: () -> Unit = {},
     ) {
@@ -208,6 +212,7 @@ class TaskViewModel(
     ) {
         val generation = listGeneration.incrementAndGet()
         onGenerationStarted(generation)
+        mutableState.value = mutableState.value.copy(loading = true)
         try {
             val latest = withContext(ioDispatcher) { repository.list() }
             if (mutation == mutationGeneration.get() && generation == listGeneration.get()) {
@@ -222,7 +227,9 @@ class TaskViewModel(
             }
         }
     }
-    private fun showError(message: String) { mutableState.value = mutableState.value.copy(error = message, loading = false) }
+    private fun showError(message: String, clearLoading: Boolean = true) {
+        mutableState.value = mutableState.value.copy(error = message, loading = if (clearLoading) false else mutableState.value.loading)
+    }
 
     companion object {
         fun factory(repository: TaskRepository, clock: () -> Instant = Instant::now, ioDispatcher: CoroutineDispatcher = Dispatchers.IO) = object : ViewModelProvider.Factory {

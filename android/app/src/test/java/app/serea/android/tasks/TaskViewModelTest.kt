@@ -326,4 +326,42 @@ class TaskViewModelTest {
         assertFalse(viewModel.state.value.loading)
         assertEquals(TaskStatus.TODO, viewModel.state.value.tasks.single().status)
     }
+
+    @Test fun failedMutationKeepsLoadingUntilItsReplacementRefreshCompletes() = runTest(mainDispatcher.dispatcher) {
+        val repository = FakeRepository().apply {
+            seed("00000000-0000-0000-0000-000000000001", "Task A")
+            updateEntered = CompletableDeferred()
+            allowUpdate = CompletableDeferred()
+            updateFailure = TaskStorageUnavailableException("Task update failed.")
+        }
+        val viewModel = TaskViewModel(repository, ioDispatcher = mainDispatcher.dispatcher)
+        runCurrent()
+        repository.listEntered = CompletableDeferred()
+        repository.allowList = CompletableDeferred()
+
+        viewModel.editTask("00000000-0000-0000-0000-000000000001")
+        viewModel.save(TaskDraft(title = "Task A draft"))
+        runCurrent()
+        assertTrue(repository.updateEntered!!.isCompleted)
+
+        viewModel.refresh()
+        runCurrent()
+        assertTrue(repository.listEntered!!.isCompleted)
+        assertTrue(viewModel.state.value.loading)
+
+        repository.allowUpdate!!.complete(Unit)
+        runCurrent()
+
+        assertTrue(viewModel.state.value.saving)
+        assertTrue(viewModel.state.value.loading)
+        assertEquals("Task update failed.", viewModel.state.value.error)
+
+        repository.allowList!!.complete(Unit)
+        runCurrent()
+
+        assertFalse(viewModel.state.value.saving)
+        assertFalse(viewModel.state.value.loading)
+        assertEquals("Task A", viewModel.state.value.tasks.single().title)
+        assertEquals("Task update failed.", viewModel.state.value.error)
+    }
 }

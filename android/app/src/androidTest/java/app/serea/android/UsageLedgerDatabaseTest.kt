@@ -166,6 +166,25 @@ class UsageLedgerDatabaseTest {
         assertEquals(0L, usage.snapshot().dailyRequests)
     }
 
+    @Test fun tokenAndWindowLongOverflowRejectsReservationWithoutPartialWrites() = runBlocking {
+        val db = open()
+        val usage = UsageRepository(db.usageDao())
+        assertThrows(UsageAccountingOverflowException::class.java) {
+            runBlocking { db.usageDao().reserve("overflow-input", 1L, Long.MAX_VALUE, 1L, ModelUsageAttribution("model/overflow", "provider-a")) }
+        }
+        usage.updateLimits(UsageLimits(dailyRequests = 5, dailyTokens = Long.MAX_VALUE, monthlyRequests = 10, monthlyTokens = Long.MAX_VALUE))
+        usage.reserve("max-window", 1, 1, ModelUsageAttribution("model/overflow", "provider-a"))
+        // Exercise the checked DAO boundary with the largest legal token count.
+        db.usageDao().settle("max-window", Long.MAX_VALUE - 1, 1, 2L)
+        assertThrows(UsageAccountingOverflowException::class.java) {
+            runBlocking { db.usageDao().reserve("overflow-window", 3L, 1L, 0L, ModelUsageAttribution("model/overflow", "provider-a")) }
+        }
+        assertEquals(null, db.usageDao().reservation("overflow-input"))
+        assertEquals(null, db.usageDao().reservation("overflow-window"))
+        assertEquals(1L, usage.snapshot().dailyRequests)
+        assertEquals(1L, usage.summaries().sumOf { it.requestCount })
+    }
+
     @Test fun utcDayMonthLeapDayAndYearBoundariesNeverReopenObservedWindows() = runBlocking {
         var now = Instant.parse("2024-02-29T23:59:59Z").toEpochMilli()
         val db = open()

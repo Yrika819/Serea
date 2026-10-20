@@ -84,24 +84,29 @@ Agenda results stay in memory. There is no event cache, Room table, migration, t
 
 ## Tests and CI evidence
 
-Automated tests added under `android/app/src/test/java/app/serea/android/calendar/` cover model identity/classification, parser mapping and rejection, all-day exclusivity, timezones/DST/date-line, injected-clock Today/Tomorrow, range boundaries, multi-calendar ordering, recurrence identity, duplicate handling, empty pages, pagination/event limits, timeout, cancellation, permission denial, no partial return on page failure, narrow scopes, and Calendar egress denial. These are local JVM tests and fake integration tests; they need no Android emulator.
+Automated tests added under `android/app/src/test/java/app/serea/android/calendar/` cover model identity/classification, parser mapping and rejection, all-day exclusivity, timezones/DST/date-line, injected-clock Today/Tomorrow, range boundaries, multi-calendar ordering, recurrence identity, duplicate handling, empty pages, pagination/event limits, timeout, cancellation, permission denial, malformed fake pages, no partial return on page failure, narrow scopes, and Calendar egress denial. The dedicated workflow ran all 22 Calendar test methods successfully on final implementation SHA `914d35eb7631e981df93a345a2ac58e399d8ba42`.
 
 Local Gradle execution was attempted. It first found an invalid preconfigured `JAVA_HOME`; rerunning with installed Java 21 downloaded Gradle but stopped because this Codex Cloud environment has no Android SDK at `/workspace/android-sdk` and no `android/local.properties`. Thus local Gradle/Android build/lint and API 26/35 instrumentation are **NOT_RUN/BLOCKED**, not PASS. The Android lifecycle instrumentation cases are not applicable to this UI-free seam.
 
 | Verification | Result | Run ID / evidence |
 |---|---|---|
-| Calendar JVM unit/parser/agenda/security | Pending dedicated GitHub workflow | To be recorded on final HEAD |
-| Android build/lint | Local NOT_RUN: SDK unavailable | To be recorded from existing Android workflow |
-| API 26 / API 35 instrumentation and required gate | Not locally run; existing required Android workflow must decide | To be recorded from existing Android workflow |
-| Fast CI / Full CI | Pending PR | To be recorded on final HEAD |
-| Native platform / SQLite portability / Windows Hooks | Pending PR | To be recorded on final HEAD |
-| Commit Identity | Commit-time preflight and post-commit identity scan pending | To be recorded after commit |
+| Calendar JVM unit/parser/agenda/security (22 tests) | PASS | [39373831346](https://github.com/Yrika819/Serea/actions/runs/39373831346), final implementation SHA `914d35e` |
+| Android build, lint, dependency audit, unit, integration, security | PASS | [39373831330](https://github.com/Yrika819/Serea/actions/runs/39373831330), final implementation SHA `914d35e` |
+| API 26 / API 35 instrumentation, process death, Android Emulator Required Gate | PASS | Android run `39373831330`; API 26 and 35 emulator job `118470644273`, required gate `118472916518` |
+| Fast CI | PASS | [39373831338](https://github.com/Yrika819/Serea/actions/runs/39373831338), final implementation SHA `914d35e` |
+| Full CI | QUEUED overall; Linux MSRV, Linux stable, and Windows synthetic job PASS; macOS jobs queued | [39373831400](https://github.com/Yrika819/Serea/actions/runs/39373831400) |
+| Native platform validation | QUEUED overall; Linux, Windows x86_64 and macOS x86_64 jobs passed; Windows ARM64 jobs in progress; other macOS jobs queued | [39373831356](https://github.com/Yrika819/Serea/actions/runs/39373831356) |
+| SQLite portability | QUEUED overall; Intel DB production passed; macOS ARM64 jobs queued | [39373831376](https://github.com/Yrika819/Serea/actions/runs/39373831376) |
+| Windows Hooks compatibility | QUEUED overall; Ubuntu and Windows jobs passed; macOS queued | [39373831333](https://github.com/Yrika819/Serea/actions/runs/39373831333) |
+| Commit Identity | PASS: repository-local identity, preflight before commits, post-commit identity scan | `python tools/git_preflight.py --mode commit`; `tools/check_commit_identity.py` on bounded PR range |
 
-A new `android-calendar-readonly.yml` workflow runs only Calendar unit/mock tests and does not replace, skip, weaken, or alter the existing Android Emulator Required Gate.
+Those CI runs target code SHA `914d35eb7631e981df93a345a2ac58e399d8ba42`. The report-only follow-up commit will trigger a fresh workflow set; its runs must be checked separately before final approval. Local Android Gradle could not run because the cloud environment has no Android SDK, so the remote Android run is the source of Android build/emulator evidence.
+
+A new `android-calendar-readonly.yml` workflow runs only Calendar unit/mock tests and does not replace, skip, weaken, or alter the existing Android Emulator Required Gate. Its duplicate `push` trigger was removed so publishing the branch does not unnecessarily start a second Calendar runner alongside pull request CI.
 
 ## A/B/C integration and owner decisions
 
-The change is isolated to the new `calendar/` source/test package, the dedicated workflow, and this report. It does not merge A/B/C branches. No shared application, task, ChatViewModel, encrypted-storage, provider, or Gate file is edited. Since the protected PR #50 base is the only common integration parent, the final PR is targeted to that branch.
+The change is isolated to the new `calendar/` source/test package, the dedicated workflow, and this report. It does not merge A/B/C branches. No shared application, task, ChatViewModel, encrypted-storage, provider, or Gate file is edited. Since the protected PR #50 base is the only common integration parent, draft PR [#57](https://github.com/Yrika819/Serea/pull/57) is targeted to `codex/android-m0-04-integration-candidate-2026-10-20`, not `main`. Base SHA is `94492d281fe0ee583744c932259c3525d5c34f86`; latest published implementation SHA at the time of this evidence update is `914d35eb7631e981df93a345a2ac58e399d8ba42`.
 
 Owner decisions before OAuth: whether to support calendar discovery or selected Calendar IDs; release channel and OAuth verification path; consent/privacy disclosure; exact revoke and reauthorization UX; and whether event title/location/description may ever enter an explicitly approved AI preparation path. Calendar-to-task mapping and Calendar-to-AI context remain separate later changes.
 
@@ -110,6 +115,6 @@ Owner decisions before OAuth: whether to support calendar discovery or selected 
 - Real Google authorization, API transport, account picker, token lifecycle, quota/backoff, and integration tests.
 - Persistent sync, `syncToken` storage, 410 recovery, cache invalidation, and event retention policy.
 - Calendar UI, user calendar selection, attendee/reminder handling, notifications, task linking, writes, and AI context integration.
-- Android API 26/35 emulator runs for this Calendar change and final Required Check evidence.
+- Recheck all workflows on the report-only final commit SHA; runs listed above test implementation SHA `914d35e`.
 
 The result is a Mock read-only foundation only. It must not be described as connected to Google Calendar.

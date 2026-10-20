@@ -42,6 +42,9 @@ internal class EncryptedTaskRepository(
 
     private suspend fun createLocked(draft: TaskDraft, proposalId: String?): Task {
         TaskValidation.validateDraft(draft)
+        try { dao.allRows().firstOrNull()?.decode() }
+        catch (error: TaskStorageUnavailableException) { throw error }
+        catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
         val id = idFactory().lowercase()
         try { TaskValidation.validateId(id) } catch (error: Exception) { throw InvalidTaskException("Task ID generation failed.") }
         val now = clock()

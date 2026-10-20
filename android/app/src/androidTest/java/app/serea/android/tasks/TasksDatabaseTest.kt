@@ -78,6 +78,8 @@ class TasksDatabaseTest {
         assertTrue(context.getDatabasePath(dbName).exists())
         keyStore.deleteEntry(alias)
         assertThrows(TaskStorageUnavailableException::class.java) { runBlocking { repo(db).get(task.id) } }
+        assertThrows(TaskStorageUnavailableException::class.java) { runBlocking { repo(db).create(TaskDraft("must not rotate key")) } }
+        assertFalse(keyStore.containsAlias(alias))
         assertNotNull(db.taskDao().row(task.id))
     }
 

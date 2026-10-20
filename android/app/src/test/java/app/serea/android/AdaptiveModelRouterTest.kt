@@ -9,7 +9,8 @@ class AdaptiveModelRouterTest {
         id, "fake", id, Knowledge.Known(context), Knowledge.Known(1024),
         ModelCapabilities(setOf("text/plain"), Knowledge.Known(tools), Knowledge.Known(true), Knowledge.Known(false)),
         ModelPricing(Knowledge.Known(cost), Knowledge.Known(cost * 2), Knowledge.Known("USD")), ModelAvailability.AVAILABLE, authorized = true,
-        source = "unit-test fixture", lastVerifiedAt = "2026-10-19T00:00:00Z",
+        source = "unit-test fixture (fictional data)", lastVerifiedAt = "2026-10-19T00:00:00Z",
+        verificationStatus = ModelVerificationStatus.TEST_FIXTURE,
     )
 
     @Test fun emptyCatalogDoesNotInventOrChooseDefaultModel() {
@@ -23,12 +24,12 @@ class AdaptiveModelRouterTest {
             model("https://attacker.example", .1)
         }
         val unverified = model("unverified", .1).copy(source = null, lastVerifiedAt = null)
-        val result = AdaptiveModelRouter(LocalModelCatalog(listOf(unverified))).select(RoutingRequest("hi"), ModelRoutingPolicy())
+        val result = AdaptiveModelRouter(FakeModelCatalog(listOf(unverified))).select(RoutingRequest("hi"), ModelRoutingPolicy())
         assertNull(result.model)
         assertTrue(result.excluded.single().reason.contains("情報源"))
     }
     @Test fun taskClassificationSeparatesComplexityFromCapabilities() {
-        val router = AdaptiveModelRouter(LocalModelCatalog(listOf(model("a", 1.0), model("b", 2.0))))
+        val router = AdaptiveModelRouter(FakeModelCatalog(listOf(model("a", 1.0), model("b", 2.0))))
         assertEquals(ModelTask.COMPLEX, router.classify(RoutingRequest("Please compare these approaches")))
         assertEquals(ModelTask.STRUCTURED, router.classify(RoutingRequest("json", requiresStructuredOutput = true)))
         assertEquals(ModelTask.TOOL_REQUIRED, router.classify(RoutingRequest("search", requiresTools = true)))
@@ -38,7 +39,7 @@ class AdaptiveModelRouterTest {
         val simple = model("a-simple", .1)
         val reasoning = model("z-reasoning", .2).copy(capabilities = ModelCapabilities(
             setOf("text/plain"), Knowledge.Known(false), Knowledge.Known(true), Knowledge.Known(true)))
-        val router = AdaptiveModelRouter(LocalModelCatalog(listOf(simple, reasoning)))
+        val router = AdaptiveModelRouter(FakeModelCatalog(listOf(simple, reasoning)))
         assertEquals("a-simple", router.select(RoutingRequest("hello"), allowFixture()).selectedModelId)
         val complex = router.select(RoutingRequest("compare these options"), allowFixture())
         assertEquals(ModelTask.COMPLEX, complex.task)
@@ -46,7 +47,7 @@ class AdaptiveModelRouterTest {
         assertTrue(complex.excluded.any { it.modelId == "a-simple" && it.reason.contains("Reasoning") })
     }
     @Test fun selectionIsDeterministicAndCostPolicyRequiresVerifiedPrices() {
-        val router = AdaptiveModelRouter(LocalModelCatalog(listOf(model("z", 1.0), model("a", .2))))
+        val router = AdaptiveModelRouter(FakeModelCatalog(listOf(model("z", 1.0), model("a", .2))))
         val request = RoutingRequest("hello")
         assertEquals("a", router.select(request, allowFixture()).selectedModelId)
         assertEquals("a", router.select(request, allowFixture()).selectedModelId)
@@ -55,7 +56,7 @@ class AdaptiveModelRouterTest {
         assertEquals("USD", withinBudget.estimatedCost?.currencyCode)
         assertNull(router.select(request, allowFixture(ModelRoutingPolicy(maxEstimatedCost = 0.0001, budgetCurrencyCode = "USD"))).model)
         val unknown = model("unknown", 1.0).copy(pricing = ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN))
-        val result = AdaptiveModelRouter(LocalModelCatalog(listOf(unknown))).select(request,
+        val result = AdaptiveModelRouter(FakeModelCatalog(listOf(unknown))).select(request,
             allowFixture(ModelRoutingPolicy(autoPolicy = AutoRoutingPolicy.COST_PRIORITY)))
         assertNull(result.model)
         assertTrue(result.excluded.single().reason.contains("料金が未確認"))
@@ -70,7 +71,7 @@ class AdaptiveModelRouterTest {
             model("expensive", 1_000.0, context = 65_536, tools = true),
             model("short-output", .1, context = 65_536, tools = true).copy(maxOutput = Knowledge.Known(64)),
         )
-        val result = AdaptiveModelRouter(LocalModelCatalog(candidates)).select(request,
+        val result = AdaptiveModelRouter(FakeModelCatalog(candidates)).select(request,
             allowFixture(ModelRoutingPolicy(maxEstimatedCost = 0.000001, budgetCurrencyCode = "USD")))
         assertNull(result.model)
         assertEquals(6, result.excluded.size)
@@ -82,15 +83,35 @@ class AdaptiveModelRouterTest {
         assertTrue(result.excluded.any { it.reason.contains("最大出力") })
     }
     @Test fun manualUnavailableDoesNotFallback() {
-        val router = AdaptiveModelRouter(LocalModelCatalog(listOf(model("a", .1), model("b", .2).copy(availability = ModelAvailability.UNAVAILABLE))))
+        val router = AdaptiveModelRouter(FakeModelCatalog(listOf(model("a", .1), model("b", .2).copy(availability = ModelAvailability.UNAVAILABLE))))
         val result = router.select(RoutingRequest("hello"), allowFixture(ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = "b")))
         assertNull(result.model)
         assertTrue(result.reason.contains("自動切替はしません"))
     }
     @Test fun providerOutsideExplicitSelectionAllowlistIsExcluded() {
         val descriptor = model("unapproved-provider", .1).copy(providerId = "elsewhere")
-        val result = AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor))).select(RoutingRequest("hello"), allowFixture())
+        val result = AdaptiveModelRouter(FakeModelCatalog(listOf(descriptor))).select(RoutingRequest("hello"), allowFixture())
         assertNull(result.model)
         assertTrue(result.excluded.single().reason.contains("Provider ID"))
+    }
+
+    @Test fun unverifiedAndStaleCatalogEntriesAreDenied() {
+        val now = java.time.Instant.parse("2026-10-20T12:00:00Z")
+        val catalog = FakeModelCatalog(listOf(model("fresh", .1), model("old", .1).copy(lastVerifiedAt = "2026-10-01T00:00:00Z"),
+            model("unverified", .1).copy(verificationStatus = ModelVerificationStatus.UNVERIFIED)), { now })
+        val result = AdaptiveModelRouter(catalog).select(RoutingRequest("hello"), allowFixture())
+        assertEquals("fresh", result.selectedModelId)
+        assertEquals(2, result.excluded.size)
+    }
+
+    @Test fun costPriorityDoesNotCompareCurrenciesAndQualityHasNoInventedRanking() {
+        val usd = model("a-usd", .1)
+        val eur = model("z-eur", .01).copy(pricing = ModelPricing(Knowledge.Known(.01), Knowledge.Known(.02), Knowledge.Known("EUR")))
+        val router = AdaptiveModelRouter(FakeModelCatalog(listOf(usd, eur)))
+        val balanced = router.select(RoutingRequest("hello"), allowFixture())
+        assertEquals("a-usd", balanced.selectedModelId)
+        val quality = router.select(RoutingRequest("hello"), allowFixture(ModelRoutingPolicy(autoPolicy = AutoRoutingPolicy.QUALITY_PRIORITY)))
+        assertEquals("a-usd", quality.selectedModelId)
+        assertTrue(quality.constraints.any { it.contains("実測品質データなし") })
     }
 }

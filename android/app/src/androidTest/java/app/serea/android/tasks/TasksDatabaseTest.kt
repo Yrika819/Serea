@@ -107,6 +107,8 @@ class TasksDatabaseTest {
             "00000000-0000-0000-0000-${idCounter.getAndIncrement().toString().padStart(12, '0')}"
         }
         val proposalId = "10000000-0000-0000-0000-000000000001"
+        // Keep AndroidKeyStore's first-time alias generation outside the DB race under test.
+        cipher.encrypt("keystore-warmup", byteArrayOf(1))
         val first = async(Dispatchers.IO) { runCatching { proposalRepo().createFromApprovedProposal(TaskDraft("approved once"), proposalId) } }
         val second = async(Dispatchers.IO) { runCatching { proposalRepo().createFromApprovedProposal(TaskDraft("approved once"), proposalId) } }
         val outcomes = listOf(first.await(), second.await())

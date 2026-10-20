@@ -108,7 +108,7 @@ Calendar originはEgress allowlistに含まれず、TasksはChatContext/Provider
 
 ## 15. Process Death
 
-Cのdebug-only harness拡張を保持した。HistoryとTasksのprepare/verify/delete後確認を行い、両SQLiteファイルの存在も検査する。実装HEAD run `39395148885` のAPI 26/35でInstrumentation後にOS Process Death harnessを実行し、両方のlogでpersisted history、pending recovery、deletion、encrypted readのPASSを確認した。
+Cのdebug-only harness拡張を保持した。HistoryとTasksのprepare/verify/delete後確認を行い、両SQLiteファイルの存在も検査する。HEAD `5fbf1c5ec1a97ec556cf14248bff3ad9225a9bf3` のAndroid run `39400624904` でAPI 26/35ともInstrumentation後のOS Process Death harnessがPASSした。Artifact `12256235434` の `process-death/api26.log` / `api35.log` でpersisted history、pending recovery、deletion、encrypted readのPASSを確認した。
 
 ## 16. Calendar Mock Foundation
 
@@ -116,27 +116,29 @@ Calendar Domain、read-only port、Fake Provider、Google JSON parser、Agenda�
 
 ## 17. Unit / Integration Results
 
-このCodex Cloud workspaceにはGradle実行ファイル/配布物がなく、Gradle Wrapperの取得が `services.gradle.org` へのConnection refusedで停止したため、ローカルAndroid Build/Unit/Instrumentationは実行できなかった。GitHub Actionsの実装HEAD run `39395148885` でAndroid Build/Lint/Instrumentation Compile、Unit、Mock HTTP Integration、Security、Dependency Audit、Documentation、API 26/35をPASSした。ローカルのRepository regression tests 136件、Instrumentation verifier regression 5件、Android/Calendar workflow YAML parse、Process Death shell syntax、Source Count整合チェック、docs validationはPASS。
+このCodex Cloud workspaceにはGradle実行ファイル/配布物がなく、Gradle Wrapperの取得が `services.gradle.org` へのConnection refusedで停止したため、ローカルAndroid Build/Unit/Instrumentationは実行できなかった。GitHub ActionsのHEAD `5fbf1c5ec1a97ec556cf14248bff3ad9225a9bf3` run `39400624904` でAndroid Build/Lint/Instrumentation Compile、Unit、Mock HTTP Integration、Security、Dependency Audit、Documentation、API 26/35をPASSした。ローカルのRepository regression tests 136件、Instrumentation verifier regression 5件、Android/Calendar workflow YAML parse、Process Death shell syntax、Source Count整合チェック、docs validationはPASS。
 
 ## 18. API 26 / API 35 Results
 
-実装HEAD `e4ca2118ca10464f605ce49379f7632d01727e02` のAndroid workflow run `39395148885` の実JUnit XMLをartifact `12251927126` から確認した。API 26は59件、API 35は59件で、両方ともfailure 0 / error 0 / skipped 0。7つの必須クラスは各APIでSource Countと完全一致した。Process Death logはAPI 26、API 35ともPASS。`Android Emulator Required Gate` も成功した。初回HEAD `9152c507e98acaf2c400ec45a9543128da7515e3` は59件中 `TasksDatabaseTest` のalias不存在assertionが1件失敗した。Instrumentation間でAndroidKeyStore stateが共有されるため、テストが正規tasks aliasの不存在を誤って仮定していた。固定aliasとの文字列比較へ変更し、製品aliasやKeystore挙動は変更せず、修正後の両APIで全件PASSを確認した。
+HEAD `5fbf1c5ec1a97ec556cf14248bff3ad9225a9bf3` のAndroid run `39400624904` のJUnit XMLをartifact `12256235434` から直接確認した。API 26は59件、API 35は59件で、両方ともfailure 0 / error 0 / skipped 0。各APIのclass countsは `EncryptedHistoryTest` 16、`ChatScreenTest` 16、`ChatHttpE2ETest` 4、`UsageLedgerDatabaseTest` 12、`TasksDatabaseTest` 6、`TaskScreenTest` 4、`ChatTasksDatabaseIntegrationTest` 1で、Source Countと完全一致した。Process Death logはAPI 26/35ともPASSし、`Android Emulator Required Gate` も成功した。
+
+初回HEAD `9152c507e98acaf2c400ec45a9543128da7515e3` ではTasks testのKeystore alias不存在assertionが1件失敗し、固定aliasとの文字列比較に直した。HEAD `0e07d41489e89d834372e921247282fe6d2d64c1` ではAPI 35の `TasksDatabaseTest.proposalReceiptIsUniqueAndDuplicateConcurrentCreateRollsBack` が、期待した `TaskConflictException` 数1に対して0となった。複数Repositoryが初回のtest Keystore alias生成とDB重複競合を同時に開始していたため、DB契約と無関係なKeystore初期化が重なっていた。テスト内で架空aliasを並行処理前に生成し、proposal uniquenessの並行DB検証を分離した。製品KeystoreやTask Repositoryの挙動は変更していない。修正HEAD `5fbf1c5` で両APIの全59件がPASSした。
 
 ## 19. All Required CI
 
-実装HEAD `e4ca2118ca10464f605ce49379f7632d01727e02` に紐づく必須Workflowはすべて成功した。
+HEAD `5fbf1c5ec1a97ec556cf14248bff3ad9225a9bf3` に紐づく必須Workflowはすべて成功した。最終レポートcommit後にも全Workflowを再実行する。
 
 | Workflow | Run ID | 結果 |
 |---|---:|---|
-| Android (Build, Unit, Integration, Security, Lint, Dependency Audit, Documentation, API 26/35, Process Death, Emulator Required Gate) | `39395148885` | PASS |
-| Calendar Read-only | `39395148855` | PASS (JUnit 22件、failure/error/skip 0) |
-| Fast CI (Commit Identity Gate含む) | `39395148914` | PASS |
-| Full CI | `39395148846` | PASS |
-| Native Platform Validation | `39395148829` | PASS |
-| SQLite Portability | `39395148810` | PASS |
-| Windows Hooks Compatibility | `39395148864` | PASS |
+| Android (Build, Unit, Integration, Security, Lint, Dependency Audit, Documentation, API 26/35, Process Death, Emulator Required Gate) | `39400624904` | PASS; API 26/35各59件 |
+| Calendar Read-only | `39400624805` | PASS (JUnit 22件、failure/error/skip 0) |
+| Fast CI (Commit Identity Gate含む) | `39400624848` | PASS |
+| Full CI | `39400624785` | PASS |
+| Native Platform Validation | `39400624827` | PASS (12/12 matrix jobs) |
+| SQLite Portability | `39400624885` | PASS |
+| Windows Hooks Compatibility | `39400624783` | PASS |
 
-初回SQLite run `39393284365` ではrunnerがartifactの署名付きURLを取得する際に `ETIMEDOUT` となり、DB検証stepに到達しなかった。アプリ/SQLite failureではなくActions artifact転送の一時的失敗として分類した。修正後の実装HEAD run `39395148810` は両方向のcross-architecture open testを含めPASS。レポート更新後の新HEADではこれら全Workflowを再実行し、そのrun IDをDraft PRのdescriptionに追記する。
+初回SQLite run `39393284365` ではrunnerがartifactの署名付きURLを取得する際に `ETIMEDOUT` となり、DB検証stepに到達しなかった。アプリ/SQLite failureではなくActions artifact転送の一時的失敗として分類した。修正後のHEAD run `39400624885` は両方向のcross-architecture open testを含めPASS。Nativeを含む全Workflow成功を確認したため、このレポートをcommitし、新HEADですべてのWorkflowを再実行する。最終run IDをDraft PRのdescriptionへ反映する。
 
 ## 20. Existing PR Preservation
 

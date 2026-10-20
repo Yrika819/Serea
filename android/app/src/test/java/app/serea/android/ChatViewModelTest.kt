@@ -87,8 +87,9 @@ class ChatViewModelTest {
         assertEquals("日本語の相談 😀", conversationTitle("  日本語の相談\n😀  "))
         assertEquals("新しい会話", conversationTitle(" \n\t "))
         val longTitle = conversationTitle("😀".repeat(60))
-        assertEquals(49, longTitle.codePointCount(0, longTitle.length))
+        assertEquals(48, longTitle.codePointCount(0, longTitle.length))
         assertTrue(longTitle.endsWith("…"))
+        assertEquals(48, conversationTitle("😀".repeat(48)).codePointCount(0, conversationTitle("😀".repeat(48)).length))
         assertEquals("first second", conversationTitle("first\u0000\nsecond"))
     }
 

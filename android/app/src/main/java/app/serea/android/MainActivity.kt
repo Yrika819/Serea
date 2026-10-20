@@ -261,10 +261,18 @@ internal class ChatViewModel(
     }
 
     fun showHistory() {
+        if (mutableState.value.isRestoring) return
+        val generation = ++selectionGeneration
         viewModelScope.launch {
-            try { mutableState.update { it.copy(history = historyRepository?.list().orEmpty(), showingHistory = true, isLoading = false) } }
-            catch (_: HistoryUnavailableException) { mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") } }
-            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not open saved history.") } }
+            try {
+                val conversations = historyRepository?.list().orEmpty()
+                if (generation != selectionGeneration) return@launch
+                mutableState.update { it.copy(history = conversations, showingHistory = true, isLoading = false) }
+            } catch (_: HistoryUnavailableException) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
+            } catch (_: Exception) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Could not open saved history.") }
+            }
         }
     }
 
@@ -283,8 +291,13 @@ internal class ChatViewModel(
                         message.copy(status = "OUTCOME_UNKNOWN").toChatMessage()
                     } else message.toChatMessage()
                 }
+                if (generation != selectionGeneration) return@launch
                 mutableState.update { it.copy(conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)), showingHistory = false, isLoading = false) }
-            } catch (_: HistoryUnavailableException) { mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") } }
+            } catch (_: HistoryUnavailableException) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
+            } catch (_: Exception) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Could not open the selected conversation.") }
+            }
         }
     }
 
@@ -296,37 +309,47 @@ internal class ChatViewModel(
         }
         val id = expectedId
         cancelCurrent()
-        selectionGeneration += 1
+        val generation = ++selectionGeneration
         mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
         viewModelScope.launch {
             try {
                 historyRepository?.delete(id)
+                if (generation != selectionGeneration) return@launch
                 newConversation()
                 refreshHistory()
-                mutableState.update { it.copy(statusMessage = "この会話を削除しました。") }
-            } catch (_: Exception) { mutableState.update { it.copy(errorMessage = "この会話を削除できませんでした。", isRestoring = false) } }
+                val completedGeneration = selectionGeneration
+                mutableState.update { if (completedGeneration == selectionGeneration) it.copy(statusMessage = "この会話を削除しました。") else it }
+            } catch (_: Exception) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "この会話を削除できませんでした。", isRestoring = false) }
+            }
         }
     }
 
     fun deleteAllHistory() {
         if (mutableState.value.isRestoring) return
         cancelCurrent()
-        selectionGeneration += 1
+        val generation = ++selectionGeneration
         mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
         viewModelScope.launch {
             try {
                 historyRepository?.deleteAll()
+                if (generation != selectionGeneration) return@launch
                 newConversation()
-                mutableState.update { it.copy(history = emptyList(), statusMessage = "全会話履歴を削除しました。") }
-            } catch (_: Exception) { mutableState.update { it.copy(errorMessage = "全会話履歴を削除できませんでした。", isRestoring = false) } }
+                val completedGeneration = selectionGeneration
+                mutableState.update { if (completedGeneration == selectionGeneration) it.copy(history = emptyList(), statusMessage = "全会話履歴を削除しました。") else it }
+            } catch (_: Exception) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "全会話履歴を削除できませんでした。", isRestoring = false) }
+            }
         }
     }
 
     private fun restoreLatest() {
+        val generation = selectionGeneration
         viewModelScope.launch {
             try {
                 usageRepository?.recoverAfterProcessRestart()
                 val conversations = historyRepository!!.list()
+                if (generation != selectionGeneration) return@launch
                 val latest = conversations.firstOrNull()
                 if (latest == null) {
                     // Keep the new empty conversation in memory until its first message is sent.
@@ -336,13 +359,16 @@ internal class ChatViewModel(
                         if (message.status == "PENDING") historyRepository.updateStatus(message.id, latest.id, "OUTCOME_UNKNOWN")
                         message.copy(status = if (message.status == "PENDING") "OUTCOME_UNKNOWN" else message.status).toChatMessage()
                     }
+                    if (generation != selectionGeneration) return@launch
                     mutableState.update { it.copy(conversation = Conversation(latest.id, messages, Instant.ofEpochMilli(latest.createdAt))) }
                 }
             } catch (_: HistoryUnavailableException) {
-                mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
             } catch (_: Exception) {
-                mutableState.update { it.copy(errorMessage = "Could not restore saved history.") }
-            } finally { mutableState.update { it.copy(isRestoring = false) } }
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Could not restore saved history.") }
+            } finally {
+                if (generation == selectionGeneration) mutableState.update { it.copy(isRestoring = false) }
+            }
         }
     }
 
@@ -364,7 +390,14 @@ internal class ChatViewModel(
             conversation = current.conversation.copy(messages = current.conversation.messages.map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
             errorMessage = reason) else current }
     }
-    private fun refreshHistory() { viewModelScope.launch { runCatching { historyRepository?.list().orEmpty() }.onSuccess { list -> mutableState.update { it.copy(history = list) } } } }
+    private fun refreshHistory() {
+        val generation = selectionGeneration
+        viewModelScope.launch {
+            runCatching { historyRepository?.list().orEmpty() }.onSuccess { list ->
+                if (generation == selectionGeneration) mutableState.update { it.copy(history = list) }
+            }
+        }
+    }
 
     companion object {
         fun factory(port: ModelChatPort, history: ConversationRepository? = null, usage: UsageRepository? = null): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
@@ -399,8 +432,10 @@ internal fun conversationTitle(firstMessage: String): String {
     }.replace(Regex("\\s+"), " ").trim()
     if (clean.isEmpty()) return "新しい会話"
     val limit = 48
-    val end = clean.offsetByCodePoints(0, minOf(clean.codePointCount(0, clean.length), limit))
-    val truncated = end < clean.length
+    val codePointCount = clean.codePointCount(0, clean.length)
+    val truncated = codePointCount > limit
+    val visibleCodePoints = if (truncated) limit - 1 else limit
+    val end = clean.offsetByCodePoints(0, minOf(codePointCount, visibleCodePoints))
     return clean.substring(0, end).trimEnd() + if (truncated) "…" else ""
 }
 

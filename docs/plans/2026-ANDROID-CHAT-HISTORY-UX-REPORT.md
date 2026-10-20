@@ -7,8 +7,7 @@
 - Verified base SHA: `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf` (matches PR #58 head).
 - Work branch: `codex/android-q4-chat-history-ux-2026-10-20`, created from the verified SHA.
 - Draft PR: https://github.com/Yrika819/Serea/pull/63 (Open, Draft).
-- Reported source commit before this report metadata update: `c86121f8a1958b88eb985649296e95c05852f7f8`; tree `ae934f357820ef92e8c5e6859b44193373a414f3`.
-- GitHub Actions initially queued on that source commit: Android `39432731277`, Fast CI `39432731264`, Full CI `39432730933`, Native platform validation `39432731448`, Cross-architecture SQLite portability `39432730713`, Windows hooks compatibility `39432730757`. These runs do not validate this report metadata commit; final-head runs are checked separately.
+- This follow-up audits PR #63 at the requested starting HEAD `9328c363d4d79cd1b9de8c7adc49f6d068f5538a`, with the same verified base SHA above.
 
 ## Implementation
 
@@ -16,14 +15,17 @@
 - The first user message and its encrypted title are written together in one Room transaction. A failed first request retains the user turn and transitions its status through the existing failure/unknown handling.
 - Titles are generated locally from the first message, whitespace and control characters are normalized, and text is capped at 48 Unicode code points. The existing encrypted title column and Android Keystore encryption are reused. The app UI displays the title; no title text is added to logs, notifications, or test diagnostics.
 - Legacy `Conversation <8 hex>` titles remain readable and are shown as-is when the stored conversation has no user message. When a user message exists, the history UI can show its derived title without rewriting the stored row.
-- The current conversation name is visible in chat and in the current-conversation deletion confirmation. Conversation reads use a generation check so an older asynchronous selection cannot replace a newer one.
+- The current conversation name is visible in chat and in the current-conversation deletion confirmation. Conversation selection, history display, startup restore, deletion completion, and history refresh use generation checks to prevent stale asynchronous results from replacing a later selection. `openConversation()` checks again after pending-message status updates, which can suspend.
+- Title length is defined as at most 48 Unicode code points, including the ellipsis. A truncated title uses 47 source code points followed by `…`; an untruncated title can use all 48.
 - History schema remains version 4. No migration, Manifest, Gradle, Workflow, task, calendar, Gmail, Google authorization, provider, usage, or signing files were changed.
 
 ## Verification
 
 - `git diff --check`: PASS.
 - `./gradlew --no-daemon testDebugUnitTest --tests '*ChatViewModelTest' assembleDebug lintDebug`: PASS. `ChatViewModelTest`: 17 tests, 0 failures, 0 errors, 0 skipped. Debug APK build and `lintDebug` passed.
-- `./gradlew --no-daemon assembleDebugAndroidTest`: PASS; Android instrumentation sources compiled, including the dedicated `ChatHistoryUxTest` cases.
+- `./gradlew --no-daemon assembleDebugAndroidTest`: PASS; Android instrumentation sources compiled. Runtime instrumentation was NOT_RUN.
+- `ChatHistoryUxTest` now uses only an in-memory Room database and a unique Android Keystore alias. It does not open or clear the production `serea-history.db`; it checks the named app database file metadata is unchanged before and after each test. It covers the delayed A-then-B conversation selection race and transaction rollback when insertion of the first message fails.
+- Safe non-CI invocation condition: only the isolated `ChatHistoryUxTest` class may be run on a device with real app data. The broader `ChatScreenTest` suite still uses app history and must only run on a disposable CI emulator or an otherwise empty test installation. Never run instrumentation on Pixel 7a or a device holding user history.
 - Local API 26/35 instrumentation and Process Death: NOT_RUN. This workspace has no Android Emulator package or AVD. No physical device or ADB device was contacted.
 - Pixel 7a acceptance: NOT_RUN.
 - Live provider, API key, Google OAuth, Gmail, and Calendar traffic: NOT_RUN.

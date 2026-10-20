@@ -148,7 +148,10 @@ interface ModelChatPort {
     suspend fun send(request: ModelChatRequest): ModelChatResponse
 }
 
-class ModelChatFailure(message: String) : Exception(message)
+open class ModelChatFailure(message: String) : Exception(message)
+
+/** A local validation failed before the provider adapter could dispatch a request. */
+internal class PreDispatchModelChatFailure(message: String) : ModelChatFailure(message)
 
 /** Deterministic demo only. It makes no network calls and never claims cloud inference. */
 class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChatPort {

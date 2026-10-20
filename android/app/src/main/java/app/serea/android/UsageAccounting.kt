@@ -102,6 +102,64 @@ object RequestModelAttribution : UsageAttributionResolver {
     )
 }
 
+/** Price evidence is keyed to the exact catalog model and has an explicit expiry. */
+data class VerifiedModelPriceSnapshot(
+    val modelId: String,
+    val price: VerifiedPriceSnapshot,
+    val expiresAt: String,
+) {
+    init {
+        require(validAttributionId(modelId) && modelId != ModelUsageAttribution.UNKNOWN_ATTRIBUTION)
+        require(expiresAt.length <= 40 && runCatching { Instant.parse(expiresAt) }.isSuccess)
+    }
+}
+
+fun interface VerifiedModelPriceCatalog {
+    fun find(modelId: String): VerifiedModelPriceSnapshot?
+}
+
+object EmptyVerifiedModelPriceCatalog : VerifiedModelPriceCatalog {
+    override fun find(modelId: String): VerifiedModelPriceSnapshot? = null
+}
+
+/** Resolves only the router-selected ID against a fresh, entitled catalog descriptor. */
+class CatalogUsageAttributionResolver(
+    private val modelCatalog: ModelCatalog,
+    private val priceCatalog: VerifiedModelPriceCatalog = EmptyVerifiedModelPriceCatalog,
+    private val clock: () -> Instant = Instant::now,
+    private val maxPriceAgeMillis: Long = 7L * 24 * 60 * 60 * 1000,
+) : UsageAttributionResolver {
+    init { require(maxPriceAgeMillis > 0) }
+
+    override fun resolve(request: ModelChatRequest): ModelUsageAttribution {
+        val selectedId = request.selectedModelId?.takeIf(String::isNotBlank)
+            ?: throw PreDispatchModelChatFailure("No model was selected for this request.")
+        val model = modelCatalog.all().singleOrNull { it.id == selectedId }
+            ?: throw PreDispatchModelChatFailure("The selected model is not in the trusted catalog.")
+        val now = clock()
+        val verifiedAt = model.lastVerifiedAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
+        val expiresAt = model.expiresAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
+        if (model.id != selectedId || model.verificationStatus !in setOf(ModelVerificationStatus.VERIFIED, ModelVerificationStatus.TEST_FIXTURE) ||
+            !modelCatalog.isFresh(model) || !model.authorized || model.availability != ModelAvailability.AVAILABLE ||
+            model.source.isNullOrBlank() || verifiedAt == null || verifiedAt.isAfter(now) ||
+            now.toEpochMilli() - verifiedAt.toEpochMilli() > maxPriceAgeMillis ||
+            (model.expiresAt != null && (expiresAt == null || !now.isBefore(expiresAt))) ) {
+            throw PreDispatchModelChatFailure("The selected model catalog entry is stale or unauthorized.")
+        }
+
+        val price = priceCatalog.find(selectedId)?.takeIf { evidence ->
+            if (evidence.modelId != selectedId) return@takeIf false
+            val priceVerifiedAt = runCatching { Instant.parse(evidence.price.verifiedAt) }.getOrNull() ?: return@takeIf false
+            val priceEffectiveAt = evidence.price.effectiveAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
+            val priceExpiresAt = runCatching { Instant.parse(evidence.expiresAt) }.getOrNull() ?: return@takeIf false
+            !priceVerifiedAt.isAfter(now) && now.toEpochMilli() - priceVerifiedAt.toEpochMilli() <= maxPriceAgeMillis &&
+                (priceEffectiveAt == null && evidence.price.effectiveAt == null || priceEffectiveAt?.let { !it.isAfter(now) } == true) &&
+                now.isBefore(priceExpiresAt)
+        }?.price
+        return ModelUsageAttribution(modelId = model.id, providerId = model.providerId, price = price)
+    }
+}
+
 @Entity(tableName = "usage_windows", primaryKeys = ["windowKey"])
 data class UsageWindowRow(val windowKey: String, val requests: Long, val inputTokens: Long, val outputTokens: Long)
 
@@ -188,6 +246,7 @@ interface UsageDao {
     @Query("SELECT * FROM usage_reservations WHERE requestId = :id") suspend fun reservation(id: String): UsageReservationRow?
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertReservation(row: UsageReservationRow)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putReservation(row: UsageReservationRow)
+    @Query("DELETE FROM usage_reservations WHERE requestId = :id AND state = 'IN_FLIGHT'") suspend fun deleteInFlightReservation(id: String): Int
     @Query("SELECT * FROM usage_reservations WHERE state = 'IN_FLIGHT'") suspend fun inFlight(): List<UsageReservationRow>
     @Query("UPDATE usage_reservations SET state = 'OUTCOME_UNKNOWN' WHERE requestId = :id AND state = 'IN_FLIGHT'") suspend fun markUnknown(id: String): Int
     @Query("SELECT * FROM usage_settings WHERE id = 1") suspend fun settings(): UsageSettingsRow?
@@ -235,6 +294,25 @@ interface UsageDao {
         putWindow(dayUsage.copy(requests = dayRequests, inputTokens = safeAdd(dayUsage.inputTokens, input), outputTokens = safeAdd(dayUsage.outputTokens, outputCap)))
         putWindow(monthUsage.copy(requests = monthRequests, inputTokens = safeAdd(monthUsage.inputTokens, input), outputTokens = safeAdd(monthUsage.outputTokens, outputCap)))
         return UsageReservation(requestId, input, outputCap)
+    }
+
+    /** Reverses a reservation only when the downstream explicitly proves no dispatch occurred. */
+    @Transaction
+    suspend fun releaseBeforeDispatch(requestId: String): Boolean {
+        val item = reservation(requestId) ?: return false
+        val savedLedger = ledger(requestId) ?: return false
+        if (item.state != UsageLedgerState.IN_FLIGHT.name || savedLedger.usageStatus != UsageLedgerState.IN_FLIGHT.name ||
+            savedLedger.reservationState != UsageLedgerState.IN_FLIGHT.name) return false
+        val day = window(item.dayKey) ?: return false
+        val month = window(item.monthKey) ?: return false
+        if (day.requests < 1 || month.requests < 1 || day.inputTokens < item.inputTokens || day.outputTokens < item.outputTokens ||
+            month.inputTokens < item.inputTokens || month.outputTokens < item.outputTokens) return false
+        putWindow(day.copy(requests = day.requests - 1, inputTokens = day.inputTokens - item.inputTokens,
+            outputTokens = day.outputTokens - item.outputTokens))
+        putWindow(month.copy(requests = month.requests - 1, inputTokens = month.inputTokens - item.inputTokens,
+            outputTokens = month.outputTokens - item.outputTokens))
+        check(deleteInFlightReservation(requestId) == 1) { "Undispatched reservation changed before it could be released." }
+        return true
     }
 
     @Transaction
@@ -367,6 +445,7 @@ internal class UsageRepository(private val dao: UsageDao, private val clock: () 
         val estimate = try { Math.multiplyExact(promptChars.toLong(), 4L) } catch (_: ArithmeticException) { throw UsageAccountingOverflowException() }
         return dao.reserve(requestId, clock(), estimate, maxOutputTokens.toLong(), attribution)
     }
+    suspend fun releaseBeforeDispatch(requestId: String) = dao.releaseBeforeDispatch(requestId)
     suspend fun complete(requestId: String, providerUsage: ProviderUsage?) = dao.settle(
         requestId, providerUsage?.inputTokens?.toLong(), providerUsage?.outputTokens?.toLong(), clock(),
     )
@@ -410,6 +489,12 @@ internal class UsageControlledModelChatPort(
             val response = delegate.send(request)
             withContext(NonCancellable) { usage.complete(request.sendId, response.usage) }
             return response
+        } catch (rejected: PreDispatchModelChatFailure) {
+            val released = withContext(NonCancellable) { usage.releaseBeforeDispatch(request.sendId) }
+            if (!released) withContext(NonCancellable) {
+                usage.outcomeUnknown(request.sendId, "A downstream local rejection could not safely release its reservation.")
+            }
+            throw rejected
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) { usage.outcomeUnknown(request.sendId, "Request was cancelled after reservation; remote outcome may be unknown.") }
             throw cancelled

@@ -30,7 +30,7 @@ data class ProviderUsage(val inputTokens: Int?, val outputTokens: Int?)
 data class CloudReply(val text: String, val usage: ProviderUsage?)
 
 enum class ProviderFailureKind { DISABLED, CREDENTIAL_MISSING, CREDENTIAL_INVALID, AUTHENTICATION, FORBIDDEN, MODEL_UNAVAILABLE, RATE_LIMITED, SERVER, NETWORK, TIMEOUT, INVALID_RESPONSE, LIMIT_EXCEEDED }
-class ProviderFailure(val kind: ProviderFailureKind) : Exception(
+open class ProviderFailure(val kind: ProviderFailureKind, val mayHaveDispatched: Boolean = true) : Exception(
     when (kind) {
         ProviderFailureKind.DISABLED -> "Cloud mode is disabled."
         ProviderFailureKind.CREDENTIAL_MISSING -> "Set an API key in Settings before using cloud mode."
@@ -46,6 +46,7 @@ class ProviderFailure(val kind: ProviderFailureKind) : Exception(
         ProviderFailureKind.LIMIT_EXCEEDED -> "The request exceeds the local size limit."
     }
 )
+internal class ProviderPreDispatchFailure(kind: ProviderFailureKind) : ProviderFailure(kind, mayHaveDispatched = false)
 
 /** A gate-issued value. There is no public constructor from arbitrary user text. */
 class EgressApprovedPayload private constructor(
@@ -107,12 +108,12 @@ class OllamaCloudAdapter private constructor(
     )
 
     suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit = {}, selectedModelId: String? = null): CloudReply {
-        if (!settings.enabled) throw ProviderFailure(ProviderFailureKind.DISABLED)
+        if (!settings.enabled) throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
         val fixedProbe = payload.conversationId == null && payload.sendId == null && payload.selectedModelId == null
         val modelId = if (fixedProbe) selectedModelId ?: settings.modelId else selectedModelId
-        if (modelId.isNullOrBlank() || !validProviderModelId(modelId)) throw ProviderFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
+        if (modelId.isNullOrBlank() || !validProviderModelId(modelId)) throw ProviderPreDispatchFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
         if (fixedProbe) {
-            if (modelId !in LEGACY_PROBE_MODEL_IDS) throw ProviderFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
+            if (modelId !in LEGACY_PROBE_MODEL_IDS) throw ProviderPreDispatchFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
         } else {
             val boundModelId = payload.selectedModelId
             val descriptor = catalog.all().firstOrNull { it.id == modelId }
@@ -123,7 +124,7 @@ class OllamaCloudAdapter private constructor(
                 descriptor.providerId != "ollama" || descriptor.availability != ModelAvailability.AVAILABLE ||
                 !descriptor.authorized || !modelEvidenceAllowed ||
                 descriptor.source.isNullOrBlank() || descriptor.lastVerifiedAt.isNullOrBlank() || !catalog.isFresh(descriptor)) {
-                throw ProviderFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
+                throw ProviderPreDispatchFailure(ProviderFailureKind.MODEL_UNAVAILABLE)
             }
             if (payload.destination != "https://ollama.com/api/chat" || payload.origin != DataOrigin.USER_AUTHORED ||
                 payload.classification != DataClassification.PUBLIC || payload.conversationId.isNullOrBlank() || payload.sendId.isNullOrBlank()) {
@@ -131,11 +132,11 @@ class OllamaCloudAdapter private constructor(
             }
         }
         if (payload.messages.sumOf { it.first.length.toLong() + it.second.toByteArray(Charsets.UTF_8).size + 64L } > MAX_INPUT_BYTES) {
-            throw ProviderFailure(ProviderFailureKind.LIMIT_EXCEEDED)
+            throw ProviderPreDispatchFailure(ProviderFailureKind.LIMIT_EXCEEDED)
         }
         val request = withContext(Dispatchers.IO) {
-            val key = try { credentials.readForRequest() } catch (_: IllegalStateException) { throw ProviderFailure(ProviderFailureKind.CREDENTIAL_MISSING) }
-            catch (_: HistoryUnavailableException) { throw ProviderFailure(ProviderFailureKind.CREDENTIAL_INVALID) }
+            val key = try { credentials.readForRequest() } catch (_: IllegalStateException) { throw ProviderPreDispatchFailure(ProviderFailureKind.CREDENTIAL_MISSING) }
+            catch (_: HistoryUnavailableException) { throw ProviderPreDispatchFailure(ProviderFailureKind.CREDENTIAL_INVALID) }
             val requestJson = JsonObject().apply {
                 addProperty("model", modelId)
                 add("messages", JsonArray().apply {
@@ -258,26 +259,29 @@ internal class OllamaModelChatPort(
     private val clock: () -> Long = System::currentTimeMillis,
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
-        val contract = request.egressContract ?: throw ModelChatFailure("Cloud send intent has not been approved.")
+        val contract = request.egressContract ?: throw PreDispatchModelChatFailure("Cloud send intent has not been approved.")
         if (contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
             contract.plannedBody != request.message || contract.context != request.context ||
             (contract.selectedModelId != null && contract.selectedModelId != request.selectedModelId) || request.selectedModelId.isNullOrBlank() ||
             contract.classification != request.classification || contract.origin != DataOrigin.USER_AUTHORED) {
-            throw ModelChatFailure("The approved content no longer matches the request.")
+            throw PreDispatchModelChatFailure("The approved content no longer matches the request.")
         }
         val boundContract = contract.copy(selectedModelId = request.selectedModelId)
         val evaluation = ChatEgressGate.evaluate(boundContract, clock())
         if (evaluation.decision != EgressContractDecision.APPROVED) {
-            throw ModelChatFailure("Cloud egress was denied: ${evaluation.decision.name.lowercase()}.")
+            throw PreDispatchModelChatFailure("Cloud egress was denied: ${evaluation.decision.name.lowercase()}.")
         }
-        val payload = evaluation.payload ?: throw ModelChatFailure("Cloud egress approval is unavailable.")
+        val payload = evaluation.payload ?: throw PreDispatchModelChatFailure("Cloud egress approval is unavailable.")
         if (payload.conversationId != request.conversationId || payload.sendId != request.sendId ||
             payload.selectedModelId != request.selectedModelId || payload.destination != boundContract.destination) {
-            throw ModelChatFailure("The approved provider payload no longer matches the routed send.")
+            throw PreDispatchModelChatFailure("The approved provider payload no longer matches the routed send.")
         }
         return try {
             adapter.send(payload, selectedModelId = request.selectedModelId).let { ModelChatResponse(it.text, it.usage) }
         } catch (failure: ProviderFailure) {
+            if (failure is ProviderPreDispatchFailure || !failure.mayHaveDispatched) {
+                throw PreDispatchModelChatFailure(failure.message ?: "The local provider request was rejected before dispatch.")
+            }
             throw ModelChatFailure(failure.message ?: "Cloud request failed.")
         }
     }
@@ -293,13 +297,17 @@ internal object DirectProviderChatComposition {
         routingPolicy: () -> ModelRoutingPolicy = { ModelRoutingPolicy(allowedProviderIds = setOf("ollama")) },
         testEndpoint: HttpUrl? = null,
         testClient: OkHttpClient? = null,
+        usageAttributionResolver: UsageAttributionResolver? = null,
     ): ModelChatPort {
         require((testEndpoint == null) == (testClient == null)) { "A loopback test endpoint and client must be supplied together." }
         val adapter = if (testEndpoint != null && testClient != null)
             OllamaCloudAdapter(credentials, settings, testEndpoint, testClient, catalog, setOf("ollama"))
         else OllamaCloudAdapter(credentials, settings, catalog, setOf("ollama"))
         val gated = EgressCheckedModelChatPort(
-            UsageControlledModelChatPort(OllamaModelChatPort(adapter), usage),
+            UsageControlledModelChatPort(
+                OllamaModelChatPort(adapter), usage,
+                attributionResolver = usageAttributionResolver ?: CatalogUsageAttributionResolver(catalog),
+            ),
         )
         return RoutedModelChatPort(gated, AdaptiveModelRouter(catalog), routingPolicy)
     }

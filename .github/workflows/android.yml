@@ -142,7 +142,7 @@ jobs:
       - name: Android unit JUnit verifier regression tests
         run: python3 -m unittest discover -s tests -p android_unit_junit_results_tests.py
       - name: Verify full Android unit JUnit evidence
-        run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
+        run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest --source-root android/app/src/test/java
       - name: Upload unit JUnit report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -266,7 +266,19 @@ jobs:
           stat -Lc 'post-rule device=%n owner=%U group=%G mode=%a' /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           "$ANDROID_HOME/emulator/emulator" -accel-check
+      - name: Initialize API-specific evidence as NOT_RUN
+        run: |
+          set -euo pipefail
+          root='android/app/build/outputs/androidTest-results'
+          rm -rf "$root/connected" "$root/api35" "$root/api26"
+          for api in 35 26; do
+            mkdir -p "$root/api$api"
+            printf 'NOT_RUN\n' > "$root/api$api/instrumentation-status.txt"
+            printf 'NOT_RUN\n' > "$root/api$api/process-death-status.txt"
+            printf 'NOT_RUN\n' > "$root/api$api/device-api-level.txt"
+          done
       - name: Run API 35 Pixel emulator and all instrumentation tests
+        id: api35
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         timeout-minutes: 55
         with:
@@ -278,32 +290,60 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            test ! -e app/build/outputs/androidTest-results/connected
+            set +e
+            root='app/build/outputs/androidTest-results'
+            evidence="$root/api35"
+            mkdir -p "$evidence"
+            rm -rf "$root/connected" "$evidence/junit"
             adb devices -l
-            adb shell getprop ro.build.version.sdk
-            ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected \
-              --source-root app/src/androidTest/java --minimum 71 \
-              --require-class app.serea.android.EncryptedHistoryTest=16 \
-              --require-class app.serea.android.ChatScreenTest=16 \
-              --require-class app.serea.android.ChatHttpE2ETest=4 \
-              --require-class app.serea.android.UsageLedgerDatabaseTest=12 \
-              --require-class app.serea.android.tasks.TasksDatabaseTest=6 \
-              --require-class app.serea.android.tasks.TaskScreenTest=4 \
-              --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1 \
-              --require-class app.serea.android.ChatHistoryUxTest=4 \
-              --require-class app.serea.android.tasks.TaskDateTimePickerTest=6 \
-              --require-class app.serea.android.assistant.taskproposal.TaskProposalReviewScreenTest=2
-            mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
-            EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh > app/build/outputs/androidTest-results/process-death-api35.log 2>&1; result=$?; cat app/build/outputs/androidTest-results/process-death-api35.log; test "$result" -eq 0
-            echo '### Android API 35 Instrumentation: PASS (71 required tests, exact source/JUnit class counts, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
-            echo 'result=PASS' >> "$GITHUB_OUTPUT"
-        id: instrumentation
+            sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+            printf '%s\n' "$sdk" > "$evidence/device-api-level.txt"
+            sdk_ok=false
+            if [ "$sdk" = 35 ]; then sdk_ok=true; else echo "Expected API 35, observed '$sdk'." > "$evidence/device-api-error.txt"; fi
+            gradle_result=1
+            if [ "$sdk_ok" = true ]; then
+              ./gradlew --no-daemon connectedDebugAndroidTest
+              gradle_result=$?
+              if [ -d "$root/connected" ]; then mv "$root/connected" "$evidence/junit"; fi
+            fi
+            junit_result=NOT_RUN
+            if [ "$sdk_ok" = true ] && [ -d "$evidence/junit" ]; then
+              python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
+                --source-root app/src/androidTest/java --minimum 71 \
+                --require-class app.serea.android.EncryptedHistoryTest=16 \
+                --require-class app.serea.android.ChatScreenTest=16 \
+                --require-class app.serea.android.ChatHttpE2ETest=4 \
+                --require-class app.serea.android.UsageLedgerDatabaseTest=12 \
+                --require-class app.serea.android.tasks.TasksDatabaseTest=6 \
+                --require-class app.serea.android.tasks.TaskScreenTest=5 \
+                --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1 \
+                --require-class app.serea.android.ChatHistoryUxTest=4 \
+                --require-class app.serea.android.tasks.TaskDateTimePickerTest=6 \
+                --require-class app.serea.android.assistant.taskproposal.TaskProposalReviewScreenTest=2 \
+                > "$evidence/junit-verification.log" 2>&1
+              verify_result=$?
+              cat "$evidence/junit-verification.log"
+              if [ "$verify_result" -eq 0 ]; then junit_result=PASS; else junit_result=FAIL; fi
+            fi
+            printf '%s\n' "$junit_result" > "$evidence/instrumentation-status.txt"
+            death_result=NOT_RUN
+            if [ "$sdk_ok" = true ]; then
+              EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh > "$evidence/process-death.log" 2>&1
+              death_exit=$?
+              cat "$evidence/process-death.log"
+              if [ "$death_exit" -eq 0 ]; then death_result=PASS; else death_result=FAIL; fi
+            fi
+            printf '%s\n' "$death_result" > "$evidence/process-death-status.txt"
+            if [ "$sdk_ok" = true ] && [ "$gradle_result" -eq 0 ] && [ "$junit_result" = PASS ] && [ "$death_result" = PASS ]; then result=PASS; else result=FAIL; fi
+            printf '%s\n' "$result" > "$evidence/api-result.txt"
+            echo "### Android API 35: instrumentation=$junit_result process-death=$death_result device-api=$sdk" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$result" != PASS ]; then exit 1; fi
       - name: Install API 26 emulator image
-        if: steps.instrumentation.outputs.result == 'PASS'
+        if: always() && !cancelled()
         run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
       - name: Run API 26 Pixel emulator and all instrumentation tests
-        if: steps.instrumentation.outputs.result == 'PASS'
+        id: api26
+        if: always() && !cancelled()
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         timeout-minutes: 45
         with:
@@ -315,24 +355,75 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: |
-            test ! -e app/build/outputs/androidTest-results/connected
+            set +e
+            root='app/build/outputs/androidTest-results'
+            evidence="$root/api26"
+            mkdir -p "$evidence"
+            rm -rf "$root/connected" "$evidence/junit"
             adb devices -l
-            test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
-            ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected \
-              --source-root app/src/androidTest/java --minimum 71 \
-              --require-class app.serea.android.EncryptedHistoryTest=16 \
-              --require-class app.serea.android.ChatScreenTest=16 \
-              --require-class app.serea.android.ChatHttpE2ETest=4 \
-              --require-class app.serea.android.UsageLedgerDatabaseTest=12 \
-              --require-class app.serea.android.tasks.TasksDatabaseTest=6 \
-              --require-class app.serea.android.tasks.TaskScreenTest=4 \
-              --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1 \
-              --require-class app.serea.android.ChatHistoryUxTest=4 \
-              --require-class app.serea.android.tasks.TaskDateTimePickerTest=6 \
-              --require-class app.serea.android.assistant.taskproposal.TaskProposalReviewScreenTest=2
-            EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh > app/build/outputs/androidTest-results/process-death-api26.log 2>&1; result=$?; cat app/build/outputs/androidTest-results/process-death-api26.log; test "$result" -eq 0
-            echo '### Android API 26 Instrumentation: PASS (71 required tests, exact source/JUnit class counts, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+            printf '%s\n' "$sdk" > "$evidence/device-api-level.txt"
+            sdk_ok=false
+            if [ "$sdk" = 26 ]; then sdk_ok=true; else echo "Expected API 26, observed '$sdk'." > "$evidence/device-api-error.txt"; fi
+            gradle_result=1
+            if [ "$sdk_ok" = true ]; then
+              ./gradlew --no-daemon connectedDebugAndroidTest
+              gradle_result=$?
+              if [ -d "$root/connected" ]; then mv "$root/connected" "$evidence/junit"; fi
+            fi
+            junit_result=NOT_RUN
+            if [ "$sdk_ok" = true ] && [ -d "$evidence/junit" ]; then
+              python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
+                --source-root app/src/androidTest/java --minimum 71 \
+                --require-class app.serea.android.EncryptedHistoryTest=16 \
+                --require-class app.serea.android.ChatScreenTest=16 \
+                --require-class app.serea.android.ChatHttpE2ETest=4 \
+                --require-class app.serea.android.UsageLedgerDatabaseTest=12 \
+                --require-class app.serea.android.tasks.TasksDatabaseTest=6 \
+                --require-class app.serea.android.tasks.TaskScreenTest=5 \
+                --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1 \
+                --require-class app.serea.android.ChatHistoryUxTest=4 \
+                --require-class app.serea.android.tasks.TaskDateTimePickerTest=6 \
+                --require-class app.serea.android.assistant.taskproposal.TaskProposalReviewScreenTest=2 \
+                > "$evidence/junit-verification.log" 2>&1
+              verify_result=$?
+              cat "$evidence/junit-verification.log"
+              if [ "$verify_result" -eq 0 ]; then junit_result=PASS; else junit_result=FAIL; fi
+            fi
+            printf '%s\n' "$junit_result" > "$evidence/instrumentation-status.txt"
+            death_result=NOT_RUN
+            if [ "$sdk_ok" = true ]; then
+              EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh > "$evidence/process-death.log" 2>&1
+              death_exit=$?
+              cat "$evidence/process-death.log"
+              if [ "$death_exit" -eq 0 ]; then death_result=PASS; else death_result=FAIL; fi
+            fi
+            printf '%s\n' "$death_result" > "$evidence/process-death-status.txt"
+            if [ "$sdk_ok" = true ] && [ "$gradle_result" -eq 0 ] && [ "$junit_result" = PASS ] && [ "$death_result" = PASS ]; then result=PASS; else result=FAIL; fi
+            printf '%s\n' "$result" > "$evidence/api-result.txt"
+            echo "### Android API 26: instrumentation=$junit_result process-death=$death_result device-api=$sdk" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$result" != PASS ]; then exit 1; fi
+      - id: instrumentation
+        name: Combine API-specific required evidence
+        if: always()
+        env:
+          API35_STEP_RESULT: ${{ steps.api35.outcome }}
+          API26_STEP_RESULT: ${{ steps.api26.outcome }}
+        run: |
+          set -euo pipefail
+          root='android/app/build/outputs/androidTest-results'
+          api35=NOT_RUN
+          api26=NOT_RUN
+          [ -f "$root/api35/api-result.txt" ] && api35="$(cat "$root/api35/api-result.txt")"
+          [ -f "$root/api26/api-result.txt" ] && api26="$(cat "$root/api26/api-result.txt")"
+          if [ "$api35" = PASS ] && [ "$api26" = PASS ] && [ "$API35_STEP_RESULT" = success ] && [ "$API26_STEP_RESULT" = success ]; then
+            echo 'result=PASS' >> "$GITHUB_OUTPUT"
+            echo 'PASS: API 26 and API 35 JUnit plus Process Death evidence passed.'
+          else
+            echo 'result=FAIL' >> "$GITHUB_OUTPUT"
+            echo "FAIL: API 35=$api35 ($API35_STEP_RESULT), API 26=$api26 ($API26_STEP_RESULT)."
+            exit 1
+          fi
       - name: Mark required emulator failure in summary
         if: failure()
         run: |
@@ -362,23 +453,46 @@ jobs:
           if [ -d android/app/build/outputs/androidTest-results/api35 ]; then
             cp -R android/app/build/outputs/androidTest-results/api35 "$bundle/tests/api35"
           fi
-          if [ -d android/app/build/outputs/androidTest-results/connected ]; then
-            cp -R android/app/build/outputs/androidTest-results/connected "$bundle/tests/api26"
+          if [ -d android/app/build/outputs/androidTest-results/api26 ]; then
+            cp -R android/app/build/outputs/androidTest-results/api26 "$bundle/tests/api26"
           fi
           mkdir -p "$bundle/process-death"
-          cp android/app/build/outputs/androidTest-results/process-death-api35.log "$bundle/process-death/api35.log" 2>/dev/null || true
-          cp android/app/build/outputs/androidTest-results/process-death-api26.log "$bundle/process-death/api26.log" 2>/dev/null || true
+          cp android/app/build/outputs/androidTest-results/api35/process-death.log "$bundle/process-death/api35.log" 2>/dev/null || true
+          cp android/app/build/outputs/androidTest-results/api26/process-death.log "$bundle/process-death/api26.log" 2>/dev/null || true
           cp "$RUNNER_TEMP/emulator.log" "$bundle/process-death/emulator.log" 2>/dev/null || true
-          api35_death=NOT_RUN_OR_FAILED
-          api26_death=NOT_RUN_OR_FAILED
-          if grep -q 'PASS: Android OS Process Death recovery on API 35' "$bundle/process-death/api35.log" 2>/dev/null; then api35_death=PASS; fi
-          if grep -q 'PASS: Android OS Process Death recovery on API 26' "$bundle/process-death/api26.log" 2>/dev/null; then api26_death=PASS; fi
+          api35_death=NOT_RUN
+          api26_death=NOT_RUN
+          api35_instrumentation=NOT_RUN
+          api26_instrumentation=NOT_RUN
+          api35_device=NOT_RUN
+          api26_device=NOT_RUN
+          [ -f android/app/build/outputs/androidTest-results/api35/process-death-status.txt ] && api35_death="$(cat android/app/build/outputs/androidTest-results/api35/process-death-status.txt)"
+          [ -f android/app/build/outputs/androidTest-results/api26/process-death-status.txt ] && api26_death="$(cat android/app/build/outputs/androidTest-results/api26/process-death-status.txt)"
+          [ -f android/app/build/outputs/androidTest-results/api35/instrumentation-status.txt ] && api35_instrumentation="$(cat android/app/build/outputs/androidTest-results/api35/instrumentation-status.txt)"
+          [ -f android/app/build/outputs/androidTest-results/api26/instrumentation-status.txt ] && api26_instrumentation="$(cat android/app/build/outputs/androidTest-results/api26/instrumentation-status.txt)"
+          [ -f android/app/build/outputs/androidTest-results/api35/device-api-level.txt ] && api35_device="$(cat android/app/build/outputs/androidTest-results/api35/device-api-level.txt)"
+          [ -f android/app/build/outputs/androidTest-results/api26/device-api-level.txt ] && api26_device="$(cat android/app/build/outputs/androidTest-results/api26/device-api-level.txt)"
+          junit_count() {
+            python3 - "$1" <<'PY'
+          import pathlib, sys, xml.etree.ElementTree as ET
+          root = pathlib.Path(sys.argv[1])
+          print(sum(1 for file in root.rglob('*.xml') for node in ET.parse(file).getroot().iter() if node.tag.rsplit('}', 1)[-1] == 'testcase') if root.is_dir() else 0)
+          PY
+          }
+          api35_cases="$(junit_count android/app/build/outputs/androidTest-results/api35/junit)"
+          api26_cases="$(junit_count android/app/build/outputs/androidTest-results/api26/junit)"
           {
             echo "source_commit=$SOURCE_SHA"
             echo "github_run_id=$RUN_ID"
             echo "android_storage_emulator_job=$JOB_RESULT"
-            echo "api35_junit_present=$([ -d "$bundle/tests/api35" ] && echo yes || echo no)"
-            echo "api26_junit_present=$([ -d "$bundle/tests/api26" ] && echo yes || echo no)"
+            echo "api35_verified_device_api_level=$api35_device"
+            echo "api35_instrumentation=$api35_instrumentation"
+            echo "api35_junit_artifact_present=$([ -d "$bundle/tests/api35/junit" ] && echo yes || echo no)"
+            echo "api35_junit_cases=$api35_cases"
+            echo "api26_verified_device_api_level=$api26_device"
+            echo "api26_instrumentation=$api26_instrumentation"
+            echo "api26_junit_artifact_present=$([ -d "$bundle/tests/api26/junit" ] && echo yes || echo no)"
+            echo "api26_junit_cases=$api26_cases"
             echo "process_death_api35=$api35_death"
             echo "process_death_api26=$api26_death"
             echo 'overall_android_emulator_required_gate=see workflow run summary'
@@ -386,9 +500,9 @@ jobs:
           cat > "$bundle/pixel7a-reacceptance.md" <<'EOF'
           # Serea Pixel 7a reacceptance packet
 
-          - Draft PR: #49, based on PR #47 head branch.
+          - Repair Draft PR: based on `codex/android-q4-abcdefg-integration-2026-10-20`.
           - Candidate APK: `serea-debug.apk`; source SHA and APK SHA-256 are in `provenance.txt`.
-          - This is a new APK built by GitHub Actions. It is not the earlier PR #47 Mac APK.
+          - This candidate APK was built by the GitHub Actions run recorded in `provenance.txt`.
           - Physical Pixel 7a reacceptance is pending the Mac Local MCP v3 agent; emulator results are in `tests/` and `android-ci-results.txt`.
 
           ## Signature and data preservation
@@ -542,8 +656,8 @@ jobs:
             echo "api26_and_api35_emulator_job=$EMULATOR_RESULT"
             echo "android_dependency_audit=$AUDIT_RESULT"
             echo "instrumentation_gate_output=$INSTRUMENTATION_RESULT"
-            echo 'api26_expected_junit_cases=71 (sum of ten exact required class counts, verified against source and JUnit XML)'
-            echo 'api35_expected_junit_cases=71 (sum of ten exact required class counts, verified against source and JUnit XML)'
+            echo 'api26_expected_junit_cases=72 (sum of ten exact required class counts, verified against source and JUnit XML)'
+            echo 'api35_expected_junit_cases=72 (sum of ten exact required class counts, verified against source and JUnit XML)'
             echo 'physical_pixel7a_reacceptance=NOT_RUN (Mac Local MCP v3 handoff required)'
             echo 'apk_source_sha256_and_certificate=search for provenance.txt in build/ and api-tests-and-process-death/'
             echo 'device_steps_and_pass_fail=search for pixel7a-reacceptance.md in api-tests-and-process-death/'

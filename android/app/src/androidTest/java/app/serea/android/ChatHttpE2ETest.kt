@@ -74,13 +74,9 @@ class ChatHttpE2ETest {
         val composer = compose.onNodeWithTag("chat-composer")
         assertEquals(conversationId, activeVm.state.value.conversation.id)
         compose.waitUntil(30_000) { runCatching { composer.assertIsEnabled() }.isSuccess }
-        composer.performTextInput("first question")
-        compose.onNodeWithText("送信").performClick()
-        awaitAssistant("first answer")
+        sendAndAwait(composer, "first question", "first answer")
         policy = policy.copy(manualModelId = modelIds.last())
-        composer.performTextInput("second question")
-        compose.onNodeWithText("送信").performClick()
-        awaitAssistant("second answer")
+        sendAndAwait(composer, "second question", "second answer")
 
         val firstRequest = server.takeRequest(5, TimeUnit.SECONDS)!!
         val firstPayload = JsonParser.parseString(firstRequest.body.readUtf8()).asJsonObject
@@ -324,12 +320,35 @@ class ChatHttpE2ETest {
         assertNull(db.usageDao().ledger(disabledRequestId))
     }
 
-    private fun awaitAssistant(text: String) {
-        compose.waitUntil(30_000) { !stateSnapshot().isLoading || stateSnapshot().errorMessage != null }
+    private fun sendAndAwait(composer: androidx.compose.ui.test.SemanticsNodeInteraction, prompt: String, response: String) {
+        val before = stateSnapshot()
+        val previousMessageCount = before.conversation.messages.size
+        val previousMessageIds = before.conversation.messages.mapTo(mutableSetOf()) { it.id }
+        val expectedRequestCount = server.requestCount + 1
+        composer.performTextInput(prompt)
+        compose.onNodeWithText("送信").performClick()
+        compose.waitUntil(30_000) {
+            val current = stateSnapshot()
+            val turn = current.conversation.messages.drop(previousMessageCount)
+            val sendId = turn.firstOrNull()?.id
+            current.conversation.id == before.conversation.id &&
+                turn.size == 2 &&
+                !sendId.isNullOrBlank() && sendId !in previousMessageIds &&
+                turn[0].role == MessageRole.USER && turn[0].text == prompt && turn[0].status == "COMPLETED" &&
+                turn[1].role == MessageRole.ASSISTANT && turn[1].text == response && turn[1].status == "COMPLETED" &&
+                !current.isLoading && current.errorMessage == null && server.requestCount == expectedRequestCount
+        }
         val completed = stateSnapshot()
-        assertFalse("Request remained active; requests=${server.requestCount}, state=$completed", completed.isLoading)
-        assertNull("Request failed; requests=${server.requestCount}, state=$completed", completed.errorMessage)
-        assertEquals(text, completed.conversation.messages.lastOrNull()?.text)
+        val turn = completed.conversation.messages.drop(previousMessageCount)
+        assertEquals("The new send did not produce exactly one user/assistant turn", 2, turn.size)
+        assertEquals(prompt, turn[0].text)
+        assertTrue("The current send ID was not persisted as a new message", turn[0].id.isNotBlank() && turn[0].id !in previousMessageIds)
+        assertEquals("COMPLETED", turn[0].status)
+        assertEquals(response, turn[1].text)
+        assertEquals("COMPLETED", turn[1].status)
+        assertEquals(expectedRequestCount, server.requestCount)
+        assertFalse("Request remained active; state=$completed", completed.isLoading)
+        assertNull("Request failed; state=$completed", completed.errorMessage)
     }
 
     private fun stateSnapshot(): ChatUiState {

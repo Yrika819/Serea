@@ -20,6 +20,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -29,6 +30,16 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ChatScreenTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Before fun startWithAnExplicitNewConversation() {
+        awaitComposerEnabled()
+        val restoredId = stateSnapshot().conversation.id
+        compose.onNodeWithText("新しい会話").performClick()
+        compose.waitUntil(10_000) {
+            val state = stateSnapshot()
+            state.conversation.id != restoredId && !state.isRestoring
+        }
+    }
 
     private fun composer() = compose.onNodeWithTag("chat-composer")
 
@@ -62,7 +73,7 @@ class ChatScreenTest {
         response.assertCountEquals(1)
     }
 
-    @Test fun demoLabelAndConversationAreVisible() {
+    @Test fun demoLabelAndConversationTitleAreVisible() {
         awaitComposerEnabled()
         compose.onNodeWithText("新しい会話").performClick()
         awaitComposerEnabled()
@@ -76,7 +87,7 @@ class ChatScreenTest {
         compose.onNodeWithText("履歴").performClick()
         compose.waitUntil(30_000) { stateSnapshot().showingHistory }
         compose.onNodeWithText("保存された会話").assertIsDisplayed()
-        compose.onAllNodes(hasText("Conversation", substring = true)).onFirst().assertIsDisplayed()
+        compose.onNodeWithText("hello · 2件").assertIsDisplayed()
     }
 
     @Test fun completedDemoConversationSurvivesActivityRecreation() {

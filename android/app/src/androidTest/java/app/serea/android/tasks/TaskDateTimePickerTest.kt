@@ -1,13 +1,15 @@
 package app.serea.android.tasks
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assert
-import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.material3.DatePickerDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -15,12 +17,16 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import java.text.NumberFormat
+import java.util.Locale
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -30,6 +36,15 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TaskDateTimePickerTest {
     @get:Rule val compose = createComposeRule()
+
+    private fun localizedPickerNumber(number: Int, locale: Locale): SemanticsMatcher {
+        val digits = NumberFormat.getIntegerInstance(locale).format(number)
+        val exactNumber = Regex("(?<!\\p{N})${Regex.escape(digits)}(?!\\p{N})")
+        return hasClickAction() and SemanticsMatcher("Material time picker dial choice for $number") { node ->
+            SemanticsProperties.ContentDescription in node.config &&
+                node.config[SemanticsProperties.ContentDescription].any { description -> exactNumber.containsMatchIn(description) }
+        }
+    }
 
     private class RecordingRepository : TaskRepository {
         data class UpdateCall(val id: String, val expectedRevision: Long, val draft: TaskDraft)
@@ -71,6 +86,7 @@ class TaskDateTimePickerTest {
         app.serea.android.SereaTheme { TaskScreen(TaskViewModel(repository)) }
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Test fun datePickerConfirmSavesDateOnlyTaskAndEditorCanScroll() {
         val repository = RecordingRepository()
         show(repository)
@@ -79,7 +95,16 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_due_date").performTextInput("2026-07-04")
         compose.onNodeWithTag("task_editor_scroll").assert(hasScrollAction())
         compose.onNodeWithTag("task_date_picker_open").performClick()
-        compose.onNodeWithText("15", useUnmergedTree = true).performClick()
+        val selectedDate = LocalDate.parse("2026-07-15")
+        val pickerLocale = InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.locales[0]
+        val selectedDateMillis = selectedDate.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        val dateSemantics = requireNotNull(DatePickerDefaults.dateFormatter().formatDate(
+            selectedDateMillis, pickerLocale, forContentDescription = true,
+        ))
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(dateSemantics).fetchSemanticsNodes().isNotEmpty() }
+        val day = compose.onNodeWithText(dateSemantics)
+        day.performClick()
+        day.assertIsSelected()
         compose.onNodeWithTag("task_date_picker_confirm").performClick()
         compose.onNodeWithTag("task_due_date").assertIsDisplayed()
         compose.onNodeWithTag("task_editor_scroll").performScrollToNode(hasTestTag("task_timezone"))
@@ -101,8 +126,12 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_timezone").performTextClearance()
         compose.onNodeWithTag("task_timezone").performTextInput("Asia/Tokyo")
         compose.onNodeWithTag("task_time_picker_open").performClick()
-        compose.onNodeWithContentDescription("9 hours").performClick()
-        compose.onNodeWithContentDescription("35 minutes").performClick()
+        val pickerLocale = InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.locales[0]
+        compose.onNode(localizedPickerNumber(9, pickerLocale)).performClick()
+        val minute = compose.onNode(localizedPickerNumber(35, pickerLocale))
+        compose.waitUntil(5_000) { compose.onAllNodes(localizedPickerNumber(35, pickerLocale)).fetchSemanticsNodes().isNotEmpty() }
+        minute.performClick()
+        minute.assertIsSelected()
         compose.onNodeWithTag("task_time_picker_confirm").performClick()
         compose.onNodeWithTag("task_due_time").assertIsDisplayed()
         compose.onNodeWithTag("task_save").performClick()
@@ -200,11 +229,14 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_title").performTextInput("Time needs a date")
         compose.onNodeWithTag("task_time_picker_open").performClick()
         compose.onNodeWithTag("task_time_picker_cancel").performClick()
-        compose.onNodeWithTag("task_due_time").assertTextEquals("")
+        val dueTimeNode = compose.onNodeWithTag("task_due_time").fetchSemanticsNode()
+        assertEquals("", if (SemanticsProperties.EditableText in dueTimeNode.config) dueTimeNode.config[SemanticsProperties.EditableText].text else null)
         compose.onNodeWithTag("task_due_time").performTextInput("09:30")
         compose.onNodeWithTag("task_save").performClick()
+        val errorText = "時刻を設定するには期限日が必要です。"
+        compose.onNodeWithTag("task_editor_scroll").performScrollToNode(hasTestTag("task_editor_error"))
         compose.onNodeWithTag("task_editor_error").assertIsDisplayed()
-        assertNotNull(compose.onAllNodesWithText("時刻を設定するには期限日が必要です。").fetchSemanticsNodes().firstOrNull())
+        compose.onNodeWithText(errorText).assertIsDisplayed()
         assertTrue(repository.createDrafts.isEmpty())
     }
 }

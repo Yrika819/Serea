@@ -182,6 +182,23 @@ class GmailSecurityPortsTest {
         assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure { GmailMimeParser.parseMessage(messageJson(payload = mismatch)) }.code)
     }
 
+    @Test fun parserRejectsNonemptyTextPartsWithoutInlineDataAndAcceptsExplicitEmptyBody() = runBlocking {
+        for (mime in listOf("text/plain", "text/html")) {
+            val unavailable = """{"mimeType":"$mime","body":{"size":5}}"""
+            assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure {
+                GmailMimeParser.parseMessage(messageJson(payload = unavailable))
+            }.code)
+        }
+
+        val empty = """{"mimeType":"text/plain","body":{"size":0}}"""
+        assertEquals("", GmailMimeParser.parseMessage(messageJson(payload = empty)).plainTextBody)
+
+        val incompleteMixed = """{"mimeType":"multipart/mixed","parts":[${part("text/plain", "complete")},{"mimeType":"text/html","body":{"size":24}}]}"""
+        assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure {
+            GmailMimeParser.parseMessage(messageJson(payload = incompleteMixed))
+        }.code)
+    }
+
     @Test fun parserAcceptsMissingOptionalFieldsButRejectsMissingRequiredFields() = runBlocking {
         val minimal = GmailMimeParser.parseMessage("""{"id":"message-1","threadId":"thread-1"}""")
         assertNull(minimal.subject)

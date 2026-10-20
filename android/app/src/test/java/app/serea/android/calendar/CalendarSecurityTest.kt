@@ -55,6 +55,36 @@ class CalendarSecurityTest {
             CalendarPermissionPolicy.missingScopes(setOf(CalendarPermissionPolicy.EVENTS_READ_ONLY), true))
     }
 
+    @Test fun calendarScopeContractMatrixPreservesCurrentBaselineAndDocumentsEndpointMinimumDifference() {
+        data class Case(
+            val name: String,
+            val granted: Set<String>,
+            val currentEvents: Boolean,
+            val currentCalendarList: Boolean,
+            val endpointMinimumEvents: Boolean,
+            val endpointMinimumCalendarList: Boolean,
+        )
+        val events = CalendarPermissionPolicy.EVENTS_READ_ONLY
+        val calendarList = CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY
+        val cases = listOf(
+            Case("Events-only", setOf(events), true, false, true, false),
+            Case("CalendarList-only", setOf(calendarList), false, false, false, true),
+            Case("Both", setOf(events, calendarList), true, true, true, true),
+            Case("None", emptySet(), false, false, false, false),
+        )
+
+        cases.forEach { case ->
+            val status = CalendarAuthorizationStatus(
+                CalendarAuthorizationState.AUTHORIZED,
+                missingScopes = CalendarPermissionPolicy.requiredScopes(listCalendars = true) - case.granted,
+            )
+            assertEquals("${case.name}: current Events permission", case.currentEvents, CalendarPermissionPolicy.mayReadEvents(status))
+            assertEquals("${case.name}: current CalendarList permission", case.currentCalendarList, CalendarPermissionPolicy.mayListCalendars(status))
+            assertEquals("${case.name}: endpoint-minimum Events permission", case.endpointMinimumEvents, events in case.granted)
+            assertEquals("${case.name}: endpoint-minimum CalendarList permission", case.endpointMinimumCalendarList, calendarList in case.granted)
+        }
+    }
+
     @Test fun permissionCheckedPortRejectsNotConnectedAndAllowsMockOnly() = runBlocking {
         val fake = FakeCalendarProvider()
         val noPermission = object : CalendarAuthorizationPort {

@@ -105,16 +105,24 @@ object GmailMimeParser {
             if (body?.let { optionalString(it, "data") } != null) invalid()
             return BodyContent()
         }
-        body?.get("size")?.let { value ->
+        val declaredSize = body?.get("size")?.let { value ->
             if (!value.isJsonPrimitive || !value.asJsonPrimitive.isNumber) invalid()
             val rawSize = value.asString
             if (!rawSize.matches(Regex("0|[1-9][0-9]*"))) invalid()
             val declaredSize = rawSize.toLongOrNull() ?: invalid()
             if (declaredSize < 0 || declaredSize > MAX_DECODED_BODY_BYTES) invalid()
+            declaredSize
         }
-        val encoded = body?.let { optionalString(it, "data") } ?: return BodyContent()
+        val encoded = body?.let { optionalString(it, "data") }
+        if (encoded == null) {
+            if (declaredSize != null && declaredSize > 0) invalid()
+            if (declaredSize == 0L) {
+                return if (mimeType == "text/plain") BodyContent(plain = "") else BodyContent(html = "")
+            }
+            return BodyContent()
+        }
         val bytes = decodeBase64Url(encoded)
-        body?.get("size")?.let { if (it.asString.toLongOrNull() != bytes.size.toLong()) invalid() }
+        if (declaredSize != null && declaredSize != bytes.size.toLong()) invalid()
         onDecoded(bytes.size)
         val charset = parseCharset(contentType)
         val text = decodeText(bytes, charset)

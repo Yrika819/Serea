@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertIsOn
@@ -30,27 +31,27 @@ class TaskScreenTest {
         private var counter = 1
         private var tick = 1_800_000_000_000L
         private fun now() = Instant.ofEpochMilli(tick++)
-        @Synchronized override suspend fun create(draft: TaskDraft): Task {
+        override suspend fun create(draft: TaskDraft): Task {
             TaskValidation.validateDraft(draft)
             val id = "00000000-0000-0000-0000-${(counter++).toString().padStart(12, '0')}"
             return Task(id, draft.title, draft.description, TaskStatus.TODO, draft.priority, now(), now(), draft.dueDate, draft.dueTime, draft.timeZoneId).also { tasks[id] = it }
         }
-        @Synchronized override suspend fun createFromApprovedProposal(draft: TaskDraft, proposalId: String): Task {
+        override suspend fun createFromApprovedProposal(draft: TaskDraft, proposalId: String): Task {
             check(proposalIds.add(proposalId))
             return create(draft)
         }
-        @Synchronized override suspend fun get(id: String) = tasks[id]
-        @Synchronized override suspend fun list() = tasks.values.sortedBy { it.id }
-        @Synchronized override suspend fun update(id: String, expectedRevision: Long, draft: TaskDraft): Task {
+        override suspend fun get(id: String) = tasks[id]
+        override suspend fun list() = tasks.values.sortedBy { it.id }
+        override suspend fun update(id: String, expectedRevision: Long, draft: TaskDraft): Task {
             TaskValidation.validateDraft(draft)
             val old = tasks[id] ?: throw TaskNotFoundException()
             if (old.revision != expectedRevision) throw TaskConflictException()
             return old.copy(title = draft.title, description = draft.description, priority = draft.priority, dueDate = draft.dueDate,
                 dueTime = draft.dueTime, timeZoneId = draft.timeZoneId, updatedAt = now(), revision = old.revision + 1).also { tasks[id] = it }
         }
-        @Synchronized override suspend fun complete(id: String, expectedRevision: Long): Task = mutate(id, expectedRevision) { it.copy(status = TaskStatus.COMPLETED, completedAt = now(), updatedAt = now()) }
-        @Synchronized override suspend fun reopen(id: String, expectedRevision: Long): Task = mutate(id, expectedRevision) { it.copy(status = TaskStatus.TODO, completedAt = null, updatedAt = now()) }
-        @Synchronized override suspend fun delete(id: String, expectedRevision: Long) {
+        override suspend fun complete(id: String, expectedRevision: Long): Task = mutate(id, expectedRevision) { it.copy(status = TaskStatus.COMPLETED, completedAt = now(), updatedAt = now()) }
+        override suspend fun reopen(id: String, expectedRevision: Long): Task = mutate(id, expectedRevision) { it.copy(status = TaskStatus.TODO, completedAt = null, updatedAt = now()) }
+        override suspend fun delete(id: String, expectedRevision: Long) {
             val old = tasks[id] ?: throw TaskNotFoundException()
             if (old.revision != expectedRevision) throw TaskConflictException()
             tasks.remove(id)

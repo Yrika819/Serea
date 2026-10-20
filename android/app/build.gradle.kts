@@ -6,6 +6,29 @@ plugins {
     id("com.github.jk1.dependency-license-report")
 }
 
+val requestedVersionCode = providers.gradleProperty("sereaVersionCode").orNull
+val appVersionCode = requestedVersionCode?.let {
+    it.toIntOrNull() ?: error("sereaVersionCode must be a positive integer")
+} ?: 1
+require(appVersionCode > 0) { "sereaVersionCode must be a positive integer" }
+
+// The update-compatibility test creates this short-lived key in RUNNER_TEMP.
+// Ordinary PR builds and internal Beta builds use separate signing inputs.
+val updateTestStoreFile = providers.environmentVariable("SEREA_UPDATE_TEST_KEYSTORE_PATH").orNull
+val updateTestStorePassword = providers.environmentVariable("SEREA_UPDATE_TEST_STORE_PASSWORD").orNull
+val updateTestKeyPassword = providers.environmentVariable("SEREA_UPDATE_TEST_KEY_PASSWORD").orNull
+val updateTestKeyAlias = providers.environmentVariable("SEREA_UPDATE_TEST_KEY_ALIAS").orNull
+val updateTestSigningReady = listOf(
+    updateTestStoreFile, updateTestStorePassword, updateTestKeyPassword, updateTestKeyAlias,
+).all { !it.isNullOrBlank() }
+
+val betaStoreFile = providers.environmentVariable("SEREA_ANDROID_KEYSTORE_PATH").orNull
+val betaStorePassword = providers.environmentVariable("SEREA_ANDROID_KEYSTORE_PASSWORD").orNull
+val betaKeyPassword = providers.environmentVariable("SEREA_ANDROID_KEY_PASSWORD").orNull
+val betaKeyAlias = providers.environmentVariable("SEREA_ANDROID_KEY_ALIAS").orNull
+val betaSigningReady = listOf(betaStoreFile, betaStorePassword, betaKeyPassword, betaKeyAlias)
+    .all { !it.isNullOrBlank() }
+
 android {
     namespace = "app.serea.android"
     compileSdk = 35
@@ -14,16 +37,40 @@ android {
         applicationId = "app.serea.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = appVersionCode
         versionName = "0.1.0-demo"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    if (updateTestSigningReady) {
+        signingConfigs.create("ephemeralUpdateTest") {
+            storeFile = file(checkNotNull(updateTestStoreFile))
+            storeType = "PKCS12"
+            storePassword = checkNotNull(updateTestStorePassword)
+            keyAlias = checkNotNull(updateTestKeyAlias)
+            keyPassword = checkNotNull(updateTestKeyPassword)
+        }
+    }
+    if (betaSigningReady) {
+        signingConfigs.create("internalBeta") {
+            storeFile = file(checkNotNull(betaStoreFile))
+            storeType = "PKCS12"
+            storePassword = checkNotNull(betaStorePassword)
+            keyAlias = checkNotNull(betaKeyAlias)
+            keyPassword = checkNotNull(betaKeyPassword)
+        }
+    }
+
     buildTypes {
-        debug { applicationIdSuffix = ".demo" }
+        debug {
+            applicationIdSuffix = ".demo"
+            if (updateTestSigningReady) signingConfig = signingConfigs.getByName("ephemeralUpdateTest")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            applicationIdSuffix = ".demo"
+            signingConfig = if (betaSigningReady) signingConfigs.getByName("internalBeta") else null
         }
     }
 
@@ -34,6 +81,29 @@ android {
     kotlinOptions { jvmTarget = "17" }
     lint { abortOnError = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
+}
+
+tasks.register("verifyInternalBetaSigning") {
+    group = "verification"
+    description = "Fail unless a complete owner-managed internal Beta signing identity is configured."
+    doLast {
+        val required = mapOf(
+            "SEREA_ANDROID_KEYSTORE_PATH" to betaStoreFile,
+            "SEREA_ANDROID_KEYSTORE_PASSWORD" to betaStorePassword,
+            "SEREA_ANDROID_KEY_ALIAS" to betaKeyAlias,
+            "SEREA_ANDROID_KEY_PASSWORD" to betaKeyPassword,
+            "SEREA_ANDROID_SIGNING_CERT_SHA256" to providers.environmentVariable("SEREA_ANDROID_SIGNING_CERT_SHA256").orNull,
+        )
+        val missing = required.filterValues { it.isNullOrBlank() }.keys
+        check(missing.isEmpty()) { "Internal Beta signing is unavailable; missing required configuration: ${missing.joinToString()}" }
+        check(betaSigningReady) { "Internal Beta signing identity was not loaded by Gradle." }
+        check(File(checkNotNull(betaStoreFile)).isFile) { "Internal Beta keystore file is unavailable." }
+        val fingerprint = required.getValue("SEREA_ANDROID_SIGNING_CERT_SHA256")!!
+        check(fingerprint.replace(":", "").matches(Regex("(?i)[0-9a-f]{64}"))) {
+            "SEREA_ANDROID_SIGNING_CERT_SHA256 must contain a SHA-256 certificate fingerprint."
+        }
+        check(appVersionCode > 1) { "Internal Beta versionCode must be greater than the initial development version." }
+    }
 }
 
 dependencies {

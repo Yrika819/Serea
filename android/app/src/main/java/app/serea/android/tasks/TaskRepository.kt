@@ -66,7 +66,7 @@ internal class EncryptedTaskRepository(
         catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
     }
     override suspend fun list(): List<Task> = mutex.withLock {
-        try { dao.allRows().map(TaskRow::decode).sortedWith(TASK_ORDER) }
+        try { dao.allRows().map { it.decode() }.sortedWith(TASK_ORDER) }
         catch (error: TaskStorageUnavailableException) { throw error }
         catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
     }

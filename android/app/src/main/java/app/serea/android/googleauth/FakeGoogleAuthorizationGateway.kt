@@ -12,6 +12,7 @@ class FakeGoogleAuthorizationGateway(
     private var expired = false
     private var accountChanged = false
     private val disabledInApp = mutableSetOf<GoogleFeature>()
+    private val featureVersions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
     var revokeCount: Int = 0
         private set
 
@@ -36,6 +37,9 @@ class FakeGoogleAuthorizationGateway(
     suspend fun authorize(scopes: Set<GoogleScope>): AuthorizationOutcome {
         if (!enabled) return AuthorizationOutcome.Rejected(AuthorizationFailure.NOT_CONFIGURED)
         if (scopes.isEmpty()) return AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
+        if (GoogleFeature.entries.any { feature -> feature in disabledInApp && scopes.any { it in feature.scopes } }) {
+            return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
+        }
         when (service) {
             GoogleServiceState.MISSING -> return AuthorizationOutcome.Rejected(AuthorizationFailure.SERVICE_MISSING)
             GoogleServiceState.OUTDATED -> return AuthorizationOutcome.Rejected(AuthorizationFailure.SERVICE_OUTDATED)
@@ -53,7 +57,14 @@ class FakeGoogleAuthorizationGateway(
         if (expired) return AuthorizationOutcome.Rejected(AuthorizationFailure.EXPIRED)
         val missing = scopes - grantedScopes
         return if (missing.isNotEmpty()) AuthorizationOutcome.ConsentRequired(missing)
-        else AuthorizationOutcome.Authorized(AccessTokenLease(fixtureToken, grantedScopes.toSet(), null))
+        else {
+            val features = GoogleFeature.entries.filter { feature -> scopes.any { it in feature.scopes } }
+            if (features.any { it in disabledInApp }) return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
+            val versions = features.associateWith { featureVersions.getValue(it) }
+            AuthorizationOutcome.Authorized(AccessTokenLease(fixtureToken, grantedScopes.toSet(), null) {
+                versions.all { (feature, version) -> feature !in disabledInApp && featureVersions[feature] == version }
+            })
+        }
     }
 
     suspend fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
@@ -75,8 +86,12 @@ class FakeGoogleAuthorizationGateway(
     }
 
     /** Disabling one app feature leaves the shared Google grant alone. */
-    fun disableInApp(feature: GoogleFeature) { disabledInApp += feature }
-    fun enableInApp(feature: GoogleFeature) { disabledInApp -= feature }
+    fun disableInApp(feature: GoogleFeature) {
+        if (disabledInApp.add(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
+    }
+    fun enableInApp(feature: GoogleFeature) {
+        if (disabledInApp.remove(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
+    }
     fun isEnabledInApp(feature: GoogleFeature): Boolean = feature !in disabledInApp
 
     /** Models Google revokeAccess, which invalidates every grant held by this app. */
@@ -84,6 +99,7 @@ class FakeGoogleAuthorizationGateway(
         revokeCount++
         grantedScopes.clear()
         disabledInApp.clear()
+        featureVersions.keys.forEach { feature -> featureVersions[feature] = featureVersions.getValue(feature) + 1 }
         expired = false
     }
 }

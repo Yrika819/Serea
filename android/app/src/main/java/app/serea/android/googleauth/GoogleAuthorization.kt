@@ -54,10 +54,12 @@ class AccessTokenLease internal constructor(
     token: String,
     val grantedScopes: Set<GoogleScope>,
     val expiresAtElapsedRealtimeMillis: Long?,
+    private val validityCheck: () -> Boolean = { true },
 ) : AutoCloseable {
     private var tokenValue: String? = token
 
     fun <T> useToken(block: (String) -> T): T {
+        check(validityCheck()) { "Authorization lease is no longer valid for this feature." }
         if (expiresAtElapsedRealtimeMillis?.let { android.os.SystemClock.elapsedRealtime() >= it } == true) {
             close()
             error("Authorization lease has expired.")
@@ -161,11 +163,12 @@ class PlayServicesGoogleAuthorizationGateway(
     private val consentRequests = ConsentRequestRegistry()
     private val knownPermissions = mutableMapOf<GoogleScope, ScopePermission>()
     private val disabledFeatures = mutableSetOf<GoogleFeature>()
+    private val featureVersions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
     private var authorizationInFlight = false
 
     override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
         if (!realOAuthEnabled) return TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
-        if (feature in disabledFeatures) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
+        if (synchronized(consentLock) { feature in disabledFeatures }) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
         if (scopes.isEmpty() || !feature.scopes.containsAll(scopes)) return TokenSupplyResult.Unavailable(AuthorizationFailure.UNAVAILABLE)
         val missing = synchronized(consentLock) { scopes.filter { knownPermissions[it] != ScopePermission.GRANTED }.toSet() }
         if (missing.isNotEmpty()) return TokenSupplyResult.UserActionRequired(missing)
@@ -243,8 +246,12 @@ class PlayServicesGoogleAuthorizationGateway(
     /** Explicitly discard a cancelled/failed foreground consent flow. */
     fun cancelConsentRequest(requestId: String): Boolean = consentRequests.cancel(requestId)
 
-    fun disableInApp(feature: GoogleFeature) { synchronized(consentLock) { disabledFeatures += feature } }
-    fun enableInApp(feature: GoogleFeature) { synchronized(consentLock) { disabledFeatures -= feature } }
+    fun disableInApp(feature: GoogleFeature) = synchronized(consentLock) {
+        if (disabledFeatures.add(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
+    }
+    fun enableInApp(feature: GoogleFeature) = synchronized(consentLock) {
+        if (disabledFeatures.remove(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
+    }
 
     fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
         val service = serviceState()
@@ -278,7 +285,11 @@ class PlayServicesGoogleAuthorizationGateway(
         }
         return try {
             await { Identity.getAuthorizationClient(context).revokeAccess(RevokeAccessRequest.builder().build()) }
-            synchronized(consentLock) { knownPermissions.clear(); disabledFeatures.clear() }
+            synchronized(consentLock) {
+                knownPermissions.clear()
+                disabledFeatures.clear()
+                featureVersions.keys.forEach { feature -> featureVersions[feature] = featureVersions.getValue(feature) + 1 }
+            }
             consentRequests.clear()
             null
         } catch (exception: Exception) { classify(exception) }
@@ -294,6 +305,10 @@ class PlayServicesGoogleAuthorizationGateway(
     }
 
     private fun mapResult(result: PlayAuthorizationResult, requested: Set<GoogleScope>, allowConsent: Boolean = true): AuthorizationOutcome {
+        val features = GoogleFeature.entries.filter { feature -> requested.any { it in feature.scopes } }
+        if (synchronized(consentLock) { features.any { it in disabledFeatures } }) {
+            return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
+        }
         if (result.hasResolution()) {
             val granted = result.grantedScopes.mapNotNull { raw -> GoogleScope.entries.firstOrNull { it.value == raw } }.toSet()
             if (!allowConsent) return AuthorizationOutcome.ConsentRequired(requested - granted)
@@ -309,8 +324,16 @@ class PlayServicesGoogleAuthorizationGateway(
         val token = result.accessToken
         if (requested.any { it !in granted }) return AuthorizationOutcome.Rejected(AuthorizationFailure.DENIED).also { cacheOutcome(requested, it) }
         if (token.isNullOrBlank()) return AuthorizationOutcome.Rejected(AuthorizationFailure.EXPIRED)
+        val versions = synchronized(consentLock) {
+            if (features.any { it in disabledFeatures }) return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
+            features.associateWith { featureVersions.getValue(it) }
+        }
         return AuthorizationOutcome.Authorized(
-            AccessTokenLease(token, granted, android.os.SystemClock.elapsedRealtime() + 5 * 60 * 1000L),
+            AccessTokenLease(token, granted, android.os.SystemClock.elapsedRealtime() + 5 * 60 * 1000L) {
+                synchronized(consentLock) {
+                    versions.all { (feature, version) -> feature !in disabledFeatures && featureVersions[feature] == version }
+                }
+            },
         ).also { cacheOutcome(requested, it) }
     }
 

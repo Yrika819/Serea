@@ -80,18 +80,21 @@ class GoogleAuthorizationTest {
 
     @Test fun appFeatureDisableDoesNotRevokeSharedGoogleGrant() = runBlocking {
         val fake = FakeGoogleAuthorizationGateway(both)
+        val oldGmailLease = (fake.acquire(GMAIL, setOf(GMAIL_READ_ONLY)) as TokenSupplyResult.Available).lease
         fake.disableInApp(GMAIL)
         assertFalse(fake.isEnabledInApp(GMAIL))
         assertTrue(fake.isEnabledInApp(CALENDAR))
         assertEquals(ScopePermission.GRANTED, fake.status(both).permissions[GMAIL_READ_ONLY])
         assertEquals(AuthorizationFailure.FEATURE_DISABLED,
             (fake.acquire(GMAIL, setOf(GMAIL_READ_ONLY)) as TokenSupplyResult.Unavailable).failure)
+        assertFalse(runCatching { oldGmailLease.useToken { it } }.isSuccess)
         val calendar = fake.acquire(CALENDAR, setOf(CALENDAR_EVENTS_READ_ONLY))
         assertTrue(calendar is TokenSupplyResult.Available)
         (calendar as TokenSupplyResult.Available).lease.close()
         assertEquals(0, fake.revokeCount)
         fake.enableInApp(GMAIL)
         assertTrue(fake.isEnabledInApp(GMAIL))
+        assertFalse(runCatching { oldGmailLease.useToken { it } }.isSuccess)
     }
 
     @Test fun googleGrantRevocationRemovesAllServiceScopes() = runBlocking {

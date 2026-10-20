@@ -5,7 +5,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -168,7 +172,11 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
         onDismissRequest = onCancel,
         title = { Text(if (task == null) "New task" else "Edit task") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 420.dp).imePadding()
+                    .verticalScroll(rememberScrollState()).testTag("task_editor_scroll"),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(title, { title = it; titleError = null }, label = { Text("Title") }, isError = titleError != null, supportingText = titleError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_title"))
                 OutlinedTextField(description, { description = it }, label = { Text("Description / notes") }, modifier = Modifier.fillMaxWidth().testTag("task_description"))
                 TextButton(onClick = { priorityExpanded = true }, modifier = Modifier.testTag("task_priority")) { Text("Priority: $priorityName") }

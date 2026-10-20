@@ -8,8 +8,8 @@
 - The local base tracking ref matched that same SHA at implementation start.
 - Draft PR: [#61](https://github.com/Yrika819/Serea/pull/61).
 - PR base SHA: `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`.
-- Implementation commit before this report update: `7652f381f50f9f4d5f71c385e0457363d31ed441`; tree: `12f6e1d77994b7917da63b763a5bfda3868a3e22`.
-- GitHub workflows for that implementation commit were queued when this report was updated. Android run ID: `39430936891`; other CI run IDs: Fast CI `39430936848`, Full CI `39430936978`, Git hooks Windows compatibility `39430936982`, Native platform validation `39430936906`, Cross-architecture SQLite portability `39430936846`. These runs do not cover the report update commit; final-head results are pending and must be checked on PR #61.
+- PR #61 remains OPEN and Draft, based on `codex/android-m0-08-abcd-integration-2026-10-20` at `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`.
+- Current audit adds constrained editor scrolling and additional instrumentation coverage; its final HEAD and final-head CI status are recorded in the completion response after push.
 - Pixel 7a manual acceptance: `NOT_RUN`.
 
 ## Implementation
@@ -18,6 +18,7 @@
 - Kept manual ISO date and strict 24-hour `HH:MM` entry. A date with no time remains an all-day deadline; time without a date is rejected.
 - The IANA timezone field uses the device `ZoneId.systemDefault()` as its initial value and is shown with an example. Validation gives separate Japanese title, date, time, timezone, DST-gap, and DST-overlap feedback with polite live-region semantics.
 - Existing `rememberSaveable` draft fields remain in place. Picker cancellation does not commit a selection.
+- The editor body has a bounded height, vertical scrolling, and IME inset padding so its fields remain reachable in a compact dialog while the keyboard is shown.
 - `TaskValidation`, Task database/repository, CAS, encryption, and ViewModel were not edited.
 
 ## Files
@@ -30,10 +31,10 @@ No files outside this lane's Task UI, matching instrumentation test, and lane re
 
 ## Verification
 
-- `git diff --cached --check`: PASS before the initial implementation commit; the report update is rechecked before its commit.
-- Android Gradle verification: `NOT_RUN`. Attempted from `android/` with `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`; the wrapper could not download Gradle 8.11.1 because the connection to `services.gradle.org` was refused. No installed `gradle` executable was available.
-- New instrumentation cases cover picker cancellation, unchanged all-day draft state, and Japanese rejection of time without a date. These cases have not executed locally.
-- The Android workflow selects all Android paths; the new tests use a separate class so the existing `TaskScreenTest=4` verifier rule remains valid. Final-head CI status remains pending until the report update is pushed and its checks complete.
+- `git diff --check`: PASS for the audit changes.
+- Android Gradle verification: `NOT_RUN`. Attempted from `android/` with `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`; the wrapper could not download Gradle 8.11.1 because the connection to `services.gradle.org` was refused. No installed `gradle` executable was available.
+- Five new instrumentation cases cover picker confirmation followed by save, all-day date-only save, bounded editor scrolling, invalid IANA zone rejection, DST gap and overlap rejection, and time-without-date rejection. The recording Fake Repository verifies create/update call counts and saved drafts; these cases have not executed locally.
+- The Android workflow selects all Android paths. The new tests remain in `TaskDateTimePickerTest`, preserving the existing exact four-test `TaskScreenTest` verifier rule.
 - Live Google OAuth/API, AI provider, emulator/device, and Pixel 7a: `NOT_RUN`.
 
 ## Security and integration

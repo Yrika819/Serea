@@ -2,7 +2,7 @@
 
 Date: 2026-10-20
 
-Status: PR #64 追加監査を実装中。指定開始 HEAD `9a91443ff135cdaee5015d6a0e309476e91fc0d7`、base `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`。
+Status: PR #64 追加監査実装済み。監査開始 HEAD `9a91443ff135cdaee5015d6a0e309476e91fc0d7`、base `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`。
 
 ## Git 基準
 
@@ -11,6 +11,7 @@ Status: PR #64 追加監査を実装中。指定開始 HEAD `9a91443ff135cdaee50
 - 新規 Draft PR: [#64](https://github.com/Yrika819/Serea/pull/64)。PR 作成時の head SHA は `4bde27af2328f7d8d87347aa9315241279777398`、base SHA は `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`。
 - 実装 branch: `codex/android-q4-gmail-domain-2026-10-20`
 - 固定開始 SHA: `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`
+- 追加監査の実装 commit: `126dda6359cc892c24456e134a8e3e6f8db3cb4a`。Tree SHA: `023e642820ea6ea26de7e4c082aac9c75d31ec0b`。
 - Base branch: `codex/android-m0-08-abcd-integration-2026-10-20`。fetch した実 SHA も `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`。
 - PR #58 の確認時 state / draft / head / base は上記と一致した。PR #58、既存 branch、main は変更していない。
 - Repository-local Identity は `Codex <noreply@github.com>`、`serea.identityProfile=codex`、`user.useConfigOnly=true`、`push.default=nothing`。Hooks は `.githooks` に設定し、`tools/git_preflight.py --mode commit` は PASS。
@@ -18,14 +19,13 @@ Status: PR #64 追加監査を実装中。指定開始 HEAD `9a91443ff135cdaee50
 
 ## 変更範囲
 
-- `android/app/src/main/java/app/serea/android/gmail/GmailModels.kt`
 - `android/app/src/main/java/app/serea/android/gmail/GmailReadPort.kt`
 - `android/app/src/main/java/app/serea/android/gmail/FakeGmailProvider.kt`
 - `android/app/src/main/java/app/serea/android/gmail/GmailMimeParser.kt`
 - `android/app/src/test/java/app/serea/android/gmail/GmailDomainParserTest.kt` (`GmailSecurityPortsTest`)
 - `docs/plans/2026-ANDROID-GMAIL-DOMAIN-REPORT.md`
 
-`git status` で上記の新規 package とこの報告書以外に変更がないことを確認した。Gradle/KSP が生成した未追跡の Tasks schema は削除し、schema・migration は残していない。`.github/workflows/**`、Gradle 設定、Manifest、既存 Calendar / Tasks / Security / Chat ファイルには変更を加えていない。
+実際の変更は上記Gmail package内の3 production files、対応test 1 file、report 1 fileに限定した。Gradle/KSP生成物、`.github/workflows/**`、Gradle設定、Manifest、既存 Calendar / Tasks / Security / Chat filesには変更を加えていない。
 
 ## 実装
 
@@ -45,9 +45,9 @@ Status: PR #64 追加監査を実装中。指定開始 HEAD `9a91443ff135cdaee50
 
 | 検証 | 結果 |
 |---|---|
-| `./gradlew --no-daemon testDebugUnitTest --tests 'app.serea.android.gmail.*' --tests '*SecurityPortsTest'` | PASS: 24 tests、failures/errors/skips 0。Gmail `GmailSecurityPortsTest` 15件を含み、既存 `*SecurityPortsTest` 回帰も含む |
+| `./gradlew --no-daemon testDebugUnitTest --tests 'app.serea.android.gmail.*' --tests '*SecurityPortsTest'` | PASS: 24 tests、failures/errors/skips 0。Gmail `GmailSecurityPortsTest` 15件 + 既存 `app.serea.android.SecurityPortsTest` 9件 |
 | `./gradlew --no-daemon assembleDebug lintDebug` | PASS |
-| `git diff --check` | PASS |
+| `git diff --check` / `tools/git_preflight.py` commit・push | PASS |
 | 実 OAuth / 実 Gmail / HTTP E2E / Pixel 7a | NOT_RUN |
 
 最初のローカル Gradle起動はシステムJDKに `javac` がなく失敗した。JDK 17とproxy CA trustを一時設定し、最終再実行ではテスト24件（Gmail 15件）を完了した。Gmail用の変更で Android workflow は既存 `android-unit` job の広い全件 selector に含まれず、`android-security` job の `--tests '*SecurityPortsTest'` に含まれる。Workflowファイルは変更していない。
@@ -58,4 +58,4 @@ Status: PR #64 追加監査を実装中。指定開始 HEAD `9a91443ff135cdaee50
 - Android Manifest の backup / cleartext policy、Keystore、History DB v4、Tasks DB v1、Usage Ledger、Task CAS には触れていない。ADB・端末データ・署名・実 credential・API key・OAuth token は使っていない。
 - 後続 REST Adapter は `GmailReadPort` に接続し、認可 status は OAuth 担当から `GmailAuthorizationPort` 経由で注入する。UI、sync、OAuth token lifecycle、quota/backoff、添付対応は未実装。
 - `GmailSecurityPortsTest` は既存 CI selector に入る。新しい Workflow や Gradle dependency は不要。実 API 接続を追加する場合は、別変更で OAuth scope/consent、Egress、retention、エラー本文の漏洩を Security Review する。
-- 最終HEAD / tree SHA、変更ファイル一覧、最終HEADに紐づくGitHub Actions Run ID / 状態は、commit/push後の確認結果を追記する。監査中の旧HEAD CIを最終HEADの証拠として扱わない。PR #64はOPEN / Draftを維持し、マージしない。
+- 追加監査実装commit後に report を更新したため、このreport更新commitが最終HEADになる。GitHub Actionsの結果は必ずその最終HEAD SHAに対して確認し、前のcommitに対するCI結果を流用しない。PR #64はOPEN / Draftを維持し、マージしない。

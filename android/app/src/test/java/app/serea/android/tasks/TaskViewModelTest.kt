@@ -291,4 +291,39 @@ class TaskViewModelTest {
         assertFalse(viewModel.state.value.loading)
         assertEquals(TaskStatus.TODO, viewModel.state.value.tasks.single().status)
     }
+
+    @Test fun cancelledMutationDoesNotClearALaterRefreshLoadingState() = runTest(mainDispatcher.dispatcher) {
+        val repository = FakeRepository().apply {
+            seed("00000000-0000-0000-0000-000000000001", "Task A")
+            completeEntered = CompletableDeferred()
+            allowComplete = CompletableDeferred()
+            completeFailure = CancellationException("Mutation was cancelled before it completed.")
+        }
+        val viewModel = TaskViewModel(repository, ioDispatcher = mainDispatcher.dispatcher)
+        runCurrent()
+
+        viewModel.toggleComplete("00000000-0000-0000-0000-000000000001")
+        runCurrent()
+        assertTrue(repository.completeEntered!!.isCompleted)
+
+        repository.listEntered = CompletableDeferred()
+        repository.allowList = CompletableDeferred()
+        viewModel.refresh()
+        runCurrent()
+        assertTrue(repository.listEntered!!.isCompleted)
+        assertTrue(viewModel.state.value.loading)
+
+        repository.allowComplete!!.complete(Unit)
+        runCurrent()
+
+        assertFalse(viewModel.state.value.saving)
+        assertTrue(viewModel.state.value.loading)
+        assertNull(viewModel.state.value.error)
+
+        repository.allowList!!.complete(Unit)
+        runCurrent()
+
+        assertFalse(viewModel.state.value.loading)
+        assertEquals(TaskStatus.TODO, viewModel.state.value.tasks.single().status)
+    }
 }

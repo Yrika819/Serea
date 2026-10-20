@@ -30,7 +30,7 @@ The workflow requires these values in the Environment before it can pass:
 
 | Setting | GitHub setting | Use |
 | --- | --- | --- |
-| `SEREA_ANDROID_KEYSTORE_BASE64` | Environment secret | Owner-managed PKCS#12/JKS keystore bytes, base64 encoded. |
+| `SEREA_ANDROID_KEYSTORE_BASE64` | Environment secret | Owner-managed PKCS#12 keystore bytes, base64 encoded. |
 | `SEREA_ANDROID_KEYSTORE_PASSWORD` | Environment secret | Keystore password. |
 | `SEREA_ANDROID_KEY_ALIAS` | Environment secret | Signing key alias. |
 | `SEREA_ANDROID_KEY_PASSWORD` | Environment secret | Key password. |

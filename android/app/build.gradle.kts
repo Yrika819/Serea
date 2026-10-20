@@ -53,6 +53,7 @@ android {
     if (betaSigningReady) {
         signingConfigs.create("internalBeta") {
             storeFile = file(checkNotNull(betaStoreFile))
+            storeType = "PKCS12"
             storePassword = checkNotNull(betaStorePassword)
             keyAlias = checkNotNull(betaKeyAlias)
             keyPassword = checkNotNull(betaKeyPassword)

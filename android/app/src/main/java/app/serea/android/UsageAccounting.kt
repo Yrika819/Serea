@@ -55,6 +55,7 @@ class DuplicateUsageRequestException(message: String) : Exception(message)
 enum class UsageLedgerState { IN_FLIGHT, SETTLED, USAGE_UNKNOWN, OUTCOME_UNKNOWN }
 enum class CostEstimationStatus { ESTIMATED, USAGE_REPORTED_COST_ESTIMATED, UNKNOWN }
 enum class UsageTimeWindow { UTC_DAILY, UTC_MONTHLY, ALL_TIME }
+enum class UsageAggregationDimension { ALL, PROVIDER, MODEL, PROVIDER_MODEL }
 
 /** Prices are immutable request-time evidence. Values are decimal strings, never binary floats. */
 data class VerifiedPriceSnapshot(
@@ -314,7 +315,14 @@ interface UsageDao {
     suspend fun unresolvedCount(): Long
 
     @Transaction
-    suspend fun summarize(timeWindow: UsageTimeWindow, now: Long, providerId: String? = null, modelId: String? = null): List<ModelUsageSummary> {
+    suspend fun summarize(
+        timeWindow: UsageTimeWindow,
+        now: Long,
+        providerId: String? = null,
+        modelId: String? = null,
+        dimension: UsageAggregationDimension = UsageAggregationDimension.PROVIDER_MODEL,
+        unknownOnly: Boolean = false,
+    ): List<ModelUsageSummary> {
         val saved = settings() ?: UsageSettingsRow().also { putSettings(it) }
         val effectiveAt = maxOf(now, saved.lastObservedAt)
         if (effectiveAt != saved.lastObservedAt) putSettings(saved.copy(lastObservedAt = effectiveAt))
@@ -325,9 +333,17 @@ interface UsageDao {
         }
         val rows = allLedgerRows().filter { row ->
             (key == null || if (timeWindow == UsageTimeWindow.UTC_DAILY) row.dayKey == "D:$key" else row.monthKey == "M:$key") &&
-                (providerId == null || row.providerId == providerId) && (modelId == null || row.modelId == modelId)
+                (providerId == null || row.providerId == providerId) && (modelId == null || row.modelId == modelId) &&
+                (!unknownOnly || row.usageStatus in setOf(UsageLedgerState.IN_FLIGHT.name, UsageLedgerState.USAGE_UNKNOWN.name, UsageLedgerState.OUTCOME_UNKNOWN.name) || row.costStatus == CostEstimationStatus.UNKNOWN.name)
         }
-        return rows.groupBy { it.providerId to it.modelId }.map { (attribution, group) ->
+        return rows.groupBy { row ->
+            when (dimension) {
+                UsageAggregationDimension.ALL -> null to null
+                UsageAggregationDimension.PROVIDER -> row.providerId to null
+                UsageAggregationDimension.MODEL -> null to row.modelId
+                UsageAggregationDimension.PROVIDER_MODEL -> row.providerId to row.modelId
+            }
+        }.map { (attribution, group) ->
             val costs = group.filter { it.costStatus != CostEstimationStatus.UNKNOWN.name && it.estimatedCost != null && it.currency != null }
                 .groupBy { it.currency!! }.mapValues { (_, currencyRows) ->
                     currencyRows.fold(BigDecimal.ZERO) { total, row -> total.add(BigDecimal(row.estimatedCost!!)) }.toPlainString()
@@ -337,7 +353,7 @@ interface UsageDao {
                 checkedSum(group.mapNotNull { it.providerInputTokens }), checkedSum(group.mapNotNull { it.providerOutputTokens }),
                 group.count { it.usageStatus == UsageLedgerState.OUTCOME_UNKNOWN.name || it.usageStatus == UsageLedgerState.USAGE_UNKNOWN.name || it.usageStatus == UsageLedgerState.IN_FLIGHT.name }.toLong(),
                 costs, group.count { it.costStatus == CostEstimationStatus.UNKNOWN.name || it.estimatedCost == null }.toLong())
-        }.sortedWith(compareBy<ModelUsageSummary> { it.providerId }.thenBy { it.modelId })
+        }.sortedWith(compareBy<ModelUsageSummary> { it.providerId.orEmpty() }.thenBy { it.modelId.orEmpty() })
     }
 
     private fun UsageSettingsRow.toLimits() = UsageLimits(dailyRequests, dailyTokens, monthlyRequests, monthlyTokens)
@@ -358,10 +374,24 @@ internal class UsageRepository(private val dao: UsageDao, private val clock: () 
     suspend fun recoverAfterProcessRestart() = dao.markInterruptedRequestsUnknown()
     suspend fun updateLimits(limits: UsageLimits) = dao.updateLimits(limits)
     suspend fun snapshot() = dao.snapshot(clock())
-    suspend fun summaries(timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME, providerId: String? = null, modelId: String? = null) =
-        dao.summarize(timeWindow, clock(), providerId, modelId)
-    suspend fun modelUsage(modelId: String, timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME) = summaries(timeWindow, modelId = modelId)
-    suspend fun providerUsage(providerId: String, timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME) = summaries(timeWindow, providerId = providerId)
+    suspend fun summaries(
+        timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME,
+        providerId: String? = null,
+        modelId: String? = null,
+        dimension: UsageAggregationDimension = UsageAggregationDimension.PROVIDER_MODEL,
+        unknownOnly: Boolean = false,
+    ) = dao.summarize(timeWindow, clock(), providerId, modelId, dimension, unknownOnly)
+    suspend fun overallUsage(timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME) = summaries(timeWindow, dimension = UsageAggregationDimension.ALL)
+    suspend fun modelUsage(modelId: String, timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME) =
+        summaries(timeWindow, modelId = modelId, dimension = UsageAggregationDimension.MODEL)
+    suspend fun providerUsage(providerId: String, timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME) =
+        summaries(timeWindow, providerId = providerId, dimension = UsageAggregationDimension.PROVIDER)
+    suspend fun providerModelUsage(providerId: String, modelId: String, timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME) =
+        summaries(timeWindow, providerId, modelId, UsageAggregationDimension.PROVIDER_MODEL)
+    suspend fun dailySummary(dimension: UsageAggregationDimension = UsageAggregationDimension.ALL) = summaries(UsageTimeWindow.UTC_DAILY, dimension = dimension)
+    suspend fun monthlySummary(dimension: UsageAggregationDimension = UsageAggregationDimension.ALL) = summaries(UsageTimeWindow.UTC_MONTHLY, dimension = dimension)
+    suspend fun unknownUsageSummary(timeWindow: UsageTimeWindow = UsageTimeWindow.ALL_TIME) =
+        summaries(timeWindow, dimension = UsageAggregationDimension.ALL, unknownOnly = true)
 }
 
 /** Reserves both UTC windows and the attribution ledger atomically before dispatch. */

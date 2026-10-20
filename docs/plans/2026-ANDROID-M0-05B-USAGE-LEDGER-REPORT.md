@@ -43,7 +43,7 @@ Calculations use `BigDecimal`; amounts are stored as decimal strings paired with
 
 ## Aggregation API
 
-`UsageRepository.summaries()` returns summaries grouped by provider+model for UTC daily, UTC monthly, or all-time windows. Optional provider/model filters provide the corresponding model and provider views. Each result contains request count, estimated input tokens, reserved output tokens, provider-reported input/output, uncertain request count, estimated costs grouped by currency, and unknown-cost count. `modelUsage()` and `providerUsage()` are stable read helpers. `UNKNOWN` attribution is retained as its own group.
+`UsageRepository.summaries()` returns summaries grouped by provider+model for UTC daily, UTC monthly, or all-time windows. `UsageAggregationDimension` explicitly selects overall, provider, model, or provider+model grouping. `overallUsage()`, `providerUsage()`, `modelUsage()`, `providerModelUsage()`, `dailySummary()`, `monthlySummary()`, and `unknownUsageSummary()` provide stable read helpers. Each result contains request count, estimated input tokens, reserved output tokens, provider-reported input/output, uncertain request count, estimated costs grouped by currency, and unknown-cost count. `UNKNOWN` attribution is retained as its own group.
 
 The existing timestamp monotonicity rule remains: observed time is `max(now, lastObservedAt)`, so a wall-clock rollback does not reopen an earlier limit or summary window. Checked `Long` additions reject overflow before ledger/window writes; aggregate sums also fail rather than wrap.
 

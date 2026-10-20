@@ -52,8 +52,15 @@ class UsageLedgerDatabaseTest {
         assertEquals(2L, first.providerReportedOutputTokens)
         assertEquals("0.00002", first.estimatedCostsByCurrency["USD"])
         assertEquals(0L, first.costUnknownCount)
-        assertEquals(1, usage.providerUsage("provider-b").size)
+        assertEquals(null, usage.providerUsage("provider-b").single().modelId)
+        assertEquals(1L, usage.providerUsage("provider-b").single().requestCount)
+        assertEquals(null, usage.modelUsage("model/b").single().providerId)
         assertEquals(1, usage.modelUsage("model/b").size)
+        assertEquals("provider-a", usage.providerModelUsage("provider-a", "model/a").single().providerId)
+        val overall = usage.overallUsage().single()
+        assertEquals(null, overall.providerId)
+        assertEquals(null, overall.modelId)
+        assertEquals(2L, overall.requestCount)
         assertEquals(2L, usage.summaries(UsageTimeWindow.ALL_TIME).sumOf { it.requestCount })
     }
 
@@ -93,6 +100,7 @@ class UsageLedgerDatabaseTest {
         val timeoutRow = usage.summaries().single { it.modelId == "fixture/model" }
         assertEquals(1L, timeoutRow.uncertainRequestCount)
         assertEquals(1L, usage.snapshot().uncertainRequests)
+        assertEquals(2L, usage.unknownUsageSummary().single().requestCount)
 
         database?.close()
         database = null

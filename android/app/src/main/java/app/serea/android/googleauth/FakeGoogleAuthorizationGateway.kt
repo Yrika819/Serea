@@ -4,7 +4,8 @@ package app.serea.android.googleauth
 class FakeGoogleAuthorizationGateway(
     initialScopes: Set<GoogleScope> = emptySet(),
     private val fixtureToken: String = "fixture-access-token-never-real",
-) : GoogleAccessTokenSupplier {
+) : GoogleAuthorizationGateway {
+    override val mode = GoogleAuthorizationMode.MOCK_ONLY
     private val grantedScopes = initialScopes.toMutableSet()
     private var service = GoogleServiceState.AVAILABLE
     private var nextFailure: AuthorizationFailure? = null
@@ -67,7 +68,7 @@ class FakeGoogleAuthorizationGateway(
         }
     }
 
-    suspend fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
+    override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
         val failure = when {
             !enabled -> AuthorizationFailure.NOT_CONFIGURED
             service == GoogleServiceState.MISSING -> AuthorizationFailure.SERVICE_MISSING
@@ -92,7 +93,7 @@ class FakeGoogleAuthorizationGateway(
     fun enableInApp(feature: GoogleFeature) {
         if (disabledInApp.remove(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
     }
-    fun isEnabledInApp(feature: GoogleFeature): Boolean = feature !in disabledInApp
+    override fun isEnabledInApp(feature: GoogleFeature): Boolean = feature !in disabledInApp
 
     /** Models Google revokeAccess, which invalidates every grant held by this app. */
     fun revokeGoogleGrant() {

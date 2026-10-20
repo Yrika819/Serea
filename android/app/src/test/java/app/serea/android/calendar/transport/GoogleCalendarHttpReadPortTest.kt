@@ -12,6 +12,8 @@ import app.serea.android.calendar.CalendarAgendaService
 import app.serea.android.calendar.CalendarEventKey
 import app.serea.android.calendar.EventId
 import app.serea.android.calendar.CalendarPermissionPolicy
+import app.serea.android.googleauth.AccessTokenLease
+import app.serea.android.googleauth.GoogleScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
@@ -32,7 +34,9 @@ import java.util.concurrent.TimeUnit
 class GoogleCalendarHttpReadPortTest {
     private lateinit var server: MockWebServer
     private val calendarId = CalendarId("fixture+calendar@example.test")
-    private val token = CalendarAccessToken("fixture-token-never-valid")
+    private fun freshToken() = CalendarAccessToken(
+        AccessTokenLease("fixture-token-never-valid", setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY), null),
+    )
     private var status = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
     private var tokenRequests = 0
     private val authorization = object : CalendarAuthorizationPort {
@@ -49,12 +53,12 @@ class GoogleCalendarHttpReadPortTest {
     @After fun tearDown() { server.shutdown() }
 
     private fun port(
-        accessToken: CalendarAccessToken? = token,
+        tokenProvider: () -> CalendarAccessToken? = { freshToken() },
         client: OkHttpClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
             .retryOnConnectionFailure(false).build(),
-    ) = GoogleCalendarHttpReadPort(authorization, CalendarAccessTokenPort {
+    ) = GoogleCalendarHttpReadPort(authorization, CalendarAccessTokenPort { _ ->
         tokenRequests++
-        accessToken
+        tokenProvider()
     }, client, server.url("/calendar/v3/"))
 
     @Test fun listCalendarsPaginatesEncodesTokensAndParsesMultipleTimezones() = runBlocking {
@@ -102,7 +106,7 @@ class GoogleCalendarHttpReadPortTest {
     }
 
     @Test fun missingTokenAndInvalidAuthorizationAreRejectedBeforeNetwork() = runBlocking {
-        try { port(accessToken = null).getEvent(CalendarEventKey(calendarId, EventId("x"))); fail("Expected missing token") }
+        try { port(tokenProvider = { null }).getEvent(CalendarEventKey(calendarId, EventId("x"))); fail("Expected missing token") }
         catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, e.code) }
         status = CalendarAuthorizationStatus(CalendarAuthorizationState.MOCK_ONLY)
         try { port().listEventsPage(calendarId, range()); fail("MOCK_ONLY must not authorize production transport") }
@@ -214,6 +218,49 @@ class GoogleCalendarHttpReadPortTest {
         val event = port().getEvent(CalendarEventKey(calendarId, EventId("all-day")))
         val time = event.time as app.serea.android.calendar.EventTime.AllDay
         assertEquals("America/Los_Angeles", time.timeZone.id)
+    }
+
+    @Test fun getEventUsesCalendarListTimezoneOnlyWhenThatScopeIsAlreadyGranted() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"id":"all-day","start":{"date":"2026-10-20"},"end":{"date":"2026-10-21"}}"""))
+        server.enqueue(MockResponse().setBody("""{"id":"fixture+calendar@example.test","timeZone":"Asia/Tokyo","accessRole":"reader"}"""))
+        val event = port().getEvent(CalendarEventKey(calendarId, EventId("all-day")))
+        assertEquals("Asia/Tokyo", (event.time as app.serea.android.calendar.EventTime.AllDay).timeZone.id)
+        assertEquals(
+            listOf("calendar", "v3", "calendars", calendarId.value, "events", "all-day"),
+            server.takeRequest().requestUrl!!.pathSegments,
+        )
+        assertEquals(
+            listOf("calendar", "v3", "users", "me", "calendarList", calendarId.value),
+            server.takeRequest().requestUrl!!.pathSegments,
+        )
+        assertEquals(2, tokenRequests)
+    }
+
+    @Test fun getEventWithUnknownAllDayTimezoneFailsWithoutRequestingAnUnapprovedScope() = runBlocking {
+        status = CalendarAuthorizationStatus(
+            CalendarAuthorizationState.AUTHORIZED,
+            missingScopes = setOf(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY),
+        )
+        server.enqueue(MockResponse().setBody("""{"id":"all-day","start":{"date":"2026-10-20"},"end":{"date":"2026-10-21"}}"""))
+        try {
+            port().getEvent(CalendarEventKey(calendarId, EventId("all-day")))
+            fail("Expected incomplete all-day timezone result")
+        } catch (failure: CalendarReadFailure) {
+            assertEquals(CalendarApiFailureCode.TIME_ZONE_UNKNOWN, failure.code)
+        }
+        assertEquals(1, tokenRequests)
+        assertEquals(1, server.requestCount)
+        assertTrue(server.takeRequest().requestLine!!.contains("/events/all-day"))
+    }
+
+    @Test fun calendarListResponseWithoutTimezoneIsNotSilentlyTreatedAsUtc() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"id":"fixture+calendar@example.test","accessRole":"reader"}"""))
+        try {
+            port().getCalendar(calendarId)
+            fail("Expected missing timezone failure")
+        } catch (failure: CalendarReadFailure) {
+            assertEquals(CalendarApiFailureCode.TIME_ZONE_UNKNOWN, failure.code)
+        }
     }
 
     @Test fun timeoutMapsToTimeout() = runBlocking {

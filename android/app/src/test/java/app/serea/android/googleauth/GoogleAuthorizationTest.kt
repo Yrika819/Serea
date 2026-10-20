@@ -1,5 +1,8 @@
 package app.serea.android.googleauth
 
+import app.serea.android.calendar.CalendarPermissionPolicy
+import app.serea.android.calendar.CalendarAuthorizationState
+import app.serea.android.gmail.GmailPermissionPolicy
 import app.serea.android.googleauth.GoogleScope.CALENDAR_EVENTS_READ_ONLY
 import app.serea.android.googleauth.GoogleScope.CALENDAR_LIST_READ_ONLY
 import app.serea.android.googleauth.GoogleScope.GMAIL_READ_ONLY
@@ -8,11 +11,95 @@ import app.serea.android.googleauth.GoogleFeature.GMAIL
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GoogleAuthorizationTest {
     private val both = setOf(GMAIL_READ_ONLY, CALENDAR_EVENTS_READ_ONLY)
+
+    @Test fun googleScopesMatchTheGmailAndCalendarDomainPolicies() {
+        assertEquals(setOf(GMAIL_READ_ONLY.value), GmailPermissionPolicy.requiredScopes())
+        assertEquals(
+            setOf(CALENDAR_EVENTS_READ_ONLY.value),
+            CalendarPermissionPolicy.requiredScopes(listCalendars = false),
+        )
+        assertEquals(
+            setOf(CALENDAR_EVENTS_READ_ONLY.value, CALENDAR_LIST_READ_ONLY.value),
+            CalendarPermissionPolicy.requiredScopes(listCalendars = true),
+        )
+    }
+
+    @Test fun calendarBridgeKeepsListScopeOptionalAndNeverTreatsMockAsGoogleAuthorization() = runBlocking {
+        val mock = FakeGoogleAuthorizationGateway(setOf(CALENDAR_EVENTS_READ_ONLY, CALENDAR_LIST_READ_ONLY))
+        val mockAdapter = GoogleCalendarAuthorizationAdapter(mock)
+        assertEquals(CalendarAuthorizationState.MOCK_ONLY, mockAdapter.status().state)
+        assertNull(mockAdapter.accessToken(CalendarPermissionPolicy.EVENTS_READ_ONLY))
+        assertNull(mockAdapter.accessToken(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY))
+
+        val requestedScopes = mutableListOf<Set<GoogleScope>>()
+        val leases = mutableListOf<AccessTokenLease>()
+        val gateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                GoogleServiceState.AVAILABLE,
+                scopes.associateWith { ScopePermission.GRANTED },
+            )
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+                assertEquals(GoogleFeature.CALENDAR, feature)
+                requestedScopes += scopes
+                val lease = AccessTokenLease("fixture-calendar-token", scopes, null)
+                leases += lease
+                return TokenSupplyResult.Available(lease)
+            }
+        }
+        val adapter = GoogleCalendarAuthorizationAdapter(gateway)
+        assertEquals(CalendarAuthorizationState.AUTHORIZED, adapter.status().state)
+        val eventsToken = checkNotNull(adapter.accessToken(CalendarPermissionPolicy.EVENTS_READ_ONLY))
+        val calendarListToken = checkNotNull(adapter.accessToken(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY))
+        eventsToken.close()
+        calendarListToken.close()
+        assertEquals(
+            listOf(setOf(CALENDAR_EVENTS_READ_ONLY), setOf(CALENDAR_LIST_READ_ONLY)),
+            requestedScopes,
+        )
+        assertTrue(leases.all { lease -> runCatching { lease.useToken { it } }.isFailure })
+    }
+
+    @Test fun featureDisableIsVisibleAndGmailDisableLeavesCalendarGrantUsable() = runBlocking {
+        val disabled = mutableSetOf<GoogleFeature>()
+        var tokenRequests = 0
+        val gateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                GoogleServiceState.AVAILABLE,
+                scopes.associateWith { ScopePermission.GRANTED },
+            )
+            override fun isEnabledInApp(feature: GoogleFeature) = feature !in disabled
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+                tokenRequests++
+                if (!isEnabledInApp(feature)) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
+                return TokenSupplyResult.Available(AccessTokenLease("fixture-calendar-token", scopes, null))
+            }
+        }
+        val adapter = GoogleCalendarAuthorizationAdapter(gateway)
+
+        disabled += GMAIL
+        assertEquals(CalendarAuthorizationState.AUTHORIZED, adapter.status().state)
+        val calendarToken = checkNotNull(adapter.accessToken(CalendarPermissionPolicy.EVENTS_READ_ONLY))
+        calendarToken.useToken { assertEquals("fixture-calendar-token", it) }
+        calendarToken.close()
+        assertEquals(1, tokenRequests)
+
+        disabled += CALENDAR
+        val disabledStatus = adapter.status()
+        assertEquals(CalendarAuthorizationState.FEATURE_DISABLED, disabledStatus.state)
+        assertEquals(ScopePermission.GRANTED,
+            gateway.status(setOf(CALENDAR_EVENTS_READ_ONLY)).permissions[CALENDAR_EVENTS_READ_ONLY])
+        assertNull(adapter.accessToken(CalendarPermissionPolicy.EVENTS_READ_ONLY))
+        assertEquals(1, tokenRequests)
+    }
 
     @Test fun firstConsentRequestsOnlyRequestedScopesAndIsExplicit() = runBlocking {
         val fake = FakeGoogleAuthorizationGateway()
@@ -155,6 +242,26 @@ class GoogleAuthorizationTest {
         assertTrue(registry.cancel("calendar-2"))
         assertFalse(registry.cancel("calendar-2"))
         assertEquals(null, registry.complete("calendar-2"))
+    }
+
+    @Test fun googleReconsentResolutionReplacesStaleGrantedPermission() {
+        val known = mutableMapOf(
+            GMAIL_READ_ONLY to ScopePermission.GRANTED,
+            CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED,
+        )
+        recordConsentResolution(known, setOf(GMAIL_READ_ONLY), emptySet())
+        assertEquals(ScopePermission.NEEDS_CONSENT, known[GMAIL_READ_ONLY])
+        assertEquals(ScopePermission.GRANTED, known[CALENDAR_EVENTS_READ_ONLY])
+
+        recordConsentResolution(known, setOf(GMAIL_READ_ONLY, CALENDAR_EVENTS_READ_ONLY), setOf(GMAIL_READ_ONLY))
+        assertEquals(ScopePermission.GRANTED, known[GMAIL_READ_ONLY])
+        assertEquals(ScopePermission.NEEDS_CONSENT, known[CALENDAR_EVENTS_READ_ONLY])
+    }
+
+    @Test fun explicitConsentCannotRequestScopesForAnInAppDisabledFeature() {
+        assertTrue(requestedScopesTouchDisabledFeature(setOf(GMAIL_READ_ONLY), setOf(GMAIL)))
+        assertFalse(requestedScopesTouchDisabledFeature(setOf(CALENDAR_EVENTS_READ_ONLY), setOf(GMAIL)))
+        assertTrue(requestedScopesTouchDisabledFeature(both, setOf(GMAIL)))
     }
 
     @Test fun realOAuthWithoutOwnerConfigurationRemainsDisabled() = runBlocking {

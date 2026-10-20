@@ -103,7 +103,7 @@ data class CalendarDateRange(val start: Instant, val endExclusive: Instant) {
 /** OAuth is deliberately not implemented. MOCK_ONLY is never an authenticated state. */
 enum class CalendarAuthorizationState {
     NOT_CONFIGURED, NOT_CONNECTED, AUTHORIZATION_REQUIRED, AUTHORIZED, DENIED,
-    REVOKED, EXPIRED, ERROR, MOCK_ONLY,
+    REVOKED, EXPIRED, ERROR, FEATURE_DISABLED, MOCK_ONLY,
 }
 
 data class CalendarAuthorizationStatus(
@@ -115,7 +115,7 @@ data class CalendarAuthorizationStatus(
 enum class CalendarApiFailureCode {
     NOT_FOUND, PERMISSION_DENIED, MISSING_SCOPE, RATE_LIMITED, TIMEOUT,
     CANCELLED, INVALID_RESPONSE, TOO_MANY_PAGES, TOO_MANY_EVENTS,
-    PARTIAL_FAILURE, SYNC_TOKEN_EXPIRED, UNAVAILABLE,
+    PARTIAL_FAILURE, SYNC_TOKEN_EXPIRED, TIME_ZONE_UNKNOWN, UNAVAILABLE,
 }
 
 class CalendarReadFailure(val code: CalendarApiFailureCode, message: String) : RuntimeException(message)

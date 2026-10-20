@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -86,6 +87,50 @@ def collect_class_counts(directory: Path) -> dict[str, int]:
     return counts
 
 
+def _source_test_count(source: str) -> int:
+    # Ignore comments and literals so examples do not look like executable tests.
+    source = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
+    source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source)
+    source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source)
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    source = re.sub(r"//[^\n]*", "", source)
+    return len(re.findall(r"@(?:org\.junit\.)?Test\b", source))
+
+
+def collect_source_test_counts(source_root: Path, requirements: dict[str, int]) -> tuple[dict[str, int], int]:
+    if not source_root.is_dir():
+        raise ValueError(f"Instrumentation Kotlin source directory is missing: {source_root}")
+    total = 0
+    for file in sorted(source_root.rglob("*.kt")):
+        try:
+            total += _source_test_count(file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError) as error:
+            raise ValueError(f"Could not read instrumentation source: {file}: {error}") from error
+
+    class_counts: dict[str, int] = {}
+    for class_name in requirements:
+        file = source_root.joinpath(*class_name.split(".")).with_suffix(".kt")
+        try:
+            class_counts[class_name] = _source_test_count(file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError) as error:
+            raise ValueError(f"Required instrumentation test source is missing or unreadable: {file}: {error}") from error
+    return class_counts, total
+
+
+def parse_class_requirements(requirements: list[str], parser: argparse.ArgumentParser) -> dict[str, int]:
+    parsed: dict[str, int] = {}
+    for requirement in requirements:
+        try:
+            class_name, count_text = requirement.rsplit("=", 1)
+            expected = int(count_text)
+            if not class_name or expected < 1 or class_name in parsed:
+                raise ValueError
+        except ValueError:
+            parser.error(f"invalid --require-class value: {requirement!r}")
+        parsed[class_name] = expected
+    return parsed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path, help="Gradle connected Android test results directory")
@@ -94,9 +139,38 @@ def main() -> int:
         "--require-class", action="append", default=[], metavar="CLASS=COUNT",
         help="require an exact executed testcase count for this fully qualified test class",
     )
+    parser.add_argument(
+        "--source-root", type=Path,
+        help="also require the exact @Test method count in every required Kotlin source and across this directory",
+    )
     args = parser.parse_args()
     if args.minimum < 1:
         parser.error("--minimum must be at least 1")
+    required_classes = parse_class_requirements(args.require_class, parser)
+    source_total: int | None = None
+    if args.source_root is not None:
+        try:
+            source_counts, source_total = collect_source_test_counts(args.source_root, required_classes)
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
+        for class_name, expected in required_classes.items():
+            actual = source_counts[class_name]
+            if actual != expected:
+                print(
+                    f"FAIL: {class_name} source contains {actual} @Test methods; expected exactly {expected}.",
+                    file=sys.stderr,
+                )
+                return 1
+        expected_total = sum(required_classes.values())
+        print(f"Instrumentation source: tests={source_total} required_class_tests={expected_total}")
+        if source_total != expected_total:
+            print(
+                f"FAIL: instrumentation source contains {source_total} @Test methods across the source set; "
+                f"all {expected_total} must belong to the required class list.",
+                file=sys.stderr,
+            )
+            return 1
     try:
         results = collect_results(args.results)
     except ValueError as error:
@@ -117,18 +191,17 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    if source_total is not None and results.tests != source_total:
+        print(
+            f"FAIL: JUnit recorded {results.tests} tests but Kotlin source contains {source_total} @Test methods.",
+            file=sys.stderr,
+        )
+        return 1
     if results.failures or results.errors or results.skipped:
         print("FAIL: every instrumentation test must pass without failures, errors, or skips.", file=sys.stderr)
         return 1
     class_counts = collect_class_counts(args.results)
-    for requirement in args.require_class:
-        try:
-            class_name, count_text = requirement.rsplit("=", 1)
-            expected = int(count_text)
-            if not class_name or expected < 1:
-                raise ValueError
-        except ValueError:
-            parser.error(f"invalid --require-class value: {requirement!r}")
+    for class_name, expected in required_classes.items():
         actual = class_counts.get(class_name, 0)
         if actual != expected:
             print(

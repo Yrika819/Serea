@@ -18,7 +18,7 @@ object GoogleCalendarEventParser {
     fun parseEvent(
         json: String,
         calendarId: CalendarId,
-        calendarTimeZone: ZoneId,
+        calendarTimeZone: ZoneId?,
         source: CalendarEventSource = CalendarEventSource.GOOGLE_CALENDAR_API,
     ): CalendarEvent {
         val root = parseRoot(json)
@@ -74,7 +74,7 @@ object GoogleCalendarEventParser {
     fun parsePage(
         json: String,
         calendarId: CalendarId,
-        calendarTimeZone: ZoneId,
+        calendarTimeZone: ZoneId?,
     ): CalendarEventPage {
         val root = parseRoot(json)
         try {
@@ -109,7 +109,7 @@ object GoogleCalendarEventParser {
         }
     }
 
-    private fun parseTime(start: JsonObject, end: JsonObject, calendarZone: ZoneId): EventTime {
+    private fun parseTime(start: JsonObject, end: JsonObject, calendarZone: ZoneId?): EventTime {
         if ((start.has("date") && start.has("dateTime")) || (end.has("date") && end.has("dateTime"))) {
             throw IllegalArgumentException("An event time cannot contain both date and dateTime.")
         }
@@ -123,6 +123,7 @@ object GoogleCalendarEventParser {
             val endLocal = LocalDate.parse(endDate)
             if (!endLocal.isAfter(startLocal)) throw IllegalArgumentException("All-day end date is exclusive and must be after start.")
             val zone = readZone(start, "timeZone") ?: readZone(end, "timeZone") ?: calendarZone
+                ?: throw CalendarReadFailure(CalendarApiFailureCode.TIME_ZONE_UNKNOWN, "Calendar timezone is unavailable for this all-day event.")
             return EventTime.AllDay(startLocal, endLocal, zone)
         }
         val parsedStart = parseDateTime(start)
@@ -131,11 +132,12 @@ object GoogleCalendarEventParser {
         return EventTime.Timed(parsedStart.instant, parsedEnd.instant, parsedStart.zone)
     }
 
-    private fun parseOriginalStart(element: JsonObject, calendarZone: ZoneId): EventOriginalStart {
+    private fun parseOriginalStart(element: JsonObject, calendarZone: ZoneId?): EventOriginalStart {
         if (element.has("date") && element.has("dateTime")) throw IllegalArgumentException("originalStartTime cannot contain both date and dateTime.")
         optionalString(element, "date")?.let { raw ->
             val date = LocalDate.parse(raw)
             val zone = readZone(element, "timeZone") ?: calendarZone
+                ?: throw CalendarReadFailure(CalendarApiFailureCode.TIME_ZONE_UNKNOWN, "Calendar timezone is unavailable for this all-day event.")
             return EventOriginalStart.AllDay(date, zone)
         }
         val parsed = parseDateTime(element)

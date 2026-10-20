@@ -69,6 +69,13 @@ object GmailMimeParser {
         val filename = optionalString(part, "filename")
         if (!filename.isNullOrEmpty()) return BodyContent() // Attachments are never downloaded or interpreted.
         val body = optionalObject(part, "body")
+        val attachmentId = body?.let { optionalString(it, "attachmentId") }
+        if (mimeType in setOf("text/plain", "text/html") && !attachmentId.isNullOrBlank() &&
+            body?.let { optionalString(it, "data") } == null
+        ) {
+            // A text body available only through attachmentId is not a complete inline body.
+            invalid()
+        }
         val partsElement = part.get("parts")
         if (partsElement != null && !partsElement.isJsonNull) {
             if (!partsElement.isJsonArray) invalid()

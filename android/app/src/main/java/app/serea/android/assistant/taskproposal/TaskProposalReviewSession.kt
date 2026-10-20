@@ -8,6 +8,7 @@ import app.serea.android.tasks.TaskProposal
 import app.serea.android.tasks.TaskProposalConfirmer
 import app.serea.android.tasks.TaskProposalOperation
 import app.serea.android.tasks.TaskRepository
+import app.serea.android.tasks.validate
 import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.CancellationException

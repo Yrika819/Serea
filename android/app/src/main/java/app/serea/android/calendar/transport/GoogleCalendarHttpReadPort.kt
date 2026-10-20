@@ -90,7 +90,7 @@ class GoogleCalendarHttpReadPort internal constructor(
         requireAuthorized(CalendarPermissionPolicy.EVENTS_READ_ONLY)
         val url = baseUrl.newBuilder().addPathSegment("calendars").addPathSegment(key.calendarId.value)
             .addPathSegment("events").addPathSegment(key.eventId.value).build()
-        return parseEvent(get(url, CalendarPermissionPolicy.EVENTS_READ_ONLY), key.calendarId)
+        return parseEventWithKnownCalendarZone(get(url, CalendarPermissionPolicy.EVENTS_READ_ONLY), key.calendarId)
     }
 
     override suspend fun listEventsPage(
@@ -110,7 +110,7 @@ class GoogleCalendarHttpReadPort internal constructor(
             .addQueryParameter("maxResults", EVENT_PAGE_SIZE.toString())
             .addQueryParameter("fields", EVENT_FIELDS)
             .apply { pageToken?.let { addQueryParameter("pageToken", it) } }.build()
-        return parsePage(get(url, CalendarPermissionPolicy.EVENTS_READ_ONLY), calendarId)
+        return parsePageWithKnownCalendarZone(get(url, CalendarPermissionPolicy.EVENTS_READ_ONLY), calendarId)
     }
 
     private suspend fun requireAuthorized(scope: String) {
@@ -127,14 +127,17 @@ class GoogleCalendarHttpReadPort internal constructor(
             throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar read authorization is unavailable.")
         }
         if (scope in status.missingScopes) throw failure(CalendarApiFailureCode.MISSING_SCOPE, "Required Calendar read scope is missing.")
-        val token = try { tokens.accessToken() }
+        val token = try { tokens.accessToken(scope) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar access token is unavailable.") }
         if (token == null) throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar access token is unavailable.")
-        val request = Request.Builder().url(url).header("Authorization", "Bearer ${token.value}")
-            .header("Accept", "application/json").get().build()
-        val response = execute(safeClient.newCall(request))
-        response.use {
+        try {
+            val request = token.useToken { value ->
+                Request.Builder().url(url).header("Authorization", "Bearer $value")
+                    .header("Accept", "application/json").get().build()
+            }
+            val response = execute(safeClient.newCall(request))
+            response.use {
             if (it.code !in 200..299) throw responseFailure(it)
             val body = it.body ?: throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response body is missing.")
             val bytes = try { body.byteStream().use { stream -> readBoundedResponse(stream, MAX_RESPONSE_BYTES) } }
@@ -143,6 +146,13 @@ class GoogleCalendarHttpReadPort internal constructor(
             catch (_: java.io.InterruptedIOException) { throw failure(CalendarApiFailureCode.TIMEOUT, "Calendar response read timed out.") }
             catch (_: IOException) { throw failure(CalendarApiFailureCode.UNAVAILABLE, "Calendar response could not be read.") }
             return bytes.toString(Charsets.UTF_8)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IllegalStateException) {
+            throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar access token is unavailable.")
+        } finally {
+            token.close()
         }
     }
 
@@ -190,7 +200,8 @@ class GoogleCalendarHttpReadPort internal constructor(
     private fun parseCalendar(json: String): CalendarDescriptor = try {
         val item = JsonParser.parseString(json).asJsonObject
         val id = item.stringOrNull("id") ?: invalid()
-        val zone = item.stringOrNull("timeZone")?.let(ZoneId::of) ?: ZoneId.of("UTC")
+        val zone = item.stringOrNull("timeZone")?.let(ZoneId::of)
+            ?: throw failure(CalendarApiFailureCode.TIME_ZONE_UNKNOWN, "Calendar timezone is unavailable.")
         val role = item.stringOrNull("accessRole")
         val permission = when (role) {
             "owner", "writer", "reader", "freeBusyReader" -> CalendarReadPermission.READ_ALLOWED
@@ -216,28 +227,47 @@ class GoogleCalendarHttpReadPort internal constructor(
         } catch (_: Exception) { null }
     }
 
-    private fun parseEvent(json: String, calendarId: CalendarId): CalendarEvent =
-        try { GoogleCalendarEventParser.parseEvent(json, calendarId, eventFallbackTimeZone(json)) }
+    private fun parseEvent(json: String, calendarId: CalendarId, calendarTimeZone: ZoneId?): CalendarEvent =
+        try { GoogleCalendarEventParser.parseEvent(json, calendarId, calendarTimeZone) }
         catch (failure: CalendarReadFailure) { throw failure }
         catch (_: Exception) { throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Invalid Google Calendar event payload.") }
 
-    private fun parsePage(json: String, calendarId: CalendarId): CalendarEventPage =
+    private fun parsePage(json: String, calendarId: CalendarId, calendarTimeZone: ZoneId?): CalendarEventPage =
         try {
             val root = JsonParser.parseString(json).asJsonObject
-            val zone = root.stringOrNull("timeZone")?.let(ZoneId::of) ?: ZoneId.of("UTC")
+            val zone = root.stringOrNull("timeZone")?.let(ZoneId::of) ?: calendarTimeZone
             GoogleCalendarEventParser.parsePage(json, calendarId, zone)
         }
         catch (failure: CalendarReadFailure) { throw failure }
         catch (_: Exception) { throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Invalid Google Calendar events page.") }
 
-    /** events.get can carry the calendar zone on its start/end; its RFC3339 offset remains authoritative otherwise. */
-    private fun eventFallbackTimeZone(json: String): ZoneId {
-        val root = parseJson(json)
-        for (field in listOf("start", "end")) {
-            val time = root.get(field)?.takeUnless { it.isJsonNull }?.asJsonObject ?: continue
-            time.stringOrNull("timeZone")?.let { return ZoneId.of(it) }
-        }
-        return ZoneId.of("UTC")
+    /**
+     * All-day dates need an IANA calendar zone for range and ordering semantics. Use the
+     * CalendarList timezone only when that read scope is already granted; never request it
+     * just to make an event response look complete.
+     */
+    private suspend fun parseEventWithKnownCalendarZone(json: String, calendarId: CalendarId): CalendarEvent = try {
+        parseEvent(json, calendarId, null)
+    } catch (unknown: CalendarReadFailure) {
+        if (unknown.code != CalendarApiFailureCode.TIME_ZONE_UNKNOWN) throw unknown
+        val zone = calendarTimeZoneIfAlreadyAuthorized(calendarId) ?: throw unknown
+        parseEvent(json, calendarId, zone)
+    }
+
+    private suspend fun parsePageWithKnownCalendarZone(json: String, calendarId: CalendarId): CalendarEventPage = try {
+        parsePage(json, calendarId, null)
+    } catch (unknown: CalendarReadFailure) {
+        if (unknown.code != CalendarApiFailureCode.TIME_ZONE_UNKNOWN) throw unknown
+        val zone = calendarTimeZoneIfAlreadyAuthorized(calendarId) ?: throw unknown
+        parsePage(json, calendarId, zone)
+    }
+
+    private suspend fun calendarTimeZoneIfAlreadyAuthorized(calendarId: CalendarId): ZoneId? {
+        val status = authorization.status()
+        if (status.state != CalendarAuthorizationState.AUTHORIZED ||
+            CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY in status.missingScopes
+        ) return null
+        return getCalendar(calendarId).timeZone
     }
 
     private fun parseJson(json: String) = try { JsonParser.parseString(json).asJsonObject }

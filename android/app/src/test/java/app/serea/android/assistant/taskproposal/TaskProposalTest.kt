@@ -13,18 +13,19 @@ import org.junit.Test
 
 class TaskProposalTest {
     private class FakeTaskRepository : TaskRepository {
+        private val lock = Any()
         val rows = linkedMapOf<String, Task>()
         val receipts = mutableMapOf<String, String>()
         var writes = 0
         var updateEntered: CompletableDeferred<Unit>? = null
         var allowUpdate: CompletableDeferred<Unit>? = null
 
-        @Synchronized override suspend fun create(draft: TaskDraft) = createRow(draft)
-        @Synchronized override suspend fun createFromApprovedProposal(draft: TaskDraft, proposalId: String): Task {
+        override suspend fun create(draft: TaskDraft) = synchronized(lock) { createRow(draft) }
+        override suspend fun createFromApprovedProposal(draft: TaskDraft, proposalId: String): Task = synchronized(lock) {
             if (receipts.containsKey(proposalId)) throw TaskConflictException()
             val task = createRow(draft)
             receipts[proposalId] = task.id
-            return task
+            task
         }
         private fun createRow(draft: TaskDraft) = Task(
             id = UUID.randomUUID().toString(), title = draft.title, description = draft.description,
@@ -33,29 +34,32 @@ class TaskProposalTest {
             timeZoneId = draft.timeZoneId,
         ).also { rows[it.id] = it; writes++ }
 
-        @Synchronized override suspend fun get(id: String) = rows[id]
-        @Synchronized override suspend fun list() = rows.values.toList()
-        @Synchronized override suspend fun update(id: String, expectedRevision: Long, draft: TaskDraft): Task {
-            updateEntered?.complete(Unit)
-            allowUpdate?.await()
+        override suspend fun get(id: String) = synchronized(lock) { rows[id] }
+        override suspend fun list() = synchronized(lock) { rows.values.toList() }
+        override suspend fun update(id: String, expectedRevision: Long, draft: TaskDraft): Task {
+            val (entered, allowed) = synchronized(lock) { updateEntered to allowUpdate }
+            entered?.complete(Unit)
+            allowed?.await()
+            return synchronized(lock) {
+                val old = checked(id, expectedRevision)
+                old.copy(title = draft.title, description = draft.description, priority = draft.priority,
+                    dueDate = draft.dueDate, dueTime = draft.dueTime, timeZoneId = draft.timeZoneId,
+                    revision = old.revision + 1).also { rows[id] = it; writes++ }
+            }
+        }
+        override suspend fun complete(id: String, expectedRevision: Long): Task = synchronized(lock) {
             val old = checked(id, expectedRevision)
-            return old.copy(title = draft.title, description = draft.description, priority = draft.priority,
-                dueDate = draft.dueDate, dueTime = draft.dueTime, timeZoneId = draft.timeZoneId,
+            old.copy(status = TaskStatus.COMPLETED, completedAt = Instant.EPOCH.plusSeconds(1),
                 revision = old.revision + 1).also { rows[id] = it; writes++ }
         }
-        @Synchronized override suspend fun complete(id: String, expectedRevision: Long): Task {
-            val old = checked(id, expectedRevision)
-            return old.copy(status = TaskStatus.COMPLETED, completedAt = Instant.EPOCH.plusSeconds(1),
-                revision = old.revision + 1).also { rows[id] = it; writes++ }
+        override suspend fun reopen(id: String, expectedRevision: Long) = error("unused")
+        override suspend fun delete(id: String, expectedRevision: Long): Unit = synchronized(lock) {
+            checked(id, expectedRevision); rows.remove(id); writes++; Unit
         }
-        @Synchronized override suspend fun reopen(id: String, expectedRevision: Long) = error("unused")
-        @Synchronized override suspend fun delete(id: String, expectedRevision: Long) {
-            checked(id, expectedRevision); rows.remove(id); writes++
-        }
-        @Synchronized override suspend fun incomplete() = rows.values.filter { it.status == TaskStatus.TODO }
-        @Synchronized override suspend fun completed() = rows.values.filter { it.status == TaskStatus.COMPLETED }
-        @Synchronized override suspend fun dueToday(today: LocalDate) = emptyList<Task>()
-        @Synchronized override suspend fun overdue(now: Instant, fallbackZone: java.time.ZoneId) = emptyList<Task>()
+        override suspend fun incomplete() = synchronized(lock) { rows.values.filter { it.status == TaskStatus.TODO } }
+        override suspend fun completed() = synchronized(lock) { rows.values.filter { it.status == TaskStatus.COMPLETED } }
+        override suspend fun dueToday(today: LocalDate) = emptyList<Task>()
+        override suspend fun overdue(now: Instant, fallbackZone: java.time.ZoneId) = emptyList<Task>()
 
         private fun checked(id: String, revision: Long): Task {
             val old = rows[id] ?: throw TaskNotFoundException()
@@ -63,12 +67,14 @@ class TaskProposalTest {
             return old
         }
 
-        fun seed(title: String = "Old title") = Task(
-            UUID.randomUUID().toString(), title, "Old description", TaskStatus.TODO, TaskPriority.NORMAL,
-            Instant.EPOCH, Instant.EPOCH, revision = 3,
-        ).also { rows[it.id] = it }
+        fun seed(title: String = "Old title") = synchronized(lock) {
+            Task(
+                UUID.randomUUID().toString(), title, "Old description", TaskStatus.TODO, TaskPriority.NORMAL,
+                Instant.EPOCH, Instant.EPOCH, revision = 3,
+            ).also { rows[it.id] = it }
+        }
 
-        fun changeRevision(id: String) {
+        fun changeRevision(id: String) = synchronized(lock) {
             rows[id] = rows.getValue(id).copy(revision = rows.getValue(id).revision + 1)
         }
     }

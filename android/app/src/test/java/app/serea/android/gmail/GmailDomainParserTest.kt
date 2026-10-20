@@ -174,6 +174,10 @@ class GmailSecurityPortsTest {
     @Test fun parserIgnoresAttachmentSubtreesAndRejectsInconsistentBodySize() = runBlocking {
         val attached = """{"mimeType":"multipart/mixed","parts":[{"mimeType":"text/plain","filename":"fixture.txt","body":{"data":"${Base64.getUrlEncoder().withoutPadding().encodeToString("do not read".toByteArray())}"}}]}"""
         assertNull(GmailMimeParser.parseMessage(messageJson(payload = attached)).plainTextBody)
+        val deferredTextBody = """{"mimeType":"text/plain","body":{"attachmentId":"fixture-body-attachment"}}"""
+        assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure {
+            GmailMimeParser.parseMessage(messageJson(payload = deferredTextBody))
+        }.code)
         val mismatch = """{"mimeType":"text/plain","body":{"size":99,"data":"${Base64.getUrlEncoder().withoutPadding().encodeToString("small".toByteArray())}"}}"""
         assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure { GmailMimeParser.parseMessage(messageJson(payload = mismatch)) }.code)
     }

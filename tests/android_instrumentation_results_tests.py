@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.verify_android_instrumentation import collect_class_counts, collect_results
+from tools.verify_android_instrumentation import collect_class_counts, collect_results, collect_source_test_counts
 
 
 class InstrumentationResultTests(unittest.TestCase):
@@ -48,6 +48,21 @@ class InstrumentationResultTests(unittest.TestCase):
             root = Path(temporary)
             self.write_xml(root, "results.xml", '<testsuite tests="2"><testcase classname="a.Storage"/><testcase classname="a.Chat"/></testsuite>')
             self.assertEqual({"a.Storage": 1, "a.Chat": 1}, collect_class_counts(root))
+
+    def test_source_counts_ignore_comments_and_string_literals_and_reject_unlisted_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "a").mkdir()
+            (root / "a" / "Storage.kt").write_text(
+                '''package a\nclass Storage {\n  // @Test fun comment() {}\n  val sample = "@Test"\n  @Test fun first() {}\n  @org.junit.Test fun second() {}\n}\n''',
+                encoding="utf-8",
+            )
+            counts, total = collect_source_test_counts(root, {"a.Storage": 2})
+            self.assertEqual({"a.Storage": 2}, counts)
+            self.assertEqual(2, total)
+            (root / "a" / "Other.kt").write_text("package a\nclass Other { @Test fun added() {} }\n", encoding="utf-8")
+            _, total = collect_source_test_counts(root, {"a.Storage": 2})
+            self.assertEqual(3, total)
 
 
 if __name__ == "__main__":

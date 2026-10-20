@@ -39,6 +39,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -153,18 +156,21 @@ fun CalendarAgendaScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 TextButton(onClick = { if (inDetail) leaveDetail() else onBack() }) {
-                    Text(if (inDetail) "戻る" else "閉じる")
+                    Text("戻る")
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
                     "DEMO / 架空の予定",
-                    modifier = Modifier.semantics { contentDescription = "DEMO / 架空の予定。Google Calendarには接続していません。" },
+                    modifier = Modifier.semantics {
+                        contentDescription = "DEMO / 架空の予定。Google Calendarには接続していません。"
+                        heading()
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.tertiary,
                     fontWeight = FontWeight.Bold,
                 )
             }
-            Text("Mock Only · Google Calendar未接続", style = MaterialTheme.typography.labelMedium)
+            Text("デモのみ · Google Calendar未接続", style = MaterialTheme.typography.labelMedium)
 
             if (!inDetail) {
                 AgendaModeSelector(
@@ -295,7 +301,8 @@ private fun CalendarSelector(
 @Composable
 private fun LoadingContent(detail: Boolean) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -307,7 +314,8 @@ private fun LoadingContent(detail: Boolean) {
 @Composable
 private fun FailureContent(state: CalendarAgendaUiState.Failure, onRetry: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
@@ -326,15 +334,26 @@ private fun AgendaContent(
     displayZone: ZoneId,
     onEvent: (CalendarEvent) -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(CalendarAgendaJapaneseText.agendaHeading(state.query, clock, displayZone), style = MaterialTheme.typography.titleLarge)
+    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Text(
+                CalendarAgendaJapaneseText.agendaHeading(state.query, clock, displayZone),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.semantics { heading() },
+            )
+        }
         when {
-            state.calendars.isEmpty() -> Text("カレンダーがありません。")
-            state.events.isEmpty() -> Text("このカレンダーに予定はありません。", style = MaterialTheme.typography.bodyLarge)
-            else -> LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            state.calendars.isEmpty() -> item {
+                Text("カレンダーがありません。", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            }
+            state.events.isEmpty() -> item {
+                Text(
+                    "このカレンダーに予定はありません。",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
+            else -> {
                 state.events.groupBy { eventGroupDate(it, state.query, clock, displayZone) }.toSortedMap().forEach { (date, events) ->
                     item(key = "date-${date}") {
                         Text(CalendarAgendaJapaneseText.date(date), style = MaterialTheme.typography.titleMedium)
@@ -409,7 +428,11 @@ private fun EventDetailContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text(CalendarAgendaJapaneseText.title(event.title), style = MaterialTheme.typography.headlineSmall)
+            Text(
+                CalendarAgendaJapaneseText.title(event.title),
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.semantics { heading() },
+            )
         }
         item {
             DetailField("開始・終了", CalendarAgendaJapaneseText.eventTime(event, displayZone))

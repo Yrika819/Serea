@@ -24,33 +24,46 @@ def _number(value: str | None) -> int:
     return int(value or 0)
 
 
-def _suite_counts(root: ET.Element) -> tuple[int, int, int, int] | None:
+def _suites(root: ET.Element) -> list[ET.Element] | None:
     tag = root.tag.rsplit("}", 1)[-1]
     if tag == "testsuite":
-        suites = [root]
+        return [root]
     elif tag == "testsuites":
-        suites = list(root.findall("./testsuite"))
-        if not suites and "tests" in root.attrib:
-            suites = [root]
-    else:
-        return None
+        return [suite for suite in root.iter() if suite.tag.rsplit("}", 1)[-1] == "testsuite"]
+    return None
 
+
+def _case_identity(case: ET.Element, file: Path) -> tuple[str, str]:
+    class_name = case.get("classname")
+    method_name = case.get("name")
+    if not class_name or not method_name:
+        raise ValueError(f"JUnit testcase must include classname and name: {file}")
+    return class_name, method_name
+
+
+def _suite_counts(root: ET.Element, file: Path) -> tuple[int, int, int, int] | None:
+    suites = _suites(root)
+    if suites is None:
+        return None
     totals = [0, 0, 0, 0]
+    if not suites:
+        raise ValueError(f"Instrumentation JUnit XML has no testsuites: {file}")
     for suite in suites:
         cases = list(suite.findall("./testcase"))
-        totals[0] += _number(suite.get("tests")) if "tests" in suite.attrib else len(cases)
-        if "failures" in suite.attrib:
-            totals[1] += _number(suite.get("failures"))
-        else:
-            totals[1] += sum(len(case.findall("./failure")) for case in cases)
-        if "errors" in suite.attrib:
-            totals[2] += _number(suite.get("errors"))
-        else:
-            totals[2] += sum(len(case.findall("./error")) for case in cases)
-        if "skipped" in suite.attrib:
-            totals[3] += _number(suite.get("skipped"))
-        else:
-            totals[3] += sum(len(case.findall("./skipped")) for case in cases)
+        declared_tests = _number(suite.get("tests")) if "tests" in suite.attrib else len(cases)
+        if declared_tests == 0 or not cases:
+            raise ValueError(f"Instrumentation JUnit suite recorded zero tests: {file}")
+        if declared_tests != len(cases):
+            raise ValueError(f"JUnit testcase count does not match tests attribute: {file}")
+        totals[0] += declared_tests
+        child_results = tuple(
+            sum(bool(case.findall(f"./{result_tag}")) for case in cases)
+            for result_tag in ("failure", "error", "skipped")
+        )
+        for attribute, child_count in zip(("failures", "errors", "skipped"), child_results):
+            if attribute in suite.attrib and _number(suite.get(attribute)) != child_count:
+                raise ValueError(f"JUnit {attribute} attribute does not match testcase results: {file}")
+        totals[1:] = [total + child for total, child in zip(totals[1:], child_results)]
     return tuple(totals)
 
 
@@ -58,13 +71,22 @@ def collect_results(directory: Path) -> Results:
     files = sorted(directory.rglob("*.xml"))
     totals = [0, 0, 0, 0]
     used_files = 0
+    seen: set[tuple[str, str]] = set()
     for file in files:
         try:
-            parsed = _suite_counts(ET.parse(file).getroot())
+            parsed = _suite_counts(ET.parse(file).getroot(), file)
         except (ET.ParseError, OSError) as error:
             raise ValueError(f"Invalid instrumentation JUnit XML: {file}: {error}") from error
         if parsed is None:
-            continue
+            raise ValueError(f"Non-JUnit XML was found in the instrumentation result directory: {file}")
+        root = ET.parse(file).getroot()
+        for case in root.iter():
+            if case.tag.rsplit("}", 1)[-1] != "testcase":
+                continue
+            identity = _case_identity(case, file)
+            if identity in seen:
+                raise ValueError(f"Duplicate instrumentation JUnit testcase: {identity[0]}#{identity[1]}")
+            seen.add(identity)
         used_files += 1
         for index, count in enumerate(parsed):
             totals[index] += count
@@ -76,14 +98,13 @@ def collect_class_counts(directory: Path) -> dict[str, int]:
     for file in sorted(directory.rglob("*.xml")):
         try:
             root = ET.parse(file).getroot()
-        except (ET.ParseError, OSError):
-            continue  # collect_results reports malformed JUnit XML with the path.
+        except (ET.ParseError, OSError) as error:
+            raise ValueError(f"Invalid instrumentation JUnit XML: {file}: {error}") from error
         for case in root.iter():
             if case.tag.rsplit("}", 1)[-1] != "testcase":
                 continue
-            class_name = case.get("classname")
-            if class_name:
-                counts[class_name] = counts.get(class_name, 0) + 1
+            class_name, _ = _case_identity(case, file)
+            counts[class_name] = counts.get(class_name, 0) + 1
     return counts
 
 
@@ -97,7 +118,23 @@ def _source_test_count(source: str) -> int:
     return len(re.findall(r"@(?:org\.junit\.)?Test\b", source))
 
 
-def collect_source_test_counts(source_root: Path, requirements: dict[str, int]) -> tuple[dict[str, int], int]:
+def _source_test_methods(source: str) -> set[str]:
+    source = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
+    source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source)
+    source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source)
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    source = re.sub(r"//[^\n]*", "", source)
+    pattern = re.compile(
+        r"@(?:org\.junit\.)?Test\b(?:\s*\([^)]*\))?\s*"
+        r"(?:(?:public|private|protected|internal|suspend|open|override|final)\s+)*"
+        r"(?:fun\s+([A-Za-z_]\w*)|(?:[\w<>?.\[\]]+\s+)+([A-Za-z_]\w*)\s*\()"
+    )
+    return {match.group(1) or match.group(2) for match in pattern.finditer(source)}
+
+
+def collect_source_test_counts(
+    source_root: Path, requirements: dict[str, int]
+) -> tuple[dict[str, int], int, dict[str, set[str]]]:
     if not source_root.is_dir():
         raise ValueError(f"Instrumentation Kotlin source directory is missing: {source_root}")
     total = 0
@@ -108,13 +145,33 @@ def collect_source_test_counts(source_root: Path, requirements: dict[str, int]) 
             raise ValueError(f"Could not read instrumentation source: {file}: {error}") from error
 
     class_counts: dict[str, int] = {}
+    source_methods: dict[str, set[str]] = {}
     for class_name in requirements:
         file = source_root.joinpath(*class_name.split(".")).with_suffix(".kt")
         try:
-            class_counts[class_name] = _source_test_count(file.read_text(encoding="utf-8"))
+            source = file.read_text(encoding="utf-8")
+            class_counts[class_name] = _source_test_count(source)
+            source_methods[class_name] = _source_test_methods(source)
         except (OSError, UnicodeError) as error:
             raise ValueError(f"Required instrumentation test source is missing or unreadable: {file}: {error}") from error
-    return class_counts, total
+    return class_counts, total, source_methods
+
+
+def collect_junit_methods(directory: Path) -> dict[str, set[str]]:
+    methods: dict[str, set[str]] = {}
+    for file in sorted(directory.rglob("*.xml")):
+        try:
+            root = ET.parse(file).getroot()
+        except (ET.ParseError, OSError) as error:
+            raise ValueError(f"Invalid instrumentation JUnit XML: {file}: {error}") from error
+        if _suites(root) is None:
+            raise ValueError(f"Non-JUnit XML was found in the instrumentation result directory: {file}")
+        for case in root.iter():
+            if case.tag.rsplit("}", 1)[-1] != "testcase":
+                continue
+            class_name, method_name = _case_identity(case, file)
+            methods.setdefault(class_name, set()).add(method_name)
+    return methods
 
 
 def parse_class_requirements(requirements: list[str], parser: argparse.ArgumentParser) -> dict[str, int]:
@@ -150,7 +207,7 @@ def main() -> int:
     source_total: int | None = None
     if args.source_root is not None:
         try:
-            source_counts, source_total = collect_source_test_counts(args.source_root, required_classes)
+            source_counts, source_total, source_methods = collect_source_test_counts(args.source_root, required_classes)
         except ValueError as error:
             print(error, file=sys.stderr)
             return 2
@@ -201,11 +258,20 @@ def main() -> int:
         print("FAIL: every instrumentation test must pass without failures, errors, or skips.", file=sys.stderr)
         return 1
     class_counts = collect_class_counts(args.results)
+    junit_methods = collect_junit_methods(args.results)
     for class_name, expected in required_classes.items():
         actual = class_counts.get(class_name, 0)
         if actual != expected:
             print(
                 f"FAIL: {class_name} recorded {actual} tests; expected exactly {expected}.",
+                file=sys.stderr,
+            )
+            return 1
+        if source_total is not None and source_methods[class_name] != junit_methods.get(class_name, set()):
+            missing = sorted(source_methods[class_name] - junit_methods.get(class_name, set()))
+            unexpected = sorted(junit_methods.get(class_name, set()) - source_methods[class_name])
+            print(
+                f"FAIL: {class_name} source/JUnit method mismatch; missing={missing}, unexpected={unexpected}.",
                 file=sys.stderr,
             )
             return 1

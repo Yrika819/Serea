@@ -108,7 +108,7 @@ class ChatScreenTest {
 
     @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         compose.waitUntil(30_000) {
             var secure = false
             compose.activityRule.scenario.onActivity {
@@ -120,7 +120,7 @@ class ChatScreenTest {
             assertEquals(WindowManager.LayoutParams.FLAG_SECURE,
                 compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
-        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
+        compose.onNodeWithTag("destination_back").performClick()
         compose.waitUntil(30_000) {
             var secure = true
             compose.activityRule.scenario.onActivity {
@@ -136,7 +136,7 @@ class ChatScreenTest {
     @Test fun previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled() {
         awaitComposerEnabled()
         composer().performTextInput("draft stays local")
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("Cloud接続テスト（未承認）").assertIsNotEnabled()
         compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
         compose.onAllNodes(hasText("送信先候補", substring = true)).assertCountEquals(1)
@@ -148,15 +148,15 @@ class ChatScreenTest {
         ModelSelectionSettings(compose.activity.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE))
             .save(ModelRoutingPolicy())
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("Manual").performScrollTo().performClick()
         compose.onNodeWithText("Cost Priority").performScrollTo().performClick()
         compose.onNodeWithText("任意の1要求費用上限").performScrollTo().performTextInput("0.05")
         compose.onNodeWithText("通貨コード").performScrollTo().performTextInput("USD")
         compose.onNodeWithText("Router設定を保存").performScrollTo().performClick()
         compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("設定").performClick()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("destination_back").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("選択Model ID: なし").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Manual Model Picker: 選択可能なモデルはありません。任意のModel IDやProvider Hostは入力できません。")
@@ -193,8 +193,8 @@ class ChatScreenTest {
         compose.onNodeWithText("この会話を削除").assertIsDisplayed()
         compose.onNodeWithText("全履歴を削除").assertIsDisplayed()
         openOverflow()
-        compose.onNodeWithText("設定").assertIsDisplayed().performClick()
-        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
+        compose.onNodeWithTag("open_settings").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("destination_back").performClick()
     }
 
     @Test fun currentConversationDeletionRequiresConfirmationAndCancelKeepsMessages() {
@@ -274,7 +274,7 @@ class ChatScreenTest {
         }
         compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").assertIsDisplayed()
+        compose.onNodeWithTag("open_settings").assertIsDisplayed()
         openOverflow()
         compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
         compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
@@ -332,7 +332,7 @@ class ChatScreenTest {
 
     @Test fun emptySoftLimitFieldShowsValidationAndDisablesSave() {
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         val dailyRequests = compose.onNodeWithText("日次requests")
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
@@ -343,21 +343,21 @@ class ChatScreenTest {
 
     @Test fun correctedSoftLimitInputCanBeSavedAndRestored() {
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         val dailyRequests = compose.onNodeWithText("日次requests")
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
         dailyRequests.performTextInput("21")
         compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsEnabled().performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("Soft Limit設定を保存しました", substring = true)).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("destination_back").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("日次requests").performScrollTo().assertTextContains("21")
     }
 
     @Test fun softLimitRejectsZeroNegativeNonNumericOverflowAndDailyMonthlyMismatch() {
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         fun verifyInvalid(value: String, expectedError: String) {
             val dailyRequests = compose.onNodeWithText("日次requests")
             dailyRequests.performScrollTo()

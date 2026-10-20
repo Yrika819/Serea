@@ -4,6 +4,7 @@ import app.serea.android.tasks.InvalidTaskException
 import app.serea.android.tasks.ProposalValidation
 import app.serea.android.tasks.Task
 import app.serea.android.tasks.TaskConflictException
+import app.serea.android.tasks.TaskNotFoundException
 import app.serea.android.tasks.TaskProposal
 import app.serea.android.tasks.TaskProposalConfirmer
 import app.serea.android.tasks.TaskProposalOperation
@@ -12,11 +13,13 @@ import app.serea.android.tasks.validate
 import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** Values shown to the user before approval. Task text stays in memory and is never logged here. */
 data class TaskProposalReviewSnapshot(
@@ -92,9 +95,14 @@ class TaskProposalReviewSession private constructor(
             TaskProposalReviewResult.Approved(snapshot.proposal.operation)
         } catch (error: CancellationException) {
             // The repository call may have crossed its write boundary; never make this gate retryable.
-            mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.REJECTED }
+            withContext(NonCancellable) {
+                mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.REJECTED }
+            }
             throw error
         } catch (_: TaskConflictException) {
+            mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.CONFLICT }
+            TaskProposalReviewResult.Conflict
+        } catch (_: TaskNotFoundException) {
             mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.CONFLICT }
             TaskProposalReviewResult.Conflict
         } catch (_: Exception) {
@@ -143,7 +151,9 @@ class TaskProposalReviewSession private constructor(
                 repository.get(proposal.targetTaskId!!)
                     ?: throw TaskConflictException()
             }
-            if (target != null && target.revision != proposal.expectedRevision) throw TaskConflictException()
+            if (target != null &&
+                (target.id != proposal.targetTaskId || target.revision != proposal.expectedRevision)
+            ) throw TaskConflictException()
             if (proposal.operation == TaskProposalOperation.COMPLETE && target?.status != app.serea.android.tasks.TaskStatus.TODO)
                 throw TaskConflictException()
             return TaskProposalReviewSession(

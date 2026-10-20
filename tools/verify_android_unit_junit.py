@@ -36,30 +36,34 @@ def _number(value: str | None) -> int:
     return int(value or 0)
 
 
-def _suite_counts(root: ET.Element) -> tuple[int, int, int, int] | None:
+def _suite_counts(root: ET.Element, file: Path) -> tuple[int, int, int, int] | None:
     tag = root.tag.rsplit("}", 1)[-1]
     if tag == "testsuite":
         suites = [root]
     elif tag == "testsuites":
-        suites = list(root.findall("./testsuite"))
-        if not suites and "tests" in root.attrib:
-            suites = [root]
+        suites = [suite for suite in root.iter() if suite.tag.rsplit("}", 1)[-1] == "testsuite"]
     else:
         return None
 
     totals = [0, 0, 0, 0]
+    if not suites:
+        raise ValueError(f"Android unit JUnit XML has no testsuites: {file}")
     for suite in suites:
         cases = list(suite.findall("./testcase"))
-        totals[0] += _number(suite.get("tests")) if "tests" in suite.attrib else len(cases)
-        totals[1] += _number(suite.get("failures")) if "failures" in suite.attrib else sum(
-            len(case.findall("./failure")) for case in cases
+        declared_tests = _number(suite.get("tests")) if "tests" in suite.attrib else len(cases)
+        if declared_tests == 0 or not cases:
+            raise ValueError(f"Android unit JUnit suite recorded zero tests: {file}")
+        if declared_tests != len(cases):
+            raise ValueError(f"JUnit testcase count does not match tests attribute: {file}")
+        totals[0] += declared_tests
+        child_results = tuple(
+            sum(bool(case.findall(f"./{result_tag}")) for case in cases)
+            for result_tag in ("failure", "error", "skipped")
         )
-        totals[2] += _number(suite.get("errors")) if "errors" in suite.attrib else sum(
-            len(case.findall("./error")) for case in cases
-        )
-        totals[3] += _number(suite.get("skipped")) if "skipped" in suite.attrib else sum(
-            len(case.findall("./skipped")) for case in cases
-        )
+        for attribute, child_count in zip(("failures", "errors", "skipped"), child_results):
+            if attribute in suite.attrib and _number(suite.get(attribute)) != child_count:
+                raise ValueError(f"JUnit {attribute} attribute does not match testcase results: {file}")
+        totals[1:] = [total + child for total, child in zip(totals[1:], child_results)]
     return tuple(totals)
 
 
@@ -72,17 +76,27 @@ def collect_results(directory: Path) -> Results:
 
     totals = [0, 0, 0, 0]
     used_suites = 0
+    seen: set[tuple[str, str]] = set()
     for file in files:
         try:
             root = ET.parse(file).getroot()
         except (ET.ParseError, OSError) as error:
             raise ValueError(f"Invalid Android unit JUnit XML: {file}: {error}") from error
-        parsed = _suite_counts(root)
+        parsed = _suite_counts(root, file)
         if parsed is None:
             raise ValueError(f"Non-JUnit XML was found in the Android unit result directory: {file}")
         used_suites += 1
-        if parsed[0] == 0:
-            raise ValueError(f"Android unit JUnit suite recorded zero tests: {file}")
+        for case in root.iter():
+            if case.tag.rsplit("}", 1)[-1] != "testcase":
+                continue
+            class_name = case.get("classname")
+            method_name = case.get("name")
+            if not class_name or not method_name:
+                raise ValueError(f"JUnit testcase must include classname and name: {file}")
+            identity = (class_name, method_name)
+            if identity in seen:
+                raise ValueError(f"Duplicate Android unit JUnit testcase: {class_name}#{method_name}")
+            seen.add(identity)
         for index, count in enumerate(parsed):
             totals[index] += count
     if used_suites == 0 or totals[0] == 0:
@@ -127,6 +141,42 @@ def collect_source_class_counts(source_root: Path) -> dict[str, int]:
     return counts
 
 
+def collect_source_test_methods(source_root: Path) -> dict[str, set[str]]:
+    if not source_root.is_dir():
+        raise ValueError(f"Android unit test source directory is missing: {source_root}")
+    methods: dict[str, set[str]] = {}
+    source_files = sorted((*source_root.rglob("*.kt"), *source_root.rglob("*.java")))
+    method_pattern = re.compile(
+        r"@(?:org\.junit\.)?Test\b(?:\s*\([^)]*\))?\s*"
+        r"(?:(?:public|private|protected|internal|suspend|open|override|final|static)\s+)*"
+        r"(?:fun\s+([A-Za-z_]\w*)|(?:[\w<>?.\[\]]+\s+)+([A-Za-z_]\w*)\s*\()"
+    )
+    for file in source_files:
+        source = file.read_text(encoding="utf-8")
+        source = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
+        source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source)
+        source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source)
+        source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+        source = re.sub(r"//[^\n]*", "", source)
+        package = re.search(r"^\s*package\s+([A-Za-z_][\w.]*)", source, flags=re.MULTILINE)
+        if package is None:
+            continue
+        classes = list(re.finditer(
+            r"^(?:(?:public|internal|private|open|abstract|final|static)\s+)*class\s+([A-Za-z_]\w*)",
+            source,
+            flags=re.MULTILINE,
+        ))
+        for index, declaration in enumerate(classes):
+            end = classes[index + 1].start() if index + 1 < len(classes) else len(source)
+            class_source = source[declaration.start():end]
+            names = {match.group(1) or match.group(2) for match in method_pattern.finditer(class_source)}
+            if names:
+                methods[f"{package.group(1)}.{declaration.group(1)}"] = names
+    if not methods:
+        raise ValueError(f"No @Test methods found under Android unit source directory: {source_root}")
+    return methods
+
+
 def collect_junit_class_counts(directory: Path) -> dict[str, int]:
     counts: dict[str, int] = {}
     for file in sorted(directory.rglob("*.xml")):
@@ -146,9 +196,31 @@ def collect_junit_class_counts(directory: Path) -> dict[str, int]:
     return counts
 
 
+def collect_junit_test_methods(directory: Path) -> dict[str, set[str]]:
+    methods: dict[str, set[str]] = {}
+    for file in sorted(directory.rglob("*.xml")):
+        try:
+            root = ET.parse(file).getroot()
+        except (ET.ParseError, OSError) as error:
+            raise ValueError(f"Invalid Android unit JUnit XML: {file}: {error}") from error
+        if root.tag.rsplit("}", 1)[-1] not in {"testsuite", "testsuites"}:
+            raise ValueError(f"Non-JUnit XML was found in the Android unit result directory: {file}")
+        for case in root.iter():
+            if case.tag.rsplit("}", 1)[-1] != "testcase":
+                continue
+            class_name = case.get("classname")
+            method_name = case.get("name")
+            if not class_name or not method_name:
+                raise ValueError(f"JUnit testcase must include classname and name: {file}")
+            methods.setdefault(class_name, set()).add(method_name)
+    return methods
+
+
 def verify_source_discovery(directory: Path, source_root: Path, required_classes: tuple[str, ...]) -> None:
     expected = collect_source_class_counts(source_root)
+    expected_methods = collect_source_test_methods(source_root)
     actual = collect_junit_class_counts(directory)
+    actual_methods = collect_junit_test_methods(directory)
     missing_required = sorted(set(required_classes) - set(expected))
     if missing_required:
         raise ValueError("Required Android unit test source class is missing: " + ", ".join(missing_required))
@@ -159,7 +231,12 @@ def verify_source_discovery(directory: Path, source_root: Path, required_classes
         for name in set(expected) & set(actual)
         if expected[name] != actual[name]
     )
-    if missing or unexpected or count_mismatches:
+    method_mismatches = sorted(
+        (name, sorted(expected_methods[name] - actual_methods.get(name, set())), sorted(actual_methods.get(name, set()) - expected_methods[name]))
+        for name in set(expected_methods) & set(actual_methods)
+        if expected_methods[name] != actual_methods.get(name, set())
+    )
+    if missing or unexpected or count_mismatches or method_mismatches:
         details = []
         if missing:
             details.append("missing JUnit classes: " + ", ".join(missing))
@@ -167,6 +244,11 @@ def verify_source_discovery(directory: Path, source_root: Path, required_classes
             details.append("unexpected JUnit classes: " + ", ".join(unexpected))
         if count_mismatches:
             details.append("test count mismatch: " + ", ".join(f"{name} source={source} junit={junit}" for name, source, junit in count_mismatches))
+        if method_mismatches:
+            details.append("test method mismatch: " + ", ".join(
+                f"{name} missing={missing_names} unexpected={unexpected_names}"
+                for name, missing_names, unexpected_names in method_mismatches
+            ))
         raise ValueError("Android unit source/JUnit discovery mismatch: " + "; ".join(details))
 
 

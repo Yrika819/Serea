@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -57,14 +58,18 @@ fun TaskScreen(viewModel: TaskViewModel) {
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Tasks", style = MaterialTheme.typography.headlineMedium)
-                Button(onClick = viewModel::addTask, modifier = Modifier.testTag("task_add")) { Text("Add task") }
+                Text("タスク", style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.semantics { heading() }.testTag("tasks_heading"))
+                Button(onClick = viewModel::addTask, modifier = Modifier.testTag("task_add")) { Text("タスクを追加") }
             }
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("task_error")) }
-            state.message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("task_error").semantics { liveRegion = LiveRegionMode.Assertive }) }
+            state.message?.let { Text(it, color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
             when {
-                state.loading -> Text("Loading tasks…")
-                state.tasks.isEmpty() -> Text("No tasks yet.", modifier = Modifier.testTag("task_empty"))
+                state.loading -> Text("タスクを読み込み中…", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                state.tasks.isEmpty() -> Text("タスクはありません。", modifier = Modifier.testTag("task_empty")
+                    .semantics { liveRegion = LiveRegionMode.Polite })
                 else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(state.tasks, key = { it.id }) { task ->
                         Column(Modifier.fillMaxWidth().padding(8.dp)) {
@@ -75,14 +80,14 @@ fun TaskScreen(viewModel: TaskViewModel) {
                                     Text(task.title, style = MaterialTheme.typography.titleMedium)
                                     if (task.description.isNotBlank()) Text(task.description, style = MaterialTheme.typography.bodyMedium)
                                     val due = task.dueDate?.let { date ->
-                                        if (task.dueTime == null) "Due $date (all day)" else "Due $date ${task.dueTime} ${task.timeZoneId.orEmpty()}"
+                                        if (task.dueTime == null) "期限 $date（終日）" else "期限 $date ${task.dueTime} ${task.timeZoneId.orEmpty()}"
                                     }
-                                    Text(listOfNotNull(task.priority.name, due, if (task.isOverdue(state.now)) "Overdue" else null).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                                    Text(listOfNotNull(priorityLabel(task.priority), due, if (task.isOverdue(state.now)) "期限超過" else null).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { viewModel.editTask(task.id) }, modifier = Modifier.testTag("task_edit_${task.id}")) { Text("Edit") }
-                                TextButton(onClick = { viewModel.requestDelete(task.id) }, modifier = Modifier.testTag("task_delete_${task.id}")) { Text("Delete") }
+                                TextButton(onClick = { viewModel.editTask(task.id) }, modifier = Modifier.testTag("task_edit_${task.id}")) { Text("編集") }
+                                TextButton(onClick = { viewModel.requestDelete(task.id) }, modifier = Modifier.testTag("task_delete_${task.id}")) { Text("削除") }
                             }
                         }
                     }
@@ -98,10 +103,10 @@ fun TaskScreen(viewModel: TaskViewModel) {
         val target = state.tasks.firstOrNull { it.id == deleteId }
         AlertDialog(
             onDismissRequest = viewModel::cancelDelete,
-            title = { Text("Delete task?") },
-            text = { Text(target?.title ?: "This task is no longer available.") },
-            confirmButton = { TextButton(enabled = target != null && !state.saving, onClick = viewModel::confirmDelete, modifier = Modifier.testTag("task_delete_confirm")) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = viewModel::cancelDelete, modifier = Modifier.testTag("task_delete_cancel")) { Text("Cancel") } },
+            title = { Text("タスクを削除しますか？") },
+            text = { Text(target?.title ?: "このタスクは利用できません。") },
+            confirmButton = { TextButton(enabled = target != null && !state.saving, onClick = viewModel::confirmDelete, modifier = Modifier.testTag("task_delete_confirm")) { Text("削除") } },
+            dismissButton = { TextButton(onClick = viewModel::cancelDelete, modifier = Modifier.testTag("task_delete_cancel")) { Text("キャンセル") } },
         )
     }
 }
@@ -170,38 +175,38 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
     }
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text(if (task == null) "New task" else "Edit task") },
+        title = { Text(if (task == null) "新しいタスク" else "タスクを編集") },
         text = {
             Column(
                 Modifier.fillMaxWidth().heightIn(max = 420.dp).imePadding()
                     .verticalScroll(rememberScrollState()).testTag("task_editor_scroll"),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedTextField(title, { title = it; titleError = null }, label = { Text("Title") }, isError = titleError != null, supportingText = titleError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_title"))
-                OutlinedTextField(description, { description = it }, label = { Text("Description / notes") }, modifier = Modifier.fillMaxWidth().testTag("task_description"))
-                TextButton(onClick = { priorityExpanded = true }, modifier = Modifier.testTag("task_priority")) { Text("Priority: $priorityName") }
+                OutlinedTextField(title, { title = it; titleError = null }, label = { Text("タイトル") }, isError = titleError != null, supportingText = titleError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_title"))
+                OutlinedTextField(description, { description = it }, label = { Text("説明・メモ") }, modifier = Modifier.fillMaxWidth().testTag("task_description"))
+                TextButton(onClick = { priorityExpanded = true }, modifier = Modifier.testTag("task_priority")) { Text("優先度: ${priorityLabel(TaskPriority.valueOf(priorityName))}") }
                 DropdownMenu(expanded = priorityExpanded, onDismissRequest = { priorityExpanded = false }) {
-                    TaskPriority.entries.forEach { item -> DropdownMenuItem(text = { Text(item.name) }, onClick = { priorityName = item.name; priorityExpanded = false }) }
+                    TaskPriority.entries.forEach { item -> DropdownMenuItem(text = { Text(priorityLabel(item)) }, onClick = { priorityName = item.name; priorityExpanded = false }) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(date, { date = it; clearDateErrors() }, label = { Text("Due date (YYYY-MM-DD)") }, isError = dateError != null, supportingText = dateError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.weight(1f).testTag("task_due_date"))
-                    TextButton(onClick = { datePickerOpen = true }, modifier = Modifier.testTag("task_date_picker_open")) { Text("Pick date") }
+                    OutlinedTextField(date, { date = it; clearDateErrors() }, label = { Text("期限日（YYYY-MM-DD）") }, isError = dateError != null, supportingText = dateError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.weight(1f).testTag("task_due_date"))
+                    TextButton(onClick = { datePickerOpen = true }, modifier = Modifier.testTag("task_date_picker_open")) { Text("日付を選択") }
                 }
                 Text(if (date.isBlank()) "日付のみの期限にもできます。" else "時刻を空欄にすると、この日付の終日タスクになります。", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(time, { time = it; timeError = null }, label = { Text("Due time (24-hour, optional)") }, isError = timeError != null, supportingText = timeError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.weight(1f).testTag("task_due_time"))
-                    TextButton(onClick = { timePickerOpen = true }, modifier = Modifier.testTag("task_time_picker_open")) { Text("Pick time") }
+                    OutlinedTextField(time, { time = it; timeError = null }, label = { Text("期限時刻（24時間制・任意）") }, isError = timeError != null, supportingText = timeError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.weight(1f).testTag("task_due_time"))
+                    TextButton(onClick = { timePickerOpen = true }, modifier = Modifier.testTag("task_time_picker_open")) { Text("時刻を選択") }
                 }
                 if (date.isNotBlank()) {
-                    OutlinedTextField(zone, { zone = it; zoneError = null }, label = { Text("Timezone (IANA)") }, isError = zoneError != null, supportingText = { Text(zoneError ?: "例: Asia/Tokyo。現在の候補: ${ZoneId.systemDefault().id}", Modifier.semantics { if (zoneError != null) liveRegion = LiveRegionMode.Polite }) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_timezone"))
+                    OutlinedTextField(zone, { zone = it; zoneError = null }, label = { Text("タイムゾーン（IANA）") }, isError = zoneError != null, supportingText = { Text(zoneError ?: "例: Asia/Tokyo。現在の候補: ${ZoneId.systemDefault().id}", Modifier.semantics { if (zoneError != null) liveRegion = LiveRegionMode.Polite }) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_timezone"))
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("task_editor_error").semantics { liveRegion = LiveRegionMode.Polite }) }
             }
         },
         confirmButton = {
-            TextButton(enabled = !saving, onClick = ::submit, modifier = Modifier.testTag("task_save")) { Text("Save") }
+            TextButton(enabled = !saving, onClick = ::submit, modifier = Modifier.testTag("task_save")) { Text("保存") }
         },
-        dismissButton = { TextButton(onClick = onCancel, modifier = Modifier.testTag("task_cancel")) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onCancel, modifier = Modifier.testTag("task_cancel")) { Text("キャンセル") } },
     )
     if (datePickerOpen) {
         val initialMillis = runCatching { LocalDate.parse(date).toEpochDay() * 86_400_000L }.getOrNull()
@@ -211,8 +216,8 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
             confirmButton = { TextButton(onClick = {
                 pickerState.selectedDateMillis?.let { millis -> date = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().format(dateFormatter); clearDateErrors() }
                 datePickerOpen = false
-            }, modifier = Modifier.testTag("task_date_picker_confirm")) { Text("Select") } },
-            dismissButton = { TextButton(onClick = { datePickerOpen = false }, modifier = Modifier.testTag("task_date_picker_cancel")) { Text("Cancel") } },
+            }, modifier = Modifier.testTag("task_date_picker_confirm")) { Text("選択") } },
+            dismissButton = { TextButton(onClick = { datePickerOpen = false }, modifier = Modifier.testTag("task_date_picker_cancel")) { Text("キャンセル") } },
         ) { DatePicker(state = pickerState) }
     }
     if (timePickerOpen) {
@@ -220,10 +225,16 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
         val pickerState = rememberTimePickerState(initialHour = initialTime.hour, initialMinute = initialTime.minute, is24Hour = true)
         AlertDialog(
             onDismissRequest = { timePickerOpen = false },
-            title = { Text("Select time (24-hour)") },
+            title = { Text("時刻を選択（24時間制）") },
             text = { TimePicker(state = pickerState) },
-            confirmButton = { TextButton(onClick = { time = "%02d:%02d".format(pickerState.hour, pickerState.minute); timeError = null; timePickerOpen = false }, modifier = Modifier.testTag("task_time_picker_confirm")) { Text("Select") } },
-            dismissButton = { TextButton(onClick = { timePickerOpen = false }, modifier = Modifier.testTag("task_time_picker_cancel")) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = { time = "%02d:%02d".format(pickerState.hour, pickerState.minute); timeError = null; timePickerOpen = false }, modifier = Modifier.testTag("task_time_picker_confirm")) { Text("選択") } },
+            dismissButton = { TextButton(onClick = { timePickerOpen = false }, modifier = Modifier.testTag("task_time_picker_cancel")) { Text("キャンセル") } },
         )
     }
+}
+
+private fun priorityLabel(priority: TaskPriority): String = when (priority) {
+    TaskPriority.LOW -> "低"
+    TaskPriority.NORMAL -> "標準"
+    TaskPriority.HIGH -> "高"
 }

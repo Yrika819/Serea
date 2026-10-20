@@ -70,6 +70,8 @@ internal class CalendarAgendaUiFake(
     private val delegate: FakeCalendarProvider,
     var authorization: CalendarAuthorizationStatus = CalendarAuthorizationStatus(CalendarAuthorizationState.MOCK_ONLY),
     private val beforePage: suspend (callIndex: Int, calendarId: CalendarId, pageToken: String?) -> Unit = { _, _, _ -> },
+    private val beforeGetEvent: suspend (CalendarEventKey) -> Unit = {},
+    private val getEventFailure: CalendarApiFailureCode? = null,
     private var firstFailure: CalendarApiFailureCode? = null,
 ) : CalendarReadPort, CalendarAuthorizationPort {
     private var pageCalls = 0
@@ -81,6 +83,8 @@ internal class CalendarAgendaUiFake(
     override suspend fun getCalendar(calendarId: CalendarId) = delegate.getCalendar(calendarId)
     override suspend fun getEvent(key: CalendarEventKey): CalendarEvent {
         getEventKeys += key
+        beforeGetEvent(key)
+        getEventFailure?.let { throw CalendarReadFailure(it, "Fictional detail failure.") }
         return delegate.getEvent(key)
     }
 

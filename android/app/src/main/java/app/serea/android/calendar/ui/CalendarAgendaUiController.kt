@@ -157,7 +157,9 @@ internal class CalendarAgendaUiController(
 
     fun backToAgenda() {
         detailKey = null
+        requestGeneration++
         activeJob?.cancel()
+        activeJob = null
         val cached = lastAgenda
         if (cached != null && cached.query == query && cached.selectedCalendarId == selectedCalendarId) {
             mutableState.value = cached

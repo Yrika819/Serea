@@ -290,6 +290,35 @@ class CalendarAgendaUiControllerTest {
         retryController.close()
     }
 
+    @Test fun returningToCachedAgendaRejectsLateFailureFromCancelledDetailRequest() = runTest {
+        val event = timedEvent("demo", "late-detail", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z")
+        val provider = fakeProvider(listOf(calendar("demo")), listOf(event))
+        val getStarted = CompletableDeferred<Unit>()
+        val releaseGet = CompletableDeferred<Unit>()
+        val fake = CalendarAgendaUiFake(
+            provider,
+            beforeGetEvent = {
+                getStarted.complete(Unit)
+                withContext(NonCancellable) { releaseGet.await() }
+            },
+            getEventFailure = CalendarApiFailureCode.UNAVAILABLE,
+        )
+        val controller = CalendarAgendaUiController(fake, fake, UI_TEST_CLOCK, ZoneId.of("UTC"), this)
+        advanceUntilIdle()
+        val cachedAgenda = agenda(controller)
+
+        controller.openEvent(event.key)
+        runCurrent()
+        getStarted.await()
+        controller.backToAgenda()
+        assertEquals(cachedAgenda, controller.state.value)
+
+        releaseGet.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(cachedAgenda, controller.state.value)
+        controller.close()
+    }
+
     @Test fun todayAndTomorrowChangeAtExplicitUtcTokyoAndDstLocalDayBoundaries() = runTest {
         val transitionClock = Clock.fixed(Instant.parse("2026-10-20T15:30:00Z"), ZoneId.of("UTC"))
         val provider = fakeProvider(

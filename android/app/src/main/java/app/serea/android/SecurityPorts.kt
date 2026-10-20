@@ -26,6 +26,8 @@ data class EgressContract(
     val preparation: PayloadPreparation,
     val explicitSendIntentAtMillis: Long?,
     val expiresAtMillis: Long?,
+    /** Set only when the sender's approved intent names the routed catalog model. */
+    val selectedModelId: String? = null,
 )
 
 enum class EgressContractDecision { APPROVED, MISSING_INTENT, EXPIRED_INTENT, DESTINATION_DENIED, ORIGIN_DENIED, CLASSIFICATION_DENIED, PREPARATION_DENIED, CONTENT_MISMATCH, LIMIT_EXCEEDED }
@@ -70,7 +72,7 @@ object ChatEgressGate {
         }
         val messages = contract.context.map { it.role.name.lowercase() to it.text } + ("user" to contract.plannedBody)
         return EgressEvaluation(EgressContractDecision.APPROVED, contract.plannedBody,
-            EgressApprovedPayload.fromApprovedContract(messages))
+            EgressApprovedPayload.fromApprovedContract(contract, messages))
     }
 }
 
@@ -84,10 +86,12 @@ internal class EgressCheckedModelChatPort(private val delegate: ModelChatPort, p
         }
         val contract = request.egressContract ?: throw ModelChatFailure("Cloud send intent has not been approved.")
         if (contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
-            contract.plannedBody != request.message || contract.context != request.context) {
+            contract.plannedBody != request.message || contract.context != request.context ||
+            (contract.selectedModelId != null && contract.selectedModelId != request.selectedModelId)) {
             throw ModelChatFailure("The approved content no longer matches the request.")
         }
-        val result = ChatEgressGate.evaluate(contract, clock())
+        val boundContract = contract.copy(selectedModelId = request.selectedModelId)
+        val result = ChatEgressGate.evaluate(boundContract, clock())
         if (result.decision != EgressContractDecision.APPROVED) {
             throw ModelChatFailure("Cloud egress was denied: ${result.decision.name.lowercase()}.")
         }

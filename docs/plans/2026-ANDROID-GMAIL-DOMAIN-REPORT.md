@@ -8,6 +8,7 @@ Status: 実装済み。新規 Draft PR 作成後の CI は GitHub Actions で確
 
 - Repository: `Yrika819/Serea`
 - PR #58: OPEN / DRAFT。確認した HEAD branch は `codex/android-m0-08-abcd-integration-2026-10-20`、HEAD SHA は `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`。
+- 新規 Draft PR: [#64](https://github.com/Yrika819/Serea/pull/64)。PR 作成時の head SHA は `4bde27af2328f7d8d87347aa9315241279777398`、base SHA は `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`。
 - 実装 branch: `codex/android-q4-gmail-domain-2026-10-20`
 - 固定開始 SHA: `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`
 - Base branch: `codex/android-m0-08-abcd-integration-2026-10-20`。fetch した実 SHA も `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`。
@@ -57,4 +58,4 @@ Status: 実装済み。新規 Draft PR 作成後の CI は GitHub Actions で確
 - Android Manifest の backup / cleartext policy、Keystore、History DB v4、Tasks DB v1、Usage Ledger、Task CAS には触れていない。ADB・端末データ・署名・実 credential・API key・OAuth token は使っていない。
 - 後続 REST Adapter は `GmailReadPort` に接続し、認可 status は OAuth 担当から `GmailAuthorizationPort` 経由で注入する。UI、sync、OAuth token lifecycle、quota/backoff、添付対応は未実装。
 - `GmailSecurityPortsTest` は既存 CI selector に入る。新しい Workflow や Gradle dependency は不要。実 API 接続を追加する場合は、別変更で OAuth scope/consent、Egress、retention、エラー本文の漏洩を Security Review する。
-- PR URL、final HEAD SHA / tree SHA、final HEAD に紐づく GitHub Actions Run ID と状態は Draft PR の作成後に確定する。旧 HEAD の CI を final HEAD の証拠として扱わない。
+- この報告書に PR #64 URL と実装 commit を記録した follow-up commit 後の branch HEAD が最終候補となる。final HEAD SHA / tree SHA とその SHA に紐づく GitHub Actions Run ID / 状態は、follow-up push 後に確認して最終回答へ記録する。旧 HEAD の CI を final HEAD の証拠として扱わない。

@@ -274,7 +274,8 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_save").performClick()
         val errorText = "時刻を設定するには期限日が必要です。"
         compose.onNodeWithTag("task_editor_scroll").performScrollToNode(SemanticsMatcher("time-needs-date inline error") { node ->
-            node.config.getOrNull(SemanticsProperties.Text)?.any { it.text == errorText } == true
+            SemanticsProperties.Text in node.config &&
+                node.config[SemanticsProperties.Text].any { it.text == errorText }
         })
         compose.onNodeWithText(errorText).assertIsDisplayed()
         assertTrue(repository.createDrafts.isEmpty())

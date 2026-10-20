@@ -125,11 +125,16 @@ class TaskProposalTest {
         assertEquals(1, repository.writes)
 
         val another = repository.seed()
-        val acknowledged = TaskProposalReviewSession.prepare(delete(another), repository)
-        assertEquals(TaskProposalReviewResult.Approved(TaskProposalOperation.DELETE), acknowledged.approve(true, another.id, true))
-        val newSession = TaskProposalReviewSession.prepare(delete(another), repository)
-        assertEquals(TaskProposalReviewResult.Rejected, newSession.approve(true, another.id, false))
+        val pendingReview = TaskProposalReviewSession.prepare(delete(another), repository)
         assertNotNull(repository.get(another.id))
+        assertEquals(TaskProposalReviewResult.Rejected, pendingReview.approve(true, another.id, false))
+        assertNotNull(repository.get(another.id))
+        assertEquals(1, repository.writes)
+
+        val explicitReview = TaskProposalReviewSession.prepare(delete(another), repository)
+        assertEquals(TaskProposalReviewResult.Approved(TaskProposalOperation.DELETE), explicitReview.approve(true, another.id, true))
+        assertNull(repository.get(another.id))
+        assertEquals(2, repository.writes)
     }
 
     @Test fun revisionMismatchIsRejectedBeforeReview() = runBlocking {

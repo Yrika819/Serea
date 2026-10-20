@@ -33,17 +33,39 @@ class UsageLedgerDatabaseTest {
     private fun open() = Room.inMemoryDatabaseBuilder(context, SereaHistoryDatabase::class.java).build().also { database = it }
     private fun fixturePrice(input: String = "2", output: String = "6", revision: String = "fictional-price-v1") =
         VerifiedPriceSnapshot(input, output, "USD", "fictional test fixture", "2026-10-20T00:00:00Z", revision = revision)
+    private fun rowCount(table: String): Long = database!!.openHelper.readableDatabase
+        .query("SELECT COUNT(*) FROM $table").use { cursor -> cursor.moveToFirst(); cursor.getLong(0) }
 
     @Test fun atomicReservationSettlementAndProviderModelSummaries() = runBlocking {
         val db = open()
         val usage = UsageRepository(db.usageDao()) { Instant.parse("2026-10-20T00:00:00Z").toEpochMilli() }
         usage.reserve("send-a", 3, 2, ModelUsageAttribution("model/a", "provider-a", fixturePrice()))
+        val reservation = checkNotNull(db.usageDao().reservation("send-a"))
+        assertEquals(12L, reservation.inputTokens)
+        assertEquals(2L, reservation.outputTokens)
         val inFlight = checkNotNull(db.usageDao().ledger("send-a"))
         assertEquals(UsageLedgerState.IN_FLIGHT.name, inFlight.usageStatus)
         assertEquals(CostEstimationStatus.ESTIMATED.name, inFlight.costStatus)
-        assertEquals("0.000018", inFlight.estimatedCost)
+        assertEquals(12L, inFlight.estimatedInputTokens)
+        assertEquals(2L, inFlight.reservedOutputTokens)
+        assertEquals("2", inFlight.inputPricePerMillion)
+        assertEquals("6", inFlight.outputPricePerMillion)
+        assertEquals("fictional-price-v1", inFlight.pricingRevision)
+        assertEquals("0.000036", inFlight.estimatedCost)
         usage.complete("send-a", ProviderUsage(4, 2))
+        val settledOnce = checkNotNull(db.usageDao().ledger("send-a"))
+        val settledUsageOnce = usage.snapshot()
+        assertEquals(CostEstimationStatus.USAGE_REPORTED_COST_ESTIMATED.name, settledOnce.costStatus)
+        assertEquals("0.00002", settledOnce.estimatedCost)
+        assertEquals(4L, settledOnce.providerInputTokens)
+        assertEquals(2L, settledOnce.providerOutputTokens)
         usage.complete("send-a", ProviderUsage(400, 200)) // repeated settle is an idempotent no-op
+        assertEquals(settledOnce, db.usageDao().ledger("send-a"))
+        val settledUsageTwice = usage.snapshot()
+        assertEquals(settledUsageOnce.dailyProviderInputTokens, settledUsageTwice.dailyProviderInputTokens)
+        assertEquals(settledUsageOnce.dailyProviderOutputTokens, settledUsageTwice.dailyProviderOutputTokens)
+        assertEquals(settledUsageOnce.dailyEstimatedInputTokens, settledUsageTwice.dailyEstimatedInputTokens)
+        assertEquals(settledUsageOnce.dailyEstimatedOutputTokens, settledUsageTwice.dailyEstimatedOutputTokens)
         usage.reserve("send-b", 5, 3, ModelUsageAttribution("model/b", "provider-b", fixturePrice("10", "20", "fictional-price-v2")))
         usage.complete("send-b", ProviderUsage(8, 1))
 
@@ -88,6 +110,14 @@ class UsageLedgerDatabaseTest {
         val usage = UsageRepository(db.usageDao()) { now }
         usage.reserve("unknown-model", 10, 5)
         usage.complete("unknown-model", null)
+        val unknownReservation = checkNotNull(db.usageDao().reservation("unknown-model"))
+        val unknownLedger = checkNotNull(db.usageDao().ledger("unknown-model"))
+        assertEquals(40L, unknownReservation.inputTokens)
+        assertEquals(5L, unknownReservation.outputTokens)
+        assertEquals(UsageLedgerState.USAGE_UNKNOWN.name, unknownReservation.state)
+        assertEquals(UsageLedgerState.USAGE_UNKNOWN.name, unknownLedger.usageStatus)
+        assertEquals(CostEstimationStatus.UNKNOWN.name, unknownLedger.costStatus)
+        assertEquals(null, unknownLedger.estimatedCost)
         val missing = usage.summaries().single()
         assertEquals(ModelUsageAttribution.UNKNOWN_ATTRIBUTION, missing.modelId)
         assertEquals(ModelUsageAttribution.UNKNOWN_ATTRIBUTION, missing.providerId)
@@ -103,8 +133,19 @@ class UsageLedgerDatabaseTest {
         } catch (_: java.util.concurrent.TimeoutException) { }
         val timeoutRow = usage.summaries().single { it.modelId == "fixture/model" }
         assertEquals(1L, timeoutRow.uncertainRequestCount)
-        assertEquals(1L, usage.snapshot().uncertainRequests)
-        assertEquals(2L, usage.unknownUsageSummary().single().requestCount)
+        val timeoutReservation = checkNotNull(db.usageDao().reservation("timeout-send"))
+        val timeoutLedger = checkNotNull(db.usageDao().ledger("timeout-send"))
+        assertEquals(24L, timeoutReservation.inputTokens)
+        assertEquals(512L, timeoutReservation.outputTokens)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, timeoutReservation.state)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, timeoutLedger.usageStatus)
+        assertEquals(CostEstimationStatus.UNKNOWN.name, timeoutLedger.costStatus)
+        assertEquals(null, timeoutLedger.estimatedCost)
+        assertEquals(2L, usage.snapshot().uncertainRequests)
+        val unknownSummary = usage.unknownUsageSummary().single()
+        assertEquals(2L, unknownSummary.requestCount)
+        assertEquals(2L, unknownSummary.uncertainRequestCount)
+        assertEquals(2L, unknownSummary.costUnknownCount)
 
         database?.close()
         database = null
@@ -113,10 +154,16 @@ class UsageLedgerDatabaseTest {
         afterRestart.recoverAfterProcessRestart()
         afterRestart.recoverAfterProcessRestart()
         assertEquals(2L, afterRestart.snapshot().uncertainRequests)
+        assertEquals(2, reopened.usageDao().allLedgerRows().size)
+        assertEquals(UsageLedgerState.USAGE_UNKNOWN.name, reopened.usageDao().ledger("unknown-model")?.usageStatus)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, reopened.usageDao().ledger("timeout-send")?.usageStatus)
+        assertEquals(UsageLedgerState.USAGE_UNKNOWN.name, reopened.usageDao().reservation("unknown-model")?.state)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, reopened.usageDao().reservation("timeout-send")?.state)
+        assertEquals(2L, afterRestart.unknownUsageSummary().single().requestCount)
         assertEquals(1, afterRestart.summaries().count { it.modelId == "fixture/model" && it.uncertainRequestCount == 1L })
     }
 
-    @Test fun concurrentReservationAndLedgerInsertFailureAreAtomic() = runBlocking {
+    @Test fun concurrentReservationsEnforceSoftLimitAtomically() = runBlocking {
         val db = open()
         val usage = UsageRepository(db.usageDao())
         usage.updateLimits(UsageLimits(dailyRequests = 1, dailyTokens = 1000, monthlyRequests = 2, monthlyTokens = 2000))
@@ -126,15 +173,55 @@ class UsageLedgerDatabaseTest {
         assertEquals(1, results.count { it.isSuccess })
         assertEquals(7, results.count { it.exceptionOrNull() is UsageLimitExceededException })
         assertEquals(1L, usage.snapshot().dailyRequests)
+        assertEquals(1L, usage.snapshot().monthlyRequests)
         assertEquals(1L, usage.summaries().sumOf { it.requestCount })
+        val ledgerRows = db.usageDao().allLedgerRows()
+        assertEquals(1, ledgerRows.size)
+        assertEquals(1L, rowCount("usage_reservations"))
+        assertEquals(1L, rowCount("model_usage_ledger"))
+        assertNotNull(db.usageDao().reservation(ledgerRows.single().requestId))
+    }
+
+    @Test fun ledgerInsertFailureRollsBackReservationAndUsageWindows() = runBlocking {
+        val db = open()
+        val usage = UsageRepository(db.usageDao()) { Instant.parse("2026-10-20T12:00:00Z").toEpochMilli() }
+        usage.reserve("kept-send", 2, 3, ModelUsageAttribution("model/kept", "provider-a"))
+        usage.complete("kept-send", ProviderUsage(4, 1))
+        val beforeSnapshot = usage.snapshot()
+        val beforeSettings = checkNotNull(db.usageDao().settings())
+        val beforeLedgerRows = db.usageDao().allLedgerRows()
+        val beforeReservationCount = rowCount("usage_reservations")
+        val beforeLedgerCount = rowCount("model_usage_ledger")
+        val beforeSummary = usage.summaries()
 
         db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_usage_ledger BEFORE INSERT ON model_usage_ledger BEGIN SELECT RAISE(ABORT, 'fixture ledger failure'); END")
-        assertThrows(android.database.sqlite.SQLiteException::class.java) {
+        val triggerFailure = assertThrows(android.database.sqlite.SQLiteConstraintException::class.java) {
             runBlocking { usage.reserve("rollback-send", 1, 1, ModelUsageAttribution("model/rollback", "provider-a")) }
         }
+        assertTrue(triggerFailure.message.orEmpty().contains("fixture ledger failure"))
         assertEquals(null, db.usageDao().reservation("rollback-send"))
         assertEquals(null, db.usageDao().ledger("rollback-send"))
-        assertEquals(1L, usage.snapshot().dailyRequests)
+        assertEquals(beforeReservationCount, rowCount("usage_reservations"))
+        assertEquals(beforeLedgerCount, rowCount("model_usage_ledger"))
+        val afterSnapshot = usage.snapshot()
+        val afterSettings = checkNotNull(db.usageDao().settings())
+        assertEquals(beforeSnapshot.dailyRequests, afterSnapshot.dailyRequests)
+        assertEquals(beforeSnapshot.monthlyRequests, afterSnapshot.monthlyRequests)
+        assertEquals(beforeSnapshot.dailyEstimatedInputTokens, afterSnapshot.dailyEstimatedInputTokens)
+        assertEquals(beforeSnapshot.dailyEstimatedOutputTokens, afterSnapshot.dailyEstimatedOutputTokens)
+        assertEquals(beforeSnapshot.monthlyEstimatedInputTokens, afterSnapshot.monthlyEstimatedInputTokens)
+        assertEquals(beforeSnapshot.monthlyEstimatedOutputTokens, afterSnapshot.monthlyEstimatedOutputTokens)
+        assertEquals(beforeSnapshot.dailyProviderInputTokens, afterSnapshot.dailyProviderInputTokens)
+        assertEquals(beforeSnapshot.dailyProviderOutputTokens, afterSnapshot.dailyProviderOutputTokens)
+        assertEquals(beforeSnapshot.monthlyProviderInputTokens, afterSnapshot.monthlyProviderInputTokens)
+        assertEquals(beforeSnapshot.monthlyProviderOutputTokens, afterSnapshot.monthlyProviderOutputTokens)
+        assertEquals(beforeSnapshot.uncertainRequests, afterSnapshot.uncertainRequests)
+        assertEquals(beforeSnapshot, afterSnapshot)
+        assertEquals(beforeSettings.lastObservedAt, afterSettings.lastObservedAt)
+        assertEquals(beforeLedgerRows, db.usageDao().allLedgerRows())
+        assertEquals(beforeSummary, usage.summaries())
+        assertNotNull(db.usageDao().reservation("kept-send"))
+        assertNotNull(db.usageDao().ledger("kept-send"))
     }
 
     @Test fun cancellationAndNetworkFailureRemainConservativelyUnknown() = runBlocking {

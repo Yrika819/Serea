@@ -59,8 +59,8 @@ class ChatHttpE2ETest {
         val modelIds = listOf("fixture/first-model", "fixture/second-model")
         val models = modelIds.map { id -> ModelDescriptor(id, "fixture", id, Knowledge.Known(8192), Knowledge.Known(512),
             ModelCapabilities(setOf("text/plain")), ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE,
-            authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture") }
-        val router = AdaptiveModelRouter(LocalModelCatalog(models))
+            authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture (fictional)", verificationStatus = ModelVerificationStatus.TEST_FIXTURE) }
+        val router = AdaptiveModelRouter(FakeModelCatalog(models))
         var policy = ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelIds.first(), allowedProviderIds = setOf("fixture"))
         val routedPort = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) { policy }
         activeVm = ChatViewModel(UsageControlledModelChatPort(routedPort, usage),
@@ -109,8 +109,8 @@ class ChatHttpE2ETest {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"routed answer"},"done":true,"prompt_eval_count":3,"eval_count":2}"""))
         val descriptor = ModelDescriptor("fixture/manual-v1", "fixture", "Fixture Manual",
             Knowledge.Known(8192), Knowledge.Known(512), ModelCapabilities(setOf("text/plain")),
-            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture")
-        val router = AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor)))
+            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture (fictional)", verificationStatus = ModelVerificationStatus.TEST_FIXTURE)
+        val router = AdaptiveModelRouter(FakeModelCatalog(listOf(descriptor)))
         val routed = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) {
             ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "fixture/manual-v1", allowedProviderIds = setOf("fixture"))
         }
@@ -125,6 +125,54 @@ class ChatHttpE2ETest {
         runCatching { unavailable.send(ModelChatRequest("route-conversation", "hello")) }
             .onSuccess { throw AssertionError("missing manual model must fail") }
         assertEquals("unavailable manual selection made no HTTP request", 1, server.requestCount)
+    }
+
+    @Test fun directCompositionRoutesCatalogModelAndDenialPrecedesUsageReservation() = runBlocking {
+        val ids = listOf("fixture/ollama-a", "fixture/ollama-b")
+        ids.forEach { server.enqueue(MockResponse().setBody("""{"message":{"content":"$it answer"},"done":true}""")) }
+        val verifiedAt = java.time.Instant.now().minusSeconds(30).toString()
+        val models = ids.map { id -> ModelDescriptor(id, "ollama", id, Knowledge.Known(8192), Knowledge.Known(512),
+            ModelCapabilities(setOf("text/plain")), ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN),
+            ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = verifiedAt,
+            source = "fictional local instrumentation fixture", verificationStatus = ModelVerificationStatus.TEST_FIXTURE) }
+        val catalog = FakeModelCatalog(models)
+        var selected = ids.first()
+        val port = DirectProviderChatComposition.create(
+            credentials = object : CredentialReader { override fun readForRequest() = "test-only-fake" },
+            usage = usage,
+            settings = CloudSettings(enabled = true),
+            catalog = catalog,
+            routingPolicy = { ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = selected, allowedProviderIds = setOf("ollama")) },
+            testEndpoint = server.url("/api/chat"),
+            testClient = okhttp3.OkHttpClient.Builder().sslSocketFactory(
+                clientCertificates.sslSocketFactory(), clientCertificates.trustManager).build(),
+        )
+        val now = System.currentTimeMillis()
+        suspend fun send(id: String, message: String, context: List<ContextMessage> = emptyList(), classification: DataClassification = DataClassification.PUBLIC) =
+            port.send(ModelChatRequest("routed-conversation", message, sendId = id, classification = classification,
+                context = context, egressContract = EgressContract("routed-conversation", id, DataOrigin.USER_AUTHORED,
+                    classification, "https://ollama.com/api/chat", message, context, PayloadPreparation.RAW, now, now + 30_000)))
+
+        val first = send("routed-send-1", "first public question")
+        assertEquals("${ids.first()} answer", first.text)
+        val prior = listOf(ContextMessage(MessageRole.USER, "first public question", DataClassification.PUBLIC,
+            "routed-send-1", DataOrigin.USER_AUTHORED, conversationId = "routed-conversation"))
+        selected = ids.last()
+        val second = send("routed-send-2", "second public question", prior)
+        assertEquals("${ids.last()} answer", second.text)
+        val firstBody = JsonParser.parseString(server.takeRequest(5, TimeUnit.SECONDS)!!.body.readUtf8()).asJsonObject
+        val secondBody = JsonParser.parseString(server.takeRequest(5, TimeUnit.SECONDS)!!.body.readUtf8()).asJsonObject
+        assertEquals(ids.first(), firstBody.get("model").asString)
+        assertEquals(ids.last(), secondBody.get("model").asString)
+        assertEquals("first public question", secondBody.getAsJsonArray("messages")[0].asJsonObject.get("content").asString)
+        assertEquals(2, server.requestCount)
+        assertEquals(2L, usage.snapshot().dailyRequests)
+
+        val beforeDenied = usage.snapshot().dailyRequests
+        try { send("routed-send-denied", "private question", classification = DataClassification.PRIVATE); throw AssertionError("egress must deny") }
+        catch (_: ModelChatFailure) { }
+        assertEquals(2, server.requestCount)
+        assertEquals(beforeDenied, usage.snapshot().dailyRequests)
     }
 
     private fun awaitAssistant(text: String) {

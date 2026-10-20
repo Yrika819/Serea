@@ -14,7 +14,7 @@ The missing pieces were durable model/provider attribution, a request-time price
 
 ## Ledger schema and state machine
 
-Room v4 adds `model_usage_ledger`, with `requestId` as its SQLite primary key and day/model/provider and month/model/provider indexes. One row is created in the same `UsageDao` transaction as the pre-egress reservation and UTC window increments. A failed ledger insert rolls back the reservation, limit window, and last-observed clock update.
+Room v4 adds `model_usage_ledger`, with `requestId` as its SQLite primary key and foreign key to `usage_reservations`, plus day/model/provider and month/model/provider indexes. One row is created in the same `UsageDao` transaction as the pre-egress reservation and UTC window increments. A failed ledger insert rolls back the reservation, limit window, and last-observed clock update; the SQLite constraint also prevents orphan ledger rows.
 
 The ledger stores send ID, model/provider attribution, request timestamp, UTC day/month keys, estimated input and reserved output tokens, nullable provider-reported input/output tokens, usage and cost statuses, estimated amount and currency, source and verification time, the immutable input/output price snapshot and revision, reservation state, settlement time, uncertainty reason, and model attribution status. It stores no conversation text, provider payload, response body, credentials, or headers.
 

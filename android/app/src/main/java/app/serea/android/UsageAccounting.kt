@@ -2,6 +2,7 @@ package app.serea.android
 
 import androidx.room.Dao
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -127,6 +128,12 @@ data class UsageSettingsRow(
 @Entity(
     tableName = "model_usage_ledger",
     primaryKeys = ["requestId"],
+    foreignKeys = [ForeignKey(
+        entity = UsageReservationRow::class,
+        parentColumns = ["requestId"],
+        childColumns = ["requestId"],
+        onDelete = ForeignKey.CASCADE,
+    )],
     indices = [Index(value = ["dayKey", "providerId", "modelId"]), Index(value = ["monthKey", "providerId", "modelId"])],
 )
 data class ModelUsageLedgerRow(

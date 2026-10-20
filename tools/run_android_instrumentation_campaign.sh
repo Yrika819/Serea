@@ -13,16 +13,31 @@ fi
 root='app/build/outputs/androidTest-results'
 evidence="$root/api$api_level"
 mkdir -p "$evidence" || exit 1
-rm -rf "$root/connected" "$evidence/junit"
-rm -f \
+printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/process-death-status.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/device-api-level.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/api-result.txt" || exit 1
+
+cleanup_failed() {
+  message="Failed to clear stale API $api_level instrumentation evidence; campaign was not run."
+  printf '%s\n' "$message" > "$evidence/device-api-error.txt" || true
+  printf 'FAIL\n' > "$evidence/api-result.txt" || true
+  echo "### Android API $api_level: instrumentation=NOT_RUN process-death=NOT_RUN device-api=NOT_RUN cleanup=FAIL" \
+    >> "$GITHUB_STEP_SUMMARY"
+  echo "$message" >&2
+  exit 1
+}
+
+if ! rm -rf "$root/connected" "$evidence/junit" || [[ -e "$root/connected" || -e "$evidence/junit" ]]; then
+  cleanup_failed
+fi
+if ! rm -f \
   "$evidence/device-api-error.txt" \
   "$evidence/junit-verification.log" \
-  "$evidence/process-death.log" \
-  "$evidence/api-result.txt"
-printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt"
-printf 'NOT_RUN\n' > "$evidence/process-death-status.txt"
-printf 'NOT_RUN\n' > "$evidence/device-api-level.txt"
-printf 'NOT_RUN\n' > "$evidence/api-result.txt"
+  "$evidence/process-death.log" || \
+  [[ -e "$evidence/device-api-error.txt" || -e "$evidence/junit-verification.log" || -e "$evidence/process-death.log" ]]; then
+  cleanup_failed
+fi
 
 adb devices -l
 sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"

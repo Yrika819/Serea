@@ -134,9 +134,9 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: ViewModel state and cancellation tests
+      - name: Android unit tests
         working-directory: android
-        run: ./gradlew --no-daemon testDebugUnitTest --tests '*ChatViewModelTest' --tests '*AdaptiveModelRouterTest' --tests '*UsageLedgerCostTest' --tests '*TaskDomainTest' --tests '*TaskRepositoryTest' --tests '*TaskProposalTest'
+        run: ./gradlew --no-daemon testDebugUnitTest
       - name: Instrumentation JUnit verifier regression tests
         run: python3 -m unittest discover -s tests -p android_instrumentation_results_tests.py
       - name: Upload unit JUnit report

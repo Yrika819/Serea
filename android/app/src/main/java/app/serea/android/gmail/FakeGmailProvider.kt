@@ -19,6 +19,7 @@ class FakeGmailProvider(
     override suspend fun status(): GmailAuthorizationStatus = authorization
 
     override suspend fun listInbox(pageToken: String?, pageSize: Int): GmailMessagePage {
+        checkAuthorization()
         checkFailure(pageToken)
         requirePageSize(pageSize)
         val inbox = messages.filter { it.id in inboxIds }
@@ -26,6 +27,7 @@ class FakeGmailProvider(
     }
 
     override suspend fun search(query: String, pageToken: String?, pageSize: Int): GmailMessagePage {
+        checkAuthorization()
         checkFailure(pageToken)
         require(query.isNotBlank()) { "Search query must not be blank." }
         requirePageSize(pageSize)
@@ -38,11 +40,13 @@ class FakeGmailProvider(
     }
 
     override suspend fun getMessage(id: GmailMessageId): GmailMessage {
+        checkAuthorization()
         checkFailure()
         return messages.firstOrNull { it.id == id } ?: throw GmailReadFailure(GmailReadFailureCode.NOT_FOUND)
     }
 
     override suspend fun getThread(id: GmailThreadId): GmailThread {
+        checkAuthorization()
         checkFailure()
         val threadMessages = messages.filter { it.threadId == id }
         if (threadMessages.isEmpty()) throw GmailReadFailure(GmailReadFailureCode.NOT_FOUND)
@@ -64,6 +68,11 @@ class FakeGmailProvider(
 
     private fun requirePageSize(pageSize: Int) {
         require(pageSize in 1..100) { "Page size is out of range." }
+    }
+
+    private fun checkAuthorization() {
+        if (authorization.missingScopes.isNotEmpty()) throw GmailReadFailure(GmailReadFailureCode.MISSING_SCOPE)
+        if (!GmailPermissionPolicy.mayReadFake(authorization)) throw GmailReadFailure(GmailReadFailureCode.PERMISSION_DENIED)
     }
 
     private fun checkFailure(pageToken: String? = null) {

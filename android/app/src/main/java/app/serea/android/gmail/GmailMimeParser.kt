@@ -35,14 +35,11 @@ object GmailMimeParser {
             val internalDate = optionalString(root, "internalDate")?.toLongOrNull()?.also { if (it < 0) invalid() }
             val payload = optionalObject(root, "payload")
             val headers = readHeaders(payload)
-            val bodyParts = ArrayList<BodyPart>()
             var decodedBytes = 0
-            if (payload != null) collectBodies(payload, 0, bodyParts) { bytes ->
+            val body = if (payload != null) collectBody(payload, 0) { bytes ->
                 if (bytes > MAX_DECODED_BODY_BYTES - decodedBytes) invalid()
                 decodedBytes += bytes
-            }
-            val plain = bodyParts.firstOrNull { it.mimeType == "text/plain" }?.text
-            val html = bodyParts.firstOrNull { it.mimeType == "text/html" }?.text?.let(::htmlToSafeText)
+            } else BodyContent()
             return GmailMessage(
                 id = id,
                 threadId = threadId,
@@ -51,37 +48,56 @@ object GmailMimeParser {
                 subject = headers["subject"],
                 internalDateMillis = internalDate,
                 snippet = optionalString(root, "snippet"),
-                plainTextBody = plain,
-                htmlTextBody = html,
+                plainTextBody = body.plain,
+                htmlTextBody = body.html?.let(::htmlToSafeText),
                 source = source,
             )
         } catch (_: GmailReadFailure) { throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE) }
         catch (_: Exception) { invalid() }
     }
 
-    private data class BodyPart(val mimeType: String, val text: String)
+    private data class BodyContent(val plain: String? = null, val html: String? = null)
 
-    private fun collectBodies(
+    private fun collectBody(
         part: JsonObject,
         depth: Int,
-        output: MutableList<BodyPart>,
         onDecoded: (Int) -> Unit,
-    ) {
+    ): BodyContent {
         if (depth > MAX_PART_DEPTH) invalid()
         val contentType = contentType(part)
         val mimeType = contentType?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
         val filename = optionalString(part, "filename")
-        if (!filename.isNullOrEmpty()) return // Attachments are never downloaded or interpreted.
+        if (!filename.isNullOrEmpty()) return BodyContent() // Attachments are never downloaded or interpreted.
         val body = optionalObject(part, "body")
         val partsElement = part.get("parts")
         if (partsElement != null && !partsElement.isJsonNull) {
             if (!partsElement.isJsonArray) invalid()
-            partsElement.asJsonArray.forEach { child ->
+            val children = partsElement.asJsonArray.map { child ->
                 if (!child.isJsonObject) invalid()
-                collectBodies(child.asJsonObject, depth + 1, output, onDecoded)
+                collectBody(child.asJsonObject, depth + 1, onDecoded)
+            }
+            if (children.isEmpty()) invalid()
+            return when {
+                mimeType == "multipart/alternative" -> {
+                    // RFC 2046 alternatives are equivalent representations. Prefer plain text;
+                    // only fall back to HTML when no plain text representation exists.
+                    children.firstOrNull { it.plain != null }?.let { BodyContent(plain = it.plain) }
+                        ?: children.firstOrNull { it.html != null }?.let { BodyContent(html = it.html) }
+                        ?: BodyContent()
+                }
+                mimeType == "multipart/mixed" -> BodyContent(
+                    plain = children.mapNotNull { it.plain }.takeIf { it.isNotEmpty() }?.joinToString("\n\n"),
+                    html = children.mapNotNull { it.html }.takeIf { it.isNotEmpty() }?.joinToString("\n\n"),
+                )
+                else -> invalid() // Includes multipart/related and external-resource containers.
             }
         }
-        if (mimeType !in setOf("text/plain", "text/html")) return
+        if (mimeType?.startsWith("multipart/") == true) invalid()
+        if (mimeType !in setOf("text/plain", "text/html")) {
+            // Unknown inline leaf bodies cannot be represented safely as complete text.
+            if (body?.let { optionalString(it, "data") } != null) invalid()
+            return BodyContent()
+        }
         body?.get("size")?.let { value ->
             if (!value.isJsonPrimitive || !value.asJsonPrimitive.isNumber) invalid()
             val rawSize = value.asString
@@ -89,13 +105,13 @@ object GmailMimeParser {
             val declaredSize = rawSize.toLongOrNull() ?: invalid()
             if (declaredSize < 0 || declaredSize > MAX_DECODED_BODY_BYTES) invalid()
         }
-        val encoded = body?.let { optionalString(it, "data") } ?: return
+        val encoded = body?.let { optionalString(it, "data") } ?: return BodyContent()
         val bytes = decodeBase64Url(encoded)
         body?.get("size")?.let { if (it.asString.toLongOrNull() != bytes.size.toLong()) invalid() }
         onDecoded(bytes.size)
         val charset = parseCharset(contentType)
         val text = decodeText(bytes, charset)
-        output.add(BodyPart(mimeType!!, text))
+        return if (mimeType == "text/plain") BodyContent(plain = text) else BodyContent(html = text)
     }
 
     private fun decodeBase64Url(value: String): ByteArray {
@@ -188,7 +204,7 @@ object GmailMimeParser {
             out.append(html[index++])
         }
         return out.toString().replace(Regex("[\\t\\x0B\\f\\r ]+"), " ")
-            .replace(Regex(" *\\n *"), "\n").trim()
+            .replace(Regex(" *\\n *"), "\n").replace(Regex("\\n{3,}"), "\n\n").trim()
     }
 
     private fun decodeEntity(entity: String): String {

@@ -17,14 +17,34 @@ class GmailSecurityPortsTest {
     @Test fun permissionIsReadOnlyAndMockOnlyIsNotAuthorized() = runBlocking {
         val fake = FakeGmailProvider()
         assertEquals(GmailAuthorizationState.MOCK_ONLY, fake.status().state)
-        assertTrue(GmailPermissionPolicy.mayRead(fake.status()))
+        assertTrue(GmailPermissionPolicy.mayReadFake(fake.status()))
+        assertFalse(GmailPermissionPolicy.mayRead(fake.status()))
         assertEquals(setOf(GmailPermissionPolicy.GMAIL_READ_ONLY), GmailPermissionPolicy.requiredScopes())
         assertEquals(setOf(GmailPermissionPolicy.GMAIL_READ_ONLY), GmailPermissionPolicy.missingScopes(emptySet()))
         for (state in GmailAuthorizationState.entries) {
             val status = GmailAuthorizationStatus(state)
-            assertEquals(state in setOf(GmailAuthorizationState.AUTHORIZED, GmailAuthorizationState.MOCK_ONLY), GmailPermissionPolicy.mayRead(status))
+            assertEquals(state == GmailAuthorizationState.AUTHORIZED, GmailPermissionPolicy.mayRead(status))
+            assertEquals(state == GmailAuthorizationState.MOCK_ONLY, GmailPermissionPolicy.mayReadFake(status))
         }
         assertFalse(GmailPermissionPolicy.mayRead(GmailAuthorizationStatus(GmailAuthorizationState.AUTHORIZED, setOf(GmailPermissionPolicy.GMAIL_READ_ONLY))))
+    }
+
+    @Test fun fakeReadsRequireFakeOnlyMockAuthorizationAndRejectRevokedExpiredAndMissingScopes() = runBlocking {
+        val operations: List<suspend (FakeGmailProvider) -> Unit> = listOf(
+            { it.listInbox() }, { it.search("Finch") },
+            { it.getMessage(GmailMessageId("fake-msg-001")) },
+            { it.getThread(GmailThreadId("fake-thread-001")) },
+        )
+        for (state in listOf(GmailAuthorizationState.DENIED, GmailAuthorizationState.REVOKED, GmailAuthorizationState.EXPIRED, GmailAuthorizationState.AUTHORIZED)) {
+            val provider = FakeGmailProvider(authorization = GmailAuthorizationStatus(state))
+            operations.forEach { operation -> assertEquals(GmailReadFailureCode.PERMISSION_DENIED, failure { operation(provider) }.code) }
+        }
+        val missing = GmailAuthorizationStatus(GmailAuthorizationState.MOCK_ONLY, setOf(GmailPermissionPolicy.GMAIL_READ_ONLY))
+        val provider = FakeGmailProvider(authorization = missing)
+        operations.forEach { operation -> assertEquals(GmailReadFailureCode.MISSING_SCOPE, failure { operation(provider) }.code) }
+        val realStatus = GmailAuthorizationStatus(GmailAuthorizationState.AUTHORIZED)
+        assertTrue(GmailPermissionPolicy.mayRead(realStatus))
+        assertFalse(GmailPermissionPolicy.mayRead(GmailAuthorizationStatus(GmailAuthorizationState.AUTHORIZED, setOf("gmail.modify"))))
     }
 
     @Test fun portHasOnlyReadOperationsAndCancellationPropagates() = runBlocking {
@@ -60,6 +80,43 @@ class GmailSecurityPortsTest {
         assertEquals(GmailReadFailureCode.TOO_MANY_MESSAGES, failure { tooManyMessages.inboxAll(pageSize = 3) }.code)
     }
 
+    @Test fun pagingCountsUniqueIdsWithinEachPageAndRejectsConflictingMessagesAndRepeatedTokens() = runBlocking {
+        val fixture = FakeGmailProvider.fixtures.messages
+        val repeatedPage = object : GmailReadPort {
+            override suspend fun listInbox(pageToken: String?, pageSize: Int) = GmailMessagePage(listOf(fixture[0], fixture[0], fixture[1]))
+            override suspend fun search(query: String, pageToken: String?, pageSize: Int) = listInbox(pageToken, pageSize)
+            override suspend fun getMessage(id: GmailMessageId) = fixture.first()
+            override suspend fun getThread(id: GmailThreadId) = GmailThread(id, fixture.filter { it.threadId == id })
+        }
+        val twoUniqueAllowed = GmailSearchService(repeatedPage, GmailReadLimits(maximumMessages = 2))
+        assertEquals(2, twoUniqueAllowed.inboxAll().size)
+        val oneUniqueAllowed = GmailSearchService(repeatedPage, GmailReadLimits(maximumMessages = 1))
+        assertEquals(GmailReadFailureCode.TOO_MANY_MESSAGES, failure { oneUniqueAllowed.inboxAll() }.code)
+
+        val contradictory = object : GmailReadPort by repeatedPage {
+            override suspend fun listInbox(pageToken: String?, pageSize: Int): GmailMessagePage {
+                val changed = fixture[0].copy(subject = "conflicting content")
+                return GmailMessagePage(listOf(fixture[0], changed))
+            }
+        }
+        assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure { GmailSearchService(contradictory).inboxAll() }.code)
+
+        val crossPageContradictory = object : GmailReadPort by repeatedPage {
+            override suspend fun listInbox(pageToken: String?, pageSize: Int): GmailMessagePage = if (pageToken == null) {
+                GmailMessagePage(listOf(fixture[0]), "next")
+            } else {
+                GmailMessagePage(listOf(fixture[0].copy(subject = "different content")))
+            }
+        }
+        assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure { GmailSearchService(crossPageContradictory).inboxAll() }.code)
+
+        val repeating = object : GmailReadPort by repeatedPage {
+            override suspend fun listInbox(pageToken: String?, pageSize: Int) =
+                GmailMessagePage(listOf(fixture[0]), "same-token")
+        }
+        assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure { GmailSearchService(repeating).inboxAll() }.code)
+    }
+
     @Test fun fakeFailureFixturesCoverDenialRateLimitTimeoutAndPartialFailure() = runBlocking {
         assertEquals(GmailReadFailureCode.PERMISSION_DENIED, failure { FakeGmailProvider(failure = FakeGmailFailure.ACCESS_DENIED).listInbox() }.code)
         assertEquals(GmailReadFailureCode.RATE_LIMITED, failure { FakeGmailProvider(failure = FakeGmailFailure.RATE_LIMITED).listInbox() }.code)
@@ -79,7 +136,18 @@ class GmailSecurityPortsTest {
         val nested = """{"mimeType":"multipart/mixed","parts":[{"mimeType":"multipart/alternative","parts":[${part("text/html", "<b>HTML version</b>")},${part("text/plain", "Plain version")}]}]}"""
         val parsed = GmailMimeParser.parseMessage(messageJson(payload = nested))
         assertEquals("Plain version", parsed.plainTextBody)
-        assertEquals("HTML version", parsed.htmlTextBody)
+        assertNull(parsed.htmlTextBody)
+    }
+
+    @Test fun parserKeepsIndependentMixedBodiesAndRejectsUnsupportedIncompleteMime() = runBlocking {
+        val mixed = """{"mimeType":"multipart/mixed","parts":[${part("text/plain", "First paragraph")},${part("text/plain", "Second paragraph")},${part("text/html", "<p>HTML one</p>")},${part("text/html", "<p>HTML two</p>") }]}"""
+        val parsed = GmailMimeParser.parseMessage(messageJson(payload = mixed))
+        assertEquals("First paragraph\n\nSecond paragraph", parsed.plainTextBody)
+        assertEquals("HTML one\n\nHTML two", parsed.htmlTextBody)
+        val unsupportedRelated = """{"mimeType":"multipart/related","parts":[${part("text/html", "body")},${part("image/png", "not interpreted")}]}"""
+        assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure { GmailMimeParser.parseMessage(messageJson(payload = unsupportedRelated)) }.code)
+        val unsupportedInline = """{"mimeType":"application/octet-stream","body":{"data":"AA"}}"""
+        assertEquals(GmailReadFailureCode.INVALID_RESPONSE, failure { GmailMimeParser.parseMessage(messageJson(payload = unsupportedInline)) }.code)
     }
 
     @Test fun parserSupportsBase64UrlAndDeclaredCharset() {

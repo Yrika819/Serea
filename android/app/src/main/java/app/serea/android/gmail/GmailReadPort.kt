@@ -18,9 +18,13 @@ object GmailPermissionPolicy {
 
     fun requiredScopes(): Set<String> = setOf(GMAIL_READ_ONLY)
     fun missingScopes(grantedScopes: Set<String>): Set<String> = requiredScopes() - grantedScopes
+    /** Contract for a future real HTTP adapter: mock authorization is never valid there. */
     fun mayRead(status: GmailAuthorizationStatus): Boolean =
-        status.state in setOf(GmailAuthorizationState.AUTHORIZED, GmailAuthorizationState.MOCK_ONLY) &&
-            GMAIL_READ_ONLY !in status.missingScopes
+        status.state == GmailAuthorizationState.AUTHORIZED && status.missingScopes.isEmpty()
+
+    /** MOCK_ONLY is a fixture capability, never a grant for a real Gmail adapter. */
+    fun mayReadFake(status: GmailAuthorizationStatus): Boolean =
+        status.state == GmailAuthorizationState.MOCK_ONLY && status.missingScopes.isEmpty()
 }
 
 data class GmailReadLimits(val maximumPages: Int = 20, val maximumMessages: Int = 1_000) {
@@ -52,16 +56,20 @@ class GmailSearchService(private val port: GmailReadPort, private val limits: Gm
             } catch (_: Exception) {
                 throw GmailReadFailure(GmailReadFailureCode.PARTIAL_FAILURE)
             }
-            var additional = 0
+            val uniquePage = LinkedHashMap<GmailMessageId, GmailMessage>()
             page.messages.forEach { message ->
                 if (message.dataOrigin != app.serea.android.DataOrigin.GMAIL || message.classification == app.serea.android.DataClassification.PUBLIC) {
                     throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)
                 }
-                if (message.id !in byId) additional++
+                val samePage = uniquePage.putIfAbsent(message.id, message)
+                if (samePage != null && samePage != message) throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)
+                val previous = byId[message.id]
+                if (previous != null && previous != message) throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)
             }
-            if (additional > limits.maximumMessages - byId.size) throw GmailReadFailure(GmailReadFailureCode.TOO_MANY_MESSAGES)
-            page.messages.forEach { message ->
-                byId.putIfAbsent(message.id, message)
+            val newUniqueCount = uniquePage.keys.count { it !in byId }
+            if (newUniqueCount > limits.maximumMessages - byId.size) throw GmailReadFailure(GmailReadFailureCode.TOO_MANY_MESSAGES)
+            uniquePage.forEach { (id, message) ->
+                byId.putIfAbsent(id, message)
             }
             token = page.nextPageToken?.also {
                 if (it.isBlank() || it.length > 2048) throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)

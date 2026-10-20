@@ -2,13 +2,13 @@
 
 Date: 2026-10-20
 
-Status: 統合候補。最終HEADのGitHub Actionsが完了するまでCI判定は未確定。
+Status: 実装HEAD `e4ca2118ca10464f605ce49379f7632d01727e02` で必須CIをすべて確認済み。レポート更新commit後の新HEADでもCIを再実行する。
 
 Base: `94492d281fe0ee583744c932259c3525d5c34f86`
 
 Integration branch: `codex/android-m0-08-abcd-integration-2026-10-20`
 
-Implementation HEAD before this report commit: `04d8da0f0f38f9839c2b81019f8d36463fd955f9`
+Implementation HEAD before this report update: `e4ca2118ca10464f605ce49379f7632d01727e02`
 
 ## 1. Git Topology
 
@@ -38,13 +38,13 @@ PR #50のHEADを共通Baseとして、新しい統合ブランチを作成した
 | C / PR #56 | `28521ee2a321f9fead0606dc0f0c06fafd29be34` |
 | D / PR #57 | `30467af6c77c6931d3139fe418fd6c3426e0ada7` |
 
-Router/Usage接続を `df070e71b9172b341d4d85a89c19c19149119540`、Chat/Tasks両DB統合テストを `04d8da0f0f38f9839c2b81019f8d36463fd955f9` で追加した。
+Router/Usage接続を `df070e71b9172b341d4d85a89c19c19149119540`、Chat/Tasks両DB統合テストを `04d8da0f0f38f9839c2b81019f8d36463fd955f9`、AndroidKeyStore共有状態に依存しないテスト修正を `e4ca2118ca10464f605ce49379f7632d01727e02` で追加した。
 
 ## 5. Commit Identity
 
 Repository-local Codex設定を使用した。`serea.identityProfile=codex`、`user.name=Codex`、`user.email=noreply@github.com`、`user.useConfigOnly=true`、`push.default=nothing`。Author/Committer環境変数の上書きはなかった。pre-commit / pre-push hooksを有効化し、各merge commitと追加commitの前にGit preflightを実行した。
 
-各Source SHAのBaseからの全コミットをIdentity Gateで検証し、統合HEADのBase以降43コミットもPASS。旧PR #52の不適切なSHA `0f917945b2c4964ca0bbffe75be2ff6cf692dd27` と旧PR #54 SHA `3a54ace78f4d4a2992e5b011d99ea9348d3ae30f` はBaseおよび統合HEADの祖先にない。
+各Source SHAのBaseからの全コミットをIdentity Gateで検証した。実装HEAD `e4ca2118ca10464f605ce49379f7632d01727e02` のPR rangeは45コミットでIdentity Gate PASS。初回の統合テスト失敗を修正した追加commitもCodex Identityで作成され、pre-commit/pre-push preflightとpush hookが通った。旧PR #52の不適切なSHA `0f917945b2c4964ca0bbffe75be2ff6cf692dd27` と旧PR #54 SHA `3a54ace78f4d4a2992e5b011d99ea9348d3ae30f` はBaseおよび統合HEADの祖先にない。
 
 ## 6. Conflict Resolution
 
@@ -108,7 +108,7 @@ Calendar originはEgress allowlistに含まれず、TasksはChatContext/Provider
 
 ## 15. Process Death
 
-Cのdebug-only harness拡張を保持した。HistoryとTasksのprepare/verify/delete後確認を行い、両SQLiteファイルの存在も検査する。API 26/35それぞれでInstrumentation後にOS Process Death harnessを実行する。Android Runner結果が返るまでは未検証。
+Cのdebug-only harness拡張を保持した。HistoryとTasksのprepare/verify/delete後確認を行い、両SQLiteファイルの存在も検査する。実装HEAD run `39395148885` のAPI 26/35でInstrumentation後にOS Process Death harnessを実行し、両方のlogでpersisted history、pending recovery、deletion、encrypted readのPASSを確認した。
 
 ## 16. Calendar Mock Foundation
 
@@ -116,19 +116,31 @@ Calendar Domain、read-only port、Fake Provider、Google JSON parser、Agenda�
 
 ## 17. Unit / Integration Results
 
-このCodex Cloud workspaceにはGradle実行ファイル/配布物がなく、Gradle Wrapperの取得が `services.gradle.org` へのConnection refusedで停止した。このためローカルAndroid Build/Unit/InstrumentationはPASS扱いにしていない。Instrumentation verifierのPython regression 5件、Android/Calendar workflow YAML parse、Process Death shell syntax、Source Count整合チェックはPASS。
+このCodex Cloud workspaceにはGradle実行ファイル/配布物がなく、Gradle Wrapperの取得が `services.gradle.org` へのConnection refusedで停止したため、ローカルAndroid Build/Unit/Instrumentationは実行できなかった。GitHub Actionsの実装HEAD run `39395148885` でAndroid Build/Lint/Instrumentation Compile、Unit、Mock HTTP Integration、Security、Dependency Audit、Documentation、API 26/35をPASSした。ローカルのRepository regression tests 136件、Instrumentation verifier regression 5件、Android/Calendar workflow YAML parse、Process Death shell syntax、Source Count整合チェック、docs validationはPASS。
 
 ## 18. API 26 / API 35 Results
 
-両APIで59件以上、上表7クラスの正確な件数、failure/error/skip 0、Process Death成功をRequired Gateにした。実際のJUnit XML、API別総数、Process Death結果は最終HEADのGitHub Actions完了後にPR check runから確認する。現時点では未実施。
+実装HEAD `e4ca2118ca10464f605ce49379f7632d01727e02` のAndroid workflow run `39395148885` の実JUnit XMLをartifact `12251927126` から確認した。API 26は59件、API 35は59件で、両方ともfailure 0 / error 0 / skipped 0。7つの必須クラスは各APIでSource Countと完全一致した。Process Death logはAPI 26、API 35ともPASS。`Android Emulator Required Gate` も成功した。初回HEAD `9152c507e98acaf2c400ec45a9543128da7515e3` は59件中 `TasksDatabaseTest` のalias不存在assertionが1件失敗した。Instrumentation間でAndroidKeyStore stateが共有されるため、テストが正規tasks aliasの不存在を誤って仮定していた。固定aliasとの文字列比較へ変更し、製品aliasやKeystore挙動は変更せず、修正後の両APIで全件PASSを確認した。
 
 ## 19. All Required CI
 
-Android Build/Unit/Integration/Security/Lint/Dependency Audit/Documentation、API 26/35 InstrumentationとProcess Death、Calendar専用Workflow、Fast CI、Full CI、Native Platform Validation、SQLite Portability、Windows Hooks Compatibility、Commit Identity Gateは、統合HEADをpushしてから実行する。実行前なので各結果は **PENDING**。未実施CIをPASSとして扱わない。
+実装HEAD `e4ca2118ca10464f605ce49379f7632d01727e02` に紐づく必須Workflowはすべて成功した。
+
+| Workflow | Run ID | 結果 |
+|---|---:|---|
+| Android (Build, Unit, Integration, Security, Lint, Dependency Audit, Documentation, API 26/35, Process Death, Emulator Required Gate) | `39395148885` | PASS |
+| Calendar Read-only | `39395148855` | PASS (JUnit 22件、failure/error/skip 0) |
+| Fast CI (Commit Identity Gate含む) | `39395148914` | PASS |
+| Full CI | `39395148846` | PASS |
+| Native Platform Validation | `39395148829` | PASS |
+| SQLite Portability | `39395148810` | PASS |
+| Windows Hooks Compatibility | `39395148864` | PASS |
+
+初回SQLite run `39393284365` ではrunnerがartifactの署名付きURLを取得する際に `ETIMEDOUT` となり、DB検証stepに到達しなかった。アプリ/SQLite failureではなくActions artifact転送の一時的失敗として分類した。修正後の実装HEAD run `39395148810` は両方向のcross-architecture open testを含めPASS。レポート更新後の新HEADではこれら全Workflowを再実行し、そのrun IDをDraft PRのdescriptionに追記する。
 
 ## 20. Existing PR Preservation
 
-PR #50〜#57の既存branch、HEAD、state、targetは変更していない。PRのclose/retarget、main push/merge、force push、branch protection、required check、tag、hook policyの変更なし。新規Draft PRだけをPR #50 baseで作成する。
+PR #50〜#57の既存branch、HEAD、state、targetは変更していない。新規Draft PR #58だけをPR #50 baseで作成した。PRのclose/retarget、main push/merge、force push、branch protection、required check、tag、hook policyの変更なし。main HEADは `e0acb0254820c381dd97828824bef86a1db5176c` のまま。
 
 ## 21. Remaining Beta Blockers
 

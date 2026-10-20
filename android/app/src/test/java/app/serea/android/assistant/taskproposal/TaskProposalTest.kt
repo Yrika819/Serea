@@ -4,6 +4,7 @@ import app.serea.android.tasks.*
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -15,6 +16,8 @@ class TaskProposalTest {
         val rows = linkedMapOf<String, Task>()
         val receipts = mutableMapOf<String, String>()
         var writes = 0
+        var updateEntered: CompletableDeferred<Unit>? = null
+        var allowUpdate: CompletableDeferred<Unit>? = null
 
         @Synchronized override suspend fun create(draft: TaskDraft) = createRow(draft)
         @Synchronized override suspend fun createFromApprovedProposal(draft: TaskDraft, proposalId: String): Task {
@@ -33,6 +36,8 @@ class TaskProposalTest {
         @Synchronized override suspend fun get(id: String) = rows[id]
         @Synchronized override suspend fun list() = rows.values.toList()
         @Synchronized override suspend fun update(id: String, expectedRevision: Long, draft: TaskDraft): Task {
+            updateEntered?.complete(Unit)
+            allowUpdate?.await()
             val old = checked(id, expectedRevision)
             return old.copy(title = draft.title, description = draft.description, priority = draft.priority,
                 dueDate = draft.dueDate, dueTime = draft.dueTime, timeZoneId = draft.timeZoneId,
@@ -62,6 +67,10 @@ class TaskProposalTest {
             UUID.randomUUID().toString(), title, "Old description", TaskStatus.TODO, TaskPriority.NORMAL,
             Instant.EPOCH, Instant.EPOCH, revision = 3,
         ).also { rows[it.id] = it }
+
+        fun changeRevision(id: String) {
+            rows[id] = rows.getValue(id).copy(revision = rows.getValue(id).revision + 1)
+        }
     }
 
     @Test fun preparingReviewDoesNotWriteAndDisplaysCapturedRevision() = runBlocking {
@@ -78,9 +87,9 @@ class TaskProposalTest {
         val repository = FakeTaskRepository()
         val proposal = create("Suggestion")
         val session = TaskProposalReviewSession.prepare(proposal, repository)
-        assertEquals(TaskProposalReviewResult.Declined, session.approve(explicitlyApproved = false))
+        assertEquals(TaskProposalReviewResult.Declined, session.approve(explicitlyApproved = false, selectedTaskId = null))
         assertEquals(TaskProposalReviewStatus.DECLINED, session.status)
-        assertEquals(TaskProposalReviewResult.Rejected, session.approve(explicitlyApproved = true))
+        assertEquals(TaskProposalReviewResult.Rejected, session.approve(explicitlyApproved = true, selectedTaskId = null))
         assertEquals(0, repository.writes)
     }
 
@@ -89,7 +98,7 @@ class TaskProposalTest {
         var now = Instant.parse("2026-10-20T12:00:00Z")
         val session = TaskProposalReviewSession.prepare(create("Suggestion"), repository) { now }
         now = now.plusSeconds(301)
-        assertEquals(TaskProposalReviewResult.Expired, session.approve(true))
+        assertEquals(TaskProposalReviewResult.Expired, session.approve(true, selectedTaskId = null))
         assertEquals(TaskProposalReviewStatus.EXPIRED, session.status)
         assertEquals(0, repository.writes)
     }
@@ -101,6 +110,10 @@ class TaskProposalTest {
         assertEquals(TaskProposalReviewResult.Rejected, mismatch.approve(true, selectedTaskId = UUID.randomUUID().toString(), dangerousActionAcknowledged = true))
         assertEquals(0, repository.writes)
 
+        val omittedSelection = TaskProposalReviewSession.prepare(delete(target), repository)
+        assertEquals(TaskProposalReviewResult.Rejected, omittedSelection.approve(true, selectedTaskId = null, dangerousActionAcknowledged = true))
+        assertEquals(0, repository.writes)
+
         val missingAcknowledgement = TaskProposalReviewSession.prepare(delete(target), repository)
         assertEquals(TaskProposalReviewResult.Rejected, missingAcknowledgement.approve(true, target.id, false))
         assertEquals(0, repository.writes)
@@ -110,6 +123,13 @@ class TaskProposalTest {
         assertEquals(TaskProposalReviewResult.Approved(TaskProposalOperation.DELETE), approved.approve(true, target.id, true))
         assertNull(repository.get(target.id))
         assertEquals(1, repository.writes)
+
+        val another = repository.seed()
+        val acknowledged = TaskProposalReviewSession.prepare(delete(another), repository)
+        assertEquals(TaskProposalReviewResult.Approved(TaskProposalOperation.DELETE), acknowledged.approve(true, another.id, true))
+        val newSession = TaskProposalReviewSession.prepare(delete(another), repository)
+        assertEquals(TaskProposalReviewResult.Rejected, newSession.approve(true, another.id, false))
+        assertNotNull(repository.get(another.id))
     }
 
     @Test fun revisionMismatchIsRejectedBeforeReview() = runBlocking {
@@ -141,8 +161,8 @@ class TaskProposalTest {
         val first = TaskProposalReviewSession.prepare(proposal, repository)
         val second = TaskProposalReviewSession.prepare(proposal, repository)
         val results = listOf(
-            async(Dispatchers.Default) { first.approve(true) },
-            async(Dispatchers.Default) { second.approve(true) },
+            async(Dispatchers.Default) { first.approve(true, selectedTaskId = null) },
+            async(Dispatchers.Default) { second.approve(true, selectedTaskId = null) },
         ).map { it.await() }
         assertEquals(1, results.count { it is TaskProposalReviewResult.Approved })
         assertEquals(1, repository.writes)
@@ -175,6 +195,87 @@ class TaskProposalTest {
         invalid.forEach { proposal -> assertThrows(InvalidTaskException::class.java) { runBlocking { TaskProposalReviewSession.prepare(proposal, repository) } } }
         assertEquals(0, repository.writes)
         assertTrue(repository.rows.isEmpty())
+    }
+
+    @Test fun expiredSessionPublishesUiStateAndRequiresFreshApproval() = runBlocking {
+        val repository = FakeTaskRepository()
+        var now = Instant.parse("2026-10-20T12:00:00Z")
+        val proposal = create("Fresh review required")
+        val expired = TaskProposalReviewSession.prepare(proposal, repository) { now }
+        now = expired.snapshot.expiresAt.plusMillis(1)
+        assertTrue(expired.expireIfNeeded())
+        assertEquals(TaskProposalReviewStatus.EXPIRED, expired.statusState.value)
+        assertEquals(TaskProposalReviewResult.Expired, expired.approve(true, selectedTaskId = null))
+        assertEquals(0, repository.writes)
+
+        val refreshed = TaskProposalReviewSession.prepare(proposal, repository) { now }
+        assertEquals(TaskProposalReviewStatus.READY, refreshed.statusState.value)
+        assertEquals(TaskProposalReviewResult.Approved(TaskProposalOperation.CREATE), refreshed.approve(true, selectedTaskId = null))
+        assertEquals(1, repository.writes)
+    }
+
+    @Test fun sameSessionDoubleApprovalAllowsAtMostOneRepositoryCall() = runBlocking {
+        val repository = FakeTaskRepository().apply {
+            updateEntered = CompletableDeferred()
+            allowUpdate = CompletableDeferred()
+        }
+        val target = repository.seed()
+        val session = TaskProposalReviewSession.prepare(update(target, "Single write"), repository)
+        val first = async(Dispatchers.Default) { session.approve(true, target.id) }
+        repository.updateEntered!!.await()
+        assertEquals(TaskProposalReviewResult.Rejected, session.approve(true, target.id))
+        assertEquals(0, repository.writes)
+        repository.allowUpdate!!.complete(Unit)
+        assertEquals(TaskProposalReviewResult.Approved(TaskProposalOperation.UPDATE), first.await())
+        assertEquals(1, repository.writes)
+    }
+
+    @Test fun approvalAndDeclineRaceCannotExecuteAfterDeclineWinsOrDuplicateAnApproval() = runBlocking {
+        val repository = FakeTaskRepository().apply {
+            updateEntered = CompletableDeferred()
+            allowUpdate = CompletableDeferred()
+        }
+        val target = repository.seed()
+        val session = TaskProposalReviewSession.prepare(update(target, "One winner"), repository)
+        val approval = async(Dispatchers.Default) { session.approve(true, target.id) }
+        repository.updateEntered!!.await()
+        assertEquals(TaskProposalReviewResult.Rejected, session.decline())
+        repository.allowUpdate!!.complete(Unit)
+        assertEquals(TaskProposalReviewResult.Approved(TaskProposalOperation.UPDATE), approval.await())
+        assertEquals(1, repository.writes)
+        assertEquals("One winner", repository.get(target.id)?.title)
+    }
+
+    @Test fun simultaneousApprovalAndDeclineHaveOneWinner() = runBlocking {
+        val repository = FakeTaskRepository()
+        val target = repository.seed()
+        val session = TaskProposalReviewSession.prepare(update(target, "Race winner"), repository)
+        val start = CompletableDeferred<Unit>()
+        val approval = async(Dispatchers.Default) {
+            start.await()
+            session.approve(true, target.id)
+        }
+        val decline = async(Dispatchers.Default) {
+            start.await()
+            session.decline()
+        }
+        start.complete(Unit)
+        val approvalResult = approval.await()
+        val declineResult = decline.await()
+        val approved = approvalResult is TaskProposalReviewResult.Approved
+        val declined = declineResult is TaskProposalReviewResult.Declined
+        assertTrue(approved.xor(declined))
+        assertEquals(if (approved) 1 else 0, repository.writes)
+    }
+
+    @Test fun taskRevisionChangedAfterReviewIsRejectedWithoutApplyingProposal() = runBlocking {
+        val repository = FakeTaskRepository()
+        val target = repository.seed()
+        val session = TaskProposalReviewSession.prepare(update(target, "Stale proposal"), repository)
+        repository.changeRevision(target.id)
+        assertEquals(TaskProposalReviewResult.Conflict, session.approve(true, target.id))
+        assertEquals("Old title", repository.get(target.id)?.title)
+        assertEquals(4L, repository.get(target.id)?.revision)
     }
 
     private fun create(title: String) = TaskProposal(operation = TaskProposalOperation.CREATE, title = title)

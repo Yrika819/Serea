@@ -3,7 +3,6 @@ package app.serea.android.assistant.taskproposal
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -13,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,24 +21,34 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import app.serea.android.tasks.TaskProposalOperation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Standalone review UI. A caller must prepare a fresh session for every review. */
 @Composable
 fun TaskProposalReviewScreen(
     session: TaskProposalReviewSession,
-    selectedTaskId: String? = session.snapshot.proposal.targetTaskId,
+    selectedTaskId: String?,
     onResult: (TaskProposalReviewResult) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val snapshot = session.snapshot
     val proposal = snapshot.proposal
-    var deleteAcknowledged by remember(proposal.proposalId) { mutableStateOf(false) }
+    // Approval UI state belongs to this exact ephemeral session, never merely to proposal identity.
+    var deleteAcknowledged by remember(session) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val status = session.statusState.collectAsState().value
     val busy = status != TaskProposalReviewStatus.READY
+
+    LaunchedEffect(session) {
+        while (session.status == TaskProposalReviewStatus.READY) {
+            delay(1_000)
+            session.expireIfNeeded()
+        }
+    }
 
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(20.dp),
@@ -75,13 +85,17 @@ fun TaskProposalReviewScreen(
 
         if (snapshot.requiresDangerousConfirmation) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = deleteAcknowledged, onCheckedChange = { deleteAcknowledged = it })
+                Checkbox(
+                    checked = deleteAcknowledged,
+                    onCheckedChange = { deleteAcknowledged = it },
+                    modifier = Modifier.testTag("task_proposal_delete_ack"),
+                )
                 Text("I understand this permanently deletes the task.")
             }
         }
 
         when (status) {
-            TaskProposalReviewStatus.EXPIRED -> Text("This review expired. Prepare the proposal again.")
+            TaskProposalReviewStatus.EXPIRED -> Text("This review expired. Prepare a new review and approve it again.")
             TaskProposalReviewStatus.CONFLICT -> Text("The task changed. Refresh and review a new proposal.")
             TaskProposalReviewStatus.DECLINED -> Text("Proposal declined.")
             TaskProposalReviewStatus.APPROVED -> Text("Approved operation finished.")
@@ -93,6 +107,7 @@ fun TaskProposalReviewScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 enabled = !busy && (!snapshot.requiresDangerousConfirmation || deleteAcknowledged),
+                modifier = Modifier.testTag("task_proposal_approve"),
                 onClick = {
                     scope.launch {
                         onResult(session.approve(

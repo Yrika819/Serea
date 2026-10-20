@@ -56,7 +56,7 @@ class TaskProposalReviewSession private constructor(
      */
     suspend fun approve(
         explicitlyApproved: Boolean,
-        selectedTaskId: String? = null,
+        selectedTaskId: String?,
         dangerousActionAcknowledged: Boolean = false,
     ): TaskProposalReviewResult {
         if (!explicitlyApproved) return decline()
@@ -103,6 +103,10 @@ class TaskProposalReviewSession private constructor(
     }
 
     suspend fun decline(): TaskProposalReviewResult = mutex.withLock {
+        if (status == TaskProposalReviewStatus.READY && !clock().isBefore(snapshot.expiresAt)) {
+            mutableStatus.value = TaskProposalReviewStatus.EXPIRED
+            return@withLock TaskProposalReviewResult.Expired
+        }
         if (status != TaskProposalReviewStatus.READY) return@withLock when (status) {
             TaskProposalReviewStatus.EXPIRED -> TaskProposalReviewResult.Expired
             TaskProposalReviewStatus.CONFLICT -> TaskProposalReviewResult.Conflict
@@ -110,6 +114,13 @@ class TaskProposalReviewSession private constructor(
         }
         mutableStatus.value = TaskProposalReviewStatus.DECLINED
         TaskProposalReviewResult.Declined
+    }
+
+    /** Refreshes the observable status when a screen's expiration timer fires. */
+    suspend fun expireIfNeeded(): Boolean = mutex.withLock {
+        if (status != TaskProposalReviewStatus.READY || clock().isBefore(snapshot.expiresAt)) return@withLock false
+        mutableStatus.value = TaskProposalReviewStatus.EXPIRED
+        true
     }
 
     companion object {

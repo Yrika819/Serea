@@ -40,7 +40,7 @@ class TaskDateTimePickerTest {
                 description = draft.description, status = TaskStatus.TODO, priority = draft.priority,
                 createdAt = Instant.EPOCH, updatedAt = Instant.EPOCH, dueDate = draft.dueDate,
                 dueTime = draft.dueTime, timeZoneId = draft.timeZoneId, revision = 1,
-            ).also(tasks::add)
+            ).also { tasks.add(it) }
         }
         override suspend fun createFromApprovedProposal(draft: TaskDraft, proposalId: String): Task = create(draft)
         override suspend fun get(id: String): Task? = tasks.firstOrNull { it.id == id }
@@ -80,7 +80,7 @@ class TaskDateTimePickerTest {
         compose.waitUntil(5_000) { repository.createDrafts.size == 1 }
         assertEquals(1, repository.createDrafts.size)
         val saved = repository.createDrafts.single()
-        assertEquals(15, saved.dueDate?.dayOfMonth)
+        assertEquals(15, saved.dueDate?.dayOfMonth ?: -1)
         assertNull(saved.dueTime)
         assertTrue(repository.updateDrafts.isEmpty())
     }

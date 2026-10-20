@@ -3,6 +3,7 @@ package app.serea.android.tasks
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,6 +44,7 @@ class TaskViewModelTest {
         var allowDelete: CompletableDeferred<Unit>? = null
         var completeEntered: CompletableDeferred<Unit>? = null
         var allowComplete: CompletableDeferred<Unit>? = null
+        var completeFailure: Exception? = null
 
         fun seed(id: String, title: String) {
             tasks[id] = Task(
@@ -83,6 +85,7 @@ class TaskViewModelTest {
         override suspend fun complete(id: String, expectedRevision: Long): Task {
             completeEntered?.complete(Unit)
             allowComplete?.await()
+            completeFailure?.let { throw it }
             val task = checked(id, expectedRevision).copy(
                 status = TaskStatus.COMPLETED,
                 completedAt = Instant.EPOCH.plusSeconds(1),
@@ -258,5 +261,34 @@ class TaskViewModelTest {
         assertFalse(viewModel.state.value.loading)
         assertFalse(viewModel.state.value.saving)
         assertEquals("Task operation completed, but the task list could not be refreshed.", viewModel.state.value.error)
+    }
+
+    @Test fun cancelledMutationDoesNotLeaveAnInvalidatedRefreshLoading() = runTest(mainDispatcher.dispatcher) {
+        val repository = FakeRepository().apply {
+            seed("00000000-0000-0000-0000-000000000001", "Task A")
+            completeFailure = CancellationException("Mutation was cancelled before it completed.")
+        }
+        val viewModel = TaskViewModel(repository, ioDispatcher = mainDispatcher.dispatcher)
+        runCurrent()
+
+        repository.listEntered = CompletableDeferred()
+        repository.allowList = CompletableDeferred()
+        viewModel.refresh()
+        runCurrent()
+        assertTrue(repository.listEntered!!.isCompleted)
+        assertTrue(viewModel.state.value.loading)
+
+        viewModel.toggleComplete("00000000-0000-0000-0000-000000000001")
+        runCurrent()
+
+        assertFalse(viewModel.state.value.saving)
+        assertFalse(viewModel.state.value.loading)
+        assertEquals("Task operation was interrupted. Refresh the task list to confirm its result.", viewModel.state.value.error)
+
+        repository.allowList!!.complete(Unit)
+        runCurrent()
+
+        assertFalse(viewModel.state.value.loading)
+        assertEquals(TaskStatus.TODO, viewModel.state.value.tasks.single().status)
     }
 }

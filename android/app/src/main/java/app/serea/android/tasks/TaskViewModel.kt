@@ -102,6 +102,9 @@ class TaskViewModel(
             onRefreshFailure = {
                 if (editorSession == editorGeneration.get()) showError("Task operation completed, but the task list could not be refreshed.")
             },
+            onCancelled = {
+                if (editorSession == editorGeneration.get()) showError("Task operation was interrupted. Refresh the task list to confirm its result.")
+            },
         )
     }
 
@@ -120,6 +123,9 @@ class TaskViewModel(
             onRefreshFailure = {
                 if (deleteSession == deleteGeneration.get()) showError("Task operation completed, but the task list could not be refreshed.")
             },
+            onCancelled = {
+                if (deleteSession == deleteGeneration.get()) showError("Task operation was interrupted. Refresh the task list to confirm its result.")
+            },
         )
     }
 
@@ -135,6 +141,11 @@ class TaskViewModel(
                     showError("Task operation completed, but the task list could not be refreshed.")
                 }
             },
+            onCancelled = {
+                if (editorSession == editorGeneration.get() && deleteSession == deleteGeneration.get()) {
+                    showError("Task operation was interrupted. Refresh the task list to confirm its result.")
+                }
+            },
         )
     }
 
@@ -146,26 +157,38 @@ class TaskViewModel(
         onSuccess: () -> Unit = {},
         onFailure: (String) -> Unit = ::showError,
         onRefreshFailure: () -> Unit = {},
+        onCancelled: () -> Unit = {},
     ) {
         if (mutableState.value.saving) return
         val mutation = mutationGeneration.incrementAndGet()
-        listGeneration.incrementAndGet() // invalidate any initial or user-triggered list read started before this mutation
+        var ownedListGeneration = listGeneration.incrementAndGet() // invalidate any list read started before this mutation
+        var wasCancelled = false
         mutableState.value = mutableState.value.copy(saving = true)
         viewModelScope.launch {
             try {
                 withContext(ioDispatcher) { block() }
                 if (mutation == mutationGeneration.get()) {
                     onSuccess()
-                    refreshAfterMutation(mutation, onRefreshFailure)
+                    refreshAfterMutation(mutation, onRefreshFailure) { ownedListGeneration = it }
                 }
-            } catch (cancelled: CancellationException) { throw cancelled }
+            } catch (cancelled: CancellationException) {
+                wasCancelled = true
+                throw cancelled
+            }
             catch (error: Exception) {
                 if (mutation == mutationGeneration.get()) {
                     onFailure(error.toTaskUserMessage())
-                    refreshAfterMutation(mutation) {}
+                    refreshAfterMutation(mutation, onFailure = {}, onGenerationStarted = { ownedListGeneration = it })
                 }
             } finally {
-                if (mutation == mutationGeneration.get()) mutableState.value = mutableState.value.copy(saving = false)
+                if (mutation == mutationGeneration.get()) {
+                    val clearLoading = wasCancelled && listGeneration.get() == ownedListGeneration
+                    if (clearLoading) onCancelled()
+                    mutableState.value = mutableState.value.copy(
+                        saving = false,
+                        loading = if (clearLoading) false else mutableState.value.loading,
+                    )
+                }
             }
         }
     }
@@ -178,8 +201,13 @@ class TaskViewModel(
         else -> "Task operation failed. Please try again."
     }
 
-    private suspend fun refreshAfterMutation(mutation: Long, onFailure: () -> Unit) {
+    private suspend fun refreshAfterMutation(
+        mutation: Long,
+        onFailure: () -> Unit,
+        onGenerationStarted: (Long) -> Unit = {},
+    ) {
         val generation = listGeneration.incrementAndGet()
+        onGenerationStarted(generation)
         try {
             val latest = withContext(ioDispatcher) { repository.list() }
             if (mutation == mutationGeneration.get() && generation == listGeneration.get()) {

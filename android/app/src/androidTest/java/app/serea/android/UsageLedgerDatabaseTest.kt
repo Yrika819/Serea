@@ -39,6 +39,7 @@ class UsageLedgerDatabaseTest {
         val usage = UsageRepository(db.usageDao()) { Instant.parse("2026-10-20T00:00:00Z").toEpochMilli() }
         usage.reserve("send-a", 3, 2, ModelUsageAttribution("model/a", "provider-a", fixturePrice()))
         usage.complete("send-a", ProviderUsage(4, 2))
+        usage.complete("send-a", ProviderUsage(400, 200)) // repeated settle is an idempotent no-op
         usage.reserve("send-b", 5, 3, ModelUsageAttribution("model/b", "provider-b", fixturePrice("10", "20", "fictional-price-v2")))
         usage.complete("send-b", ProviderUsage(8, 1))
 
@@ -122,6 +123,51 @@ class UsageLedgerDatabaseTest {
         assertEquals(null, db.usageDao().reservation("rollback-send"))
         assertEquals(null, db.usageDao().ledger("rollback-send"))
         assertEquals(1L, usage.snapshot().dailyRequests)
+    }
+
+    @Test fun cancellationAndNetworkFailureRemainConservativelyUnknown() = runBlocking {
+        val db = open()
+        val usage = UsageRepository(db.usageDao())
+        val port = UsageControlledModelChatPort(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse = when (request.sendId) {
+                "cancel-send" -> throw kotlinx.coroutines.CancellationException("fixture cancellation")
+                else -> throw java.io.IOException("fixture network failure")
+            }
+        }, usage)
+        for (sendId in listOf("cancel-send", "network-send")) {
+            try {
+                port.send(ModelChatRequest("conversation", "prompt", sendId = sendId))
+                throw AssertionError("expected failure")
+            } catch (_: Exception) { }
+        }
+        val summary = usage.summaries().single()
+        assertEquals(2L, summary.requestCount)
+        assertEquals(2L, summary.uncertainRequestCount)
+        assertEquals(0L, summary.providerReportedInputTokens + summary.providerReportedOutputTokens)
+        assertEquals(2L, summary.costUnknownCount)
+        assertEquals(2L * ("prompt".length * 4L + 512L), summary.estimatedInputTokens + summary.reservedOutputTokens)
+    }
+
+    @Test fun utcDayMonthLeapDayAndYearBoundariesNeverReopenObservedWindows() = runBlocking {
+        var now = Instant.parse("2024-02-29T23:59:59Z").toEpochMilli()
+        val db = open()
+        val usage = UsageRepository(db.usageDao()) { now }
+        usage.reserve("leap-day-send", 1, 1, ModelUsageAttribution("model/calendar", "provider-calendar"))
+        usage.complete("leap-day-send", ProviderUsage(1, 1))
+        now = Instant.parse("2024-03-01T00:00:00Z").toEpochMilli()
+        assertEquals(0L, usage.summaries(UsageTimeWindow.UTC_DAILY).sumOf { it.requestCount })
+        assertEquals(0L, usage.summaries(UsageTimeWindow.UTC_MONTHLY).sumOf { it.requestCount })
+        assertEquals(1L, usage.summaries(UsageTimeWindow.ALL_TIME).sumOf { it.requestCount })
+        now = Instant.parse("2024-02-29T23:00:00Z").toEpochMilli() // wall clock rollback uses the last observed UTC instant
+        assertEquals(0L, usage.summaries(UsageTimeWindow.UTC_DAILY).sumOf { it.requestCount })
+
+        now = Instant.parse("2024-12-31T23:59:59Z").toEpochMilli()
+        usage.reserve("year-end-send", 1, 1, ModelUsageAttribution("model/calendar", "provider-calendar"))
+        usage.complete("year-end-send", ProviderUsage(1, 1))
+        now = Instant.parse("2025-01-01T00:00:00Z").toEpochMilli()
+        assertEquals(0L, usage.summaries(UsageTimeWindow.UTC_DAILY).sumOf { it.requestCount })
+        assertEquals(0L, usage.summaries(UsageTimeWindow.UTC_MONTHLY).sumOf { it.requestCount })
+        assertEquals(2L, usage.summaries(UsageTimeWindow.ALL_TIME).sumOf { it.requestCount })
     }
 
     @Test fun oldPriceSnapshotIsUsedAfterLaterCatalogPriceChange() = runBlocking {

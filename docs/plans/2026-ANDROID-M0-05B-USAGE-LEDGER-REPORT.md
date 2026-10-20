@@ -79,16 +79,24 @@ The database tests now require 12 `UsageLedgerDatabaseTest` cases on both API 26
 
 The new JVM cost tests cover separate input/output prices, zero/large token counts, missing usage/pricing, exact decimal arithmetic, invalid prices/currency/source, and immutable revisions. Android instrumentation tests cover model/provider summaries, duplicate/conflicting send IDs and settle, unknown attribution/usage, timeout/cancellation/network failure, reopen recovery, concurrent reservation, atomic rollback on forced ledger insert failure, Egress DENY with zero reservation, near-`Long.MAX_VALUE` overflow rejection, UTC day/month/leap/year boundaries, price revision history, successful 1/2/3→4 migration, and failure rollback without destructive fallback.
 
-Execution status in this workspace:
+Execution status for the implementation commit:
 
 | Check | Result |
 | --- | --- |
 | `git diff --check` | PASS |
-| Android build / Unit / Integration / Security / Lint / Dependency Audit | NOT_RUN: Gradle distribution download was refused by the environment network connection |
-| API 26 / API 35 instrumentation and process death | NOT_RUN locally; CI evidence pending final pushed HEAD |
-| Fast CI / Full CI / Native / SQLite / Windows hooks / Commit Identity | NOT_RUN locally; CI evidence pending final pushed HEAD |
+| Android Build, Lint, and Instrumentation Compile | PASS |
+| Android Unit / Integration / Security / Dependency Audit / Documentation | PASS |
+| API 35 Instrumentation | PASS: 46 tests, 0 failures, 0 errors, 0 skips |
+| API 26 Instrumentation | PASS: 46 tests, 0 failures, 0 errors, 0 skips |
+| API 35 / API 26 OS Process Death | PASS on both APIs |
+| Android Emulator Required Gate | PASS |
+| Fast CI / Full CI / Commit Identity Gate | PASS |
+| Native Platform Validation / SQLite Portability / Windows Hooks Compatibility | PASS |
+| Migration 1→4 / 2→4 / 3→4 instrumentation regression | PASS on API 26 and API 35, as part of the 46-test suite |
 
-The execution environment has JDK 21, but its inherited `JAVA_HOME` points to absent JDK 17. After selecting JDK 21 for the Gradle process, the wrapper could not download Gradle 8.11.1 (`Connection refused`). No test is reported as passed on that basis. Final CI run IDs and outcomes must be recorded after the branch is pushed.
+On the first Android workflow attempt, API 35 ran all 46 tests but an existing `ChatScreenTest.modelModeAndPolicyPersistWhenSettingsAreReopened` assertion failed with “The component is not displayed!”; emulator ColorBuffer errors appeared immediately afterward. The Usage Ledger tests were not among the failures. Re-running the failed jobs on the exact same HEAD passed API 35 and API 26 with 46/46 tests each, both process-death harnesses, and the Required Gate. No ChatScreen or production source was changed for that non-reproducible UI assertion.
+
+The managed workspace did not contain an Android SDK, so Android execution was performed in GitHub Actions. The successful CI evidence above records the executed tests; local SDK absence is not counted as a test pass.
 
 ## Owner decisions and remaining integration work
 

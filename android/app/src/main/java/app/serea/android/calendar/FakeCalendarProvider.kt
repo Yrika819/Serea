@@ -21,6 +21,7 @@ class FakeCalendarProvider(
         val duplicateFirstEventAcrossPages: Boolean = false,
         val reverseEventOrder: Boolean = false,
         val failureOnPageIndex: Int? = null,
+        val malformedResponseOnPageIndex: Int? = null,
         val timeoutOnPageIndex: Int? = null,
         val cancellationOnPageIndex: Int? = null,
         val permissionDenied: Boolean = false,
@@ -65,6 +66,7 @@ class FakeCalendarProvider(
         if (options.timeoutOnPageIndex == callIndex) throw CalendarReadFailure(CalendarApiFailureCode.TIMEOUT, "Injected mock timeout.")
         if (options.cancellationOnPageIndex == callIndex) throw CancellationException("Injected mock cancellation.")
         if (options.failureOnPageIndex == callIndex) throw CalendarReadFailure(CalendarApiFailureCode.PARTIAL_FAILURE, "Injected mock page failure.")
+        if (options.malformedResponseOnPageIndex == callIndex) return CalendarEventPage(emptyList(), " ")
 
         val matching = ordered.filter { it.key.calendarId == calendarId && overlaps(it, range) }
         val start = page * pageSize

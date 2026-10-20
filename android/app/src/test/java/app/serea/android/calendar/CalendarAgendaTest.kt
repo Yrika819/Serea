@@ -72,6 +72,16 @@ class CalendarAgendaTest {
         catch (expected: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, expected.code) }
         val empty = FakeCalendarProvider(calendars = emptyList(), events = emptyList())
         assertTrue(CalendarAgendaService(empty, fixed).eventsToday().isEmpty())
+        try { empty.getCalendar(CalendarId("missing")); fail("Expected missing calendar") }
+        catch (expected: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.NOT_FOUND, expected.code) }
+        try { empty.getEvent(CalendarEventKey(CalendarId("missing"), EventId("missing"))); fail("Expected missing event") }
+        catch (expected: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.NOT_FOUND, expected.code) }
+    }
+
+    @Test fun malformedPageResponseIsRejectedAsIncomplete() = runBlocking {
+        val provider = FakeCalendarProvider(options = FakeCalendarProvider.Options(malformedResponseOnPageIndex = 0))
+        try { CalendarAgendaService(provider, fixed).eventsToday(); fail("Expected malformed page rejection") }
+        catch (expected: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.INVALID_RESPONSE, expected.code) }
     }
 
     @Test fun nextUpcomingExcludesAllDayAndPastTimedEvents() = runBlocking {

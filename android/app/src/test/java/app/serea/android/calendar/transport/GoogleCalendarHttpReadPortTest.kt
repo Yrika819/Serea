@@ -23,6 +23,9 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.IOException
+import java.io.InputStream
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
@@ -92,7 +95,9 @@ class GoogleCalendarHttpReadPortTest {
         server.enqueue(MockResponse().setBody(eventObjectJson("event")))
         port().getCalendar(calendarId)
         port().getEvent(CalendarEventKey(calendarId, EventId("event")))
-        assertTrue(server.takeRequest().requestLine!!.startsWith("GET /calendar/v3/calendars/"))
+        val calendarRequest = server.takeRequest()
+        assertEquals("GET /calendar/v3/users/me/calendarList/fixture+calendar%40example.test HTTP/1.1", calendarRequest.requestLine)
+        assertEquals("Bearer fixture-token-never-valid", calendarRequest.getHeader("Authorization"))
         assertTrue(server.takeRequest().requestLine!!.contains("/events/event "))
     }
 
@@ -112,6 +117,12 @@ class GoogleCalendarHttpReadPortTest {
         catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.MISSING_SCOPE, e.code) }
         assertEquals(0, tokenRequests)
         assertEquals(0, server.requestCount)
+
+        status = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED,
+            missingScopes = setOf(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY))
+        try { port().getCalendar(calendarId); fail("Expected calendar-list scope rejection") }
+        catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.MISSING_SCOPE, e.code) }
+        assertEquals(0, tokenRequests)
     }
 
     @Test fun apiFailuresAreMappedWithoutLeakingResponseBody() = runBlocking {
@@ -141,17 +152,68 @@ class GoogleCalendarHttpReadPortTest {
         assertEquals(1, server.requestCount)
     }
 
-    @Test fun redirectIsNotFollowedAndMalformedOrOversizedJsonIsRejected() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", server.url("/elsewhere").toString()))
-        try { port().getEvent(CalendarEventKey(calendarId, EventId("x"))); fail("Expected redirect rejection") }
-        catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.INVALID_RESPONSE, e.code) }
-        assertEquals(1, server.requestCount)
+    @Test fun injectedClientCannotForwardBearerTokenThroughRedirect() = runBlocking {
+        val destination = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", destination.url("/steal").toString()))
+            val redirectingClient = OkHttpClient.Builder().followRedirects(true).followSslRedirects(true).build()
+            try { port(client = redirectingClient).getEvent(CalendarEventKey(calendarId, EventId("x"))); fail("Expected redirect rejection") }
+            catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.INVALID_RESPONSE, e.code) }
+            assertEquals(1, server.requestCount)
+            assertEquals(0, destination.requestCount)
+            assertEquals("Bearer fixture-token-never-valid", server.takeRequest().getHeader("Authorization"))
+        } finally { destination.shutdown() }
+    }
+
+    @Test fun malformedOrOversizedJsonIsRejected() = runBlocking {
         server.enqueue(MockResponse().setBody("{broken"))
         try { port().getEvent(CalendarEventKey(calendarId, EventId("x"))); fail("Expected JSON rejection") }
         catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.INVALID_RESPONSE, e.code) }
         server.enqueue(MockResponse().setBody(" ".repeat(600_000)))
         try { port().getEvent(CalendarEventKey(calendarId, EventId("x"))); fail("Expected size rejection") }
         catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.INVALID_RESPONSE, e.code) }
+    }
+
+    @Test fun boundedChunkReaderAcceptsExactLimitAndRejectsOneByteOver() {
+        val limit = 512 * 1024
+        val exact = ByteArray(limit) { (it % 251).toByte() }
+        assertArrayEquals(exact, readBoundedResponse(ByteArrayInputStream(exact), limit))
+        try { readBoundedResponse(ByteArrayInputStream(ByteArray(limit + 1)), limit); fail("Expected size limit") }
+        catch (_: ResponseTooLargeException) { }
+    }
+
+    @Test fun boundedChunkReaderMapsMidstreamIoFailure() {
+        val input = object : InputStream() {
+            private var first = true
+            override fun read(): Int = error("single-byte path should not be used")
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (first) {
+                    first = false
+                    buffer[offset] = 1
+                    return 1
+                }
+                throw IOException("fixture read failure")
+            }
+        }
+        try { readBoundedResponse(input, 32); fail("Expected I/O failure") }
+        catch (e: IOException) { assertEquals("fixture read failure", e.message) }
+    }
+
+    @Test fun listEventsUsesSafePageSizeAndResponseTimezone() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"timeZone":"Asia/Tokyo","items":[{"id":"all-day","summary":"Fixture","status":"confirmed","start":{"date":"2026-10-20"},"end":{"date":"2026-10-21"}}]}"""))
+        val page = port().listEventsPage(calendarId, range())
+        val time = page.events.single().time as app.serea.android.calendar.EventTime.AllDay
+        assertEquals("Asia/Tokyo", time.timeZone.id)
+        val request = server.takeRequest()
+        assertEquals("100", request.requestUrl!!.queryParameter("maxResults"))
+        assertTrue(request.requestUrl!!.queryParameter("fields")!!.contains("timeZone"))
+    }
+
+    @Test fun getEventUsesPayloadTimezoneForAllDayFallback() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"id":"all-day","summary":"Fixture","start":{"date":"2026-10-20","timeZone":"America/Los_Angeles"},"end":{"date":"2026-10-21","timeZone":"America/Los_Angeles"}}"""))
+        val event = port().getEvent(CalendarEventKey(calendarId, EventId("all-day")))
+        val time = event.time as app.serea.android.calendar.EventTime.AllDay
+        assertEquals("America/Los_Angeles", time.timeZone.id)
     }
 
     @Test fun timeoutMapsToTimeout() = runBlocking {

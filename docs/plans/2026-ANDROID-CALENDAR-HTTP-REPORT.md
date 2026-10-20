@@ -12,12 +12,21 @@ Implemented lane B on `codex/android-q4-calendar-http-2026-10-20`, based on the 
 - Responses are capped at the existing parser's 512 KiB limit; error bodies are read only up to 16 KiB for status classification and are not included in failures. HTTP errors map to the existing `CalendarReadFailure` codes. No event write method or cache was added. Parsed events retain `DataOrigin.CALENDAR` and `PERSONAL` classification through the existing parser.
 - A package-internal loopback-only base URL seam supports MockWebServer. It cannot redirect the production client to arbitrary hosts.
 
+## Follow-up audit fixes
+
+- `getCalendar` now uses `/users/me/calendarList/{calendarId}`, matching `calendar.calendarlist.readonly`; no scope was added. Its MockWebServer assertion checks the exact route and bearer header.
+- Replaced `InputStream.readNBytes` with an 8 KiB chunk reader that reads at most one sentinel byte beyond the 512 KiB bound. Tests cover exact limit, one byte over, and an I/O error after the first chunk. API 26 device execution: **NOT_RUN**; no API 26 emulator/device was available, and Pixel 7a access is prohibited.
+- `events.list` reads the response `timeZone` and passes it to the existing parser; a fixed `maxResults=100` keeps the expected 20-page aggregate within the domain's 2,000-event default. A field mask limits each item to parser-supported fields while retaining the page token and timezone.
+- Clones an injected OkHttp client with redirects, SSL redirects, and connection retries disabled; a test injects a redirect-enabled client and verifies a second MockWebServer never receives the bearer token.
+- `events.get` honors a timezone embedded in `start`/`end`; RFC3339 offsets remain interpreted by the existing parser. If an all-day single-event payload omits its zone, this domain port has no calendar-zone input and the parser retains the documented UTC fallback. Resolving that case without requiring calendar-list scope needs an Owner-approved domain/API seam.
+- The follow-up adds five test methods beyond the original eleven; final suite size is 16 methods. The final-head test and CI results are recorded in the task handoff.
+
 ## Verification
 
 - `git diff --check`: PASS.
 - Requested JVM unit command: `./gradlew :app:testDebugUnitTest --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarDomainParserTest' --tests 'app.serea.android.calendar.CalendarAgendaTest' --tests 'app.serea.android.calendar.CalendarSecurityTest'` — NOT_RUN. Gradle wrapper could not download Gradle 8.11.1 because the distribution request failed with `java.net.ConnectException: Connection refused`; no Gradle tasks started.
 - Android build and lint: NOT_RUN for the same unavailable Gradle distribution.
-- New transport suite contains 11 MockWebServer test methods for URLs, headers, pagination, authorization/token handling, status mapping, redirects, malformed/oversized responses, timeout, cancellation, and repeated page tokens. Execution status: NOT_RUN; there are no real Google requests.
+- New transport suite contains 16 test methods, including MockWebServer route/scope, pagination, authorization/token handling, status mapping, redirect, timezone, malformed/oversized response, timeout, cancellation, and repeated-token cases, plus bounded-reader boundary and I/O failure cases. Execution status before the follow-up CI dispatch: NOT_RUN; there are no real Google requests.
 - Existing Calendar regression suites: NOT_RUN. No CI workflow was triggered; CI Run ID and final-head status are unavailable.
 - Real Google OAuth, API access, personal calendar data, and device/ADB verification: NOT_RUN.
 

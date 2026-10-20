@@ -27,6 +27,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.InputStream
 import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -38,6 +41,11 @@ class GoogleCalendarHttpReadPort internal constructor(
     private val client: OkHttpClient = productionClient(),
     private val baseUrl: HttpUrl = GOOGLE_API_BASE,
 ) : CalendarReadPort {
+    private val safeClient = client.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .retryOnConnectionFailure(false)
+        .build()
 
     init {
         val production = baseUrl.scheme == "https" && baseUrl.host == GOOGLE_API_HOST
@@ -73,7 +81,8 @@ class GoogleCalendarHttpReadPort internal constructor(
 
     override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor {
         requireAuthorized(CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY)
-        val url = baseUrl.newBuilder().addPathSegment("calendars").addPathSegment(calendarId.value).build()
+        val url = baseUrl.newBuilder().addPathSegment("users").addPathSegment("me")
+            .addPathSegment("calendarList").addPathSegment(calendarId.value).build()
         return parseCalendar(get(url, CalendarPermissionPolicy.CALENDAR_LIST_READ_ONLY))
     }
 
@@ -99,6 +108,7 @@ class GoogleCalendarHttpReadPort internal constructor(
             .addQueryParameter("showDeleted", "true")
             .addQueryParameter("orderBy", "startTime")
             .addQueryParameter("maxResults", EVENT_PAGE_SIZE.toString())
+            .addQueryParameter("fields", EVENT_FIELDS)
             .apply { pageToken?.let { addQueryParameter("pageToken", it) } }.build()
         return parsePage(get(url, CalendarPermissionPolicy.EVENTS_READ_ONLY), calendarId)
     }
@@ -123,14 +133,15 @@ class GoogleCalendarHttpReadPort internal constructor(
         if (token == null) throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar access token is unavailable.")
         val request = Request.Builder().url(url).header("Authorization", "Bearer ${token.value}")
             .header("Accept", "application/json").get().build()
-        val response = execute(client.newCall(request))
+        val response = execute(safeClient.newCall(request))
         response.use {
             if (it.code !in 200..299) throw responseFailure(it)
             val body = it.body ?: throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response body is missing.")
-            val bytes = try { body.byteStream().use { stream -> stream.readNBytes(MAX_RESPONSE_BYTES + 1) } }
+            val bytes = try { body.byteStream().use { stream -> readBoundedResponse(stream, MAX_RESPONSE_BYTES) } }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { throw failure(CalendarApiFailureCode.UNAVAILABLE, "Calendar response could not be read.") }
-            if (bytes.size > MAX_RESPONSE_BYTES) throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response exceeds the payload limit.")
+            catch (_: ResponseTooLargeException) { throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response exceeds the payload limit.") }
+            catch (_: java.io.InterruptedIOException) { throw failure(CalendarApiFailureCode.TIMEOUT, "Calendar response read timed out.") }
+            catch (_: IOException) { throw failure(CalendarApiFailureCode.UNAVAILABLE, "Calendar response could not be read.") }
             return bytes.toString(Charsets.UTF_8)
         }
     }
@@ -206,14 +217,28 @@ class GoogleCalendarHttpReadPort internal constructor(
     }
 
     private fun parseEvent(json: String, calendarId: CalendarId): CalendarEvent =
-        try { GoogleCalendarEventParser.parseEvent(json, calendarId, ZoneId.of("UTC")) }
+        try { GoogleCalendarEventParser.parseEvent(json, calendarId, eventFallbackTimeZone(json)) }
         catch (failure: CalendarReadFailure) { throw failure }
         catch (_: Exception) { throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Invalid Google Calendar event payload.") }
 
     private fun parsePage(json: String, calendarId: CalendarId): CalendarEventPage =
-        try { GoogleCalendarEventParser.parsePage(json, calendarId, ZoneId.of("UTC")) }
+        try {
+            val root = JsonParser.parseString(json).asJsonObject
+            val zone = root.stringOrNull("timeZone")?.let(ZoneId::of) ?: ZoneId.of("UTC")
+            GoogleCalendarEventParser.parsePage(json, calendarId, zone)
+        }
         catch (failure: CalendarReadFailure) { throw failure }
         catch (_: Exception) { throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Invalid Google Calendar events page.") }
+
+    /** events.get can carry the calendar zone on its start/end; its RFC3339 offset remains authoritative otherwise. */
+    private fun eventFallbackTimeZone(json: String): ZoneId {
+        val root = parseJson(json)
+        for (field in listOf("start", "end")) {
+            val time = root.get(field)?.takeUnless { it.isJsonNull }?.asJsonObject ?: continue
+            time.stringOrNull("timeZone")?.let { return ZoneId.of(it) }
+        }
+        return ZoneId.of("UTC")
+    }
 
     private fun parseJson(json: String) = try { JsonParser.parseString(json).asJsonObject }
     catch (_: Exception) { throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Invalid Google Calendar response.") }
@@ -240,12 +265,36 @@ class GoogleCalendarHttpReadPort internal constructor(
         private const val MAX_ERROR_BYTES = 16 * 1024
         private const val MAX_PAGES = 20
         private const val CALENDAR_PAGE_SIZE = 250
-        private const val EVENT_PAGE_SIZE = 2_000
+        private const val EVENT_PAGE_SIZE = 100
         private const val MAX_CALENDARS = 2_000
+        private const val EVENT_FIELDS = "items(id,summary,description,location,start,end,status,recurringEventId,originalStartTime,updated,visibility),nextPageToken,timeZone"
 
         private fun productionClient() = OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS)
             .callTimeout(20, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
             .retryOnConnectionFailure(false).build()
+    }
+}
+
+internal class ResponseTooLargeException : IOException("Response exceeds configured byte limit.")
+
+/** Reads with bounded chunks and at most one byte beyond the accepted limit. */
+internal fun readBoundedResponse(input: InputStream, maximumBytes: Int): ByteArray {
+    require(maximumBytes >= 0)
+    val output = ByteArrayOutputStream(minOf(maximumBytes, 8 * 1024))
+    val chunk = ByteArray(8 * 1024)
+    while (true) {
+        val remainingWithSentinel = maximumBytes.toLong() + 1L - output.size()
+        if (remainingWithSentinel <= 0L) throw ResponseTooLargeException()
+        val count = input.read(chunk, 0, minOf(chunk.size.toLong(), remainingWithSentinel).toInt())
+        if (count < 0) return output.toByteArray()
+        if (count == 0) {
+            val one = input.read()
+            if (one < 0) return output.toByteArray()
+            output.write(one)
+        } else {
+            output.write(chunk, 0, count)
+        }
+        if (output.size() > maximumBytes) throw ResponseTooLargeException()
     }
 }

@@ -81,12 +81,17 @@ class TasksDatabaseTest {
 
     @Test fun concurrentUpdatesUseRevisionCasAndDeleteDoesNotResurrect() = runBlocking {
         val repository = repo(db)
+        val otherRepository = repo(db)
         val task = repository.create(TaskDraft("first"))
-        val update = repository.update(task.id, task.revision, TaskDraft("second"))
-        assertThrows(TaskConflictException::class.java) { runBlocking { repository.update(task.id, task.revision, TaskDraft("stale")) } }
-        repository.delete(task.id, update.revision)
+        val one = async(Dispatchers.IO) { runCatching { repository.update(task.id, task.revision, TaskDraft("second")) } }
+        val two = async(Dispatchers.IO) { runCatching { otherRepository.update(task.id, task.revision, TaskDraft("parallel stale")) } }
+        val outcomes = listOf(one.await(), two.await())
+        assertEquals(1, outcomes.count { it.isSuccess })
+        assertEquals(1, outcomes.count { it.exceptionOrNull() is TaskConflictException })
+        val current = checkNotNull(repository.get(task.id))
+        repository.delete(task.id, current.revision)
         assertNull(repository.get(task.id))
-        assertThrows(TaskNotFoundException::class.java) { runBlocking { repository.update(task.id, update.revision, TaskDraft("late")) } }
+        assertThrows(TaskNotFoundException::class.java) { runBlocking { otherRepository.update(task.id, current.revision, TaskDraft("late")) } }
         assertNull(db.taskDao().row(task.id))
     }
 

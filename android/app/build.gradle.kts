@@ -69,12 +69,8 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-        }
-        create("internalBeta") {
-            initWith(getByName("release"))
             applicationIdSuffix = ".demo"
             signingConfig = if (betaSigningReady) signingConfigs.getByName("internalBeta") else null
-            matchingFallbacks += listOf("release")
         }
     }
 

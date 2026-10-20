@@ -38,8 +38,10 @@ The workflow requires these values in the Environment before it can pass:
 
 Gradle reads the keystore path and credentials from process environment. The
 workflow materializes the keystore under a mode-700 directory in runner temp,
-uses only the internalBeta variant, disables Gradle build/configuration cache,
-and deletes the temporary key files in an `always()` cleanup step. It does not
+uses the existing Release variant only after the signing preflight passes,
+disables Gradle build/configuration cache, and deletes the temporary key files
+in an `always()` cleanup step. The Release application ID is kept at
+`app.serea.android.demo` to match PR #49's installed Debug package. It does not
 upload the keystore, passwords, Gradle home, or build cache. The uploaded
 artifact contains only the verified APK and a 14-day provenance file with APK
 SHA-256, expected/observed certificate fingerprint, application ID, version
@@ -106,7 +108,7 @@ PR #47's Debug certificate was
 was `ca82217d50c840b5183d3027ce56a5d1c3f862d32f0ae3979658014e3b7b912c`.
 The PR #49 APK already installed on the Owner's Pixel 7a has package
 `app.serea.android.demo`. Its signing private key is not present in this
-repository or the current environment. The proposed `internalBeta` variant
+repository or the current environment. The protected workflow's Release APK
 keeps the `.demo` application ID suffix to match that package, but the new
 owner-managed certificate still will not match automatically.
 

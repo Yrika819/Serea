@@ -85,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           version_code=$((GITHUB_RUN_NUMBER + 1))
-          ./gradlew --no-daemon --no-build-cache --no-configuration-cache clean :app:verifyInternalBetaSigning :app:assembleInternalBeta "-PsereaVersionCode=$version_code"
+          ./gradlew --no-daemon --no-build-cache --no-configuration-cache clean :app:verifyInternalBetaSigning :app:assembleRelease "-PsereaVersionCode=$version_code"
 
       - name: Verify APK identity, signature, and provenance
         env:
@@ -98,7 +98,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT_SHA"
           test "$BUILD_COMMIT_SHA" = "$SOURCE_COMMIT_SHA"
           version_code=$((GITHUB_RUN_NUMBER + 1))
-          apk='android/app/build/outputs/apk/internalBeta/app-internalBeta.apk'
+          apk='android/app/build/outputs/apk/release/app-release.apk'
           test -s "$apk"
           output_dir="$RUNNER_TEMP/serea-internal-beta-output"
           install -d -m 700 "$output_dir"

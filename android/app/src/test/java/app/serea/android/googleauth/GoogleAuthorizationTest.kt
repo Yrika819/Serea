@@ -3,6 +3,8 @@ package app.serea.android.googleauth
 import app.serea.android.googleauth.GoogleScope.CALENDAR_EVENTS_READ_ONLY
 import app.serea.android.googleauth.GoogleScope.CALENDAR_LIST_READ_ONLY
 import app.serea.android.googleauth.GoogleScope.GMAIL_READ_ONLY
+import app.serea.android.googleauth.GoogleFeature.CALENDAR
+import app.serea.android.googleauth.GoogleFeature.GMAIL
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -78,13 +80,18 @@ class GoogleAuthorizationTest {
 
     @Test fun appFeatureDisableDoesNotRevokeSharedGoogleGrant() = runBlocking {
         val fake = FakeGoogleAuthorizationGateway(both)
-        fake.disableInApp(GMAIL_READ_ONLY)
-        assertFalse(fake.isEnabledInApp(GMAIL_READ_ONLY))
-        assertTrue(fake.isEnabledInApp(CALENDAR_EVENTS_READ_ONLY))
+        fake.disableInApp(GMAIL)
+        assertFalse(fake.isEnabledInApp(GMAIL))
+        assertTrue(fake.isEnabledInApp(CALENDAR))
         assertEquals(ScopePermission.GRANTED, fake.status(both).permissions[GMAIL_READ_ONLY])
+        assertEquals(AuthorizationFailure.FEATURE_DISABLED,
+            (fake.acquire(GMAIL, setOf(GMAIL_READ_ONLY)) as TokenSupplyResult.Unavailable).failure)
+        val calendar = fake.acquire(CALENDAR, setOf(CALENDAR_EVENTS_READ_ONLY))
+        assertTrue(calendar is TokenSupplyResult.Available)
+        (calendar as TokenSupplyResult.Available).lease.close()
         assertEquals(0, fake.revokeCount)
-        fake.enableInApp(GMAIL_READ_ONLY)
-        assertTrue(fake.isEnabledInApp(GMAIL_READ_ONLY))
+        fake.enableInApp(GMAIL)
+        assertTrue(fake.isEnabledInApp(GMAIL))
     }
 
     @Test fun googleGrantRevocationRemovesAllServiceScopes() = runBlocking {
@@ -108,6 +115,43 @@ class GoogleAuthorizationTest {
     @Test fun expiredLeaseCannotYieldToken() {
         val lease = AccessTokenLease("fixture-expired-token", both, 0)
         assertFalse(runCatching { lease.useToken { it } }.isSuccess)
+    }
+
+    @Test fun oldClosedLeaseCannotBeReusedAfterFreshLeaseIsIssued() = runBlocking {
+        val fake = FakeGoogleAuthorizationGateway(both)
+        val old = (fake.acquire(GMAIL, setOf(GMAIL_READ_ONLY)) as TokenSupplyResult.Available).lease
+        old.close()
+        val fresh = (fake.acquire(GMAIL, setOf(GMAIL_READ_ONLY)) as TokenSupplyResult.Available).lease
+        assertFalse(runCatching { old.useToken { it } }.isSuccess)
+        assertTrue(runCatching { fresh.useToken { it } }.isSuccess)
+        fresh.close()
+    }
+
+    @Test fun googleDenialBlocksTokenSupply() = runBlocking {
+        val fake = FakeGoogleAuthorizationGateway(both)
+        fake.denyNext(AuthorizationFailure.DENIED)
+        assertEquals(AuthorizationFailure.DENIED,
+            (fake.acquire(CALENDAR, setOf(CALENDAR_EVENTS_READ_ONLY)) as TokenSupplyResult.Unavailable).failure)
+    }
+
+    @Test fun consentRegistryRejectsOverlapAndStaleResultsAndAllowsCancellation() {
+        val registry = ConsentRequestRegistry()
+        val gmail = ConsentRequestRegistry.Request("gmail-1", setOf(GMAIL_READ_ONLY), emptySet(), null)
+        assertTrue(registry.register(gmail))
+        assertFalse(registry.register(ConsentRequestRegistry.Request("calendar-1", setOf(CALENDAR_EVENTS_READ_ONLY), emptySet(), null)))
+        assertEquals(null, registry.complete("calendar-1"))
+        assertEquals(null, registry.takeIntent("calendar-1"))
+        assertEquals(null, registry.takeIntent("gmail-1"))
+        assertEquals(null, registry.takeIntent("gmail-1"))
+        assertEquals(null, registry.complete("gmail-1"))
+        assertTrue(registry.cancel("gmail-1"))
+        assertEquals(null, registry.complete("gmail-1"))
+
+        val calendar = ConsentRequestRegistry.Request("calendar-2", setOf(CALENDAR_EVENTS_READ_ONLY), emptySet(), null)
+        assertTrue(registry.register(calendar))
+        assertTrue(registry.cancel("calendar-2"))
+        assertFalse(registry.cancel("calendar-2"))
+        assertEquals(null, registry.complete("calendar-2"))
     }
 
     @Test fun realOAuthWithoutOwnerConfigurationRemainsDisabled() = runBlocking {

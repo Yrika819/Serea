@@ -11,7 +11,7 @@ class FakeGoogleAuthorizationGateway(
     private var enabled = true
     private var expired = false
     private var accountChanged = false
-    private val disabledInApp = mutableSetOf<GoogleScope>()
+    private val disabledInApp = mutableSetOf<GoogleFeature>()
     var revokeCount: Int = 0
         private set
 
@@ -22,7 +22,10 @@ class FakeGoogleAuthorizationGateway(
     fun setExpired(value: Boolean) { expired = value }
     fun switchAccount() { accountChanged = true }
 
-    override suspend fun acquire(scopes: Set<GoogleScope>): TokenSupplyResult {
+    override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+        if (!enabled) return TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
+        if (feature in disabledInApp) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
+        if (scopes.isEmpty() || !feature.scopes.containsAll(scopes)) return TokenSupplyResult.Unavailable(AuthorizationFailure.UNAVAILABLE)
         when (val outcome = authorize(scopes)) {
             is AuthorizationOutcome.Authorized -> return TokenSupplyResult.Available(outcome.lease)
             is AuthorizationOutcome.ConsentRequired -> return TokenSupplyResult.UserActionRequired(outcome.missingScopes)
@@ -72,9 +75,9 @@ class FakeGoogleAuthorizationGateway(
     }
 
     /** Disabling one app feature leaves the shared Google grant alone. */
-    fun disableInApp(feature: GoogleScope) { disabledInApp += feature }
-    fun enableInApp(feature: GoogleScope) { disabledInApp -= feature }
-    fun isEnabledInApp(feature: GoogleScope): Boolean = feature !in disabledInApp
+    fun disableInApp(feature: GoogleFeature) { disabledInApp += feature }
+    fun enableInApp(feature: GoogleFeature) { disabledInApp -= feature }
+    fun isEnabledInApp(feature: GoogleFeature): Boolean = feature !in disabledInApp
 
     /** Models Google revokeAccess, which invalidates every grant held by this app. */
     fun revokeGoogleGrant() {

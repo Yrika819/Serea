@@ -516,8 +516,8 @@ jobs:
             echo "api26_and_api35_emulator_job=$EMULATOR_RESULT"
             echo "android_dependency_audit=$AUDIT_RESULT"
             echo "instrumentation_gate_output=$INSTRUMENTATION_RESULT"
-            echo 'api26_expected_junit_cases=34'
-            echo 'api35_expected_junit_cases=34'
+            echo 'api26_expected_junit_cases=44'
+            echo 'api35_expected_junit_cases=44'
             echo 'physical_pixel7a_reacceptance=NOT_RUN (Mac Local MCP v3 handoff required)'
             echo 'apk_source_sha256_and_certificate=search for provenance.txt in build/ and api-tests-and-process-death/'
             echo 'device_steps_and_pass_fail=search for pixel7a-reacceptance.md in api-tests-and-process-death/'

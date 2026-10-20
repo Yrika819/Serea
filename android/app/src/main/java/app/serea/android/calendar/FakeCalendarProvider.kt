@@ -69,7 +69,11 @@ class FakeCalendarProvider(
         val matching = ordered.filter { it.key.calendarId == calendarId && overlaps(it, range) }
         val start = page * pageSize
         val end = minOf(start + pageSize, matching.size)
-        val pageEvents = if (page in options.emptyPageIndexes) emptyList() else matching.subList(minOf(start, matching.size), end).toMutableList()
+        val pageEvents: MutableList<CalendarEvent> = if (page in options.emptyPageIndexes) {
+            mutableListOf()
+        } else {
+            matching.subList(minOf(start, matching.size), end).toMutableList()
+        }
         if (options.duplicateFirstEventAcrossPages && page > 0 && matching.isNotEmpty()) pageEvents.add(0, matching.first())
         return CalendarEventPage(pageEvents, if (end < matching.size) "page-${page + 1}" else null)
     }

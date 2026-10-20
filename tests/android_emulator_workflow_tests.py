@@ -34,6 +34,19 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             fake_bin = root / "bin"
             fake_bin.mkdir()
             android.mkdir()
+            evidence = android / "app/build/outputs/androidTest-results/api26"
+            evidence.mkdir(parents=True)
+            for name, contents in {
+                "device-api-error.txt": "old error\n",
+                "junit-verification.log": "old JUnit result\n",
+                "process-death.log": "old process death result\n",
+                "instrumentation-status.txt": "PASS\n",
+                "process-death-status.txt": "PASS\n",
+                "api-result.txt": "PASS\n",
+            }.items():
+                (evidence / name).write_text(contents, encoding="utf-8")
+            (evidence / "junit").mkdir()
+            (evidence / "junit/old.xml").write_text("old result", encoding="utf-8")
             adb = fake_bin / "adb"
             adb.write_text(
                 "#!/usr/bin/env bash\n"
@@ -55,13 +68,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 text=True,
                 check=False,
             )
-            evidence = android / "app/build/outputs/androidTest-results/api26"
             self.assertNotEqual(0, result.returncode)
             self.assertEqual("35\n", (evidence / "device-api-level.txt").read_text())
             self.assertEqual("NOT_RUN\n", (evidence / "instrumentation-status.txt").read_text())
             self.assertEqual("NOT_RUN\n", (evidence / "process-death-status.txt").read_text())
             self.assertEqual("FAIL\n", (evidence / "api-result.txt").read_text())
             self.assertIn("Expected API 26, observed '35'.", (evidence / "device-api-error.txt").read_text())
+            self.assertFalse((evidence / "junit-verification.log").exists())
+            self.assertFalse((evidence / "process-death.log").exists())
+            self.assertFalse((evidence / "junit").exists())
             self.assertIn("instrumentation=NOT_RUN process-death=NOT_RUN device-api=35", summary.read_text())
 
 

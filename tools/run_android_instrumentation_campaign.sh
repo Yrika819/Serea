@@ -14,6 +14,15 @@ root='app/build/outputs/androidTest-results'
 evidence="$root/api$api_level"
 mkdir -p "$evidence" || exit 1
 rm -rf "$root/connected" "$evidence/junit"
+rm -f \
+  "$evidence/device-api-error.txt" \
+  "$evidence/junit-verification.log" \
+  "$evidence/process-death.log" \
+  "$evidence/api-result.txt"
+printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt"
+printf 'NOT_RUN\n' > "$evidence/process-death-status.txt"
+printf 'NOT_RUN\n' > "$evidence/device-api-level.txt"
+printf 'NOT_RUN\n' > "$evidence/api-result.txt"
 
 adb devices -l
 sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"

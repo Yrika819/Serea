@@ -55,18 +55,20 @@ class TasksDatabaseTest {
         assertFalse(storedValue.contains("HIGH")); assertFalse(storedValue.contains("TODO"))
     }
 
-    @Test fun ciphertextTamperingAndCiphertextSwapAreRejected() = runBlocking {
-        val repository = repo(db)
-        val one = repository.create(TaskDraft("alpha")); val two = repository.create(TaskDraft("beta"))
-        val firstRow = db.taskDao().row(one.id)!!
-        val corrupted = firstRow.encryptedRecord.toCharArray()
-        corrupted[corrupted.lastIndex / 2] = if (corrupted[corrupted.lastIndex / 2] == 'A') 'B' else 'A'
-        val tampered = firstRow.copy(encryptedRecord = String(corrupted))
-        db.taskDao().compareAndSet(one.id, firstRow.revision, firstRow.revision + 1, tampered.encryptedRecord)
-        assertThrows(TaskStorageUnavailableException::class.java) { runBlocking { repository.get(one.id) } }
-        val secondRow = db.taskDao().row(two.id)!!
-        db.taskDao().compareAndSet(two.id, secondRow.revision, secondRow.revision + 1, firstRow.encryptedRecord)
-        assertThrows(TaskStorageUnavailableException::class.java) { runBlocking { repository.get(two.id) } }
+    @Test fun ciphertextTamperingAndCiphertextSwapAreRejected() {
+        runBlocking {
+            val repository = repo(db)
+            val one = repository.create(TaskDraft("alpha")); val two = repository.create(TaskDraft("beta"))
+            val firstRow = db.taskDao().row(one.id)!!
+            val corrupted = firstRow.encryptedRecord.toCharArray()
+            corrupted[corrupted.lastIndex / 2] = if (corrupted[corrupted.lastIndex / 2] == 'A') 'B' else 'A'
+            val tampered = firstRow.copy(encryptedRecord = String(corrupted))
+            db.taskDao().compareAndSet(one.id, firstRow.revision, firstRow.revision + 1, tampered.encryptedRecord)
+            assertThrows(TaskStorageUnavailableException::class.java) { runBlocking { repository.get(one.id) } }
+            val secondRow = db.taskDao().row(two.id)!!
+            db.taskDao().compareAndSet(two.id, secondRow.revision, secondRow.revision + 1, firstRow.encryptedRecord)
+            assertThrows(TaskStorageUnavailableException::class.java) { runBlocking { repository.get(two.id) } }
+        }
     }
 
     @Test fun databaseAndKeyAliasesAreSeparateAndKeyLossPreservesCiphertext() = runBlocking {

@@ -56,6 +56,11 @@ class TaskRepositoryTest {
     }
 
     @Test fun listsSortsFiltersAndLateUpdateCannotResurrectDeletedTask() = runBlocking {
+        val nextId = AtomicLong(1)
+        val repository = EncryptedTaskRepository(MemoryDao(), TestCipher(),
+            { Instant.ofEpochMilli(tick.getAndIncrement()) }) {
+            "00000000-0000-0000-0000-${nextId.getAndIncrement().toString().padStart(12, '0')}"
+        }
         val first = repository.create(TaskDraft("low", priority = TaskPriority.LOW, dueDate = LocalDate.parse("2020-01-01")))
         val high = repository.create(TaskDraft("high", priority = TaskPriority.HIGH, dueDate = LocalDate.parse("2020-01-01")))
         assertEquals(listOf(high.id, first.id), repository.list().map { it.id })

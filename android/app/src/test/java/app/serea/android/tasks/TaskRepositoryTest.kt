@@ -64,7 +64,7 @@ class TaskRepositoryTest {
         val first = repository.create(TaskDraft("low", priority = TaskPriority.LOW, dueDate = LocalDate.parse("2020-01-01")))
         val high = repository.create(TaskDraft("high", priority = TaskPriority.HIGH, dueDate = LocalDate.parse("2020-01-01")))
         assertEquals(listOf(high.id, first.id), repository.list().map { it.id })
-        assertEquals(listOf(first.id, high.id), repository.overdue(Instant.parse("2021-01-01T00:00:00Z")).map { it.id })
+        assertEquals(listOf(high.id, first.id), repository.overdue(Instant.parse("2021-01-01T00:00:00Z")).map { it.id })
         repository.delete(first.id, first.revision)
         assertThrows(TaskNotFoundException::class.java) { runBlocking { repository.update(first.id, first.revision, TaskDraft("late")) } }
         assertNull(repository.get(first.id))

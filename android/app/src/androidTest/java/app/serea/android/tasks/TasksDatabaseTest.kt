@@ -51,7 +51,9 @@ class TasksDatabaseTest {
         assertTrue(db.openHelper.readableDatabase.query("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'").count > 0)
         val raw = File(context.getDatabasePath(dbName).path).readBytes().toString(Charsets.ISO_8859_1)
         assertFalse(raw.contains("秘密 日本語")); assertFalse(raw.contains("private note"))
-        assertFalse(raw.contains("HIGH")); assertFalse(raw.contains("TODO"))
+        val storedValue = checkNotNull(db.taskDao().row(task.id)).encryptedRecord
+        assertFalse(storedValue.contains("秘密 日本語")); assertFalse(storedValue.contains("private note"))
+        assertFalse(storedValue.contains("HIGH")); assertFalse(storedValue.contains("TODO"))
     }
 
     @Test fun ciphertextTamperingAndCiphertextSwapAreRejected() = runBlocking {

@@ -177,6 +177,10 @@ internal class ChatViewModel(
     val state: StateFlow<ChatUiState> = mutableState.asStateFlow()
     private var activeJob: Job? = null
     private var activeMessageId: String? = null
+    private var selectionGeneration = 0L
+    private val persistedConversationIds = mutableSetOf<String>().apply {
+        if (historyRepository != null && initialConversation != null) add(initialConversation.id)
+    }
 
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
 
@@ -199,7 +203,16 @@ internal class ChatViewModel(
         }
         activeJob = viewModelScope.launch {
             try {
-                persist(userMessage, conversationId)
+                if (historyRepository != null) {
+                    if (conversationId in persistedConversationIds) {
+                        persist(userMessage, conversationId)
+                    } else {
+                        historyRepository.createWithFirstMessage(
+                            conversationId, conversationTitle(messageText), userMessage.toStoredMessage(conversationId),
+                        )
+                        persistedConversationIds += conversationId
+                    }
+                }
                 val context = ChatContextBuilder.build(snapshot.conversation.messages, messageText, conversationId)
                 val request = ModelChatRequest(conversationId, messageText, sendId = userMessage.id, context = context)
                 val reply = withTimeout(request.timeoutMillis) { modelChat.send(request) }
@@ -241,14 +254,10 @@ internal class ChatViewModel(
 
     fun newConversation() {
         cancelCurrent()
+        selectionGeneration += 1
         val id = UUID.randomUUID().toString()
         mutableState.update { it.copy(conversation = Conversation(id), input = "", isLoading = false, showingHistory = false,
-            isRestoring = historyRepository != null, errorMessage = null, statusMessage = null) }
-        viewModelScope.launch {
-            try { historyRepository?.create(id, "Conversation ${id.take(8)}") }
-            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not save this conversation securely.") } }
-            finally { mutableState.update { it.copy(isRestoring = false) } }
-        }
+            isRestoring = false, errorMessage = null, statusMessage = null) }
     }
 
     fun showHistory() {
@@ -260,10 +269,14 @@ internal class ChatViewModel(
     }
 
     fun openConversation(id: String) {
+        if (mutableState.value.isRestoring) return
         cancelCurrent()
+        val generation = ++selectionGeneration
         viewModelScope.launch {
             try {
                 val saved = historyRepository?.get(id) ?: return@launch
+                if (generation != selectionGeneration) return@launch
+                persistedConversationIds += saved.id
                 val messages = saved.messages.map { message ->
                     if (message.status == "PENDING") {
                         historyRepository?.updateStatus(message.id, saved.id, "OUTCOME_UNKNOWN")
@@ -283,6 +296,7 @@ internal class ChatViewModel(
         }
         val id = expectedId
         cancelCurrent()
+        selectionGeneration += 1
         mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
         viewModelScope.launch {
             try {
@@ -297,6 +311,7 @@ internal class ChatViewModel(
     fun deleteAllHistory() {
         if (mutableState.value.isRestoring) return
         cancelCurrent()
+        selectionGeneration += 1
         mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
         viewModelScope.launch {
             try {
@@ -314,9 +329,9 @@ internal class ChatViewModel(
                 val conversations = historyRepository!!.list()
                 val latest = conversations.firstOrNull()
                 if (latest == null) {
-                    val id = mutableState.value.conversation.id
-                    historyRepository.create(id, "Conversation ${id.take(8)}")
+                    // Keep the new empty conversation in memory until its first message is sent.
                 } else {
+                    persistedConversationIds += latest.id
                     val messages = latest.messages.map { message ->
                         if (message.status == "PENDING") historyRepository.updateStatus(message.id, latest.id, "OUTCOME_UNKNOWN")
                         message.copy(status = if (message.status == "PENDING") "OUTCOME_UNKNOWN" else message.status).toChatMessage()
@@ -378,6 +393,28 @@ private fun ChatMessage.toStoredMessage(conversationId: String) = StoredMessage(
     id, conversationId, role, text, classification, createdAt.toEpochMilli(), status, origin,
 )
 
+internal fun conversationTitle(firstMessage: String): String {
+    val clean = buildString(firstMessage.length) {
+        firstMessage.forEach { char -> append(if (char.isISOControl() || char == '\u2028' || char == '\u2029') ' ' else char) }
+    }.replace(Regex("\\s+"), " ").trim()
+    if (clean.isEmpty()) return "新しい会話"
+    val limit = 48
+    val end = clean.offsetByCodePoints(0, minOf(clean.codePointCount(0, clean.length), limit))
+    val truncated = end < clean.length
+    return clean.substring(0, end).trimEnd() + if (truncated) "…" else ""
+}
+
+internal fun conversationDisplayTitle(conversation: Conversation): String =
+    conversation.messages.firstOrNull { it.role == MessageRole.USER }?.text?.let(::conversationTitle)
+        ?: "新しい会話 · ${conversation.id.take(8)}"
+
+internal fun storedConversationDisplayTitle(conversation: StoredConversation): String {
+    val legacyTitle = Regex("^Conversation [0-9a-fA-F]{8}$").matches(conversation.title)
+    if (!legacyTitle) return conversation.title
+    return conversation.messages.firstOrNull { it.role == MessageRole.USER }?.text?.let(::conversationTitle)
+        ?: conversation.title
+}
+
 private fun <T> Knowledge<T>.displayValue(): String = when (this) {
     Knowledge.UNKNOWN -> "UNKNOWN"
     is Knowledge.Known<*> -> value.toString()
@@ -405,6 +442,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     var overflowExpanded by remember { mutableStateOf(false) }
     var deleteConfirmation by rememberSaveable { mutableStateOf("") }
     var deleteTargetId by rememberSaveable { mutableStateOf("") }
+    var deleteTargetTitle by rememberSaveable { mutableStateOf("") }
     var credentialReady by remember { mutableStateOf(credentials?.isConfigured() == true) }
     var dailyRequestsText by remember { mutableStateOf("20") }
     var dailyTokensText by remember { mutableStateOf("10000") }
@@ -588,7 +626,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                     DropdownMenu(expanded = overflowExpanded, onDismissRequest = { overflowExpanded = false }) {
                         HorizontalDivider()
                         DropdownMenuItem(text = { Text("この会話を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
-                            onClick = { overflowExpanded = false; deleteTargetId = state.conversation.id; deleteConfirmation = "current" })
+                            onClick = { overflowExpanded = false; deleteTargetId = state.conversation.id; deleteTargetTitle = conversationDisplayTitle(state.conversation); deleteConfirmation = "current" })
                         DropdownMenuItem(text = { Text("全履歴を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
                             onClick = { overflowExpanded = false; deleteTargetId = ""; deleteConfirmation = "all" })
                     }
@@ -655,12 +693,14 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(state.history, key = { it.id }) { conversation ->
                         TextButton(onClick = { chatViewModel.openConversation(conversation.id) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("${conversation.title} · ${conversation.messages.size}件")
+                            Text("${storedConversationDisplayTitle(conversation)} · ${conversation.messages.size}件")
                         }
                     }
                     if (state.history.isEmpty()) item { Text("履歴はありません。") }
                 }
             } else {
+                Text("会話: ${conversationDisplayTitle(state.conversation)}", style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (state.conversation.messages.isEmpty()) {
                     Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else "端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。",
                         style = MaterialTheme.typography.bodyLarge)
@@ -700,16 +740,17 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
             }
             if (deleteConfirmation == "current") {
                 AlertDialog(
-                    onDismissRequest = { deleteConfirmation = ""; deleteTargetId = "" },
+                    onDismissRequest = { deleteConfirmation = ""; deleteTargetId = ""; deleteTargetTitle = "" },
                     title = { Text("この会話を削除しますか？") },
-                    text = { Text("選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。") },
+                    text = { Text("対象: $deleteTargetTitle\n選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。") },
                     confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
                         val confirmedId = deleteTargetId
                         deleteConfirmation = ""
                         deleteTargetId = ""
+                        deleteTargetTitle = ""
                         chatViewModel.deleteCurrentConversation(confirmedId)
                     }) { Text("この会話を削除") } },
-                    dismissButton = { TextButton(onClick = { deleteConfirmation = ""; deleteTargetId = "" }) { Text("キャンセル") } },
+                    dismissButton = { TextButton(onClick = { deleteConfirmation = ""; deleteTargetId = ""; deleteTargetTitle = "" }) { Text("キャンセル") } },
                 )
             } else if (deleteConfirmation == "all") {
                 AlertDialog(

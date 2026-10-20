@@ -1,184 +1,179 @@
-# Android AND-M0-06A standalone local tasks
+# Android AND-M0-06A: standalone local tasks
 
-Date: 2026-10-20  
-Repository: `Yrika819/Serea`  
-Base: `codex/android-m0-04-integration-candidate-2026-10-20` at `94492d281fe0ee583744c932259c3525d5c34f86`  
-Work branch: `codex/android-m0-06a-local-tasks-2026-10-20`
+Date: 2026-10-20
+Repository: `Yrika819/Serea`
+Base: `codex/android-m0-04-integration-candidate-2026-10-20` at `94492d281fe0ee583744c932259c3525d5c34f86`
+Implementation validation SHA: `9e637c3f7ba228f1cf8c70babdb9205be76eb04a`
+Working branch: `codex/android-m0-06a-local-tasks-2026-10-20-recovery`
+Draft PR: [#56](https://github.com/Yrika819/Serea/pull/56), based on the requested integration-candidate branch.
 
-## Current result
+## Result
 
-Implementation is isolated under `app.serea.android.tasks`, with a private
-`TasksActivity` entry point and a two-line Chat screen launch affordance. The
-feature has no AI, cloud, PC Core, calendar, mail, or network dependency.
+The Android-only task feature is implemented under `app.serea.android.tasks`.
+Its UI opens in a private `TasksActivity`; `MainActivity` has only a small
+launch affordance. Tasks work without AI, a PC Core, cloud, Calendar, Gmail,
+credentials, or network access.
 
-Local Android build status is **BLOCKED** in this execution container: its
-configured Java home contains only a JRE (no `javac`), and the configured
-Android SDK directory is absent. The Gradle distribution was fetched through
-the configured proxy, but Gradle stopped before compilation because no Java
-compiler toolchain was installed. API 26/35 emulator tests and GitHub Actions
-have not yet run at this report revision. Their final results and workflow IDs
-must be filled in after CI on the final commit.
+The requested branch name was already used by PR #54, whose head contains a
+commit rejected by the repository's commit-identity check. To avoid rewriting
+or changing that existing PR, the validated implementation and PR were created
+on the recovery branch above. PR #54 remains open and unchanged. PR #50 and
+PR #51 also remain unchanged.
 
-## Existing app audit
+Local Android compilation was **NOT_RUN**: the execution container's configured
+Java home has no `javac`, and its configured Android SDK directory is absent.
+The GitHub Actions Android build and emulator checks passed on the validation
+SHA below. No CI requirement or test threshold was reduced.
 
-The base has `SereaHistoryDatabase` at `serea-history.db`, schema version 3,
-with history, usage, and reservation tables. Existing history AES-GCM uses
-`KeystoreAesGcm` and `serea-history-v1`; credentials use another alias. The
-manifest disables backup and references both legacy and Android 12 extraction
-backup exclusion rules. Compose Material 3 and lifecycle ViewModels are already
-configured; Room 2.7.0, coroutines, API 26 minimum, and API 35 target are in use.
+## Existing app audit and parallel boundaries
 
-The task implementation does not edit `EncryptedStorage.kt`, `UsageAccounting.kt`,
-the history database or its migrations, provider/router/security ports, or Rust.
-The existing 34 instrumentation cases remain required; the Android workflow
-now expects 44 cases per API (the existing 34 plus 6 database and 4 Compose
-cases).
+The base uses `SereaHistoryDatabase` in `serea-history.db`, schema version 3.
+Its history AES-GCM uses `KeystoreAesGcm` and the `serea-history-v1` alias.
+Compose Material 3, lifecycle ViewModels, Room, and coroutines were already
+available. The manifest disables backup and applies both legacy and Android 12
+data-extraction exclusions.
+
+This change adds a separate tasks database and does not modify
+`SereaHistoryDatabase`, history migrations, `EncryptedStorage.kt`,
+`UsageAccounting.kt`, the Usage schema/ledger, AdaptiveModelRouter, provider or
+security ports, Rust Core, or PC permissions. The debug process-death harness
+was extended only to exercise its separate test task database. The task launch
+entry point is the only chat-screen integration.
 
 ## Android Tasks architecture
 
-`TaskScreen` → `TaskViewModel` → `TaskRepository` → `TaskDao` →
-`TasksDatabase` / `TaskCipher`. The UI has no DAO reference. The domain models
-and proposal types have no Compose or provider dependency. `TasksActivity` is
-non-exported. Chat changes only add the Tasks button that launches it.
+`TaskScreen` → `TaskViewModel` → `TaskRepository` → `TaskDao` → `TasksDatabase`
+and `TaskCipher`. Compose has no DAO reference. Domain and proposal contracts
+have no Compose, model provider, or cloud dependency.
 
-Database: `serea-tasks.db`, Room schema version 1, independent from history.
-`tasks` stores only the UUID, monotonic revision, and encrypted record. A
-`proposal_receipts` table stores one-time proposal ID to generated task ID
-receipts; no title or body is stored there. Room uses no destructive migration.
-The schema JSON is exported by KSP to `android/app/schemas` and is expected to
-be committed from the successful build output.
+`SereaTasksDatabase` uses `serea-tasks.db`, Room schema version 1, and a
+committed exported schema at
+`android/app/schemas/app.serea.android.tasks/1.json`. `tasks` has a UUID primary
+key, monotonic revision, and encrypted record. `proposal_receipts` stores an
+opaque proposal ID and task ID for one-time approval. No destructive migration
+is enabled and no historical TasksDB migration is claimed.
 
-## Domain and validation
+## Domain, validation, and date semantics
 
-`Task` contains stable UUID, title, notes, open/completed, LOW/NORMAL/HIGH,
-created/updated instants, optional due date/time/timezone, completion instant,
-and revision. Titles and notes preserve Unicode, emoji, and newlines; limits
-are measured in Unicode code points (200 and 10,000). Empty/whitespace titles,
-malformed surrogate sequences, invalid UUIDs, invalid zones, invalid date/time
-combinations, impossible timestamps, and inconsistent completion timestamps
-are rejected.
+`Task` has a stable UUID, title, notes, open/completed state, LOW/NORMAL/HIGH
+priority, created/updated instants, optional due date/time/timezone,
+completion instant, and revision. Title and notes retain Unicode, emoji, and
+newlines; code-point limits are 200 and 10,000. Empty titles, malformed UTF-16,
+invalid IDs, invalid priorities/zones/dates, impossible timestamps, and
+completion-state mismatches are rejected.
 
-A date with no time is an all-day local deadline. A time requires a date and an
-IANA zone. The selected zone is captured by the editor for due dates; all-day
-deadlines remain `LocalDate`, while timed deadlines resolve to `Instant` in
-UTC. DST gaps and overlaps are rejected instead of silently shifted. Overdue
-checks accept an injected instant and zone. The Tasks Activity supplies one
-clock function to both repository and ViewModel; the UI evaluates overdue
-labels from the ViewModel clock snapshot. Timed tasks compare resolved
-instants, while all-day tasks compare local dates in the task zone (or explicit
-fallback zone).
+A date without a time is an all-day local deadline (`LocalDate`). A timed
+deadline requires a date and IANA timezone and resolves to a UTC `Instant`.
+DST gaps and overlaps are rejected. Overdue evaluation accepts an injected
+instant and zone. One clock is shared between the Activity, ViewModel, and
+repository; all-day deadlines compare local dates and timed deadlines compare
+instants.
 
 ## Encryption and storage policy
 
-All task payload fields are encrypted together: title, notes, status, priority,
-created/updated/completed timestamps, due date, due time, timezone. SQLite
-plaintext is limited to random task UUID, revision, and opaque proposal receipt
-IDs/task IDs. All-day/time metadata is encrypted as part of the payload.
+The complete payload is encrypted: title, notes, status, priority, timestamps,
+due date, due time, and timezone. SQLite plaintext is limited to random task
+UUIDs, revision counters, and opaque proposal receipt/task IDs. Task text and
+metadata are not logged or sent off-device.
 
-AES-GCM reuses the existing low-level `KeystoreAesGcm` implementation with a
-task-specific alias `serea-tasks-v1`. AAD binds the ciphertext to the task ID
-and record version. Nonces are generated by the existing AES-GCM cipher; tag
-verification is provided by GCM. The adapter checks that the alias still
-exists before decrypting, so key loss reports unavailable data and does not
-silently create a replacement key or delete rows. Invalid tags and moved
-ciphertexts raise a user-visible storage error. No task text is logged or sent
-off-device. Existing manifest backup exclusion also covers the task database.
-Keystore use does not establish full operating system integrity on rooted or
-otherwise compromised devices.
+The task adapter reuses low-level `KeystoreAesGcm` with the dedicated alias
+`serea-tasks-v1`; the history alias is not reused. AES-GCM creates nonces and
+checks authentication tags. Associated data binds ciphertext to task ID and
+record version, so tampering or moving a ciphertext between tasks is rejected.
+Missing keys and invalid ciphertext raise a visible storage error; the app
+does not create a replacement key, erase rows, or initialize an empty store.
+Manifest backup exclusion covers the TasksDB. Keystore use does not guarantee
+integrity on a rooted or otherwise compromised OS.
 
-## CRUD and concurrency
+## CRUD, concurrency, and proposals
 
-The repository supports create/get/list/update/complete/reopen/delete and
-incomplete/completed/due-today/overdue queries. List sorting decrypts payloads
-in memory: open tasks first, earlier dates first, higher priority first, then recent
-updates. Creates validate first and return after the Room write succeeds.
+Repository operations include create/get/list/update/complete/reopen/delete,
+incomplete/completed filters, due-today/overdue queries, and in-memory
+priority/date sorting. Revision-based SQL compare-and-set protects updates;
+deletion is conditional on the same ID and revision. Per-instance mutation
+serialization plus the database CAS handles multiple repository instances.
+Stale updates, update/delete races, and late updates after deletion cannot
+recreate a row. Completion and reopening with the current revision are
+idempotent.
 
-Updates use caller-held revisions and SQL compare-and-set (`WHERE id = ? AND
-revision = ?`). Delete is conditional on the same revision. A stale update,
-update-after-delete, and delete/update race cannot recreate a removed row.
-UUID is the primary key. Repeated completion/reopen with the current revision
-is idempotent. UI mutations are serialized and duplicate taps are ignored while
-a write is active. Delete confirmation freezes both task ID and revision; it
-cannot switch to another row while the dialog is open.
+The UI freezes the selected ID and revision in the delete confirmation. Saves,
+validation, storage failures, and revision conflicts have visible feedback.
 
-Proposal CREATE writes use a Room transaction that inserts the task and a
-unique proposal receipt. Reconfirming that proposal ID cannot create a second
-task, including after process recreation. UPDATE uses target ID plus revision;
-COMPLETE and DELETE remain explicit approved repository calls. Proposal
-creation/validation itself has no write side effect. There is no provider
-adapter or provider repository capability in this milestone.
+`TaskProposal` distinguishes CREATE, UPDATE, COMPLETE, and DELETE. Proposal
+creation/receipt alone has no repository side effect. Explicit user approval is
+required before the repository call; proposal CREATE uses a transaction and a
+unique receipt to prevent duplicate approval from creating a second task.
+Formal authorization policy, provider egress, and AI integration remain
+future work; no PC permit is reused.
 
 ## Compose UI and lifecycle
 
-The minimal Material 3 screen lists tasks, status, due date, priority, add/edit,
-completion toggle, and confirmed delete. The editor supports title, notes,
-priority, ISO date, 24-hour time, and timezone. Validation and storage/conflict
-failures have visible messages. Empty list and delete cancel/confirm states are
-covered by instrumentation tests. Existing SereaTheme and dark mode are reused.
+The minimal Material 3 screen displays tasks, status, due date, priority, and
+empty state. The editor supports title, notes, priority, ISO local date, 24-hour
+time, and timezone. It supports create/edit/complete/reopen/delete and delete
+confirmation. Existing `SereaTheme` and dark mode remain in use.
 
-The ViewModel reloads from the independent persistent Room database after
-construction and invalidates older asynchronous list reads when a mutation begins and does not treat an Activity recreation as persistence. A
-debug-only process-death receiver and harness seed a dedicated task database
-and Keystore alias, force-stop the target app, relaunch it, and check the
-completed task, open task, deleted task, payload, and DB files. The harness is
-absent from release source sets and does not clear app data. Actual emulator
-execution is pending CI.
+ViewModel state reloads from Room after Activity recreation. Mutations
+invalidate older list refreshes. The debug-only process-death receiver and
+harness use a dedicated task database and test alias, force-stop and relaunch
+the app, verify persisted/open/completed/deleted task state, and do not clear
+app data. This is separate from a rotation-only test.
 
-## Tests and CI integration
+## Tests and CI results
 
-Unit tests cover Unicode and newline preservation, title/description limits,
-invalid IDs/zone/time, DST gap/overlap rejection, UTC conversion, all-day
-semantics, injected overdue time, completion invariants, CRUD, revision
-conflict, list/filter/sort, late update after delete, duplicate IDs, concurrent
-same-revision update, proposal validation, no implicit write, mismatched target,
-and duplicate proposal approval.
+On implementation validation SHA `9e637c3f7ba228f1cf8c70babdb9205be76eb04a`:
 
-Instrumentation tests cover Room create/close/reopen, encrypted payload and
-absence of plaintext title/notes/metadata, tamper and cross-task ciphertext
-swap rejection, task key separation, unique proposal-receipt concurrency with rollback, missing-key error without row deletion,
-revision conflict, delete non-resurrection, completion/deletion persistence,
-and Compose empty/create/edit/complete/reopen/delete/validation flows.
-The debug process-death harness covers OS force-stop/relaunch on both API
-levels. Test database names and Keystore aliases are separate from production.
+- Android build, lint, dependency audit, integration, security, unit, and
+  documentation jobs: **PASS**, Android workflow run `39372623137` (attempt 2).
+- API 35 instrumentation: **44/44 PASS**, including 6 task DB and 4 task
+  Compose cases; OS force-stop/relaunch Process Death: **PASS**.
+- API 26 instrumentation: **44/44 PASS**; OS force-stop/relaunch Process Death:
+  **PASS**.
+- Android Emulator Required Gate: **PASS**.
+- Fast CI and Commit Identity: **PASS**, run `39372623160`.
+- Full CI (Linux stable, MSRV 1.85.0, macOS Intel/ARM64, Windows P7 gate):
+  **PASS**, run `39372623124`.
+- Native platform validation (stable and Rust 1.85.0 Linux/Windows/macOS
+  targets): **PASS**, run `39372623211`.
+- SQLite portability (Intel/ARM64 database creation and cross-opening):
+  **PASS**, run `39372623205`.
+- Git Hooks Windows compatibility (Ubuntu/macOS/Windows): **PASS**, run
+  `39372623170`.
 
-At this report revision, local compile/test is **NOT_RUN** after the toolchain
-failure; instrumentation, API 26, API 35, and OS process death are **NOT_RUN**.
-The configured Android workflow explicitly selects all three new unit test
-classes and requires the database/Compose instrumentation classes. Full/Fast
-CI and native, SQLite portability, Windows hooks, dependency audit, lint, and
-emulator gate results are **NOT_RUN** until the final commit workflow runs.
-No CI threshold was reduced.
+The first API 35 run had one 30-second timeout in the existing
+`ChatScreenTest.currentConversationDeletionRequiresConfirmationAndCancelKeepsMessages`
+while waiting for a Demo Chat response. The task tests in that run completed
+without failures. The failed jobs were rerun on the same SHA; API 35 then
+passed, API 26 passed, and the Android gate passed. The initial flake is
+recorded rather than hidden.
 
-## A/B integration boundaries
+Local Android Gradle compile/test: **NOT_RUN** due to the missing local JDK and
+SDK described above. GitHub Actions ran the Android build and all required
+tests. API 26/35 each retained the prior 34 cases and added 10 task cases; the
+instrumentation verifier threshold is 44. No test was disabled.
 
-- A: no edits to AdaptiveModelRouter, CloudProvider, SecurityPorts, or provider
-  behavior.
-- B: no edits to UsageAccounting, history Room entities/schema/migrations, or
-  usage accounting paths.
-- MainActivity: only an import-free two-line Tasks launch button; all screen
-  behavior is in TasksActivity and `tasks/`.
-- History DB and Usage DB are not modified; verify with the final branch diff.
-- The debug process-death receiver was extended only to validate a separate
-  task database under a test-only alias.
+## A/B compatibility and security review
 
-Future AI integration may create `TaskProposal` values and show a review UI.
-Formal permission policy, provider data egress, update conflict resolution UX,
-and proposal semantics remain a later design task. No PC-side permit is reused.
+- A/provider boundary: no router, provider, security-port, cloud, or egress
+  changes; no task text leaves the device.
+- B/usage boundary: no UsageAccounting, Usage Ledger, history DB, or migration
+  changes. History and Usage structures were verified unchanged against the
+  base diff.
+- `MainActivity`: one small task launch affordance; screen behavior remains in
+  `TasksActivity` and `tasks/`.
+- No external credentials or real provider requests were used. Workflow
+  provider tests use their existing mocks.
+- No task is automatically created, edited, completed, or deleted by AI.
 
-## Not implemented / owner decisions
+## Not implemented and follow-up
 
 - Notifications: **NOT_IMPLEMENTED**.
-- Recurrence, synchronization, Calendar/Gmail, live AI proposals, cloud access,
-  and PC Core integration: not implemented.
-- No formal ADR is proposed or adopted by this change.
-- Owner review is still required for final CI results and beta acceptance; no
-  merge, existing PR mutation, device data clearing, or signing-key setup is
-  part of this work.
+- Recurrence, sync, Calendar/Gmail, live AI proposal generation, cloud access,
+  PC Core integration, and detailed UI polish: not implemented.
+- No formal ADR was proposed or adopted.
+- Physical-device UI acceptance, owner beta acceptance, and future notification
+  design remain follow-up work. No merge, signing-key setup, or user-data
+  deletion was performed.
 
-## Beta follow-up
-
-Run the final-head Android build/unit/lint/dependency audit and API 26/35
-instrumentation plus OS force-stop harness. Confirm all repository-wide CI
-workflows and the Android Emulator Required Gate. Review the exported Room
-schema, run physical-device UI acceptance, and then consider an Owner-approved
-ADR and notification design. Draft PR URL and final SHA are added after push.
+The report-only follow-up commit updates this file with the implementation
+validation outcomes; it does not change the tested Android implementation.

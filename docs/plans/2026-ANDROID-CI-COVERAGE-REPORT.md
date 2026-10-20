@@ -39,8 +39,9 @@ Other lanes' Android source and Gradle changes will be picked up automatically b
 
 ## Publication
 
-- Draft PR: pending
+- Draft PR: https://github.com/Yrika819/Serea/pull/62
 - Head branch: `codex/android-q4-ci-coverage-2026-10-20`
-- Final head SHA / tree: pending
-- Base: `codex/android-m0-08-abcd-integration-2026-10-20` at pinned SHA `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf` before publication
-- Final-head CI run IDs and results: pending; report `NOT_RUN` until observed
+- Initial implementation commit: `09cfa214b34a7718cb7a8f1b95793e6db277962b`; tree `c86890041bd344821a821af7d956a9756cfb1536`.
+- Base: `codex/android-m0-08-abcd-integration-2026-10-20`, SHA `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf` at PR creation.
+- Runs associated with the initial implementation commit were queued when checked: Fast CI `39430976314`, Native platform validation `39430976081`, Android Calendar Read-only Tests `39430976095`, Git hooks Windows compatibility `39430976186`, Android `39430976113`, Cross-architecture SQLite portability `39430975712`, Full CI `39430975736`.
+- These run IDs belong to `09cfa214...`, not any later report-update commit. Treat them as pending until their conclusions are observed, and do not treat PR #58's earlier runs as results for this branch. The PR's latest head SHA and associated checks are authoritative after report updates.

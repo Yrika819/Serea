@@ -4,6 +4,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import app.serea.android.KeystoreAesGcm
+import app.serea.android.tasks.EncryptedTaskRepository
+import app.serea.android.tasks.TaskDraft
+import app.serea.android.tasks.TaskPriority
+import app.serea.android.tasks.TaskStatus
+import app.serea.android.tasks.TasksDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
@@ -22,11 +28,16 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                 runBlocking(Dispatchers.IO) {
                     when (intent.action) {
                         ACTION -> when (phase) {
-                            "prepare" -> prepare(context, repository, token)
-                            "verify" -> verify(context, repository, token)
+                            "prepare" -> { prepare(context, repository, token); prepareTasks(context) }
+                            "verify" -> { verify(context, repository, token); verifyTasks(context) }
                             "delete-all" -> repository.deleteAll()
-                            "verify-empty" -> check(listOf("process-death-complete", "process-death-pending", "process-death-deleted")
-                                .all { repository.get(it) == null })
+                            "verify-empty" -> {
+                                check(listOf("process-death-complete", "process-death-pending", "process-death-deleted")
+                                    .all { repository.get(it) == null })
+                                verifyTasks(context)
+                            }
+                            "task-prepare" -> prepareTasks(context)
+                            "task-verify" -> verifyTasks(context)
                             else -> error("Unknown harness phase")
                         }
                     }
@@ -87,7 +98,51 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         check(SereaHistoryDatabase.open(context).usageDao().reservation("process-death-usage-$token")?.state == "OUTCOME_UNKNOWN")
     }
 
+
+    private suspend fun prepareTasks(context: Context) {
+        val database = tasksDatabase(context)
+        val dao = database.taskDao()
+        val ids = listOf(TASK_COMPLETED_ID, TASK_TODO_ID, TASK_DELETED_ID)
+        ids.forEach { dao.deleteById(it) }
+        var next = 0
+        val repository = EncryptedTaskRepository(dao, ProcessDeathTaskCipher(context), { java.time.Instant.parse("2026-10-20T00:00:00Z") }) {
+            ids[next++]
+        }
+        val completed = repository.create(TaskDraft("Process recovery completed", "Persisted encrypted task", TaskPriority.HIGH))
+        repository.complete(completed.id, completed.revision)
+        repository.create(TaskDraft("Process recovery todo", "Must remain incomplete", TaskPriority.NORMAL))
+        val deleted = repository.create(TaskDraft("Deleted task"))
+        repository.delete(deleted.id, deleted.revision)
+        check(repository.get(TASK_COMPLETED_ID)?.status == TaskStatus.COMPLETED)
+    }
+
+    private suspend fun verifyTasks(context: Context) {
+        val repository = EncryptedTaskRepository(tasksDatabase(context).taskDao(), ProcessDeathTaskCipher(context))
+        val complete = checkNotNull(repository.get(TASK_COMPLETED_ID))
+        check(complete.status == TaskStatus.COMPLETED && complete.completedAt != null)
+        check(complete.title == "Process recovery completed" && complete.description == "Persisted encrypted task")
+        check(repository.get(TASK_TODO_ID)?.status == TaskStatus.TODO)
+        check(repository.get(TASK_DELETED_ID) == null)
+    }
+
+    private fun tasksDatabase(context: Context): TasksDatabase =
+        androidx.room.Room.databaseBuilder(context, TasksDatabase::class.java, "serea-tasks-process-death-harness.db").build()
+
+    private class ProcessDeathTaskCipher(context: Context) : app.serea.android.tasks.TaskCipher {
+        private val ALIAS = "serea-tasks-process-death-test-v1"
+        private val aes = KeystoreAesGcm(ALIAS)
+        override fun encrypt(id: String, plaintext: ByteArray) = aes.encrypt(plaintext, aad(id))
+        override fun decrypt(id: String, ciphertext: String): ByteArray {
+            check(java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(ALIAS))
+            return aes.decrypt(ciphertext, aad(id))
+        }
+        private fun aad(id: String) = "process-death-task:$id".toByteArray()
+    }
+
     companion object {
+        private const val TASK_COMPLETED_ID = "00000000-0000-0000-0000-000000000026"
+        private const val TASK_TODO_ID = "00000000-0000-0000-0000-000000000035"
+        private const val TASK_DELETED_ID = "00000000-0000-0000-0000-000000000099"
         const val ACTION = "app.serea.android.action.PROCESS_DEATH_HARNESS"
         private const val TAG = "SereaProcessDeath"
     }

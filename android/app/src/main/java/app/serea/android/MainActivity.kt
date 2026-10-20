@@ -457,6 +457,8 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
         Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Serea", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                 modifier = Modifier.semantics { heading() })
+            Button(onClick = { context.startActivity(android.content.Intent(context, app.serea.android.tasks.TasksActivity::class.java)) },
+                modifier = Modifier.testTag("open_tasks")) { Text("Tasks") }
             Text("DEMO · Mock chat · No cloud AI", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             Text("Cloud未利用 · Provider利用条件/送信対象未承認 · 資格情報: ${if (credentialReady) "端末内に保存済み" else "未設定"} · OfflineでもDemo会話は利用できます。",
                 style = MaterialTheme.typography.bodySmall)

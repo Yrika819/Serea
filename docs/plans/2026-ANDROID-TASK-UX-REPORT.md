@@ -6,7 +6,10 @@
 - Pinned start: `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`
 - PR #58 was verified OPEN and draft with head `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`; its head branch is the requested PR base.
 - The local base tracking ref matched that same SHA at implementation start.
-- Draft PR and CI run: pending publication; no run ID or result is available yet.
+- Draft PR: [#61](https://github.com/Yrika819/Serea/pull/61).
+- PR base SHA: `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`.
+- Implementation commit before this report update: `7652f381f50f9f4d5f71c385e0457363d31ed441`; tree: `12f6e1d77994b7917da63b763a5bfda3868a3e22`.
+- GitHub workflows for that implementation commit were queued when this report was updated. Android run ID: `39430936891`; other CI run IDs: Fast CI `39430936848`, Full CI `39430936978`, Git hooks Windows compatibility `39430936982`, Native platform validation `39430936906`, Cross-architecture SQLite portability `39430936846`. These runs do not cover the report update commit; final-head results are pending and must be checked on PR #61.
 - Pixel 7a manual acceptance: `NOT_RUN`.
 
 ## Implementation
@@ -27,10 +30,10 @@ No files outside this lane's Task UI, matching instrumentation test, and lane re
 
 ## Verification
 
-- `git diff --check`: PASS before report creation.
+- `git diff --cached --check`: PASS before the initial implementation commit; the report update is rechecked before its commit.
 - Android Gradle verification: `NOT_RUN`. Attempted from `android/` with `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`; the wrapper could not download Gradle 8.11.1 because the connection to `services.gradle.org` was refused. No installed `gradle` executable was available.
 - New instrumentation cases cover picker cancellation, unchanged all-day draft state, and Japanese rejection of time without a date. These cases have not executed locally.
-- CI: pending Draft PR creation. The Android workflow selects all Android paths; the new tests use a separate class so the existing `TaskScreenTest=4` verifier rule remains valid.
+- The Android workflow selects all Android paths; the new tests use a separate class so the existing `TaskScreenTest=4` verifier rule remains valid. Final-head CI status remains pending until the report update is pushed and its checks complete.
 - Live Google OAuth/API, AI provider, emulator/device, and Pixel 7a: `NOT_RUN`.
 
 ## Security and integration
@@ -38,4 +41,4 @@ No files outside this lane's Task UI, matching instrumentation test, and lane re
 - No live OAuth, Gmail/Calendar, AI provider, credential, token, or real user data was used.
 - No Manifest, Gradle dependency, Workflow, signing, database/migration, crypto, repository, or CAS changes were made.
 - The task editor remains UI-only and calls the existing `parseTaskDraft` and ViewModel save path after the field-specific checks. No storage contract or DST validation was weakened.
-- Final commit SHA, tree SHA, actual PR URL, and final-head CI results are recorded in the task completion response after publication.
+- The task completion response records the final report commit SHA/tree and its CI status after publication.

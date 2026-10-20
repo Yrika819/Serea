@@ -8,6 +8,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,77 +32,167 @@ data class TaskUiState(
 class TaskViewModel(
     private val repository: TaskRepository,
     private val clock: () -> Instant = Instant::now,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(TaskUiState(now = clock()))
     val state: StateFlow<TaskUiState> = mutableState.asStateFlow()
     private val listGeneration = AtomicLong(0)
+    private val editorGeneration = AtomicLong(0)
+    private val deleteGeneration = AtomicLong(0)
+    private val mutationGeneration = AtomicLong(0)
 
     init { refresh() }
 
     fun refresh() {
         val generation = listGeneration.incrementAndGet()
+        val editorSession = editorGeneration.get()
+        val deleteSession = deleteGeneration.get()
         mutableState.value = mutableState.value.copy(loading = true)
         viewModelScope.launch {
             try {
-                val latest = withContext(Dispatchers.IO) { repository.list() }
+                val latest = withContext(ioDispatcher) { repository.list() }
                 if (generation == listGeneration.get()) mutableState.value = mutableState.value.copy(tasks = latest, now = clock(), loading = false)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
-                if (generation == listGeneration.get()) showError(error.toTaskUserMessage())
+                if (generation == listGeneration.get()) {
+                    val sameUiSession = editorSession == editorGeneration.get() && deleteSession == deleteGeneration.get()
+                    mutableState.value = mutableState.value.copy(
+                        loading = false,
+                        error = if (sameUiSession) error.toTaskUserMessage() else mutableState.value.error,
+                    )
+                }
             }
         }
     }
-    fun addTask() { mutableState.value = mutableState.value.copy(editing = null, editorVisible = true, error = null) }
+    fun addTask() {
+        editorGeneration.incrementAndGet()
+        mutableState.value = mutableState.value.copy(editing = null, editorVisible = true, error = null)
+    }
     fun editTask(id: String) {
         val target = mutableState.value.tasks.firstOrNull { it.id == id } ?: return showError("Task no longer exists.")
+        editorGeneration.incrementAndGet()
         mutableState.value = mutableState.value.copy(editing = target, editorVisible = true, error = null)
     }
-    fun cancelEditor() { mutableState.value = mutableState.value.copy(editing = null, editorVisible = false) }
-    fun requestDelete(id: String) { mutableState.value.tasks.firstOrNull { it.id == id }?.let { mutableState.value = mutableState.value.copy(deleteTargetId = it.id, deleteTargetRevision = it.revision, error = null) } }
-    fun cancelDelete() { mutableState.value = mutableState.value.copy(deleteTargetId = null, deleteTargetRevision = null) }
+    fun cancelEditor() {
+        editorGeneration.incrementAndGet()
+        mutableState.value = mutableState.value.copy(editing = null, editorVisible = false, error = null)
+    }
+    fun requestDelete(id: String) {
+        val target = mutableState.value.tasks.firstOrNull { it.id == id } ?: return showError("Task no longer exists.")
+        deleteGeneration.incrementAndGet()
+        mutableState.value = mutableState.value.copy(deleteTargetId = target.id, deleteTargetRevision = target.revision, error = null)
+    }
+    fun cancelDelete() {
+        deleteGeneration.incrementAndGet()
+        mutableState.value = mutableState.value.copy(deleteTargetId = null, deleteTargetRevision = null)
+    }
 
     fun save(draft: TaskDraft) {
         val snapshot = mutableState.value
         val target = snapshot.editing
-        launchMutation {
-            if (target == null) repository.create(draft) else repository.update(target.id, target.revision, draft)
-            mutableState.value = mutableState.value.copy(editorVisible = false, editing = null, message = "Task saved.")
-            refreshInline()
-        }
+        val editorSession = editorGeneration.get()
+        launchMutation(
+            block = { if (target == null) repository.create(draft) else repository.update(target.id, target.revision, draft) },
+            onSuccess = {
+                if (editorSession == editorGeneration.get()) {
+                    mutableState.value = mutableState.value.copy(editorVisible = false, editing = null, error = null, message = "Task saved.")
+                }
+            },
+            onFailure = { message -> if (editorSession == editorGeneration.get()) showError(message, clearLoading = false) },
+            onRefreshFailure = {
+                if (editorSession == editorGeneration.get()) showError("Task operation completed, but the task list could not be refreshed.")
+            },
+            onCancelled = {
+                if (editorSession == editorGeneration.get()) showError("Task operation was interrupted. Refresh the task list to confirm its result.")
+            },
+        )
     }
 
     fun confirmDelete() {
         val id = mutableState.value.deleteTargetId ?: return
         val revision = mutableState.value.deleteTargetRevision ?: return showError("Task changed. Refresh the list before deleting.")
-        launchMutation {
-            repository.delete(id, revision)
-            mutableState.value = mutableState.value.copy(deleteTargetId = null, deleteTargetRevision = null, message = "Task deleted.")
-            refreshInline()
-        }
+        val deleteSession = deleteGeneration.get()
+        launchMutation(
+            block = { repository.delete(id, revision) },
+            onSuccess = {
+                if (deleteSession == deleteGeneration.get()) {
+                    mutableState.value = mutableState.value.copy(deleteTargetId = null, deleteTargetRevision = null, error = null, message = "Task deleted.")
+                }
+            },
+            onFailure = { message -> if (deleteSession == deleteGeneration.get()) showError(message, clearLoading = false) },
+            onRefreshFailure = {
+                if (deleteSession == deleteGeneration.get()) showError("Task operation completed, but the task list could not be refreshed.")
+            },
+            onCancelled = {
+                if (deleteSession == deleteGeneration.get()) showError("Task operation was interrupted. Refresh the task list to confirm its result.")
+            },
+        )
     }
 
     fun toggleComplete(id: String) {
         val target = mutableState.value.tasks.firstOrNull { it.id == id } ?: return showError("Task no longer exists.")
-        launchMutation {
-            if (target.status == TaskStatus.TODO) repository.complete(id, target.revision) else repository.reopen(id, target.revision)
-            refreshInline()
-        }
+        val editorSession = editorGeneration.get()
+        val deleteSession = deleteGeneration.get()
+        launchMutation(
+            block = { if (target.status == TaskStatus.TODO) repository.complete(id, target.revision) else repository.reopen(id, target.revision) },
+            onFailure = { message ->
+                if (editorSession == editorGeneration.get() && deleteSession == deleteGeneration.get()) {
+                    showError(message, clearLoading = false)
+                }
+            },
+            onRefreshFailure = {
+                if (editorSession == editorGeneration.get() && deleteSession == deleteGeneration.get()) {
+                    showError("Task operation completed, but the task list could not be refreshed.")
+                }
+            },
+            onCancelled = {
+                if (editorSession == editorGeneration.get() && deleteSession == deleteGeneration.get()) {
+                    showError("Task operation was interrupted. Refresh the task list to confirm its result.")
+                }
+            },
+        )
     }
 
     fun clearMessage() { mutableState.value = mutableState.value.copy(message = null, error = null) }
 
 
-    private fun launchMutation(block: suspend () -> Unit) {
+    private fun launchMutation(
+        block: suspend () -> Unit,
+        onSuccess: () -> Unit = {},
+        onFailure: (String) -> Unit = { showError(it) },
+        onRefreshFailure: () -> Unit = {},
+        onCancelled: () -> Unit = {},
+    ) {
         if (mutableState.value.saving) return
-        listGeneration.incrementAndGet() // invalidate any initial or user-triggered list read started before this mutation
+        val mutation = mutationGeneration.incrementAndGet()
+        var ownedListGeneration = listGeneration.incrementAndGet() // invalidate any list read started before this mutation
+        var wasCancelled = false
         mutableState.value = mutableState.value.copy(saving = true)
         viewModelScope.launch {
-            try { withContext(Dispatchers.IO) { block() }; mutableState.value = mutableState.value.copy(saving = false) }
-            catch (cancelled: CancellationException) { mutableState.value = mutableState.value.copy(saving = false); throw cancelled }
+            try {
+                withContext(ioDispatcher) { block() }
+                if (mutation == mutationGeneration.get()) {
+                    onSuccess()
+                    refreshAfterMutation(mutation, onRefreshFailure) { ownedListGeneration = it }
+                }
+            } catch (cancelled: CancellationException) {
+                wasCancelled = true
+                throw cancelled
+            }
             catch (error: Exception) {
-                mutableState.value = mutableState.value.copy(saving = false)
-                showError(error.toTaskUserMessage())
-                runCatching { withContext(Dispatchers.IO) { mutableState.value = mutableState.value.copy(tasks = repository.list(), loading = false) } }
+                if (mutation == mutationGeneration.get()) {
+                    onFailure(error.toTaskUserMessage())
+                    refreshAfterMutation(mutation, onFailure = {}, onGenerationStarted = { ownedListGeneration = it })
+                }
+            } finally {
+                if (mutation == mutationGeneration.get()) {
+                    val clearLoading = wasCancelled && listGeneration.get() == ownedListGeneration
+                    if (clearLoading) onCancelled()
+                    mutableState.value = mutableState.value.copy(
+                        saving = false,
+                        loading = if (clearLoading) false else mutableState.value.loading,
+                    )
+                }
             }
         }
     }
@@ -114,17 +205,36 @@ class TaskViewModel(
         else -> "Task operation failed. Please try again."
     }
 
-    private suspend fun refreshInline() {
+    private suspend fun refreshAfterMutation(
+        mutation: Long,
+        onFailure: () -> Unit,
+        onGenerationStarted: (Long) -> Unit = {},
+    ) {
         val generation = listGeneration.incrementAndGet()
-        val latest = repository.list()
-        if (generation == listGeneration.get()) mutableState.value = mutableState.value.copy(tasks = latest, now = clock(), loading = false)
+        onGenerationStarted(generation)
+        mutableState.value = mutableState.value.copy(loading = true)
+        try {
+            val latest = withContext(ioDispatcher) { repository.list() }
+            if (mutation == mutationGeneration.get() && generation == listGeneration.get()) {
+                mutableState.value = mutableState.value.copy(tasks = latest, now = clock(), loading = false)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            if (mutation == mutationGeneration.get() && generation == listGeneration.get()) {
+                mutableState.value = mutableState.value.copy(loading = false)
+                onFailure()
+            }
+        }
     }
-    private fun showError(message: String) { mutableState.value = mutableState.value.copy(error = message, loading = false) }
+    private fun showError(message: String, clearLoading: Boolean = true) {
+        mutableState.value = mutableState.value.copy(error = message, loading = if (clearLoading) false else mutableState.value.loading)
+    }
 
     companion object {
-        fun factory(repository: TaskRepository, clock: () -> Instant = Instant::now) = object : ViewModelProvider.Factory {
+        fun factory(repository: TaskRepository, clock: () -> Instant = Instant::now, ioDispatcher: CoroutineDispatcher = Dispatchers.IO) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = TaskViewModel(repository, clock) as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = TaskViewModel(repository, clock, ioDispatcher) as T
         }
     }
 }

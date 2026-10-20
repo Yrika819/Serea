@@ -196,7 +196,6 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
                     OutlinedTextField(zone, { zone = it; zoneError = null }, label = { Text("Timezone (IANA)") }, isError = zoneError != null, supportingText = { Text(zoneError ?: "例: Asia/Tokyo。現在の候補: ${ZoneId.systemDefault().id}", Modifier.semantics { if (zoneError != null) liveRegion = LiveRegionMode.Polite }) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_timezone"))
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("task_editor_error").semantics { liveRegion = LiveRegionMode.Polite }) }
-                listOfNotNull(titleError, dateError, timeError, zoneError).firstOrNull()?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("task_editor_error").semantics { liveRegion = LiveRegionMode.Polite }) }
             }
         },
         confirmButton = {

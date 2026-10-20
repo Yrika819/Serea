@@ -6,17 +6,22 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,44 +31,60 @@ class TaskScreenTest {
     @get:Rule val compose = createComposeRule()
 
     private class FakeRepository : TaskRepository {
+        private val lock = Any()
         private val tasks = linkedMapOf<String, Task>()
         private val proposalIds = mutableSetOf<String>()
         private var counter = 1
         private var tick = 1_800_000_000_000L
-        private fun now() = Instant.ofEpochMilli(tick++)
+        var updateEntered: CompletableDeferred<Unit>? = null
+        var allowUpdate: CompletableDeferred<Unit>? = null
+        private fun now() = synchronized(lock) { Instant.ofEpochMilli(tick++) }
+        fun seed(task: Task) { synchronized(lock) { tasks[task.id] = task } }
         override suspend fun create(draft: TaskDraft): Task {
             TaskValidation.validateDraft(draft)
-            val id = "00000000-0000-0000-0000-${(counter++).toString().padStart(12, '0')}"
-            return Task(id, draft.title, draft.description, TaskStatus.TODO, draft.priority, now(), now(), draft.dueDate, draft.dueTime, draft.timeZoneId).also { tasks[id] = it }
+            return synchronized(lock) {
+                val id = "00000000-0000-0000-0000-${(counter++).toString().padStart(12, '0')}"
+                Task(id, draft.title, draft.description, TaskStatus.TODO, draft.priority, now(), now(), draft.dueDate, draft.dueTime, draft.timeZoneId)
+                    .also { tasks[id] = it }
+            }
         }
         override suspend fun createFromApprovedProposal(draft: TaskDraft, proposalId: String): Task {
-            check(proposalIds.add(proposalId))
+            check(synchronized(lock) { proposalIds.add(proposalId) })
             return create(draft)
         }
-        override suspend fun get(id: String) = tasks[id]
-        override suspend fun list() = tasks.values.sortedBy { it.id }
+        override suspend fun get(id: String) = synchronized(lock) { tasks[id] }
+        override suspend fun list() = synchronized(lock) { tasks.values.sortedBy { it.id } }
         override suspend fun update(id: String, expectedRevision: Long, draft: TaskDraft): Task {
             TaskValidation.validateDraft(draft)
-            val old = tasks[id] ?: throw TaskNotFoundException()
-            if (old.revision != expectedRevision) throw TaskConflictException()
-            return old.copy(title = draft.title, description = draft.description, priority = draft.priority, dueDate = draft.dueDate,
-                dueTime = draft.dueTime, timeZoneId = draft.timeZoneId, updatedAt = now(), revision = old.revision + 1).also { tasks[id] = it }
+            updateEntered?.complete(Unit)
+            allowUpdate?.await()
+            return synchronized(lock) {
+                val old = tasks[id] ?: throw TaskNotFoundException()
+                if (old.revision != expectedRevision) throw TaskConflictException()
+                old.copy(title = draft.title, description = draft.description, priority = draft.priority, dueDate = draft.dueDate,
+                    dueTime = draft.dueTime, timeZoneId = draft.timeZoneId, updatedAt = now(), revision = old.revision + 1)
+                    .also { tasks[id] = it }
+            }
         }
         override suspend fun complete(id: String, expectedRevision: Long): Task = mutate(id, expectedRevision) { it.copy(status = TaskStatus.COMPLETED, completedAt = now(), updatedAt = now()) }
         override suspend fun reopen(id: String, expectedRevision: Long): Task = mutate(id, expectedRevision) { it.copy(status = TaskStatus.TODO, completedAt = null, updatedAt = now()) }
         override suspend fun delete(id: String, expectedRevision: Long) {
-            val old = tasks[id] ?: throw TaskNotFoundException()
-            if (old.revision != expectedRevision) throw TaskConflictException()
-            tasks.remove(id)
+            synchronized(lock) {
+                val old = tasks[id] ?: throw TaskNotFoundException()
+                if (old.revision != expectedRevision) throw TaskConflictException()
+                tasks.remove(id)
+            }
         }
         override suspend fun incomplete() = list().filter { it.status == TaskStatus.TODO }
         override suspend fun completed() = list().filter { it.status == TaskStatus.COMPLETED }
         override suspend fun dueToday(today: LocalDate) = incomplete().filter { it.dueDate == today }
         override suspend fun overdue(now: Instant, fallbackZone: java.time.ZoneId) = incomplete().filter { it.isOverdue(now) }
         private fun mutate(id: String, revision: Long, update: (Task) -> Task): Task {
-            val old = tasks[id] ?: throw TaskNotFoundException()
-            if (old.revision != revision) throw TaskConflictException()
-            return update(old).copy(revision = old.revision + 1).also { tasks[id] = it }
+            return synchronized(lock) {
+                val old = tasks[id] ?: throw TaskNotFoundException()
+                if (old.revision != revision) throw TaskConflictException()
+                update(old).copy(revision = old.revision + 1).also { tasks[id] = it }
+            }
         }
     }
 
@@ -101,11 +122,15 @@ class TaskScreenTest {
         show(repository)
         compose.onNodeWithTag("task_add").performClick()
         compose.onNodeWithTag("task_save").performClick()
-        compose.onNodeWithTag("task_editor_error").assertIsDisplayed()
+        val titleError = "タイトルを入力してください。"
+        compose.onNodeWithTag("task_editor_scroll").performScrollToNode(hasText(titleError))
+        compose.onNodeWithText(titleError).assertIsDisplayed()
         compose.onNodeWithTag("task_title").performTextInput("Valid title")
         compose.onNodeWithTag("task_due_date").performTextInput("not-a-date")
         compose.onNodeWithTag("task_save").performClick()
-        compose.onNodeWithTag("task_editor_error").assertIsDisplayed()
+        val dateError = "期限日は YYYY-MM-DD 形式で入力してください。"
+        compose.onNodeWithTag("task_editor_scroll").performScrollToNode(hasText(dateError))
+        compose.onNodeWithText(dateError).assertIsDisplayed()
         assertEquals(0, runBlocking { repository.list().size })
     }
 
@@ -137,6 +162,40 @@ class TaskScreenTest {
         compose.onNodeWithTag("task_delete_confirm").performClick()
         compose.waitUntil(5_000) { runBlocking { repository.get(ids.last()) == null } }
         assertEquals("First", runBlocking { repository.get(ids.first())?.title })
+    }
+
+    @Test fun lateSaveFromClosedEditorPreservesTheNewEditorsUnsavedDraft() {
+        val repository = FakeRepository().apply {
+            seed(Task("00000000-0000-0000-0000-000000000001", "Task A", "", TaskStatus.TODO,
+                TaskPriority.NORMAL, Instant.EPOCH, Instant.EPOCH))
+            seed(Task("00000000-0000-0000-0000-000000000002", "Task B", "", TaskStatus.TODO,
+                TaskPriority.NORMAL, Instant.EPOCH, Instant.EPOCH))
+            updateEntered = CompletableDeferred()
+            allowUpdate = CompletableDeferred()
+        }
+        show(repository)
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Task A").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("task_edit_00000000-0000-0000-0000-000000000001").performClick()
+        compose.onNodeWithTag("task_title").performTextClearance()
+        compose.onNodeWithTag("task_title").performTextInput("Task A saved")
+        compose.onNodeWithTag("task_save").performClick()
+        compose.waitUntil(5_000) { runBlocking { repository.updateEntered!!.isCompleted } }
+
+        compose.onNodeWithTag("task_cancel").performClick()
+        compose.onNodeWithTag("task_edit_00000000-0000-0000-0000-000000000002").performClick()
+        compose.onNodeWithTag("task_title").performTextClearance()
+        compose.onNodeWithTag("task_title").performTextInput("Task B unsaved draft")
+        repository.allowUpdate!!.complete(Unit)
+
+        compose.waitUntil(5_000) { runBlocking { repository.get("00000000-0000-0000-0000-000000000001")?.title == "Task A saved" } }
+        compose.waitUntil(5_000) {
+            val config = compose.onNodeWithTag("task_title").fetchSemanticsNode().config
+            SemanticsProperties.EditableText in config && config[SemanticsProperties.EditableText].text == "Task B unsaved draft"
+        }
+        val draftConfig = compose.onNodeWithTag("task_title").fetchSemanticsNode().config
+        assertTrue(SemanticsProperties.EditableText in draftConfig)
+        assertEquals("Task B unsaved draft", draftConfig[SemanticsProperties.EditableText].text)
+        assertEquals("Task B", runBlocking { repository.get("00000000-0000-0000-0000-000000000002")?.title })
     }
 
     private fun show(repository: FakeRepository) = compose.setContent {

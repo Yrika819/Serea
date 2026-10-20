@@ -6,8 +6,13 @@ import java.time.LocalDate
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -17,6 +22,7 @@ class TaskProposalTest {
         val rows = linkedMapOf<String, Task>()
         val receipts = mutableMapOf<String, String>()
         var writes = 0
+        var updateCalls = 0
         var updateEntered: CompletableDeferred<Unit>? = null
         var allowUpdate: CompletableDeferred<Unit>? = null
 
@@ -37,6 +43,7 @@ class TaskProposalTest {
         override suspend fun get(id: String) = synchronized(lock) { rows[id] }
         override suspend fun list() = synchronized(lock) { rows.values.toList() }
         override suspend fun update(id: String, expectedRevision: Long, draft: TaskDraft): Task {
+            synchronized(lock) { updateCalls++ }
             val (entered, allowed) = synchronized(lock) { updateEntered to allowUpdate }
             entered?.complete(Unit)
             allowed?.await()
@@ -239,6 +246,36 @@ class TaskProposalTest {
         repository.allowUpdate!!.complete(Unit)
         assertEquals(TaskProposalReviewResult.Approved(TaskProposalOperation.UPDATE), first.await())
         assertEquals(1, repository.writes)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun cancellationDuringSaveLeavesSessionTerminalAndCannotRetry() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repository = FakeTaskRepository().apply {
+            updateEntered = CompletableDeferred()
+            allowUpdate = CompletableDeferred()
+        }
+        val target = repository.seed()
+        val session = TaskProposalReviewSession.prepare(update(target, "Canceled write"), repository)
+        val approval = async(dispatcher) { session.approve(true, target.id) }
+
+        runCurrent()
+        repository.updateEntered!!.await()
+        assertEquals(TaskProposalReviewStatus.EXECUTING, session.status)
+        approval.cancelAndJoin()
+        runCurrent()
+
+        assertTrue(session.status in setOf(
+            TaskProposalReviewStatus.APPROVED, TaskProposalReviewStatus.DECLINED,
+            TaskProposalReviewStatus.EXPIRED, TaskProposalReviewStatus.CONFLICT,
+            TaskProposalReviewStatus.REJECTED,
+        ))
+        assertEquals(TaskProposalReviewStatus.REJECTED, session.status)
+        assertEquals(TaskProposalReviewStatus.REJECTED, session.statusState.value)
+        assertEquals(TaskProposalReviewResult.Rejected, session.approve(true, target.id))
+        assertEquals(1, repository.updateCalls)
+        assertEquals(0, repository.writes)
+        assertEquals("Old title", repository.get(target.id)?.title)
     }
 
     @Test fun approvalAndDeclineRaceCannotExecuteAfterDeclineWinsOrDuplicateAnApproval() = runBlocking {

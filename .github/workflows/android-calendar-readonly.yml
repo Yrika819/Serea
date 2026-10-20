@@ -2,7 +2,7 @@ name: Android Calendar Read-only Tests
 
 on:
   pull_request:
-    branches: [codex/android-m0-04-integration-candidate-2026-10-20]
+    branches: [codex/android-m0-04-integration-candidate-2026-10-20, codex/android-m0-08-abcd-integration-2026-10-20]
     paths:
       - 'android/app/src/main/java/app/serea/android/calendar/**'
       - 'android/app/src/test/java/app/serea/android/calendar/**'

@@ -134,6 +134,13 @@ interface HistoryDao {
         putConversation(conversation.copy(updatedAt = maxOf(conversation.updatedAt, row.createdAt)))
     }
     @Transaction
+    suspend fun createConversationWithFirstMessage(conversation: ConversationRow, message: MessageRow) {
+        require(conversation.id == message.conversationId)
+        require(message.role == MessageRole.USER.name && message.status == "PENDING")
+        putConversation(conversation)
+        putMessage(message)
+    }
+    @Transaction
     suspend fun completePendingTurn(userMessageId: String, assistant: MessageRow) {
         val conversation = conversation(assistant.conversationId)
             ?: throw IllegalArgumentException("Conversation does not exist")
@@ -217,6 +224,15 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
         dao.putMessageIfConversationIsActive(MessageRow(message.id, message.conversationId, message.role.name,
             encrypt(message.text, "message:${message.id}:body"), message.classification.name,
             message.createdAt, message.status, origin = message.origin.name))
+    }
+    suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String = "demo-local") {
+        require(message.conversationId == id && message.role == MessageRole.USER && message.status == "PENDING")
+        val timestamp = message.createdAt
+        dao.createConversationWithFirstMessage(
+            ConversationRow(id, encrypt(title, "conversation:$id:title"), timestamp, timestamp, modelId),
+            MessageRow(message.id, id, message.role.name, encrypt(message.text, "message:${message.id}:body"),
+                message.classification.name, timestamp, message.status, origin = message.origin.name),
+        )
     }
     suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
         require(assistant.role == MessageRole.ASSISTANT && assistant.status == "COMPLETED")

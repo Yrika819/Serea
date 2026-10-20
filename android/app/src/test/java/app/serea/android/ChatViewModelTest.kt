@@ -83,6 +83,30 @@ class ChatViewModelTest {
         assertEquals("conversation-current", context.single().conversationId)
     }
 
+    @Test fun conversationTitlesNormalizeWhitespaceAndKeepJapaneseEmojiAndWholeCodePoints() {
+        assertEquals("日本語の相談 😀", conversationTitle("  日本語の相談\n😀  "))
+        assertEquals("新しい会話", conversationTitle(" \n\t "))
+        val longTitle = conversationTitle("😀".repeat(60))
+        assertEquals(48, longTitle.codePointCount(0, longTitle.length))
+        assertTrue(longTitle.endsWith("…"))
+        assertEquals(48, conversationTitle("😀".repeat(48)).codePointCount(0, conversationTitle("😀".repeat(48)).length))
+        assertEquals("first second", conversationTitle("first\u0000\nsecond"))
+    }
+
+    @Test fun conversationTitlesAreDerivedPerConversationAndLegacyTitlesRemainReadable() {
+        val first = Conversation("conversation-a", listOf(ChatMessage(
+            "m1", MessageRole.USER, "Planning the garden", java.time.Instant.EPOCH,
+        )))
+        val second = Conversation("conversation-b", listOf(ChatMessage(
+            "m2", MessageRole.USER, "Reviewing the budget", java.time.Instant.EPOCH,
+        )))
+        assertEquals("Planning the garden", conversationDisplayTitle(first))
+        assertEquals("Reviewing the budget", conversationDisplayTitle(second))
+        assertEquals("Conversation 1234abcd", storedConversationDisplayTitle(
+            StoredConversation("legacy", "Conversation 1234abcd", 1, 1, "demo-local", emptyList()),
+        ))
+    }
+
     @Test fun softLimitValidationRejectsEmptyZeroAndNegativeValues() {
         assertTrue(runCatching { validateUsageLimits("", "2", "10", "20") }.isFailure)
         assertTrue(runCatching { validateUsageLimits("0", "2", "10", "20") }.isFailure)

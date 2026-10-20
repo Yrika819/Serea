@@ -31,6 +31,19 @@ class CalendarDomainParserTest {
         assertFalse(CalendarDateRange(Instant.parse("2026-10-20T15:00:00Z"), Instant.parse("2026-10-21T15:00:00Z")).overlaps(event))
     }
 
+    @Test fun allDayEventWithoutKnownCalendarTimezoneIsExplicitlyIncomplete() {
+        try {
+            GoogleCalendarEventParser.parseEvent(
+                """{"id":"day","start":{"date":"2026-10-20"},"end":{"date":"2026-10-21"}}""",
+                calendarId,
+                null,
+            )
+            fail("An unknown timezone must not be interpreted as UTC.")
+        } catch (failure: CalendarReadFailure) {
+            assertEquals(CalendarApiFailureCode.TIME_ZONE_UNKNOWN, failure.code)
+        }
+    }
+
     @Test fun cancelledEventMayOmitTimesAndUnknownStatusIsSafe() {
         val cancelled = GoogleCalendarEventParser.parseEvent("""{"id":"gone","status":"cancelled"}""", calendarId, tokyo)
         assertEquals(EventStatus.CANCELLED, cancelled.status)

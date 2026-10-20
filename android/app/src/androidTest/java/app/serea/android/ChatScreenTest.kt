@@ -195,7 +195,8 @@ class ChatScreenTest {
         openOverflow()
         compose.onNodeWithText("この会話を削除").performClick()
         compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
-        compose.onNodeWithText("選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。").assertIsDisplayed()
+        compose.onNodeWithText("対象: keep on cancel", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。", substring = true).assertIsDisplayed()
         compose.onNodeWithText("キャンセル").performClick()
         assertEquals(before.conversation.id, stateSnapshot().conversation.id)
         assertEquals(before.conversation.messages, stateSnapshot().conversation.messages)
@@ -210,6 +211,7 @@ class ChatScreenTest {
         openOverflow()
         compose.onNodeWithText("この会話を削除").performClick()
         compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        compose.onNodeWithText("対象: delete this conversation", substring = true).assertIsDisplayed()
         compose.onNodeWithText("この会話を削除").performClick()
         compose.waitUntil(30_000) { !stateSnapshot().isRestoring && stateSnapshot().conversation.id != deletedId }
         assertTrue(stateSnapshot().conversation.messages.isEmpty())

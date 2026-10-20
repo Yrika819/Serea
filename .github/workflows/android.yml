@@ -49,7 +49,7 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tests/android_instrumentation_results_tests.py) android_changed=true ;;
+              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tools/verify_android_unit_junit.py|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py) android_changed=true ;;
             esac
           done <<< "$changed"
           echo "android=$android_changed" >> "$GITHUB_OUTPUT"
@@ -134,17 +134,21 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: ViewModel state and cancellation tests
+      - name: Android unit tests
         working-directory: android
-        run: ./gradlew --no-daemon testDebugUnitTest --tests '*ChatViewModelTest' --tests '*AdaptiveModelRouterTest' --tests '*UsageLedgerCostTest' --tests '*TaskDomainTest' --tests '*TaskRepositoryTest' --tests '*TaskProposalTest'
+        run: ./gradlew --no-daemon testDebugUnitTest
       - name: Instrumentation JUnit verifier regression tests
         run: python3 -m unittest discover -s tests -p android_instrumentation_results_tests.py
+      - name: Android unit JUnit verifier regression tests
+        run: python3 -m unittest discover -s tests -p android_unit_junit_results_tests.py
+      - name: Verify full Android unit JUnit evidence
+        run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
       - name: Upload unit JUnit report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-unit-junit
-          if-no-files-found: warn
+          if-no-files-found: error
           path: android/app/build/test-results/testDebugUnitTest/*.xml
 
   android-integration:
@@ -163,12 +167,14 @@ jobs:
       - name: Mock HTTP provider contract tests
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest --tests '*OllamaCloudAdapterTest'
+      - name: Verify Mock HTTP provider JUnit evidence
+        run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
       - name: Upload provider JUnit report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-integration-junit
-          if-no-files-found: warn
+          if-no-files-found: error
           path: android/app/build/test-results/testDebugUnitTest/*.xml
 
   android-security:
@@ -187,12 +193,14 @@ jobs:
       - name: Egress allow and deny contract tests
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest --tests '*SecurityPortsTest'
+      - name: Verify Egress security JUnit evidence
+        run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
       - name: Upload security JUnit report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-security-junit
-          if-no-files-found: warn
+          if-no-files-found: error
           path: android/app/build/test-results/testDebugUnitTest/*.xml
 
   android-storage-emulator:
@@ -274,10 +282,21 @@ jobs:
             adb devices -l
             adb shell getprop ro.build.version.sdk
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 59 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=4 --require-class app.serea.android.UsageLedgerDatabaseTest=12 --require-class app.serea.android.tasks.TasksDatabaseTest=6 --require-class app.serea.android.tasks.TaskScreenTest=4 --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected \
+              --source-root app/src/androidTest/java --minimum 71 \
+              --require-class app.serea.android.EncryptedHistoryTest=16 \
+              --require-class app.serea.android.ChatScreenTest=16 \
+              --require-class app.serea.android.ChatHttpE2ETest=4 \
+              --require-class app.serea.android.UsageLedgerDatabaseTest=12 \
+              --require-class app.serea.android.tasks.TasksDatabaseTest=6 \
+              --require-class app.serea.android.tasks.TaskScreenTest=4 \
+              --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1 \
+              --require-class app.serea.android.ChatHistoryUxTest=4 \
+              --require-class app.serea.android.tasks.TaskDateTimePickerTest=6 \
+              --require-class app.serea.android.assistant.taskproposal.TaskProposalReviewScreenTest=2
             mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
             EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh > app/build/outputs/androidTest-results/process-death-api35.log 2>&1; result=$?; cat app/build/outputs/androidTest-results/process-death-api35.log; test "$result" -eq 0
-            echo '### Android API 35 Instrumentation: PASS (59 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            echo '### Android API 35 Instrumentation: PASS (71 required tests, exact source/JUnit class counts, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
         id: instrumentation
       - name: Install API 26 emulator image
@@ -300,9 +319,20 @@ jobs:
             adb devices -l
             test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 26
             ./gradlew --no-daemon connectedDebugAndroidTest
-            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 59 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=4 --require-class app.serea.android.UsageLedgerDatabaseTest=12 --require-class app.serea.android.tasks.TasksDatabaseTest=6 --require-class app.serea.android.tasks.TaskScreenTest=4 --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1
+            python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected \
+              --source-root app/src/androidTest/java --minimum 71 \
+              --require-class app.serea.android.EncryptedHistoryTest=16 \
+              --require-class app.serea.android.ChatScreenTest=16 \
+              --require-class app.serea.android.ChatHttpE2ETest=4 \
+              --require-class app.serea.android.UsageLedgerDatabaseTest=12 \
+              --require-class app.serea.android.tasks.TasksDatabaseTest=6 \
+              --require-class app.serea.android.tasks.TaskScreenTest=4 \
+              --require-class app.serea.android.ChatTasksDatabaseIntegrationTest=1 \
+              --require-class app.serea.android.ChatHistoryUxTest=4 \
+              --require-class app.serea.android.tasks.TaskDateTimePickerTest=6 \
+              --require-class app.serea.android.assistant.taskproposal.TaskProposalReviewScreenTest=2
             EXPECTED_API_LEVEL=26 bash ../tools/run_android_process_death_harness.sh > app/build/outputs/androidTest-results/process-death-api26.log 2>&1; result=$?; cat app/build/outputs/androidTest-results/process-death-api26.log; test "$result" -eq 0
-            echo '### Android API 26 Instrumentation: PASS (59 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            echo '### Android API 26 Instrumentation: PASS (71 required tests, exact source/JUnit class counts, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
       - name: Mark required emulator failure in summary
         if: failure()
         run: |
@@ -456,28 +486,24 @@ jobs:
           path: ${{ runner.temp }}/serea-candidate
       - name: Download API 26/35 emulator evidence
         if: always()
-        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: serea-android-emulator-evidence
           path: ${{ runner.temp }}/serea-emulator
       - name: Download Android Unit JUnit report
         if: always()
-        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: serea-android-unit-junit
           path: ${{ runner.temp }}/serea-unit
       - name: Download Android Integration JUnit report
         if: always()
-        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: serea-android-integration-junit
           path: ${{ runner.temp }}/serea-integration
       - name: Download Android Security JUnit report
         if: always()
-        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: serea-android-security-junit
@@ -516,8 +542,8 @@ jobs:
             echo "api26_and_api35_emulator_job=$EMULATOR_RESULT"
             echo "android_dependency_audit=$AUDIT_RESULT"
             echo "instrumentation_gate_output=$INSTRUMENTATION_RESULT"
-            echo 'api26_expected_junit_cases=59 (sum of seven exact required class counts)'
-            echo 'api35_expected_junit_cases=59 (sum of seven exact required class counts)'
+            echo 'api26_expected_junit_cases=71 (sum of ten exact required class counts, verified against source and JUnit XML)'
+            echo 'api35_expected_junit_cases=71 (sum of ten exact required class counts, verified against source and JUnit XML)'
             echo 'physical_pixel7a_reacceptance=NOT_RUN (Mac Local MCP v3 handoff required)'
             echo 'apk_source_sha256_and_certificate=search for provenance.txt in build/ and api-tests-and-process-death/'
             echo 'device_steps_and_pass_fail=search for pixel7a-reacceptance.md in api-tests-and-process-death/'
@@ -588,4 +614,4 @@ jobs:
             echo 'FAIL: changed documentation validation did not pass.'
             exit 1
           fi
-          echo 'PASS: emulator booted, connectedDebugAndroidTest completed, and JUnit evidence passed the minimum test count.'
+          echo 'PASS: API 26 and API 35 emulator instrumentation completed, source counts matched JUnit XML for all required classes, and both Process Death checks passed.'

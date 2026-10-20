@@ -434,10 +434,14 @@ private fun ModelUsageAttribution.toLedger(requestId: String, createdAt: Long, d
 )
 
 private fun ModelUsageLedgerRow.toCost(input: Long, output: Long): UsageCostResult {
-    if (inputPricePerMillion == null || outputPricePerMillion == null || currency == null || pricingSource.isNullOrBlank() || pricingVerifiedAt.isNullOrBlank()) {
-        return UsageCostResult(CostEstimationStatus.UNKNOWN, null)
-    }
-    val snapshot = runCatching { VerifiedPriceSnapshot(inputPricePerMillion, outputPricePerMillion, currency, pricingSource, pricingVerifiedAt, pricingEffectiveAt, pricingRevision) }.getOrNull()
+    val inputPrice = inputPricePerMillion ?: return UsageCostResult(CostEstimationStatus.UNKNOWN, null)
+    val outputPrice = outputPricePerMillion ?: return UsageCostResult(CostEstimationStatus.UNKNOWN, null)
+    val currencyCode = currency ?: return UsageCostResult(CostEstimationStatus.UNKNOWN, null)
+    val source = pricingSource?.takeIf(String::isNotBlank) ?: return UsageCostResult(CostEstimationStatus.UNKNOWN, null)
+    val verifiedAt = pricingVerifiedAt?.takeIf(String::isNotBlank) ?: return UsageCostResult(CostEstimationStatus.UNKNOWN, null)
+    val snapshot = runCatching {
+        VerifiedPriceSnapshot(inputPrice, outputPrice, currencyCode, source, verifiedAt, pricingEffectiveAt, pricingRevision)
+    }.getOrNull()
     return estimateUsageCost(snapshot, input, output)
 }
 

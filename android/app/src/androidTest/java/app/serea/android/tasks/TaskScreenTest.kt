@@ -7,7 +7,6 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.assertIsOn
@@ -130,8 +129,7 @@ class TaskScreenTest {
         compose.onNodeWithTag("task_due_date").performTextInput("not-a-date")
         compose.onNodeWithTag("task_save").performClick()
         val dateError = "期限日は YYYY-MM-DD 形式で入力してください。"
-        compose.onNodeWithTag("task_editor_scroll").performScrollToNode(hasTestTag("task_editor_error"))
-        compose.onNodeWithTag("task_editor_error").assertIsDisplayed()
+        compose.onNodeWithTag("task_editor_scroll").performScrollToNode(hasText(dateError))
         compose.onNodeWithText(dateError).assertIsDisplayed()
         assertEquals(0, runBlocking { repository.list().size })
     }

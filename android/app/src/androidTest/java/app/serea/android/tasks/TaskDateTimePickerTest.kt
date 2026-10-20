@@ -46,6 +46,16 @@ class TaskDateTimePickerTest {
         }
     }
 
+    private fun selectedLocalizedPickerNumber(number: Int, locale: Locale): SemanticsMatcher {
+        val digits = NumberFormat.getIntegerInstance(locale).format(number)
+        val exactNumber = Regex("(?<!\\p{N})${Regex.escape(digits)}(?!\\p{N})")
+        return SemanticsMatcher("Selected Material time picker dial choice for $number") { node ->
+            SemanticsProperties.ContentDescription in node.config &&
+                node.config[SemanticsProperties.ContentDescription].any { description -> exactNumber.containsMatchIn(description) } &&
+                SemanticsProperties.Selected in node.config && node.config[SemanticsProperties.Selected]
+        }
+    }
+
     private class RecordingRepository : TaskRepository {
         data class UpdateCall(val id: String, val expectedRevision: Long, val draft: TaskDraft)
         val createDrafts = mutableListOf<TaskDraft>()
@@ -128,10 +138,11 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_time_picker_open").performClick()
         val pickerLocale = InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.locales[0]
         compose.onNode(localizedPickerNumber(9, pickerLocale)).performClick()
+        compose.onNode(selectedLocalizedPickerNumber(9, pickerLocale)).assertIsSelected()
         val minute = compose.onNode(localizedPickerNumber(35, pickerLocale))
         compose.waitUntil(5_000) { compose.onAllNodes(localizedPickerNumber(35, pickerLocale)).fetchSemanticsNodes().isNotEmpty() }
         minute.performClick()
-        minute.assertIsSelected()
+        compose.onNode(selectedLocalizedPickerNumber(35, pickerLocale)).assertIsSelected()
         compose.onNodeWithTag("task_time_picker_confirm").performClick()
         compose.onNodeWithTag("task_due_time").assertIsDisplayed()
         compose.onNodeWithTag("task_save").performClick()
@@ -234,8 +245,9 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_due_time").performTextInput("09:30")
         compose.onNodeWithTag("task_save").performClick()
         val errorText = "時刻を設定するには期限日が必要です。"
-        compose.onNodeWithTag("task_editor_scroll").performScrollToNode(hasTestTag("task_editor_error"))
-        compose.onNodeWithTag("task_editor_error").assertIsDisplayed()
+        compose.onNodeWithTag("task_editor_scroll").performScrollToNode(SemanticsMatcher("time-needs-date inline error") { node ->
+            node.config.getOrNull(SemanticsProperties.Text)?.any { it.text == errorText } == true
+        })
         compose.onNodeWithText(errorText).assertIsDisplayed()
         assertTrue(repository.createDrafts.isEmpty())
     }

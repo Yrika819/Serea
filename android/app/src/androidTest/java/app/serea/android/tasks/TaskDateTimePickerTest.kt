@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -29,9 +31,12 @@ class TaskDateTimePickerTest {
     @get:Rule val compose = createComposeRule()
 
     private class RecordingRepository : TaskRepository {
+        data class UpdateCall(val id: String, val expectedRevision: Long, val draft: TaskDraft)
         val createDrafts = mutableListOf<TaskDraft>()
-        val updateDrafts = mutableListOf<TaskDraft>()
+        val updateCalls = mutableListOf<UpdateCall>()
         private val tasks = mutableListOf<Task>()
+
+        fun seed(task: Task) { tasks += task }
 
         override suspend fun create(draft: TaskDraft): Task {
             createDrafts += draft
@@ -46,7 +51,7 @@ class TaskDateTimePickerTest {
         override suspend fun get(id: String): Task? = tasks.firstOrNull { it.id == id }
         override suspend fun list(): List<Task> = tasks.toList()
         override suspend fun update(id: String, expectedRevision: Long, draft: TaskDraft): Task {
-            updateDrafts += draft
+            updateCalls += UpdateCall(id, expectedRevision, draft)
             val old = tasks.first { it.id == id }
             return old.copy(title = draft.title, description = draft.description, priority = draft.priority,
                 dueDate = draft.dueDate, dueTime = draft.dueTime, timeZoneId = draft.timeZoneId,
@@ -70,6 +75,7 @@ class TaskDateTimePickerTest {
         show(repository)
         compose.onNodeWithTag("task_add").performClick()
         compose.onNodeWithTag("task_title").performTextInput("All day from picker")
+        compose.onNodeWithTag("task_due_date").performTextInput("2026-07-04")
         compose.onNodeWithTag("task_editor_scroll").assert(hasScrollAction())
         compose.onNodeWithTag("task_date_picker_open").performClick()
         compose.onNodeWithText("15", useUnmergedTree = true).performClick()
@@ -80,9 +86,9 @@ class TaskDateTimePickerTest {
         compose.waitUntil(5_000) { repository.createDrafts.size == 1 }
         assertEquals(1, repository.createDrafts.size)
         val saved = repository.createDrafts.single()
-        assertEquals(15, saved.dueDate?.dayOfMonth ?: -1)
+        assertEquals(LocalDate.parse("2026-07-15"), saved.dueDate)
         assertNull(saved.dueTime)
-        assertTrue(repository.updateDrafts.isEmpty())
+        assertTrue(repository.updateCalls.isEmpty())
     }
 
     @Test fun timePickerConfirmSavesTwentyFourHourTimeWithIanaZone() {
@@ -94,17 +100,60 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_timezone").performTextClearance()
         compose.onNodeWithTag("task_timezone").performTextInput("Asia/Tokyo")
         compose.onNodeWithTag("task_time_picker_open").performClick()
+        compose.onNodeWithContentDescription("9 hours").performClick()
+        compose.onNodeWithContentDescription("35 minutes").performClick()
         compose.onNodeWithTag("task_time_picker_confirm").performClick()
         compose.onNodeWithTag("task_due_time").assertIsDisplayed()
         compose.onNodeWithTag("task_save").performClick()
         compose.waitUntil(5_000) { repository.createDrafts.size == 1 }
         val saved = repository.createDrafts.single()
         assertEquals(LocalDate.parse("2026-10-20"), saved.dueDate)
-        assertNotNull(saved.dueTime)
-        assertTrue(saved.dueTime.toString().matches(Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]")))
+        assertEquals(LocalTime.of(9, 35), saved.dueTime)
         assertEquals("Asia/Tokyo", saved.timeZoneId)
         assertEquals(1, repository.createDrafts.size)
-        assertTrue(repository.updateDrafts.isEmpty())
+        assertTrue(repository.updateCalls.isEmpty())
+    }
+
+    @Test fun editingExistingTaskUpdatesExactDraftAndExpectedRevision() {
+        val repository = RecordingRepository()
+        val existing = Task(
+            id = "00000000-0000-0000-0000-000000000042", title = "Before edit",
+            description = "old notes", status = TaskStatus.TODO, priority = TaskPriority.NORMAL,
+            createdAt = Instant.parse("2026-01-01T00:00:00Z"), updatedAt = Instant.parse("2026-01-02T00:00:00Z"),
+            dueDate = LocalDate.parse("2026-10-20"), dueTime = LocalTime.of(9, 0),
+            timeZoneId = "Asia/Tokyo", revision = 7,
+        )
+        repository.seed(existing)
+        show(repository)
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Before edit").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("task_edit_${existing.id}").performClick()
+        compose.onNodeWithTag("task_title").performTextClearance()
+        compose.onNodeWithTag("task_title").performTextInput("After edit")
+        compose.onNodeWithTag("task_description").performTextClearance()
+        compose.onNodeWithTag("task_description").performTextInput("new notes")
+        compose.onNodeWithTag("task_due_date").performTextClearance()
+        compose.onNodeWithTag("task_due_date").performTextInput("2026-12-31")
+        compose.onNodeWithTag("task_due_time").performTextClearance()
+        compose.onNodeWithTag("task_due_time").performTextInput("18:45")
+        compose.onNodeWithTag("task_timezone").performTextClearance()
+        compose.onNodeWithTag("task_timezone").performTextInput("America/New_York")
+        compose.onNodeWithTag("task_save").performClick()
+        compose.waitUntil(5_000) { repository.updateCalls.size == 1 }
+
+        val call = repository.updateCalls.single()
+        assertEquals(existing.id, call.id)
+        assertEquals(7L, call.expectedRevision)
+        assertEquals(
+            TaskDraft(
+                title = "After edit", description = "new notes", priority = TaskPriority.NORMAL,
+                dueDate = LocalDate.parse("2026-12-31"), dueTime = LocalTime.of(18, 45),
+                timeZoneId = "America/New_York",
+            ),
+            call.draft,
+        )
+        assertTrue(repository.createDrafts.isEmpty())
     }
 
     @Test fun invalidIanaZoneIsReportedAndDoesNotCallRepository() {
@@ -118,7 +167,7 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_save").performClick()
         compose.onAllNodesWithText("有効な IANA タイムゾーンを入力してください（例: Asia/Tokyo）。").fetchSemanticsNodes().also { assertTrue(it.isNotEmpty()) }
         assertTrue(repository.createDrafts.isEmpty())
-        assertTrue(repository.updateDrafts.isEmpty())
+        assertTrue(repository.updateCalls.isEmpty())
     }
 
     @Test fun daylightSavingGapAndOverlapAreReportedWithoutRepositoryCalls() {
@@ -140,7 +189,7 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_save").performClick()
         assertTrue(compose.onAllNodesWithText("この時刻は夏時間の切り替えで重複します。別の時刻を選んでください。").fetchSemanticsNodes().isNotEmpty())
         assertTrue(repository.createDrafts.isEmpty())
-        assertTrue(repository.updateDrafts.isEmpty())
+        assertTrue(repository.updateCalls.isEmpty())
     }
 
     @Test fun timeWithoutDateShowsJapaneseDateErrorAndDoesNotSave() {

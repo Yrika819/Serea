@@ -33,7 +33,8 @@ No files outside this lane's Task UI, matching instrumentation test, and lane re
 
 - `git diff --check`: PASS for the audit changes.
 - Android Gradle verification: `NOT_RUN`. Attempted from `android/` with `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug`; the wrapper could not download Gradle 8.11.1 because the connection to `services.gradle.org` was refused. No installed `gradle` executable was available.
-- Five new instrumentation cases cover picker confirmation followed by save, all-day date-only save, bounded editor scrolling, invalid IANA zone rejection, DST gap and overlap rejection, and time-without-date rejection. The recording Fake Repository verifies create/update call counts and saved drafts; these cases have not executed locally.
+- Six instrumentation cases cover a fixed DatePicker selection (`2026-07-15`) and date-only save, a TimePicker dial selection (`09:35`) and exact saved-time equality, existing-task update with exact ID/revision/draft assertions, invalid IANA zone rejection, DST gap/overlap rejection, and time-without-date rejection. The recording Fake Repository verifies create/update calls and captured drafts. The date picker case also exercises scrolling to the lower editor fields.
+- API 26 and API 35 instrumentation execution status for the final HEAD is recorded in the completion response from the Android workflow artifacts.
 - The Android workflow selects all Android paths. The new tests remain in `TaskDateTimePickerTest`, preserving the existing exact four-test `TaskScreenTest` verifier rule.
 - Live Google OAuth/API, AI provider, emulator/device, and Pixel 7a: `NOT_RUN`.
 

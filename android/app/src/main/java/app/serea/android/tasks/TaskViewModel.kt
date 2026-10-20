@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 
 data class TaskUiState(
     val tasks: List<Task> = emptyList(),
+    val now: Instant = Instant.now(),
     val loading: Boolean = true,
     val saving: Boolean = false,
     val editing: Task? = null,
@@ -27,8 +28,11 @@ data class TaskUiState(
     val message: String? = null,
 )
 
-class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
-    private val mutableState = MutableStateFlow(TaskUiState())
+class TaskViewModel(
+    private val repository: TaskRepository,
+    private val clock: () -> Instant = Instant::now,
+) : ViewModel() {
+    private val mutableState = MutableStateFlow(TaskUiState(now = clock()))
     val state: StateFlow<TaskUiState> = mutableState.asStateFlow()
     private val listGeneration = AtomicLong(0)
 
@@ -40,7 +44,7 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
         viewModelScope.launch {
             try {
                 val latest = withContext(Dispatchers.IO) { repository.list() }
-                if (generation == listGeneration.get()) mutableState.value = mutableState.value.copy(tasks = latest, loading = false)
+                if (generation == listGeneration.get()) mutableState.value = mutableState.value.copy(tasks = latest, now = clock(), loading = false)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 if (generation == listGeneration.get()) showError(error.toTaskUserMessage())
@@ -113,14 +117,14 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
     private suspend fun refreshInline() {
         val generation = listGeneration.incrementAndGet()
         val latest = repository.list()
-        if (generation == listGeneration.get()) mutableState.value = mutableState.value.copy(tasks = latest, loading = false)
+        if (generation == listGeneration.get()) mutableState.value = mutableState.value.copy(tasks = latest, now = clock(), loading = false)
     }
     private fun showError(message: String) { mutableState.value = mutableState.value.copy(error = message, loading = false) }
 
     companion object {
-        fun factory(repository: TaskRepository) = object : ViewModelProvider.Factory {
+        fun factory(repository: TaskRepository, clock: () -> Instant = Instant::now) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = TaskViewModel(repository) as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = TaskViewModel(repository, clock) as T
         }
     }
 }

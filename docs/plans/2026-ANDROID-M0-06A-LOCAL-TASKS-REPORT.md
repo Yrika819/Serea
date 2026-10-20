@@ -62,7 +62,9 @@ A date with no time is an all-day local deadline. A time requires a date and an
 IANA zone. The selected zone is captured by the editor for due dates; all-day
 deadlines remain `LocalDate`, while timed deadlines resolve to `Instant` in
 UTC. DST gaps and overlaps are rejected instead of silently shifted. Overdue
-checks accept an injected instant and zone; timed tasks compare resolved
+checks accept an injected instant and zone. The Tasks Activity supplies one
+clock function to both repository and ViewModel; the UI evaluates overdue
+labels from the ViewModel clock snapshot. Timed tasks compare resolved
 instants, while all-day tasks compare local dates in the task zone (or explicit
 fallback zone).
 

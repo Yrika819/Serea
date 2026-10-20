@@ -59,7 +59,7 @@ fun TaskScreen(viewModel: TaskViewModel) {
                                     val due = task.dueDate?.let { date ->
                                         if (task.dueTime == null) "Due $date (all day)" else "Due $date ${task.dueTime} ${task.timeZoneId.orEmpty()}"
                                     }
-                                    Text(listOfNotNull(task.priority.name, due, if (task.isOverdue) "Overdue" else null).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                                    Text(listOfNotNull(task.priority.name, due, if (task.isOverdue(state.now)) "Overdue" else null).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

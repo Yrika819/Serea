@@ -45,6 +45,7 @@ android {
     if (updateTestSigningReady) {
         signingConfigs.create("ephemeralUpdateTest") {
             storeFile = file(checkNotNull(updateTestStoreFile))
+            storeType = "PKCS12"
             storePassword = checkNotNull(updateTestStorePassword)
             keyAlias = checkNotNull(updateTestKeyAlias)
             keyPassword = checkNotNull(updateTestKeyPassword)

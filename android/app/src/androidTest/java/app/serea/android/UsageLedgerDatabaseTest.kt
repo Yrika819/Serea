@@ -267,4 +267,39 @@ class UsageLedgerDatabaseTest {
             context.deleteDatabase(name)
         }
     }
+
+    @Test fun failedMigrationKeepsLegacyDatabaseAndDoesNotFallBackToDestructiveCreate() {
+        val name = "usage-migration-failure-${UUID.randomUUID()}.db"
+        val file = context.getDatabasePath(name)
+        file.parentFile?.mkdirs()
+        val raw = SQLiteDatabase.openOrCreateDatabase(file, null)
+        raw.execSQL("CREATE TABLE conversations (id TEXT NOT NULL PRIMARY KEY, encryptedTitle TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, modelId TEXT NOT NULL, deletedAt INTEGER)")
+        raw.execSQL("CREATE TABLE messages (id TEXT NOT NULL PRIMARY KEY, conversationId TEXT NOT NULL, role TEXT NOT NULL, encryptedBody TEXT NOT NULL, classification TEXT NOT NULL, createdAt INTEGER NOT NULL, status TEXT NOT NULL, inputTokens INTEGER, outputTokens INTEGER, origin TEXT NOT NULL DEFAULT 'UNKNOWN')")
+        raw.execSQL("CREATE TABLE usage_windows (windowKey TEXT NOT NULL PRIMARY KEY, requests INTEGER NOT NULL, inputTokens INTEGER NOT NULL, outputTokens INTEGER NOT NULL)")
+        // Missing the legacy state column forces the backfill SQL to fail transactionally.
+        raw.execSQL("CREATE TABLE usage_reservations (requestId TEXT NOT NULL PRIMARY KEY, dayKey TEXT NOT NULL, monthKey TEXT NOT NULL, inputTokens INTEGER NOT NULL, outputTokens INTEGER NOT NULL)")
+        raw.execSQL("CREATE TABLE usage_settings (id INTEGER NOT NULL PRIMARY KEY, dailyRequests INTEGER NOT NULL, dailyTokens INTEGER NOT NULL, monthlyRequests INTEGER NOT NULL, monthlyTokens INTEGER NOT NULL, lastObservedAt INTEGER NOT NULL)")
+        raw.execSQL("INSERT INTO conversations VALUES ('preserved', 'ciphertext', 1, 1, 'UNKNOWN', NULL)")
+        raw.version = 3
+        raw.close()
+
+        val failedDatabase = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name)
+            .addMigrations(SereaHistoryDatabase.MIGRATION_1_2, SereaHistoryDatabase.MIGRATION_2_3, SereaHistoryDatabase.MIGRATION_3_4)
+            .allowMainThreadQueries().build()
+        try {
+            assertThrows(Exception::class.java) { failedDatabase.openHelper.writableDatabase }
+        } finally {
+            failedDatabase.close()
+        }
+        val afterFailure = SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY)
+        assertEquals(3, afterFailure.version)
+        val preserved = afterFailure.rawQuery("SELECT id FROM conversations WHERE id = 'preserved'", null)
+        assertTrue(preserved.moveToFirst())
+        preserved.close()
+        val ledgerTable = afterFailure.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='model_usage_ledger'", null)
+        assertEquals(false, ledgerTable.moveToFirst())
+        ledgerTable.close()
+        afterFailure.close()
+        context.deleteDatabase(name)
+    }
 }

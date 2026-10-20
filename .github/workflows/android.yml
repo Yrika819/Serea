@@ -279,12 +279,10 @@ jobs:
             python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
             mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
             EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh > app/build/outputs/androidTest-results/process-death-api35.log 2>&1; result=$?; cat app/build/outputs/androidTest-results/process-death-api35.log; test "$result" -eq 0
-            echo '### Android API 35 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death: PASS' >> "$GITHUB_STEP_SUMMARY"
+            bash ../tools/test_android_update_compatibility.sh
+            echo '### Android API 35 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death and same-signer update compatibility: PASS' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
         id: instrumentation
-      - name: Verify same-signer APK update preserves app data
-        if: steps.instrumentation.outputs.result == 'PASS'
-        run: bash tools/test_android_update_compatibility.sh
       - name: Install API 26 emulator image
         if: steps.instrumentation.outputs.result == 'PASS'
         run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'

@@ -1,7 +1,6 @@
 package app.serea.android.tasks
 
 import android.content.Context
-import android.security.keystore.KeyStoreException
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry

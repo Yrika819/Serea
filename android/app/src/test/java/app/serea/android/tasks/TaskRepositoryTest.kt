@@ -37,20 +37,22 @@ class TaskRepositoryTest {
     private val tick = AtomicLong(1_800_000_000_000)
     private val repository = EncryptedTaskRepository(MemoryDao(), TestCipher(), { Instant.ofEpochMilli(tick.getAndIncrement()) }, { "00000000-0000-0000-0000-000000000001" })
 
-    @Test fun createReadUpdateCompleteReopenAndDelete() = runBlocking {
-        val created = repository.create(TaskDraft("一次締切 📌", "memo\nnext", TaskPriority.HIGH, LocalDate.parse("2027-01-02")))
-        assertEquals(created, repository.get(created.id))
-        val changed = repository.update(created.id, created.revision, TaskDraft("changed", "text", TaskPriority.LOW))
-        assertEquals(2L, changed.revision)
-        assertThrows(TaskConflictException::class.java) { runBlocking { repository.update(created.id, created.revision, TaskDraft("stale")) } }
-        val completed = repository.complete(created.id, changed.revision)
-        assertEquals(TaskStatus.COMPLETED, completed.status); assertNotNull(completed.completedAt)
-        assertEquals(completed, repository.complete(created.id, completed.revision))
-        val reopened = repository.reopen(created.id, completed.revision)
-        assertNull(reopened.completedAt)
-        repository.delete(created.id, reopened.revision)
-        assertNull(repository.get(created.id))
-        assertThrows(TaskNotFoundException::class.java) { runBlocking { repository.update(created.id, reopened.revision, TaskDraft("late")) } }
+    @Test fun createReadUpdateCompleteReopenAndDelete() {
+        runBlocking {
+            val created = repository.create(TaskDraft("一次締切 📌", "memo\nnext", TaskPriority.HIGH, LocalDate.parse("2027-01-02")))
+            assertEquals(created, repository.get(created.id))
+            val changed = repository.update(created.id, created.revision, TaskDraft("changed", "text", TaskPriority.LOW))
+            assertEquals(2L, changed.revision)
+            assertThrows(TaskConflictException::class.java) { runBlocking { repository.update(created.id, created.revision, TaskDraft("stale")) } }
+            val completed = repository.complete(created.id, changed.revision)
+            assertEquals(TaskStatus.COMPLETED, completed.status); assertNotNull(completed.completedAt)
+            assertEquals(completed, repository.complete(created.id, completed.revision))
+            val reopened = repository.reopen(created.id, completed.revision)
+            assertNull(reopened.completedAt)
+            repository.delete(created.id, reopened.revision)
+            assertNull(repository.get(created.id))
+            assertThrows(TaskNotFoundException::class.java) { runBlocking { repository.update(created.id, reopened.revision, TaskDraft("late")) } }
+        }
     }
 
     @Test fun listsSortsFiltersAndLateUpdateCannotResurrectDeletedTask() = runBlocking {

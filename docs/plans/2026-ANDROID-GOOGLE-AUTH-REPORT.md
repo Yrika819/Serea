@@ -56,14 +56,14 @@ Executed locally against the implementation source on Java 17, Gradle 8.11.1, An
 | `tools/check_commit_identity.py --pre-push --remote origin` | PASS | 138 new commits checked after refreshing `origin/main`; all approved identities. |
 | `tools/git_preflight.py --mode push` | PASS | Explicit target branch and PR #58 base verified; push hook passed. |
 | OSV scanner | NOT_RUN locally | `osv-scanner` is not installed in this workspace; the existing Android Dependency Audit workflow owns this check. |
-| GitHub CI for the final report commit | NOT_RUN | GitHub API returned HTTP 401 `Bad credentials` during this audit. Earlier-head run IDs/statuses are not evidence for the final head and are not counted as passing. |
+| GitHub CI for the final report commit | PENDING at handoff | GitHub API access recovered after an initial HTTP 401. Actions started for the pushed implementation head; their run IDs and final statuses are reported in the handoff. Earlier-head results are excluded. |
 | Real OAuth, Google API, and physical device | NOT_RUN | No real account, API request, emulator authorization, or device install was used. |
 
 The Android-specific `Android Calendar Read-only Tests` workflow filters both by the older PR #57 base branch and by `calendar/**`; this PR targets PR #58's head branch and adds `googleauth/**`. It is therefore not the validation path for this lane. The required `Android` workflow selects Android changes broadly and runs the full unit task; no workflow filter or security policy was edited.
 
 ## 5. CI status and run IDs
 
-GitHub Actions for the final head could not be queried because GitHub API authentication returned HTTP 401 `Bad credentials`. Historical runs from earlier heads are excluded. No CI run ID is claimed for this revision; remote CI status is `NOT_RUN` pending restored read access.
+GitHub API access briefly returned HTTP 401, then recovered. Actions for the pushed implementation head were queued or in progress when this report was updated. Historical runs from earlier heads are excluded; unfinished checks remain `PENDING`, never PASS. The handoff identifies the run IDs and the latest observed statuses.
 
 ## 6. Security and data invariants
 
@@ -85,7 +85,7 @@ PR #51 remains OPEN/DRAFT at the recorded head `79de1b30d6f552538368e8c38dea71ce
 - Owner registers the Android OAuth client for the package/signing certificate pair selected for Beta, configures the consent screen/test users and verification, then explicitly authorizes a separately reviewed real-flow implementation.
 - Add Activity Result UI wiring, account-change UX, and clear/retry behavior in the integration lane; test on a non-production test account only after Owner configuration.
 - Validate user deletion/revoke behavior and ensure any future Google-derived cache is invalidated.
-- Recheck GitHub Actions on the exact pushed HEAD when API access is available. Until then remote CI is `NOT_RUN`, not passed.
+- Recheck GitHub Actions on the exact pushed HEAD; unfinished or failed checks remain visible in the handoff and are not described as passed.
 
 ### Source references
 

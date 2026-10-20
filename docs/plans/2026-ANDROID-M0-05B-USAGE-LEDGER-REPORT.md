@@ -39,7 +39,7 @@ For AND-M0-05A integration, put `UsageControlledModelChatPort` downstream of `Ro
 
 `VerifiedPriceSnapshot` accepts decimal strings for input/output price per million tokens, ISO 4217 currency, source, verification timestamp, and optional effective time/revision. Negative prices, invalid currencies, absent source, and malformed timestamps are rejected. The snapshot is copied into the request ledger row and is never looked up again during settlement, so later catalog edits do not alter old calculations.
 
-Calculations use `BigDecimal`; amounts are stored as decimal strings paired with a currency. Summary totals remain separated by currency. No production price is embedded in the app; tests label prices as fictional fixtures. A provider-reported token count only produces `USAGE_REPORTED_COST_ESTIMATED`, never a final provider invoice amount. Missing/invalid price evidence or usage produces `UNKNOWN`, not zero.
+Calculations use `BigDecimal`; amounts are stored as decimal strings paired with a currency. Summary totals remain separated by currency. No production price is embedded in the app; tests label prices as fictional fixtures. During `IN_FLIGHT`, the ledger may store an `ESTIMATED` amount from the estimated input and reserved output tokens. After provider usage arrives, the row is recalculated as `USAGE_REPORTED_COST_ESTIMATED`, never as a final provider invoice amount. Missing/invalid price evidence or usage, and uncertain outcomes, produce `UNKNOWN`, not zero.
 
 ## Aggregation API
 

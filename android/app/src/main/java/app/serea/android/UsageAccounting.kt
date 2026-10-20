@@ -422,16 +422,21 @@ internal class UsageControlledModelChatPort(
 
 internal data class UsageCostResult(val status: CostEstimationStatus, val amount: String?)
 
-private fun ModelUsageAttribution.toLedger(requestId: String, createdAt: Long, day: String, month: String, input: Long, output: Long) = ModelUsageLedgerRow(
-    requestId = requestId, modelId = modelId, providerId = providerId, createdAt = createdAt, dayKey = day, monthKey = month,
-    estimatedInputTokens = input, reservedOutputTokens = output, providerInputTokens = null, providerOutputTokens = null,
-    usageStatus = UsageLedgerState.IN_FLIGHT.name, costStatus = CostEstimationStatus.UNKNOWN.name, estimatedCost = null,
-    currency = price?.currency, pricingSource = price?.source, pricingVerifiedAt = price?.verifiedAt,
-    inputPricePerMillion = price?.inputPricePerMillion, outputPricePerMillion = price?.outputPricePerMillion,
-    pricingEffectiveAt = price?.effectiveAt, pricingRevision = price?.revision,
-    reservationState = UsageLedgerState.IN_FLIGHT.name, settledAt = null, uncertainOutcomeReason = null,
-    modelAttributionStatus = if (modelId == ModelUsageAttribution.UNKNOWN_ATTRIBUTION) "UNKNOWN" else "ATTRIBUTED",
-)
+private fun ModelUsageAttribution.toLedger(requestId: String, createdAt: Long, day: String, month: String, input: Long, output: Long): ModelUsageLedgerRow {
+    val estimate = estimateUsageCost(price, input, output)
+    return ModelUsageLedgerRow(
+        requestId = requestId, modelId = modelId, providerId = providerId, createdAt = createdAt, dayKey = day, monthKey = month,
+        estimatedInputTokens = input, reservedOutputTokens = output, providerInputTokens = null, providerOutputTokens = null,
+        usageStatus = UsageLedgerState.IN_FLIGHT.name,
+        costStatus = if (estimate.amount == null) CostEstimationStatus.UNKNOWN.name else CostEstimationStatus.ESTIMATED.name,
+        estimatedCost = estimate.amount,
+        currency = price?.currency, pricingSource = price?.source, pricingVerifiedAt = price?.verifiedAt,
+        inputPricePerMillion = price?.inputPricePerMillion, outputPricePerMillion = price?.outputPricePerMillion,
+        pricingEffectiveAt = price?.effectiveAt, pricingRevision = price?.revision,
+        reservationState = UsageLedgerState.IN_FLIGHT.name, settledAt = null, uncertainOutcomeReason = null,
+        modelAttributionStatus = if (modelId == ModelUsageAttribution.UNKNOWN_ATTRIBUTION) "UNKNOWN" else "ATTRIBUTED",
+    )
+}
 
 private fun ModelUsageLedgerRow.toCost(input: Long, output: Long): UsageCostResult {
     val inputPrice = inputPricePerMillion ?: return UsageCostResult(CostEstimationStatus.UNKNOWN, null)

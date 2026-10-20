@@ -38,6 +38,10 @@ class UsageLedgerDatabaseTest {
         val db = open()
         val usage = UsageRepository(db.usageDao()) { Instant.parse("2026-10-20T00:00:00Z").toEpochMilli() }
         usage.reserve("send-a", 3, 2, ModelUsageAttribution("model/a", "provider-a", fixturePrice()))
+        val inFlight = checkNotNull(db.usageDao().ledger("send-a"))
+        assertEquals(UsageLedgerState.IN_FLIGHT.name, inFlight.usageStatus)
+        assertEquals(CostEstimationStatus.ESTIMATED.name, inFlight.costStatus)
+        assertEquals("0.000018", inFlight.estimatedCost)
         usage.complete("send-a", ProviderUsage(4, 2))
         usage.complete("send-a", ProviderUsage(400, 200)) // repeated settle is an idempotent no-op
         usage.reserve("send-b", 5, 3, ModelUsageAttribution("model/b", "provider-b", fixturePrice("10", "20", "fictional-price-v2")))

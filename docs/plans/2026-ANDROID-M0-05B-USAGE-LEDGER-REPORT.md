@@ -63,9 +63,9 @@ No `AdaptiveModelRouter.kt`, `CloudProvider.kt`, `SecurityPorts.kt`, `MainActivi
 
 ## Test and CI evidence
 
-The Android workflow's existing Unit selection used explicit class patterns. It now includes `UsageLedgerCostTest`; the API 26/35 instrumentation verifier still requires at least 34 total tests and additionally requires six `UsageLedgerDatabaseTest` cases. Existing required class thresholds are unchanged.
+The Android workflow's existing Unit selection used explicit class patterns. It now includes `UsageLedgerCostTest`; the API 26/35 instrumentation verifier still requires at least 34 total tests and additionally requires nine `UsageLedgerDatabaseTest` cases. Existing required class thresholds are unchanged.
 
-The new JVM cost tests cover separate input/output prices, zero/large token counts, missing usage/pricing, exact decimal arithmetic, invalid prices/currency/source, and immutable revisions. Android instrumentation tests cover model/provider summaries, duplicate/conflicting send IDs and settle, unknown attribution/usage, timeout/cancellation/network failure, reopen recovery, concurrent reservation, atomic rollback on forced ledger insert failure, UTC day/month/leap/year boundaries, price revision history, and 1/2/3→4 migration with existing ciphertext/settings/reservations.
+The new JVM cost tests cover separate input/output prices, zero/large token counts, missing usage/pricing, exact decimal arithmetic, invalid prices/currency/source, and immutable revisions. Android instrumentation tests cover model/provider summaries, duplicate/conflicting send IDs and settle, unknown attribution/usage, timeout/cancellation/network failure, reopen recovery, concurrent reservation, atomic rollback on forced ledger insert failure, Egress DENY with zero reservation, UTC day/month/leap/year boundaries, price revision history, and 1/2/3→4 migration with existing ciphertext/settings/reservations.
 
 Execution status in this workspace:
 

@@ -148,6 +148,24 @@ class UsageLedgerDatabaseTest {
         assertEquals(2L * ("prompt".length * 4L + 512L), summary.estimatedInputTokens + summary.reservedOutputTokens)
     }
 
+    @Test fun egressDenyOccursBeforeUsageReservation() = runBlocking {
+        val db = open()
+        val usage = UsageRepository(db.usageDao())
+        var providerCalls = 0
+        val usagePort = UsageControlledModelChatPort(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                providerCalls++
+                return ModelChatResponse("must not dispatch")
+            }
+        }, usage)
+        val gated = EgressCheckedModelChatPort(usagePort)
+        assertThrows(ModelChatFailure::class.java) { runBlocking { gated.send(ModelChatRequest("conversation", "private prompt", sendId = "egress-deny")) } }
+        assertEquals(0, providerCalls)
+        assertEquals(null, db.usageDao().reservation("egress-deny"))
+        assertTrue(usage.summaries().isEmpty())
+        assertEquals(0L, usage.snapshot().dailyRequests)
+    }
+
     @Test fun utcDayMonthLeapDayAndYearBoundariesNeverReopenObservedWindows() = runBlocking {
         var now = Instant.parse("2024-02-29T23:59:59Z").toEpochMilli()
         val db = open()

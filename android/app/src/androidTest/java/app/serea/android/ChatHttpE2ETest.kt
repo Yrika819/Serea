@@ -104,9 +104,11 @@ class ChatHttpE2ETest {
         assertEquals(modelIds.last(), secondPayload.get("model").asString)
         assertTrue(secondMessages[0].asJsonObject.has("source_message_id"))
         assertEquals(2, server.requestCount)
-        assertEquals(1L, usage.modelUsage(modelIds.first()).single().requestCount)
-        assertEquals(1L, usage.modelUsage(modelIds.last()).single().requestCount)
-        assertEquals("fixture", usage.providerModelUsage("fixture", modelIds.first()).single().providerId)
+        runBlocking {
+            assertEquals(1L, usage.modelUsage(modelIds.first()).single().requestCount)
+            assertEquals(1L, usage.modelUsage(modelIds.last()).single().requestCount)
+            assertEquals("fixture", usage.providerModelUsage("fixture", modelIds.first()).single().providerId)
+        }
 
         val saved = runBlocking { history.get(conversationId)!! }
         assertEquals(listOf("COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED"), saved.messages.map { it.status })

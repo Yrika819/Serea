@@ -1,5 +1,7 @@
 package app.serea.android
 
+import java.time.Instant
+
 /** Values are UNKNOWN unless supported by a source captured when the catalog entry was verified. */
 sealed interface Knowledge<out T> {
     data object UNKNOWN : Knowledge<Nothing>
@@ -8,6 +10,7 @@ sealed interface Knowledge<out T> {
 enum class ModelSelectionMode { AUTO, MANUAL }
 enum class AutoRoutingPolicy { BALANCED, COST_PRIORITY, QUALITY_PRIORITY }
 enum class ModelAvailability { AVAILABLE, UNAVAILABLE, UNKNOWN }
+enum class ModelVerificationStatus { VERIFIED, TEST_FIXTURE, UNVERIFIED, REVOKED }
 enum class ModelTask { SIMPLE, STANDARD, COMPLEX, STRUCTURED, LONG_CONTEXT, TOOL_REQUIRED }
 enum class ModelCapability { TEXT_INPUT, IMAGE_INPUT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING }
 
@@ -52,6 +55,9 @@ data class ModelDescriptor(
     val lastVerifiedAt: String? = null,
     val source: String? = null,
     val contractLimits: Knowledge<ModelContractLimits> = Knowledge.UNKNOWN,
+    /** Explicit provenance state; descriptors remain unverified unless a source review sets this. */
+    val verificationStatus: ModelVerificationStatus = ModelVerificationStatus.UNVERIFIED,
+    val expiresAt: String? = null,
 ) {
     init {
         require(validModelId(id)); require(providerId.matches(Regex("[a-z0-9-]{1,64}")))
@@ -61,13 +67,50 @@ data class ModelDescriptor(
     }
 }
 
-interface ModelCatalog { fun all(): List<ModelDescriptor> }
-class LocalModelCatalog(entries: List<ModelDescriptor> = emptyList()) : ModelCatalog {
+interface ModelCatalog {
+    fun all(): List<ModelDescriptor>
+    fun isFresh(model: ModelDescriptor): Boolean = false
+}
+class LocalModelCatalog(
+    entries: List<ModelDescriptor> = emptyList(),
+    private val clock: () -> Instant = Instant::now,
+    private val maxAgeMillis: Long = 7L * 24 * 60 * 60 * 1000,
+) : ModelCatalog {
     @Volatile private var entries = entries.toList()
-    init { validate(entries) }
+    init { require(maxAgeMillis > 0); validate(entries) }
     override fun all(): List<ModelDescriptor> = entries.toList()
     fun replace(entries: List<ModelDescriptor>) { validate(entries); this.entries = entries.toList() }
+    override fun isFresh(model: ModelDescriptor): Boolean {
+        if (model.verificationStatus != ModelVerificationStatus.VERIFIED) return false
+        return freshFor(model)
+    }
+    private fun freshFor(model: ModelDescriptor): Boolean {
+        val verifiedAt = runCatching { Instant.parse(model.lastVerifiedAt) }.getOrNull() ?: return false
+        val now = clock()
+        if (verifiedAt.isAfter(now) || now.toEpochMilli() - verifiedAt.toEpochMilli() > maxAgeMillis) return false
+        val expiry = model.expiresAt?.let { runCatching { Instant.parse(it) }.getOrNull() ?: return false }
+        return expiry == null || now.isBefore(expiry)
+    }
     private fun validate(entries: List<ModelDescriptor>) { require(entries.map { it.id }.distinct().size == entries.size) }
+}
+
+/** Explicitly fictional catalog for local tests. It cannot be mistaken for verified production data. */
+internal class FakeModelCatalog(
+    entries: List<ModelDescriptor> = emptyList(),
+    private val clock: () -> Instant = Instant::now,
+    private val maxAgeMillis: Long = 7L * 24 * 60 * 60 * 1000,
+) : ModelCatalog {
+    @Volatile private var entries = entries.toList()
+    init { require(maxAgeMillis > 0); require(entries.map { it.id }.distinct().size == entries.size) }
+    override fun all(): List<ModelDescriptor> = entries.toList()
+    override fun isFresh(model: ModelDescriptor): Boolean {
+        if (model.verificationStatus != ModelVerificationStatus.TEST_FIXTURE) return false
+        val verifiedAt = runCatching { Instant.parse(model.lastVerifiedAt) }.getOrNull() ?: return false
+        val now = clock()
+        if (verifiedAt.isAfter(now) || now.toEpochMilli() - verifiedAt.toEpochMilli() > maxAgeMillis) return false
+        val expiry = model.expiresAt?.let { runCatching { Instant.parse(it) }.getOrNull() ?: return false }
+        return expiry == null || now.isBefore(expiry)
+    }
 }
 
 data class ModelRoutingPolicy(
@@ -171,7 +214,8 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
     }
 
     private fun rejection(m: ModelDescriptor, r: RoutingRequest, p: ModelRoutingPolicy, task: ModelTask): String? {
-        if (m.source.isNullOrBlank() || m.lastVerifiedAt.isNullOrBlank()) return "情報源または最終確認日時が未確認"
+        if (m.source.isNullOrBlank() || m.lastVerifiedAt.isNullOrBlank() || m.verificationStatus !in setOf(ModelVerificationStatus.VERIFIED, ModelVerificationStatus.TEST_FIXTURE) ||
+            !catalog.isFresh(m)) return "情報源・確認状態またはCatalog鮮度が未確認"
         if (m.providerId !in p.allowedProviderIds) return "Provider IDが選択ポリシーで許可されていない"
         if (m.availability != ModelAvailability.AVAILABLE) return "利用可否が${if (m.availability == ModelAvailability.UNKNOWN) "未確認" else "利用不可"}"
         if (!m.authorized) return "利用権限が未確認"
@@ -235,6 +279,7 @@ internal class RoutedModelChatPort(
     private val policy: () -> ModelRoutingPolicy,
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+        if (request.selectedModelId != null) throw ModelChatFailure("Model ID is assigned only by the router.")
         val current = policy()
         val selected = router.select(RoutingRequest(request.message, request.context.sumOf { it.text.length }), current)
         val model = selected.model ?: throw ModelChatFailure(selected.reason)

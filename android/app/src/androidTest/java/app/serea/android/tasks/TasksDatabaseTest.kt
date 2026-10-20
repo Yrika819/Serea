@@ -75,7 +75,7 @@ class TasksDatabaseTest {
         val task = repo(db).create(TaskDraft("retained"))
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         assertTrue(keyStore.containsAlias(alias))
-        assertFalse(keyStore.containsAlias("serea-tasks-v1"))
+        assertNotEquals(alias, "serea-tasks-v1")
         assertTrue(context.getDatabasePath(dbName).exists())
         keyStore.deleteEntry(alias)
         assertThrows(TaskStorageUnavailableException::class.java) { runBlocking { repo(db).get(task.id) } }

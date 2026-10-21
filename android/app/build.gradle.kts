@@ -81,7 +81,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
-    add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")
+    add("isolatedAndroidTestImplementation", "androidx.compose.ui:ui-test-manifest")
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }

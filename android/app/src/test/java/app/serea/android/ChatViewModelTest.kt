@@ -1,6 +1,8 @@
 package app.serea.android
 
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -52,7 +54,10 @@ class ChatViewModelTest {
         override suspend fun deleteAll() = Unit
     }
 
-    private class BlockingStatusHistory(private val blockedStatus: String) : ConversationHistoryPort {
+    private class BlockingStatusHistory(
+        private val blockedStatus: String,
+        private val failingStatus: String? = null,
+    ) : ConversationHistoryPort {
         val updateStarted = kotlinx.coroutines.CompletableDeferred<String>()
         val releaseUpdate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val messages = linkedMapOf<String, StoredMessage>()
@@ -73,6 +78,7 @@ class ChatViewModelTest {
         override suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
             updateCalls += messageId to status
             val current = checkNotNull(messages[messageId])
+            if (status == failingStatus) error("simulated status persistence failure")
             if (status == blockedStatus && !releaseUpdate.isCompleted) {
                 updateStarted.complete(messageId)
                 releaseUpdate.await()
@@ -475,6 +481,99 @@ class ChatViewModelTest {
         assertEquals(listOf("FAILED", "COMPLETED", "COMPLETED"),
             vm.state.value.conversation.messages.map { it.status })
         assertEquals("reply B", vm.state.value.conversation.messages.last().text)
+    }
+
+    @Test fun clearingViewModelCannotInterruptPersistingDefiniteFailure() = runTest(dispatcher) {
+        val history = BlockingStatusHistory("FAILED")
+        val viewModelStore = ViewModelStore()
+        val vm = ViewModelProvider(viewModelStore, ChatViewModel.factory(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse =
+                throw ModelChatFailure("provider rejected request")
+        }, history))[ChatViewModel::class.java]
+
+        vm.updateInput("request A")
+        vm.sendMessage()
+        runCurrent()
+        val requestAId = history.updateStarted.await()
+        assertEquals("PENDING", history.messages[requestAId]?.status)
+        assertTrue(vm.state.value.isFinalizing)
+
+        viewModelStore.clear()
+        runCurrent()
+        history.releaseUpdate.complete(Unit)
+        runCurrent()
+
+        assertEquals("FAILED", history.messages[requestAId]?.status)
+        assertEquals(listOf(requestAId to "FAILED"), history.updateCalls)
+    }
+
+    @Test fun cancellingTimeoutStatusWriteStillMarksAUnknownWithoutChangingB() = runTest(dispatcher) {
+        val history = BlockingStatusHistory("OUTCOME_UNKNOWN")
+        val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondReply = kotlinx.coroutines.CompletableDeferred<ModelChatResponse>()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse = when (request.message) {
+                "request A" -> {
+                    firstStarted.complete(Unit)
+                    kotlinx.coroutines.awaitCancellation()
+                }
+                "request B" -> {
+                    secondStarted.complete(Unit)
+                    secondReply.await()
+                }
+                else -> error("Unexpected provider request: ${request.message}")
+            }
+        }, historyRepository = history, initialConversation = Conversation("timeout-db-race"))
+
+        vm.updateInput("request A")
+        vm.sendMessage()
+        runCurrent()
+        firstStarted.await()
+        val requestAId = vm.state.value.conversation.messages.single().id
+
+        advanceTimeBy(15_000)
+        runCurrent()
+        assertEquals(requestAId, history.updateStarted.await())
+        vm.cancelCurrent()
+        vm.updateInput("request B")
+        vm.sendMessage()
+        runCurrent()
+        secondStarted.await()
+        val requestBId = vm.state.value.conversation.messages[1].id
+        assertTrue(vm.state.value.isLoading)
+
+        history.releaseUpdate.complete(Unit)
+        runCurrent()
+        assertEquals("OUTCOME_UNKNOWN", history.messages[requestAId]?.status)
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages[0].status)
+        assertEquals("PENDING", vm.state.value.conversation.messages[1].status)
+        assertEquals(requestBId, vm.state.value.conversation.messages[1].id)
+        assertTrue(vm.state.value.isLoading)
+
+        secondReply.complete(ModelChatResponse("reply B"))
+        advanceUntilIdle()
+        assertEquals(listOf("OUTCOME_UNKNOWN", "COMPLETED", "COMPLETED"),
+            vm.state.value.conversation.messages.map { it.status })
+        assertEquals("reply B", vm.state.value.conversation.messages.last().text)
+    }
+
+    @Test fun failedFailureStatusWriteReleasesChatAndReportsPersistenceError() = runTest(dispatcher) {
+        val history = BlockingStatusHistory(blockedStatus = "never", failingStatus = "FAILED")
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse =
+                throw ModelChatFailure("provider rejected request")
+        }, historyRepository = history, initialConversation = Conversation("failed-persistence"))
+
+        vm.updateInput("request A")
+        vm.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals("PENDING", history.messages.values.single().status)
+        assertEquals("FAILED", vm.state.value.conversation.messages.single().status)
+        assertFalse(vm.state.value.isLoading)
+        assertFalse(vm.state.value.isFinalizing)
+        assertTrue(vm.state.value.errorMessage?.contains("could not be saved") == true)
     }
 
     @Test fun completedReplyCannotBeCancelledBetweenPersistenceAndUiUpdate() = runTest(dispatcher) {

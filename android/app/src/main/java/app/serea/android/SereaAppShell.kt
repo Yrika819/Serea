@@ -20,7 +20,6 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -62,10 +61,12 @@ internal fun SereaAppShell(
     val canGoBack = backStackNames.isNotEmpty()
     var taskProposalActionPending by androidx.compose.runtime.remember { mutableStateOf(false) }
     val saveableStateHolder = rememberSaveableStateHolder()
-    val configuration = LocalConfiguration.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    val navigationColumns = if (configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340) 2 else 3
+    // Keep the bottom navigation to two rows on compact and large-text displays.
+    // Three columns remain wide enough for the two-line Japanese labels while
+    // giving the current destination more vertical room.
+    val navigationColumns = 3
 
     fun navigate(target: SereaDestination) {
         keyboardController?.hide()

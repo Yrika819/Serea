@@ -139,9 +139,8 @@ class SereaAppShellTest {
         compose.onAllNodesWithTag("gmail_message_subject").onFirst().assertTextContains("Project Finch schedule")
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        Espresso.closeSoftKeyboard()
         compose.onNodeWithTag("gmail_search_submit").assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithTag("gmail_search_submit").performClick()
+        compose.onNodeWithTag("gmail_search_input").performImeAction()
         val repeatedSearchLoaded = runCatching { compose.waitUntil(10_000) {
             runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件") }.isSuccess
         } }.isSuccess

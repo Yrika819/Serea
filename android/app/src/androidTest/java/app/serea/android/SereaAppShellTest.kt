@@ -193,8 +193,13 @@ class SereaAppShellTest {
                 .assertHasClickAction()
         }
         compose.onNodeWithTag("destination_chat").assertIsSelected()
-        select(SereaDestination.GMAIL)
-        compose.onNodeWithTag("destination_gmail").assertIsSelected()
+        DestinationContract.all.drop(1).forEach { contract ->
+            select(contract.destination)
+            compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
+            compose.onNodeWithTag("destination_${contract.destination.name.lowercase()}")
+                .assertIsDisplayed()
+                .assertIsSelected()
+        }
     }
 
     @Test fun screenHeadingsAreExposedToScreenReaders() {

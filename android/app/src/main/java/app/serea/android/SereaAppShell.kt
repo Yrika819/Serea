@@ -115,30 +115,32 @@ internal fun SereaAppShell(
                     }
                 }
             }
-            saveableStateHolder.SaveableStateProvider(destination.name) {
-                when (destination) {
-                    SereaDestination.CHAT -> ChatScreen(
-                        chatViewModel = chatViewModel,
-                        credentials = credentials,
-                        usage = usage,
-                        onOpenTasks = { navigate(SereaDestination.TASKS) },
-                        onOpenSettings = { navigate(SereaDestination.SETTINGS) },
-                    )
-                    SereaDestination.TASKS -> TaskScreen(taskViewModel)
-                    SereaDestination.GMAIL -> GmailDestination(onBack = ::goBack)
-                    SereaDestination.CALENDAR -> CalendarDestination(onBack = ::goBack)
-                    SereaDestination.SETTINGS -> ChatScreen(
-                        chatViewModel = chatViewModel,
-                        credentials = credentials,
-                        usage = usage,
-                        settingsDestination = true,
-                        onSettingsClosed = ::goBack,
-                    )
-                    SereaDestination.TASK_PROPOSAL_DEMO -> TaskProposalDemoScreen(
-                        onClose = ::goBack,
-                        onActionPendingChanged = { taskProposalActionPending = it },
-                        modifier = Modifier.fillMaxSize().testTag("task_proposal_demo"),
-                    )
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                saveableStateHolder.SaveableStateProvider(destination.name) {
+                    when (destination) {
+                        SereaDestination.CHAT -> ChatScreen(
+                            chatViewModel = chatViewModel,
+                            credentials = credentials,
+                            usage = usage,
+                            onOpenTasks = { navigate(SereaDestination.TASKS) },
+                            onOpenSettings = { navigate(SereaDestination.SETTINGS) },
+                        )
+                        SereaDestination.TASKS -> TaskScreen(taskViewModel)
+                        SereaDestination.GMAIL -> GmailDestination(onBack = ::goBack)
+                        SereaDestination.CALENDAR -> CalendarDestination(onBack = ::goBack)
+                        SereaDestination.SETTINGS -> ChatScreen(
+                            chatViewModel = chatViewModel,
+                            credentials = credentials,
+                            usage = usage,
+                            settingsDestination = true,
+                            onSettingsClosed = ::goBack,
+                        )
+                        SereaDestination.TASK_PROPOSAL_DEMO -> TaskProposalDemoScreen(
+                            onClose = ::goBack,
+                            onActionPendingChanged = { taskProposalActionPending = it },
+                            modifier = Modifier.fillMaxSize().testTag("task_proposal_demo"),
+                        )
+                    }
                 }
             }
         }

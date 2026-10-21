@@ -101,7 +101,7 @@ fun GmailScreen(
                 error = state.detailError,
                 onRetry = viewModel::retry,
                 onOpenThread = viewModel::openThread,
-                modifier = Modifier.weight(1f).testTag("gmail_search_input"),
+                modifier = Modifier.weight(1f),
             )
             is GmailRoute.Thread -> GmailThreadContent(state, route, viewModel, Modifier.weight(1f))
         }
@@ -126,7 +126,7 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
             OutlinedTextField(
                 value = state.searchInput,
                 onValueChange = viewModel::updateSearchInput,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("gmail_search_input"),
                 label = { Text("メールを検索") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),

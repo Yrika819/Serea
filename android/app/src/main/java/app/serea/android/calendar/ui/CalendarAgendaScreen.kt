@@ -113,6 +113,12 @@ fun CalendarAgendaScreen(
         onDispose { controller.close() }
     }
     val state by controller.state.collectAsState()
+    var previousAgendaScope by remember { mutableStateOf(state.query to state.selectedCalendarId) }
+    LaunchedEffect(state.query, state.selectedCalendarId) {
+        val currentScope = state.query to state.selectedCalendarId
+        if (currentScope != previousAgendaScope) agendaListState.scrollToItem(0)
+        previousAgendaScope = currentScope
+    }
     val inDetail = when (state) {
         is CalendarAgendaUiState.EventDetail -> true
         is CalendarAgendaUiState.Loading -> (state as CalendarAgendaUiState.Loading).detailKey != null

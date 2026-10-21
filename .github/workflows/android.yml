@@ -228,6 +228,7 @@ jobs:
       - name: Install API 35 emulator image
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
       - name: Diagnose KVM before permission changes
+        if: always() && !cancelled()
         run: |
           set +e
           echo '### KVM pre-change diagnostics' >> "$GITHUB_STEP_SUMMARY"
@@ -257,6 +258,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           set -e
       - name: Apply official KVM udev permissions
+        if: always() && !cancelled()
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
@@ -269,6 +271,7 @@ jobs:
           test -r /dev/kvm && test -w /dev/kvm
           "$ANDROID_HOME/emulator/emulator" -accel-check
       - name: Initialize API-specific evidence as NOT_RUN
+        if: always() && !cancelled()
         run: |
           set -euo pipefail
           root='android/app/build/outputs/androidTest-results'

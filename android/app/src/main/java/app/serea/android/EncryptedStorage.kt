@@ -214,18 +214,29 @@ data class StoredMessage(
 )
 data class StoredConversation(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val modelId: String, val messages: List<StoredMessage>)
 
-internal class ConversationRepository(private val dao: HistoryDao, private val cipher: KeystoreAesGcm) {
+internal interface ConversationHistoryPort {
+    suspend fun list(): List<StoredConversation>
+    suspend fun get(id: String): StoredConversation?
+    suspend fun addMessage(message: StoredMessage)
+    suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String = "demo-local")
+    suspend fun completeTurn(userMessageId: String, assistant: StoredMessage)
+    suspend fun updateStatus(messageId: String, conversationId: String, status: String)
+    suspend fun delete(id: String, now: Long = System.currentTimeMillis())
+    suspend fun deleteAll()
+}
+
+internal class ConversationRepository(private val dao: HistoryDao, private val cipher: KeystoreAesGcm) : ConversationHistoryPort {
     suspend fun create(id: String, title: String, modelId: String = "demo-local", now: Long = System.currentTimeMillis()) {
         dao.putConversation(ConversationRow(id, encrypt(title, "conversation:$id:title"), now, now, modelId))
     }
-    suspend fun list(): List<StoredConversation> = dao.conversations().map { load(it) }
-    suspend fun get(id: String): StoredConversation? = dao.conversation(id)?.let { load(it) }
-    suspend fun addMessage(message: StoredMessage) {
+    override suspend fun list(): List<StoredConversation> = dao.conversations().map { load(it) }
+    override suspend fun get(id: String): StoredConversation? = dao.conversation(id)?.let { load(it) }
+    override suspend fun addMessage(message: StoredMessage) {
         dao.putMessageIfConversationIsActive(MessageRow(message.id, message.conversationId, message.role.name,
             encrypt(message.text, "message:${message.id}:body"), message.classification.name,
             message.createdAt, message.status, origin = message.origin.name))
     }
-    suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String = "demo-local") {
+    override suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String) {
         require(message.conversationId == id && message.role == MessageRole.USER && message.status == "PENDING")
         val timestamp = message.createdAt
         dao.createConversationWithFirstMessage(
@@ -234,7 +245,7 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
                 message.classification.name, timestamp, message.status, origin = message.origin.name),
         )
     }
-    suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
+    override suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
         require(assistant.role == MessageRole.ASSISTANT && assistant.status == "COMPLETED")
         dao.completePendingTurn(userMessageId, MessageRow(
             assistant.id, assistant.conversationId, assistant.role.name,
@@ -242,14 +253,14 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
             assistant.createdAt, assistant.status, origin = assistant.origin.name,
         ))
     }
-    suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
+    override suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
         require(status in setOf("COMPLETED", "FAILED", "OUTCOME_UNKNOWN"))
         dao.transitionPendingMessage(messageId, conversationId, status)
     }
-    suspend fun delete(id: String, now: Long = System.currentTimeMillis()) {
+    override suspend fun delete(id: String, now: Long) {
         dao.deleteConversationAndMessages(id, now)
     }
-    suspend fun deleteAll() { dao.deleteAllHistory() }
+    override suspend fun deleteAll() { dao.deleteAllHistory() }
     private suspend fun load(row: ConversationRow): StoredConversation = StoredConversation(
         row.id, decrypt(row.encryptedTitle, "conversation:${row.id}:title"), row.createdAt, row.updatedAt, row.modelId,
         dao.messages(row.id).map { message ->

@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
@@ -16,6 +17,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performImeAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
@@ -73,15 +75,29 @@ class ChatScreenTest {
         response.assertCountEquals(1)
     }
 
+    private fun send(text: String) {
+        composer().performTextInput(text)
+        compose.waitUntil(30_000) { stateSnapshot().input == text }
+        composer().performImeAction()
+        compose.waitUntil(30_000) {
+            stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
+        }
+    }
+
     @Test fun demoLabelAndConversationTitleAreVisible() {
         awaitComposerEnabled()
         compose.onNodeWithText("新しい会話").performClick()
         awaitComposerEnabled()
-        compose.onNodeWithText("DEMO · Mock chat · No cloud AI").assertIsDisplayed()
-        composer().performTextInput("hello")
-        compose.onNodeWithText("送信").performClick()
-        compose.onNodeWithText("You", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("DEMO · Mock会話 · クラウドAI未接続").assertIsDisplayed()
+        send("hello")
         awaitResponse("Demo response: I received “hello”.")
+        val sentIndex = stateSnapshot().conversation.messages.indexOfFirst {
+            it.role == MessageRole.USER && it.text == "hello"
+        }
+        assertTrue("Sent user message is missing", sentIndex >= 0)
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(sentIndex)
+        compose.onNodeWithText("あなた", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(stateSnapshot().conversation.messages.lastIndex)
         compose.onAllNodes(hasText("Demo response: I received “hello”.", substring = true))
             .onFirst().assertTextContains("No cloud AI", substring = true)
         compose.onNodeWithText("履歴").performClick()
@@ -92,8 +108,7 @@ class ChatScreenTest {
 
     @Test fun completedDemoConversationSurvivesActivityRecreation() {
         awaitComposerEnabled()
-        composer().performTextInput("rotation-check")
-        compose.onNodeWithText("送信").performClick()
+        send("rotation-check")
         awaitResponse("Demo response: I received “rotation-check”.")
         compose.activityRule.scenario.recreate()
         compose.waitUntil(30_000) {
@@ -101,14 +116,22 @@ class ChatScreenTest {
             !state.isRestoring && state.conversation.messages.any { it.text == "rotation-check" }
         }
         val restored = stateSnapshot()
-        compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
+        val restoredUserIndex = restored.conversation.messages.indexOfFirst { it.text == "rotation-check" }
+        assertTrue("Restored user message is missing", restoredUserIndex >= 0)
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("conversation-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(restoredUserIndex)
         compose.onNodeWithText("rotation-check").assertIsDisplayed()
-        compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true)).assertCountEquals(1)
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
+        val restoredResponse = compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true))
+        compose.waitUntil(5_000) { restoredResponse.fetchSemanticsNodes().isNotEmpty() }
+        restoredResponse.assertCountEquals(1)
     }
 
     @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         compose.waitUntil(30_000) {
             var secure = false
             compose.activityRule.scenario.onActivity {
@@ -120,7 +143,7 @@ class ChatScreenTest {
             assertEquals(WindowManager.LayoutParams.FLAG_SECURE,
                 compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         }
-        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
+        compose.onNodeWithTag("destination_back").performClick()
         compose.waitUntil(30_000) {
             var secure = true
             compose.activityRule.scenario.onActivity {
@@ -136,7 +159,7 @@ class ChatScreenTest {
     @Test fun previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled() {
         awaitComposerEnabled()
         composer().performTextInput("draft stays local")
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("Cloud接続テスト（未承認）").assertIsNotEnabled()
         compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
         compose.onAllNodes(hasText("送信先候補", substring = true)).assertCountEquals(1)
@@ -148,18 +171,18 @@ class ChatScreenTest {
         ModelSelectionSettings(compose.activity.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE))
             .save(ModelRoutingPolicy())
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
-        compose.onNodeWithText("Manual").performScrollTo().performClick()
-        compose.onNodeWithText("Cost Priority").performScrollTo().performClick()
+        compose.onNodeWithTag("open_settings").performClick()
+        compose.onNodeWithText("手動").performScrollTo().performClick()
+        compose.onNodeWithText("費用優先").performScrollTo().performClick()
         compose.onNodeWithText("任意の1要求費用上限").performScrollTo().performTextInput("0.05")
         compose.onNodeWithText("通貨コード").performScrollTo().performTextInput("USD")
-        compose.onNodeWithText("Router設定を保存").performScrollTo().performClick()
-        compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("設定").performClick()
-        compose.onNodeWithText("設定").performClick()
-        compose.onNodeWithText("Mode: MANUAL · Policy: COST_PRIORITY").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("選択Model ID: なし").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Manual Model Picker: 選択可能なモデルはありません。任意のModel IDやProvider Hostは入力できません。")
+        compose.onNodeWithText("ルーター設定を保存").performScrollTo().performClick()
+        compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("destination_back").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
+        compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("選択モデルID: なし").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。")
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("0.05").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("USD").performScrollTo().assertIsDisplayed()
@@ -193,14 +216,13 @@ class ChatScreenTest {
         compose.onNodeWithText("この会話を削除").assertIsDisplayed()
         compose.onNodeWithText("全履歴を削除").assertIsDisplayed()
         openOverflow()
-        compose.onNodeWithText("設定").assertIsDisplayed().performClick()
-        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
+        compose.onNodeWithTag("open_settings").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("destination_back").performClick()
     }
 
     @Test fun currentConversationDeletionRequiresConfirmationAndCancelKeepsMessages() {
         awaitComposerEnabled()
-        composer().performTextInput("keep on cancel")
-        compose.onNodeWithText("送信").performClick()
+        send("keep on cancel")
         awaitResponse("Demo response: I received “keep on cancel”.")
         val before = stateSnapshot()
         openOverflow()
@@ -215,8 +237,7 @@ class ChatScreenTest {
 
     @Test fun confirmedCurrentConversationDeletionRemovesSelectedConversation() {
         awaitComposerEnabled()
-        composer().performTextInput("delete this conversation")
-        compose.onNodeWithText("送信").performClick()
+        send("delete this conversation")
         awaitResponse("Demo response: I received “delete this conversation”.")
         val deletedId = stateSnapshot().conversation.id
         openOverflow()
@@ -231,8 +252,7 @@ class ChatScreenTest {
 
     @Test fun deleteAllConfirmationCancelKeepsConversationAndConfirmClearsHistory() {
         awaitComposerEnabled()
-        composer().performTextInput("history remains until confirmation")
-        compose.onNodeWithText("送信").performClick()
+        send("history remains until confirmation")
         awaitResponse("Demo response: I received “history remains until confirmation”.")
         val originalId = stateSnapshot().conversation.id
         openOverflow()
@@ -274,7 +294,7 @@ class ChatScreenTest {
         }
         compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").assertIsDisplayed()
+        compose.onNodeWithTag("open_settings").assertIsDisplayed()
         openOverflow()
         compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
         compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
@@ -306,6 +326,11 @@ class ChatScreenTest {
         } finally {
             shell("wm size reset")
             shell("wm density reset")
+            compose.waitUntil(15_000) {
+                var width = 0
+                compose.activityRule.scenario.onActivity { width = it.resources.configuration.screenWidthDp }
+                width > 340
+            }
         }
     }
 
@@ -327,44 +352,49 @@ class ChatScreenTest {
             compose.onNodeWithText("キャンセル").performClick()
         } finally {
             shell("settings put system font_scale $originalScale")
+            compose.waitUntil(15_000) {
+                var fontScale = 0f
+                compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
+                kotlin.math.abs(fontScale - originalScale) < 0.02f
+            }
         }
     }
 
     @Test fun emptySoftLimitFieldShowsValidationAndDisablesSave() {
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         val dailyRequests = compose.onNodeWithText("日次requests")
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
         val error = compose.onNodeWithText("日次requests はLong範囲内の整数で入力してください。")
         error.performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
     }
 
     @Test fun correctedSoftLimitInputCanBeSavedAndRestored() {
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         val dailyRequests = compose.onNodeWithText("日次requests")
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
         dailyRequests.performTextInput("21")
-        compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsEnabled().performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("Soft Limit設定を保存しました", substring = true)).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("設定を閉じる").performScrollTo().performClick()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("destination_back").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("日次requests").performScrollTo().assertTextContains("21")
     }
 
     @Test fun softLimitRejectsZeroNegativeNonNumericOverflowAndDailyMonthlyMismatch() {
         awaitComposerEnabled()
-        compose.onNodeWithText("設定").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
         fun verifyInvalid(value: String, expectedError: String) {
             val dailyRequests = compose.onNodeWithText("日次requests")
             dailyRequests.performScrollTo()
             dailyRequests.performTextClearance()
             dailyRequests.performTextInput(value)
             compose.onNodeWithText(expectedError).performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsNotEnabled()
+            compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
         }
         verifyInvalid("0", "日次requests は1以上で入力してください。")
         verifyInvalid("-1", "日次requests は1以上で入力してください。")
@@ -380,6 +410,6 @@ class ChatScreenTest {
         dailyTokens.performTextClearance()
         dailyTokens.performTextInput("50001")
         compose.onNodeWithText("日次tokensは月次tokens以下にしてください。").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Soft Limitを保存").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
     }
 }

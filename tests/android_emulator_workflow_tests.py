@@ -26,6 +26,46 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertTrue(script.is_file())
         subprocess.run(["bash", "-n", str(script)], check=True)
 
+    def test_api26_evidence_and_kvm_setup_run_after_api35_image_failure(self) -> None:
+        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        steps = {
+            match.group(1): match.group(0)
+            for match in re.finditer(
+                r"^      - name: ([^\n]+)\n(?:(?!^      - name: ).*\n)*",
+                workflow,
+                flags=re.MULTILINE,
+            )
+        }
+        always = "if: always() && !cancelled()"
+        for name in (
+            "Diagnose KVM before permission changes",
+            "Apply official KVM udev permissions",
+            "Initialize API-specific evidence as NOT_RUN",
+            "Install API 26 emulator image",
+            "Run API 26 Pixel emulator and all instrumentation tests",
+        ):
+            self.assertIn(name, steps)
+            self.assertIn(always, steps[name], name)
+        self.assertLess(
+            workflow.index("- name: Apply official KVM udev permissions"),
+            workflow.index("- name: Run API 26 Pixel emulator and all instrumentation tests"),
+        )
+        api35 = steps["Run API 35 Pixel emulator and all instrumentation tests"]
+        self.assertNotRegex(api35, r"(?m)^\s+if:")
+        combine = workflow.split("name: Combine API-specific required evidence", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        self.assertIn(
+            'if [ "$api35" = PASS ] && [ "$api26" = PASS ] '
+            '&& [ "$API35_STEP_RESULT" = success ] && [ "$API26_STEP_RESULT" = success ]; then',
+            combine,
+        )
+        for required in (
+            'echo "FAIL: API 35=$api35',
+            "exit 1",
+        ):
+            self.assertIn(required, combine)
+
     def test_wrong_emulator_api_level_fails_closed_as_not_run(self) -> None:
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"
         with tempfile.TemporaryDirectory() as temporary:

@@ -23,6 +23,35 @@ class ChatViewModelTest {
     @get:Rule val instantTaskExecutorRule = InstantTaskExecutorRule()
     private val dispatcher = StandardTestDispatcher()
 
+    private class BlockingCompleteHistory : ConversationHistoryPort {
+        val completeStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releaseComplete = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var persistedUser: StoredMessage? = null
+        var persistedAssistant: StoredMessage? = null
+        var getCalls = 0
+
+        override suspend fun list() = emptyList<StoredConversation>()
+        override suspend fun get(id: String): StoredConversation? {
+            getCalls += 1
+            return null
+        }
+        override suspend fun addMessage(message: StoredMessage) { persistedUser = message }
+        override suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String) {
+            persistedUser = message
+        }
+        override suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
+            completeStarted.complete(Unit)
+            releaseComplete.await()
+            persistedUser = persistedUser?.copy(status = "COMPLETED")
+            persistedAssistant = assistant
+        }
+        override suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
+            persistedUser = persistedUser?.copy(status = status)
+        }
+        override suspend fun delete(id: String, now: Long) = Unit
+        override suspend fun deleteAll() = Unit
+    }
+
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
 
@@ -204,6 +233,159 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.isLoading)
         assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages.last().status)
         assertTrue(vm.state.value.errorMessage!!.contains("may still have completed remotely"))
+    }
+
+    @Test fun cancelledRequestCannotClearLoadingOrErrorForTheNextRequest() = runTest(dispatcher) {
+        val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val firstReply = kotlinx.coroutines.CompletableDeferred<ModelChatResponse>()
+        val secondReply = kotlinx.coroutines.CompletableDeferred<ModelChatResponse>()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse =
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    if (request.message == "first request") {
+                        firstStarted.complete(Unit)
+                        firstReply.await()
+                    } else {
+                        secondStarted.complete(Unit)
+                        secondReply.await()
+                    }
+                }
+        })
+        vm.updateInput("first request")
+        vm.sendMessage()
+        runCurrent()
+        firstStarted.await()
+
+        vm.cancelCurrent()
+        vm.updateInput("second request")
+        vm.sendMessage()
+        runCurrent()
+        secondStarted.await()
+
+        assertEquals("PENDING", vm.state.value.conversation.messages[1].status)
+        assertTrue(vm.state.value.isLoading)
+        assertEquals(null, vm.state.value.errorMessage)
+
+        firstReply.complete(ModelChatResponse("late first reply"))
+        runCurrent()
+
+        val messages = vm.state.value.conversation.messages
+        assertEquals("OUTCOME_UNKNOWN", messages[0].status)
+        assertEquals("PENDING", messages[1].status)
+        assertTrue(messages.none { it.text == "late first reply" })
+        assertTrue(vm.state.value.isLoading)
+        assertEquals(null, vm.state.value.errorMessage)
+
+        secondReply.complete(ModelChatResponse("second reply"))
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isLoading)
+        assertEquals(listOf(MessageRole.USER, MessageRole.USER, MessageRole.ASSISTANT),
+            vm.state.value.conversation.messages.map { it.role })
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages[0].status)
+        assertEquals("COMPLETED", vm.state.value.conversation.messages[1].status)
+        assertEquals("second reply", vm.state.value.conversation.messages.last().text)
+    }
+
+    @Test fun lateDefiniteProviderFailureAfterCancellationKeepsOutcomeUnknown() = runTest(dispatcher) {
+        val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releaseFirstFailure = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondReply = kotlinx.coroutines.CompletableDeferred<ModelChatResponse>()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse =
+                if (request.message == "first request") {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        firstStarted.complete(Unit)
+                        releaseFirstFailure.await()
+                        throw ModelChatFailure("late provider failure")
+                    }
+                } else {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        secondStarted.complete(Unit)
+                        secondReply.await()
+                    }
+                }
+        })
+        vm.updateInput("first request")
+        vm.sendMessage()
+        runCurrent()
+        firstStarted.await()
+
+        vm.cancelCurrent()
+        vm.updateInput("second request")
+        vm.sendMessage()
+        runCurrent()
+        secondStarted.await()
+
+        releaseFirstFailure.complete(Unit)
+        runCurrent()
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages[0].status)
+        assertEquals("PENDING", vm.state.value.conversation.messages[1].status)
+        assertTrue(vm.state.value.isLoading)
+        assertEquals(null, vm.state.value.errorMessage)
+
+        secondReply.complete(ModelChatResponse("second reply"))
+        advanceUntilIdle()
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages[0].status)
+        assertEquals("COMPLETED", vm.state.value.conversation.messages[1].status)
+        assertEquals("second reply", vm.state.value.conversation.messages.last().text)
+    }
+
+    @Test fun completedReplyCannotBeCancelledBetweenPersistenceAndUiUpdate() = runTest(dispatcher) {
+        val history = BlockingCompleteHistory()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("known reply")
+        }, historyRepository = history, initialConversation = Conversation("finalize-safely"))
+        vm.updateInput("finish safely")
+        vm.sendMessage()
+        runCurrent()
+        history.completeStarted.await()
+
+        assertTrue(vm.state.value.isFinalizing)
+        vm.openConversation(vm.state.value.conversation.id)
+        runCurrent()
+        assertEquals(0, history.getCalls)
+        assertEquals("PENDING", history.persistedUser?.status)
+        assertTrue(vm.state.value.isFinalizing)
+        vm.cancelCurrent()
+        assertTrue(vm.state.value.isLoading)
+        history.releaseComplete.complete(Unit)
+        advanceUntilIdle()
+
+        assertFalse(vm.state.value.isLoading)
+        assertFalse(vm.state.value.isFinalizing)
+        assertEquals(listOf("COMPLETED", "COMPLETED"), vm.state.value.conversation.messages.map { it.status })
+        assertEquals("COMPLETED", history.persistedUser?.status)
+        assertEquals("COMPLETED", history.persistedAssistant?.status)
+    }
+
+    @Test fun changingConversationDuringFinalizationClearsSavingStateAndAllowsNextSend() = runTest(dispatcher) {
+        val history = BlockingCompleteHistory()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("known reply")
+        }, historyRepository = history, initialConversation = Conversation("old-conversation"))
+        vm.updateInput("finish old conversation")
+        vm.sendMessage()
+        runCurrent()
+        history.completeStarted.await()
+        assertTrue(vm.state.value.isFinalizing)
+
+        vm.newConversation()
+        val newConversationId = vm.state.value.conversation.id
+        assertFalse(vm.state.value.isFinalizing)
+        history.releaseComplete.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(newConversationId, vm.state.value.conversation.id)
+        assertFalse(vm.state.value.isLoading)
+        assertFalse(vm.state.value.isFinalizing)
+        vm.updateInput("send from new conversation")
+        vm.sendMessage()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isLoading)
+        assertEquals("send from new conversation", vm.state.value.conversation.messages.first().text)
+        assertEquals("known reply", vm.state.value.conversation.messages.last().text)
     }
 
     @Test fun newConversationCannotReceiveLateReply() = runTest(dispatcher) {

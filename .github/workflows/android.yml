@@ -228,6 +228,7 @@ jobs:
       - name: Install API 35 emulator image
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
       - name: Diagnose KVM before permission changes
+        if: always() && !cancelled()
         run: |
           set +e
           echo '### KVM pre-change diagnostics' >> "$GITHUB_STEP_SUMMARY"
@@ -257,6 +258,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           set -e
       - name: Apply official KVM udev permissions
+        if: always() && !cancelled()
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
@@ -269,6 +271,7 @@ jobs:
           test -r /dev/kvm && test -w /dev/kvm
           "$ANDROID_HOME/emulator/emulator" -accel-check
       - name: Initialize API-specific evidence as NOT_RUN
+        if: always() && !cancelled()
         run: |
           set -euo pipefail
           root='android/app/build/outputs/androidTest-results'
@@ -295,6 +298,27 @@ jobs:
       - name: Install API 26 emulator image
         if: always() && !cancelled()
         run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
+      - name: Clear API 35 emulator state before API 26 campaign
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          adb devices -l
+          while IFS= read -r serial; do
+            [ -n "$serial" ] || continue
+            adb -s "$serial" emu kill || true
+          done < <(adb devices | awk '$1 ~ /^emulator-/ { print $1 }')
+          for attempt in $(seq 1 30); do
+            if ! adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
+              break
+            fi
+            sleep 1
+          done
+          if adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
+            echo 'An emulator from the API 35 campaign is still attached.' >&2
+            exit 1
+          fi
+          adb kill-server
+          adb start-server
       - name: Run API 26 Pixel emulator and all instrumentation tests
         id: api26
         if: always() && !cancelled()
@@ -562,8 +586,8 @@ jobs:
             echo "api26_and_api35_emulator_job=$EMULATOR_RESULT"
             echo "android_dependency_audit=$AUDIT_RESULT"
             echo "instrumentation_gate_output=$INSTRUMENTATION_RESULT"
-            echo 'api26_expected_junit_cases=72 (sum of ten exact required class counts, verified against source and JUnit XML)'
-            echo 'api35_expected_junit_cases=72 (sum of ten exact required class counts, verified against source and JUnit XML)'
+            echo 'api26_expected_junit_cases=98 (sum of fourteen exact required class counts, verified against source and JUnit XML)'
+            echo 'api35_expected_junit_cases=98 (sum of fourteen exact required class counts, verified against source and JUnit XML)'
             echo 'physical_pixel7a_reacceptance=NOT_RUN (Mac Local MCP v3 handoff required)'
             echo 'apk_source_sha256_and_certificate=search for provenance.txt in build/ and api-tests-and-process-death/'
             echo 'device_steps_and_pass_fail=search for pixel7a-reacceptance.md in api-tests-and-process-death/'

@@ -144,12 +144,24 @@ class FakeCalendarProvider(
                 visibility = EventVisibility.PRIVATE))
             add(timed("demo-primary", "evt-no-summary", null, "2026-10-20T12:00:00Z", "2026-10-20T12:15:00Z", tokyo))
             add(timed("demo-global", "evt-apia", "Date-line test", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z", apia))
+            // Keep a long fictional list in a second calendar so UI tests can verify that
+            // changing the selected calendar resets scroll position without short-list clamping.
+            for (index in 0 until 96) {
+                val start = Instant.parse("2026-10-24T00:00:00Z").plusSeconds(index * 3600L)
+                add(timed("demo-global", "global-bulk-$index", "Fictional global event $index", start.toString(), start.plusSeconds(900).toString(), apia))
+            }
             add(timed("demo-work", "evt-dst-start", "DST start sample", "2026-03-08T06:30:00Z", "2026-03-08T07:30:00Z", newYork))
             add(timed("demo-work", "evt-dst-end", "DST end sample", "2026-11-01T05:30:00Z", "2026-11-01T06:30:00Z", newYork))
             for (index in 0 until 245) {
                 val start = Instant.parse("2026-10-21T00:00:00Z").plusSeconds(index * 3600L)
                 add(timed("demo-work", "bulk-$index", "Fictional paged event $index", start.toString(), start.plusSeconds(900).toString(), newYork))
             }
+        }
+
+        /** Bounded app-shell fixture crosses two pages without rendering a test-only 245-row demo. */
+        val appShellEvents: List<CalendarEvent> = events.filter { event ->
+            val index = event.key.eventId.value.removePrefix("bulk-").toIntOrNull()
+            index == null || index < 72
         }
     }
 }

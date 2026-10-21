@@ -103,6 +103,26 @@ class GmailViewModelTest {
         assertTrue(viewModel.state.value.backStack.isEmpty())
     }
 
+    @Test fun returningFromMessageDetailKeepsUnsubmittedSearchInput() = runTest(mainDispatcher.dispatcher) {
+        val message = FakeGmailProvider.fixtures.messages.first()
+        val fake = GmailUiTestFake().apply {
+            searchHandler = { _, _, _ -> GmailMessagePage(listOf(message)) }
+        }
+        val viewModel = viewModel(fake)
+        advanceUntilIdle()
+        viewModel.submitSearch("Garden")
+        advanceUntilIdle()
+        viewModel.updateSearchInput("Garden draft")
+        viewModel.openMessage(message.id)
+        advanceUntilIdle()
+
+        viewModel.back()
+        advanceUntilIdle()
+
+        assertEquals(GmailRoute.List(GmailListMode.SEARCH, "Garden"), viewModel.state.value.route)
+        assertEquals("Garden draft", viewModel.state.value.searchInput)
+    }
+
     @Test fun emptyPageWithContinuationCanAdvanceToLaterMessages() = runTest(mainDispatcher.dispatcher) {
         val fixture = FakeGmailProvider.fixtures.messages
         val fake = GmailUiTestFake()

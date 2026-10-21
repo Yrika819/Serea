@@ -231,6 +231,8 @@ class GmailViewModel(
         failedAction = null
         val target = current.backStack.last()
         val remaining = current.backStack.dropLast(1)
+        val returningFromDetailToList = target is GmailRoute.List &&
+            (current.route is GmailRoute.Message || current.route is GmailRoute.Thread)
         val previousListContext = listContext(current.route, current.backStack)
         val targetListContext = listContext(target, remaining)
         if (previousListContext != targetListContext) {
@@ -243,7 +245,7 @@ class GmailViewModel(
                 mutableState.value = current.copy(
                     route = target,
                     backStack = remaining,
-                    searchInput = target.query,
+                    searchInput = if (returningFromDetailToList) current.searchInput else target.query,
                     isLoading = false,
                     isLoadingMore = false,
                     listError = null,

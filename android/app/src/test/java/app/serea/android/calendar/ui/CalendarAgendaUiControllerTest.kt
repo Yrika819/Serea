@@ -18,6 +18,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
@@ -34,6 +35,53 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CalendarAgendaUiControllerTest {
+    @Test fun providerCancellationEndsLoadingAndCanBeRetried() = runTest {
+        val provider = fakeProvider(
+            listOf(calendar("demo")),
+            listOf(timedEvent("demo", "event", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z")),
+        )
+        var cancelFirstPage = true
+        val fake = CalendarAgendaUiFake(provider, beforePage = { _, _, _ ->
+            if (cancelFirstPage) {
+                cancelFirstPage = false
+                throw CancellationException("Fictional provider cancellation")
+            }
+        })
+        val controller = CalendarAgendaUiController(fake, fake, UI_TEST_CLOCK, ZoneId.of("UTC"), this)
+        runCurrent()
+
+        assertFailure(controller, CalendarAgendaFailure.UNAVAILABLE)
+        controller.retry()
+        advanceUntilIdle()
+        assertEquals(listOf("event"), agenda(controller).events.map { it.key.eventId.value })
+        controller.close()
+    }
+
+    @Test fun detailProviderCancellationEndsLoadingAndCanBeRetried() = runTest {
+        val event = timedEvent("demo", "detail-retry", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z")
+        val provider = fakeProvider(listOf(calendar("demo")), listOf(event))
+        var cancelFirstDetail = true
+        val fake = CalendarAgendaUiFake(provider, beforeGetEvent = {
+            if (cancelFirstDetail) {
+                cancelFirstDetail = false
+                throw CancellationException("Fictional detail provider cancellation")
+            }
+        })
+        val controller = CalendarAgendaUiController(fake, fake, UI_TEST_CLOCK, ZoneId.of("UTC"), this)
+        advanceUntilIdle()
+
+        controller.openEvent(event.key)
+        advanceUntilIdle()
+        val failure = assertFailure(controller, CalendarAgendaFailure.UNAVAILABLE)
+        assertEquals(event.key, failure.detailKey)
+
+        controller.retry()
+        advanceUntilIdle()
+        val detail = controller.state.value as CalendarAgendaUiState.EventDetail
+        assertEquals(event.key, detail.event.key)
+        controller.close()
+    }
+
     @Test fun choosingSpecifiedDateSeedsAnEmptyDateFieldFromInjectedClockAndZone() {
         val beforeTokyoMidnight = Clock.fixed(Instant.parse("2026-10-20T15:30:00Z"), ZoneId.of("UTC"))
         assertEquals("2026-10-21", normalizeSpecifiedDateInput("", beforeTokyoMidnight, ZoneId.of("Asia/Tokyo")))

@@ -31,6 +31,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 enum class CalendarAgendaMode { TODAY, TOMORROW, UPCOMING, DATE }
@@ -229,6 +230,14 @@ internal class CalendarAgendaUiController(
                 lastAgenda = ready
                 mutableState.value = ready
             } catch (cancelled: CancellationException) {
+                if (generation == requestGeneration && currentCoroutineContext().isActive) {
+                    mutableState.value = CalendarAgendaUiState.Failure(
+                        requestedQuery,
+                        selectedCalendarId,
+                        mutableState.value.calendars,
+                        CalendarAgendaFailure.UNAVAILABLE,
+                    )
+                }
                 throw cancelled
             } catch (failure: Exception) {
                 if (generation == requestGeneration) {
@@ -278,6 +287,15 @@ internal class CalendarAgendaUiController(
                     authorization.state == CalendarAuthorizationState.MOCK_ONLY,
                 )
             } catch (cancelled: CancellationException) {
+                if (generation == requestGeneration && currentCoroutineContext().isActive) {
+                    mutableState.value = CalendarAgendaUiState.Failure(
+                        requestedQuery,
+                        requestedCalendarId,
+                        mutableState.value.calendars,
+                        CalendarAgendaFailure.UNAVAILABLE,
+                        detailKey = key,
+                    )
+                }
                 throw cancelled
             } catch (failure: Exception) {
                 if (generation == requestGeneration) {

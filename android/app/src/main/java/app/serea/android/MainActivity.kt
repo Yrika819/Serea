@@ -68,7 +68,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -133,6 +135,7 @@ data class ChatUiState(
     val conversation: Conversation = Conversation(id = UUID.randomUUID().toString()),
     val input: String = "",
     val isLoading: Boolean = false,
+    val isFinalizing: Boolean = false,
     val isRestoring: Boolean = false,
     val showingHistory: Boolean = false,
     val history: List<StoredConversation> = emptyList(),
@@ -176,7 +179,7 @@ class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChat
 
 internal class ChatViewModel(
     private val modelChat: ModelChatPort,
-    private val historyRepository: ConversationRepository? = null,
+    private val historyRepository: ConversationHistoryPort? = null,
     private val usageRepository: UsageRepository? = null,
     initialConversation: Conversation? = null,
 ) : ViewModel() {
@@ -187,6 +190,7 @@ internal class ChatViewModel(
     val state: StateFlow<ChatUiState> = mutableState.asStateFlow()
     private var activeJob: Job? = null
     private var activeMessageId: String? = null
+    private val finalizingMessageIds = mutableSetOf<String>()
     private var selectionGeneration = 0L
     private val persistedConversationIds = mutableSetOf<String>().apply {
         if (historyRepository != null && initialConversation != null) add(initialConversation.id)
@@ -209,9 +213,10 @@ internal class ChatViewModel(
             origin = DataOrigin.USER_AUTHORED, conversationId = conversationId)
         activeMessageId = userMessage.id
         mutableState.update {
-            it.copy(conversation = it.conversation.copy(messages = it.conversation.messages + userMessage), input = "", isLoading = true, errorMessage = null)
+            it.copy(conversation = it.conversation.copy(messages = it.conversation.messages + userMessage), input = "", isLoading = true, isFinalizing = false, errorMessage = null)
         }
         activeJob = viewModelScope.launch {
+            var turnFinalized = false
             try {
                 if (historyRepository != null) {
                     if (conversationId in persistedConversationIds) {
@@ -226,22 +231,43 @@ internal class ChatViewModel(
                 val context = ChatContextBuilder.build(snapshot.conversation.messages, messageText, conversationId)
                 val request = ModelChatRequest(conversationId, messageText, sendId = userMessage.id, context = context)
                 val reply = withTimeout(request.timeoutMillis) { modelChat.send(request) }
+                currentCoroutineContext().ensureActive()
+                if (activeMessageId != userMessage.id || mutableState.value.conversation.id != conversationId) {
+                    markUnknown(userMessage, conversationId, "Request cancelled. A transmitted request may still have completed remotely.")
+                    return@launch
+                }
                 val assistant = ChatMessage(UUID.randomUUID().toString(), MessageRole.ASSISTANT, reply.text,
                     nextMessageTime(snapshot.conversation.copy(messages = snapshot.conversation.messages + userMessage)),
                     origin = DataOrigin.MODEL_OUTPUT, conversationId = conversationId)
-                if (historyRepository != null) {
-                    historyRepository.completeTurn(userMessage.id, assistant.toStoredMessage(conversationId))
-                }
                 mutableState.update { current ->
-                    if (current.conversation.id != conversationId) current
-                    else current.copy(conversation = current.conversation.copy(messages = current.conversation.messages
-                        .map { if (it.id == userMessage.id) it.copy(status = "COMPLETED") else it } + assistant), isLoading = false)
+                    if (current.conversation.id != conversationId || activeMessageId != userMessage.id) current
+                    else current.copy(isFinalizing = true)
+                }
+                finalizingMessageIds += userMessage.id
+                withContext(NonCancellable) {
+                    historyRepository?.completeTurn(userMessage.id, assistant.toStoredMessage(conversationId))
+                    turnFinalized = true
+                    mutableState.update { current ->
+                        if (current.conversation.id != conversationId) current
+                        else {
+                            val ownsActiveRequest = activeMessageId == userMessage.id
+                            current.copy(
+                                conversation = current.conversation.copy(messages = current.conversation.messages
+                                    .map { if (it.id == userMessage.id) it.copy(status = "COMPLETED") else it } + assistant),
+                                isLoading = if (ownsActiveRequest) false else current.isLoading,
+                                isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                                errorMessage = if (ownsActiveRequest) null else current.errorMessage,
+                            )
+                        }
+                    }
                 }
                 refreshHistory()
             } catch (_: TimeoutCancellationException) {
                 markUnknown(userMessage, conversationId, "The request timed out. Its remote outcome is unknown; retry explicitly.")
             } catch (cancelled: CancellationException) {
-                withContext(NonCancellable) { markUnknown(userMessage, conversationId, "Request cancelled. A transmitted request may still have completed remotely.") }
+                if (!turnFinalized) {
+                    withContext(NonCancellable) { markUnknown(userMessage, conversationId, "Request cancelled. A transmitted request may still have completed remotely.") }
+                }
             } catch (failure: ModelChatFailure) {
                 markFailed(userMessage, conversationId, failure.message ?: "The model request failed.")
             } catch (_: UsageLimitExceededException) {
@@ -249,6 +275,7 @@ internal class ChatViewModel(
             } catch (_: Exception) {
                 markFailed(userMessage, conversationId)
             } finally {
+                finalizingMessageIds -= userMessage.id
                 if (activeMessageId == userMessage.id) { activeMessageId = null; activeJob = null }
             }
         }
@@ -256,6 +283,7 @@ internal class ChatViewModel(
 
     fun cancelCurrent() {
         val id = activeMessageId ?: return
+        if (id in finalizingMessageIds) return
         val conversationId = mutableState.value.conversation.id
         activeJob?.cancel()
         mutableState.update { it.copy(isLoading = false, errorMessage = "Request cancelled. A transmitted request may still have completed remotely.") }
@@ -266,18 +294,22 @@ internal class ChatViewModel(
         cancelCurrent()
         selectionGeneration += 1
         val id = UUID.randomUUID().toString()
-        mutableState.update { it.copy(conversation = Conversation(id), input = "", isLoading = false, showingHistory = false,
+        mutableState.update { it.copy(conversation = Conversation(id), input = "", isLoading = false, isFinalizing = false, showingHistory = false,
             isRestoring = false, errorMessage = null, statusMessage = null) }
     }
 
     fun showHistory() {
         if (mutableState.value.isRestoring) return
+        if (finalizingMessageIds.isNotEmpty()) {
+            mutableState.update { it.copy(errorMessage = "応答の保存中は履歴を開けません。") }
+            return
+        }
         val generation = ++selectionGeneration
         viewModelScope.launch {
             try {
                 val conversations = historyRepository?.list().orEmpty()
                 if (generation != selectionGeneration) return@launch
-                mutableState.update { it.copy(history = conversations, showingHistory = true, isLoading = false) }
+                mutableState.update { it.copy(history = conversations, showingHistory = true, isLoading = false, isFinalizing = false) }
             } catch (_: HistoryUnavailableException) {
                 if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
             } catch (_: Exception) {
@@ -288,6 +320,10 @@ internal class ChatViewModel(
 
     fun openConversation(id: String) {
         if (mutableState.value.isRestoring) return
+        if (finalizingMessageIds.isNotEmpty()) {
+            mutableState.update { it.copy(errorMessage = "応答の保存中は履歴を切り替えられません。") }
+            return
+        }
         cancelCurrent()
         val generation = ++selectionGeneration
         viewModelScope.launch {
@@ -302,7 +338,7 @@ internal class ChatViewModel(
                     } else message.toChatMessage()
                 }
                 if (generation != selectionGeneration) return@launch
-                mutableState.update { it.copy(conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)), showingHistory = false, isLoading = false) }
+                mutableState.update { it.copy(conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)), showingHistory = false, isLoading = false, isFinalizing = false) }
             } catch (_: HistoryUnavailableException) {
                 if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
             } catch (_: Exception) {
@@ -312,6 +348,10 @@ internal class ChatViewModel(
     }
 
     fun deleteCurrentConversation(expectedId: String) {
+        if (finalizingMessageIds.isNotEmpty()) {
+            mutableState.update { it.copy(errorMessage = "応答の保存中は会話を削除できません。") }
+            return
+        }
         val current = mutableState.value
         if (current.isRestoring || current.conversation.id != expectedId) {
             mutableState.update { it.copy(errorMessage = "削除対象の会話が切り替わったため、削除を中止しました。") }
@@ -320,7 +360,7 @@ internal class ChatViewModel(
         val id = expectedId
         cancelCurrent()
         val generation = ++selectionGeneration
-        mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
+        mutableState.update { it.copy(isRestoring = true, isLoading = false, isFinalizing = false, statusMessage = null) }
         viewModelScope.launch {
             try {
                 historyRepository?.delete(id)
@@ -337,9 +377,13 @@ internal class ChatViewModel(
 
     fun deleteAllHistory() {
         if (mutableState.value.isRestoring) return
+        if (finalizingMessageIds.isNotEmpty()) {
+            mutableState.update { it.copy(errorMessage = "応答の保存中は履歴を削除できません。") }
+            return
+        }
         cancelCurrent()
         val generation = ++selectionGeneration
-        mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
+        mutableState.update { it.copy(isRestoring = true, isLoading = false, isFinalizing = false, statusMessage = null) }
         viewModelScope.launch {
             try {
                 historyRepository?.deleteAll()
@@ -390,15 +434,35 @@ internal class ChatViewModel(
     )
     private suspend fun markUnknown(message: ChatMessage, conversationId: String, reason: String) {
         historyRepository?.updateStatus(message.id, conversationId, "OUTCOME_UNKNOWN")
-        mutableState.update { current -> if (current.conversation.id == conversationId) current.copy(isLoading = false,
-            conversation = current.conversation.copy(messages = current.conversation.messages.map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
-            errorMessage = reason) else current }
+        mutableState.update { current ->
+            if (current.conversation.id != conversationId) current
+            else {
+                val ownsActiveRequest = activeMessageId == message.id
+                current.copy(
+                    isLoading = if (ownsActiveRequest) false else current.isLoading,
+                    isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                    conversation = current.conversation.copy(messages = current.conversation.messages
+                        .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
+                    errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
+                )
+            }
+        }
     }
     private suspend fun markFailed(message: ChatMessage, conversationId: String, reason: String = "Demo response failed. Please try again.") {
         historyRepository?.updateStatus(message.id, conversationId, "FAILED")
-        mutableState.update { current -> if (current.conversation.id == conversationId) current.copy(isLoading = false,
-            conversation = current.conversation.copy(messages = current.conversation.messages.map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
-            errorMessage = reason) else current }
+        mutableState.update { current ->
+            if (current.conversation.id != conversationId) current
+            else {
+                val ownsActiveRequest = activeMessageId == message.id
+                current.copy(
+                    isLoading = if (ownsActiveRequest) false else current.isLoading,
+                    isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                    conversation = current.conversation.copy(messages = current.conversation.messages
+                        .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
+                    errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
+                )
+            }
+        }
     }
     private fun refreshHistory() {
         val generation = selectionGeneration
@@ -410,7 +474,7 @@ internal class ChatViewModel(
     }
 
     companion object {
-        fun factory(port: ModelChatPort, history: ConversationRepository? = null, usage: UsageRepository? = null): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+        fun factory(port: ModelChatPort, history: ConversationHistoryPort? = null, usage: UsageRepository? = null): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ChatViewModel(port, history, usage) as T
         }
@@ -788,7 +852,8 @@ internal fun ChatScreen(
                     if (state.isLoading) item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
                         CircularProgressIndicator(modifier = Modifier.padding(4.dp), strokeWidth = 2.dp)
-                        Text("Demo応答を準備しています…", modifier = Modifier.padding(top = 8.dp))
+                        Text(if (state.isFinalizing) "応答を保存しています…" else "Demo応答を準備しています…",
+                            modifier = Modifier.padding(top = 8.dp))
                     } }
                 }
             }
@@ -802,8 +867,8 @@ internal fun ChatScreen(
                         maxLines = 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
                         supportingText = { Text("デモ専用。Cloudへは送信されません。") })
-                    if (state.isLoading) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
-                    else Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
+                    if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
+                    else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                         enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,
                         modifier = Modifier.padding(top = 8.dp)) { Text("送信") }
                 }

@@ -5,6 +5,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -44,6 +45,7 @@ internal class EncryptedTaskRepository(
         TaskValidation.validateDraft(draft)
         try { dao.allRows().firstOrNull()?.decode() }
         catch (error: TaskStorageUnavailableException) { throw error }
+        catch (error: CancellationException) { throw error }
         catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
         val id = idFactory().lowercase()
         try { TaskValidation.validateId(id) } catch (error: Exception) { throw InvalidTaskException("Task ID generation failed.") }
@@ -56,6 +58,7 @@ internal class EncryptedTaskRepository(
             if (proposalId == null) dao.insert(row) else dao.insertTaskForProposal(row, ProposalReceiptRow(proposalId, id))
         } catch (error: TaskConflictException) { throw error }
         catch (error: SQLiteConstraintException) { throw TaskConflictException() }
+        catch (error: CancellationException) { throw error }
         catch (error: Exception) { throw TaskStorageUnavailableException("Task could not be saved.", error) }
         return task
     }
@@ -63,11 +66,13 @@ internal class EncryptedTaskRepository(
     override suspend fun get(id: String): Task? = mutex.withLock {
         TaskValidation.validateId(id)
         try { dao.row(id)?.decode() } catch (error: TaskStorageUnavailableException) { throw error }
+        catch (error: CancellationException) { throw error }
         catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
     }
     override suspend fun list(): List<Task> = mutex.withLock {
         try { dao.allRows().map { it.decode() }.sortedWith(TASK_ORDER) }
         catch (error: TaskStorageUnavailableException) { throw error }
+        catch (error: CancellationException) { throw error }
         catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
     }
 
@@ -98,10 +103,12 @@ internal class EncryptedTaskRepository(
     override suspend fun delete(id: String, expectedRevision: Long) = mutex.withLock {
         TaskValidation.validateId(id)
         if (expectedRevision < 1) throw InvalidTaskException("Invalid task revision.")
-        val row = try { dao.row(id) } catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
+        val row = try { dao.row(id) } catch (error: CancellationException) { throw error }
+            catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
             ?: throw TaskNotFoundException()
         if (row.revision != expectedRevision) throw TaskConflictException()
         val deleted = try { dao.deleteIfRevisionMatches(id, expectedRevision) }
+            catch (error: CancellationException) { throw error }
             catch (error: Exception) { throw TaskStorageUnavailableException("Task could not be deleted.", error) }
         if (deleted != 1) throw TaskConflictException()
     }
@@ -113,7 +120,8 @@ internal class EncryptedTaskRepository(
 
     private suspend fun readForMutation(id: String, expectedRevision: Long): Task {
         if (expectedRevision < 1 || expectedRevision == Long.MAX_VALUE) throw InvalidTaskException("Invalid task revision.")
-        val row = try { dao.row(id) } catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
+        val row = try { dao.row(id) } catch (error: CancellationException) { throw error }
+            catch (error: Exception) { throw TaskStorageUnavailableException("Task storage is unavailable.", error) }
             ?: throw TaskNotFoundException()
         if (row.revision != expectedRevision) throw TaskConflictException()
         return row.decode()
@@ -122,8 +130,10 @@ internal class EncryptedTaskRepository(
     private suspend fun save(task: Task): Task {
         TaskValidation.validate(task)
         val encoded = try { cipher.encrypt(task.id, TaskPayloadCodec.encode(task)) }
+            catch (error: CancellationException) { throw error }
             catch (error: Exception) { throw TaskStorageUnavailableException("Task could not be encrypted and saved.", error) }
         val changed = try { dao.compareAndSet(task.id, task.revision - 1, task.revision, encoded) }
+            catch (error: CancellationException) { throw error }
             catch (error: Exception) { throw TaskStorageUnavailableException("Task could not be saved.", error) }
         if (changed != 1) throw TaskConflictException()
         return task

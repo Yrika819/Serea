@@ -22,6 +22,11 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             ],
             scripts,
         )
+        self.assertIn('build_checkout_commit=$(git rev-parse HEAD)', workflow)
+        self.assertIn('build_checkout_commit=$GITHUB_SHA', workflow)
+        self.assertIn('base_commit=$BASE_SHA', workflow)
+        self.assertIn('github_run_attempt=$GITHUB_RUN_ATTEMPT', workflow)
+        self.assertIn('based on `codex/pr71-beta-acceptance-final-20261021-v2`', workflow)
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"
         self.assertTrue(script.is_file())
         subprocess.run(["bash", "-n", str(script)], check=True)
@@ -75,7 +80,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             if line.startswith("androidx.compose.ui:ui-test-manifest:")
         )
         self.assertEqual(
-            "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedAndroidTestCompileClasspath,isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath",
+            "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedAndroidTestCompileClasspath,isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath,isolatedUnitTestCompileClasspath,isolatedUnitTestRuntimeClasspath",
             manifest_lock,
         )
 

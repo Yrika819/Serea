@@ -3,6 +3,7 @@ package app.serea.android.tasks
 import java.time.Instant
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -77,5 +78,27 @@ class TaskRepositoryTest {
         val second = async { runCatching { repository.update(created.id, created.revision, TaskDraft("second")) } }
         assertEquals(1, listOf(first.await(), second.await()).count { it.isSuccess })
         assertEquals(2L, repository.get(created.id)?.revision)
+    }
+
+    @Test fun daoCancellationDuringUpdatePropagatesWithoutBecomingStorageFailure() = runBlocking {
+        val memoryDao = MemoryDao()
+        var cancelWrites = false
+        val dao = object : TaskDao by memoryDao {
+            override suspend fun compareAndSet(id: String, expectedRevision: Long, nextRevision: Long, encrypted: String): Int {
+                if (cancelWrites) throw CancellationException("DAO update was cancelled")
+                return memoryDao.compareAndSet(id, expectedRevision, nextRevision, encrypted)
+            }
+        }
+        val repository = EncryptedTaskRepository(dao, TestCipher(), { Instant.ofEpochMilli(tick.getAndIncrement()) }, { "00000000-0000-0000-0000-000000000002" })
+        val created = repository.create(TaskDraft("cancelled update"))
+        cancelWrites = true
+
+        val error = assertThrows(CancellationException::class.java) {
+            runBlocking { repository.update(created.id, created.revision, TaskDraft("must not be saved")) }
+        }
+
+        assertEquals("DAO update was cancelled", error.message)
+        cancelWrites = false
+        assertEquals(created, repository.get(created.id))
     }
 }

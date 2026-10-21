@@ -157,5 +157,11 @@ class FakeCalendarProvider(
                 add(timed("demo-work", "bulk-$index", "Fictional paged event $index", start.toString(), start.plusSeconds(900).toString(), newYork))
             }
         }
+
+        /** Bounded app-shell fixture remains multi-page without forcing the screen demo to render 245 rows. */
+        val appShellEvents: List<CalendarEvent> = events.filter { event ->
+            val index = event.key.eventId.value.removePrefix("bulk-").toIntOrNull()
+            index == null || index < 121
+        }
     }
 }

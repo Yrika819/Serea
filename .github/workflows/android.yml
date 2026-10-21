@@ -300,6 +300,27 @@ jobs:
       - name: Install API 26 emulator image
         if: always() && !cancelled()
         run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
+      - name: Clear API 35 emulator state before API 26 campaign
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          adb devices -l
+          while IFS= read -r serial; do
+            [ -n "$serial" ] || continue
+            adb -s "$serial" emu kill || true
+          done < <(adb devices | awk '$1 ~ /^emulator-/ { print $1 }')
+          for attempt in $(seq 1 30); do
+            if ! adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
+              break
+            fi
+            sleep 1
+          done
+          if adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
+            echo 'An emulator from the API 35 campaign is still attached.' >&2
+            exit 1
+          fi
+          adb kill-server
+          adb start-server
       - name: Run API 26 Pixel emulator and all instrumentation tests
         id: api26
         if: always() && !cancelled()

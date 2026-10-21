@@ -30,12 +30,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -111,7 +110,13 @@ fun GmailScreen(
 
 @Composable
 private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewModel: GmailViewModel, modifier: Modifier) {
-    var query by rememberSaveable(route.mode, route.query) { mutableStateOf(route.query) }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val submitSearch = {
+        viewModel.submitSearch(state.searchInput)
+        keyboardController?.hide()
+        focusManager.clearFocus()
+    }
     Column(modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -119,15 +124,15 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
+                value = state.searchInput,
+                onValueChange = viewModel::updateSearchInput,
                 modifier = Modifier.weight(1f),
                 label = { Text("メールを検索") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { viewModel.submitSearch(query) }),
+                keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
             )
-            Button(onClick = { viewModel.submitSearch(query) }) { Text("検索") }
+            Button(onClick = { submitSearch() }) { Text("検索") }
         }
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),

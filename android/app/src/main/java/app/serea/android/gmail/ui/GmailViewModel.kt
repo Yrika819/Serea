@@ -68,6 +68,8 @@ data class GmailUiState(
     val detailError: GmailUiErrorCode? = null,
     val thread: GmailThread? = null,
     val threadError: GmailUiErrorCode? = null,
+    /** Raw search text stays in the Activity ViewModel and is never written to saved state. */
+    val searchInput: String = "",
 )
 
 /**
@@ -105,6 +107,10 @@ class GmailViewModel(
         loadFirstPage(GmailRoute.List(GmailListMode.INBOX))
     }
 
+    fun updateSearchInput(value: String) {
+        mutableState.value = mutableState.value.copy(searchInput = value)
+    }
+
     fun submitSearch(query: String) {
         val normalized = query.trim()
         val current = mutableState.value
@@ -122,6 +128,7 @@ class GmailViewModel(
             mutableState.value = current.copy(
                 route = nextRoute,
                 backStack = stack,
+                searchInput = query,
                 messages = emptyList(),
                 nextPageToken = null,
                 hasMore = false,
@@ -236,6 +243,7 @@ class GmailViewModel(
                 mutableState.value = current.copy(
                     route = target,
                     backStack = remaining,
+                    searchInput = target.query,
                     isLoading = false,
                     isLoadingMore = false,
                     listError = null,
@@ -310,13 +318,36 @@ class GmailViewModel(
     private fun restoreState(): GmailUiState {
         val mode = runCatching { GmailListMode.valueOf(savedStateHandle[KEY_LIST_MODE] ?: GmailListMode.INBOX.name) }
             .getOrDefault(GmailListMode.INBOX)
-        val query = savedStateHandle[KEY_QUERY] ?: ""
-        val fallbackList = GmailRoute.List(mode, query)
+        // A Gmail search can contain personal text. Older versions saved it in route IDs;
+        // discard it on process recreation. The Activity-scoped ViewModel retains it through
+        // configuration changes without placing it in the Bundle.
+        savedStateHandle.remove<Any>(KEY_QUERY)
+        val hadSavedSearch = mode == GmailListMode.SEARCH ||
+            savedStateHandle.get<String>("${ROUTE_PREFIX}_type") == "search" ||
+            (0 until MAX_SAVED_BACK_ROUTES).any { index ->
+                savedStateHandle.get<String>("${BACK_PREFIX}${index}_type") == "search"
+            }
+        if (hadSavedSearch) {
+            resetSavedNavigationToInbox()
+            return GmailUiState(isLoading = true)
+        }
+        val fallbackList = GmailRoute.List(mode)
         val route = readRoute(ROUTE_PREFIX, fallbackList) ?: fallbackList
         val backStack = (0 until MAX_SAVED_BACK_ROUTES).mapNotNull { index ->
             readRoute("$BACK_PREFIX$index", fallbackList)
         }
         return GmailUiState(route = route, backStack = backStack, isLoading = true)
+    }
+
+    private fun resetSavedNavigationToInbox() {
+        savedStateHandle[KEY_LIST_MODE] = GmailListMode.INBOX.name
+        savedStateHandle.remove<Any>(KEY_QUERY)
+        writeRoute(ROUTE_PREFIX, GmailRoute.List(GmailListMode.INBOX))
+        for (index in 0 until MAX_SAVED_BACK_ROUTES) {
+            savedStateHandle.remove<Any>("${BACK_PREFIX}${index}_type")
+            savedStateHandle.remove<Any>("${BACK_PREFIX}${index}_id")
+            savedStateHandle.remove<Any>("${BACK_PREFIX}${index}_selected")
+        }
     }
 
     private fun navigateToList(route: GmailRoute.List, stack: List<GmailRoute> = mutableState.value.backStack) {
@@ -335,6 +366,7 @@ class GmailViewModel(
             detailError = null,
             thread = null,
             threadError = null,
+            searchInput = route.query,
         )
     }
 
@@ -599,11 +631,14 @@ class GmailViewModel(
         if (firstPage) FailedAction.FirstPage(route) else FailedAction.NextPage(route, token.orEmpty())
 
     private fun persistNavigation(route: GmailRoute, backStack: List<GmailRoute>) {
-        savedStateHandle[KEY_LIST_MODE] = listContext(route, backStack).mode.name
-        savedStateHandle[KEY_QUERY] = listContext(route, backStack).query
-        writeRoute(ROUTE_PREFIX, route)
-        backStack.takeLast(MAX_SAVED_BACK_ROUTES).forEachIndexed { index, item -> writeRoute("$BACK_PREFIX$index", item) }
-        for (index in backStack.size.coerceAtMost(MAX_SAVED_BACK_ROUTES) until MAX_SAVED_BACK_ROUTES) {
+        val sensitiveSearch = listContext(route, backStack).mode == GmailListMode.SEARCH
+        val safeRoute = if (sensitiveSearch) GmailRoute.List(GmailListMode.INBOX) else route
+        val safeBackStack = if (sensitiveSearch) emptyList() else backStack
+        savedStateHandle[KEY_LIST_MODE] = GmailListMode.INBOX.name
+        savedStateHandle.remove<Any>(KEY_QUERY)
+        writeRoute(ROUTE_PREFIX, safeRoute)
+        safeBackStack.takeLast(MAX_SAVED_BACK_ROUTES).forEachIndexed { index, item -> writeRoute("$BACK_PREFIX$index", item) }
+        for (index in safeBackStack.size.coerceAtMost(MAX_SAVED_BACK_ROUTES) until MAX_SAVED_BACK_ROUTES) {
             savedStateHandle.remove<Any>("$BACK_PREFIX${index}_type")
             savedStateHandle.remove<Any>("$BACK_PREFIX${index}_id")
             savedStateHandle.remove<Any>("$BACK_PREFIX${index}_selected")
@@ -642,7 +677,8 @@ class GmailViewModel(
         return runCatching {
             when (type) {
                 "inbox" -> GmailRoute.List(GmailListMode.INBOX)
-                "search" -> GmailRoute.List(GmailListMode.SEARCH, id)
+                // Do not resurrect a query from an older Bundle. Search state is in-memory only.
+                "search" -> GmailRoute.List(GmailListMode.INBOX)
                 "message" -> GmailRoute.Message(GmailMessageId(id))
                 "thread" -> GmailRoute.Thread(GmailThreadId(id), selected.takeIf(String::isNotEmpty)?.let(::GmailMessageId))
                 else -> fallbackList

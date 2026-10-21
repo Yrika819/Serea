@@ -510,7 +510,7 @@ class GmailViewModelTest {
         assertFalse(errorMessage(GmailUiErrorCode.UNAVAILABLE).contains(fixture.from.orEmpty()))
     }
 
-    @Test fun processRestorationReloadsDataWithoutSavingBodiesOrTokens() = runTest(mainDispatcher.dispatcher) {
+    @Test fun processRestorationReloadsInboxDetailsButNeverSavesSearchTextBodiesOrTokens() = runTest(mainDispatcher.dispatcher) {
         val fixture = FakeGmailProvider.fixtures.messages.first()
         val savedState = SavedStateHandle()
         val fake = GmailUiTestFake().apply { inboxHandler = { _, _ -> GmailMessagePage(listOf(fixture), "opaque-secret-cursor") } }
@@ -519,6 +519,8 @@ class GmailViewModelTest {
         original.openMessage(fixture.id)
         advanceUntilIdle()
         assertEquals(GmailRoute.Message(fixture.id), original.state.value.route)
+        original.updateSearchInput("unsubmitted private phrase")
+        assertFalse(savedState.keys().any { key -> savedState.get<Any?>(key) == "unsubmitted private phrase" })
 
         val recreatedFake = GmailUiTestFake().apply { inboxHandler = { _, _ -> GmailMessagePage(listOf(fixture)) } }
         val savedValues = savedState.keys().associateWith { savedState.get<Any?>(it) }
@@ -530,23 +532,49 @@ class GmailViewModelTest {
         val restoredValues = savedState.keys().mapNotNull { savedState.get<Any?>(it) }
         assertFalse(restoredValues.any { it == "opaque-secret-cursor" })
         assertFalse(restoredValues.any { it == fixture.plainTextBody })
+
+        original.submitSearch("private search marker")
+        advanceUntilIdle()
+        assertEquals(GmailRoute.List(GmailListMode.SEARCH, "private search marker"), original.state.value.route)
+        assertEquals("private search marker", original.state.value.searchInput)
+        val searchSavedValues = savedState.keys().associateWith { savedState.get<Any?>(it) }
+        assertFalse(searchSavedValues.keys.any { it == "gmail_search_query" })
+        assertFalse(searchSavedValues.values.any { it == "private search marker" })
+
+        val afterSearchFake = GmailUiTestFake()
+        val afterSearch = GmailViewModel(afterSearchFake, afterSearchFake, SavedStateHandle(searchSavedValues))
+        advanceUntilIdle()
+        assertEquals(GmailRoute.List(GmailListMode.INBOX), afterSearch.state.value.route)
+        assertEquals("", afterSearch.state.value.searchInput)
+        assertTrue(afterSearchFake.searchQueries.isEmpty())
     }
 
-    @Test fun restoredEmptySearchDoesNotCallProviderAgain() = runTest(mainDispatcher.dispatcher) {
+    @Test fun legacySearchSavedStateIsClearedAndRestoresInboxWithoutTheQuery() = runTest(mainDispatcher.dispatcher) {
+        val privateQuery = "private-search-phrase"
         val handle = SavedStateHandle(mapOf(
             "gmail_list_mode" to GmailListMode.SEARCH.name,
-            "gmail_search_query" to "",
+            "gmail_search_query" to privateQuery,
             "gmail_route_type" to "search",
-            "gmail_route_id" to "",
+            "gmail_route_id" to privateQuery,
             "gmail_route_selected" to "",
+            "gmail_back_0_type" to "search",
+            "gmail_back_0_id" to privateQuery,
+            "gmail_back_0_selected" to "",
+            "gmail_back_1_type" to "search",
+            "gmail_back_1_id" to privateQuery,
+            "gmail_back_1_selected" to "",
         ))
         val fake = GmailUiTestFake()
         val viewModel = GmailViewModel(fake, fake, handle)
         advanceUntilIdle()
 
-        assertEquals(GmailUiErrorCode.EMPTY_SEARCH, viewModel.state.value.listError)
+        assertEquals(GmailRoute.List(GmailListMode.INBOX), viewModel.state.value.route)
+        assertFalse(viewModel.state.value.searchInput.contains(privateQuery))
         assertTrue(fake.searchQueries.isEmpty())
-        assertTrue(fake.inboxTokens.isEmpty())
+        assertTrue(fake.inboxTokens.isNotEmpty())
+        assertFalse(handle.keys().any { key -> handle.get<Any?>(key) == privateQuery })
+        assertFalse(handle.keys().contains("gmail_search_query"))
+        assertFalse(handle.keys().any { it.startsWith("gmail_back_") })
     }
 
     @Test fun restoredDetailInboxFailureIsShownAndRetryContinuesRestoration() = runTest(mainDispatcher.dispatcher) {

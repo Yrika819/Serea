@@ -4,6 +4,7 @@ import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertIsEnabled
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -85,15 +87,20 @@ class SereaAppShellTest {
     }
 
     @Test fun gmailSearchAndMessageDetailUseTheFakeProviderFixtures() {
+        compose.waitUntil(10_000) { !compose.activity.chatViewModel.state.value.isRestoring }
+        val chatConversationBefore = compose.activity.chatViewModel.state.value.conversation
         select(SereaDestination.GMAIL)
         compose.onNodeWithText("メールを検索").performTextInput("Garden plan")
-        compose.onNodeWithText("検索").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("Garden plan").assertIsDisplayed()
+        compose.onNodeWithText("メールを検索").performImeAction()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("メールを検索").assertIsNotFocused()
         compose.onNodeWithTag("gmail_message_subject").performClick()
         compose.onNodeWithText("The imaginary basil bed is ready.").assertIsDisplayed()
-        assertTrue(compose.activity.chatViewModel.state.value.conversation.messages.isEmpty())
+        assertEquals(chatConversationBefore, compose.activity.chatViewModel.state.value.conversation)
     }
 
     @Test fun chatCalendarBackShowsFictionalAgendaAndDetail() {

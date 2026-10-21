@@ -67,10 +67,20 @@ if [[ "$sdk_ok" == true ]]; then
   test_package='app.serea.android.isolated.test'
   debug_apk='app/build/outputs/apk/debug/app-debug.apk'
   isolated_apk='app/build/outputs/apk/isolated/app-isolated.apk'
-  if [[ -n "$(adb shell pm path "$demo_package" 2>/dev/null | tr -d '\r')" || \
-        -n "$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')" || \
-        -n "$(adb shell pm path "$test_package" 2>/dev/null | tr -d '\r')" ]]; then
-    echo "Refusing emulator with pre-existing Serea app or test package; no app data will be cleared." > "$evidence/data-isolation-error.txt"
+  retained_packages="$(adb shell pm list packages -u 2>/dev/null)"
+  retained_packages_result=$?
+  retained_packages="$(printf '%s' "$retained_packages" | tr -d '\r')"
+  if [[ "$retained_packages_result" -ne 0 ]]; then
+    echo "Unable to prove that no installed or retained Serea package data exists; refusing campaign." > "$evidence/data-isolation-error.txt"
+    data_isolation_result=FAIL
+    printf 'FAIL\n' > "$evidence/data-isolation-status.txt"
+  elif { printf '%s\n' "$retained_packages" | grep -Fxq "package:$demo_package" || \
+       printf '%s\n' "$retained_packages" | grep -Fxq "package:$isolated_package" || \
+       printf '%s\n' "$retained_packages" | grep -Fxq "package:$test_package" || \
+       [[ -n "$(adb shell pm path "$demo_package" 2>/dev/null | tr -d '\r')" || \
+          -n "$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')" || \
+          -n "$(adb shell pm path "$test_package" 2>/dev/null | tr -d '\r')" ]]; }; then
+    echo "Refusing emulator with an installed package or retained Serea app data; no app data will be cleared." > "$evidence/data-isolation-error.txt"
     data_isolation_result=FAIL
     printf 'FAIL\n' > "$evidence/data-isolation-status.txt"
   else

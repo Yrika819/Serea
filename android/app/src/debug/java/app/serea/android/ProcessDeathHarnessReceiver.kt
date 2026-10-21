@@ -153,9 +153,9 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         check(!context.getDatabasePath("serea-history.db").exists()) {
             "Refusing to seed an existing demo history database"
         }
-        check(repository.list().isEmpty()) { "Refusing to seed a non-empty demo history database" }
         val preferences = context.getSharedPreferences("model_selection", Context.MODE_PRIVATE)
         check(preferences.all.isEmpty()) { "Refusing to overwrite existing model_selection preferences" }
+        check(repository.list().isEmpty()) { "Refusing to seed a non-empty demo history database" }
         val conversationId = "data-sentinel-$token"
         val timestamp = System.currentTimeMillis()
         repository.create(conversationId, "CI data sentinel $token", now = timestamp)

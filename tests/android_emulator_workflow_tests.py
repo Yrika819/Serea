@@ -316,6 +316,71 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertIn("Refusing non-emulator", result.stderr)
             self.assertFalse(marker.exists())
 
+    def test_campaign_refuses_app_data_retained_by_uninstall_keep_data(self) -> None:
+        script = ROOT / "tools/run_android_instrumentation_campaign.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            android = root / "android"
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            android.mkdir()
+            calls = root / "adb-calls"
+            adb = fake_bin / "adb"
+            adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$*\" >> \"$ADB_CALLS\"\n"
+                "if [[ \"$1\" == devices ]]; then\n"
+                "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
+                "elif [[ \"$1\" == shell && \"$2\" == getprop && \"$3\" == ro.build.version.sdk ]]; then\n"
+                "  printf '35\\n'\n"
+                "elif [[ \"$1\" == shell && \"$2\" == getprop && \"$3\" == ro.kernel.qemu ]]; then\n"
+                "  printf '1\\n'\n"
+                "elif [[ \"$1 $2 $3 $4\" == 'shell pm list packages' && \"$5\" == -u ]]; then\n"
+                "  printf 'package:app.serea.android.demo\\n'\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            adb.chmod(0o755)
+            summary = root / "summary.md"
+            environment = os.environ.copy()
+            environment.update({
+                "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+                "CI": "true",
+                "GITHUB_ACTIONS": "true",
+                "SEREA_DISPOSABLE_CI_EMULATOR": "1",
+                "EXPECTED_API_LEVEL": "35",
+                "GITHUB_RUN_ID": "12345",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_STEP_SUMMARY": str(summary),
+                "ADB_CALLS": str(calls),
+            })
+            result = subprocess.run(
+                ["bash", str(script), "35"],
+                cwd=android,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, result.returncode)
+            adb_calls = calls.read_text(encoding="utf-8")
+            self.assertIn("shell pm list packages -u", adb_calls)
+            self.assertNotIn("install ", adb_calls)
+            self.assertNotIn("shell pm path", adb_calls)
+            evidence = android / "app/build/outputs/androidTest-results/api35"
+            self.assertIn("retained Serea app data", (evidence / "data-isolation-error.txt").read_text(encoding="utf-8"))
+            self.assertEqual("FAIL\n", (evidence / "data-isolation-status.txt").read_text(encoding="utf-8"))
+            self.assertEqual("NOT_RUN\n", (evidence / "process-death-status.txt").read_text(encoding="utf-8"))
+
+    def test_sentinel_checks_existing_preferences_before_touching_history_database(self) -> None:
+        receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(
+            encoding="utf-8",
+        )
+        seed = receiver.split("private suspend fun seedDebugSentinel(", 1)[1].split(
+            "private suspend fun verifyDebugSentinel(", 1,
+        )[0]
+        self.assertLess(seed.index("preferences.all.isEmpty()"), seed.index("repository.list()"))
+
 
 if __name__ == "__main__":
     unittest.main()

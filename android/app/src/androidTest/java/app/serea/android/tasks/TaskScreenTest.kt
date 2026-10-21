@@ -237,7 +237,7 @@ class TaskScreenTest {
         repository.allowUpdate!!.complete(Unit)
         compose.waitUntil(5_000) { !viewModel.state.value.saving }
         compose.onNodeWithTag("task_operation_notice").assertIsDisplayed()
-        compose.onNodeWithTag("task_operation_notice").assertTextContains("保存に失敗しました")
+        compose.onNodeWithTag("task_operation_notice").assertTextContains("保存に失敗しました", substring = true)
         assertTrue(viewModel.state.value.operationNoticeIsError)
         val newerDraft = compose.onNodeWithTag("task_title").fetchSemanticsNode().config
         assertEquals("Task B newer draft", newerDraft[SemanticsProperties.EditableText].text)

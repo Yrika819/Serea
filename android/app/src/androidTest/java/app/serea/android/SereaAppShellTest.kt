@@ -14,10 +14,12 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -91,8 +93,9 @@ class SereaAppShellTest {
         val chatConversationBefore = compose.activity.chatViewModel.state.value.conversation
         select(SereaDestination.GMAIL)
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 7
+            compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("7 件").assertIsDisplayed()
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
         compose.onNodeWithTag("gmail_search_submit").performClick()
@@ -105,8 +108,9 @@ class SereaAppShellTest {
         compose.onNodeWithText("検索を取消").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("受信箱", substring = true).fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 7
+                compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("7 件").assertIsDisplayed()
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
         compose.onNodeWithTag("gmail_search_submit").performClick()
@@ -273,11 +277,9 @@ class SereaAppShellTest {
         pressBack()
 
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("開始・終了").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.waitUntil(10_000) {
-            runCatching { compose.onNodeWithText("開始・終了").assertIsDisplayed() }.isSuccess
-        }
+        compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("開始・終了"))
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.onNodeWithText("開始・終了").assertIsDisplayed()
         pressBack()

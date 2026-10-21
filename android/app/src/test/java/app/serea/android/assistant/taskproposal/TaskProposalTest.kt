@@ -389,9 +389,9 @@ class TaskProposalTest {
         assertEquals(TaskProposalReviewStatus.EXECUTING, session.status)
         pending.cancelAndJoin()
         assertTrue(pending.isCancelled)
-        assertEquals(TaskProposalReviewStatus.REJECTED, session.status)
+        assertEquals(TaskProposalReviewStatus.OUTCOME_UNKNOWN, session.status)
         assertEquals(0, repository.writes)
-        assertEquals(TaskProposalReviewResult.Rejected, session.approve(true, target.id))
+        assertEquals(TaskProposalReviewResult.OutcomeUnknown, session.approve(true, target.id))
         assertEquals(0, repository.writes)
     }
 
@@ -412,9 +412,9 @@ class TaskProposalTest {
         approval.cancelAndJoin()
         runCurrent()
 
-        assertEquals(TaskProposalReviewStatus.REJECTED, session.status)
-        assertEquals(TaskProposalReviewStatus.REJECTED, session.statusState.value)
-        assertEquals(TaskProposalReviewResult.Rejected, session.approve(true, target.id))
+        assertEquals(TaskProposalReviewStatus.OUTCOME_UNKNOWN, session.status)
+        assertEquals(TaskProposalReviewStatus.OUTCOME_UNKNOWN, session.statusState.value)
+        assertEquals(TaskProposalReviewResult.OutcomeUnknown, session.approve(true, target.id))
         assertEquals(1, repository.updateCalls)
         assertEquals(0, repository.writes)
         assertEquals("Old title", repository.get(target.id)?.title)
@@ -432,8 +432,8 @@ class TaskProposalTest {
         assertEquals(1, repository.writes)
         pending.cancelAndJoin()
         assertTrue(pending.isCancelled)
-        assertEquals(TaskProposalReviewStatus.REJECTED, session.status)
-        assertEquals(TaskProposalReviewResult.Rejected, session.approve(true, target.id))
+        assertEquals(TaskProposalReviewStatus.OUTCOME_UNKNOWN, session.status)
+        assertEquals(TaskProposalReviewResult.OutcomeUnknown, session.approve(true, target.id))
         assertEquals(1, repository.writes)
         assertEquals("Write may have completed", repository.get(target.id)?.title)
     }
@@ -442,11 +442,11 @@ class TaskProposalTest {
         val repository = FakeTaskRepository().apply { failAfterUpdateWrite = true }
         val target = repository.seed()
         val session = TaskProposalReviewSession.prepare(update(target, "Written before error"), repository)
-        assertEquals(TaskProposalReviewResult.Rejected, session.approve(true, target.id))
-        assertEquals(TaskProposalReviewStatus.REJECTED, session.status)
+        assertEquals(TaskProposalReviewResult.OutcomeUnknown, session.approve(true, target.id))
+        assertEquals(TaskProposalReviewStatus.OUTCOME_UNKNOWN, session.status)
         assertEquals(1, repository.writes)
         assertEquals("Written before error", repository.get(target.id)?.title)
-        assertEquals(TaskProposalReviewResult.Rejected, session.approve(true, target.id))
+        assertEquals(TaskProposalReviewResult.OutcomeUnknown, session.approve(true, target.id))
         assertEquals(1, repository.writes)
     }
 

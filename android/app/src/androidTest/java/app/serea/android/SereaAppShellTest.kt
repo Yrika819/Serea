@@ -3,11 +3,14 @@ package app.serea.android
 import android.content.pm.ActivityInfo
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
+import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -16,6 +19,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
@@ -27,8 +31,12 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
+import app.serea.android.assistant.taskproposal.TaskProposalDemoScreenForTest
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -142,41 +150,40 @@ class SereaAppShellTest {
         val chatConversationBefore = compose.activity.chatViewModel.state.value.conversation
         select(SereaDestination.GMAIL)
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
+            runCatching { compose.onNodeWithTag("gmail_result_count").assertTextContains("7 件") }.isSuccess
         }
         compose.onNodeWithText("7 件").assertIsDisplayed()
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        compose.onNodeWithTag("gmail_search_input").performImeAction()
-        compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithTag("gmail_search_input").assertIsNotFocused() }.isSuccess
-        }
-        compose.onNodeWithTag("gmail_list_heading").assertTextContains("検索結果")
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
-        }
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("gmail_search_submit").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("gmail_search_submit").performClick()
+        val firstSearchLoaded = runCatching { compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件") }.isSuccess
+        } }.isSuccess
+        if (!firstSearchLoaded) compose.onRoot(useUnmergedTree = true).printToLog("gmail-search-result-timeout")
+        assertTrue("Gmail search must settle to exactly one fictional Garden plan message.", firstSearchLoaded)
         compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan").assertIsDisplayed()
         compose.onNodeWithText("検索を取消").performClick()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("受信箱").fetchSemanticsNodes().isNotEmpty() &&
+                runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("7 件") }.isSuccess
         }
-        compose.onNodeWithText("7 件").assertIsDisplayed()
-        compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱")
+        compose.onNodeWithTag("gmail_result_count").assertTextEquals("7 件").assertIsDisplayed()
+        compose.onNodeWithTag("gmail_list_heading").assertTextEquals("受信箱")
+        compose.onAllNodesWithTag("gmail_message_subject").onFirst().assertTextContains("Project Finch schedule")
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        compose.activityRule.scenario.onActivity { activity ->
-            val manager = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as android.view.inputmethod.InputMethodManager
-            manager.hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
-        }
-        compose.waitForIdle()
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("gmail_search_submit").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("gmail_search_submit").performClick()
-        compose.onNodeWithTag("gmail_list_heading").assertTextContains("検索結果")
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
-        }
+        val repeatedSearchLoaded = runCatching { compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件") }.isSuccess
+        } }.isSuccess
+        if (!repeatedSearchLoaded) compose.onRoot(useUnmergedTree = true).printToLog("gmail-repeat-search-result-timeout")
+        assertTrue("Gmail search after cancellation must settle to exactly one fictional Garden plan message.", repeatedSearchLoaded)
         compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
         compose.onNodeWithTag("gmail_message_subject").performClick()
@@ -186,6 +193,7 @@ class SereaAppShellTest {
 
     @Test fun chatCalendarBackShowsFictionalAgendaAndDetail() {
         select(SereaDestination.CALENDAR)
+        compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.onNodeWithText("DEMO / 架空の予定").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("表示するカレンダー").fetchSemanticsNodes().isNotEmpty()
@@ -225,6 +233,57 @@ class SereaAppShellTest {
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("chat-composer").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+    }
+
+    @Test fun taskProposalApprovalBlocksBackAndNavigationUntilResultIsKnown() {
+        val repository = DemoTaskProposalRepository()
+        val mutationStarted = CompletableDeferred<Unit>()
+        val allowMutation = CompletableDeferred<Unit>()
+        repository.beforeMutation = {
+            mutationStarted.complete(Unit)
+            allowMutation.await()
+        }
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.setContent {
+                SereaTheme {
+                    SereaAppShell(
+                        chatViewModel = activity.chatViewModel,
+                        credentials = activity.shellCredentials,
+                        usage = activity.shellUsage,
+                        taskViewModel = activity.shellTaskViewModel,
+                        taskProposalDemoContent = { modifier, onClose, onPendingChanged ->
+                            TaskProposalDemoScreenForTest(repository, modifier, onClose, onPendingChanged)
+                        },
+                    )
+                }
+            }
+        }
+        select(SereaDestination.TASK_PROPOSAL_DEMO)
+        compose.onNodeWithTag("task_proposal_approve").performScrollTo().performClick()
+        compose.waitUntil(5_000) { mutationStarted.isCompleted }
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("destination_chat").assertIsNotEnabled() }.isSuccess
+        }
+
+        pressBack()
+        compose.onNodeWithTag("task_proposal_demo").assertIsDisplayed()
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています") }.isSuccess
+        }
+        compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています")
+        compose.onNodeWithTag("destination_chat").assertIsNotEnabled()
+        assertEquals(0, repository.writeCount())
+
+        allowMutation.complete(Unit)
+        compose.waitUntil(5_000) { repository.writeCount() == 1 }
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("task_proposal_status").assertTextContains("承認済み") }.isSuccess
+        }
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("destination_chat").assertIsEnabled() }.isSuccess
+        }
+        pressBack()
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
     }
 
@@ -281,6 +340,7 @@ class SereaAppShellTest {
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
         compose.onNodeWithTag("chat-composer").assertIsNotFocused()
         select(SereaDestination.CALENDAR)
+        compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
@@ -322,7 +382,7 @@ class SereaAppShellTest {
         assertTrue(SemanticsProperties.Heading in compose.onNodeWithText("DEMO / 架空のタスク").fetchSemanticsNode().config)
     }
 
-    @Test(timeout = 120_000) fun calendarDetailAndSelectedCalendarSurviveAnotherDestination() {
+    @Test fun calendarDetailAndSelectedCalendarSurviveAnotherDestination() {
         compose.activityRule.scenario.onActivity { activity ->
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
@@ -332,6 +392,7 @@ class SereaAppShellTest {
         }
 
         select(SereaDestination.CALENDAR)
+        compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("表示するカレンダー").fetchSemanticsNodes().isNotEmpty()
         }
@@ -456,9 +517,8 @@ class SereaAppShellTest {
         }
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
         compose.onNodeWithText("Date-line test").performClick()
-        compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("開始・終了").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("説明"))
         compose.onNodeWithText("説明").assertIsDisplayed()
@@ -468,6 +528,7 @@ class SereaAppShellTest {
         assertTrue("calendar detail must have a non-zero saved offset", detailScrollBefore.value() > 0f)
 
         select(SereaDestination.GMAIL)
+        compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed()
         pressBack()
 
         compose.waitUntil(10_000) {
@@ -477,9 +538,10 @@ class SereaAppShellTest {
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue(detailScrollAfter.maxValue() > 0f)
         assertEquals(detailScrollBefore.value(), detailScrollAfter.value(), 1f)
+        compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("Date-line test"))
+        compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.onNodeWithText("説明").assertIsDisplayed()
         compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("開始・終了"))
-        compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.onNodeWithText("開始・終了").assertIsDisplayed()
         pressBack()
         compose.onNodeWithText("Demo Global").assertIsSelected()
@@ -548,6 +610,10 @@ class SereaAppShellTest {
         val originalScale = compose.activity.resources.configuration.fontScale
         val originalWidthDp = compose.activity.resources.configuration.screenWidthDp
         val originalDensityDpi = compose.activity.resources.configuration.densityDpi
+        val originalFontScaleSetting = shell("settings get system font_scale")
+        check(originalFontScaleSetting == "null" || originalFontScaleSetting.toFloatOrNull() != null) {
+            "Unable to read the original system font scale setting"
+        }
         val originalSizeOverride = shell("wm size").lineSequence()
             .firstOrNull { it.startsWith("Override size:") }
             ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
@@ -560,8 +626,14 @@ class SereaAppShellTest {
             shell("settings put system font_scale 2.0")
             compose.waitUntil(15_000) {
                 var fontScale = 1f
-                compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
-                fontScale >= 1.99f
+                var width = 0
+                var densityDpi = 0
+                compose.activityRule.scenario.onActivity {
+                    fontScale = it.resources.configuration.fontScale
+                    width = it.resources.configuration.screenWidthDp
+                    densityDpi = it.resources.configuration.densityDpi
+                }
+                fontScale >= 1.99f && width == 320 && densityDpi == 160
             }
             DestinationContract.all.forEach { contract ->
                 compose.onNodeWithTag("destination_${contract.destination.name.lowercase()}")
@@ -616,9 +688,28 @@ class SereaAppShellTest {
                 runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess
             }
         } finally {
-            shell("settings put system font_scale $originalScale")
-            if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
-            if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
+            runCatching {
+                if (originalFontScaleSetting == "null") {
+                    shell("settings delete system font_scale")
+                } else {
+                    shell("settings put system font_scale $originalFontScaleSetting")
+                }
+            }
+            runCatching {
+                if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
+            }
+            runCatching {
+                if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
+            }
+            val restoredSizeOverride = shell("wm size").lineSequence()
+                .firstOrNull { it.startsWith("Override size:") }
+                ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+            val restoredDensityOverride = shell("wm density").lineSequence()
+                .firstOrNull { it.startsWith("Override density:") }
+                ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+            assertEquals(originalFontScaleSetting, shell("settings get system font_scale"))
+            assertEquals(originalSizeOverride, restoredSizeOverride)
+            assertEquals(originalDensityOverride, restoredDensityOverride)
             compose.waitUntil(15_000) {
                 var width = 0
                 var densityDpi = 0

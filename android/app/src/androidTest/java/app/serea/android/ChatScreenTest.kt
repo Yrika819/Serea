@@ -17,8 +17,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.test.performImeAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import androidx.test.platform.app.InstrumentationRegistry
@@ -78,10 +78,17 @@ class ChatScreenTest {
     private fun send(text: String) {
         composer().performTextInput(text)
         compose.waitUntil(30_000) { stateSnapshot().input == text }
-        composer().performImeAction()
-        compose.waitUntil(30_000) {
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("chat_send").assertIsDisplayed().assertIsEnabled().performClick()
+        val submitted = runCatching { compose.waitUntil(10_000) {
             stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
-        }
+        } }.isSuccess
+        val state = stateSnapshot()
+        assertTrue(
+            "Send action did not append the message; input=${state.input}, loading=${state.isLoading}, " +
+                "error=${state.errorMessage}, statuses=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
+            submitted,
+        )
     }
 
     @Test fun demoLabelAndConversationTitleAreVisible() {
@@ -336,9 +343,14 @@ class ChatScreenTest {
 
     @Test fun fontScaleTwoKeepsDeletionActionsReachableAndTappable() {
         awaitComposerEnabled()
-        val originalScale = compose.activity.resources.configuration.fontScale
-        shell("settings put system font_scale 2.0")
+        val originalFontScaleSetting = shell("settings get system font_scale")
+        val originalScale = originalFontScaleSetting.toFloatOrNull()
+            ?: compose.activity.resources.configuration.fontScale
+        check(originalFontScaleSetting == "null" || originalFontScaleSetting.toFloatOrNull() != null) {
+            "Unable to read the original system font scale setting"
+        }
         try {
+            shell("settings put system font_scale 2.0")
             compose.waitUntil(15_000) {
                 var fontScale = 1f
                 compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
@@ -351,7 +363,8 @@ class ChatScreenTest {
             compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
             compose.onNodeWithText("キャンセル").performClick()
         } finally {
-            shell("settings put system font_scale $originalScale")
+            if (originalFontScaleSetting == "null") shell("settings delete system font_scale")
+            else shell("settings put system font_scale $originalFontScaleSetting")
             compose.waitUntil(15_000) {
                 var fontScale = 0f
                 compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }

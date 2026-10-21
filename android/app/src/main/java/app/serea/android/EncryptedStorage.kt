@@ -126,6 +126,8 @@ interface HistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putMessage(row: MessageRow)
     @Query("UPDATE messages SET status = :status WHERE id = :messageId AND conversationId = :conversationId AND status = 'PENDING'")
     suspend fun transitionPendingMessage(messageId: String, conversationId: String, status: String): Int
+    @Query("SELECT status FROM messages WHERE id = :messageId AND conversationId = :conversationId")
+    suspend fun messageStatus(messageId: String, conversationId: String): String?
     @Transaction
     suspend fun putMessageIfConversationIsActive(row: MessageRow) {
         val conversation = conversation(row.conversationId)
@@ -220,7 +222,7 @@ internal interface ConversationHistoryPort {
     suspend fun addMessage(message: StoredMessage)
     suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String = "demo-local")
     suspend fun completeTurn(userMessageId: String, assistant: StoredMessage)
-    suspend fun updateStatus(messageId: String, conversationId: String, status: String)
+    suspend fun updateStatus(messageId: String, conversationId: String, status: String): Boolean
     suspend fun delete(id: String, now: Long = System.currentTimeMillis())
     suspend fun deleteAll()
 }
@@ -253,9 +255,10 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
             assistant.createdAt, assistant.status, origin = assistant.origin.name,
         ))
     }
-    override suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
+    override suspend fun updateStatus(messageId: String, conversationId: String, status: String): Boolean {
         require(status in setOf("COMPLETED", "FAILED", "OUTCOME_UNKNOWN"))
-        dao.transitionPendingMessage(messageId, conversationId, status)
+        val updated = dao.transitionPendingMessage(messageId, conversationId, status)
+        return updated == 1 || dao.messageStatus(messageId, conversationId) == status
     }
     override suspend fun delete(id: String, now: Long) {
         dao.deleteConversationAndMessages(id, now)

@@ -36,6 +36,7 @@ import app.serea.android.tasks.TaskPriority
 import app.serea.android.tasks.TaskProposalOperation
 import app.serea.android.tasks.TaskStatus
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** Standalone review UI. A caller must prepare a fresh session for every review. */
@@ -92,7 +93,9 @@ private fun TaskProposalReviewContent(
     var actionStarted by remember(session) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val status = session.statusState.collectAsState().value
-    val busy = status != TaskProposalReviewStatus.READY || actionStarted
+    val actionInFlight = status == TaskProposalReviewStatus.EXECUTING ||
+        actionStarted && status == TaskProposalReviewStatus.READY
+    val canMutate = status == TaskProposalReviewStatus.READY && !actionStarted
     val currentOnResult by rememberUpdatedState(onResult)
     val currentOnClose by rememberUpdatedState(onClose)
     val currentOnActionPendingChanged by rememberUpdatedState(onActionPendingChanged)
@@ -111,18 +114,29 @@ private fun TaskProposalReviewContent(
         scope.launch {
             try {
                 action()
+            } catch (error: CancellationException) {
+                if (session.status == TaskProposalReviewStatus.OUTCOME_UNKNOWN) {
+                    runCatching { currentOnResult(TaskProposalReviewResult.OutcomeUnknown) }
+                }
+                throw error
             } finally {
                 currentOnActionPendingChanged(false)
             }
         }
     }
 
-    fun closeReview() = startAction {
-        currentOnResult(session.decline())
-        currentOnClose?.invoke()
+    fun closeReview() {
+        if (session.status == TaskProposalReviewStatus.READY && !actionStarted) {
+            startAction {
+                currentOnResult(session.decline())
+                currentOnClose?.invoke()
+            }
+        } else if (!actionInFlight) {
+            currentOnClose?.invoke()
+        }
     }
 
-    BackHandler(enabled = !busy, onBack = ::closeReview)
+    BackHandler(enabled = !actionInFlight, onBack = ::closeReview)
 
     val contentModifier = if (ownScroll) modifier.verticalScroll(rememberScrollState()) else modifier
     Column(
@@ -179,8 +193,8 @@ private fun TaskProposalReviewContent(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
                     checked = deleteAcknowledged,
-                    enabled = !busy,
-                    onCheckedChange = { if (!busy) deleteAcknowledged = it },
+                    enabled = canMutate,
+                    onCheckedChange = { if (canMutate) deleteAcknowledged = it },
                     modifier = Modifier
                         .testTag("task_proposal_delete_ack")
                         .semantics {
@@ -200,7 +214,7 @@ private fun TaskProposalReviewContent(
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
-                enabled = !busy && (!snapshot.requiresDangerousConfirmation || deleteAcknowledged),
+                enabled = canMutate && (!snapshot.requiresDangerousConfirmation || deleteAcknowledged),
                 modifier = Modifier.fillMaxWidth().testTag("task_proposal_approve"),
                 onClick = {
                     startAction {
@@ -215,12 +229,12 @@ private fun TaskProposalReviewContent(
                 },
             ) { Text("承認して実行") }
             OutlinedButton(
-                enabled = !busy,
+                enabled = canMutate,
                 modifier = Modifier.fillMaxWidth().testTag("task_proposal_decline"),
                 onClick = { startAction { currentOnResult(session.decline()) } },
             ) { Text("拒否") }
             TextButton(
-                enabled = !busy,
+                enabled = !actionInFlight,
                 modifier = Modifier.fillMaxWidth().testTag("task_proposal_close"),
                 onClick = ::closeReview,
             ) { Text("閉じる") }
@@ -271,4 +285,5 @@ private fun statusMessage(status: TaskProposalReviewStatus): String = when (stat
     TaskProposalReviewStatus.EXPIRED -> "期限切れです。状態を再取得・再検証し、新しいレビューで改めて承認してください。同じレビューは再実行できません。"
     TaskProposalReviewStatus.CONFLICT -> "対象タスクが変更されています。最新状態を再取得・再検証して、新しいレビューを作成してください。同じ提案を再実行できません。"
     TaskProposalReviewStatus.REJECTED -> "このレビューは使用済みのため承認できません。状態を確認してから新しいレビューを作成してください。"
+    TaskProposalReviewStatus.OUTCOME_UNKNOWN -> "処理結果を確認できません。対象タスク一覧を再読み込みし、変更の有無を確認してください。同じ承認は再実行できません。"
 }

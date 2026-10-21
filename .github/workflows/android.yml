@@ -49,7 +49,7 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py) android_changed=true ;;
+              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py) android_changed=true ;;
             esac
           done <<< "$changed"
           echo "android=$android_changed" >> "$GITHUB_OUTPUT"
@@ -79,10 +79,10 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug, release, and instrumentation APKs
         working-directory: android
-        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleDebugAndroidTest
+        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleIsolated assembleIsolatedAndroidTest
       - name: Android lint
         working-directory: android
-        run: ./gradlew --no-daemon lintDebug
+        run: ./gradlew --no-daemon lintDebug lintIsolated
       - name: Record Pixel 7a reacceptance APK provenance
         env:
           BUILD_TOOLS_VERSION: 35.0.0
@@ -285,6 +285,8 @@ jobs:
       - name: Run API 35 Pixel emulator and all instrumentation tests
         id: api35
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
         timeout-minutes: 55
         with:
           api-level: 35
@@ -323,6 +325,8 @@ jobs:
         id: api26
         if: always() && !cancelled()
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
         timeout-minutes: 45
         with:
           api-level: 26
@@ -394,12 +398,16 @@ jobs:
           api26_death=NOT_RUN
           api35_instrumentation=NOT_RUN
           api26_instrumentation=NOT_RUN
+          api35_data_isolation=NOT_RUN
+          api26_data_isolation=NOT_RUN
           api35_device=NOT_RUN
           api26_device=NOT_RUN
           [ -f android/app/build/outputs/androidTest-results/api35/process-death-status.txt ] && api35_death="$(cat android/app/build/outputs/androidTest-results/api35/process-death-status.txt)"
           [ -f android/app/build/outputs/androidTest-results/api26/process-death-status.txt ] && api26_death="$(cat android/app/build/outputs/androidTest-results/api26/process-death-status.txt)"
           [ -f android/app/build/outputs/androidTest-results/api35/instrumentation-status.txt ] && api35_instrumentation="$(cat android/app/build/outputs/androidTest-results/api35/instrumentation-status.txt)"
           [ -f android/app/build/outputs/androidTest-results/api26/instrumentation-status.txt ] && api26_instrumentation="$(cat android/app/build/outputs/androidTest-results/api26/instrumentation-status.txt)"
+          [ -f android/app/build/outputs/androidTest-results/api35/data-isolation-status.txt ] && api35_data_isolation="$(cat android/app/build/outputs/androidTest-results/api35/data-isolation-status.txt)"
+          [ -f android/app/build/outputs/androidTest-results/api26/data-isolation-status.txt ] && api26_data_isolation="$(cat android/app/build/outputs/androidTest-results/api26/data-isolation-status.txt)"
           [ -f android/app/build/outputs/androidTest-results/api35/device-api-level.txt ] && api35_device="$(cat android/app/build/outputs/androidTest-results/api35/device-api-level.txt)"
           [ -f android/app/build/outputs/androidTest-results/api26/device-api-level.txt ] && api26_device="$(cat android/app/build/outputs/androidTest-results/api26/device-api-level.txt)"
           junit_count() {
@@ -417,10 +425,12 @@ jobs:
             echo "android_storage_emulator_job=$JOB_RESULT"
             echo "api35_verified_device_api_level=$api35_device"
             echo "api35_instrumentation=$api35_instrumentation"
+            echo "api35_data_isolation=$api35_data_isolation"
             echo "api35_junit_artifact_present=$([ -d "$bundle/tests/api35/junit" ] && echo yes || echo no)"
             echo "api35_junit_cases=$api35_cases"
             echo "api26_verified_device_api_level=$api26_device"
             echo "api26_instrumentation=$api26_instrumentation"
+            echo "api26_data_isolation=$api26_data_isolation"
             echo "api26_junit_artifact_present=$([ -d "$bundle/tests/api26/junit" ] && echo yes || echo no)"
             echo "api26_junit_cases=$api26_cases"
             echo "process_death_api35=$api35_death"
@@ -437,21 +447,21 @@ jobs:
 
           ## Signature and data preservation
 
-          Compare the installed `app.serea.android.demo` APK certificate fingerprint with the candidate using `apksigner verify --print-certs`. The installed APK path can be read with `adb shell pm path app.serea.android.demo` and pulled with `adb pull`. If fingerprints match, use `adb install -r serea-debug.apk`. If they differ, stop and request Owner direction; do not uninstall the app or clear data automatically.
+          This packet is for a dedicated disposable test profile only. If `app.serea.android.demo` is already installed or the profile may contain personal data, stop. Do not install over it, uninstall it, clear its data, or use `pm clear`. Compare the candidate APK certificate with `apksigner verify --print-certs` as a read-only check. Any physical reacceptance on a personal Pixel 7a remains NOT_RUN.
 
           ## Device steps
 
           1. Launch the candidate and confirm the DEMO / Mock / no-cloud label and restored encrypted history.
           2. In portrait, tap New Conversation, History, Settings, and Other Actions. Open the overflow menu and confirm both deletion actions are visible and tappable.
           3. Open Delete Current and Delete All, then Cancel each. Confirm the conversation list and current messages remain unchanged.
-          4. Confirm Delete Current, then separately confirm Delete All. Confirm only the selected conversation is removed, and Delete All leaves no saved history. Relaunch and verify deleted conversations do not return.
+          4. Exercise confirmed deletion only on the disposable API 26/35 CI emulators with synthetic data. Do not confirm destructive actions on a profile with real user data.
           5. Repeat operation reachability in landscape, at Android font scale 2.0, and at a small-screen setting. Open the IME and confirm the overflow action remains reachable.
           6. In Settings, try empty, zero, negative, nonnumeric, `9223372036854775808`, daily requests above monthly requests, and daily tokens above monthly tokens. Confirm each is rejected visibly and cannot overwrite saved limits. Correct the values, save, close Settings, reopen it, and relaunch to verify persistence.
           7. Confirm TalkBack identifies Other Actions, both delete actions, and each confirmation button by its Japanese label.
 
           ## PASS / FAIL
 
-          PASS requires all controls to be visibly reachable and successfully tappable in the listed configurations, Cancel to preserve history, confirmed deletions to remain deleted after relaunch, invalid Soft Limits to preserve previous settings, corrected values to persist, and no app crash or unexpected network/provider request. Any clipped or untappable action, unintended deletion, resurrected history, rejected valid value, changed data after Cancel, or crash is FAIL. Record physical device results separately from the emulator JUnit results.
+          PASS requires all controls to be visibly reachable and successfully tappable in the listed configurations, Cancel to preserve history, invalid Soft Limits to preserve previous settings, corrected values to persist, and no app crash or unexpected network/provider request. Any clipped or untappable action, data changed after Cancel, rejected valid value, or crash is FAIL. Confirmed deletion and Process Death results are limited to the disposable emulator evidence; record physical device results separately.
           EOF
       - name: Upload emulator evidence
         if: always()
@@ -586,8 +596,8 @@ jobs:
             echo "api26_and_api35_emulator_job=$EMULATOR_RESULT"
             echo "android_dependency_audit=$AUDIT_RESULT"
             echo "instrumentation_gate_output=$INSTRUMENTATION_RESULT"
-            echo 'api26_expected_junit_cases=98 (sum of fourteen exact required class counts, verified against source and JUnit XML)'
-            echo 'api35_expected_junit_cases=98 (sum of fourteen exact required class counts, verified against source and JUnit XML)'
+            echo 'api26_expected_junit_cases=103 (sum of fifteen exact required class counts, verified against source and JUnit XML)'
+            echo 'api35_expected_junit_cases=103 (sum of fifteen exact required class counts, verified against source and JUnit XML)'
             echo 'physical_pixel7a_reacceptance=NOT_RUN (Mac Local MCP v3 handoff required)'
             echo 'apk_source_sha256_and_certificate=search for provenance.txt in build/ and api-tests-and-process-death/'
             echo 'device_steps_and_pass_fail=search for pixel7a-reacceptance.md in api-tests-and-process-death/'
@@ -658,4 +668,4 @@ jobs:
             echo 'FAIL: changed documentation validation did not pass.'
             exit 1
           fi
-          echo 'PASS: API 26 and API 35 emulator instrumentation completed, source counts matched JUnit XML for all required classes, and both Process Death checks passed.'
+          echo 'PASS: API 26 and API 35 instrumentation matched source counts; Process Death and demo sentinel data isolation passed on both disposable emulators.'

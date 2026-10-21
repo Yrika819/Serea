@@ -290,7 +290,8 @@ internal class ChatViewModel(
                                     .map { if (it.id == userMessage.id) it.copy(status = "COMPLETED") else it } + assistant),
                                 isLoading = if (ownsActiveRequest) false else current.isLoading,
                                 isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
-                                errorMessage = if (ownsActiveRequest) null else current.errorMessage,
+                                errorMessage = if (ownsActiveRequest && !current.errorMessage.isHistoryPersistenceWarning()) null
+                                    else current.errorMessage,
                             )
                         }
                     }
@@ -321,7 +322,15 @@ internal class ChatViewModel(
         val conversationId = mutableState.value.conversation.id
         activeJob?.cancel()
         mutableState.update { it.copy(isLoading = false, errorMessage = "Request cancelled. A transmitted request may still have completed remotely.") }
-        viewModelScope.launch { historyRepository?.updateStatus(id, conversationId, "OUTCOME_UNKNOWN") }
+        viewModelScope.launch {
+            try {
+                historyRepository?.updateStatus(id, conversationId, "OUTCOME_UNKNOWN")
+            } catch (_: Exception) {
+                mutableState.update {
+                    it.copy(errorMessage = "The cancelled request's saved history status could not be updated; reopen history to reconcile.")
+                }
+            }
+        }
     }
 
     fun newConversation() {
@@ -467,18 +476,28 @@ internal class ChatViewModel(
         Instant.now(), (conversation.messages.maxOfOrNull { it.createdAt } ?: Instant.EPOCH).plusMillis(1),
     )
     private suspend fun markUnknown(message: ChatMessage, conversationId: String, reason: String) {
-        historyRepository?.updateStatus(message.id, conversationId, "OUTCOME_UNKNOWN")
-        mutableState.update { current ->
-            if (current.conversation.id != conversationId) current
-            else {
-                val ownsActiveRequest = activeMessageId == message.id
-                current.copy(
-                    isLoading = if (ownsActiveRequest) false else current.isLoading,
-                    isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
-                    conversation = current.conversation.copy(messages = current.conversation.messages
-                        .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
-                    errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
-                )
+        withContext(NonCancellable) {
+            val statusPersisted = try {
+                historyRepository?.updateStatus(message.id, conversationId, "OUTCOME_UNKNOWN")
+                true
+            } catch (_: Exception) {
+                false
+            }
+            val persistenceWarning = if (statusPersisted) null else
+                "$reason The saved history status could not be updated; reopen history to reconcile."
+            mutableState.update { current ->
+                if (current.conversation.id != conversationId) {
+                    if (persistenceWarning == null) current else current.copy(errorMessage = persistenceWarning)
+                } else {
+                    val ownsActiveRequest = activeMessageId == message.id
+                    current.copy(
+                        isLoading = if (ownsActiveRequest) false else current.isLoading,
+                        isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                        conversation = current.conversation.copy(messages = current.conversation.messages
+                            .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
+                        errorMessage = persistenceWarning ?: if (ownsActiveRequest) reason else current.errorMessage,
+                    )
+                }
             }
         }
     }
@@ -503,17 +522,25 @@ internal class ChatViewModel(
         }
         try {
             withContext(NonCancellable) {
-                historyRepository?.updateStatus(message.id, conversationId, "FAILED")
+                val statusPersisted = try {
+                    historyRepository?.updateStatus(message.id, conversationId, "FAILED")
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+                val persistenceWarning = if (statusPersisted) null else
+                    "$reason The failure status could not be saved; reopen history to check the saved record."
                 mutableState.update { current ->
-                    if (current.conversation.id != conversationId) current
-                    else {
+                    if (current.conversation.id != conversationId) {
+                        if (persistenceWarning == null) current else current.copy(errorMessage = persistenceWarning)
+                    } else {
                         val stillOwnsActiveRequest = activeMessageId == message.id
                         current.copy(
                             isLoading = if (stillOwnsActiveRequest) false else current.isLoading,
                             isFinalizing = if (stillOwnsActiveRequest) false else current.isFinalizing,
                             conversation = current.conversation.copy(messages = current.conversation.messages
                                 .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
-                            errorMessage = if (stillOwnsActiveRequest) reason else current.errorMessage,
+                            errorMessage = persistenceWarning ?: if (stillOwnsActiveRequest) reason else current.errorMessage,
                         )
                     }
                 }
@@ -538,6 +565,10 @@ internal class ChatViewModel(
         }
     }
 }
+
+private fun String?.isHistoryPersistenceWarning(): Boolean =
+    this?.contains("saved history status could not be updated") == true ||
+        this?.contains("failure status could not be saved") == true
 
 internal fun validateUsageLimits(dailyRequests: String, dailyTokens: String, monthlyRequests: String, monthlyTokens: String): UsageLimits {
     fun positiveLong(raw: String, label: String): Long {

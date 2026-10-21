@@ -22,7 +22,7 @@ test -n "$(adb shell pm path "$package" | tr -d '\r')"
 adb shell am broadcast -f 0x20 -n "$receiver" -a "$action" \
   --es phase "${phase}-sentinel" --es token "$token" --es requestId "$request_id"
 for _ in $(seq 1 30); do
-  result_log=$(adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E)
+  result_log=$(adb logcat -d -s SereaProcessDeath:V)
   if grep -F "FAIL:$token:${phase}-sentinel:$request_id:" <<< "$result_log" >/dev/null; then
     printf '%s\n' "$result_log" >&2
     exit 1
@@ -34,5 +34,5 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 echo "Sentinel phase $phase did not report completion." >&2
-adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E >&2
+adb logcat -d -s SereaProcessDeath:V >&2
 exit 1

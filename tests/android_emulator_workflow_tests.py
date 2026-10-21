@@ -66,6 +66,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('request_id="sentinel-${BASHPID}-$(date +%s%N)-${RANDOM}"', script)
         self.assertIn('--es requestId "$request_id"', script)
         self.assertIn('am broadcast -f 0x20 -n "$receiver"', script)
+        self.assertIn('adb logcat -d -s SereaProcessDeath:V', script)
         fail_check = script.index('FAIL:$token:${phase}-sentinel:$request_id:')
         pass_check = script.index('PASS:$token:${phase}-sentinel:$request_id')
         self.assertLess(fail_check, pass_check)
@@ -126,6 +127,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('request_id="process-${BASHPID}-$(date +%s%N)-${RANDOM}"', script)
         self.assertIn('--es requestId "$request_id"', script)
         self.assertIn('am broadcast -f 0x20 -n "$receiver"', script)
+        self.assertIn('adb logcat -d -s SereaProcessDeath:V', script)
         self.assertIn('FAIL:$phase_token:$phase_name:$request_id:', script)
         self.assertIn('PASS:$phase_token:$phase_name:$request_id', script)
         self.assertLess(
@@ -134,6 +136,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         )
         self.assertIn('--es requestId "$request_id"', helper)
         self.assertIn('am broadcast -f 0x20 -n "$receiver"', helper)
+        self.assertIn('adb logcat -d -s SereaProcessDeath:V', helper)
         self.assertIn('PASS:$token:campaign-seed:$request_id', helper)
 
     def test_api26_evidence_and_kvm_setup_run_after_api35_image_failure(self) -> None:

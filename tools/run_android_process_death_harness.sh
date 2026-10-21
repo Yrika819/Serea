@@ -30,7 +30,7 @@ phase() {
     --es phase "$phase_name" --es token "$phase_token" --es requestId "$request_id"
   for _ in $(seq 1 30); do
     local result_log
-    result_log=$(adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E)
+    result_log=$(adb logcat -d -s SereaProcessDeath:V)
     if grep -F "FAIL:$phase_token:$phase_name:$request_id:" <<< "$result_log" >/dev/null; then
       printf '%s\n' "$result_log" >&2
       return 1
@@ -39,7 +39,7 @@ phase() {
     sleep 1
   done
   echo "Process-death harness phase $phase_name did not report completion." >&2
-  adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E >&2
+  adb logcat -d -s SereaProcessDeath:V >&2
   return 1
 }
 

@@ -276,9 +276,41 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("表示するカレンダー").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("Demo Work").performClick()
+        compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithText("今後").assertIsEnabled() }.isSuccess
+        }
+        compose.onNodeWithText("今後").performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 40"))
+        val agendaOffsetBeforeDetail = compose.onNodeWithTag("calendar_agenda_list")
+            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertTrue("Calendar agenda must have several scroll positions", agendaOffsetBeforeDetail.maxValue() > 0f)
+        assertTrue("The long agenda test must begin below its first event", agendaOffsetBeforeDetail.value() > 0f)
+        compose.onNodeWithText("Fictional paged event 40").performClick()
+        compose.onNodeWithText("Fictional paged event 40").assertIsDisplayed()
+        pressBack()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
+        }
+        val agendaOffsetAfterDetail = compose.onNodeWithTag("calendar_agenda_list")
+            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertEquals(agendaOffsetBeforeDetail.value(), agendaOffsetAfterDetail.value(), 1f)
+
+        select(SereaDestination.GMAIL)
+        pressBack()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
+        }
+        val agendaOffsetAfterDestination = compose.onNodeWithTag("calendar_agenda_list")
+            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertEquals(agendaOffsetBeforeDetail.value(), agendaOffsetAfterDestination.value(), 1f)
+
         compose.onNodeWithText("Demo Global").performClick()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
         compose.onNodeWithText("Date-line test").performClick()

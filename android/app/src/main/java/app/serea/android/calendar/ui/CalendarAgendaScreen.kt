@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -76,6 +78,7 @@ fun CalendarAgendaScreen(
     var savedDetailCalendarId by rememberSaveable { mutableStateOf<String?>(null) }
     var savedDetailEventId by rememberSaveable { mutableStateOf<String?>(null) }
     var dateInput by rememberSaveable { mutableStateOf("") }
+    val agendaListState = rememberLazyListState()
     val query = remember(savedMode, savedDate) {
         when (runCatching { CalendarAgendaMode.valueOf(savedMode) }.getOrDefault(CalendarAgendaMode.TODAY)) {
             CalendarAgendaMode.TODAY -> CalendarAgendaQuery(CalendarAgendaMode.TODAY)
@@ -224,6 +227,7 @@ fun CalendarAgendaScreen(
                         current,
                         clock,
                         displayZone,
+                        agendaListState,
                         onEvent = { event ->
                             savedDetailCalendarId = event.key.calendarId.value
                             savedDetailEventId = event.key.eventId.value
@@ -333,10 +337,12 @@ private fun AgendaContent(
     state: CalendarAgendaUiState.Agenda,
     clock: Clock,
     displayZone: ZoneId,
+    listState: LazyListState,
     onEvent: (CalendarEvent) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("calendar_agenda_list"),
+        state = listState,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {

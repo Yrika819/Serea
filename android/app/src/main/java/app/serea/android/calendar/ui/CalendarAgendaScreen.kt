@@ -269,7 +269,7 @@ private fun AgendaModeSelector(
             OutlinedTextField(
                 value = dateInput,
                 onValueChange = onDateInput,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("calendar_date_input"),
                 enabled = enabled,
                 label = { Text("指定日 (YYYY-MM-DD)") },
                 placeholder = { Text("2026-10-21") },

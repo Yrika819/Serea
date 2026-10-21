@@ -101,7 +101,7 @@ fun GmailScreen(
                 error = state.detailError,
                 onRetry = viewModel::retry,
                 onOpenThread = viewModel::openThread,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("gmail_search_input"),
             )
             is GmailRoute.Thread -> GmailThreadContent(state, route, viewModel, Modifier.weight(1f))
         }

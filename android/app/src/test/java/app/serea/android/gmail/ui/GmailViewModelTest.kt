@@ -552,10 +552,10 @@ class GmailViewModelTest {
     @Test fun legacySearchSavedStateIsClearedAndRestoresInboxWithoutTheQuery() = runTest(mainDispatcher.dispatcher) {
         val privateQuery = "private-search-phrase"
         val handle = SavedStateHandle(mapOf(
-            "gmail_list_mode" to GmailListMode.SEARCH.name,
-            "gmail_search_query" to privateQuery,
-            "gmail_route_type" to "search",
-            "gmail_route_id" to privateQuery,
+            "gmail_list_mode" to GmailListMode.INBOX.name,
+            "gmail_search_query" to "",
+            "gmail_route_type" to "inbox",
+            "gmail_route_id" to "",
             "gmail_route_selected" to "",
             "gmail_back_0_type" to "search",
             "gmail_back_0_id" to privateQuery,

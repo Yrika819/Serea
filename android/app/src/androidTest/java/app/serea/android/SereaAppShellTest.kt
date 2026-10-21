@@ -90,14 +90,14 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) { !compose.activity.chatViewModel.state.value.isRestoring }
         val chatConversationBefore = compose.activity.chatViewModel.state.value.conversation
         select(SereaDestination.GMAIL)
-        compose.onNodeWithText("メールを検索").performTextInput("Garden plan")
+        compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("Garden plan").assertIsDisplayed()
-        compose.onNodeWithText("メールを検索").performImeAction()
+        compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan").assertIsDisplayed()
+        compose.onNodeWithTag("gmail_search_input").performImeAction()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("メールを検索").assertIsNotFocused()
+        compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
         compose.onNodeWithTag("gmail_message_subject").performClick()
         compose.onNodeWithText("The imaginary basil bed is ready.").assertIsDisplayed()
         assertEquals(chatConversationBefore, compose.activity.chatViewModel.state.value.conversation)

@@ -1,6 +1,7 @@
 package app.serea.android
 
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import kotlinx.coroutines.Dispatchers
@@ -486,10 +487,16 @@ class ChatViewModelTest {
     @Test fun clearingViewModelCannotInterruptPersistingDefiniteFailure() = runTest(dispatcher) {
         val history = BlockingStatusHistory("FAILED")
         val viewModelStore = ViewModelStore()
-        val vm = ViewModelProvider(viewModelStore, ChatViewModel.factory(object : ModelChatPort {
+        val port = object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest): ModelChatResponse =
                 throw ModelChatFailure("provider rejected request")
-        }, history))[ChatViewModel::class.java]
+        }
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                ChatViewModel(port, history, initialConversation = Conversation("viewmodel-clear-race")) as T
+        }
+        val vm = ViewModelProvider(viewModelStore, factory)[ChatViewModel::class.java]
 
         vm.updateInput("request A")
         vm.sendMessage()

@@ -601,10 +601,12 @@ class SereaAppShellTest {
             assertEquals(originalDensityOverride, restoredDensityOverride)
             compose.waitUntil(15_000) {
                 var width = 0
+                var densityDpi = 0
                 var fontScale = 0f
                 var densityDpi = 0
                 compose.activityRule.scenario.onActivity {
                     width = it.resources.configuration.screenWidthDp
+                    densityDpi = it.resources.configuration.densityDpi
                     fontScale = it.resources.configuration.fontScale
                     densityDpi = it.resources.configuration.densityDpi
                 }

@@ -100,6 +100,8 @@ class MainActivity : ComponentActivity() {
     internal val shellTaskViewModel: app.serea.android.tasks.TaskViewModel by viewModels {
         app.serea.android.tasks.TaskViewModel.factory(taskRepository, taskClock)
     }
+    internal val shellCredentials: CredentialRepository get() = credentials
+    internal val shellUsage: UsageRepository get() = usage
     internal val chatViewModel: ChatViewModel by viewModels {
         ChatViewModel.factory(MockModelChatPort(), history, usage)
     }

@@ -211,8 +211,8 @@ class SereaAppShellTest {
                 SereaTheme {
                     SereaAppShell(
                         chatViewModel = activity.chatViewModel,
-                        credentials = activity.credentialRepository,
-                        usage = activity.usageRepository,
+                        credentials = activity.shellCredentials,
+                        usage = activity.shellUsage,
                         taskViewModel = activity.shellTaskViewModel,
                         taskProposalDemoContent = { modifier, onClose, onPendingChanged ->
                             TaskProposalDemoScreenForTest(repository, modifier, onClose, onPendingChanged)

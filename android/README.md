@@ -17,10 +17,12 @@ From this directory:
 ./gradlew assembleRelease
 ./gradlew testDebugUnitTest
 ./gradlew lintDebug
-./gradlew assembleDebugAndroidTest
+./gradlew assembleIsolatedAndroidTest
 ```
 
-The Gradle wrapper pins Gradle 8.11.1 and its published distribution SHA-256.
+Instrumented tests target the `isolated` build type, whose application ID is
+separate from the installed demo app. The Gradle wrapper pins Gradle 8.11.1 and
+its published distribution SHA-256.
 The debug APK is written to `app/build/outputs/apk/debug/`; the release
 variant is an unsigned demo APK, not a production release.
 
@@ -30,18 +32,23 @@ and ADR-0045 remain proposed and await Owner review.
 
 ## Required pull request check
 
-The `Android Emulator Required Gate` workflow job is emitted for every pull
-request. Android implementation, build, test, or security configuration changes
-require Android build, unit, mock HTTP, security, dependency audit, and API 35
-emulator jobs to succeed. The emulator job must run
-`connectedDebugAndroidTest` on both API 35 and API 26 and produce JUnit XML for
-at least twenty-one tests on each image, including exactly sixteen encrypted
-history tests, four Compose tests, and one Compose-to-Mock-HTTP E2E test, with
-zero failures, errors, or skipped tests. The ADB process-death harness also
-force-stops and relaunches the installed app on both API levels while verifying
-that app data remains present. Missing emulator access or missing
-JUnit output fails the gate. Android documentation-only changes run
-documentation validation without requiring an emulator.
+The `Android Emulator Required Gate` runs the isolated instrumentation suite on
+API 35 and API 26, in addition to Android build, JVM, lint, security, and
+dependency checks. It compiles the Debug and Release APKs, plus the isolated
+instrumentation APK, and requires exactly 101 source/JUnit test cases across 15
+classes with zero failures, errors, or skips on each emulator. The process-death
+harness verifies encrypted history, the Usage Ledger `OUTCOME_UNKNOWN` state,
+Delete All, and a separate `.demo` history/preferences sentinel on both APIs.
+Missing emulator access or missing JUnit output fails the gate.
+
+Instrumentation uses the `isolated` application ID (`app.serea.android.isolated`).
+Its runner refuses to start tests on a physical or unrecognized device, an
+unsupported API, the normal `.demo` application ID, or a target with existing
+app data. `connectedIsolatedAndroidTest` is the only generated instrumented
+variant. The CI campaign additionally refuses any emulator
+with an existing Serea package and never clears or reinstalls over existing
+application data. Android documentation-only changes run documentation
+validation without requiring an emulator.
 
 To require this check in GitHub, the Owner must open **Settings → Branches** (or
 the applicable ruleset), edit the protection rule for the target branch, enable

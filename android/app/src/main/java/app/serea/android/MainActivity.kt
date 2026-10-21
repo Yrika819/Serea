@@ -910,7 +910,7 @@ internal fun ChatScreen(
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                         enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,
-                        modifier = Modifier.padding(top = 8.dp)) { Text("送信") }
+                        modifier = Modifier.padding(top = 8.dp).testTag("chat_send")) { Text("送信") }
                 }
             }
             if (state.deleteConfirmation == "current") {

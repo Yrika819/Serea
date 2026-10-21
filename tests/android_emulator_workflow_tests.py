@@ -25,6 +25,113 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"
         self.assertTrue(script.is_file())
         subprocess.run(["bash", "-n", str(script)], check=True)
+        for name in (
+            "assert_disposable_android_emulator.sh",
+            "run_android_data_sentinel.sh",
+            "prepare_isolated_instrumentation_target.sh",
+            "run_android_process_death_harness.sh",
+        ):
+            subprocess.run(["bash", "-n", str(ROOT / "tools" / name)], check=True)
+        self.assertIn("connectedIsolatedAndroidTest", script.read_text(encoding="utf-8"))
+        self.assertNotIn("connectedDebugAndroidTest", script.read_text(encoding="utf-8"))
+        self.assertRegex(
+            workflow,
+            r"android/\*\|[^\n]*tools/run_android_process_death_harness\.sh[^\n]*android_changed=true",
+        )
+        self.assertIn("tools/prepare_isolated_instrumentation_target.sh", workflow)
+        for step_name in (
+            "Run API 35 Pixel emulator and all instrumentation tests",
+            "Run API 26 Pixel emulator and all instrumentation tests",
+        ):
+            self.assertIn("SEREA_DISPOSABLE_CI_EMULATOR: '1'", workflow.split(step_name, 1)[1].split("\n      - name:", 1)[0])
+
+
+    def test_direct_instrumentation_requires_fresh_isolated_campaign_before_tests(self) -> None:
+        runner = (ROOT / "android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt").read_text(encoding="utf-8")
+        self.assertIn('target.packageName == ISOLATED_PACKAGE', runner)
+        self.assertIn('Build.VERSION.SDK_INT == 26 || Build.VERSION.SDK_INT == 35', runner)
+        self.assertIn('hardware in setOf("ranchu", "goldfish")', runner)
+        self.assertIn('campaignMarkerMatches', runner)
+        self.assertIn('noBackupFiles == setOf(INSTRUMENTATION_MARKER)', runner)
+        self.assertIn('testBuildType = "isolated"', (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8"))
+        self.assertIn("assembleIsolatedAndroidTest", (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8"))
+        self.assertIn('marker.renameTo(claimedMarker)', runner)
+        self.assertLess(runner.index('check(preferencesEmpty'), runner.index('super.onStart()'))
+        self.assertLess(runner.index('marker.renameTo(claimedMarker)'), runner.index('super.onStart()'))
+        self.assertIn('connectedIsolatedAndroidTest', (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8"))
+
+    def test_sentinel_rejects_stale_pass_and_current_failure_wins(self) -> None:
+        script = (ROOT / "tools/run_android_data_sentinel.sh").read_text(encoding="utf-8")
+        receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(encoding="utf-8")
+        self.assertIn('request_id="sentinel-${BASHPID}-$(date +%s%N)-${RANDOM}"', script)
+        self.assertIn('--es requestId "$request_id"', script)
+        fail_check = script.index('FAIL:$token:${phase}-sentinel:$request_id:')
+        pass_check = script.index('PASS:$token:${phase}-sentinel:$request_id')
+        self.assertLess(fail_check, pass_check)
+        self.assertIn('PASS:$token:$phase:$requestId', receiver)
+        self.assertIn('FAIL:$token:$phase:$requestId:', receiver)
+
+
+    def test_sentinel_does_not_accept_stale_success_for_a_failed_current_request(self) -> None:
+        script = ROOT / "tools/run_android_data_sentinel.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            request_file = root / "request-id"
+            adb = fake_bin / "adb"
+            adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == devices ]]; then\n"
+                "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
+                "elif [[ \"$1 \" == 'shell ' && \"$2 \" == 'getprop ' ]]; then\n"
+                "  if [[ \"$3\" == ro.build.version.sdk ]]; then printf '35\\n'; else printf '1\\n'; fi\n"
+                "elif [[ \"$1 \" == 'shell ' && \"$2 \" == 'pm ' && \"$3\" == path ]]; then\n"
+                "  printf 'package:/data/app/demo.apk\\n'\n"
+                "elif [[ \"$1 \" == 'shell ' && \"$2 \" == 'am ' ]]; then\n"
+                "  while (($#)); do if [[ \"$1\" == requestId ]]; then printf '%s' \"$2\" > \"$REQUEST_FILE\"; fi; shift; done\n"
+                "elif [[ \"$1\" == logcat ]]; then\n"
+                "  request=$(cat \"$REQUEST_FILE\")\n"
+                "  printf 'I/SereaProcessDeath: PASS:sentinel-token:verify-sentinel:stale-request\\n'\n"
+                "  printf 'E/SereaProcessDeath: FAIL:sentinel-token:verify-sentinel:%s:IllegalStateException\\n' \"$request\"\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            adb.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update({
+                "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+                "CI": "true",
+                "GITHUB_ACTIONS": "true",
+                "SEREA_DISPOSABLE_CI_EMULATOR": "1",
+                "EXPECTED_API_LEVEL": "35",
+                "REQUEST_FILE": str(request_file),
+            })
+            result = subprocess.run(
+                ["bash", str(script), "sentinel-token", "verify"],
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("FAIL:sentinel-token:verify-sentinel:", result.stderr)
+            self.assertNotIn("sentinel verify verified", result.stdout)
+
+
+    def test_process_death_phases_require_a_fresh_request_result(self) -> None:
+        script = (ROOT / "tools/run_android_process_death_harness.sh").read_text(encoding="utf-8")
+        helper = (ROOT / "tools/prepare_isolated_instrumentation_target.sh").read_text(encoding="utf-8")
+        self.assertIn('request_id="process-${BASHPID}-$(date +%s%N)-${RANDOM}"', script)
+        self.assertIn('--es requestId "$request_id"', script)
+        self.assertIn('FAIL:$phase_token:$phase_name:$request_id:', script)
+        self.assertIn('PASS:$phase_token:$phase_name:$request_id', script)
+        self.assertLess(
+            script.index('FAIL:$phase_token:$phase_name:$request_id:'),
+            script.index('PASS:$phase_token:$phase_name:$request_id'),
+        )
+        self.assertIn('--es requestId "$request_id"', helper)
+        self.assertIn('PASS:$token:campaign-seed:$request_id', helper)
 
     def test_api26_evidence_and_kvm_setup_run_after_api35_image_failure(self) -> None:
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
@@ -90,8 +197,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             adb = fake_bin / "adb"
             adb.write_text(
                 "#!/usr/bin/env bash\n"
-                "if [[ \"$1 $2 $3 $4\" == \"shell getprop ro.build.version.sdk \" ]]; then\n"
+                "if [[ \"$1\" == devices ]]; then\n"
+                "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
+                "elif [[ \"$1\" == shell && \"$2 $3 $4\" == 'getprop ro.build.version.sdk ' ]]; then\n"
                 "  printf '35\\n'\n"
+                "elif [[ \"$1\" == shell && \"$2 $3 $4\" == 'getprop ro.kernel.qemu ' ]]; then\n"
+                "  printf '1\\n'\n"
                 "fi\n",
                 encoding="utf-8",
             )
@@ -99,6 +210,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             summary = root / "summary.md"
             environment = os.environ.copy()
             environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
+            environment["CI"] = "true"
+            environment["GITHUB_ACTIONS"] = "true"
+            environment["SEREA_DISPOSABLE_CI_EMULATOR"] = "1"
             environment["GITHUB_STEP_SUMMARY"] = str(summary)
             result = subprocess.run(
                 ["bash", str(script), "26"],
@@ -112,12 +226,13 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertEqual("35\n", (evidence / "device-api-level.txt").read_text())
             self.assertEqual("NOT_RUN\n", (evidence / "instrumentation-status.txt").read_text())
             self.assertEqual("NOT_RUN\n", (evidence / "process-death-status.txt").read_text())
+            self.assertEqual("NOT_RUN\n", (evidence / "data-isolation-status.txt").read_text())
             self.assertEqual("FAIL\n", (evidence / "api-result.txt").read_text())
             self.assertIn("Expected API 26, observed '35'.", (evidence / "device-api-error.txt").read_text())
             self.assertFalse((evidence / "junit-verification.log").exists())
             self.assertFalse((evidence / "process-death.log").exists())
             self.assertFalse((evidence / "junit").exists())
-            self.assertIn("instrumentation=NOT_RUN process-death=NOT_RUN device-api=35", summary.read_text())
+            self.assertIn("instrumentation=NOT_RUN process-death=NOT_RUN data-isolation=NOT_RUN device-api=35", summary.read_text())
 
     def test_stale_junit_cleanup_failure_stops_campaign(self) -> None:
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"
@@ -169,6 +284,37 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertEqual("old passing result", (evidence / "junit/old.xml").read_text())
             self.assertIn("Failed to clear stale API 26 instrumentation evidence", (evidence / "device-api-error.txt").read_text())
             self.assertIn("instrumentation=NOT_RUN process-death=NOT_RUN device-api=NOT_RUN cleanup=FAIL", summary.read_text())
+
+    def test_data_mutating_guard_rejects_a_physical_device(self) -> None:
+        guard = ROOT / "tools/assert_disposable_android_emulator.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_bin = Path(temporary) / "bin"
+            fake_bin.mkdir()
+            adb = fake_bin / "adb"
+            adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == devices ]]; then\n"
+                "  printf 'List of devices attached\\nPixel7a serial device product:lynx model:Pixel_7a\\n'\n"
+                "else\n"
+                "  touch \"$ADB_MUTATION_MARKER\"\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            adb.chmod(0o755)
+            marker = Path(temporary) / "unexpected-adb-command"
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
+            environment.update({
+                "CI": "true",
+                "GITHUB_ACTIONS": "true",
+                "SEREA_DISPOSABLE_CI_EMULATOR": "1",
+                "EXPECTED_API_LEVEL": "35",
+                "ADB_MUTATION_MARKER": str(marker),
+            })
+            result = subprocess.run(["bash", str(guard)], env=environment, capture_output=True, text=True, check=False)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("Refusing non-emulator", result.stderr)
+            self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":

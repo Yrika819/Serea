@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -176,6 +177,27 @@ class TaskScreenTest {
         assertEquals("First", runBlocking { repository.get(ids.first())?.title })
     }
 
+    @Test fun rowActionsAnnounceTheirTargetTask() {
+        val firstId = "00000000-0000-0000-0000-000000000011"
+        val secondId = "00000000-0000-0000-0000-000000000012"
+        val repository = FakeRepository().apply {
+            seed(Task(firstId, "Pay rent", "", TaskStatus.TODO, TaskPriority.NORMAL, Instant.EPOCH, Instant.EPOCH))
+            seed(Task(secondId, "Book dentist", "", TaskStatus.COMPLETED, TaskPriority.HIGH, Instant.EPOCH, Instant.EPOCH))
+        }
+        show(repository)
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Pay rent").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        compose.onNodeWithTag("task_complete_$firstId").assertContentDescriptionEquals("Pay rent を完了にする")
+        compose.onNodeWithTag("task_edit_$firstId").assertContentDescriptionEquals("Pay rent を編集")
+        compose.onNodeWithTag("task_delete_$firstId").assertContentDescriptionEquals("Pay rent を削除")
+        compose.onNodeWithText("Book dentist").performScrollTo()
+        compose.onNodeWithTag("task_complete_$secondId").assertContentDescriptionEquals("Book dentist を未完了に戻す")
+        compose.onNodeWithTag("task_edit_$secondId").assertContentDescriptionEquals("Book dentist を編集")
+        compose.onNodeWithTag("task_delete_$secondId").assertContentDescriptionEquals("Book dentist を削除")
+    }
+
     @Test fun lateSaveFromClosedEditorPreservesTheNewEditorsUnsavedDraft() {
         val repository = FakeRepository().apply {
             seed(Task("00000000-0000-0000-0000-000000000001", "Task A", "", TaskStatus.TODO,
@@ -213,6 +235,9 @@ class TaskScreenTest {
         compose.waitUntil(5_000) {
             val config = compose.onNodeWithTag("task_title").fetchSemanticsNode().config
             SemanticsProperties.EditableText in config && config[SemanticsProperties.EditableText].text == "Task B unsaved draft"
+        }
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("task_save").assertIsEnabled() }.isSuccess
         }
         compose.onNodeWithTag("task_save").assertIsEnabled()
         val draftConfig = compose.onNodeWithTag("task_title").fetchSemanticsNode().config

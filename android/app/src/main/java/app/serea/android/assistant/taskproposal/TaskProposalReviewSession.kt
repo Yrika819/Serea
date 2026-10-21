@@ -30,7 +30,7 @@ data class TaskProposalReviewSnapshot(
     val requiresDangerousConfirmation: Boolean get() = proposal.operation == TaskProposalOperation.DELETE
 }
 
-enum class TaskProposalReviewStatus { READY, EXECUTING, APPROVED, DECLINED, EXPIRED, CONFLICT, REJECTED }
+enum class TaskProposalReviewStatus { READY, EXECUTING, APPROVED, DECLINED, EXPIRED, CONFLICT, REJECTED, OUTCOME_UNKNOWN }
 
 sealed interface TaskProposalReviewResult {
     data class Approved(val operation: TaskProposalOperation) : TaskProposalReviewResult
@@ -38,6 +38,7 @@ sealed interface TaskProposalReviewResult {
     data object Expired : TaskProposalReviewResult
     data object Conflict : TaskProposalReviewResult
     data object Rejected : TaskProposalReviewResult
+    data object OutcomeUnknown : TaskProposalReviewResult
 }
 
 /**
@@ -82,6 +83,7 @@ class TaskProposalReviewSession private constructor(
         if (!accepted) return when (status) {
             TaskProposalReviewStatus.EXPIRED -> TaskProposalReviewResult.Expired
             TaskProposalReviewStatus.CONFLICT -> TaskProposalReviewResult.Conflict
+            TaskProposalReviewStatus.OUTCOME_UNKNOWN -> TaskProposalReviewResult.OutcomeUnknown
             else -> TaskProposalReviewResult.Rejected
         }
 
@@ -96,7 +98,7 @@ class TaskProposalReviewSession private constructor(
         } catch (error: CancellationException) {
             // The repository call may have crossed its write boundary; never make this gate retryable.
             withContext(NonCancellable) {
-                mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.REJECTED }
+                mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.OUTCOME_UNKNOWN }
             }
             throw error
         } catch (_: TaskConflictException) {
@@ -105,9 +107,13 @@ class TaskProposalReviewSession private constructor(
         } catch (_: TaskNotFoundException) {
             mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.CONFLICT }
             TaskProposalReviewResult.Conflict
-        } catch (_: Exception) {
+        } catch (_: InvalidTaskException) {
             mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.REJECTED }
             TaskProposalReviewResult.Rejected
+        } catch (_: Exception) {
+            // A generic repository failure can occur after the underlying mutation committed.
+            mutex.withLock { mutableStatus.value = TaskProposalReviewStatus.OUTCOME_UNKNOWN }
+            TaskProposalReviewResult.OutcomeUnknown
         }
     }
 
@@ -119,6 +125,7 @@ class TaskProposalReviewSession private constructor(
         if (status != TaskProposalReviewStatus.READY) return@withLock when (status) {
             TaskProposalReviewStatus.EXPIRED -> TaskProposalReviewResult.Expired
             TaskProposalReviewStatus.CONFLICT -> TaskProposalReviewResult.Conflict
+            TaskProposalReviewStatus.OUTCOME_UNKNOWN -> TaskProposalReviewResult.OutcomeUnknown
             else -> TaskProposalReviewResult.Rejected
         }
         mutableStatus.value = TaskProposalReviewStatus.DECLINED

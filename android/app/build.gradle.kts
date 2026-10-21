@@ -9,6 +9,7 @@ plugins {
 android {
     namespace = "app.serea.android"
     compileSdk = 35
+    testBuildType = "isolated"
 
     defaultConfig {
         applicationId = "app.serea.android"
@@ -16,14 +17,28 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0-demo"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
     }
 
     buildTypes {
         debug { applicationIdSuffix = ".demo" }
+        create("isolated") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".isolated"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    sourceSets {
+        // Instrumentation and the process-death harness use a separate Android
+        // application ID and therefore a separate app-private DB/Preferences area.
+        getByName("isolated") {
+            java.srcDir("src/debug/java")
+            manifest.srcFile("src/debug/AndroidManifest.xml")
         }
     }
 
@@ -66,7 +81,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    isolatedImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
@@ -96,7 +111,9 @@ licenseReport {
     configurations = arrayOf(
         "debugRuntimeClasspath",
         "releaseRuntimeClasspath",
+        "isolatedRuntimeClasspath",
         "debugUnitTestRuntimeClasspath",
-        "debugAndroidTestRuntimeClasspath",
+        "isolatedUnitTestRuntimeClasspath",
+        "isolatedAndroidTestRuntimeClasspath",
     )
 }

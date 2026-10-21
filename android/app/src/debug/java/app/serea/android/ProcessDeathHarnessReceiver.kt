@@ -3,6 +3,7 @@ package app.serea.android
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import app.serea.android.KeystoreAesGcm
 import app.serea.android.tasks.EncryptedTaskRepository
@@ -12,6 +13,7 @@ import app.serea.android.tasks.TaskStatus
 import app.serea.android.tasks.TasksDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import java.io.File
 
 /** Debug-only ADB harness endpoint. It is absent from release builds. */
 class ProcessDeathHarnessReceiver : BroadcastReceiver() {
@@ -20,35 +22,185 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         Thread {
             val token = intent.getStringExtra("token") ?: "missing-token"
             val phase = intent.getStringExtra("phase") ?: "missing-phase"
+            val requestId = intent.getStringExtra("requestId") ?: "none"
             try {
                 check(token != "missing-token")
                 check(phase != "missing-phase")
+                check(requestId.matches(Regex("[A-Za-z0-9-]{1,120}")))
+                check(intent.action == ACTION) { "Unsupported harness action" }
+                validateTargetPackage(context, phase)
+                validateDisposableDevice()
+                if (phase == "campaign-seed") {
+                    seedInstrumentationMarker(context, token)
+                    Log.i(TAG, "PASS:$token:$phase:$requestId")
+                    return@Thread
+                }
+                if (phase == "campaign-consume") {
+                    promoteInstrumentationMarker(context, token)
+                    Log.i(TAG, "PASS:$token:$phase:$requestId")
+                    return@Thread
+                }
+                if (phase in DESTRUCTIVE_PHASES) {
+                    verifyProcessDeathAuthorization(context, token)
+                }
                 val database = SereaHistoryDatabase.open(context)
                 val repository = ConversationRepository(database.historyDao(), KeystoreAesGcm("serea-history-v1"))
                 runBlocking(Dispatchers.IO) {
-                    when (intent.action) {
-                        ACTION -> when (phase) {
+                    when (phase) {
+                            "seed-sentinel" -> seedDebugSentinel(context, repository, token)
+                            "verify-sentinel" -> verifyDebugSentinel(context, repository, token)
                             "prepare" -> { prepare(context, repository, token); prepareTasks(context) }
                             "verify" -> { verify(context, repository, token); verifyTasks(context) }
-                            "delete-all" -> repository.deleteAll()
+                            "delete-all" -> {
+                                repository.create("process-death-unrelated", "Unrelated history before Delete All")
+                                repository.deleteAll()
+                            }
                             "verify-empty" -> {
-                                check(listOf("process-death-complete", "process-death-pending", "process-death-deleted")
-                                    .all { repository.get(it) == null })
+                                check(repository.list().isEmpty()) {
+                                    "Delete All left one or more history conversations behind"
+                                }
                                 verifyTasks(context)
                             }
                             "task-prepare" -> prepareTasks(context)
                             "task-verify" -> verifyTasks(context)
                             else -> error("Unknown harness phase")
-                        }
                     }
                 }
-                Log.i(TAG, "PASS:$token:$phase")
+                if (phase == "verify-empty") consumeProcessDeathAuthorization(context, token)
+                Log.i(TAG, "PASS:$token:$phase:$requestId")
             } catch (error: Throwable) {
-                Log.e(TAG, "FAIL:$token:$phase:${error.javaClass.simpleName}")
+                Log.e(TAG, "FAIL:$token:$phase:$requestId:${error.javaClass.simpleName}")
             } finally {
                 pending.finish()
             }
         }.start()
+    }
+
+    /**
+     * The normal demo package can contain a person's history and preferences. It may only
+     * receive the non-destructive sentinel phases. Process-death mutation phases are tied to
+     * the isolated application ID, whose app-private DB, preferences and Keystore namespace are
+     * separate from app.serea.android.demo.
+     */
+    private fun validateTargetPackage(context: Context, phase: String) {
+        val expectedPackage = when (phase) {
+            "seed-sentinel", "verify-sentinel" -> DEBUG_DEMO_PACKAGE
+            "campaign-seed", "campaign-consume", "prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify" -> ISOLATED_PACKAGE
+            else -> error("Unknown harness phase")
+        }
+        check(context.packageName == expectedPackage) {
+            "Phase $phase is not allowed for package ${context.packageName}"
+        }
+    }
+
+    private fun validateDisposableDevice() {
+        check(Build.VERSION.SDK_INT == 26 || Build.VERSION.SDK_INT == 35) {
+            "Unsupported Android API for destructive harness"
+        }
+        val hardware = Build.HARDWARE.lowercase()
+        val fingerprint = Build.FINGERPRINT.lowercase()
+        check(hardware in setOf("ranchu", "goldfish") &&
+            (fingerprint.contains("generic") || fingerprint.contains("sdk_gphone"))) {
+            "Refusing harness operations on a physical or unrecognized Android device"
+        }
+    }
+
+    private fun seedInstrumentationMarker(context: Context, token: String) {
+        check(token.matches(Regex("[A-Za-z0-9-]{1,120}")))
+        check(context.databaseList().isEmpty()) { "Refusing instrumentation target with existing databases" }
+        val preferences = File(context.applicationInfo.dataDir, "shared_prefs")
+        check(!preferences.exists() || preferences.listFiles().isNullOrEmpty()) {
+            "Refusing instrumentation target with existing preferences"
+        }
+        check(context.filesDir.listFiles().isNullOrEmpty()) { "Refusing instrumentation target with existing files" }
+        check(context.noBackupFilesDir.listFiles().isNullOrEmpty()) {
+            "Refusing instrumentation target with existing no-backup data"
+        }
+        val marker = File(context.noBackupFilesDir, INSTRUMENTATION_MARKER)
+        check(!marker.exists()) { "Refusing to replace an existing instrumentation marker" }
+        check(marker.createNewFile()) { "Unable to create instrumentation marker" }
+        marker.writeText(token)
+    }
+
+    private fun promoteInstrumentationMarker(context: Context, token: String) {
+        val marker = File(context.noBackupFilesDir, CLAIMED_INSTRUMENTATION_MARKER)
+        val authorization = File(context.noBackupFilesDir, PROCESS_DEATH_AUTHORIZATION)
+        check(marker.isFile && marker.readText() == token) {
+            "Missing or mismatched disposable instrumentation marker"
+        }
+        check(!authorization.exists()) { "Process Death authorization was already used" }
+        check(marker.renameTo(authorization)) { "Unable to consume instrumentation marker" }
+    }
+
+    private fun verifyProcessDeathAuthorization(context: Context, token: String) {
+        val authorization = File(context.noBackupFilesDir, PROCESS_DEATH_AUTHORIZATION)
+        check(authorization.isFile && authorization.readText() == token) {
+            "Missing or mismatched one-run Process Death authorization"
+        }
+    }
+
+    private fun consumeProcessDeathAuthorization(context: Context, token: String) {
+        verifyProcessDeathAuthorization(context, token)
+        val authorization = File(context.noBackupFilesDir, PROCESS_DEATH_AUTHORIZATION)
+        check(authorization.delete()) { "Unable to consume Process Death authorization" }
+    }
+
+    private suspend fun seedDebugSentinel(
+        context: Context,
+        repository: ConversationRepository,
+        token: String,
+    ) {
+        check(!context.getDatabasePath("serea-history.db").exists()) {
+            "Refusing to seed an existing demo history database"
+        }
+        check(repository.list().isEmpty()) { "Refusing to seed a non-empty demo history database" }
+        val preferences = context.getSharedPreferences("model_selection", Context.MODE_PRIVATE)
+        check(preferences.all.isEmpty()) { "Refusing to overwrite existing model_selection preferences" }
+        val conversationId = "data-sentinel-$token"
+        val timestamp = System.currentTimeMillis()
+        repository.create(conversationId, "CI data sentinel $token", now = timestamp)
+        repository.addMessage(
+            StoredMessage(
+                id = "sentinel-message-$token",
+                conversationId = conversationId,
+                role = MessageRole.USER,
+                text = "preserve-demo-data-$token",
+                classification = DataClassification.UNKNOWN,
+                createdAt = timestamp + 1,
+                status = "COMPLETED",
+                origin = DataOrigin.USER_AUTHORED,
+            ),
+        )
+        ModelSelectionSettings(preferences).save(
+            ModelRoutingPolicy(
+                ModelSelectionMode.MANUAL,
+                AutoRoutingPolicy.COST_PRIORITY,
+                "sentinel/$token",
+                maxEstimatedCost = 0.37,
+                budgetCurrencyCode = "USD",
+            ),
+        )
+        verifyDebugSentinel(context, repository, token)
+    }
+
+    private suspend fun verifyDebugSentinel(
+        context: Context,
+        repository: ConversationRepository,
+        token: String,
+    ) {
+        val conversation = checkNotNull(repository.get("data-sentinel-$token"))
+        check(conversation.title == "CI data sentinel $token")
+        check(conversation.messages.single().let {
+            it.id == "sentinel-message-$token" && it.text == "preserve-demo-data-$token" &&
+                it.status == "COMPLETED" && it.origin == DataOrigin.USER_AUTHORED
+        })
+        val selection = ModelSelectionSettings(
+            context.getSharedPreferences("model_selection", Context.MODE_PRIVATE),
+        ).load()
+        check(selection.mode == ModelSelectionMode.MANUAL)
+        check(selection.autoPolicy == AutoRoutingPolicy.COST_PRIORITY)
+        check(selection.manualModelId == "sentinel/$token")
+        check(selection.maxEstimatedCost == 0.37 && selection.budgetCurrencyCode == "USD")
     }
 
     private suspend fun prepare(context: Context, repository: ConversationRepository, token: String) {
@@ -140,6 +292,12 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        private const val DEBUG_DEMO_PACKAGE = "app.serea.android.demo"
+        private const val ISOLATED_PACKAGE = "app.serea.android.isolated"
+        private const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"
+        private const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"
+        private const val PROCESS_DEATH_AUTHORIZATION = "serea-process-death-authorization"
+        private val DESTRUCTIVE_PHASES = setOf("prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify")
         private const val TASK_COMPLETED_ID = "00000000-0000-0000-0000-000000000026"
         private const val TASK_TODO_ID = "00000000-0000-0000-0000-000000000035"
         private const val TASK_DELETED_ID = "00000000-0000-0000-0000-000000000099"

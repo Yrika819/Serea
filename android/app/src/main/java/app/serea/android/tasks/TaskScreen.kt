@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -83,7 +84,15 @@ fun TaskScreen(viewModel: TaskViewModel) {
                         Column(Modifier.fillMaxWidth().padding(8.dp)) {
                             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Checkbox(checked = task.status == TaskStatus.COMPLETED,
-                                    onCheckedChange = { viewModel.toggleComplete(task.id) }, enabled = !state.saving, modifier = Modifier.testTag("task_complete_${task.id}"))
+                                    onCheckedChange = { viewModel.toggleComplete(task.id) },
+                                    enabled = !state.saving,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = if (task.status == TaskStatus.COMPLETED) {
+                                            "${task.title} を未完了に戻す"
+                                        } else {
+                                            "${task.title} を完了にする"
+                                        }
+                                    }.testTag("task_complete_${task.id}"))
                                 Column(Modifier.weight(1f)) {
                                     Text(task.title, style = MaterialTheme.typography.titleMedium)
                                     if (task.description.isNotBlank()) Text(task.description, style = MaterialTheme.typography.bodyMedium)
@@ -94,8 +103,10 @@ fun TaskScreen(viewModel: TaskViewModel) {
                                 }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { viewModel.editTask(task.id) }, enabled = state.savingTaskId != task.id, modifier = Modifier.testTag("task_edit_${task.id}")) { Text("編集") }
-                                TextButton(onClick = { viewModel.requestDelete(task.id) }, enabled = !state.saving, modifier = Modifier.testTag("task_delete_${task.id}")) { Text("削除") }
+                                TextButton(onClick = { viewModel.editTask(task.id) }, enabled = state.savingTaskId != task.id,
+                                    modifier = Modifier.semantics { contentDescription = "${task.title} を編集" }.testTag("task_edit_${task.id}")) { Text("編集") }
+                                TextButton(onClick = { viewModel.requestDelete(task.id) }, enabled = !state.saving,
+                                    modifier = Modifier.semantics { contentDescription = "${task.title} を削除" }.testTag("task_delete_${task.id}")) { Text("削除") }
                             }
                         }
                     }

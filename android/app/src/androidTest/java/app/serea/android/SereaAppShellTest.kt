@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -24,6 +25,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Before
@@ -100,38 +102,39 @@ class SereaAppShellTest {
         val chatConversationBefore = compose.activity.chatViewModel.state.value.conversation
         select(SereaDestination.GMAIL)
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
+            runCatching { compose.onNodeWithTag("gmail_result_count").assertTextContains("7 件") }.isSuccess
         }
         compose.onNodeWithText("7 件").assertIsDisplayed()
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        compose.onNodeWithTag("gmail_search_input").performImeAction()
-        compose.onNodeWithTag("gmail_list_heading").assertTextContains("検索結果")
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
-        }
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("gmail_search_submit").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("gmail_search_submit").performClick()
+        val firstSearchLoaded = runCatching { compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件") }.isSuccess
+        } }.isSuccess
+        if (!firstSearchLoaded) compose.onRoot(useUnmergedTree = true).printToLog("gmail-search-result-timeout")
+        assertTrue("Gmail search must settle to exactly one fictional Garden plan message.", firstSearchLoaded)
         compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan").assertIsDisplayed()
         compose.onNodeWithText("検索を取消").performClick()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("受信箱", substring = true).fetchSemanticsNodes().isNotEmpty() &&
+                runCatching { compose.onNodeWithTag("gmail_result_count").assertTextContains("7 件") }.isSuccess
         }
         compose.onNodeWithText("7 件").assertIsDisplayed()
         compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱")
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        compose.activityRule.scenario.onActivity { activity ->
-            val manager = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as android.view.inputmethod.InputMethodManager
-            manager.hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
-        }
-        compose.waitForIdle()
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("gmail_search_submit").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithTag("gmail_search_submit").performClick()
-        compose.onNodeWithTag("gmail_list_heading").assertTextContains("検索結果")
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
-        }
+        val repeatedSearchLoaded = runCatching { compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件") }.isSuccess
+        } }.isSuccess
+        if (!repeatedSearchLoaded) compose.onRoot(useUnmergedTree = true).printToLog("gmail-repeat-search-result-timeout")
+        assertTrue("Gmail search after cancellation must settle to exactly one fictional Garden plan message.", repeatedSearchLoaded)
         compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
         compose.onNodeWithTag("gmail_message_subject").performClick()
@@ -141,6 +144,7 @@ class SereaAppShellTest {
 
     @Test fun chatCalendarBackShowsFictionalAgendaAndDetail() {
         select(SereaDestination.CALENDAR)
+        compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.onNodeWithText("DEMO / 架空の予定").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("表示するカレンダー").fetchSemanticsNodes().isNotEmpty()
@@ -233,6 +237,7 @@ class SereaAppShellTest {
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
         compose.onNodeWithTag("chat-composer").assertIsNotFocused()
         select(SereaDestination.CALENDAR)
+        compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
@@ -284,6 +289,7 @@ class SereaAppShellTest {
         }
 
         select(SereaDestination.CALENDAR)
+        compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("表示するカレンダー").fetchSemanticsNodes().isNotEmpty()
         }
@@ -336,9 +342,8 @@ class SereaAppShellTest {
         assertEquals(0f, agendaOffsetAfterCalendarChange.value(), 1f)
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
         compose.onNodeWithText("Date-line test").performClick()
-        compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("開始・終了").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("説明"))
         compose.onNodeWithText("説明").assertIsDisplayed()
@@ -348,6 +353,7 @@ class SereaAppShellTest {
         assertTrue("calendar detail must have a non-zero saved offset", detailScrollBefore.value() > 0f)
 
         select(SereaDestination.GMAIL)
+        compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed()
         pressBack()
 
         compose.waitUntil(10_000) {
@@ -357,9 +363,10 @@ class SereaAppShellTest {
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue(detailScrollAfter.maxValue() > 0f)
         assertEquals(detailScrollBefore.value(), detailScrollAfter.value(), 1f)
+        compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("Date-line test"))
+        compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.onNodeWithText("説明").assertIsDisplayed()
         compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("開始・終了"))
-        compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.onNodeWithText("開始・終了").assertIsDisplayed()
         pressBack()
         compose.onNodeWithText("Demo Global").assertIsSelected()

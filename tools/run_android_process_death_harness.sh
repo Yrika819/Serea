@@ -1,36 +1,44 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -euo pipefail
 
-package="app.serea.android.demo"
+source "$(dirname "$0")/assert_disposable_android_emulator.sh"
+test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${EXPECTED_API_LEVEL:?EXPECTED_API_LEVEL must be set}"
+
+package="app.serea.android.isolated"
+demo_package="app.serea.android.demo"
 activity="$package/app.serea.android.MainActivity"
 receiver="$package/app.serea.android.ProcessDeathHarnessReceiver"
 action="app.serea.android.action.PROCESS_DEATH_HARNESS"
-run_token="process-death-${EXPECTED_API_LEVEL:?EXPECTED_API_LEVEL must be set}-$$-$(date +%s)"
+campaign_token="${SEREA_CAMPAIGN_TOKEN:?SEREA_CAMPAIGN_TOKEN must identify the fresh isolated campaign}"
+run_token="$campaign_token"
+sentinel_token="${SEREA_SENTINEL_TOKEN:?SEREA_SENTINEL_TOKEN must identify the debug data sentinel}"
 
-command -v adb >/dev/null
-adb get-state >/dev/null
-test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = "${EXPECTED_API_LEVEL:?EXPECTED_API_LEVEL must be set}"
-before_path=$( (adb shell pm path "$package" || true) | tr -d '\r')
-if [ -z "$before_path" ]; then
-  ./gradlew --no-daemon :app:assembleDebug
-  test -s app/build/outputs/apk/debug/app-debug.apk
-  adb install app/build/outputs/apk/debug/app-debug.apk
-  before_path=$( (adb shell pm path "$package" || true) | tr -d '\r')
-fi
+test -n "$(adb shell pm path "$demo_package" | tr -d '\r')"
+test -n "$(adb shell pm path "$package" | tr -d '\r')"
+test -n "$(adb shell pm path "${package}.test" | tr -d '\r')"
+EXPECTED_API_LEVEL="$EXPECTED_API_LEVEL" bash "$(dirname "$0")/run_android_data_sentinel.sh" "$sentinel_token" verify
+before_path=$(adb shell pm path "$package" | tr -d '\r')
+demo_before_path=$(adb shell pm path "$demo_package" | tr -d '\r')
 test -n "$before_path"
 
 phase() {
-  echo "Process-death harness: starting phase $1"
-  adb shell am broadcast -n "$receiver" -a "$action" --es phase "$1" --es token "$run_token"
+  local phase_name="$1"
+  local phase_token="${2:-$run_token}"
+  local request_id="process-${BASHPID}-$(date +%s%N)-${RANDOM}"
+  echo "Process-death harness: starting phase $phase_name"
+  adb shell am broadcast -n "$receiver" -a "$action" \
+    --es phase "$phase_name" --es token "$phase_token" --es requestId "$request_id"
   for _ in $(seq 1 30); do
-    if adb logcat -d -s SereaProcessDeath:I | grep -F "PASS:$run_token:$1" >/dev/null; then return 0; fi
-    if adb logcat -d -s SereaProcessDeath:E | grep -F "FAIL:$run_token:$1:" >/dev/null; then
-      adb logcat -d -s SereaProcessDeath:E
+    local result_log
+    result_log=$(adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E)
+    if grep -F "FAIL:$phase_token:$phase_name:$request_id:" <<< "$result_log" >/dev/null; then
+      printf '%s\n' "$result_log" >&2
       return 1
     fi
+    if grep -F "PASS:$phase_token:$phase_name:$request_id" <<< "$result_log" >/dev/null; then return 0; fi
     sleep 1
   done
-  echo "Process-death harness phase $1 did not report completion." >&2
+  echo "Process-death harness phase $phase_name did not report completion." >&2
   adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E >&2
   return 1
 }
@@ -42,6 +50,7 @@ verify_database_file() {
   printf '%s\n' "$listing" | awk '$5 ~ /^[0-9]+$/ && $5 > 0 && ($NF == "serea-history.db" || $NF == "serea-tasks-process-death-harness.db") { found[$NF]=1 } END { exit !(found["serea-history.db"] && found["serea-tasks-process-death-harness.db"]) }'
 }
 
+phase campaign-consume "$campaign_token"
 phase prepare
 echo "Process-death harness: checking prepared encrypted database"
 verify_database_file
@@ -62,4 +71,9 @@ adb shell am start -W -n "$activity" >/dev/null
 sleep 2
 phase verify-empty
 
-echo "PASS: Android OS Process Death recovery on API ${EXPECTED_API_LEVEL} (persisted history, pending recovery without replay, deletion, encrypted read, package/data preserved)."
+EXPECTED_API_LEVEL="$EXPECTED_API_LEVEL" bash "$(dirname "$0")/run_android_data_sentinel.sh" "$sentinel_token" verify
+after_path=$(adb shell pm path "$package" | tr -d '\r')
+demo_after_path=$(adb shell pm path "$demo_package" | tr -d '\r')
+test "$before_path" = "$after_path"
+test "$demo_before_path" = "$demo_after_path"
+echo "PASS: isolated Android OS Process Death recovery on API ${EXPECTED_API_LEVEL} (encrypted history, Usage Ledger OUTCOME_UNKNOWN, recovery without replay, deletion, isolated package preserved, demo sentinel preserved)."

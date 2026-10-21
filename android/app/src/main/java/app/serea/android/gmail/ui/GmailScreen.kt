@@ -150,7 +150,7 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
             Text(
                 "${state.messages.size} 件",
                 style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("gmail_result_count"),
             )
         }
         when {

@@ -4,7 +4,6 @@ import android.os.Build
 import androidx.test.runner.AndroidJUnitRunner
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
-import java.nio.file.Files
 
 /**
  * Stops instrumentation before any test Activity can start unless the target is a clean,
@@ -24,16 +23,20 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         val filesDirectory = target.filesDir
         val filesDirectoryEntries = filesDirectory.listFiles()?.map { it.name }?.toSet()
         val filesEmpty = isAbsentOrEmptyDirectory(filesDirectory)
-        // AndroidX ProfileInstaller writes this per-install marker before the
-        // instrumentation runner starts on newer Android releases. It contains
-        // no user data; keep the fail-closed check for every other file.
-        val profileInstallerMarker = File(filesDirectory, PROFILE_INSTALLER_MARKER)
-        val onlyKnownPlatformProfileMarker = filesDirectory.isDirectory &&
-            filesDirectoryEntries == setOf(PROFILE_INSTALLER_MARKER) &&
-            profileInstallerMarker.isFile &&
-            profileInstallerMarker.length() == PROFILE_INSTALLER_MARKER_BYTES &&
-            !Files.isSymbolicLink(profileInstallerMarker.toPath()) &&
-            profileInstallerMarker.canonicalFile.parentFile == filesDirectory.canonicalFile
+        // AndroidX ProfileVerifier 1.4.0 persists this schema'd cache on supported API levels.
+        // API 26 is unsupported by ProfileVerifier and therefore must still have an empty filesDir.
+        val packageLastUpdateTime = runCatching {
+            @Suppress("DEPRECATION")
+            target.packageManager.getPackageInfo(target.packageName, 0).lastUpdateTime
+        }.getOrDefault(-1L)
+        val profileVerifierApiSupported = Build.VERSION.SDK_INT >= 28 && Build.VERSION.SDK_INT != 30
+        val onlyKnownPlatformProfileMarker = profileVerifierApiSupported &&
+            ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, packageLastUpdateTime)
+        val profileMarkerRejectionDetails = if (profileVerifierApiSupported && !filesEmpty && !onlyKnownPlatformProfileMarker) {
+            ProfileVerifierCacheMarker.rejectionDetails(filesDirectory, packageLastUpdateTime)
+        } else {
+            "not-applicable"
+        }
         val filesSafe = filesEmpty || onlyKnownPlatformProfileMarker
         val databaseDirectory = File(dataDir, "databases")
         val databasesEmpty = target.databaseList().isEmpty() &&
@@ -55,6 +58,7 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
             "Refusing instrumentation without a fresh isolated namespace and matching CI campaign marker " +
                 "(preferencesEmpty=$preferencesEmpty, filesEmpty=$filesEmpty, filesDirEntries=${filesDirectoryEntries?.sorted()}, " +
                 "knownProfileInstallerMarker=$onlyKnownPlatformProfileMarker, databasesEmpty=$databasesEmpty, " +
+                "knownProfileInstallerMarkerDetails=$profileMarkerRejectionDetails, " +
                 "campaignTokenPresent=${campaignToken != null}, markerMatches=$campaignMarkerMatches, " +
                 "noBackupEntries=${noBackupFiles?.sorted()}, claimedMarkerExists=${claimedMarker.exists()})."
         }
@@ -79,7 +83,5 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         const val CAMPAIGN_TOKEN_ARGUMENT = "sereaCampaignToken"
         const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"
         const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"
-        const val PROFILE_INSTALLER_MARKER = "profileinstaller_profileWrittenFor_lastUpdateTime.dat"
-        const val PROFILE_INSTALLER_MARKER_BYTES = 8L
     }
 }

@@ -66,11 +66,17 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('hardware in setOf("ranchu", "goldfish")', runner)
         self.assertIn('campaignMarkerMatches', runner)
         self.assertIn('noBackupFiles == setOf(INSTRUMENTATION_MARKER)', runner)
-        self.assertIn('PROFILE_INSTALLER_MARKER = "profileinstaller_profileWrittenFor_lastUpdateTime.dat"', runner)
-        self.assertIn('filesDirectoryEntries == setOf(PROFILE_INSTALLER_MARKER)', runner)
-        self.assertIn('profileInstallerMarker.isFile', runner)
-        self.assertIn('profileInstallerMarker.length() == PROFILE_INSTALLER_MARKER_BYTES', runner)
-        self.assertIn('!Files.isSymbolicLink(profileInstallerMarker.toPath())', runner)
+        profile_marker = (ROOT / "android/app/src/debug/java/app/serea/android/ProfileVerifierCacheMarker.kt").read_text(encoding="utf-8")
+        self.assertIn('FILE_NAME = "profileInstalled"', profile_marker)
+        self.assertIn('private const val SCHEMA = 1', profile_marker)
+        self.assertIn('private const val BYTE_COUNT = 24', profile_marker)
+        self.assertIn('storedPackageUpdateTime == packageLastUpdateTime', profile_marker)
+        self.assertIn('resultCode in persistedResultCodes', profile_marker)
+        self.assertIn('Files.isSymbolicLink(markerPath)', profile_marker)
+        self.assertIn('Files.isRegularFile(markerPath, LinkOption.NOFOLLOW_LINKS)', profile_marker)
+        self.assertIn('Files.size(markerPath) != BYTE_COUNT.toLong()', profile_marker)
+        self.assertIn('entries.size != 1 || entries.single().name != FILE_NAME', profile_marker)
+        self.assertIn('Build.VERSION.SDK_INT >= 28 && Build.VERSION.SDK_INT != 30', runner)
         self.assertIn('filesDirEntries=${filesDirectoryEntries?.sorted()}', runner)
         self.assertIn('testBuildType = "isolated"', (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8"))
         self.assertIn("assembleIsolatedAndroidTest", (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8"))
@@ -86,6 +92,11 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertLess(runner.index('check(preferencesEmpty'), runner.index('super.onStart()'))
         self.assertLess(runner.index('marker.renameTo(claimedMarker)'), runner.index('super.onStart()'))
         self.assertIn('connectedIsolatedAndroidTest', (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8"))
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        self.assertIn('SereaInstrumentationLifecycleListener', campaign)
+        self.assertIn('logcat-live.txt', campaign)
+        self.assertIn('timeout --signal=INT --kill-after=120s 40m ./gradlew', campaign)
+        self.assertIn('test-device-state.txt', campaign)
         build = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")', build)
         self.assertNotIn('androidTestImplementation("androidx.compose.ui:ui-test-manifest")', build)
@@ -584,6 +595,31 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('target.getDatabasePath("serea-history.db").exists()', runner)
         self.assertNotIn("listFiles().isNullOrEmpty()", runner)
         self.assertLess(seed.index("preferences.all.isEmpty()"), seed.index("repository.list()"))
+
+    def test_lifecycle_summary_keeps_last_started_and_finished_tests_distinct(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "logcat.txt"
+            summary = Path(temporary) / "summary.txt"
+            log.write_text(
+                "10-21 16:00:00.000 123 456 I SereaTestLifecycle: START|1792598400000|a.First#done\n"
+                "10-21 16:00:01.000 123 456 I SereaTestLifecycle: FINISH|1792598401000|a.First#done\n"
+                "10-21 16:00:02.000 123 456 I SereaTestLifecycle: START|1792598402000|a.Second#blocked\n"
+                "10-21 16:00:03.000 123 456 I SereaTestLifecycle: RUN_FINISH|1792598403000|2|0|0\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["python3", str(ROOT / "tools/summarize_android_test_lifecycle.py"), str(log), str(summary)],
+                check=True,
+            )
+            contents = summary.read_text(encoding="utf-8")
+            self.assertIn("last_test_started=a.Second#blocked", contents)
+            self.assertIn("last_test_finished=a.First#done", contents)
+            self.assertIn("unfinished_test=a.Second#blocked", contents)
+            self.assertIn("expected_test_cases=103", contents)
+            self.assertIn("tests_not_started=101", contents)
+            self.assertIn("tests_started_without_finish=1", contents)
+            self.assertIn("runner_test_count=2", contents)
+            self.assertIn("runner_failure_count=0", contents)
 
 
 if __name__ == "__main__":

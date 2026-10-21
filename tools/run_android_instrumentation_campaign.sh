@@ -20,6 +20,26 @@ printf 'NOT_RUN\n' > "$evidence/device-api-level.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/api-result.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/data-isolation-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/data-isolation.log" || exit 1
+printf 'NOT_RUN\n' > "$evidence/instrumentation-timeout.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/test-lifecycle-host.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/test-device-state.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/logcat-live.txt" || exit 1
+
+logcat_pid=''
+stop_live_capture() {
+  if [[ -n "$logcat_pid" ]]; then
+    kill "$logcat_pid" 2>/dev/null || true
+    wait "$logcat_pid" 2>/dev/null || true
+    logcat_pid=''
+  fi
+  if [[ -s "$evidence/logcat-live.txt" ]]; then
+    python3 "$tool_dir/summarize_android_test_lifecycle.py" \
+      "$evidence/logcat-live.txt" "$evidence/test-lifecycle-summary.txt" || true
+  fi
+}
+trap stop_live_capture EXIT
+trap 'stop_live_capture; exit 130' INT
+trap 'stop_live_capture; exit 143' TERM
 
 cleanup_failed() {
   message="Failed to clear stale API $api_level instrumentation evidence; campaign was not run."
@@ -38,8 +58,10 @@ if ! rm -f \
   "$evidence/device-api-error.txt" \
   "$evidence/junit-verification.log" \
   "$evidence/process-death.log" \
-  "$evidence/data-isolation-error.txt" || \
-  [[ -e "$evidence/device-api-error.txt" || -e "$evidence/junit-verification.log" || -e "$evidence/process-death.log" || -e "$evidence/data-isolation-error.txt" ]]; then
+  "$evidence/data-isolation-error.txt" \
+  "$evidence/test-lifecycle-summary.txt" \
+  "$evidence/instrumentation-timeout-detail.txt" || \
+  [[ -e "$evidence/device-api-error.txt" || -e "$evidence/junit-verification.log" || -e "$evidence/process-death.log" || -e "$evidence/data-isolation-error.txt" || -e "$evidence/test-lifecycle-summary.txt" || -e "$evidence/instrumentation-timeout-detail.txt" ]]; then
   cleanup_failed
 fi
 
@@ -129,10 +151,41 @@ if [[ "$sdk_ok" == true ]]; then
         isolated_target_result=1
       fi
       if [[ "$isolated_target_result" -eq 0 ]]; then
-        ./gradlew --no-daemon \
+        printf 'campaign_started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$evidence/test-lifecycle-host.txt"
+        printf 'instrumentation_started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$evidence/test-lifecycle-host.txt"
+        adb -s "$ANDROID_SERIAL" logcat -v threadtime -s \
+          SereaTestLifecycle:I chat-demo-label:I chat-current-delete-confirmation:I \
+          chat-current-delete-status:I chat-delete-all-confirmation:I chat-delete-all-status:I \
+          chat-restored-conversation:I task-proposal-font-scale:I AndroidRuntime:E \
+          > "$evidence/logcat-live.txt" 2>&1 &
+        logcat_pid=$!
+        timeout --signal=INT --kill-after=120s 40m ./gradlew --no-daemon \
           -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$campaign_token" \
+          -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
           connectedIsolatedAndroidTest
         gradle_result=$?
+        printf 'instrumentation_finished_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$evidence/test-lifecycle-host.txt"
+        printf 'instrumentation_exit_code=%s\n' "$gradle_result" >> "$evidence/test-lifecycle-host.txt"
+        if [[ "$gradle_result" -eq 124 || "$gradle_result" -eq 137 ]]; then
+          printf 'TIMEOUT\n' > "$evidence/instrumentation-timeout.txt"
+          echo "Instrumentation was stopped by the 40-minute campaign deadline (exit=$gradle_result)." \
+            > "$evidence/instrumentation-timeout-detail.txt"
+        else
+          printf 'NOT_TIMED_OUT\n' > "$evidence/instrumentation-timeout.txt"
+        fi
+
+        if [[ "$gradle_result" -ne 0 ]]; then
+          {
+            printf 'captured_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+            printf 'adb_state='; timeout 10s adb -s "$ANDROID_SERIAL" get-state 2>&1 || true
+            printf 'boot_completed='; timeout 10s adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>&1 | tr -d '\r' || true
+            printf 'isolated_target_pid='; timeout 10s adb -s "$ANDROID_SERIAL" shell pidof "$isolated_package" 2>&1 | tr -d '\r' || true
+            printf 'isolated_test_pid='; timeout 10s adb -s "$ANDROID_SERIAL" shell pidof "$test_package" 2>&1 | tr -d '\r' || true
+            printf 'instrumentation_state:\n'
+            timeout 10s adb -s "$ANDROID_SERIAL" shell dumpsys activity instrumentation 2>&1 | \
+              rg 'Instrumentation|mFinished|mWatcher|target=|runner=' | head -40 || true
+          } > "$evidence/test-device-state.txt"
+        fi
       else
         gradle_result=1
         echo "Fresh isolated instrumentation target could not be proven." >> "$evidence/data-isolation.log"

@@ -1,8 +1,26 @@
 # Pixel 7a Android beta acceptance checklist
 
-State: **NOT_RUN** in Codex Cloud. Target: Pixel 7a, Android 17 Beta, rooted
-test device. Use synthetic content only. Do not add a Provider account or key;
-live Provider access remains disabled.
+State: **NOT_RUN** in Codex Cloud. Target: a dedicated disposable Pixel 7a
+test profile on Android 17 Beta. Never run this checklist on a personal Pixel
+7a or a profile containing personal data. Use synthetic content only. Do not
+add a Provider account or key; live Provider access remains disabled.
+
+Before continuing, prove that this is the disposable test profile and that
+`app.serea.android.demo`, `app.serea.android.isolated`, and
+`app.serea.android.isolated.test` are absent. If any package is installed or
+retained, the profile may contain personal data, or the profile cannot be
+verified, stop without installing or changing anything. Do not use
+`adb install -r`, uninstall an app, or clear app/device data to make the check
+pass. Use a newly provisioned disposable profile instead.
+
+Run this read-only package check on the verified device; it must print no
+matches:
+
+```sh
+adb shell pm list packages -u --user all | grep -E 'package:app\.serea\.android\.(demo|isolated|isolated\.test)$'
+```
+
+If `adb`, the profile identity, or package inventory cannot be verified, stop.
 
 ## Build identity and install
 
@@ -13,9 +31,10 @@ live Provider access remains disabled.
    development debug key. Record `apksigner verify --print-certs app-debug.apk`
    and `aapt dump badging app-debug.apk`. The release APK is not the install
    candidate for this checklist.
-3. Connect the device with USB debugging already enabled. Run `adb devices -l`,
-   record the Android build fingerprint and API level, then install with
-   `adb install -r app-debug.apk`. Do not clear data during restore checks.
+3. Connect only the verified disposable profile with USB debugging already
+   enabled. Run `adb devices -l`, record the Android build fingerprint and API
+   level, then install the APK with `adb install app-debug.apk` after confirming
+   the package checks above. Do not clear data during restore checks.
 
 ## UI, history, selection, and local limits
 

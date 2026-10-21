@@ -48,8 +48,9 @@ class ChatViewModelTest {
             persistedUser = persistedUser?.copy(status = "COMPLETED")
             persistedAssistant = assistant
         }
-        override suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
+        override suspend fun updateStatus(messageId: String, conversationId: String, status: String): Boolean {
             persistedUser = persistedUser?.copy(status = status)
+            return persistedUser != null
         }
         override suspend fun delete(id: String, now: Long) = Unit
         override suspend fun deleteAll() = Unit
@@ -58,6 +59,8 @@ class ChatViewModelTest {
     private class BlockingStatusHistory(
         private val blockedStatus: String,
         private val failingStatus: String? = null,
+        private val failingStatusAfterRelease: String? = null,
+        private val notPersistingStatus: String? = null,
     ) : ConversationHistoryPort {
         val updateStarted = kotlinx.coroutines.CompletableDeferred<String>()
         val releaseUpdate = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -65,7 +68,18 @@ class ChatViewModelTest {
         val updateCalls = mutableListOf<Pair<String, String>>()
 
         override suspend fun list() = emptyList<StoredConversation>()
-        override suspend fun get(id: String): StoredConversation? = null
+        override suspend fun get(id: String): StoredConversation? {
+            val stored = messages.values.filter { it.conversationId == id }.sortedBy { it.createdAt }
+            if (stored.isEmpty()) return null
+            return StoredConversation(
+                id = id,
+                title = "Test conversation",
+                createdAt = stored.first().createdAt,
+                updatedAt = stored.last().createdAt,
+                modelId = "demo-local",
+                messages = stored,
+            )
+        }
         override suspend fun addMessage(message: StoredMessage) { messages[message.id] = message }
         override suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String) {
             messages[message.id] = message
@@ -76,7 +90,7 @@ class ChatViewModelTest {
             messages[userMessageId] = user.copy(status = "COMPLETED")
             messages[assistant.id] = assistant
         }
-        override suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
+        override suspend fun updateStatus(messageId: String, conversationId: String, status: String): Boolean {
             updateCalls += messageId to status
             val current = checkNotNull(messages[messageId])
             if (status == failingStatus) error("simulated status persistence failure")
@@ -84,7 +98,10 @@ class ChatViewModelTest {
                 updateStarted.complete(messageId)
                 releaseUpdate.await()
             }
+            if (status == failingStatusAfterRelease) error("simulated status persistence failure after release")
+            if (status == notPersistingStatus) return false
             messages[messageId] = current.copy(status = status)
+            return true
         }
         override suspend fun delete(id: String, now: Long) = Unit
         override suspend fun deleteAll() = Unit
@@ -399,6 +416,7 @@ class ChatViewModelTest {
         runCurrent()
         assertEquals(requestAId, history.updateStarted.await())
         assertEquals("PENDING", history.messages[requestAId]?.status)
+        assertEquals(listOf(requestAId to "OUTCOME_UNKNOWN"), history.updateCalls)
 
         vm.updateInput("request B")
         vm.sendMessage()
@@ -416,6 +434,7 @@ class ChatViewModelTest {
         assertEquals("OUTCOME_UNKNOWN", history.messages[requestAId]?.status)
         assertTrue(vm.state.value.isLoading)
         assertEquals(null, vm.state.value.errorMessage)
+        assertEquals(listOf(requestAId to "OUTCOME_UNKNOWN"), history.updateCalls)
 
         vm.updateInput("request C")
         vm.sendMessage()
@@ -429,6 +448,7 @@ class ChatViewModelTest {
         assertEquals(listOf("OUTCOME_UNKNOWN", "COMPLETED", "COMPLETED"),
             vm.state.value.conversation.messages.map { it.status })
         assertEquals("COMPLETED", history.messages[requestBId]?.status)
+        assertEquals(listOf(requestAId to "OUTCOME_UNKNOWN"), history.updateCalls)
         assertEquals("reply B", vm.state.value.conversation.messages.last().text)
         assertFalse(vm.state.value.isLoading)
     }
@@ -566,7 +586,7 @@ class ChatViewModelTest {
     }
 
     @Test fun failedFailureStatusWriteReleasesChatAndReportsPersistenceError() = runTest(dispatcher) {
-        val history = BlockingStatusHistory(blockedStatus = "never", failingStatus = "FAILED")
+        val history = BlockingStatusHistory(blockedStatus = "never", notPersistingStatus = "FAILED")
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest): ModelChatResponse =
                 throw ModelChatFailure("provider rejected request")
@@ -580,7 +600,9 @@ class ChatViewModelTest {
         assertEquals("FAILED", vm.state.value.conversation.messages.single().status)
         assertFalse(vm.state.value.isLoading)
         assertFalse(vm.state.value.isFinalizing)
-        assertTrue(vm.state.value.errorMessage?.contains("could not be saved") == true)
+        val messageId = vm.state.value.conversation.messages.single().id
+        assertTrue(vm.state.value.errorMessage?.contains("provider rejected request") == true)
+        assertTrue(vm.state.value.historyPersistenceWarnings[messageId]?.contains("could not be saved") == true)
     }
 
     @Test fun failedUnknownStatusWriteIsReportedWithoutChangingNextRequestOwnership() = runTest(dispatcher) {
@@ -618,7 +640,7 @@ class ChatViewModelTest {
         assertEquals("PENDING", vm.state.value.conversation.messages[1].status)
         assertEquals("PENDING", history.messages[requestAId]?.status)
         assertTrue(vm.state.value.isLoading)
-        assertTrue(vm.state.value.errorMessage?.contains("could not be updated") == true)
+        assertTrue(vm.state.value.historyPersistenceWarnings[requestAId]?.contains("could not be updated") == true)
 
         secondReply.complete(ModelChatResponse("reply B"))
         advanceUntilIdle()
@@ -626,7 +648,128 @@ class ChatViewModelTest {
         assertEquals("COMPLETED", vm.state.value.conversation.messages[1].status)
         assertEquals("COMPLETED", history.messages[requestBId]?.status)
         assertFalse(vm.state.value.isLoading)
-        assertTrue(vm.state.value.errorMessage?.contains("could not be updated") == true)
+        assertTrue(vm.state.value.historyPersistenceWarnings[requestAId]?.contains("could not be updated") == true)
+    }
+
+    @Test fun olderUnknownWriteFailureDoesNotReplaceNewerRequestError() = runTest(dispatcher) {
+        val history = BlockingStatusHistory(
+            blockedStatus = "OUTCOME_UNKNOWN",
+            failingStatusAfterRelease = "OUTCOME_UNKNOWN",
+        )
+        val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondReply = kotlinx.coroutines.CompletableDeferred<ModelChatResponse>()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse = when (request.message) {
+                "request A" -> {
+                    firstStarted.complete(Unit)
+                    kotlinx.coroutines.awaitCancellation()
+                }
+                "request B" -> {
+                    secondStarted.complete(Unit)
+                    secondReply.await()
+                }
+                else -> error("Unexpected provider request: ${request.message}")
+            }
+        }, historyRepository = history, initialConversation = Conversation("stale-warning-owner"))
+
+        vm.updateInput("request A")
+        vm.sendMessage()
+        runCurrent()
+        firstStarted.await()
+        val requestAId = vm.state.value.conversation.messages[0].id
+        vm.cancelCurrent()
+        runCurrent()
+        assertEquals(requestAId, history.updateStarted.await())
+
+        vm.updateInput("request B")
+        vm.sendMessage()
+        runCurrent()
+        secondStarted.await()
+        val requestBId = vm.state.value.conversation.messages[1].id
+        secondReply.completeExceptionally(ModelChatFailure("provider B rejected request"))
+        advanceUntilIdle()
+        assertEquals("FAILED", vm.state.value.conversation.messages[1].status)
+        assertEquals("provider B rejected request", vm.state.value.errorMessage)
+        assertTrue(vm.state.value.isFinalizing.not())
+
+        history.releaseUpdate.complete(Unit)
+        runCurrent()
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages[0].status)
+        assertEquals("FAILED", vm.state.value.conversation.messages[1].status)
+        assertEquals("PENDING", history.messages[requestAId]?.status)
+        assertEquals("FAILED", history.messages[requestBId]?.status)
+        assertEquals("provider B rejected request", vm.state.value.errorMessage)
+        assertTrue(vm.state.value.historyPersistenceWarnings[requestAId]?.contains("could not be updated") == true)
+    }
+
+    @Test fun unknownStatusNoopWarnsAndKeepsMessageVisible() = runTest(dispatcher) {
+        val history = BlockingStatusHistory(blockedStatus = "never", notPersistingStatus = "OUTCOME_UNKNOWN")
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse = kotlinx.coroutines.awaitCancellation()
+        }, historyRepository = history, initialConversation = Conversation("unknown-status-noop"))
+
+        vm.updateInput("request A")
+        vm.sendMessage()
+        runCurrent()
+        val messageId = vm.state.value.conversation.messages.single().id
+        vm.cancelCurrent()
+        advanceUntilIdle()
+
+        assertEquals("PENDING", history.messages[messageId]?.status)
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages.single().status)
+        assertFalse(vm.state.value.isLoading)
+        assertTrue(vm.state.value.historyPersistenceWarnings[messageId]?.contains("could not be updated") == true)
+    }
+
+    @Test fun reopeningHistoryClearsWarningWhenTerminalStatusIsNowSaved() = runTest(dispatcher) {
+        val history = BlockingStatusHistory(blockedStatus = "never", notPersistingStatus = "OUTCOME_UNKNOWN")
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse = kotlinx.coroutines.awaitCancellation()
+        }, historyRepository = history, initialConversation = Conversation("warning-reconciliation"))
+
+        vm.updateInput("request A")
+        vm.sendMessage()
+        runCurrent()
+        val messageId = vm.state.value.conversation.messages.single().id
+        vm.cancelCurrent()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.historyPersistenceWarnings.containsKey(messageId))
+
+        history.messages[messageId] = checkNotNull(history.messages[messageId]).copy(status = "OUTCOME_UNKNOWN")
+        vm.openConversation("warning-reconciliation")
+        advanceUntilIdle()
+
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages.single().status)
+        assertFalse(vm.state.value.historyPersistenceWarnings.containsKey(messageId))
+    }
+
+    @Test fun reopeningPendingHistoryKeepsConversationVisibleWhenStatusWriteThrows() = runTest(dispatcher) {
+        val history = BlockingStatusHistory(blockedStatus = "never", failingStatus = "OUTCOME_UNKNOWN")
+        history.createWithFirstMessage(
+            id = "status-write-failure",
+            title = "Status write failure",
+            message = StoredMessage(
+                id = "pending-message",
+                conversationId = "status-write-failure",
+                role = MessageRole.USER,
+                text = "saved request",
+                classification = DataClassification.UNKNOWN,
+                createdAt = 1L,
+                status = "PENDING",
+                origin = DataOrigin.USER_AUTHORED,
+            ),
+        )
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse = error("Unexpected send")
+        }, historyRepository = history, initialConversation = Conversation("before-open"))
+
+        vm.openConversation("status-write-failure")
+        advanceUntilIdle()
+
+        assertEquals("status-write-failure", vm.state.value.conversation.id)
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages.single().status)
+        assertTrue(vm.state.value.historyPersistenceWarnings.containsKey("pending-message"))
     }
 
     @Test fun completedReplyCannotBeCancelledBetweenPersistenceAndUiUpdate() = runTest(dispatcher) {

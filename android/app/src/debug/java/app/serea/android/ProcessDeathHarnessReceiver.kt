@@ -40,6 +40,12 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
                     return@Thread
                 }
+                if (phase == "seed-sentinel") {
+                    assertFreshDebugDataNamespace(context)
+                }
+                if (phase == "verify-sentinel") {
+                    assertDebugSentinelAuthorization(context, token)
+                }
                 if (phase in DESTRUCTIVE_PHASES) {
                     verifyProcessDeathAuthorization(context, token)
                 }
@@ -105,15 +111,71 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         }
     }
 
+    private fun assertFreshDebugDataNamespace(context: Context) {
+        val databaseDirectory = File(context.applicationInfo.dataDir, "databases")
+        val historyDatabase = context.getDatabasePath("serea-history.db")
+        check(context.databaseList().isEmpty()) {
+            "Refusing to seed the debug sentinel in an app that already has databases"
+        }
+        check(isAbsentOrEmptyDirectory(databaseDirectory) && !historyDatabase.exists()) {
+            "Refusing to seed the debug sentinel when the database namespace is present or unreadable"
+        }
+        val preferenceDirectory = File(context.applicationInfo.dataDir, "shared_prefs")
+        val persistentDirectories = listOf(
+            preferenceDirectory,
+            context.filesDir,
+            context.noBackupFilesDir,
+            context.cacheDir,
+            context.codeCacheDir,
+        )
+        check(persistentDirectories.all(::isAbsentOrEmptyDirectory)) {
+            "Refusing to seed the debug sentinel in an app that already has private files or preferences"
+        }
+        check(context.getSharedPreferences("model_selection", Context.MODE_PRIVATE).all.isEmpty()) {
+            "Refusing to seed existing model_selection preferences"
+        }
+    }
+
+    private fun assertDebugSentinelAuthorization(context: Context, token: String) {
+        val database = context.getDatabasePath("serea-history.db")
+        check(database.isFile && database.length() > 0L) {
+            "Refusing to open Room before a debug sentinel database is proven to exist"
+        }
+        val marker = File(context.noBackupFilesDir, DEBUG_SENTINEL_AUTHORIZATION)
+        check(marker.isFile && marker.readText() == token) {
+            "Refusing sentinel verification without its matching seed authorization"
+        }
+        val selection = ModelSelectionSettings(
+            context.getSharedPreferences("model_selection", Context.MODE_PRIVATE),
+        ).load()
+        check(selection.mode == ModelSelectionMode.MANUAL && selection.manualModelId == "sentinel/$token") {
+            "Refusing sentinel verification without matching model_selection data"
+        }
+    }
+
+    private fun isAbsentOrEmptyDirectory(directory: File): Boolean {
+        if (!directory.exists()) {
+            val parent = directory.parentFile ?: return false
+            if (!parent.isDirectory) return false
+            val siblings = parent.listFiles() ?: return false
+            return siblings.none { it.name == directory.name }
+        }
+        return directory.isDirectory && directory.listFiles()?.isEmpty() == true
+    }
+
     private fun seedInstrumentationMarker(context: Context, token: String) {
         check(token.matches(Regex("[A-Za-z0-9-]{1,120}")))
         check(context.databaseList().isEmpty()) { "Refusing instrumentation target with existing databases" }
+        val databaseDirectory = File(context.applicationInfo.dataDir, "databases")
+        check(isAbsentOrEmptyDirectory(databaseDirectory) && !context.getDatabasePath("serea-history.db").exists()) {
+            "Refusing instrumentation target with an existing or unreadable database namespace"
+        }
         val preferences = File(context.applicationInfo.dataDir, "shared_prefs")
-        check(!preferences.exists() || preferences.listFiles().isNullOrEmpty()) {
+        check(isAbsentOrEmptyDirectory(preferences)) {
             "Refusing instrumentation target with existing preferences"
         }
-        check(context.filesDir.listFiles().isNullOrEmpty()) { "Refusing instrumentation target with existing files" }
-        check(context.noBackupFilesDir.listFiles().isNullOrEmpty()) {
+        check(isAbsentOrEmptyDirectory(context.filesDir)) { "Refusing instrumentation target with existing files" }
+        check(isAbsentOrEmptyDirectory(context.noBackupFilesDir)) {
             "Refusing instrumentation target with existing no-backup data"
         }
         val marker = File(context.noBackupFilesDir, INSTRUMENTATION_MARKER)
@@ -150,9 +212,6 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         repository: ConversationRepository,
         token: String,
     ) {
-        check(!context.getDatabasePath("serea-history.db").exists()) {
-            "Refusing to seed an existing demo history database"
-        }
         val preferences = context.getSharedPreferences("model_selection", Context.MODE_PRIVATE)
         check(preferences.all.isEmpty()) { "Refusing to overwrite existing model_selection preferences" }
         check(repository.list().isEmpty()) { "Refusing to seed a non-empty demo history database" }
@@ -181,6 +240,9 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
             ),
         )
         verifyDebugSentinel(context, repository, token)
+        val marker = File(context.noBackupFilesDir, DEBUG_SENTINEL_AUTHORIZATION)
+        check(marker.createNewFile()) { "Refusing to replace an existing debug sentinel authorization" }
+        marker.writeText(token)
     }
 
     private suspend fun verifyDebugSentinel(
@@ -297,6 +359,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         private const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"
         private const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"
         private const val PROCESS_DEATH_AUTHORIZATION = "serea-process-death-authorization"
+        private const val DEBUG_SENTINEL_AUTHORIZATION = "serea-debug-sentinel-authorization"
         private val DESTRUCTIVE_PHASES = setOf("prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify")
         private const val TASK_COMPLETED_ID = "00000000-0000-0000-0000-000000000026"
         private const val TASK_TODO_ID = "00000000-0000-0000-0000-000000000035"

@@ -465,13 +465,47 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 (evidence / "data-isolation-error.txt").read_text(encoding="utf-8"),
             )
 
-    def test_sentinel_checks_existing_preferences_before_touching_history_database(self) -> None:
+    def test_sentinel_seeding_requires_a_fresh_complete_debug_data_namespace(self) -> None:
         receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(
             encoding="utf-8",
         )
+        seed_phase = receiver.split('if (phase == "seed-sentinel") {', 1)[1].split("}", 1)[0]
+        verify_phase = receiver.split('if (phase == "verify-sentinel") {', 1)[1].split("}", 1)[0]
+        fresh_namespace_check = receiver.split("private fun assertFreshDebugDataNamespace(", 1)[1].split(
+            "private fun assertDebugSentinelAuthorization(", 1,
+        )[0]
+        verify_authorization = receiver.split("private fun assertDebugSentinelAuthorization(", 1)[1].split(
+            "private fun isAbsentOrEmptyDirectory(", 1,
+        )[0]
         seed = receiver.split("private suspend fun seedDebugSentinel(", 1)[1].split(
             "private suspend fun verifyDebugSentinel(", 1,
         )[0]
+        runner = (ROOT / "android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt").read_text(
+            encoding="utf-8",
+        )
+        self.assertIn("assertFreshDebugDataNamespace(context)", seed_phase)
+        self.assertLess(receiver.index('if (phase == "seed-sentinel")'), receiver.index("val database = SereaHistoryDatabase.open(context)"))
+        self.assertIn("assertDebugSentinelAuthorization(context, token)", verify_phase)
+        self.assertLess(receiver.index('if (phase == "verify-sentinel")'), receiver.index("val database = SereaHistoryDatabase.open(context)"))
+        self.assertIn("context.databaseList().isEmpty()", fresh_namespace_check)
+        self.assertIn('File(context.applicationInfo.dataDir, "databases")', fresh_namespace_check)
+        self.assertIn('context.getDatabasePath("serea-history.db")', fresh_namespace_check)
+        self.assertIn("isAbsentOrEmptyDirectory(databaseDirectory)", fresh_namespace_check)
+        self.assertIn('File(context.applicationInfo.dataDir, "shared_prefs")', fresh_namespace_check)
+        self.assertIn("context.filesDir", fresh_namespace_check)
+        self.assertIn("context.noBackupFilesDir", fresh_namespace_check)
+        self.assertIn("context.cacheDir", fresh_namespace_check)
+        self.assertIn("context.codeCacheDir", fresh_namespace_check)
+        self.assertIn("database.isFile && database.length() > 0L", verify_authorization)
+        self.assertIn("marker.isFile && marker.readText() == token", verify_authorization)
+        self.assertIn('selection.manualModelId == "sentinel/$token"', verify_authorization)
+        self.assertIn("DEBUG_SENTINEL_AUTHORIZATION", seed)
+        self.assertIn("directory.listFiles()?.isEmpty() == true", receiver)
+        self.assertIn("isAbsentOrEmptyDirectory(preferences)", runner)
+        self.assertIn("isAbsentOrEmptyDirectory(target.filesDir)", runner)
+        self.assertIn("isAbsentOrEmptyDirectory(databaseDirectory)", runner)
+        self.assertIn('target.getDatabasePath("serea-history.db").exists()', runner)
+        self.assertNotIn("listFiles().isNullOrEmpty()", runner)
         self.assertLess(seed.index("preferences.all.isEmpty()"), seed.index("repository.list()"))
 
 

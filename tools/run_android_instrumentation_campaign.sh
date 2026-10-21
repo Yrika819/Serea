@@ -165,8 +165,8 @@ if [[ "$sdk_ok" == true ]]; then
 
   if [[ -d "$evidence/junit" ]]; then
     python3 "$tool_dir/verify_android_instrumentation.py" "$evidence/junit" \
-      --source-root app/src/androidTest/java --minimum 101 \
-      --require-class app.serea.android.EncryptedHistoryTest=16 \
+      --source-root app/src/androidTest/java --minimum 102 \
+      --require-class app.serea.android.EncryptedHistoryTest=17 \
       --require-class app.serea.android.ChatScreenTest=16 \
       --require-class app.serea.android.ChatHttpE2ETest=4 \
       --require-class app.serea.android.UsageLedgerDatabaseTest=12 \

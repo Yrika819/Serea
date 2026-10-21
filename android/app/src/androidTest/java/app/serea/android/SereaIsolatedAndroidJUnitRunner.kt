@@ -19,13 +19,16 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
             (fingerprint.contains("generic") || fingerprint.contains("sdk_gphone"))
         val apiSupported = Build.VERSION.SDK_INT == 26 || Build.VERSION.SDK_INT == 35
         val preferences = File(dataDir, "shared_prefs")
-        val preferencesEmpty = !preferences.exists() || preferences.listFiles().isNullOrEmpty()
-        val filesEmpty = target.filesDir.listFiles().isNullOrEmpty()
-        val databasesEmpty = target.databaseList().isEmpty()
+        val preferencesEmpty = isAbsentOrEmptyDirectory(preferences)
+        val filesEmpty = isAbsentOrEmptyDirectory(target.filesDir)
+        val databaseDirectory = File(dataDir, "databases")
+        val databasesEmpty = target.databaseList().isEmpty() &&
+            isAbsentOrEmptyDirectory(databaseDirectory) &&
+            !target.getDatabasePath("serea-history.db").exists()
         val marker = File(target.noBackupFilesDir, INSTRUMENTATION_MARKER)
         val claimedMarker = File(target.noBackupFilesDir, CLAIMED_INSTRUMENTATION_MARKER)
         val campaignToken = InstrumentationRegistry.getArguments().getString(CAMPAIGN_TOKEN_ARGUMENT)
-        val noBackupFiles = target.noBackupFilesDir.listFiles()?.map { it.name }?.toSet().orEmpty()
+        val noBackupFiles = target.noBackupFilesDir.listFiles()?.map { it.name }?.toSet()
         val campaignMarkerMatches = campaignToken != null && marker.isFile && marker.readText() == campaignToken &&
             noBackupFiles == setOf(INSTRUMENTATION_MARKER)
 
@@ -41,6 +44,16 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
             "Refusing instrumentation because another run already claimed the campaign marker."
         }
         super.onStart()
+    }
+
+    private fun isAbsentOrEmptyDirectory(directory: File): Boolean {
+        if (!directory.exists()) {
+            val parent = directory.parentFile ?: return false
+            if (!parent.isDirectory) return false
+            val siblings = parent.listFiles() ?: return false
+            return siblings.none { it.name == directory.name }
+        }
+        return directory.isDirectory && directory.listFiles()?.isEmpty() == true
     }
 
     private companion object {

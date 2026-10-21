@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
@@ -123,11 +124,12 @@ class SereaAppShellTest {
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan").assertIsDisplayed()
         compose.onNodeWithText("検索を取消").performClick()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("受信箱", substring = true).fetchSemanticsNodes().isNotEmpty() &&
-                runCatching { compose.onNodeWithTag("gmail_result_count").assertTextContains("7 件") }.isSuccess
+            compose.onAllNodesWithText("受信箱").fetchSemanticsNodes().isNotEmpty() &&
+                runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("7 件") }.isSuccess
         }
-        compose.onNodeWithText("7 件").assertIsDisplayed()
-        compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱")
+        compose.onNodeWithTag("gmail_result_count").assertTextEquals("7 件").assertIsDisplayed()
+        compose.onNodeWithTag("gmail_list_heading").assertTextEquals("受信箱")
+        compose.onAllNodesWithTag("gmail_message_subject").onFirst().assertTextContains("Project Finch schedule")
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
         Espresso.closeSoftKeyboard()

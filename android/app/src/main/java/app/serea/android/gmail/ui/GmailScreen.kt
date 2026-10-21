@@ -132,7 +132,7 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
             )
-            Button(onClick = { submitSearch() }) { Text("検索") }
+            Button(onClick = { submitSearch() }, modifier = Modifier.testTag("gmail_search_submit")) { Text("検索") }
         }
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),

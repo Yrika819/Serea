@@ -141,6 +141,9 @@ data class ChatUiState(
     val history: List<StoredConversation> = emptyList(),
     val errorMessage: String? = null,
     val statusMessage: String? = null,
+    val deleteConfirmation: String = "",
+    val deleteTargetId: String = "",
+    val deleteTargetTitle: String = "",
 )
 
 data class ModelChatRequest(
@@ -199,6 +202,36 @@ internal class ChatViewModel(
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
 
     fun updateInput(value: String) = mutableState.update { it.copy(input = value, errorMessage = null) }
+
+    fun requestCurrentConversationDeletionConfirmation() {
+        val conversation = mutableState.value.conversation
+        mutableState.update {
+            it.copy(
+                deleteConfirmation = "current",
+                deleteTargetId = conversation.id,
+                deleteTargetTitle = conversationDisplayTitle(conversation),
+            )
+        }
+    }
+
+    fun requestAllHistoryDeletionConfirmation() = mutableState.update {
+        it.copy(deleteConfirmation = "all", deleteTargetId = "", deleteTargetTitle = "")
+    }
+
+    fun clearDeleteConfirmation() = mutableState.update {
+        it.copy(deleteConfirmation = "", deleteTargetId = "", deleteTargetTitle = "")
+    }
+
+    fun confirmCurrentConversationDeletion() {
+        val id = mutableState.value.deleteTargetId
+        clearDeleteConfirmation()
+        if (id.isNotBlank()) deleteCurrentConversation(id)
+    }
+
+    fun confirmAllHistoryDeletion() {
+        clearDeleteConfirmation()
+        deleteAllHistory()
+    }
 
     fun sendMessage() {
         val snapshot = mutableState.value
@@ -557,9 +590,6 @@ internal fun ChatScreen(
     var secretText by remember { mutableStateOf("") }
     var settingsMessage by remember { mutableStateOf("") }
     var overflowExpanded by remember { mutableStateOf(false) }
-    var deleteConfirmation by rememberSaveable { mutableStateOf("") }
-    var deleteTargetId by rememberSaveable { mutableStateOf("") }
-    var deleteTargetTitle by rememberSaveable { mutableStateOf("") }
     var credentialReady by remember { mutableStateOf(credentials?.isConfigured() == true) }
     var dailyRequestsText by remember { mutableStateOf("20") }
     var dailyTokensText by remember { mutableStateOf("10000") }
@@ -752,9 +782,9 @@ internal fun ChatScreen(
                         DropdownMenu(expanded = overflowExpanded, onDismissRequest = { overflowExpanded = false }) {
                             HorizontalDivider()
                             DropdownMenuItem(text = { Text("この会話を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
-                                onClick = { overflowExpanded = false; deleteTargetId = state.conversation.id; deleteTargetTitle = conversationDisplayTitle(state.conversation); deleteConfirmation = "current" })
+                                onClick = { overflowExpanded = false; chatViewModel.requestCurrentConversationDeletionConfirmation() })
                             DropdownMenuItem(text = { Text("全履歴を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
-                                onClick = { overflowExpanded = false; deleteTargetId = ""; deleteConfirmation = "all" })
+                                onClick = { overflowExpanded = false; chatViewModel.requestAllHistoryDeletionConfirmation() })
                         }
                     }
                 }
@@ -873,30 +903,25 @@ internal fun ChatScreen(
                         modifier = Modifier.padding(top = 8.dp)) { Text("送信") }
                 }
             }
-            if (deleteConfirmation == "current") {
+            if (state.deleteConfirmation == "current") {
                 AlertDialog(
-                    onDismissRequest = { deleteConfirmation = ""; deleteTargetId = ""; deleteTargetTitle = "" },
+                    onDismissRequest = chatViewModel::clearDeleteConfirmation,
                     title = { Text("この会話を削除しますか？") },
-                    text = { Text("対象: $deleteTargetTitle\n選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。") },
+                    text = { Text("対象: ${state.deleteTargetTitle}\n選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。") },
                     confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
-                        val confirmedId = deleteTargetId
-                        deleteConfirmation = ""
-                        deleteTargetId = ""
-                        deleteTargetTitle = ""
-                        chatViewModel.deleteCurrentConversation(confirmedId)
+                        chatViewModel.confirmCurrentConversationDeletion()
                     }) { Text("この会話を削除") } },
-                    dismissButton = { TextButton(onClick = { deleteConfirmation = ""; deleteTargetId = ""; deleteTargetTitle = "" }) { Text("キャンセル") } },
+                    dismissButton = { TextButton(onClick = chatViewModel::clearDeleteConfirmation) { Text("キャンセル") } },
                 )
-            } else if (deleteConfirmation == "all") {
+            } else if (state.deleteConfirmation == "all") {
                 AlertDialog(
-                    onDismissRequest = { deleteConfirmation = "" },
+                    onDismissRequest = chatViewModel::clearDeleteConfirmation,
                     title = { Text("全会話履歴を削除しますか？") },
                     text = { Text("すべてのローカル会話履歴が削除されます。この操作はアプリ内から取り消せません。") },
                     confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
-                        deleteConfirmation = ""
-                        chatViewModel.deleteAllHistory()
+                        chatViewModel.confirmAllHistoryDeletion()
                     }) { Text("全履歴を削除") } },
-                    dismissButton = { TextButton(onClick = { deleteConfirmation = "" }) { Text("キャンセル") } },
+                    dismissButton = { TextButton(onClick = chatViewModel::clearDeleteConfirmation) { Text("キャンセル") } },
                 )
             }
         }

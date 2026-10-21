@@ -29,14 +29,15 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -66,6 +67,13 @@ fun TaskScreen(viewModel: TaskViewModel) {
                 modifier = Modifier.testTag("task_error").semantics { liveRegion = LiveRegionMode.Assertive }) }
             state.message?.let { Text(it, color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+            if (!state.editorVisible) state.operationNotice?.let { notice ->
+                Text(
+                    notice,
+                    color = if (state.operationNoticeIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("task_operation_notice"),
+                )
+            }
             when {
                 state.loading -> Text("タスクを読み込み中…", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 state.tasks.isEmpty() -> Text("タスクはありません。", modifier = Modifier.testTag("task_empty")
@@ -86,8 +94,8 @@ fun TaskScreen(viewModel: TaskViewModel) {
                                 }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { viewModel.editTask(task.id) }, modifier = Modifier.testTag("task_edit_${task.id}")) { Text("編集") }
-                                TextButton(onClick = { viewModel.requestDelete(task.id) }, modifier = Modifier.testTag("task_delete_${task.id}")) { Text("削除") }
+                                TextButton(onClick = { viewModel.editTask(task.id) }, enabled = state.savingTaskId != task.id, modifier = Modifier.testTag("task_edit_${task.id}")) { Text("編集") }
+                                TextButton(onClick = { viewModel.requestDelete(task.id) }, enabled = !state.saving, modifier = Modifier.testTag("task_delete_${task.id}")) { Text("削除") }
                             }
                         }
                     }
@@ -96,7 +104,18 @@ fun TaskScreen(viewModel: TaskViewModel) {
         }
     }
     if (state.editorVisible) key(state.editing?.id ?: "new") {
-        TaskEditorDialog(state.editing, state.error, state.saving, viewModel::save, viewModel::cancelEditor)
+        TaskEditorDialog(
+            task = state.editing,
+            draft = requireNotNull(state.editorInput),
+            error = state.error,
+            editorSaving = state.editorSaving,
+            mutationInFlight = state.saving,
+            operationNotice = state.operationNotice,
+            operationNoticeIsError = state.operationNoticeIsError,
+            onDraftChange = viewModel::updateEditorInput,
+            onSave = viewModel::save,
+            onCancel = viewModel::cancelEditor,
+        )
     }
     val deleteId = state.deleteTargetId
     if (deleteId != null) {
@@ -113,13 +132,18 @@ fun TaskScreen(viewModel: TaskViewModel) {
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSave: (TaskDraft) -> Unit, onCancel: () -> Unit) {
-    var title by rememberSaveable { mutableStateOf(task?.title.orEmpty()) }
-    var description by rememberSaveable { mutableStateOf(task?.description.orEmpty()) }
-    var priorityName by rememberSaveable { mutableStateOf((task?.priority ?: TaskPriority.NORMAL).name) }
-    var date by rememberSaveable { mutableStateOf(task?.dueDate?.toString().orEmpty()) }
-    var time by rememberSaveable { mutableStateOf(task?.dueTime?.toString().orEmpty()) }
-    var zone by rememberSaveable { mutableStateOf(task?.timeZoneId ?: ZoneId.systemDefault().id) }
+private fun TaskEditorDialog(
+    task: Task?,
+    draft: TaskEditorInput,
+    error: String?,
+    editorSaving: Boolean,
+    mutationInFlight: Boolean,
+    operationNotice: String?,
+    operationNoticeIsError: Boolean,
+    onDraftChange: (TaskEditorInput) -> Unit,
+    onSave: (TaskDraft) -> Unit,
+    onCancel: () -> Unit,
+) {
     var titleError by remember { mutableStateOf<String?>(null) }
     var dateError by remember { mutableStateOf<String?>(null) }
     var timeError by remember { mutableStateOf<String?>(null) }
@@ -130,19 +154,19 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
     val dateFormatter = remember { DateTimeFormatter.ISO_LOCAL_DATE }
     fun clearDateErrors() { dateError = null; timeError = null; zoneError = null }
     fun submit() {
-        titleError = if (title.isBlank()) "タイトルを入力してください。" else if (title.codePointCount(0, title.length) > TaskValidation.MAX_TITLE_CODE_POINTS) "タイトルは200文字以内で入力してください。" else null
+        titleError = if (draft.title.isBlank()) "タイトルを入力してください。" else if (draft.title.codePointCount(0, draft.title.length) > TaskValidation.MAX_TITLE_CODE_POINTS) "タイトルは200文字以内で入力してください。" else null
         dateError = null; timeError = null; zoneError = null
-        val parsedDate = if (date.isBlank()) null else try { LocalDate.parse(date.trim(), dateFormatter) }
+        val parsedDate = if (draft.dueDate.isBlank()) null else try { LocalDate.parse(draft.dueDate.trim(), dateFormatter) }
             catch (_: DateTimeException) { dateError = "期限日は YYYY-MM-DD 形式で入力してください。"; null }
-        val parsedTime = if (time.isBlank()) null else try {
-            val value = time.trim()
+        val parsedTime = if (draft.dueTime.isBlank()) null else try {
+            val value = draft.dueTime.trim()
             if (!value.matches(Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]"))) throw DateTimeException("not HH:mm")
             LocalTime.parse(value, DateTimeFormatter.ISO_LOCAL_TIME)
         }
             catch (_: DateTimeException) { timeError = "時刻は24時間制の HH:MM 形式で入力してください。"; null }
         if (parsedTime != null && parsedDate == null && dateError == null) dateError = "時刻を設定するには期限日が必要です。"
         val zoneId = if (parsedDate != null) try {
-            val value = zone.trim()
+            val value = draft.timeZoneId.trim()
             if (value !in ZoneId.getAvailableZoneIds()) throw DateTimeException("not IANA")
             ZoneId.of(value)
         } catch (_: Exception) { zoneError = "有効な IANA タイムゾーンを入力してください（例: Asia/Tokyo）。"; null } else null
@@ -152,7 +176,7 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
             else if (offsetCount > 1) timeError = "この時刻は夏時間の切り替えで重複します。別の時刻を選んでください。"
         }
         if (titleError == null && dateError == null && timeError == null && zoneError == null) {
-            try { onSave(parseTaskDraft(title, description, TaskPriority.valueOf(priorityName), date, time, zone)) }
+            try { onSave(parseTaskDraft(draft.title, draft.description, TaskPriority.valueOf(draft.priorityName), draft.dueDate, draft.dueTime, draft.timeZoneId)) }
             catch (failure: InvalidTaskException) {
                 val message = when (failure.message) {
                     "Title is required." -> "タイトルを入力してください。"
@@ -174,7 +198,7 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
         }
     }
     AlertDialog(
-        onDismissRequest = onCancel,
+        onDismissRequest = { if (!editorSaving) onCancel() },
         title = { Text(if (task == null) "新しいタスク" else "タスクを編集") },
         text = {
             Column(
@@ -182,54 +206,69 @@ private fun TaskEditorDialog(task: Task?, error: String?, saving: Boolean, onSav
                     .verticalScroll(rememberScrollState()).testTag("task_editor_scroll"),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedTextField(title, { title = it; titleError = null }, label = { Text("タイトル") }, isError = titleError != null, supportingText = titleError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_title"))
-                OutlinedTextField(description, { description = it }, label = { Text("説明・メモ") }, modifier = Modifier.fillMaxWidth().testTag("task_description"))
-                TextButton(onClick = { priorityExpanded = true }, modifier = Modifier.testTag("task_priority")) { Text("優先度: ${priorityLabel(TaskPriority.valueOf(priorityName))}") }
+                OutlinedTextField(draft.title, { onDraftChange(draft.copy(title = it)); titleError = null }, enabled = !editorSaving, label = { Text("タイトル") }, isError = titleError != null, supportingText = titleError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_title"))
+                OutlinedTextField(draft.description, { onDraftChange(draft.copy(description = it)) }, enabled = !editorSaving, label = { Text("説明・メモ") }, modifier = Modifier.fillMaxWidth().testTag("task_description"))
+                TextButton(onClick = { priorityExpanded = true }, enabled = !editorSaving, modifier = Modifier.testTag("task_priority")) { Text("優先度: ${priorityLabel(TaskPriority.valueOf(draft.priorityName))}") }
                 DropdownMenu(expanded = priorityExpanded, onDismissRequest = { priorityExpanded = false }) {
-                    TaskPriority.entries.forEach { item -> DropdownMenuItem(text = { Text(priorityLabel(item)) }, onClick = { priorityName = item.name; priorityExpanded = false }) }
+                    TaskPriority.entries.forEach { item -> DropdownMenuItem(text = { Text(priorityLabel(item)) }, enabled = !editorSaving, onClick = { onDraftChange(draft.copy(priorityName = item.name)); priorityExpanded = false }) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(date, { date = it; clearDateErrors() }, label = { Text("期限日（YYYY-MM-DD）") }, isError = dateError != null, supportingText = dateError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.weight(1f).testTag("task_due_date"))
-                    TextButton(onClick = { datePickerOpen = true }, modifier = Modifier.testTag("task_date_picker_open")) { Text("日付を選択") }
+                    OutlinedTextField(draft.dueDate, { onDraftChange(draft.copy(dueDate = it)); clearDateErrors() }, enabled = !editorSaving, label = { Text("期限日（YYYY-MM-DD）") }, isError = dateError != null, supportingText = dateError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.weight(1f).testTag("task_due_date"))
+                    TextButton(onClick = { datePickerOpen = true }, enabled = !editorSaving, modifier = Modifier.testTag("task_date_picker_open")) { Text("日付を選択") }
                 }
-                Text(if (date.isBlank()) "日付のみの期限にもできます。" else "時刻を空欄にすると、この日付の終日タスクになります。", style = MaterialTheme.typography.bodySmall)
+                Text(if (draft.dueDate.isBlank()) "日付のみの期限にもできます。" else "時刻を空欄にすると、この日付の終日タスクになります。", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(time, { time = it; timeError = null }, label = { Text("期限時刻（24時間制・任意）") }, isError = timeError != null, supportingText = timeError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.weight(1f).testTag("task_due_time"))
-                    TextButton(onClick = { timePickerOpen = true }, modifier = Modifier.testTag("task_time_picker_open")) { Text("時刻を選択") }
+                    OutlinedTextField(draft.dueTime, { onDraftChange(draft.copy(dueTime = it)); timeError = null }, enabled = !editorSaving, label = { Text("期限時刻（24時間制・任意）") }, isError = timeError != null, supportingText = timeError?.let { msg -> { Text(msg, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }, singleLine = true, modifier = Modifier.weight(1f).testTag("task_due_time"))
+                    TextButton(onClick = { timePickerOpen = true }, enabled = !editorSaving, modifier = Modifier.testTag("task_time_picker_open")) { Text("時刻を選択") }
                 }
-                if (date.isNotBlank()) {
-                    OutlinedTextField(zone, { zone = it; zoneError = null }, label = { Text("タイムゾーン（IANA）") }, isError = zoneError != null, supportingText = { Text(zoneError ?: "例: Asia/Tokyo。現在の候補: ${ZoneId.systemDefault().id}", Modifier.semantics { if (zoneError != null) liveRegion = LiveRegionMode.Polite }) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_timezone"))
+                if (draft.dueDate.isNotBlank()) {
+                    OutlinedTextField(draft.timeZoneId, { onDraftChange(draft.copy(timeZoneId = it)); zoneError = null }, enabled = !editorSaving, label = { Text("タイムゾーン（IANA）") }, isError = zoneError != null, supportingText = { Text(zoneError ?: "例: Asia/Tokyo。現在の候補: ${ZoneId.systemDefault().id}", Modifier.semantics { if (zoneError != null) liveRegion = LiveRegionMode.Polite }) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("task_timezone"))
+                }
+                when {
+                    editorSaving -> Text("保存中です。画面を閉じても処理は続行します。", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("task_editor_saving"))
+                    mutationInFlight -> Text("別のタスク操作が完了するまで保存できません。", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("task_editor_waiting"))
+                }
+                operationNotice?.let { notice ->
+                    Text(
+                        notice,
+                        color = if (operationNoticeIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("task_operation_notice"),
+                    )
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("task_editor_error").semantics { liveRegion = LiveRegionMode.Polite }) }
             }
         },
         confirmButton = {
-            TextButton(enabled = !saving, onClick = ::submit, modifier = Modifier.testTag("task_save")) { Text("保存") }
+            TextButton(enabled = !editorSaving && !mutationInFlight, onClick = ::submit, modifier = Modifier.testTag("task_save")) { Text("保存") }
         },
-        dismissButton = { TextButton(onClick = onCancel, modifier = Modifier.testTag("task_cancel")) { Text("キャンセル") } },
+        dismissButton = { TextButton(onClick = onCancel, modifier = Modifier.testTag("task_cancel")) { Text(if (editorSaving) "閉じる" else "キャンセル") } },
     )
     if (datePickerOpen) {
-        val initialMillis = runCatching { LocalDate.parse(date).toEpochDay() * 86_400_000L }.getOrNull()
-        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
-        DatePickerDialog(
-            onDismissRequest = { datePickerOpen = false },
-            confirmButton = { TextButton(onClick = {
-                pickerState.selectedDateMillis?.let { millis -> date = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().format(dateFormatter); clearDateErrors() }
-                datePickerOpen = false
-            }, modifier = Modifier.testTag("task_date_picker_confirm")) { Text("選択") } },
-            dismissButton = { TextButton(onClick = { datePickerOpen = false }, modifier = Modifier.testTag("task_date_picker_cancel")) { Text("キャンセル") } },
-        ) { DatePicker(state = pickerState) }
+        CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
+            val initialMillis = runCatching { LocalDate.parse(draft.dueDate).toEpochDay() * 86_400_000L }.getOrNull()
+            val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+            DatePickerDialog(
+                onDismissRequest = { datePickerOpen = false },
+                confirmButton = { TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { millis -> onDraftChange(draft.copy(dueDate = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().format(dateFormatter))); clearDateErrors() }
+                    datePickerOpen = false
+                }, modifier = Modifier.testTag("task_date_picker_confirm")) { Text("選択") } },
+                dismissButton = { TextButton(onClick = { datePickerOpen = false }, modifier = Modifier.testTag("task_date_picker_cancel")) { Text("キャンセル") } },
+            ) { DatePicker(state = pickerState) }
+        }
     }
     if (timePickerOpen) {
-        val initialTime = runCatching { LocalTime.parse(time) }.getOrNull() ?: LocalTime.now().withSecond(0).withNano(0)
-        val pickerState = rememberTimePickerState(initialHour = initialTime.hour, initialMinute = initialTime.minute, is24Hour = true)
-        AlertDialog(
-            onDismissRequest = { timePickerOpen = false },
-            title = { Text("時刻を選択（24時間制）") },
-            text = { TimePicker(state = pickerState) },
-            confirmButton = { TextButton(onClick = { time = "%02d:%02d".format(pickerState.hour, pickerState.minute); timeError = null; timePickerOpen = false }, modifier = Modifier.testTag("task_time_picker_confirm")) { Text("選択") } },
-            dismissButton = { TextButton(onClick = { timePickerOpen = false }, modifier = Modifier.testTag("task_time_picker_cancel")) { Text("キャンセル") } },
-        )
+        CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
+            val initialTime = runCatching { LocalTime.parse(draft.dueTime) }.getOrNull() ?: LocalTime.now().withSecond(0).withNano(0)
+            val pickerState = rememberTimePickerState(initialHour = initialTime.hour, initialMinute = initialTime.minute, is24Hour = true)
+            AlertDialog(
+                onDismissRequest = { timePickerOpen = false },
+                title = { Text("時刻を選択（24時間制）") },
+                text = { TimePicker(state = pickerState) },
+                confirmButton = { TextButton(onClick = { onDraftChange(draft.copy(dueTime = "%02d:%02d".format(pickerState.hour, pickerState.minute))); timeError = null; timePickerOpen = false }, modifier = Modifier.testTag("task_time_picker_confirm")) { Text("選択") } },
+                dismissButton = { TextButton(onClick = { timePickerOpen = false }, modifier = Modifier.testTag("task_time_picker_cancel")) { Text("キャンセル") } },
+            )
+        }
     }
 }
 

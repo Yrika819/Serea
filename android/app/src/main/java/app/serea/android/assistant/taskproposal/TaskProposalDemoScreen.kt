@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -112,14 +111,14 @@ private fun TaskProposalDemoContent(
 
         val activeSession = session
         if (activeSession != null) {
-            TaskProposalReviewScreen(
+            TaskProposalReviewEmbedded(
                 session = activeSession,
                 selectedTaskId = activeSession.snapshot.proposal.targetTaskId,
                 onResult = {
                     writeCount = repository.writeCount()
                     tasks = repository.demoTasks()
                 },
-                modifier = Modifier.heightIn(max = 420.dp),
+                modifier = Modifier,
                 onClose = onClose,
                 onActionPendingChanged = { pending ->
                     actionPending = pending

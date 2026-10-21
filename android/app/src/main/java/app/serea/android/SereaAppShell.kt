@@ -21,6 +21,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -50,14 +52,20 @@ internal fun SereaAppShell(
     var taskProposalActionPending by androidx.compose.runtime.remember { mutableStateOf(false) }
     val saveableStateHolder = rememberSaveableStateHolder()
     val configuration = LocalConfiguration.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val navigationColumns = if (configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340) 2 else 3
 
     fun navigate(target: SereaDestination) {
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
         val state = SereaNavigationState.restore(destinationName, backStackNames).navigate(target)
         destinationName = state.current.name
         backStackNames = state.backStack.takeLast(SereaNavigationState.MAX_BACK_STACK).map { it.name }
     }
     fun goBack() {
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
         val state = SereaNavigationState.restore(destinationName, backStackNames).back()
         destinationName = state.current.name
         backStackNames = state.backStack.map { it.name }

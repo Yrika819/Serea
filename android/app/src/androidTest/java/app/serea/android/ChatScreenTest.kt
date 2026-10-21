@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
@@ -73,15 +74,29 @@ class ChatScreenTest {
         response.assertCountEquals(1)
     }
 
+    private fun send(text: String) {
+        composer().performTextInput(text)
+        compose.waitUntil(5_000) { stateSnapshot().input == text }
+        compose.onNodeWithText("送信").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) {
+            stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
+        }
+    }
+
     @Test fun demoLabelAndConversationTitleAreVisible() {
         awaitComposerEnabled()
         compose.onNodeWithText("新しい会話").performClick()
         awaitComposerEnabled()
         compose.onNodeWithText("DEMO · Mock会話 · クラウドAI未接続").assertIsDisplayed()
-        composer().performTextInput("hello")
-        compose.onNodeWithText("送信").performClick()
-        compose.onNodeWithText("あなた", substring = true).assertIsDisplayed()
+        send("hello")
         awaitResponse("Demo response: I received “hello”.")
+        val sentIndex = stateSnapshot().conversation.messages.indexOfFirst {
+            it.role == MessageRole.USER && it.text == "hello"
+        }
+        assertTrue("Sent user message is missing", sentIndex >= 0)
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(sentIndex)
+        compose.onNodeWithText("あなた", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(stateSnapshot().conversation.messages.lastIndex)
         compose.onAllNodes(hasText("Demo response: I received “hello”.", substring = true))
             .onFirst().assertTextContains("No cloud AI", substring = true)
         compose.onNodeWithText("履歴").performClick()
@@ -92,8 +107,7 @@ class ChatScreenTest {
 
     @Test fun completedDemoConversationSurvivesActivityRecreation() {
         awaitComposerEnabled()
-        composer().performTextInput("rotation-check")
-        compose.onNodeWithText("送信").performClick()
+        send("rotation-check")
         awaitResponse("Demo response: I received “rotation-check”.")
         compose.activityRule.scenario.recreate()
         compose.waitUntil(30_000) {
@@ -101,9 +115,17 @@ class ChatScreenTest {
             !state.isRestoring && state.conversation.messages.any { it.text == "rotation-check" }
         }
         val restored = stateSnapshot()
-        compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
+        val restoredUserIndex = restored.conversation.messages.indexOfFirst { it.text == "rotation-check" }
+        assertTrue("Restored user message is missing", restoredUserIndex >= 0)
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("conversation-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(restoredUserIndex)
         compose.onNodeWithText("rotation-check").assertIsDisplayed()
-        compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true)).assertCountEquals(1)
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
+        val restoredResponse = compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true))
+        compose.waitUntil(5_000) { restoredResponse.fetchSemanticsNodes().isNotEmpty() }
+        restoredResponse.assertCountEquals(1)
     }
 
     @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
@@ -199,8 +221,7 @@ class ChatScreenTest {
 
     @Test fun currentConversationDeletionRequiresConfirmationAndCancelKeepsMessages() {
         awaitComposerEnabled()
-        composer().performTextInput("keep on cancel")
-        compose.onNodeWithText("送信").performClick()
+        send("keep on cancel")
         awaitResponse("Demo response: I received “keep on cancel”.")
         val before = stateSnapshot()
         openOverflow()
@@ -215,8 +236,7 @@ class ChatScreenTest {
 
     @Test fun confirmedCurrentConversationDeletionRemovesSelectedConversation() {
         awaitComposerEnabled()
-        composer().performTextInput("delete this conversation")
-        compose.onNodeWithText("送信").performClick()
+        send("delete this conversation")
         awaitResponse("Demo response: I received “delete this conversation”.")
         val deletedId = stateSnapshot().conversation.id
         openOverflow()
@@ -231,8 +251,7 @@ class ChatScreenTest {
 
     @Test fun deleteAllConfirmationCancelKeepsConversationAndConfirmClearsHistory() {
         awaitComposerEnabled()
-        composer().performTextInput("history remains until confirmation")
-        compose.onNodeWithText("送信").performClick()
+        send("history remains until confirmation")
         awaitResponse("Demo response: I received “history remains until confirmation”.")
         val originalId = stateSnapshot().conversation.id
         openOverflow()
@@ -306,6 +325,11 @@ class ChatScreenTest {
         } finally {
             shell("wm size reset")
             shell("wm density reset")
+            compose.waitUntil(15_000) {
+                var width = 0
+                compose.activityRule.scenario.onActivity { width = it.resources.configuration.screenWidthDp }
+                width > 340
+            }
         }
     }
 
@@ -327,6 +351,11 @@ class ChatScreenTest {
             compose.onNodeWithText("キャンセル").performClick()
         } finally {
             shell("settings put system font_scale $originalScale")
+            compose.waitUntil(15_000) {
+                var fontScale = 0f
+                compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
+                kotlin.math.abs(fontScale - originalScale) < 0.02f
+            }
         }
     }
 

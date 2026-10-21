@@ -47,6 +47,43 @@ fun TaskProposalReviewScreen(
     modifier: Modifier = Modifier,
     onClose: (() -> Unit)? = null,
     onActionPendingChanged: (Boolean) -> Unit = {},
+) = TaskProposalReviewContent(
+    session = session,
+    selectedTaskId = selectedTaskId,
+    onResult = onResult,
+    modifier = modifier,
+    onClose = onClose,
+    onActionPendingChanged = onActionPendingChanged,
+    ownScroll = true,
+)
+
+@Composable
+internal fun TaskProposalReviewEmbedded(
+    session: TaskProposalReviewSession,
+    selectedTaskId: String?,
+    onResult: (TaskProposalReviewResult) -> Unit,
+    modifier: Modifier = Modifier,
+    onClose: (() -> Unit)? = null,
+    onActionPendingChanged: (Boolean) -> Unit = {},
+) = TaskProposalReviewContent(
+    session = session,
+    selectedTaskId = selectedTaskId,
+    onResult = onResult,
+    modifier = modifier,
+    onClose = onClose,
+    onActionPendingChanged = onActionPendingChanged,
+    ownScroll = false,
+)
+
+@Composable
+private fun TaskProposalReviewContent(
+    session: TaskProposalReviewSession,
+    selectedTaskId: String?,
+    onResult: (TaskProposalReviewResult) -> Unit,
+    modifier: Modifier,
+    onClose: (() -> Unit)?,
+    onActionPendingChanged: (Boolean) -> Unit,
+    ownScroll: Boolean,
 ) {
     val snapshot = session.snapshot
     val proposal = snapshot.proposal
@@ -87,8 +124,9 @@ fun TaskProposalReviewScreen(
 
     BackHandler(enabled = !busy, onBack = ::closeReview)
 
+    val contentModifier = if (ownScroll) modifier.verticalScroll(rememberScrollState()) else modifier
     Column(
-        modifier = modifier.verticalScroll(rememberScrollState()).padding(20.dp),
+        modifier = contentModifier.padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(

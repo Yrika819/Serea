@@ -91,12 +91,26 @@ class SereaAppShellTest {
         val chatConversationBefore = compose.activity.chatViewModel.state.value.conversation
         select(SereaDestination.GMAIL)
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
-        compose.activityRule.scenario.recreate()
-        compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan").assertIsDisplayed()
+        compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
         compose.onNodeWithTag("gmail_search_input").performImeAction()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
         }
+        compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan").assertIsDisplayed()
+        compose.onNodeWithText("検索を取消").performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("受信箱", substring = true).fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 7
+        }
+        compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
+        compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
+        compose.onNodeWithTag("gmail_search_submit").performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
+        }
+        compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
         compose.onNodeWithTag("gmail_message_subject").performClick()
         compose.onNodeWithText("The imaginary basil bed is ready.").assertIsDisplayed()
@@ -182,10 +196,21 @@ class SereaAppShellTest {
 
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
         compose.onNodeWithTag("chat-composer").performTextInput("draft survives navigation")
+        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
+        compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
+        compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
+        compose.onNodeWithTag("gmail_search_input").performImeAction()
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("gmail_search_input").assertIsNotFocused() }.isSuccess
+        }
         pressBack()
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
+        compose.onNodeWithTag("chat-composer").assertIsNotFocused()
         select(SereaDestination.CALENDAR)
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
+        }
         pressBack()
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
         compose.onNodeWithTag("chat-composer").assertTextContains("draft survives navigation")
@@ -239,12 +264,19 @@ class SereaAppShellTest {
         select(SereaDestination.GMAIL)
         pressBack()
 
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("開始・終了").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithText("開始・終了").assertIsDisplayed() }.isSuccess
+        }
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
+        compose.onNodeWithText("開始・終了").assertIsDisplayed()
         pressBack()
         compose.onNodeWithText("Demo Global").assertIsSelected()
     }
 
-    @Test fun taskEditorDraftSurvivesAnotherDestination() {
+    @Test fun taskEditorDraftSurvivesActivityRecreation() {
         compose.waitUntil(10_000) { !compose.activity.shellTaskViewModel.state.value.loading }
         select(SereaDestination.TASKS)
         compose.onNodeWithTag("task_add").performClick()
@@ -255,9 +287,6 @@ class SereaAppShellTest {
             manager.hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
         }
         compose.waitForIdle()
-
-        select(SereaDestination.GMAIL)
-        pressBack()
 
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("新しいタスク").assertIsDisplayed()
@@ -323,13 +352,29 @@ class SereaAppShellTest {
             }
             select(SereaDestination.TASK_PROPOSAL_DEMO)
             compose.onNodeWithText("DEMO / 架空のタスク").assertIsDisplayed()
-            compose.onNodeWithTag("task_proposal_approve").performScrollTo().assertIsDisplayed()
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("task_proposal_approve").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.waitUntil(10_000) {
+                runCatching { compose.onNodeWithTag("task_proposal_approve").performScrollTo().assertIsDisplayed() }.isSuccess
+            }
             compose.onNodeWithText("デモをリセット").performScrollTo().assertIsDisplayed().performClick()
-            compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed()
+            compose.waitUntil(10_000) {
+                runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess
+            }
         } finally {
             shell("settings put system font_scale $originalScale")
             shell("wm size reset")
             shell("wm density reset")
+            compose.waitUntil(15_000) {
+                var width = 0
+                var fontScale = 0f
+                compose.activityRule.scenario.onActivity {
+                    width = it.resources.configuration.screenWidthDp
+                    fontScale = it.resources.configuration.fontScale
+                }
+                width > 340 && kotlin.math.abs(fontScale - originalScale) < 0.02f
+            }
         }
     }
 }

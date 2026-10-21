@@ -6,10 +6,10 @@
 - Draft PR: [#71](https://github.com/Yrika819/Serea/pull/71)
 - Branch: `codex/android-q4-day-ui-integration-2026-10-21`
 - Base branch/SHA: `codex/android-q4-night-gate-recovery-2026-10-21` / `fd4321df03a3834044e3432bc288e2512b543fd2`
-- 最新のコード検証はHEAD `95f2110c6f408cdb12757628add9bf9269e7725c`を起点にした最終作業ツリーで実施。commit後のHEAD/Treeは、CI完了後の本レポート更新で固定します。
+- 実装コード検証HEAD/Tree: `c92a3c3dd73ea741dedebe741d3044d4def67200` / `84eca8acd3a2b719bf250b0e6c3c158515b848dd`
 - Base tree: `ef4403783e356ddf0362fc4ad9d5a589467e9248`
 
-このレポートと最終ソースをコミットしてからGitHub CIを実行します。CIを通過したソースを変更せず、docs-only report updateが必要な場合は、検証済みコードHEAD/TreeとPR最終HEAD/Treeを区別して記録します。
+最終JVM XMLはこのHEADで取得しました。Debug/Release/Instrumentation BuildとLintは直前の`ddc904af6080096f5413345175a2c015f8bd2d31`でPASSし、このHEADとの差分はGmail test assertionだけです。GitHub CIはpush後に起動します。最終PR HEAD/TreeとCI runは、レポート更新commit後に記録します。
 
 | Lane | 取り込み元の固定SHA | 取り込み方法 |
 |---|---|---|
@@ -19,7 +19,7 @@
 | Gmail / PR #69 | `4b20786a9ae065ee94b1b77d64160f48656e0835` | identity不適合の履歴は含めず、共通baseとの差分を監査して正規コミットへ再構成 |
 | Navigation | 利用できる固定SHAなし | 既存branch、Tree、Draft PRが存在しないことを確認し、このブランチで新規実装 |
 
-PR #71はOPEN / Draftで、baseは固定したPR #70のHEADです。PR #51、#58〜#70、`main`、既存branchは変更していません。PR #68/69の固定HEADおよび不適合identityの元コミットは最終HEADの祖先ではありません。PR #67のmerge commitは祖先で、統合ブランチから固定baseまでの11 commitはすべて`Codex <noreply@github.com>`です。
+PR #71はOPEN / Draftで、baseは固定したPR #70のHEADです。PR #51、#58〜#70、`main`、既存branchは変更していません。PR #68/69の固定HEADおよび不適合identityの元コミットは実装HEADの祖先ではありません。PR #67のmerge commitは祖先で、実装HEAD時点の14 commitはすべて`Codex <noreply@github.com>`です。
 
 ## Git Identity、Hooks、差分の監査
 
@@ -89,19 +89,19 @@ Chat、Tasks、Settingsを含め、6画面すべてApp Shellから到達でき�
 
 ### Android JVM
 
-最終作業ツリー（HEAD `95f2110c6f408cdb12757628add9bf9269e7725c`からのソース差分を含む）で、次を実行しました。
+実装HEAD `c92a3c3dd73ea741dedebe741d3044d4def67200`で、次を実行しました。
 
 ```text
 ./gradlew --no-daemon :app:testDebugUnitTest
 ```
 
-JUnit XMLとKotlin sourceの厳密verifierで**251 tests / 21 classes、0 failure、0 error、0 skipped**を確認しました。`TaskProposalTest`は30 method、`SereaNavigationStateTest`は5 methodです。件数は重複を除いた最終ソースとJUnit XMLの一致値です。Android unit/instrumentation JUnit verifier regression 14件とemulator campaign script regression 4件もPASSしました。
+JUnit XMLとKotlin sourceの厳密verifierで**252 tests / 21 classes、0 failure、0 error、0 skipped**を確認しました。追加した`lateDefiniteProviderFailureAfterCancellationKeepsOutcomeUnknown`も実行済みです。`TaskProposalTest`は30 method、`SereaNavigationStateTest`は5 methodです。件数は重複を除いた最終ソースとJUnit XMLの一致値です。Android instrumentation/JVM JUnit verifierおよびemulator campaign script regressionは合計18件PASSしました。
 
 固定PR #70 sourceと最終sourceのtest method名集合も比較しました。PR #70の178 methods / 16 classesはすべて最終sourceに残り、削除classや欠落methodはありません。TaskProposalの重複解消はPR #68/#70のmethod unionを保つ比較で確認しています。
 
 ### Android Instrumentation source
 
-最終source countは**98 methods / 14 classes**です。PR #70基準72件に26件を追加しました。追加26件は`SereaAppShellTest` 18、`MockUiStateIntegrationTest` 4、`SereaThemeTest` 2、`TaskProposalDemoScreenTest` 2です。PR #68/70からの`TaskProposalReviewScreenTest` 2件は維持しています。
+最終source countは**98 methods / 14 classes**です。PR #70基準72件に26件を追加しました。追加26件は`SereaAppShellTest` 18、`MockUiStateIntegrationTest` 4、`SereaThemeTest` 2、`TaskProposalDemoScreenTest` 2です。PR #68/70からの`TaskProposalReviewScreenTest` 2件は維持しています。新しいNavigation/TaskProposal UI変更は既存test methodを編集し、件数を水増ししていません。
 
 画面別テストは次のとおりです。
 
@@ -124,19 +124,28 @@ JUnit XMLとKotlin sourceの厳密verifierで**251 tests / 21 classes、0 failur
 
 この14 classの件数合計は98です。API別JUnit XMLはCI verifierで全classのsource method集合・件数との一致を要求します。
 
-API 26とAPI 35のエミュレーター実行数、Process Deathは最終GitHub Android runの実JUnit/XMLとevidenceを確認してこの欄を確定します。Instrumentation APKのローカルassembleはemulator実行PASSとは数えていません。個人データのある端末は使用していません。
+主要な実画面テストは次のとおりです。
+
+- **Chat / Tasks / Navigation:** `chatIsInitialDestinationAndAllRoutesAreAccessible`、`chatTasksBackReturnsToTheSameChatViewModel`、`backStackReturnsThroughPriorDestinations`、`activityRecreationRestoresRouteAndBackStackButNoProposalSession`、`chatDraftSurvivesGmailAndCalendarDestinationChanges`、`taskEditorDraftSurvivesActivityRecreation`。Tasks UIの作成・編集・完了・再開・Delete確認・古いsave結果保持は`TaskScreenTest` 5件。
+- **Gmail:** `chatGmailBackShowsOnlyFictionalMailboxData`、`gmailSearchAndMessageDetailUseTheFakeProviderFixtures`、`gmailAndCalendarDetailsRestoreAcrossActivityRecreation`。`MockUiStateIntegrationTest`はLoading→EmptyとFailure→Retryを確認。
+- **Calendar:** `chatCalendarBackShowsFictionalAgendaAndDetail`、`calendarDetailAndSelectedCalendarSurviveAnotherDestination`、`gmailAndCalendarDetailsRestoreAcrossActivityRecreation`。CalendarのLoading/Empty/Failure/Retryも同じFake UI state testで検証。
+- **Settings:** `chatSettingsBackKeepsCredentialScreenshotProtectionScoped`でSettings導線、Back、Credential/`FLAG_SECURE`適用範囲を確認。
+- **TaskProposal Demo:** `taskProposalDemoIsFakeOnlyUnapprovedAndCanClose`、`taskProposalDemoDoesNotWriteUntilExplicitApproval`、`taskProposalRotationStartsANewUnapprovedFakeReview`と、専用demo screenの2件でclose、承認前write=0、rotation/session更新を確認。
+- **Accessibility / visual state:** `navigationDestinationsRemainSemanticallyAvailable`、`screenHeadingsAreExposedToScreenReaders`、`fontScaleTwoKeepsTaskProposalReviewAndFooterReachable`、`SereaThemeTest`のDark/Light scheme、Gmail/CalendarのLoading/Empty/Failure/Retry各2件。
+
+`assembleDebugAndroidTest`はローカルPASSです。API 26/35での最新emulator実行・Process Deathはpush後のGitHub Android runで確定します。Instrumentation APKのassembleはemulator実行PASSとは数えていません。個人データのある端末は使用していません。
 
 固定PR #70 instrumentation sourceの72 test method / 10 required classesを最終sourceと比較しました。既存72 methodはすべて名前まで保持され、欠落はありません。残り26 methodを4 class追加し、計98 / 14 classesです。
 
 ### Build、Lint、Security
 
-最終作業ツリーで次のローカルGradle taskをPASSしました。
+実装HEADで次のローカルGradle taskをPASSしました。
 
 ```text
-./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:lintDebug
+./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:lintDebug
 ```
 
-Lintは0 error、12 Warning、2 Informationです。GitHub runではDebug/Release/Instrumentation Build、Lint、dependency vulnerability audit、Egress security testsも実行します。
+Gradle build/lintはPASS、Lintは0 error、12 Warning、2 Informationです。JUnitは252/21・0 failure/error/skipでstrict verifier PASSです。静的regression suiteは18件PASS。GitHub runではDebug/Release/Instrumentation Build、Lint、dependency vulnerability audit、Egress security testsも再実行します。
 
 PR #70のHistory DB v4、Tasks DB v1、Keystore/encryption、Usage Ledger、Egress Gate、`PENDING / OUTCOME_UNKNOWN`、TaskViewModel世代管理を維持しています。schema、TaskRepository、SecurityPorts、UsageAccountingの差分はありません。`EncryptedStorage.kt`の差分はChat testability用の`ConversationHistoryPort`境界で、production repositoryの暗号化、DAO、CAS transactionを変更していません。
 
@@ -155,7 +164,7 @@ PR #70固定基盤の既存成功run:
 | SQLite | `39473032284` | PASS |
 | Git Hooks | `39473032292` | PASS |
 
-PR #71の前回push HEAD `95f2110c6f408cdb12757628add9bf9269e7725c`に対するCI結果です。Android emulatorの6失敗を受けてCompose待機/IME/フォント拡大テストを修正し、最新作業ツリーをローカル検証済みです。修正版をpush後、以下runを更新します。
+PR #71の過去push HEADと各実装候補のCI結果を記録します。最新修正commit `ddc904af6080096f5413345175a2c015f8bd2d31`はローカルのみで、push後のworkflow runは未開始です。
 
 | Workflow | Run ID | 状態 |
 |---|---:|---|
@@ -166,7 +175,13 @@ PR #71の前回push HEAD `95f2110c6f408cdb12757628add9bf9269e7725c`に対するC
 | Cross-architecture SQLite portability | `39524392984` | PASS |
 | Git hooks Windows compatibility | `39524393060` | PASS |
 
-Android run `39523520371`では初回Unit実行がfinalization test 2件で失敗しました。原因はproduction regressionではなく、history repository付きViewModelが初期restore中に`sendMessage()`を拒否するのに、test fixtureがrestoreを待たず`completeStarted`をawaitしていたことです。既存会話を明示してfinalization経路へ入るfixtureに直し、251件すべてPASS後のCI run `39524393018`ではAndroid Unit、Security、Integration、Dependency Audit、DocumentationがPASSしました。しかしAPI 26/35のCompose instrumentationは各6件失敗しました。最新作業ツリーでは失敗したCompose待機を表示/意味状態待ちに置換し、IMEのBack挙動とfontScale 2時のスクロール到達性を修正しました。再実行後、API別件数・Process Death・全workflowの最終結果を追記します。
+最新に完了したGitHub Android run `39530282680`はHEAD `f79aa2c09b3438d369571c297e73adb090c0b279`を検証しました。API 35は98/98件、7 failures、API 26は98/98件、5 failuresで、JUnit/source/class verifierは両APIともPASSしました。両APIのProcess DeathはPASSです。失敗テストはChat send wait (API 35の2件)、fontScale 2のTaskProposal reachability、Calendar detail readiness、Gmail search result、Gmail内Back stack、Task operation notice assertionです。詳細Artifactはrun `39530282680`の`serea-android-emulator-evidence`、artifact ID `12315682304`で確認しました。
+
+この失敗に対して、Chatの長時間操作waitを30秒へ延長、Calendar/Gmailの状態同期を明示、Back stackのGmail内戻りを二段階でassert、Task noticeをscroll後に部分文字列でassertしました。fontScale 2/幅320dpではTaskProposalの4操作チップと操作ボタンを全幅縦並びにし、4チップ・承認・reset・closeの到達性assertを追加しました。さらにConcurrency reviewで見つかった、cancel後に遅着した`ModelChatFailure`で状態を`FAILED`へ上書きする問題を修正し、Aをcancel後にBを開始してAの遅延例外を解放するJVM再現testを追加しました。Adversarial reviewはGmailのprocess restoration testが再作成後のhandleではなく元handleをassertしていた点も見つけました。`GmailViewModelTest`は再作成後へ渡した`SavedStateHandle`を保持してcursor/body不在を検証するよう修正し、252件のJUnit全件を再実行しました。
+
+実装コードcommit `ddc904af6080096f5413345175a2c015f8bd2d31`とtest-only commit `c92a3c3dd73ea741dedebe741d3044d4def67200`は上記修正を含みます。push前のため、このHEADに対するGitHub run IDはまだありません。PR #71にpushした後、最新HEADでAndroid API 26/35、両Process Death、Fast/Full/Native/SQLite/Git Hooksを再実行してこの欄と最終PR SHA/Treeを更新します。push前のローカルBuild/Lint/JUnit結果は前節に記録しました。
+
+Android run `39523520371`では初回Unit実行がfinalization test 2件で失敗しました。原因はproduction regressionではなく、history repository付きViewModelが初期restore中に`sendMessage()`を拒否するのに、test fixtureがrestoreを待たず`completeStarted`をawaitしていたことです。既存会話を明示してfinalization経路へ入るfixtureに直し、251件すべてPASS後のCI run `39524393018`ではAndroid Unit、Security、Integration、Dependency Audit、DocumentationがPASSしました。API 26/35のInstrumentationは各6件失敗していました。run `39530282680`の修正対象とは別の過去実行として記録します。
 
 ## 独立レビューと指摘
 
@@ -174,20 +189,22 @@ Android run `39523520371`では初回Unit実行がfinalization test 2件で失�
 
 | 観点 | 結果 |
 |---|---|
-| Architecture / Lifecycle / Concurrency | P0/P1なし。Chat履歴切替、Gmail検索A→B、Calendar選択A→B、Task save generation、TaskProposal二重承認/session/cancellation、Activity recreationを確認。Chat finalization中の履歴切替・cancel state不整合には再現テストを追加して修正 |
-| Android UX / Accessibility | P0/P1なし。6 route、Back、TalkBack semantics、fontScale 2、dark/light、詳細/スクロールをInstrumentationで確認。実機での視覚・TalkBack/IME確認は未実行 |
+| Architecture / Lifecycle / Concurrency | P0/P1なし。Chat履歴切替、Gmail検索A→B、Calendar選択A→B、Task save generation、TaskProposal二重承認/session/cancellation、Activity recreationを確認。cancel後のChat遅延失敗は再現test付きで修正し、Aの`OUTCOME_UNKNOWN`とBの状態を維持 |
+| Android UX / Accessibility | P0/P1なし。6 route、Back、TalkBack semantics、fontScale 2、dark/light、詳細/スクロールのInstrumentationを実装。fontScale 2の操作chip狭小問題は縦並びと到達性assertで修正。実端末でのTalkBack traversal、IME表示中のsystem Backとナビ領域視認性は未実施 |
 | Security / Data Egress | P0/P1なし。Google scope/token-lease契約、Mock-only/OAuth OFF、Credential/FLAG_SECURE、隔離Fake、body/token/account loggingとartifact境界を確認 |
-| Regression / CI | P0/P1なし。source/JUnit exact count、API別証拠、Process Death gate、identity/lockfileを確認 |
-| Adversarial | P0/P1なし。stale session/result、操作中のfeature切替、承認迂回・二重mutation、assert false positiveを確認 |
+| Regression / CI | ソース/JUnit照合、API別証拠、Process Death gate、identity/lockfileにP0/P1なし。最新の完了済みemulator gate `39530282680`はAPI 26/35のassertion failuresでFAIL。修正commit `ddc904a`の新しいAPI runはpush後に実行予定 |
+| Adversarial | P0/P1なし。stale session/result、操作中のfeature切替、承認迂回・二重mutation、assert false positiveを確認。Gmail recreation testが元handleを参照するassertion gapを指摘し、再生成handleのassertへ修正。独立再レビューで解消確認 |
 
 残るP2 / Beta前のOwner判断:
 
 - Chatの削除確認用ID/titleとTask editorのtitle/description/due fieldsはActivity-scoped ViewModelに置き、Android SavedStateへ書き込みません。Task DatePicker/TimePicker subtreeもSaveableStateRegistryへ登録しません。Activity再作成ではTask editor draftを維持しますが、OS process death後にeditor visibility/draftを復元しません。process death後の未保存draft破棄は設計どおりで、process-death専用draft assertionは未実装です。
+- TaskProposal DemoのSessionはSavedState/Parcelableへ保存せず、Activity再作成では新しい未承認Sessionになります。アプリ固有testは`ActivityScenario.recreate`を使い、TaskProposal単独のOS process-death assertionはありません。PR #70の両API Process Death gateは別に維持しています。
+- 古いTask saveが新しいeditor中に完了/失敗した場合は画面通知と新draft保持をInstrumentationで検証しました。古いsaveがCancellationExceptionになる分岐の通知・新draft保持は直接assertするInstrumentation coverageがありません。ViewModelのgeneration gateは静的レビューで確認済みで、実動作のP2 coverage gapとして残します。
 - Calendarは画面の日付入力/選択日を`rememberSaveable`へ保存します。現在の画面は`FakeCalendarProvider`のみを使いますが、日付文字列はユーザー入力由来のメタデータです。Calendar/event identifiersおよびGmail message/thread route identifiersも画面状態に保存されますが、現接続ではfakeのsynthetic IDsのみです。これらを実providerへ接続する前にSavedStateのデータ分類を再確認してください。
 - API 26/35の自動Instrumentationとは別に、実端末でのTalkBack announcement、ナビゲーション領域の視認性/タッチ、IME表示中のBack操作はNOT_RUNです。個人データのある実機は使用していません。
-- Lintの最新taskは再実行中です。完了後、warning数とCI結果を本レポートへ記録します。
+- 実装HEADのローカルDebug/Release/Instrumentation BuildとLintはPASS（0 error、12 Warning、2 Information）。最新GitHub CIのBuild/Lint、Dependency Audit、Security結果は`ddc904a`をpush後に追記します。
 
-未解決P0/P1はありません。Owner DecisionsはCalendar date metadataのSavedState分類確認と、実データのない端末/正式なBeta手順でのvisual/TalkBack/IME reacceptanceです。これらの判断が済むまでPRはDraftのまま保全します。
+実装コードの独立reviewで未解決P0/P1はありません。前回の最新GitHub Android required emulator gateはHEAD `f79aa2c`で失敗しており、修正後の`ddc904a` CIがまだないため、必須gateのP1状態は未解決です。Owner DecisionsはCalendar date metadataのSavedState分類確認と、実データのない端末/正式なBeta手順でのvisual/TalkBack/IME reacceptanceです。これらと最新CIが済むまでPRはDraftのまま保全します。
 
 ## NOT_RUNとMerge Readiness
 
@@ -196,4 +213,4 @@ Android run `39523520371`では初回Unit実行がfinalization test 2件で失�
 - 個人データのある実機Instrumentation / Pixel 7a manual reacceptance: **NOT_RUN**。
 - Beta署名/release、mainへのmerge: **NOT_RUN**。
 
-**Merge Readiness: Draft / 最終API 26・35のInstrumentation、Process Death、必須CI結果とOwnerのP2判断待ち。** Required gateを緩和せず、実行していないCompose/emulator動作をPASSとは扱いません。
+**Merge Readiness: Draft / 修正HEADのAPI 26・35 Instrumentation、Process Death、必須CI結果とOwnerのP2判断待ち。** Required gateを緩和せず、実行していないCompose/emulator動作をPASSとは扱いません。

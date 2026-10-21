@@ -1,5 +1,6 @@
 package app.serea.android
 
+import android.content.pm.ActivityInfo
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.assertCountEquals
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
@@ -259,6 +261,14 @@ class SereaAppShellTest {
     }
 
     @Test fun calendarDetailAndSelectedCalendarSurviveAnotherDestination() {
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
+        compose.waitUntil(10_000) {
+            val size = compose.onRoot().fetchSemanticsNode().size
+            size.width > size.height
+        }
+
         select(SereaDestination.CALENDAR)
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("表示するカレンダー").fetchSemanticsNodes().isNotEmpty()
@@ -274,6 +284,10 @@ class SereaAppShellTest {
         }
         compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("説明"))
         compose.onNodeWithText("説明").assertIsDisplayed()
+        val detailScrollBefore = compose.onNodeWithTag("calendar_event_detail_list")
+            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertTrue("calendar detail must be scrollable in this viewport", detailScrollBefore.maxValue() > 0f)
+        assertTrue("calendar detail must have a non-zero saved offset", detailScrollBefore.value() > 0f)
 
         select(SereaDestination.GMAIL)
         pressBack()
@@ -281,6 +295,10 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
+        val detailScrollAfter = compose.onNodeWithTag("calendar_event_detail_list")
+            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertTrue(detailScrollAfter.maxValue() > 0f)
+        assertEquals(detailScrollBefore.value(), detailScrollAfter.value(), 1f)
         compose.onNodeWithText("説明").assertIsDisplayed()
         compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("開始・終了"))
         compose.onNodeWithText("Date-line test").assertIsDisplayed()

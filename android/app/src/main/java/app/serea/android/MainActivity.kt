@@ -655,21 +655,25 @@ internal fun ChatScreen(
             .then(if (settingsVisible) Modifier.verticalScroll(rememberScrollState()) else Modifier)
             .padding(if (compactChat) 8.dp else 16.dp)
         Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(if (compactChat) 4.dp else 12.dp)) {
-            Text("Serea", style = if (compactChat) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+            Text("Serea", style = if (compactChat) MaterialTheme.typography.labelLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                 modifier = Modifier.semantics { heading() })
-            if (!settingsDestination) {
+            if (!settingsDestination && (!compactChat || onOpenTasks == null)) {
                 Button(onClick = {
                     if (onOpenTasks != null) onOpenTasks()
                     else context.startActivity(android.content.Intent(context, app.serea.android.tasks.TasksActivity::class.java))
                 }, modifier = Modifier.testTag("open_tasks")) { Text("タスク") }
             }
-            Text("DEMO · Mock会話 · クラウドAI未接続", color = MaterialTheme.colorScheme.primary,
-                style = if (compactChat) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge)
-            Text(
-                if (compactChat) "Cloud送信: 無効 · デモ専用" else
+            if (compactChat) {
+                Text("DEMO · Cloud送信: 無効", color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            } else {
+                Text("DEMO · Mock会話 · クラウドAI未接続", color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge)
+                Text(
                     "Cloud未利用 · Provider利用条件/送信対象未承認 · 資格情報: ${if (credentialReady) "端末内に保存済み" else "未設定"} · オフラインでもデモ会話は利用できます。",
-                style = MaterialTheme.typography.bodySmall,
-            )
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             if (settingsVisible) {
                 Text("モデル選択", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
                 Text("選択設定は端末内に保存されます。現在は検証済みCatalogが空のため、外部モデルは選択できません。デモ会話とCloud無効状態は維持されます。",
@@ -878,11 +882,12 @@ internal fun ChatScreen(
                     if (state.history.isEmpty()) item { Text("履歴はありません。") }
                 }
             } else {
-                Text("会話: ${conversationDisplayTitle(state.conversation)}", style = MaterialTheme.typography.titleSmall,
+                if (!compactChat) Text("会話: ${conversationDisplayTitle(state.conversation)}", style = MaterialTheme.typography.titleSmall,
                     maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (state.conversation.messages.isEmpty()) {
-                    Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else "端末内の暗号化履歴に保存されるデモ会話です。Cloud送信は無効です。",
-                        style = MaterialTheme.typography.bodyLarge)
+                    Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else
+                        if (compactChat) "端末内のデモ会話 · Cloud送信なし" else "端末内の暗号化履歴に保存されるデモ会話です。Cloud送信は無効です。",
+                        style = if (compactChat) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge)
                 }
                 LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().testTag("conversation-list"), state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -911,9 +916,9 @@ internal fun ChatScreen(
                     OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
                         modifier = Modifier.weight(1f).testTag("chat-composer"), label = { Text("メッセージ") },
                         enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
-                        maxLines = 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                        supportingText = { Text("デモ専用。Cloudへは送信されません。") })
+                        supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                         enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,

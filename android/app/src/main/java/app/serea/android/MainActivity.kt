@@ -492,19 +492,34 @@ internal class ChatViewModel(
         }
     }
     private suspend fun markFailed(message: ChatMessage, conversationId: String, reason: String = "Demo response failed. Please try again.") {
-        historyRepository?.updateStatus(message.id, conversationId, "FAILED")
-        mutableState.update { current ->
-            if (current.conversation.id != conversationId) current
-            else {
-                val ownsActiveRequest = activeMessageId == message.id
-                current.copy(
-                    isLoading = if (ownsActiveRequest) false else current.isLoading,
-                    isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
-                    conversation = current.conversation.copy(messages = current.conversation.messages
-                        .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
-                    errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
-                )
+        val ownsActiveRequest = activeMessageId == message.id && mutableState.value.conversation.id == conversationId
+        if (ownsActiveRequest) {
+            finalizingMessageIds += message.id
+            mutableState.update { current ->
+                if (current.conversation.id == conversationId && activeMessageId == message.id) {
+                    current.copy(isFinalizing = true)
+                } else current
             }
+        }
+        try {
+            withContext(NonCancellable) {
+                historyRepository?.updateStatus(message.id, conversationId, "FAILED")
+                mutableState.update { current ->
+                    if (current.conversation.id != conversationId) current
+                    else {
+                        val stillOwnsActiveRequest = activeMessageId == message.id
+                        current.copy(
+                            isLoading = if (stillOwnsActiveRequest) false else current.isLoading,
+                            isFinalizing = if (stillOwnsActiveRequest) false else current.isFinalizing,
+                            conversation = current.conversation.copy(messages = current.conversation.messages
+                                .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
+                            errorMessage = if (stillOwnsActiveRequest) reason else current.errorMessage,
+                        )
+                    }
+                }
+            }
+        } finally {
+            if (ownsActiveRequest) finalizingMessageIds -= message.id
         }
     }
     private fun refreshHistory() {

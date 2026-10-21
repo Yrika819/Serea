@@ -446,13 +446,17 @@ class ChatViewModelTest {
         runCurrent()
         val requestAId = history.updateStarted.await()
         assertTrue(vm.state.value.isLoading)
+        assertTrue(vm.state.value.isFinalizing)
+        assertEquals(listOf(requestAId to "FAILED"), history.updateCalls)
 
         vm.cancelCurrent()
         vm.updateInput("request B")
         vm.sendMessage()
         runCurrent()
         assertTrue(vm.state.value.isLoading)
+        assertTrue(vm.state.value.isFinalizing)
         assertEquals(1, vm.state.value.conversation.messages.size)
+        assertEquals(listOf(requestAId to "FAILED"), history.updateCalls)
 
         history.releaseUpdate.complete(Unit)
         runCurrent()
@@ -460,6 +464,7 @@ class ChatViewModelTest {
         assertEquals("FAILED", vm.state.value.conversation.messages.single().status)
         assertFalse(vm.state.value.isLoading)
         assertFalse(vm.state.value.isFinalizing)
+        assertEquals(listOf(requestAId to "FAILED"), history.updateCalls)
 
         vm.sendMessage()
         runCurrent()

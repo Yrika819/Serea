@@ -70,6 +70,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         build = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")', build)
         self.assertNotIn('androidTestImplementation("androidx.compose.ui:ui-test-manifest")', build)
+        manifest_lock = next(
+            line for line in (ROOT / "android/app/gradle.lockfile").read_text(encoding="utf-8").splitlines()
+            if line.startswith("androidx.compose.ui:ui-test-manifest:")
+        )
+        self.assertEqual(
+            "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath",
+            manifest_lock,
+        )
 
     def test_process_death_reinstalls_only_isolated_target_after_utp_cleanup(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")

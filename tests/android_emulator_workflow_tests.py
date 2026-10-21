@@ -332,11 +332,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "if [[ \"$1\" == devices ]]; then\n"
                 "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
                 "elif [[ \"$1\" == shell && \"$2\" == getprop && \"$3\" == ro.build.version.sdk ]]; then\n"
-                "  printf '35\\n'\n"
+                "  printf '%s\\n' \"$ANDROID_TEST_API\"\n"
                 "elif [[ \"$1\" == shell && \"$2\" == getprop && \"$3\" == ro.kernel.qemu ]]; then\n"
                 "  printf '1\\n'\n"
                 "elif [[ \"$1 $2 $3 $4\" == 'shell pm list packages' && \"$5\" == -u ]]; then\n"
-                "  printf 'package:app.serea.android.demo\\n'\n"
+                "  printf '%s' \"$ADB_PACKAGE_INVENTORY\"\n"
+                "  exit \"${ADB_PACKAGE_EXIT_STATUS:-0}\"\n"
                 "fi\n",
                 encoding="utf-8",
             )
@@ -353,7 +354,10 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "GITHUB_RUN_ATTEMPT": "1",
                 "GITHUB_STEP_SUMMARY": str(summary),
                 "ADB_CALLS": str(calls),
+                "ANDROID_TEST_API": "35",
+                "ADB_PACKAGE_INVENTORY": "package:app.serea.android.demo\n",
             })
+            environment.pop("ADB_PACKAGE_EXIT_STATUS", None)
             result = subprocess.run(
                 ["bash", str(script), "35"],
                 cwd=android,
@@ -364,13 +368,82 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             )
             self.assertNotEqual(0, result.returncode)
             adb_calls = calls.read_text(encoding="utf-8")
-            self.assertIn("shell pm list packages -u", adb_calls)
+            self.assertIn("shell pm list packages -u --user all", adb_calls)
             self.assertNotIn("install ", adb_calls)
             self.assertNotIn("shell pm path", adb_calls)
             evidence = android / "app/build/outputs/androidTest-results/api35"
-            self.assertIn("retained Serea app data", (evidence / "data-isolation-error.txt").read_text(encoding="utf-8"))
+            self.assertIn(
+                "retained Serea app data",
+                (evidence / "data-isolation-error.txt").read_text(encoding="utf-8"),
+            )
             self.assertEqual("FAIL\n", (evidence / "data-isolation-status.txt").read_text(encoding="utf-8"))
             self.assertEqual("NOT_RUN\n", (evidence / "process-death-status.txt").read_text(encoding="utf-8"))
+
+            calls.write_text("", encoding="utf-8")
+            environment["ANDROID_TEST_API"] = "26"
+            environment["EXPECTED_API_LEVEL"] = "26"
+            api26_inventory = subprocess.run(
+                ["bash", str(script), "26"],
+                cwd=android,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, api26_inventory.returncode)
+            api26_calls = calls.read_text(encoding="utf-8")
+            self.assertIn("shell pm list packages -u\n", api26_calls)
+            self.assertNotIn("--user all", api26_calls)
+            self.assertNotIn("install ", api26_calls)
+            self.assertNotIn("shell pm path", api26_calls)
+            evidence26 = android / "app/build/outputs/androidTest-results/api26"
+            self.assertIn(
+                "retained Serea app data",
+                (evidence26 / "data-isolation-error.txt").read_text(encoding="utf-8"),
+            )
+
+            calls.write_text("", encoding="utf-8")
+            environment["ANDROID_TEST_API"] = "35"
+            environment["EXPECTED_API_LEVEL"] = "35"
+            environment["ADB_PACKAGE_INVENTORY"] = ""
+            empty_inventory = subprocess.run(
+                ["bash", str(script), "35"],
+                cwd=android,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, empty_inventory.returncode)
+            empty_calls = calls.read_text(encoding="utf-8")
+            self.assertIn("shell pm list packages -u --user all", empty_calls)
+            self.assertNotIn("install ", empty_calls)
+            self.assertNotIn("shell pm path", empty_calls)
+            self.assertIn(
+                "empty or malformed",
+                (evidence / "data-isolation-error.txt").read_text(encoding="utf-8"),
+            )
+
+            calls.write_text("", encoding="utf-8")
+            environment["ADB_PACKAGE_INVENTORY"] = ""
+            environment["ADB_PACKAGE_EXIT_STATUS"] = "1"
+            failed_inventory = subprocess.run(
+                ["bash", str(script), "35"],
+                cwd=android,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, failed_inventory.returncode)
+            failed_calls = calls.read_text(encoding="utf-8")
+            self.assertIn("shell pm list packages -u --user all", failed_calls)
+            self.assertNotIn("install ", failed_calls)
+            self.assertNotIn("shell pm path", failed_calls)
+            self.assertIn(
+                "Unable to prove",
+                (evidence / "data-isolation-error.txt").read_text(encoding="utf-8"),
+            )
 
     def test_sentinel_checks_existing_preferences_before_touching_history_database(self) -> None:
         receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(

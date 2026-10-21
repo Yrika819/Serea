@@ -508,20 +508,28 @@ class SereaAppShellTest {
 
     @Test fun fontScaleTwoKeepsTaskProposalReviewAndFooterReachable() {
         val originalScale = compose.activity.resources.configuration.fontScale
+        val originalWidthDp = compose.activity.resources.configuration.screenWidthDp
+        val originalDensityDpi = compose.activity.resources.configuration.densityDpi
         val originalSizeOverride = shell("wm size").lineSequence()
             .firstOrNull { it.startsWith("Override size:") }
             ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
         val originalDensityOverride = shell("wm density").lineSequence()
             .firstOrNull { it.startsWith("Override density:") }
             ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-        shell("wm size 320x640")
-        shell("wm density 160")
-        shell("settings put system font_scale 2.0")
         try {
+            shell("wm size 320x640")
+            shell("wm density 160")
+            shell("settings put system font_scale 2.0")
             compose.waitUntil(15_000) {
                 var fontScale = 1f
-                compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
-                fontScale >= 1.99f
+                var width = 0
+                var densityDpi = 0
+                compose.activityRule.scenario.onActivity {
+                    fontScale = it.resources.configuration.fontScale
+                    width = it.resources.configuration.screenWidthDp
+                    densityDpi = it.resources.configuration.densityDpi
+                }
+                fontScale >= 1.99f && width == 320 && densityDpi == 160
             }
             DestinationContract.all.forEach { contract ->
                 compose.onNodeWithTag("destination_${contract.destination.name.lowercase()}")
@@ -576,17 +584,32 @@ class SereaAppShellTest {
                 runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess
             }
         } finally {
-            shell("settings put system font_scale $originalScale")
-            if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
-            if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
+            runCatching { shell("settings put system font_scale $originalScale") }
+            runCatching {
+                if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
+            }
+            runCatching {
+                if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
+            }
+            val restoredSizeOverride = shell("wm size").lineSequence()
+                .firstOrNull { it.startsWith("Override size:") }
+                ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+            val restoredDensityOverride = shell("wm density").lineSequence()
+                .firstOrNull { it.startsWith("Override density:") }
+                ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+            assertEquals(originalSizeOverride, restoredSizeOverride)
+            assertEquals(originalDensityOverride, restoredDensityOverride)
             compose.waitUntil(15_000) {
                 var width = 0
                 var fontScale = 0f
+                var densityDpi = 0
                 compose.activityRule.scenario.onActivity {
                     width = it.resources.configuration.screenWidthDp
                     fontScale = it.resources.configuration.fontScale
+                    densityDpi = it.resources.configuration.densityDpi
                 }
-                width > 340 && kotlin.math.abs(fontScale - originalScale) < 0.02f
+                width == originalWidthDp && densityDpi == originalDensityDpi &&
+                    kotlin.math.abs(fontScale - originalScale) < 0.02f
             }
         }
     }

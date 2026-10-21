@@ -67,11 +67,24 @@ if [[ "$sdk_ok" == true ]]; then
   test_package='app.serea.android.isolated.test'
   debug_apk='app/build/outputs/apk/debug/app-debug.apk'
   isolated_apk='app/build/outputs/apk/isolated/app-isolated.apk'
-  retained_packages="$(adb shell pm list packages -u 2>/dev/null)"
+  if [[ "$api_level" == 26 ]]; then
+    # Android 8 accepts `--user all` but returns an empty successful result.
+    # Its default query enumerates the disposable emulator's system user.
+    retained_packages="$(adb shell pm list packages -u 2>/dev/null)"
+  else
+    retained_packages="$(adb shell pm list packages -u --user all 2>/dev/null)"
+  fi
   retained_packages_result=$?
   retained_packages="$(printf '%s' "$retained_packages" | tr -d '\r')"
   if [[ "$retained_packages_result" -ne 0 ]]; then
     echo "Unable to prove that no installed or retained Serea package data exists; refusing campaign." > "$evidence/data-isolation-error.txt"
+    data_isolation_result=FAIL
+    printf 'FAIL\n' > "$evidence/data-isolation-status.txt"
+  elif ! printf '%s\n' "$retained_packages" | awk '
+       NF { if ($0 !~ /^package:[A-Za-z0-9_.]+$/) malformed=1; count++ }
+       END { exit (count > 0 && !malformed) ? 0 : 1 }
+     '; then
+    echo "Installed/retained package inventory was empty or malformed; refusing campaign." > "$evidence/data-isolation-error.txt"
     data_isolation_result=FAIL
     printf 'FAIL\n' > "$evidence/data-isolation-status.txt"
   elif { printf '%s\n' "$retained_packages" | grep -Fxq "package:$demo_package" || \

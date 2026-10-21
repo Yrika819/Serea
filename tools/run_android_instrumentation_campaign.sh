@@ -61,6 +61,7 @@ junit_result=NOT_RUN
 data_isolation_result=NOT_RUN
 data_sentinel_token=''
 isolated_target_result=NOT_RUN
+process_death_target_ready=true
 if [[ "$sdk_ok" == true ]]; then
   demo_package='app.serea.android.demo'
   isolated_package='app.serea.android.isolated'
@@ -163,6 +164,26 @@ if [[ "$sdk_ok" == true ]]; then
     mv "$root/connected" "$evidence/junit"
   fi
 
+  # UTP uninstalls both instrumentation APKs after connectedAndroidTest. Keep
+  # Process Death coverage on a fresh isolated install without touching the
+  # separate demo package or any pre-existing user namespace.
+  if [[ "$data_isolation_result" == PASS && -n "$campaign_token" && \
+        -z "$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')" ]]; then
+    echo "Instrumentation runner uninstalled the isolated target; reinstalling the fresh isolated APK for Process Death."
+    if adb install "$isolated_apk" && [[ -s "$isolated_apk" ]]; then
+      EXPECTED_API_LEVEL="$api_level" bash "$tool_dir/prepare_isolated_instrumentation_target.sh" \
+        "serea-isolated-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" \
+        >> "$evidence/data-isolation.log" 2>&1
+      reseed_result=$?
+    else
+      reseed_result=1
+    fi
+    if [[ "$reseed_result" -ne 0 ]]; then
+      echo "Could not reinstall and authorize the fresh isolated Process Death target." > "$evidence/process-death.log"
+      process_death_target_ready=false
+    fi
+  fi
+
   if [[ -d "$evidence/junit" ]]; then
     python3 "$tool_dir/verify_android_instrumentation.py" "$evidence/junit" \
       --source-root app/src/androidTest/java --minimum 103 \
@@ -202,7 +223,7 @@ fi
 printf '%s\n' "$junit_result" > "$evidence/instrumentation-status.txt"
 
 death_result=NOT_RUN
-if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS ]]; then
+if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_target_ready" == true ]]; then
   EXPECTED_API_LEVEL="$api_level" SEREA_SENTINEL_TOKEN="$data_sentinel_token" \
     SEREA_CAMPAIGN_TOKEN="serea-isolated-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" \
     bash "$tool_dir/run_android_process_death_harness.sh" \
@@ -215,7 +236,7 @@ if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS ]]; then
     death_result=FAIL
   fi
 elif [[ "$sdk_ok" == true ]]; then
-  echo "Process Death not run because the disposable-device and demo-sentinel isolation gate did not pass." \
+  echo "Process Death not run because the disposable-device, demo-sentinel, or isolated-target readiness gate did not pass." \
     > "$evidence/process-death.log"
 fi
 printf '%s\n' "$death_result" > "$evidence/process-death-status.txt"

@@ -15,7 +15,6 @@ sentinel_token="${SEREA_SENTINEL_TOKEN:?SEREA_SENTINEL_TOKEN must identify the d
 
 test -n "$(adb shell pm path "$demo_package" | tr -d '\r')"
 test -n "$(adb shell pm path "$package" | tr -d '\r')"
-test -n "$(adb shell pm path "${package}.test" | tr -d '\r')"
 EXPECTED_API_LEVEL="$EXPECTED_API_LEVEL" bash "$(dirname "$0")/run_android_data_sentinel.sh" "$sentinel_token" verify
 before_path=$(adb shell pm path "$package" | tr -d '\r')
 demo_before_path=$(adb shell pm path "$demo_package" | tr -d '\r')

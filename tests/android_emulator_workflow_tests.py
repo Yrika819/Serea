@@ -56,9 +56,35 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('testBuildType = "isolated"', (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8"))
         self.assertIn("assembleIsolatedAndroidTest", (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8"))
         self.assertIn('marker.renameTo(claimedMarker)', runner)
+        for diagnostic in (
+            'preferencesEmpty=$preferencesEmpty',
+            'filesEmpty=$filesEmpty',
+            'databasesEmpty=$databasesEmpty',
+            'markerMatches=$campaignMarkerMatches',
+            'noBackupEntries=${noBackupFiles?.sorted()}',
+        ):
+            self.assertIn(diagnostic, runner)
         self.assertLess(runner.index('check(preferencesEmpty'), runner.index('super.onStart()'))
         self.assertLess(runner.index('marker.renameTo(claimedMarker)'), runner.index('super.onStart()'))
         self.assertIn('connectedIsolatedAndroidTest', (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8"))
+        build = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn('add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")', build)
+        self.assertNotIn('androidTestImplementation("androidx.compose.ui:ui-test-manifest")', build)
+
+    def test_process_death_reinstalls_only_isolated_target_after_utp_cleanup(self) -> None:
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        harness = (ROOT / "tools/run_android_process_death_harness.sh").read_text(encoding="utf-8")
+        reinstall = campaign.index('Instrumentation runner uninstalled the isolated target')
+        reseed = campaign.index('prepare_isolated_instrumentation_target.sh', reinstall)
+        readiness = campaign.index('process_death_target_ready=false', reseed)
+        process_death = campaign.index('if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_target_ready" == true ]]')
+        self.assertLess(reinstall, reseed)
+        self.assertLess(reseed, readiness)
+        self.assertLess(readiness, process_death)
+        self.assertIn('adb install "$isolated_apk"', campaign[reinstall:reseed])
+        self.assertNotIn('pm clear', campaign.lower())
+        self.assertNotIn('pm clear', harness.lower())
+        self.assertNotIn('pm path "${package}.test"', harness)
 
     def test_sentinel_rejects_stale_pass_and_current_failure_wins(self) -> None:
         script = (ROOT / "tools/run_android_data_sentinel.sh").read_text(encoding="utf-8")

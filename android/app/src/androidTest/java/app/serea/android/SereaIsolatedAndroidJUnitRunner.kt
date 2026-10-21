@@ -38,7 +38,10 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         check(apiSupported) { "Refusing instrumentation on unsupported API ${Build.VERSION.SDK_INT}." }
         check(emulator) { "Refusing instrumentation on an unverified or physical Android device." }
         check(preferencesEmpty && filesEmpty && databasesEmpty && campaignMarkerMatches && !claimedMarker.exists()) {
-            "Refusing instrumentation without a fresh isolated namespace and matching CI campaign marker."
+            "Refusing instrumentation without a fresh isolated namespace and matching CI campaign marker " +
+                "(preferencesEmpty=$preferencesEmpty, filesEmpty=$filesEmpty, databasesEmpty=$databasesEmpty, " +
+                "campaignTokenPresent=${campaignToken != null}, markerMatches=$campaignMarkerMatches, " +
+                "noBackupEntries=${noBackupFiles?.sorted()}, claimedMarkerExists=${claimedMarker.exists()})."
         }
         check(marker.renameTo(claimedMarker)) {
             "Refusing instrumentation because another run already claimed the campaign marker."

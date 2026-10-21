@@ -81,7 +81,9 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
-    androidTestImplementation("androidx.compose.ui:ui-test-manifest")
+    // Compose test activities must be declared in the isolated target APK so
+    // ActivityScenario launches them in the app process, never in the test APK.
+    add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }

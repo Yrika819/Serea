@@ -544,12 +544,13 @@ class GmailViewModelTest {
 
         val recreatedFake = GmailUiTestFake().apply { inboxHandler = { _, _ -> GmailMessagePage(listOf(fixture)) } }
         val savedValues = savedState.keys().associateWith { savedState.get<Any?>(it) }
-        val recreated = GmailViewModel(recreatedFake, recreatedFake, SavedStateHandle(savedValues), pageSize = 1)
+        val recreatedHandle = SavedStateHandle(savedValues)
+        val recreated = GmailViewModel(recreatedFake, recreatedFake, recreatedHandle, pageSize = 1)
         advanceUntilIdle()
 
         assertEquals(GmailRoute.Message(fixture.id), recreated.state.value.route)
         assertEquals(fixture.id, recreated.state.value.detail?.id)
-        val restoredValues = savedState.keys().mapNotNull { savedState.get<Any?>(it) }
+        val restoredValues = recreatedHandle.keys().mapNotNull { recreatedHandle.get<Any?>(it) }
         assertFalse(restoredValues.any { it == "opaque-secret-cursor" })
         assertFalse(restoredValues.any { it == fixture.plainTextBody })
 

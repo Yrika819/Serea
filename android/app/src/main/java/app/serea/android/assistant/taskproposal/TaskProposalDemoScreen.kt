@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
@@ -72,6 +73,8 @@ private fun TaskProposalDemoContent(
     var tasks by remember { mutableStateOf(repository.demoTasks()) }
     var writeCount by remember { mutableStateOf(0) }
     var actionPending by remember { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val compactActions = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 360
 
     LaunchedEffect(operation, reviewGeneration) {
         session = null
@@ -91,21 +94,42 @@ private fun TaskProposalDemoContent(
         Text("DEMO / 架空のタスク", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Text("この画面は隔離されたメモリ内Fake Repositoryだけを使います。実データには触れません。")
         Text("確認する操作を選択")
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            TaskProposalOperation.entries.forEach { candidate ->
-                FilterChip(
-                    selected = operation == candidate,
-                    onClick = {
-                        if (candidate != operation) {
-                            session = null
-                            preparationError = null
-                            operation = candidate
-                        }
-                    },
-                    enabled = !actionPending,
-                    label = { Text(demoOperationLabel(candidate)) },
-                    modifier = Modifier.weight(1f).testTag("task_proposal_operation_${candidate.name.lowercase()}"),
-                )
+        if (compactActions) {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                TaskProposalOperation.entries.forEach { candidate ->
+                    FilterChip(
+                        selected = operation == candidate,
+                        onClick = {
+                            if (candidate != operation) {
+                                session = null
+                                preparationError = null
+                                operation = candidate
+                            }
+                        },
+                        enabled = !actionPending,
+                        label = { Text(demoOperationLabel(candidate)) },
+                        modifier = Modifier.fillMaxWidth()
+                            .testTag("task_proposal_operation_${candidate.name.lowercase()}"),
+                    )
+                }
+            }
+        } else {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                TaskProposalOperation.entries.forEach { candidate ->
+                    FilterChip(
+                        selected = operation == candidate,
+                        onClick = {
+                            if (candidate != operation) {
+                                session = null
+                                preparationError = null
+                                operation = candidate
+                            }
+                        },
+                        enabled = !actionPending,
+                        label = { Text(demoOperationLabel(candidate)) },
+                        modifier = Modifier.weight(1f).testTag("task_proposal_operation_${candidate.name.lowercase()}"),
+                    )
+                }
             }
         }
 
@@ -138,20 +162,38 @@ private fun TaskProposalDemoContent(
             Text("${task.title} · ID ${task.id} · rev ${task.revision}")
         }
         if (tasks.size > 3) Text("ほか ${tasks.size - 3} 件の架空タスク")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(enabled = !actionPending, onClick = {
-                session = null
-                preparationError = null
-                reviewGeneration++
-            }) { Text("新しいレビューを準備") }
-            OutlinedButton(onClick = {
-                session = null
-                preparationError = null
-                repository.resetDemoData()
-                tasks = repository.demoTasks()
-                writeCount = 0
-                reviewGeneration++
-            }, enabled = !actionPending) { Text("デモをリセット") }
+        val prepareReview: () -> Unit = {
+            session = null
+            preparationError = null
+            reviewGeneration++
+        }
+        val resetDemo: () -> Unit = {
+            session = null
+            preparationError = null
+            repository.resetDemoData()
+            tasks = repository.demoTasks()
+            writeCount = 0
+            reviewGeneration++
+        }
+        if (compactActions) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(enabled = !actionPending, onClick = prepareReview, modifier = Modifier.fillMaxWidth()) {
+                    Text("新しいレビューを準備")
+                }
+                OutlinedButton(onClick = resetDemo, enabled = !actionPending, modifier = Modifier.fillMaxWidth()) {
+                    Text("デモをリセット")
+                }
+            }
+        } else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(enabled = !actionPending, onClick = prepareReview) {
+                Text("新しいレビューを準備")
+            }
+            OutlinedButton(onClick = resetDemo, enabled = !actionPending) {
+                Text("デモをリセット")
+            }
         }
     }
 }

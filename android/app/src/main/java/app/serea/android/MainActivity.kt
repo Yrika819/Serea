@@ -71,6 +71,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -302,11 +303,11 @@ internal class ChatViewModel(
                     withContext(NonCancellable) { markUnknown(userMessage, conversationId, "Request cancelled. A transmitted request may still have completed remotely.") }
                 }
             } catch (failure: ModelChatFailure) {
-                markFailed(userMessage, conversationId, failure.message ?: "The model request failed.")
+                markFailureOrUnknown(userMessage, conversationId, failure.message ?: "The model request failed.")
             } catch (_: UsageLimitExceededException) {
-                markFailed(userMessage, conversationId, "ローカルの日次または月次Soft Limitを超えました。設定で上限を確認してください。")
+                markFailureOrUnknown(userMessage, conversationId, "ローカルの日次または月次Soft Limitを超えました。設定で上限を確認してください。")
             } catch (_: Exception) {
-                markFailed(userMessage, conversationId)
+                markFailureOrUnknown(userMessage, conversationId, "Demo response failed. Please try again.")
             } finally {
                 finalizingMessageIds -= userMessage.id
                 if (activeMessageId == userMessage.id) { activeMessageId = null; activeJob = null }
@@ -478,6 +479,15 @@ internal class ChatViewModel(
                         .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
                     errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
                 )
+            }
+        }
+    }
+    private suspend fun markFailureOrUnknown(message: ChatMessage, conversationId: String, reason: String) {
+        if (currentCoroutineContext().isActive) {
+            markFailed(message, conversationId, reason)
+        } else {
+            withContext(NonCancellable) {
+                markUnknown(message, conversationId, "Request cancelled. A transmitted request may still have completed remotely.")
             }
         }
     }

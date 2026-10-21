@@ -90,9 +90,12 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) { !compose.activity.chatViewModel.state.value.isRestoring }
         val chatConversationBefore = compose.activity.chatViewModel.state.value.conversation
         select(SereaDestination.GMAIL)
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 7
+        }
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        compose.onNodeWithTag("gmail_search_input").performImeAction()
+        compose.onNodeWithTag("gmail_search_submit").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
         }
@@ -205,6 +208,8 @@ class SereaAppShellTest {
             runCatching { compose.onNodeWithTag("gmail_search_input").assertIsNotFocused() }.isSuccess
         }
         pressBack()
+        compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱").assertIsDisplayed()
+        pressBack()
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
         compose.onNodeWithTag("chat-composer").assertIsNotFocused()
         select(SereaDestination.CALENDAR)
@@ -260,6 +265,9 @@ class SereaAppShellTest {
         }
         compose.onNodeWithText("Date-line test").performClick()
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("開始・終了").fetchSemanticsNodes().isNotEmpty()
+        }
 
         select(SereaDestination.GMAIL)
         pressBack()
@@ -352,6 +360,9 @@ class SereaAppShellTest {
             }
             select(SereaDestination.TASK_PROPOSAL_DEMO)
             compose.onNodeWithText("DEMO / 架空のタスク").assertIsDisplayed()
+            listOf("create", "update", "complete", "delete").forEach { operation ->
+                compose.onNodeWithTag("task_proposal_operation_$operation").performScrollTo().assertIsDisplayed()
+            }
             compose.waitUntil(10_000) {
                 compose.onAllNodesWithTag("task_proposal_approve").fetchSemanticsNodes().isNotEmpty()
             }

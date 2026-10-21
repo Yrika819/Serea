@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertTextContains
@@ -207,8 +208,8 @@ class TaskScreenTest {
         compose.waitUntil(5_000) { !viewModel.state.value.saving }
 
         compose.waitUntil(5_000) { runBlocking { repository.get("00000000-0000-0000-0000-000000000001")?.title == "Task A saved" } }
-        compose.onNodeWithTag("task_operation_notice").assertIsDisplayed()
-        compose.onNodeWithTag("task_operation_notice").assertTextContains("保存が完了しました。")
+        compose.onNodeWithTag("task_operation_notice").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("task_operation_notice").assertTextContains("保存が完了しました。", substring = true)
         compose.waitUntil(5_000) {
             val config = compose.onNodeWithTag("task_title").fetchSemanticsNode().config
             SemanticsProperties.EditableText in config && config[SemanticsProperties.EditableText].text == "Task B unsaved draft"

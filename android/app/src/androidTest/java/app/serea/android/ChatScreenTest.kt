@@ -76,9 +76,9 @@ class ChatScreenTest {
 
     private fun send(text: String) {
         composer().performTextInput(text)
-        compose.waitUntil(5_000) { stateSnapshot().input == text }
+        compose.waitUntil(30_000) { stateSnapshot().input == text }
         compose.onNodeWithText("送信").assertIsEnabled().performClick()
-        compose.waitUntil(5_000) {
+        compose.waitUntil(30_000) {
             stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
         }
     }

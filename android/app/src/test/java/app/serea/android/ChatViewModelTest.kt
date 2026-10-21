@@ -287,6 +287,51 @@ class ChatViewModelTest {
         assertEquals("second reply", vm.state.value.conversation.messages.last().text)
     }
 
+    @Test fun lateDefiniteProviderFailureAfterCancellationKeepsOutcomeUnknown() = runTest(dispatcher) {
+        val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releaseFirstFailure = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val secondReply = kotlinx.coroutines.CompletableDeferred<ModelChatResponse>()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse =
+                if (request.message == "first request") {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        firstStarted.complete(Unit)
+                        releaseFirstFailure.await()
+                        throw ModelChatFailure("late provider failure")
+                    }
+                } else {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        secondStarted.complete(Unit)
+                        secondReply.await()
+                    }
+                }
+        })
+        vm.updateInput("first request")
+        vm.sendMessage()
+        runCurrent()
+        firstStarted.await()
+
+        vm.cancelCurrent()
+        vm.updateInput("second request")
+        vm.sendMessage()
+        runCurrent()
+        secondStarted.await()
+
+        releaseFirstFailure.complete(Unit)
+        runCurrent()
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages[0].status)
+        assertEquals("PENDING", vm.state.value.conversation.messages[1].status)
+        assertTrue(vm.state.value.isLoading)
+        assertEquals(null, vm.state.value.errorMessage)
+
+        secondReply.complete(ModelChatResponse("second reply"))
+        advanceUntilIdle()
+        assertEquals("OUTCOME_UNKNOWN", vm.state.value.conversation.messages[0].status)
+        assertEquals("COMPLETED", vm.state.value.conversation.messages[1].status)
+        assertEquals("second reply", vm.state.value.conversation.messages.last().text)
+    }
+
     @Test fun completedReplyCannotBeCancelledBetweenPersistenceAndUiUpdate() = runTest(dispatcher) {
         val history = BlockingCompleteHistory()
         val vm = ChatViewModel(object : ModelChatPort {

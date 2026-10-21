@@ -142,6 +142,7 @@ data class ChatUiState(
     val showingHistory: Boolean = false,
     val history: List<StoredConversation> = emptyList(),
     val errorMessage: String? = null,
+    val historyPersistenceWarnings: Map<String, String> = emptyMap(),
     val statusMessage: String? = null,
     val deleteConfirmation: String = "",
     val deleteTargetId: String = "",
@@ -319,10 +320,8 @@ internal class ChatViewModel(
     fun cancelCurrent() {
         val id = activeMessageId ?: return
         if (id in finalizingMessageIds) return
-        val conversationId = mutableState.value.conversation.id
         activeJob?.cancel()
         mutableState.update { it.copy(isLoading = false, errorMessage = "Request cancelled. A transmitted request may still have completed remotely.") }
-        viewModelScope.launch { historyRepository?.updateStatus(id, conversationId, "OUTCOME_UNKNOWN") }
     }
 
     fun newConversation() {
@@ -366,14 +365,32 @@ internal class ChatViewModel(
                 val saved = historyRepository?.get(id) ?: return@launch
                 if (generation != selectionGeneration) return@launch
                 persistedConversationIds += saved.id
+                val persistenceWarningUpdates = mutableMapOf<String, String?>()
                 val messages = saved.messages.map { message ->
                     if (message.status == "PENDING") {
-                        historyRepository?.updateStatus(message.id, saved.id, "OUTCOME_UNKNOWN")
+                        val statusPersisted = tryPersistUnknownStatus(message.id, saved.id)
+                        persistenceWarningUpdates[message.id] = if (statusPersisted) null else
+                            "The saved history status for this message could not be updated; reopen history to reconcile."
                         message.copy(status = "OUTCOME_UNKNOWN").toChatMessage()
-                    } else message.toChatMessage()
+                    } else {
+                        persistenceWarningUpdates[message.id] = null
+                        message.toChatMessage()
+                    }
                 }
                 if (generation != selectionGeneration) return@launch
-                mutableState.update { it.copy(conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)), showingHistory = false, isLoading = false, isFinalizing = false) }
+                mutableState.update {
+                    val warnings = it.historyPersistenceWarnings.toMutableMap()
+                    persistenceWarningUpdates.forEach { (messageId, warning) ->
+                        if (warning == null) warnings.remove(messageId) else warnings[messageId] = warning
+                    }
+                    it.copy(
+                        conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)),
+                        showingHistory = false, isLoading = false, isFinalizing = false,
+                        historyPersistenceWarnings = warnings,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: HistoryUnavailableException) {
                 if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
             } catch (_: Exception) {
@@ -444,13 +461,31 @@ internal class ChatViewModel(
                     // Keep the new empty conversation in memory until its first message is sent.
                 } else {
                     persistedConversationIds += latest.id
+                    val persistenceWarningUpdates = mutableMapOf<String, String?>()
                     val messages = latest.messages.map { message ->
-                        if (message.status == "PENDING") historyRepository.updateStatus(message.id, latest.id, "OUTCOME_UNKNOWN")
+                        if (message.status == "PENDING") {
+                            val statusPersisted = tryPersistUnknownStatus(message.id, latest.id)
+                            persistenceWarningUpdates[message.id] = if (statusPersisted) null else
+                                "The saved history status for this message could not be updated; reopen history to reconcile."
+                        } else {
+                            persistenceWarningUpdates[message.id] = null
+                        }
                         message.copy(status = if (message.status == "PENDING") "OUTCOME_UNKNOWN" else message.status).toChatMessage()
                     }
                     if (generation != selectionGeneration) return@launch
-                    mutableState.update { it.copy(conversation = Conversation(latest.id, messages, Instant.ofEpochMilli(latest.createdAt))) }
+                    mutableState.update {
+                        val warnings = it.historyPersistenceWarnings.toMutableMap()
+                        persistenceWarningUpdates.forEach { (messageId, warning) ->
+                            if (warning == null) warnings.remove(messageId) else warnings[messageId] = warning
+                        }
+                        it.copy(
+                            conversation = Conversation(latest.id, messages, Instant.ofEpochMilli(latest.createdAt)),
+                            historyPersistenceWarnings = warnings,
+                        )
+                    }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: HistoryUnavailableException) {
                 if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
             } catch (_: Exception) {
@@ -464,22 +499,38 @@ internal class ChatViewModel(
     private suspend fun persist(message: ChatMessage, conversationId: String) {
         historyRepository?.addMessage(message.toStoredMessage(conversationId))
     }
+    private suspend fun tryPersistUnknownStatus(messageId: String, conversationId: String): Boolean = try {
+        historyRepository?.updateStatus(messageId, conversationId, "OUTCOME_UNKNOWN") ?: true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        false
+    }
     private fun nextMessageTime(conversation: Conversation): Instant = maxOf(
         Instant.now(), (conversation.messages.maxOfOrNull { it.createdAt } ?: Instant.EPOCH).plusMillis(1),
     )
     private suspend fun markUnknown(message: ChatMessage, conversationId: String, reason: String) {
-        historyRepository?.updateStatus(message.id, conversationId, "OUTCOME_UNKNOWN")
-        mutableState.update { current ->
-            if (current.conversation.id != conversationId) current
-            else {
-                val ownsActiveRequest = activeMessageId == message.id
-                current.copy(
-                    isLoading = if (ownsActiveRequest) false else current.isLoading,
-                    isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
-                    conversation = current.conversation.copy(messages = current.conversation.messages
-                        .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
-                    errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
-                )
+        withContext(NonCancellable) {
+            val statusPersisted = tryPersistUnknownStatus(message.id, conversationId)
+            val persistenceWarning = if (statusPersisted) null else
+                "The saved history status for this message could not be updated; reopen history to reconcile."
+            mutableState.update { current ->
+                val warnings = current.historyPersistenceWarnings.toMutableMap().apply {
+                    if (persistenceWarning == null) remove(message.id) else put(message.id, persistenceWarning)
+                }
+                if (current.conversation.id != conversationId) {
+                    if (warnings == current.historyPersistenceWarnings) current else current.copy(historyPersistenceWarnings = warnings)
+                } else {
+                    val ownsActiveRequest = activeMessageId == message.id
+                    current.copy(
+                        isLoading = if (ownsActiveRequest) false else current.isLoading,
+                        isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                        conversation = current.conversation.copy(messages = current.conversation.messages
+                            .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
+                        errorMessage = if (ownsActiveRequest && statusPersisted) reason else current.errorMessage,
+                        historyPersistenceWarnings = warnings,
+                    )
+                }
             }
         }
     }
@@ -493,19 +544,45 @@ internal class ChatViewModel(
         }
     }
     private suspend fun markFailed(message: ChatMessage, conversationId: String, reason: String = "Demo response failed. Please try again.") {
-        historyRepository?.updateStatus(message.id, conversationId, "FAILED")
-        mutableState.update { current ->
-            if (current.conversation.id != conversationId) current
-            else {
-                val ownsActiveRequest = activeMessageId == message.id
-                current.copy(
-                    isLoading = if (ownsActiveRequest) false else current.isLoading,
-                    isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
-                    conversation = current.conversation.copy(messages = current.conversation.messages
-                        .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
-                    errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
-                )
+        val ownsActiveRequest = activeMessageId == message.id && mutableState.value.conversation.id == conversationId
+        if (ownsActiveRequest) {
+            finalizingMessageIds += message.id
+            mutableState.update { current ->
+                if (current.conversation.id == conversationId && activeMessageId == message.id) {
+                    current.copy(isFinalizing = true)
+                } else current
             }
+        }
+        try {
+            withContext(NonCancellable) {
+                val statusPersisted = try {
+                    historyRepository?.updateStatus(message.id, conversationId, "FAILED") ?: true
+                } catch (_: Exception) {
+                    false
+                }
+                val persistenceWarning = if (statusPersisted) null else
+                    "The failure status for this message could not be saved; reopen history to check the saved record."
+                mutableState.update { current ->
+                    val warnings = current.historyPersistenceWarnings.toMutableMap().apply {
+                        if (persistenceWarning == null) remove(message.id) else put(message.id, persistenceWarning)
+                    }
+                    if (current.conversation.id != conversationId) {
+                        if (warnings == current.historyPersistenceWarnings) current else current.copy(historyPersistenceWarnings = warnings)
+                    } else {
+                        val stillOwnsActiveRequest = activeMessageId == message.id
+                        current.copy(
+                            isLoading = if (stillOwnsActiveRequest) false else current.isLoading,
+                            isFinalizing = if (stillOwnsActiveRequest) false else current.isFinalizing,
+                            conversation = current.conversation.copy(messages = current.conversation.messages
+                                .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
+                            errorMessage = if (stillOwnsActiveRequest) reason else current.errorMessage,
+                            historyPersistenceWarnings = warnings,
+                        )
+                    }
+                }
+            }
+        } finally {
+            if (ownsActiveRequest) finalizingMessageIds -= message.id
         }
     }
     private fun refreshHistory() {
@@ -911,6 +988,13 @@ internal fun ChatScreen(
             }
             state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }) }
+            state.conversation.messages.forEachIndexed { index, message ->
+                state.historyPersistenceWarnings[message.id]?.let { warning ->
+                    Text("Message ${index + 1}: $warning", color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
+                }
+            }
             if (!settingsDestination) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,

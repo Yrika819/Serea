@@ -508,6 +508,12 @@ class SereaAppShellTest {
 
     @Test fun fontScaleTwoKeepsTaskProposalReviewAndFooterReachable() {
         val originalScale = compose.activity.resources.configuration.fontScale
+        val originalSizeOverride = shell("wm size").lineSequence()
+            .firstOrNull { it.startsWith("Override size:") }
+            ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+        val originalDensityOverride = shell("wm density").lineSequence()
+            .firstOrNull { it.startsWith("Override density:") }
+            ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
         shell("wm size 320x640")
         shell("wm density 160")
         shell("settings put system font_scale 2.0")
@@ -571,8 +577,8 @@ class SereaAppShellTest {
             }
         } finally {
             shell("settings put system font_scale $originalScale")
-            shell("wm size reset")
-            shell("wm density reset")
+            if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
+            if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
             compose.waitUntil(15_000) {
                 var width = 0
                 var fontScale = 0f

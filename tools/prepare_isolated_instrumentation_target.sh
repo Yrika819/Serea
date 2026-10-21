@@ -13,7 +13,9 @@ receiver="$package/app.serea.android.ProcessDeathHarnessReceiver"
 action='app.serea.android.action.PROCESS_DEATH_HARNESS'
 request_id="campaign-seed-${BASHPID}-$(date +%s%N)-${RANDOM}"
 test -n "$(adb shell pm path "$package" | tr -d '\r')"
-adb shell am broadcast -n "$receiver" -a "$action" \
+# The isolated package has just been installed and is still stopped. Include it
+# explicitly so only the guarded fresh-storage marker receiver is started.
+adb shell am broadcast -f 0x20 -n "$receiver" -a "$action" \
   --es phase campaign-seed --es token "$token" --es requestId "$request_id"
 for _ in $(seq 1 30); do
   result_log=$(adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E)

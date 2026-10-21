@@ -65,6 +65,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(encoding="utf-8")
         self.assertIn('request_id="sentinel-${BASHPID}-$(date +%s%N)-${RANDOM}"', script)
         self.assertIn('--es requestId "$request_id"', script)
+        self.assertIn('am broadcast -f 0x20 -n "$receiver"', script)
         fail_check = script.index('FAIL:$token:${phase}-sentinel:$request_id:')
         pass_check = script.index('PASS:$token:${phase}-sentinel:$request_id')
         self.assertLess(fail_check, pass_check)
@@ -124,6 +125,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         helper = (ROOT / "tools/prepare_isolated_instrumentation_target.sh").read_text(encoding="utf-8")
         self.assertIn('request_id="process-${BASHPID}-$(date +%s%N)-${RANDOM}"', script)
         self.assertIn('--es requestId "$request_id"', script)
+        self.assertIn('am broadcast -f 0x20 -n "$receiver"', script)
         self.assertIn('FAIL:$phase_token:$phase_name:$request_id:', script)
         self.assertIn('PASS:$phase_token:$phase_name:$request_id', script)
         self.assertLess(
@@ -131,6 +133,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             script.index('PASS:$phase_token:$phase_name:$request_id'),
         )
         self.assertIn('--es requestId "$request_id"', helper)
+        self.assertIn('am broadcast -f 0x20 -n "$receiver"', helper)
         self.assertIn('PASS:$token:campaign-seed:$request_id', helper)
 
     def test_api26_evidence_and_kvm_setup_run_after_api35_image_failure(self) -> None:

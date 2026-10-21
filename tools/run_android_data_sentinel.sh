@@ -16,7 +16,10 @@ action='app.serea.android.action.PROCESS_DEATH_HARNESS'
 request_id="sentinel-${BASHPID}-$(date +%s%N)-${RANDOM}"
 test -n "$(adb shell pm path "$package" | tr -d '\r')"
 
-adb shell am broadcast -n "$receiver" -a "$action" \
+# A freshly installed app is in Android's stopped state. Explicitly include it
+# so the receiver can perform the read-only/guarded sentinel phase before any
+# Activity has been launched.
+adb shell am broadcast -f 0x20 -n "$receiver" -a "$action" \
   --es phase "${phase}-sentinel" --es token "$token" --es requestId "$request_id"
 for _ in $(seq 1 30); do
   result_log=$(adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E)

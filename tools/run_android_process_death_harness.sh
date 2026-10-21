@@ -26,7 +26,7 @@ phase() {
   local phase_token="${2:-$run_token}"
   local request_id="process-${BASHPID}-$(date +%s%N)-${RANDOM}"
   echo "Process-death harness: starting phase $phase_name"
-  adb shell am broadcast -n "$receiver" -a "$action" \
+  adb shell am broadcast -f 0x20 -n "$receiver" -a "$action" \
     --es phase "$phase_name" --es token "$phase_token" --es requestId "$request_id"
   for _ in $(seq 1 30); do
     local result_log

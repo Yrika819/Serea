@@ -51,15 +51,16 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             workflow.index("- name: Run API 26 Pixel emulator and all instrumentation tests"),
         )
         api35 = steps["Run API 35 Pixel emulator and all instrumentation tests"]
-        self.assertNotIn(always, api35)
+        self.assertNotRegex(api35, r"(?m)^\s+if:")
         combine = workflow.split("name: Combine API-specific required evidence", 1)[1].split(
             "\n      - name:", 1
         )[0]
+        self.assertIn(
+            'if [ "$api35" = PASS ] && [ "$api26" = PASS ] '
+            '&& [ "$API35_STEP_RESULT" = success ] && [ "$API26_STEP_RESULT" = success ]; then',
+            combine,
+        )
         for required in (
-            '[ "$api35" = PASS ]',
-            '[ "$api26" = PASS ]',
-            '[ "$API35_STEP_RESULT" = success ]',
-            '[ "$API26_STEP_RESULT" = success ]',
             'echo "FAIL: API 35=$api35',
             "exit 1",
         ):

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -1015,7 +1016,13 @@ internal fun ChatScreen(
                 AlertDialog(
                     onDismissRequest = chatViewModel::clearDeleteConfirmation,
                     title = { Text("この会話を削除しますか？") },
-                    text = { Text("対象: ${state.deleteTargetTitle}\n選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。") },
+                    text = {
+                        Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+                            Text("対象: ${state.deleteTargetTitle}")
+                            Text("選択した会話のローカル履歴を削除します。")
+                            Text("この操作はアプリ内から取り消せません。")
+                        }
+                    },
                     confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
                         chatViewModel.confirmCurrentConversationDeletion()
                     }) { Text("この会話を削除") } },
@@ -1025,7 +1032,12 @@ internal fun ChatScreen(
                 AlertDialog(
                     onDismissRequest = chatViewModel::clearDeleteConfirmation,
                     title = { Text("全会話履歴を削除しますか？") },
-                    text = { Text("すべてのローカル会話履歴が削除されます。この操作はアプリ内から取り消せません。") },
+                    text = {
+                        Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+                            Text("すべてのローカル会話履歴が削除されます。")
+                            Text("この操作はアプリ内から取り消せません。")
+                        }
+                    },
                     confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
                         chatViewModel.confirmAllHistoryDeletion()
                     }) { Text("全履歴を削除") } },

@@ -297,6 +297,22 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: bash ../tools/run_android_instrumentation_campaign.sh 35
+      - name: Save API 35 failure semantics and safety logcat
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          output='android/app/build/outputs/androidTest-results/api35/logcat-selected.txt'
+          mkdir -p "$(dirname "$output")"
+          serial="$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
+          if [ -n "$serial" ]; then
+            adb -s "$serial" logcat -d -v threadtime -s \
+              font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
+              chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
+              chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
+              SereaProcessDeath AndroidRuntime > "$output"
+          else
+            printf 'NOT_AVAILABLE: API 35 emulator was no longer attached after its test step.\n' > "$output"
+          fi
       - name: Install API 26 emulator image
         if: always() && !cancelled()
         run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
@@ -337,6 +353,22 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: android
           script: bash ../tools/run_android_instrumentation_campaign.sh 26
+      - name: Save API 26 failure semantics and safety logcat
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          output='android/app/build/outputs/androidTest-results/api26/logcat-selected.txt'
+          mkdir -p "$(dirname "$output")"
+          serial="$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
+          if [ -n "$serial" ]; then
+            adb -s "$serial" logcat -d -v threadtime -s \
+              font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
+              chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
+              chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
+              SereaProcessDeath AndroidRuntime > "$output"
+          else
+            printf 'NOT_AVAILABLE: API 26 emulator was no longer attached after its test step.\n' > "$output"
+          fi
       - id: instrumentation
         name: Combine API-specific required evidence
         if: always()
@@ -374,6 +406,7 @@ jobs:
           JOB_RESULT: ${{ job.status }}
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RUN_ID: ${{ github.run_id }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
         run: |
           set -euo pipefail
           bundle='android/app/build/outputs/pixel7a-final-campaign'
@@ -421,7 +454,10 @@ jobs:
           api26_cases="$(junit_count android/app/build/outputs/androidTest-results/api26/junit)"
           {
             echo "source_commit=$SOURCE_SHA"
+            echo "build_checkout_commit=$(git rev-parse HEAD)"
+            echo "base_commit=$BASE_SHA"
             echo "github_run_id=$RUN_ID"
+            echo "github_run_attempt=$GITHUB_RUN_ATTEMPT"
             echo "android_storage_emulator_job=$JOB_RESULT"
             echo "api35_verified_device_api_level=$api35_device"
             echo "api35_instrumentation=$api35_instrumentation"
@@ -440,7 +476,7 @@ jobs:
           cat > "$bundle/pixel7a-reacceptance.md" <<'EOF'
           # Serea Pixel 7a reacceptance packet
 
-          - Repair Draft PR: based on `codex/android-q4-abcdefg-integration-2026-10-20`.
+          - Repair Draft PR: based on `codex/pr71-beta-acceptance-final-20261021-v2`.
           - Candidate APK: `serea-debug.apk`; source SHA and APK SHA-256 are in `provenance.txt`.
           - This candidate APK was built by the GitHub Actions run recorded in `provenance.txt`.
           - Physical Pixel 7a reacceptance is pending the Mac Local MCP v3 agent; emulator results are in `tests/` and `android-ci-results.txt`.
@@ -565,6 +601,7 @@ jobs:
       - name: Assemble CI result manifest and reacceptance bundle
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           RUN_ID: ${{ github.run_id }}
           BUILD_RESULT: ${{ needs.android-build.result }}
           UNIT_RESULT: ${{ needs.android-unit.result }}
@@ -588,7 +625,10 @@ jobs:
           done
           {
             echo "source_commit=$SOURCE_SHA"
+            echo "build_checkout_commit=$GITHUB_SHA"
+            echo "base_commit=$BASE_SHA"
             echo "github_run_id=$RUN_ID"
+            echo "github_run_attempt=$GITHUB_RUN_ATTEMPT"
             echo "android_build=$BUILD_RESULT"
             echo "android_unit=$UNIT_RESULT"
             echo "android_integration=$INTEGRATION_RESULT"

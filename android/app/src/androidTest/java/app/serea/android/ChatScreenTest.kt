@@ -12,6 +12,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
@@ -44,6 +46,15 @@ class ChatScreenTest {
     }
 
     private fun composer() = compose.onNodeWithTag("chat-composer")
+
+    private fun assertDisplayedWithEvidence(tag: String, assertion: () -> Unit) {
+        try {
+            assertion()
+        } catch (failure: Throwable) {
+            compose.onRoot(useUnmergedTree = true).printToLog(tag)
+            throw failure
+        }
+    }
 
     private fun awaitComposerEnabled() {
         composer().assertExists()
@@ -95,7 +106,14 @@ class ChatScreenTest {
         awaitComposerEnabled()
         compose.onNodeWithText("新しい会話").performClick()
         awaitComposerEnabled()
-        compose.onNodeWithText("DEMO · Mock会話 · クラウドAI未接続").assertIsDisplayed()
+        val compactChat = compose.activity.resources.configuration.fontScale >= 1.5f ||
+            compose.activity.resources.configuration.screenWidthDp < 340
+        assertDisplayedWithEvidence("chat-demo-label") {
+            compose.onNodeWithText(
+                if (compactChat) "DEMO · Cloud送信: 無効" else "DEMO · Mock会話 · クラウドAI未接続",
+                substring = false,
+            ).assertIsDisplayed()
+        }
         send("hello")
         awaitResponse("Demo response: I received “hello”.")
         val sentIndex = stateSnapshot().conversation.messages.indexOfFirst {
@@ -234,9 +252,12 @@ class ChatScreenTest {
         val before = stateSnapshot()
         openOverflow()
         compose.onNodeWithText("この会話を削除").performClick()
-        compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
-        compose.onNodeWithText("対象: keep on cancel", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。", substring = true).assertIsDisplayed()
+        assertDisplayedWithEvidence("chat-current-delete-confirmation") {
+            compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        }
+        compose.onNodeWithText("対象: keep on cancel", substring = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("この操作はアプリ内から取り消せません。", substring = false)
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("キャンセル").performClick()
         assertEquals(before.conversation.id, stateSnapshot().conversation.id)
         assertEquals(before.conversation.messages, stateSnapshot().conversation.messages)
@@ -250,11 +271,13 @@ class ChatScreenTest {
         openOverflow()
         compose.onNodeWithText("この会話を削除").performClick()
         compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
-        compose.onNodeWithText("対象: delete this conversation", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("対象: delete this conversation", substring = false).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("この会話を削除").performClick()
         compose.waitUntil(30_000) { !stateSnapshot().isRestoring && stateSnapshot().conversation.id != deletedId }
         assertTrue(stateSnapshot().conversation.messages.isEmpty())
-        compose.onNodeWithText("この会話を削除しました。").assertIsDisplayed()
+        assertDisplayedWithEvidence("chat-current-delete-status") {
+            compose.onNodeWithText("この会話を削除しました。").assertIsDisplayed()
+        }
     }
 
     @Test fun deleteAllConfirmationCancelKeepsConversationAndConfirmClearsHistory() {
@@ -264,17 +287,31 @@ class ChatScreenTest {
         val originalId = stateSnapshot().conversation.id
         openOverflow()
         compose.onNodeWithText("全履歴を削除").performClick()
-        compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        assertDisplayedWithEvidence("chat-delete-all-confirmation") {
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        }
+        compose.onNodeWithText("すべてのローカル会話履歴が削除されます。", substring = false)
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("この操作はアプリ内から取り消せません。", substring = false)
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("キャンセル").performClick()
         assertEquals(originalId, stateSnapshot().conversation.id)
         assertTrue(stateSnapshot().conversation.messages.isNotEmpty())
         openOverflow()
         compose.onNodeWithText("全履歴を削除").performClick()
-        compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        assertDisplayedWithEvidence("chat-delete-all-confirmation") {
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        }
+        compose.onNodeWithText("すべてのローカル会話履歴が削除されます。", substring = false)
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("この操作はアプリ内から取り消せません。", substring = false)
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("全履歴を削除").performClick()
         compose.waitUntil(30_000) { stateSnapshot().history.isEmpty() && !stateSnapshot().isRestoring }
         assertTrue(stateSnapshot().conversation.messages.isEmpty())
-        compose.onNodeWithText("全会話履歴を削除しました。").assertIsDisplayed()
+        assertDisplayedWithEvidence("chat-delete-all-status") {
+            compose.onNodeWithText("全会話履歴を削除しました。").assertIsDisplayed()
+        }
     }
 
     @Test fun openDeletionConfirmationSurvivesActivityRecreationWithoutDeleting() {

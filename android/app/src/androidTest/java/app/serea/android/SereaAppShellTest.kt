@@ -117,14 +117,15 @@ class SereaAppShellTest {
         compose.onNodeWithText("7 件").assertIsDisplayed()
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        Espresso.closeSoftKeyboard()
-        compose.onNodeWithTag("gmail_search_submit").assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithTag("gmail_search_submit").performClick()
+        compose.onNodeWithTag("gmail_search_input").performImeAction()
         val firstSearchLoaded = runCatching { compose.waitUntil(10_000) {
-            runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件") }.isSuccess
+            runCatching {
+                compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件")
+                compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
+            }.isSuccess
         } }.isSuccess
         if (!firstSearchLoaded) compose.onRoot(useUnmergedTree = true).printToLog("gmail-search-result-timeout")
-        assertTrue("Gmail search must settle to exactly one fictional Garden plan message.", firstSearchLoaded)
+        assertTrue("Gmail IME search must load its single fictional Garden plan message and clear field focus.", firstSearchLoaded)
         compose.onNodeWithTag("gmail_message_subject").assertTextContains("Garden plan")
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan").assertIsDisplayed()
@@ -138,9 +139,8 @@ class SereaAppShellTest {
         compose.onAllNodesWithTag("gmail_message_subject").onFirst().assertTextContains("Project Finch schedule")
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        Espresso.closeSoftKeyboard()
         compose.onNodeWithTag("gmail_search_submit").assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithTag("gmail_search_submit").performClick()
+        compose.onNodeWithTag("gmail_search_input").performImeAction()
         val repeatedSearchLoaded = runCatching { compose.waitUntil(10_000) {
             runCatching { compose.onNodeWithTag("gmail_result_count").assertTextEquals("1 件") }.isSuccess
         } }.isSuccess
@@ -293,9 +293,14 @@ class SereaAppShellTest {
         select(SereaDestination.GMAIL)
         compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
         compose.onNodeWithTag("gmail_search_input").performImeAction()
-        compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithTag("gmail_search_input").assertIsNotFocused() }.isSuccess
-        }
+        val emptySearchSettled = runCatching { compose.waitUntil(10_000) {
+            runCatching {
+                compose.onNodeWithTag("gmail_result_count").assertTextEquals("0 件")
+                compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
+            }.isSuccess
+        } }.isSuccess
+        if (!emptySearchSettled) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-gmail-search-timeout")
+        assertTrue("Gmail IME search must settle before navigation and release TextField focus.", emptySearchSettled)
         pressBack()
         compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱").assertIsDisplayed()
         pressBack()
@@ -367,6 +372,7 @@ class SereaAppShellTest {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 50"))
+        compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
         val agendaOffsetBeforeDetail = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("Calendar agenda must have several scroll positions", agendaOffsetBeforeDetail.maxValue() > 0f)
@@ -429,6 +435,7 @@ class SereaAppShellTest {
         assertEquals(0f, agendaOffsetAfterQueryChange.value(), 1f)
 
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 40"))
+        compose.onNodeWithText("Fictional paged event 40").assertIsDisplayed()
         val workOffsetBeforeDateChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("date-change test must start below the first Work event", workOffsetBeforeDateChange.value() > 0f)
@@ -458,6 +465,7 @@ class SereaAppShellTest {
         assertEquals(0f, agendaOffsetAfterDateChange.value(), 1f)
 
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 64"))
+        compose.onNodeWithText("Fictional paged event 64").assertIsDisplayed()
         val workOffsetBeforeCalendarChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("calendar switch test must start below the first Work event", workOffsetBeforeCalendarChange.value() > 0f)
@@ -612,13 +620,18 @@ class SereaAppShellTest {
             select(SereaDestination.SETTINGS)
             compose.onNodeWithTag("destination_title").assertTextContains("設定").assertIsDisplayed()
             compose.onNodeWithText("Provider候補: Ollama Cloud").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("Cloud送信: 無効", substring = true).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("DEMO · Cloud送信: 無効", substring = false).performScrollTo().assertIsDisplayed()
             pressBack()
             compose.onNodeWithTag("tasks_heading").assertIsDisplayed()
             pressBack()
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
 
             select(SereaDestination.GMAIL)
+            val gmailHeadingDisplayed = runCatching { compose.waitUntil(10_000) {
+                runCatching { compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed() }.isSuccess
+            } }.isSuccess
+            if (!gmailHeadingDisplayed) compose.onRoot(useUnmergedTree = true).printToLog("font-scale-gmail-heading")
+            assertTrue("The Gmail heading must remain displayed after returning through Tasks and Settings at font scale 2.0.", gmailHeadingDisplayed)
             compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed()
             compose.onNodeWithTag("gmail_search_input").assertIsDisplayed()
             compose.waitUntil(10_000) {
@@ -645,6 +658,9 @@ class SereaAppShellTest {
             compose.waitUntil(10_000) {
                 runCatching { compose.onNodeWithTag("task_proposal_approve").performScrollTo().assertIsDisplayed() }.isSuccess
             }
+            compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Fake Repository 書き込み回数: 0").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("task_proposal_approve").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("デモをリセット").performScrollTo().assertIsDisplayed().performClick()
             compose.waitUntil(10_000) {
                 runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess

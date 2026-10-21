@@ -115,7 +115,7 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
     val submitSearch = {
         viewModel.submitSearch(state.searchInput)
         keyboardController?.hide()
-        focusManager.clearFocus()
+        focusManager.clearFocus(force = true)
     }
     Column(modifier.fillMaxSize()) {
         Row(
@@ -134,12 +134,14 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
             )
             Button(onClick = { submitSearch() }, modifier = Modifier.testTag("gmail_search_submit")) { Text("検索") }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextButton(onClick = viewModel::showInbox, enabled = route.mode != GmailListMode.INBOX) { Text("受信箱") }
-            if (route.mode == GmailListMode.SEARCH) TextButton(onClick = viewModel::cancelSearch) { Text("検索を取消") }
+        if (route.mode == GmailListMode.SEARCH) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(onClick = viewModel::showInbox) { Text("受信箱") }
+                TextButton(onClick = viewModel::cancelSearch) { Text("検索を取消") }
+            }
         }
         Text(
             if (route.mode == GmailListMode.INBOX) "受信箱" else "検索結果",

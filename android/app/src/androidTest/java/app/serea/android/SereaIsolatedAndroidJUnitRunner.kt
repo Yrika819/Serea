@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.test.runner.AndroidJUnitRunner
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.nio.file.Files
 
 /**
  * Stops instrumentation before any test Activity can start unless the target is a clean,
@@ -20,7 +21,20 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         val apiSupported = Build.VERSION.SDK_INT == 26 || Build.VERSION.SDK_INT == 35
         val preferences = File(dataDir, "shared_prefs")
         val preferencesEmpty = isAbsentOrEmptyDirectory(preferences)
-        val filesEmpty = isAbsentOrEmptyDirectory(target.filesDir)
+        val filesDirectory = target.filesDir
+        val filesDirectoryEntries = filesDirectory.listFiles()?.map { it.name }?.toSet()
+        val filesEmpty = isAbsentOrEmptyDirectory(filesDirectory)
+        // AndroidX ProfileInstaller writes this per-install marker before the
+        // instrumentation runner starts on newer Android releases. It contains
+        // no user data; keep the fail-closed check for every other file.
+        val profileInstallerMarker = File(filesDirectory, PROFILE_INSTALLER_MARKER)
+        val onlyKnownPlatformProfileMarker = filesDirectory.isDirectory &&
+            filesDirectoryEntries == setOf(PROFILE_INSTALLER_MARKER) &&
+            profileInstallerMarker.isFile &&
+            profileInstallerMarker.length() == PROFILE_INSTALLER_MARKER_BYTES &&
+            !Files.isSymbolicLink(profileInstallerMarker.toPath()) &&
+            profileInstallerMarker.canonicalFile.parentFile == filesDirectory.canonicalFile
+        val filesSafe = filesEmpty || onlyKnownPlatformProfileMarker
         val databaseDirectory = File(dataDir, "databases")
         val databasesEmpty = target.databaseList().isEmpty() &&
             isAbsentOrEmptyDirectory(databaseDirectory) &&
@@ -37,9 +51,10 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         }
         check(apiSupported) { "Refusing instrumentation on unsupported API ${Build.VERSION.SDK_INT}." }
         check(emulator) { "Refusing instrumentation on an unverified or physical Android device." }
-        check(preferencesEmpty && filesEmpty && databasesEmpty && campaignMarkerMatches && !claimedMarker.exists()) {
+        check(preferencesEmpty && filesSafe && databasesEmpty && campaignMarkerMatches && !claimedMarker.exists()) {
             "Refusing instrumentation without a fresh isolated namespace and matching CI campaign marker " +
-                "(preferencesEmpty=$preferencesEmpty, filesEmpty=$filesEmpty, databasesEmpty=$databasesEmpty, " +
+                "(preferencesEmpty=$preferencesEmpty, filesEmpty=$filesEmpty, filesDirEntries=${filesDirectoryEntries?.sorted()}, " +
+                "knownProfileInstallerMarker=$onlyKnownPlatformProfileMarker, databasesEmpty=$databasesEmpty, " +
                 "campaignTokenPresent=${campaignToken != null}, markerMatches=$campaignMarkerMatches, " +
                 "noBackupEntries=${noBackupFiles?.sorted()}, claimedMarkerExists=${claimedMarker.exists()})."
         }
@@ -64,5 +79,7 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         const val CAMPAIGN_TOKEN_ARGUMENT = "sereaCampaignToken"
         const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"
         const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"
+        const val PROFILE_INSTALLER_MARKER = "profileinstaller_profileWrittenFor_lastUpdateTime.dat"
+        const val PROFILE_INSTALLER_MARKER_BYTES = 8L
     }
 }

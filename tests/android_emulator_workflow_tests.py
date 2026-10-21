@@ -22,6 +22,11 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             ],
             scripts,
         )
+        self.assertIn('build_checkout_commit=$(git rev-parse HEAD)', workflow)
+        self.assertIn('build_checkout_commit=$GITHUB_SHA', workflow)
+        self.assertIn('base_commit=$BASE_SHA', workflow)
+        self.assertIn('github_run_attempt=$GITHUB_RUN_ATTEMPT', workflow)
+        self.assertIn('based on `codex/pr71-beta-acceptance-final-20261021-v2`', workflow)
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"
         self.assertTrue(script.is_file())
         subprocess.run(["bash", "-n", str(script)], check=True)
@@ -39,6 +44,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             r"android/\*\|[^\n]*tools/run_android_process_death_harness\.sh[^\n]*android_changed=true",
         )
         self.assertIn("tools/prepare_isolated_instrumentation_target.sh", workflow)
+        self.assertIn("Save API 35 failure semantics and safety logcat", workflow)
+        self.assertIn("Save API 26 failure semantics and safety logcat", workflow)
+        self.assertIn("font-scale-gmail-heading", workflow)
+        self.assertIn("chat-draft-gmail-search-timeout", workflow)
+        self.assertLess(
+            workflow.index("Save API 35 failure semantics and safety logcat"),
+            workflow.index("Clear API 35 emulator state before API 26 campaign"),
+        )
         for step_name in (
             "Run API 35 Pixel emulator and all instrumentation tests",
             "Run API 26 Pixel emulator and all instrumentation tests",
@@ -53,6 +66,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('hardware in setOf("ranchu", "goldfish")', runner)
         self.assertIn('campaignMarkerMatches', runner)
         self.assertIn('noBackupFiles == setOf(INSTRUMENTATION_MARKER)', runner)
+        self.assertIn('PROFILE_INSTALLER_MARKER = "profileinstaller_profileWrittenFor_lastUpdateTime.dat"', runner)
+        self.assertIn('filesDirectoryEntries == setOf(PROFILE_INSTALLER_MARKER)', runner)
+        self.assertIn('profileInstallerMarker.isFile', runner)
+        self.assertIn('profileInstallerMarker.length() == PROFILE_INSTALLER_MARKER_BYTES', runner)
+        self.assertIn('!Files.isSymbolicLink(profileInstallerMarker.toPath())', runner)
+        self.assertIn('filesDirEntries=${filesDirectoryEntries?.sorted()}', runner)
         self.assertIn('testBuildType = "isolated"', (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8"))
         self.assertIn("assembleIsolatedAndroidTest", (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8"))
         self.assertIn('marker.renameTo(claimedMarker)', runner)
@@ -75,7 +94,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             if line.startswith("androidx.compose.ui:ui-test-manifest:")
         )
         self.assertEqual(
-            "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedAndroidTestCompileClasspath,isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath",
+            "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedAndroidTestCompileClasspath,isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath,isolatedUnitTestCompileClasspath,isolatedUnitTestRuntimeClasspath",
             manifest_lock,
         )
 
@@ -559,7 +578,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("DEBUG_SENTINEL_AUTHORIZATION", seed)
         self.assertIn("directory.listFiles()?.isEmpty() == true", receiver)
         self.assertIn("isAbsentOrEmptyDirectory(preferences)", runner)
-        self.assertIn("isAbsentOrEmptyDirectory(target.filesDir)", runner)
+        self.assertIn("isAbsentOrEmptyDirectory(filesDirectory)", runner)
+        self.assertIn("filesSafe", runner)
         self.assertIn("isAbsentOrEmptyDirectory(databaseDirectory)", runner)
         self.assertIn('target.getDatabasePath("serea-history.db").exists()', runner)
         self.assertNotIn("listFiles().isNullOrEmpty()", runner)

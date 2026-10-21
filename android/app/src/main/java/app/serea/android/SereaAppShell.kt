@@ -165,7 +165,9 @@ private fun GmailDestination(onBack: () -> Unit) {
 
 @Composable
 private fun CalendarDestination(onBack: () -> Unit) {
-    val provider = androidx.compose.runtime.remember { FakeCalendarProvider() }
+    val provider = androidx.compose.runtime.remember {
+        FakeCalendarProvider(events = FakeCalendarProvider.Fixtures.appShellEvents)
+    }
     val clock = provider.clock
     val displayZone = androidx.compose.runtime.remember { ZoneId.systemDefault() }
     CalendarAgendaScreen(

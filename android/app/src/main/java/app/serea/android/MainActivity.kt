@@ -52,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -647,12 +648,14 @@ internal fun ChatScreen(
     val keystoreProfile = remember(credentials, settingsVisible) {
         if (settingsVisible) runCatching { credentials?.securityProfile() }.getOrNull() ?: "未確認" else "未確認"
     }
+    val configuration = LocalConfiguration.current
+    val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         val screenModifier = Modifier.fillMaxSize().imePadding()
             .then(if (settingsVisible) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-            .padding(16.dp)
-        Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Serea", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+            .padding(if (compactChat) 8.dp else 16.dp)
+        Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(if (compactChat) 4.dp else 12.dp)) {
+            Text("Serea", style = if (compactChat) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                 modifier = Modifier.semantics { heading() })
             if (!settingsDestination) {
                 Button(onClick = {
@@ -660,9 +663,13 @@ internal fun ChatScreen(
                     else context.startActivity(android.content.Intent(context, app.serea.android.tasks.TasksActivity::class.java))
                 }, modifier = Modifier.testTag("open_tasks")) { Text("タスク") }
             }
-            Text("DEMO · Mock会話 · クラウドAI未接続", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-            Text("Cloud未利用 · Provider利用条件/送信対象未承認 · 資格情報: ${if (credentialReady) "端末内に保存済み" else "未設定"} · オフラインでもデモ会話は利用できます。",
-                style = MaterialTheme.typography.bodySmall)
+            Text("DEMO · Mock会話 · クラウドAI未接続", color = MaterialTheme.colorScheme.primary,
+                style = if (compactChat) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge)
+            Text(
+                if (compactChat) "Cloud送信: 無効 · デモ専用" else
+                    "Cloud未利用 · Provider利用条件/送信対象未承認 · 資格情報: ${if (credentialReady) "端末内に保存済み" else "未設定"} · オフラインでもデモ会話は利用できます。",
+                style = MaterialTheme.typography.bodySmall,
+            )
             if (settingsVisible) {
                 Text("モデル選択", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
                 Text("選択設定は端末内に保存されます。現在は検証済みCatalogが空のため、外部モデルは選択できません。デモ会話とCloud無効状態は維持されます。",

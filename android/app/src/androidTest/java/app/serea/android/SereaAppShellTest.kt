@@ -283,7 +283,7 @@ class SereaAppShellTest {
         assertTrue(SemanticsProperties.Heading in compose.onNodeWithText("DEMO / 架空のタスク").fetchSemanticsNode().config)
     }
 
-    @Test fun calendarDetailAndSelectedCalendarSurviveAnotherDestination() {
+    @Test(timeout = 120_000) fun calendarDetailAndSelectedCalendarSurviveAnotherDestination() {
         compose.activityRule.scenario.onActivity { activity ->
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }

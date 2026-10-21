@@ -146,7 +146,7 @@ class FakeCalendarProvider(
             add(timed("demo-global", "evt-apia", "Date-line test", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z", apia))
             // Keep a long fictional list in a second calendar so UI tests can verify that
             // changing the selected calendar resets scroll position without short-list clamping.
-            for (index in 0 until 72) {
+            for (index in 0 until 96) {
                 val start = Instant.parse("2026-10-24T00:00:00Z").plusSeconds(index * 3600L)
                 add(timed("demo-global", "global-bulk-$index", "Fictional global event $index", start.toString(), start.plusSeconds(900).toString(), apia))
             }

@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
@@ -200,6 +201,7 @@ class SereaAppShellTest {
         }
         compose.activityRule.scenario.onActivity { it.shellTaskViewModel.refresh() }
         compose.waitUntil(10_000) { !compose.activity.shellTaskViewModel.state.value.loading }
+        assertEquals(null, compose.activity.shellTaskViewModel.state.value.error)
         assertEquals(tasksBefore, compose.activity.shellTaskViewModel.state.value.tasks)
     }
 
@@ -337,7 +339,13 @@ class SereaAppShellTest {
         // Both query and calendar changes are checked against long lists, avoiding a false pass
         // caused by a short list clamping a stale scroll offset to zero.
         compose.onNodeWithText("指定日").performClick()
+        compose.onNodeWithTag("calendar_date_input").performTextClearance()
         compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-25")
+        assertEquals(
+            "2026-10-25",
+            compose.onNodeWithTag("calendar_date_input").fetchSemanticsNode()
+                .config[SemanticsProperties.EditableText].text,
+        )
         compose.activityRule.scenario.onActivity { activity ->
             val manager = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
                 as android.view.inputmethod.InputMethodManager
@@ -354,6 +362,35 @@ class SereaAppShellTest {
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("date query must retain a scrollable Work agenda", agendaOffsetAfterQueryChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterQueryChange.value(), 1f)
+
+        compose.onNodeWithTag("calendar_agenda_list").performTouchInput { swipeUp() }
+        val workOffsetBeforeDateChange = compose.onNodeWithTag("calendar_agenda_list")
+            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertTrue("date-change test must start below the first Work event", workOffsetBeforeDateChange.value() > 0f)
+
+        compose.onNodeWithTag("calendar_date_input").performTextClearance()
+        compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-26")
+        assertEquals(
+            "2026-10-26",
+            compose.onNodeWithTag("calendar_date_input").fetchSemanticsNode()
+                .config[SemanticsProperties.EditableText].text,
+        )
+        compose.activityRule.scenario.onActivity { activity ->
+            val manager = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as android.view.inputmethod.InputMethodManager
+            manager.hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
+        }
+        compose.waitUntil(10_000) {
+            runCatching {
+                val range = compose.onNodeWithTag("calendar_agenda_list")
+                    .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+                range.maxValue() > 0f && range.value() == 0f
+            }.getOrDefault(false)
+        }
+        val agendaOffsetAfterDateChange = compose.onNodeWithTag("calendar_agenda_list")
+            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertTrue("changing the selected date must keep a scrollable Work agenda", agendaOffsetAfterDateChange.maxValue() > 0f)
+        assertEquals(0f, agendaOffsetAfterDateChange.value(), 1f)
 
         compose.onNodeWithTag("calendar_agenda_list").performTouchInput { swipeUp() }
         val workOffsetBeforeCalendarChange = compose.onNodeWithTag("calendar_agenda_list")

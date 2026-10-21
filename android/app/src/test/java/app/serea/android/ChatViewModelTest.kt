@@ -291,7 +291,7 @@ class ChatViewModelTest {
         val history = BlockingCompleteHistory()
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("known reply")
-        }, historyRepository = history)
+        }, historyRepository = history, initialConversation = Conversation("finalize-safely"))
         vm.updateInput("finish safely")
         vm.sendMessage()
         runCurrent()
@@ -319,7 +319,7 @@ class ChatViewModelTest {
         val history = BlockingCompleteHistory()
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("known reply")
-        }, historyRepository = history)
+        }, historyRepository = history, initialConversation = Conversation("old-conversation"))
         vm.updateInput("finish old conversation")
         vm.sendMessage()
         runCurrent()

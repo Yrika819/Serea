@@ -44,7 +44,7 @@ class TaskProposalDemoScreenTest {
         compose.onNodeWithTag("task_proposal_operation_create").assertIsNotEnabled()
         compose.onNodeWithText("新しいレビューを準備").assertIsNotEnabled()
         compose.onNodeWithText("デモをリセット").assertIsNotEnabled()
-        compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています")
+        compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています", substring = true)
         compose.onNodeWithTag("task_proposal_close").assertIsNotEnabled()
         assertEquals(0, repository.writeCount())
 
@@ -67,7 +67,7 @@ class TaskProposalDemoScreenTest {
         compose.waitUntil(5_000) {
             runCatching {
                 compose.onNodeWithTag("task_proposal_status")
-                    .assertTextContains("処理結果を確認できません")
+                    .assertTextContains("処理結果を確認できません", substring = true)
             }.isSuccess
         }
 

@@ -90,7 +90,13 @@ class ChatScreenTest {
         composer().performTextInput(text)
         compose.waitUntil(30_000) { stateSnapshot().input == text }
         Espresso.closeSoftKeyboard()
-        compose.onNodeWithTag("chat_send").assertIsDisplayed().assertIsEnabled().performClick()
+        val sendButton = compose.onNodeWithText("送信", substring = false)
+        try {
+            sendButton.assertIsDisplayed().assertIsEnabled().performClick()
+        } catch (failure: Throwable) {
+            runCatching { compose.onRoot(useUnmergedTree = true).printToLog("chat-send-action") }
+            throw failure
+        }
         val submitted = runCatching { compose.waitUntil(10_000) {
             stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
         } }.isSuccess

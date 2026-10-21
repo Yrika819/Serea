@@ -32,6 +32,11 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         val profileVerifierApiSupported = Build.VERSION.SDK_INT >= 28 && Build.VERSION.SDK_INT != 30
         val onlyKnownPlatformProfileMarker = profileVerifierApiSupported &&
             ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, packageLastUpdateTime)
+        val profileMarkerRejectionDetails = if (profileVerifierApiSupported && !filesEmpty && !onlyKnownPlatformProfileMarker) {
+            ProfileVerifierCacheMarker.rejectionDetails(filesDirectory, packageLastUpdateTime)
+        } else {
+            "not-applicable"
+        }
         val filesSafe = filesEmpty || onlyKnownPlatformProfileMarker
         val databaseDirectory = File(dataDir, "databases")
         val databasesEmpty = target.databaseList().isEmpty() &&
@@ -53,6 +58,7 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
             "Refusing instrumentation without a fresh isolated namespace and matching CI campaign marker " +
                 "(preferencesEmpty=$preferencesEmpty, filesEmpty=$filesEmpty, filesDirEntries=${filesDirectoryEntries?.sorted()}, " +
                 "knownProfileInstallerMarker=$onlyKnownPlatformProfileMarker, databasesEmpty=$databasesEmpty, " +
+                "knownProfileInstallerMarkerDetails=$profileMarkerRejectionDetails, " +
                 "campaignTokenPresent=${campaignToken != null}, markerMatches=$campaignMarkerMatches, " +
                 "noBackupEntries=${noBackupFiles?.sorted()}, claimedMarkerExists=${claimedMarker.exists()})."
         }

@@ -601,9 +601,10 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             log = Path(temporary) / "logcat.txt"
             summary = Path(temporary) / "summary.txt"
             log.write_text(
-                "10-21 16:00:00.000 I/SereaTestLifecycle( 123): START|1792598400000|a.First#done\n"
-                "10-21 16:00:01.000 I/SereaTestLifecycle( 123): FINISH|1792598401000|a.First#done\n"
-                "10-21 16:00:02.000 I/SereaTestLifecycle( 123): START|1792598402000|a.Second#blocked\n",
+                "10-21 16:00:00.000 123 456 I SereaTestLifecycle: START|1792598400000|a.First#done\n"
+                "10-21 16:00:01.000 123 456 I SereaTestLifecycle: FINISH|1792598401000|a.First#done\n"
+                "10-21 16:00:02.000 123 456 I SereaTestLifecycle: START|1792598402000|a.Second#blocked\n"
+                "10-21 16:00:03.000 123 456 I SereaTestLifecycle: RUN_FINISH|1792598403000|2|0|0\n",
                 encoding="utf-8",
             )
             subprocess.run(
@@ -617,6 +618,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertIn("expected_test_cases=103", contents)
             self.assertIn("tests_not_started=101", contents)
             self.assertIn("tests_started_without_finish=1", contents)
+            self.assertIn("runner_test_count=2", contents)
+            self.assertIn("runner_failure_count=0", contents)
 
 
 if __name__ == "__main__":

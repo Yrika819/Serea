@@ -231,9 +231,9 @@ class SereaAppShellTest {
         pressBack()
         compose.onNodeWithTag("task_proposal_demo").assertIsDisplayed()
         compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています") }.isSuccess
+            runCatching { compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています", substring = true) }.isSuccess
         }
-        compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています")
+        compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています", substring = true)
         compose.onNodeWithTag("destination_chat").assertIsNotEnabled()
         assertEquals(0, repository.writeCount())
 

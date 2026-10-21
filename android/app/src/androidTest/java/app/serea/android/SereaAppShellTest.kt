@@ -107,10 +107,10 @@ class SereaAppShellTest {
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan").assertIsDisplayed()
         compose.onNodeWithText("検索を取消").performClick()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText("受信箱", substring = true).fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("7 件").assertIsDisplayed()
+        compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱")
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
         compose.onNodeWithTag("gmail_search_submit").performClick()
@@ -272,6 +272,8 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("開始・終了").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("説明"))
+        compose.onNodeWithText("説明").assertIsDisplayed()
 
         select(SereaDestination.GMAIL)
         pressBack()
@@ -279,6 +281,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("説明").assertIsDisplayed()
         compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("開始・終了"))
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.onNodeWithText("開始・終了").assertIsDisplayed()

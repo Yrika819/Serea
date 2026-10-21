@@ -510,6 +510,10 @@ class SereaAppShellTest {
         val originalScale = compose.activity.resources.configuration.fontScale
         val originalWidthDp = compose.activity.resources.configuration.screenWidthDp
         val originalDensityDpi = compose.activity.resources.configuration.densityDpi
+        val originalFontScaleSetting = shell("settings get system font_scale")
+        check(originalFontScaleSetting == "null" || originalFontScaleSetting.toFloatOrNull() != null) {
+            "Unable to read the original system font scale setting"
+        }
         val originalSizeOverride = shell("wm size").lineSequence()
             .firstOrNull { it.startsWith("Override size:") }
             ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
@@ -584,7 +588,13 @@ class SereaAppShellTest {
                 runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess
             }
         } finally {
-            runCatching { shell("settings put system font_scale $originalScale") }
+            runCatching {
+                if (originalFontScaleSetting == "null") {
+                    shell("settings delete system font_scale")
+                } else {
+                    shell("settings put system font_scale $originalFontScaleSetting")
+                }
+            }
             runCatching {
                 if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
             }
@@ -597,6 +607,7 @@ class SereaAppShellTest {
             val restoredDensityOverride = shell("wm density").lineSequence()
                 .firstOrNull { it.startsWith("Override density:") }
                 ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+            assertEquals(originalFontScaleSetting, shell("settings get system font_scale"))
             assertEquals(originalSizeOverride, restoredSizeOverride)
             assertEquals(originalDensityOverride, restoredDensityOverride)
             compose.waitUntil(15_000) {

@@ -74,6 +74,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
     def test_process_death_reinstalls_only_isolated_target_after_utp_cleanup(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
         harness = (ROOT / "tools/run_android_process_death_harness.sh").read_text(encoding="utf-8")
+        receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(encoding="utf-8")
+        target_helper = (ROOT / "tools/prepare_isolated_instrumentation_target.sh").read_text(encoding="utf-8")
         reinstall = campaign.index('Instrumentation runner uninstalled the isolated target')
         reseed = campaign.index('prepare_isolated_instrumentation_target.sh', reinstall)
         readiness = campaign.index('process_death_target_ready=false', reseed)
@@ -85,6 +87,20 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertNotIn('pm clear', campaign.lower())
         self.assertNotIn('pm clear', harness.lower())
         self.assertNotIn('pm path "${package}.test"', harness)
+        self.assertIn(' process-death \\', campaign[reinstall:readiness])
+        self.assertIn('"$mode" == process-death', target_helper)
+        self.assertIn('phase == "process-death-seed"', receiver)
+        process_death_seed = receiver.split('if (phase == "process-death-seed") {', 1)[1].split("}", 1)[0]
+        claim = receiver.split('private fun claimInstrumentationMarker(', 1)[1].split('private fun verifyProcessDeathAuthorization(', 1)[0]
+        promote = receiver.split('private fun promoteInstrumentationMarker(', 1)[1].split('private fun claimInstrumentationMarker(', 1)[0]
+        self.assertLess(process_death_seed.index('seedInstrumentationMarker(context, token)'),
+                        process_death_seed.index('claimInstrumentationMarker(context, token)'))
+        self.assertIn('check(!claimedMarker.exists())', claim)
+        self.assertIn('marker.renameTo(claimedMarker)', claim)
+        self.assertIn('CLAIMED_INSTRUMENTATION_MARKER', promote)
+        self.assertIn('marker.renameTo(authorization)', promote)
+        self.assertIn("phase='process-death-seed'", target_helper)
+        self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
 
     def test_sentinel_rejects_stale_pass_and_current_failure_wins(self) -> None:
         script = (ROOT / "tools/run_android_data_sentinel.sh").read_text(encoding="utf-8")
@@ -163,7 +179,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('--es requestId "$request_id"', helper)
         self.assertIn('am broadcast -f 0x20 -n "$receiver"', helper)
         self.assertIn('adb logcat -d -s SereaProcessDeath:V', helper)
-        self.assertIn('PASS:$token:campaign-seed:$request_id', helper)
+        self.assertIn("phase='campaign-seed'", helper)
+        self.assertIn('PASS:$token:$phase:$request_id', helper)
 
     def test_api26_evidence_and_kvm_setup_run_after_api35_image_failure(self) -> None:
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")

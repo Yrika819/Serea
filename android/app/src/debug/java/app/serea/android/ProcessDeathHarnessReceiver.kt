@@ -35,6 +35,12 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
                     return@Thread
                 }
+                if (phase == "process-death-seed") {
+                    seedInstrumentationMarker(context, token)
+                    claimInstrumentationMarker(context, token)
+                    Log.i(TAG, "PASS:$token:$phase:$requestId")
+                    return@Thread
+                }
                 if (phase == "campaign-consume") {
                     promoteInstrumentationMarker(context, token)
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
@@ -91,7 +97,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
     private fun validateTargetPackage(context: Context, phase: String) {
         val expectedPackage = when (phase) {
             "seed-sentinel", "verify-sentinel" -> DEBUG_DEMO_PACKAGE
-            "campaign-seed", "campaign-consume", "prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify" -> ISOLATED_PACKAGE
+            "campaign-seed", "process-death-seed", "campaign-consume", "prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify" -> ISOLATED_PACKAGE
             else -> error("Unknown harness phase")
         }
         check(context.packageName == expectedPackage) {
@@ -192,6 +198,16 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         }
         check(!authorization.exists()) { "Process Death authorization was already used" }
         check(marker.renameTo(authorization)) { "Unable to consume instrumentation marker" }
+    }
+
+    private fun claimInstrumentationMarker(context: Context, token: String) {
+        val marker = File(context.noBackupFilesDir, INSTRUMENTATION_MARKER)
+        val claimedMarker = File(context.noBackupFilesDir, CLAIMED_INSTRUMENTATION_MARKER)
+        check(marker.isFile && marker.readText() == token) {
+            "Missing or mismatched fresh Process Death marker"
+        }
+        check(!claimedMarker.exists()) { "Process Death marker was already claimed" }
+        check(marker.renameTo(claimedMarker)) { "Unable to claim fresh Process Death marker" }
     }
 
     private fun verifyProcessDeathAuthorization(context: Context, token: String) {

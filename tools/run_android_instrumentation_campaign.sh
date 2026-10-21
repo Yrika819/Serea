@@ -172,7 +172,7 @@ if [[ "$sdk_ok" == true ]]; then
     echo "Instrumentation runner uninstalled the isolated target; reinstalling the fresh isolated APK for Process Death."
     if adb install "$isolated_apk" && [[ -s "$isolated_apk" ]]; then
       EXPECTED_API_LEVEL="$api_level" bash "$tool_dir/prepare_isolated_instrumentation_target.sh" \
-        "serea-isolated-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" \
+        "serea-isolated-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" process-death \
         >> "$evidence/data-isolation.log" 2>&1
       reseed_result=$?
     else

@@ -88,8 +88,8 @@ class MainActivity : ComponentActivity() {
     private val history by lazy {
         ConversationRepository(database.historyDao(), KeystoreAesGcm("serea-history-v1"))
     }
-    internal val usageRepository by lazy { UsageRepository(database.usageDao()) }
-    internal val credentialRepository by lazy { CredentialRepository(this) }
+    private val usage by lazy { UsageRepository(database.usageDao()) }
+    private val credentials by lazy { CredentialRepository(this) }
     private val tasksDatabase by lazy { app.serea.android.tasks.TasksDatabase.open(this) }
     private val taskClock: () -> Instant = Instant::now
     private val taskRepository by lazy {
@@ -101,12 +101,12 @@ class MainActivity : ComponentActivity() {
         app.serea.android.tasks.TaskViewModel.factory(taskRepository, taskClock)
     }
     internal val chatViewModel: ChatViewModel by viewModels {
-        ChatViewModel.factory(MockModelChatPort(), history, usageRepository)
+        ChatViewModel.factory(MockModelChatPort(), history, usage)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { SereaTheme { SereaAppShell(chatViewModel, credentialRepository, usageRepository, shellTaskViewModel) } }
+        setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
     }
 }
 
@@ -142,7 +142,6 @@ data class ChatUiState(
     val showingHistory: Boolean = false,
     val history: List<StoredConversation> = emptyList(),
     val errorMessage: String? = null,
-    val historyPersistenceWarnings: Map<String, String> = emptyMap(),
     val statusMessage: String? = null,
     val deleteConfirmation: String = "",
     val deleteTargetId: String = "",
@@ -320,8 +319,10 @@ internal class ChatViewModel(
     fun cancelCurrent() {
         val id = activeMessageId ?: return
         if (id in finalizingMessageIds) return
+        val conversationId = mutableState.value.conversation.id
         activeJob?.cancel()
         mutableState.update { it.copy(isLoading = false, errorMessage = "Request cancelled. A transmitted request may still have completed remotely.") }
+        viewModelScope.launch { historyRepository?.updateStatus(id, conversationId, "OUTCOME_UNKNOWN") }
     }
 
     fun newConversation() {
@@ -365,32 +366,14 @@ internal class ChatViewModel(
                 val saved = historyRepository?.get(id) ?: return@launch
                 if (generation != selectionGeneration) return@launch
                 persistedConversationIds += saved.id
-                val persistenceWarningUpdates = mutableMapOf<String, String?>()
                 val messages = saved.messages.map { message ->
                     if (message.status == "PENDING") {
-                        val statusPersisted = tryPersistUnknownStatus(message.id, saved.id)
-                        persistenceWarningUpdates[message.id] = if (statusPersisted) null else
-                            "The saved history status for this message could not be updated; reopen history to reconcile."
+                        historyRepository?.updateStatus(message.id, saved.id, "OUTCOME_UNKNOWN")
                         message.copy(status = "OUTCOME_UNKNOWN").toChatMessage()
-                    } else {
-                        persistenceWarningUpdates[message.id] = null
-                        message.toChatMessage()
-                    }
+                    } else message.toChatMessage()
                 }
                 if (generation != selectionGeneration) return@launch
-                mutableState.update {
-                    val warnings = it.historyPersistenceWarnings.toMutableMap()
-                    persistenceWarningUpdates.forEach { (messageId, warning) ->
-                        if (warning == null) warnings.remove(messageId) else warnings[messageId] = warning
-                    }
-                    it.copy(
-                        conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)),
-                        showingHistory = false, isLoading = false, isFinalizing = false,
-                        historyPersistenceWarnings = warnings,
-                    )
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
+                mutableState.update { it.copy(conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)), showingHistory = false, isLoading = false, isFinalizing = false) }
             } catch (_: HistoryUnavailableException) {
                 if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
             } catch (_: Exception) {
@@ -461,31 +444,13 @@ internal class ChatViewModel(
                     // Keep the new empty conversation in memory until its first message is sent.
                 } else {
                     persistedConversationIds += latest.id
-                    val persistenceWarningUpdates = mutableMapOf<String, String?>()
                     val messages = latest.messages.map { message ->
-                        if (message.status == "PENDING") {
-                            val statusPersisted = tryPersistUnknownStatus(message.id, latest.id)
-                            persistenceWarningUpdates[message.id] = if (statusPersisted) null else
-                                "The saved history status for this message could not be updated; reopen history to reconcile."
-                        } else {
-                            persistenceWarningUpdates[message.id] = null
-                        }
+                        if (message.status == "PENDING") historyRepository.updateStatus(message.id, latest.id, "OUTCOME_UNKNOWN")
                         message.copy(status = if (message.status == "PENDING") "OUTCOME_UNKNOWN" else message.status).toChatMessage()
                     }
                     if (generation != selectionGeneration) return@launch
-                    mutableState.update {
-                        val warnings = it.historyPersistenceWarnings.toMutableMap()
-                        persistenceWarningUpdates.forEach { (messageId, warning) ->
-                            if (warning == null) warnings.remove(messageId) else warnings[messageId] = warning
-                        }
-                        it.copy(
-                            conversation = Conversation(latest.id, messages, Instant.ofEpochMilli(latest.createdAt)),
-                            historyPersistenceWarnings = warnings,
-                        )
-                    }
+                    mutableState.update { it.copy(conversation = Conversation(latest.id, messages, Instant.ofEpochMilli(latest.createdAt))) }
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
             } catch (_: HistoryUnavailableException) {
                 if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
             } catch (_: Exception) {
@@ -499,38 +464,22 @@ internal class ChatViewModel(
     private suspend fun persist(message: ChatMessage, conversationId: String) {
         historyRepository?.addMessage(message.toStoredMessage(conversationId))
     }
-    private suspend fun tryPersistUnknownStatus(messageId: String, conversationId: String): Boolean = try {
-        historyRepository?.updateStatus(messageId, conversationId, "OUTCOME_UNKNOWN") ?: true
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (_: Exception) {
-        false
-    }
     private fun nextMessageTime(conversation: Conversation): Instant = maxOf(
         Instant.now(), (conversation.messages.maxOfOrNull { it.createdAt } ?: Instant.EPOCH).plusMillis(1),
     )
     private suspend fun markUnknown(message: ChatMessage, conversationId: String, reason: String) {
-        withContext(NonCancellable) {
-            val statusPersisted = tryPersistUnknownStatus(message.id, conversationId)
-            val persistenceWarning = if (statusPersisted) null else
-                "The saved history status for this message could not be updated; reopen history to reconcile."
-            mutableState.update { current ->
-                val warnings = current.historyPersistenceWarnings.toMutableMap().apply {
-                    if (persistenceWarning == null) remove(message.id) else put(message.id, persistenceWarning)
-                }
-                if (current.conversation.id != conversationId) {
-                    if (warnings == current.historyPersistenceWarnings) current else current.copy(historyPersistenceWarnings = warnings)
-                } else {
-                    val ownsActiveRequest = activeMessageId == message.id
-                    current.copy(
-                        isLoading = if (ownsActiveRequest) false else current.isLoading,
-                        isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
-                        conversation = current.conversation.copy(messages = current.conversation.messages
-                            .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
-                        errorMessage = if (ownsActiveRequest && statusPersisted) reason else current.errorMessage,
-                        historyPersistenceWarnings = warnings,
-                    )
-                }
+        historyRepository?.updateStatus(message.id, conversationId, "OUTCOME_UNKNOWN")
+        mutableState.update { current ->
+            if (current.conversation.id != conversationId) current
+            else {
+                val ownsActiveRequest = activeMessageId == message.id
+                current.copy(
+                    isLoading = if (ownsActiveRequest) false else current.isLoading,
+                    isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                    conversation = current.conversation.copy(messages = current.conversation.messages
+                        .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
+                    errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
+                )
             }
         }
     }
@@ -544,45 +493,19 @@ internal class ChatViewModel(
         }
     }
     private suspend fun markFailed(message: ChatMessage, conversationId: String, reason: String = "Demo response failed. Please try again.") {
-        val ownsActiveRequest = activeMessageId == message.id && mutableState.value.conversation.id == conversationId
-        if (ownsActiveRequest) {
-            finalizingMessageIds += message.id
-            mutableState.update { current ->
-                if (current.conversation.id == conversationId && activeMessageId == message.id) {
-                    current.copy(isFinalizing = true)
-                } else current
+        historyRepository?.updateStatus(message.id, conversationId, "FAILED")
+        mutableState.update { current ->
+            if (current.conversation.id != conversationId) current
+            else {
+                val ownsActiveRequest = activeMessageId == message.id
+                current.copy(
+                    isLoading = if (ownsActiveRequest) false else current.isLoading,
+                    isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                    conversation = current.conversation.copy(messages = current.conversation.messages
+                        .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
+                    errorMessage = if (ownsActiveRequest) reason else current.errorMessage,
+                )
             }
-        }
-        try {
-            withContext(NonCancellable) {
-                val statusPersisted = try {
-                    historyRepository?.updateStatus(message.id, conversationId, "FAILED") ?: true
-                } catch (_: Exception) {
-                    false
-                }
-                val persistenceWarning = if (statusPersisted) null else
-                    "The failure status for this message could not be saved; reopen history to check the saved record."
-                mutableState.update { current ->
-                    val warnings = current.historyPersistenceWarnings.toMutableMap().apply {
-                        if (persistenceWarning == null) remove(message.id) else put(message.id, persistenceWarning)
-                    }
-                    if (current.conversation.id != conversationId) {
-                        if (warnings == current.historyPersistenceWarnings) current else current.copy(historyPersistenceWarnings = warnings)
-                    } else {
-                        val stillOwnsActiveRequest = activeMessageId == message.id
-                        current.copy(
-                            isLoading = if (stillOwnsActiveRequest) false else current.isLoading,
-                            isFinalizing = if (stillOwnsActiveRequest) false else current.isFinalizing,
-                            conversation = current.conversation.copy(messages = current.conversation.messages
-                                .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
-                            errorMessage = if (stillOwnsActiveRequest) reason else current.errorMessage,
-                            historyPersistenceWarnings = warnings,
-                        )
-                    }
-                }
-            }
-        } finally {
-            if (ownsActiveRequest) finalizingMessageIds -= message.id
         }
     }
     private fun refreshHistory() {
@@ -732,21 +655,25 @@ internal fun ChatScreen(
             .then(if (settingsVisible) Modifier.verticalScroll(rememberScrollState()) else Modifier)
             .padding(if (compactChat) 8.dp else 16.dp)
         Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(if (compactChat) 4.dp else 12.dp)) {
-            Text("Serea", style = if (compactChat) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+            Text("Serea", style = if (compactChat) MaterialTheme.typography.labelLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                 modifier = Modifier.semantics { heading() })
-            if (!settingsDestination) {
+            if (!settingsDestination && (!compactChat || onOpenTasks == null)) {
                 Button(onClick = {
                     if (onOpenTasks != null) onOpenTasks()
                     else context.startActivity(android.content.Intent(context, app.serea.android.tasks.TasksActivity::class.java))
                 }, modifier = Modifier.testTag("open_tasks")) { Text("タスク") }
             }
-            Text("DEMO · Mock会話 · クラウドAI未接続", color = MaterialTheme.colorScheme.primary,
-                style = if (compactChat) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge)
-            Text(
-                if (compactChat) "Cloud送信: 無効 · デモ専用" else
+            if (compactChat) {
+                Text("DEMO · Cloud送信: 無効", color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            } else {
+                Text("DEMO · Mock会話 · クラウドAI未接続", color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge)
+                Text(
                     "Cloud未利用 · Provider利用条件/送信対象未承認 · 資格情報: ${if (credentialReady) "端末内に保存済み" else "未設定"} · オフラインでもデモ会話は利用できます。",
-                style = MaterialTheme.typography.bodySmall,
-            )
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             if (settingsVisible) {
                 Text("モデル選択", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
                 Text("選択設定は端末内に保存されます。現在は検証済みCatalogが空のため、外部モデルは選択できません。デモ会話とCloud無効状態は維持されます。",
@@ -955,11 +882,12 @@ internal fun ChatScreen(
                     if (state.history.isEmpty()) item { Text("履歴はありません。") }
                 }
             } else {
-                Text("会話: ${conversationDisplayTitle(state.conversation)}", style = MaterialTheme.typography.titleSmall,
+                if (!compactChat) Text("会話: ${conversationDisplayTitle(state.conversation)}", style = MaterialTheme.typography.titleSmall,
                     maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (state.conversation.messages.isEmpty()) {
-                    Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else "端末内の暗号化履歴に保存されるデモ会話です。Cloud送信は無効です。",
-                        style = MaterialTheme.typography.bodyLarge)
+                    Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else
+                        if (compactChat) "端末内のデモ会話 · Cloud送信なし" else "端末内の暗号化履歴に保存されるデモ会話です。Cloud送信は無効です。",
+                        style = if (compactChat) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge)
                 }
                 LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().testTag("conversation-list"), state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -983,25 +911,18 @@ internal fun ChatScreen(
             }
             state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }) }
-            state.conversation.messages.forEachIndexed { index, message ->
-                state.historyPersistenceWarnings[message.id]?.let { warning ->
-                    Text("Message ${index + 1}: $warning", color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
-                }
-            }
             if (!settingsDestination) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
                         modifier = Modifier.weight(1f).testTag("chat-composer"), label = { Text("メッセージ") },
                         enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
-                        maxLines = 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                        supportingText = { Text("デモ専用。Cloudへは送信されません。") })
+                        supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                         enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,
-                        modifier = Modifier.padding(top = 8.dp).testTag("chat_send")) { Text("送信") }
+                        modifier = Modifier.padding(top = 8.dp)) { Text("送信") }
                 }
             }
             if (state.deleteConfirmation == "current") {

@@ -158,10 +158,10 @@ class FakeCalendarProvider(
             }
         }
 
-        /** Bounded app-shell fixture remains multi-page without forcing the screen demo to render 245 rows. */
+        /** Bounded app-shell fixture crosses two pages without rendering a test-only 245-row demo. */
         val appShellEvents: List<CalendarEvent> = events.filter { event ->
             val index = event.key.eventId.value.removePrefix("bulk-").toIntOrNull()
-            index == null || index < 121
+            index == null || index < 72
         }
     }
 }

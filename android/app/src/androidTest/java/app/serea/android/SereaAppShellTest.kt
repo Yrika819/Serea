@@ -23,7 +23,6 @@ import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
@@ -43,6 +42,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.time.Instant
+import java.time.ZoneId
 
 @RunWith(AndroidJUnit4::class)
 class SereaAppShellTest {
@@ -362,13 +363,13 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 120"))
+        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 50"))
         val agendaOffsetBeforeDetail = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("Calendar agenda must have several scroll positions", agendaOffsetBeforeDetail.maxValue() > 0f)
         assertTrue("The long agenda test must begin below its first event", agendaOffsetBeforeDetail.value() > 0f)
-        compose.onNodeWithText("Fictional paged event 120").performClick()
-        compose.onNodeWithText("Fictional paged event 120").assertIsDisplayed()
+        compose.onNodeWithText("Fictional paged event 50").performClick()
+        compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
         pressBack()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
@@ -398,9 +399,12 @@ class SereaAppShellTest {
         // caused by a short list clamping a stale scroll offset to zero.
         compose.onNodeWithText("指定日").performClick()
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
-        compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-25")
+        val displayZone = ZoneId.systemDefault()
+        val firstBulkDate = Instant.parse("2026-10-22T16:00:00Z").atZone(displayZone).toLocalDate().toString()
+        val secondBulkDate = Instant.parse("2026-10-23T16:00:00Z").atZone(displayZone).toLocalDate().toString()
+        compose.onNodeWithTag("calendar_date_input").performTextInput(firstBulkDate)
         assertEquals(
-            "2026-10-25",
+            firstBulkDate,
             compose.onNodeWithTag("calendar_date_input").fetchSemanticsNode()
                 .config[SemanticsProperties.EditableText].text,
         )
@@ -421,15 +425,15 @@ class SereaAppShellTest {
         assertTrue("date query must retain a scrollable Work agenda", agendaOffsetAfterQueryChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterQueryChange.value(), 1f)
 
-        compose.onNodeWithTag("calendar_agenda_list").performTouchInput { swipeUp() }
+        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 40"))
         val workOffsetBeforeDateChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("date-change test must start below the first Work event", workOffsetBeforeDateChange.value() > 0f)
 
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
-        compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-26")
+        compose.onNodeWithTag("calendar_date_input").performTextInput(secondBulkDate)
         assertEquals(
-            "2026-10-26",
+            secondBulkDate,
             compose.onNodeWithTag("calendar_date_input").fetchSemanticsNode()
                 .config[SemanticsProperties.EditableText].text,
         )
@@ -450,10 +454,11 @@ class SereaAppShellTest {
         assertTrue("changing the selected date must keep a scrollable Work agenda", agendaOffsetAfterDateChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterDateChange.value(), 1f)
 
-        compose.onNodeWithTag("calendar_agenda_list").performTouchInput { swipeUp() }
+        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 64"))
         val workOffsetBeforeCalendarChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("calendar switch test must start below the first Work event", workOffsetBeforeCalendarChange.value() > 0f)
+        compose.onNodeWithText("今後").performClick()
         compose.onNodeWithText("Demo Global").performClick()
         compose.waitUntil(10_000) {
             runCatching {
@@ -466,7 +471,6 @@ class SereaAppShellTest {
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("Demo Global must also provide a long agenda for reset verification", agendaOffsetAfterCalendarChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterCalendarChange.value(), 1f)
-        compose.onNodeWithText("今後").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
         }

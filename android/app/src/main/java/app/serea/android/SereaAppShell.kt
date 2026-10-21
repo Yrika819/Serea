@@ -44,14 +44,6 @@ internal fun SereaAppShell(
     credentials: CredentialRepository,
     usage: UsageRepository,
     taskViewModel: TaskViewModel,
-    taskProposalDemoContent: @Composable (Modifier, (() -> Unit)?, (Boolean) -> Unit) -> Unit =
-        { modifier, onClose, onActionPendingChanged ->
-            TaskProposalDemoScreen(
-                modifier = modifier,
-                onClose = onClose,
-                onActionPendingChanged = onActionPendingChanged,
-            )
-        },
 ) {
     var destinationName by rememberSaveable { mutableStateOf(SereaDestination.CHAT.name) }
     var backStackNames by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -152,10 +144,11 @@ internal fun SereaAppShell(
                             settingsDestination = true,
                             onSettingsClosed = ::goBack,
                         )
-                        SereaDestination.TASK_PROPOSAL_DEMO -> taskProposalDemoContent(
-                            Modifier.fillMaxSize().testTag("task_proposal_demo"),
-                            ::goBack,
-                        ) { pending -> taskProposalActionPending = pending }
+                        SereaDestination.TASK_PROPOSAL_DEMO -> TaskProposalDemoScreen(
+                            onClose = ::goBack,
+                            onActionPendingChanged = { taskProposalActionPending = it },
+                            modifier = Modifier.fillMaxSize().testTag("task_proposal_demo"),
+                        )
                     }
                 }
             }
@@ -173,7 +166,7 @@ private fun GmailDestination(onBack: () -> Unit) {
 @Composable
 private fun CalendarDestination(onBack: () -> Unit) {
     val provider = androidx.compose.runtime.remember {
-        FakeCalendarProvider(events = FakeCalendarProvider.Fixtures.appShellEvents)
+        FakeCalendarProvider(events = FakeCalendarProvider.Fixtures.appShellEvents, pageSize = 50)
     }
     val clock = provider.clock
     val displayZone = androidx.compose.runtime.remember { ZoneId.systemDefault() }

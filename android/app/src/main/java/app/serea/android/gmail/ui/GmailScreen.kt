@@ -192,7 +192,7 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
 
 @Composable
 private fun GmailMessageRow(message: GmailMessage, onClick: () -> Unit) {
-    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth().testTag("gmail_message_subject")) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
                 Text(
@@ -210,7 +210,6 @@ private fun GmailMessageRow(message: GmailMessage, onClick: () -> Unit) {
                 fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("gmail_message_subject"),
             )
             Text(
                 message.snippet.orEmpty().ifBlank { "本文プレビューはありません" },

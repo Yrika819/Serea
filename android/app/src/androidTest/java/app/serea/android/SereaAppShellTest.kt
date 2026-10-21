@@ -522,6 +522,22 @@ class SereaAppShellTest {
                     .assertIsDisplayed()
                     .assertTextContains(contract.title)
             }
+            compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+
+            select(SereaDestination.TASKS)
+            compose.waitUntil(10_000) { !compose.activity.shellTaskViewModel.state.value.loading }
+            compose.onNodeWithTag("tasks_heading").assertIsDisplayed()
+            compose.onNodeWithTag("task_add").assertIsDisplayed()
+
+            select(SereaDestination.SETTINGS)
+            compose.onNodeWithTag("destination_title").assertTextContains("設定").assertIsDisplayed()
+            compose.onNodeWithText("Provider候補: Ollama Cloud").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Cloud送信: 無効", substring = true).performScrollTo().assertIsDisplayed()
+            pressBack()
+            compose.onNodeWithTag("tasks_heading").assertIsDisplayed()
+            pressBack()
+            compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+
             select(SereaDestination.GMAIL)
             compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed()
             compose.onNodeWithTag("gmail_search_input").assertIsDisplayed()

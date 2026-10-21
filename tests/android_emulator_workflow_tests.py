@@ -425,6 +425,26 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             )
 
             calls.write_text("", encoding="utf-8")
+            environment["ADB_PACKAGE_INVENTORY"] = "Error: package service unavailable\n"
+            malformed_inventory = subprocess.run(
+                ["bash", str(script), "35"],
+                cwd=android,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(0, malformed_inventory.returncode)
+            malformed_calls = calls.read_text(encoding="utf-8")
+            self.assertIn("shell pm list packages -u --user all", malformed_calls)
+            self.assertNotIn("install ", malformed_calls)
+            self.assertNotIn("shell pm path", malformed_calls)
+            self.assertIn(
+                "empty or malformed",
+                (evidence / "data-isolation-error.txt").read_text(encoding="utf-8"),
+            )
+
+            calls.write_text("", encoding="utf-8")
             environment["ADB_PACKAGE_INVENTORY"] = ""
             environment["ADB_PACKAGE_EXIT_STATUS"] = "1"
             failed_inventory = subprocess.run(

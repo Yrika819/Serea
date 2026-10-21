@@ -603,12 +603,10 @@ class SereaAppShellTest {
                 var width = 0
                 var densityDpi = 0
                 var fontScale = 0f
-                var densityDpi = 0
                 compose.activityRule.scenario.onActivity {
                     width = it.resources.configuration.screenWidthDp
                     densityDpi = it.resources.configuration.densityDpi
                     fontScale = it.resources.configuration.fontScale
-                    densityDpi = it.resources.configuration.densityDpi
                 }
                 width == originalWidthDp && densityDpi == originalDensityDpi &&
                     kotlin.math.abs(fontScale - originalScale) < 0.02f

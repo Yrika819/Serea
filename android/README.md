@@ -35,7 +35,7 @@ and ADR-0045 remain proposed and await Owner review.
 The `Android Emulator Required Gate` runs the isolated instrumentation suite on
 API 35 and API 26, in addition to Android build, JVM, lint, security, and
 dependency checks. It compiles the Debug and Release APKs, plus the isolated
-instrumentation APK, and requires exactly 102 source/JUnit test cases across 15
+instrumentation APK, and requires exactly 103 source/JUnit test cases across 15
 classes with zero failures, errors, or skips on each emulator. The process-death
 harness verifies encrypted history, the Usage Ledger `OUTCOME_UNKNOWN` state,
 Delete All, and a separate `.demo` history/preferences sentinel on both APIs.

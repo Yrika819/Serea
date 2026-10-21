@@ -44,6 +44,14 @@ internal fun SereaAppShell(
     credentials: CredentialRepository,
     usage: UsageRepository,
     taskViewModel: TaskViewModel,
+    taskProposalDemoContent: @Composable (Modifier, (() -> Unit)?, (Boolean) -> Unit) -> Unit =
+        { modifier, onClose, onActionPendingChanged ->
+            TaskProposalDemoScreen(
+                modifier = modifier,
+                onClose = onClose,
+                onActionPendingChanged = onActionPendingChanged,
+            )
+        },
 ) {
     var destinationName by rememberSaveable { mutableStateOf(SereaDestination.CHAT.name) }
     var backStackNames by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -144,11 +152,10 @@ internal fun SereaAppShell(
                             settingsDestination = true,
                             onSettingsClosed = ::goBack,
                         )
-                        SereaDestination.TASK_PROPOSAL_DEMO -> TaskProposalDemoScreen(
-                            onClose = ::goBack,
-                            onActionPendingChanged = { taskProposalActionPending = it },
-                            modifier = Modifier.fillMaxSize().testTag("task_proposal_demo"),
-                        )
+                        SereaDestination.TASK_PROPOSAL_DEMO -> taskProposalDemoContent(
+                            Modifier.fillMaxSize().testTag("task_proposal_demo"),
+                            ::goBack,
+                        ) { pending -> taskProposalActionPending = pending }
                     }
                 }
             }

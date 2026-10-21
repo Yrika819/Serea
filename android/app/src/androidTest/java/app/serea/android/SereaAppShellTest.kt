@@ -3,10 +3,12 @@ package app.serea.android
 import android.content.pm.ActivityInfo
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
+import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertIsEnabled
@@ -32,6 +34,9 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
+import app.serea.android.assistant.taskproposal.TaskProposalDemoScreenForTest
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -189,6 +194,54 @@ class SereaAppShellTest {
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("chat-composer").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+    }
+
+    @Test fun taskProposalApprovalBlocksBackAndNavigationUntilResultIsKnown() {
+        val repository = DemoTaskProposalRepository()
+        val mutationStarted = CompletableDeferred<Unit>()
+        val allowMutation = CompletableDeferred<Unit>()
+        repository.beforeMutation = {
+            mutationStarted.complete(Unit)
+            allowMutation.await()
+        }
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.setContent {
+                SereaTheme {
+                    SereaAppShell(
+                        chatViewModel = activity.chatViewModel,
+                        credentials = activity.credentialRepository,
+                        usage = activity.usageRepository,
+                        taskViewModel = activity.shellTaskViewModel,
+                        taskProposalDemoContent = { modifier, onClose, onPendingChanged ->
+                            TaskProposalDemoScreenForTest(repository, modifier, onClose, onPendingChanged)
+                        },
+                    )
+                }
+            }
+        }
+        select(SereaDestination.TASK_PROPOSAL_DEMO)
+        compose.onNodeWithTag("task_proposal_approve").performScrollTo().performClick()
+        compose.waitUntil(5_000) { mutationStarted.isCompleted }
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("destination_chat").assertIsNotEnabled() }.isSuccess
+        }
+
+        pressBack()
+        compose.onNodeWithTag("task_proposal_demo").assertIsDisplayed()
+        compose.onNodeWithTag("task_proposal_status").assertTextContains("処理しています")
+        compose.onNodeWithTag("destination_chat").assertIsNotEnabled()
+        assertEquals(0, repository.writeCount())
+
+        allowMutation.complete(Unit)
+        compose.waitUntil(5_000) { repository.writeCount() == 1 }
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("task_proposal_status").assertTextContains("承認済み") }.isSuccess
+        }
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("destination_chat").assertIsEnabled() }.isSuccess
+        }
+        pressBack()
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
     }
 

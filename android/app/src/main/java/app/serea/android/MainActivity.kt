@@ -87,8 +87,8 @@ class MainActivity : ComponentActivity() {
     private val history by lazy {
         ConversationRepository(database.historyDao(), KeystoreAesGcm("serea-history-v1"))
     }
-    private val usage by lazy { UsageRepository(database.usageDao()) }
-    private val credentials by lazy { CredentialRepository(this) }
+    internal val usageRepository by lazy { UsageRepository(database.usageDao()) }
+    internal val credentialRepository by lazy { CredentialRepository(this) }
     private val tasksDatabase by lazy { app.serea.android.tasks.TasksDatabase.open(this) }
     private val taskClock: () -> Instant = Instant::now
     private val taskRepository by lazy {
@@ -100,12 +100,12 @@ class MainActivity : ComponentActivity() {
         app.serea.android.tasks.TaskViewModel.factory(taskRepository, taskClock)
     }
     internal val chatViewModel: ChatViewModel by viewModels {
-        ChatViewModel.factory(MockModelChatPort(), history, usage)
+        ChatViewModel.factory(MockModelChatPort(), history, usageRepository)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
+        setContent { SereaTheme { SereaAppShell(chatViewModel, credentialRepository, usageRepository, shellTaskViewModel) } }
     }
 }
 

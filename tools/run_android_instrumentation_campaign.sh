@@ -165,7 +165,7 @@ if [[ "$sdk_ok" == true ]]; then
 
   if [[ -d "$evidence/junit" ]]; then
     python3 "$tool_dir/verify_android_instrumentation.py" "$evidence/junit" \
-      --source-root app/src/androidTest/java --minimum 102 \
+      --source-root app/src/androidTest/java --minimum 103 \
       --require-class app.serea.android.EncryptedHistoryTest=17 \
       --require-class app.serea.android.ChatScreenTest=16 \
       --require-class app.serea.android.ChatHttpE2ETest=4 \
@@ -177,7 +177,7 @@ if [[ "$sdk_ok" == true ]]; then
       --require-class app.serea.android.ChatHistoryUxTest=4 \
       --require-class app.serea.android.tasks.TaskDateTimePickerTest=6 \
       --require-class app.serea.android.assistant.taskproposal.TaskProposalReviewScreenTest=2 \
-      --require-class app.serea.android.SereaAppShellTest=18 \
+      --require-class app.serea.android.SereaAppShellTest=19 \
       --require-class app.serea.android.assistant.taskproposal.TaskProposalDemoScreenTest=3 \
       --require-class app.serea.android.SereaThemeTest=2 \
       --require-class app.serea.android.MockUiStateIntegrationTest=4 \

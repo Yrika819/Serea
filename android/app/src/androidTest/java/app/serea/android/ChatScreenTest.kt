@@ -149,9 +149,11 @@ class ChatScreenTest {
         compose.onNodeWithTag("conversation-list").performScrollToIndex(restoredUserIndex)
         compose.onNodeWithText("rotation-check").assertIsDisplayed()
         compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
-        val restoredResponse = compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true))
-        compose.waitUntil(5_000) { restoredResponse.fetchSemanticsNodes().isNotEmpty() }
-        restoredResponse.assertCountEquals(1)
+        assertDisplayedWithEvidence("chat-restored-conversation") {
+            val restoredResponse = compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true))
+            compose.waitUntil(5_000) { restoredResponse.fetchSemanticsNodes().isNotEmpty() }
+            restoredResponse.assertCountEquals(1)
+        }
     }
 
     @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
@@ -270,7 +272,9 @@ class ChatScreenTest {
         val deletedId = stateSnapshot().conversation.id
         openOverflow()
         compose.onNodeWithText("この会話を削除").performClick()
-        compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        assertDisplayedWithEvidence("chat-current-delete-confirmation") {
+            compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        }
         compose.onNodeWithText("対象: delete this conversation", substring = false).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("この会話を削除").performClick()
         compose.waitUntil(30_000) { !stateSnapshot().isRestoring && stateSnapshot().conversation.id != deletedId }

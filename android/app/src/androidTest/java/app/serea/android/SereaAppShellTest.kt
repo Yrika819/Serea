@@ -665,6 +665,9 @@ class SereaAppShellTest {
             compose.waitUntil(10_000) {
                 runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess
             }
+        } catch (failure: Throwable) {
+            compose.onRoot(useUnmergedTree = true).printToLog("task-proposal-font-scale")
+            throw failure
         } finally {
             runCatching {
                 if (originalFontScaleSetting == "null") {

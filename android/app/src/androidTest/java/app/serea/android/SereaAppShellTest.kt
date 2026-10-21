@@ -22,6 +22,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
@@ -340,7 +341,9 @@ class SereaAppShellTest {
         // Both query and calendar changes are checked against long lists, avoiding a false pass
         // caused by a short list clamping a stale scroll offset to zero.
         compose.onNodeWithText("指定日").performClick()
-        compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-25")
+        compose.onNodeWithTag("calendar_date_input")
+            .performTextClearance()
+            .performTextInput("2026-10-25")
         compose.activityRule.scenario.onActivity { activity ->
             val manager = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
                 as android.view.inputmethod.InputMethodManager

@@ -100,7 +100,8 @@ class SereaAppShellTest {
         compose.onNodeWithText("7 件").assertIsDisplayed()
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        compose.onNodeWithTag("gmail_search_submit").performClick()
+        compose.onNodeWithTag("gmail_search_input").performImeAction()
+        compose.onNodeWithTag("gmail_list_heading").assertTextContains("検索結果")
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
         }
@@ -115,7 +116,8 @@ class SereaAppShellTest {
         compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱")
         compose.onNodeWithTag("gmail_search_input").performTextInput("Garden plan")
         compose.onNodeWithTag("gmail_search_input").assertTextContains("Garden plan")
-        compose.onNodeWithTag("gmail_search_submit").performClick()
+        compose.onNodeWithTag("gmail_search_input").performImeAction()
+        compose.onNodeWithTag("gmail_list_heading").assertTextContains("検索結果")
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("gmail_message_subject").fetchSemanticsNodes().size == 1
         }
@@ -136,6 +138,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
         compose.onNodeWithText("Date-line test").performClick()
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
         pressBack() // Event detail -> agenda.
@@ -277,6 +280,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
         compose.onNodeWithText("Date-line test").performClick()
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.waitUntil(10_000) {
@@ -360,6 +364,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
         compose.onNodeWithText("Date-line test").performClick()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("Date-line test").assertIsDisplayed()

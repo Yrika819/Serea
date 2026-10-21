@@ -335,7 +335,10 @@ private fun AgendaContent(
     displayZone: ZoneId,
     onEvent: (CalendarEvent) -> Unit,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().testTag("calendar_agenda_list"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         item {
             Text(
                 CalendarAgendaJapaneseText.agendaHeading(state.query, clock, displayZone),

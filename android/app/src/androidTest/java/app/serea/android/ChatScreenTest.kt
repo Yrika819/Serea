@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performImeAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
@@ -77,7 +78,7 @@ class ChatScreenTest {
     private fun send(text: String) {
         composer().performTextInput(text)
         compose.waitUntil(30_000) { stateSnapshot().input == text }
-        compose.onNodeWithText("送信").assertIsEnabled().performClick()
+        composer().performImeAction()
         compose.waitUntil(30_000) {
             stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
         }

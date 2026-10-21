@@ -578,7 +578,7 @@ class SereaAppShellTest {
             select(SereaDestination.SETTINGS)
             compose.onNodeWithTag("destination_title").assertTextContains("設定").assertIsDisplayed()
             compose.onNodeWithText("Provider候補: Ollama Cloud").performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("[DEMO · Cloud送信: 無効]", substring = false).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("DEMO · Cloud送信: 無効", substring = false).performScrollTo().assertIsDisplayed()
             pressBack()
             compose.onNodeWithTag("tasks_heading").assertIsDisplayed()
             pressBack()

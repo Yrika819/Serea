@@ -75,7 +75,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             if line.startswith("androidx.compose.ui:ui-test-manifest:")
         )
         self.assertEqual(
-            "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath",
+            "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedAndroidTestCompileClasspath,isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath",
             manifest_lock,
         )
 

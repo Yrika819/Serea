@@ -49,7 +49,7 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py) android_changed=true ;;
+              android/*|.github/workflows/android.yml|.github/workflows/android-personal-beta.yml|.github/workflows/android-personal-beta-contract-tests.yml|tools/verify_android_instrumentation.py|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_api35_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tools/test_personal_beta_identity.sh|tools/verify_personal_beta_apk.sh|tools/android_firebase_distribution.py|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py|tests/android_firebase_distribution_tests.py) android_changed=true ;;
             esac
           done <<< "$changed"
           echo "android=$android_changed" >> "$GITHUB_OUTPUT"
@@ -67,6 +67,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test Android update emulator guard with Mock ADB
+        run: bash tools/test_android_update_compatibility_guard.sh
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -79,7 +81,7 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug, release, and instrumentation APKs
         working-directory: android
-        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleIsolated assembleIsolatedAndroidTest
+        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleIsolated assembleIsolatedAndroidTest :app:compileBetaKotlin
       - name: Android lint
         working-directory: android
         run: ./gradlew --no-daemon lintDebug lintIsolated
@@ -296,7 +298,7 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           working-directory: android
-          script: bash ../tools/run_android_instrumentation_campaign.sh 35
+          script: bash ../tools/run_android_api35_campaign.sh
       - name: Save API 35 failure semantics and safety logcat
         if: always() && !cancelled()
         run: |
@@ -670,6 +672,57 @@ jobs:
           if-no-files-found: error
           path: ${{ runner.temp }}/serea-pixel7a-final-bundle/**
 
+  android-personal-beta-identity:
+    name: Personal Beta Identity Isolation (temporary signing keys)
+    needs: [android-changes, android-build, android-storage-emulator]
+    if: needs.android-changes.outputs.android == 'true' && needs.android-build.result == 'success' && needs.android-storage-emulator.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install API 35 emulator image and build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+      - name: Apply official KVM udev permissions
+        if: always() && !cancelled()
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+      - name: Run disposable Beta identity and encrypted-data checks
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
+        env:
+          SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR: '1'
+        timeout-minutes: 100
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          working-directory: .
+          script: bash tools/test_personal_beta_identity.sh
+      - name: Upload temporary-key Beta isolation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-personal-beta-identity-isolation
+          if-no-files-found: warn
+          path: android/app/build/outputs/androidTest-results/personal-beta-identity.txt
+
   android-emulator-required-gate:
     name: Android Emulator Required Gate
     if: always()
@@ -680,6 +733,7 @@ jobs:
       - android-integration
       - android-security
       - android-storage-emulator
+      - android-personal-beta-identity
       - android-documentation
       - android-dependency-audit
       - android-reacceptance-bundle
@@ -696,6 +750,7 @@ jobs:
           INTEGRATION_RESULT: ${{ needs.android-integration.result }}
           SECURITY_RESULT: ${{ needs.android-security.result }}
           EMULATOR_RESULT: ${{ needs.android-storage-emulator.result }}
+          BETA_IDENTITY_RESULT: ${{ needs.android-personal-beta-identity.result }}
           DOCS_RESULT: ${{ needs.android-documentation.result }}
           AUDIT_RESULT: ${{ needs.android-dependency-audit.result }}
           BUNDLE_RESULT: ${{ needs.android-reacceptance-bundle.result }}
@@ -714,7 +769,7 @@ jobs:
             echo 'PASS: no Android implementation/configuration change requires emulator execution.'
             exit 0
           fi
-          for check in "build:$BUILD_RESULT" "unit:$UNIT_RESULT" "integration:$INTEGRATION_RESULT" "security:$SECURITY_RESULT" "emulator:$EMULATOR_RESULT" "dependency-audit:$AUDIT_RESULT" "reacceptance-bundle:$BUNDLE_RESULT"; do
+          for check in "build:$BUILD_RESULT" "unit:$UNIT_RESULT" "integration:$INTEGRATION_RESULT" "security:$SECURITY_RESULT" "emulator:$EMULATOR_RESULT" "beta-identity:$BETA_IDENTITY_RESULT" "dependency-audit:$AUDIT_RESULT" "reacceptance-bundle:$BUNDLE_RESULT"; do
             if [ "${check#*:}" != success ]; then
               echo "FAIL: required Android check $check. Emulator status is NOT_RUN or incomplete until its full test result succeeds."
               exit 1

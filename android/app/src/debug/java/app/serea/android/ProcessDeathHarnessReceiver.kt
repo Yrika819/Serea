@@ -92,15 +92,17 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
      * The normal demo package can contain a person's history and preferences. It may only
      * receive the non-destructive sentinel phases. Process-death mutation phases are tied to
      * the isolated application ID, whose app-private DB, preferences and Keystore namespace are
-     * separate from app.serea.android.demo.
+     * separate from app.serea.android.demo. A conditional Beta test overlay permits only campaign
+     * marker and fixture prepare/verify phases in the disposable identity-validation build.
      */
     private fun validateTargetPackage(context: Context, phase: String) {
+        val betaValidationPhase = context.packageName == PERSONAL_BETA_PACKAGE && phase in PERSONAL_BETA_PHASES
         val expectedPackage = when (phase) {
             "seed-sentinel", "verify-sentinel" -> DEBUG_DEMO_PACKAGE
             "campaign-seed", "process-death-seed", "campaign-consume", "prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify" -> ISOLATED_PACKAGE
             else -> error("Unknown harness phase")
         }
-        check(context.packageName == expectedPackage) {
+        check(betaValidationPhase || context.packageName == expectedPackage) {
             "Phase $phase is not allowed for package ${context.packageName}"
         }
     }
@@ -372,6 +374,8 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
     companion object {
         private const val DEBUG_DEMO_PACKAGE = "app.serea.android.demo"
         private const val ISOLATED_PACKAGE = "app.serea.android.isolated"
+        private const val PERSONAL_BETA_PACKAGE = "app.serea.android.beta"
+        private val PERSONAL_BETA_PHASES = setOf("campaign-seed", "campaign-consume", "prepare", "verify")
         private const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"
         private const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"
         private const val PROCESS_DEATH_AUTHORIZATION = "serea-process-death-authorization"

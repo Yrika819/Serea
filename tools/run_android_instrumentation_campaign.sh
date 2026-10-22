@@ -214,8 +214,23 @@ if ! rm -f \
 fi
 
 EXPECTED_API_LEVEL="$api_level"
-export EXPECTED_API_LEVEL
-source "$tool_dir/assert_disposable_android_emulator.sh" || exit 1
+SEREA_EXPECTED_ANDROID_API="$api_level"
+export EXPECTED_API_LEVEL SEREA_EXPECTED_ANDROID_API
+if ! source "$tool_dir/assert_disposable_android_emulator.sh"; then
+  observed_api="${SEREA_OBSERVED_ANDROID_API:-}"
+  observed_qemu="${SEREA_OBSERVED_ANDROID_QEMU:-}"
+  if [[ -n "$observed_api" ]]; then
+    printf '%s\n' "$observed_api" > "$evidence/device-api-level.txt"
+    {
+      echo "Expected API $api_level, observed '$observed_api'."
+      echo "Observed ro.kernel.qemu=$observed_qemu."
+    } > "$evidence/device-api-error.txt"
+    printf 'FAIL\n' > "$evidence/api-result.txt"
+    echo "### Android API $api_level: instrumentation=NOT_RUN process-death=NOT_RUN data-isolation=NOT_RUN device-api=$observed_api" \
+      >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+  fi
+  exit 1
+fi
 
 sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
 printf '%s\n' "$sdk" > "$evidence/device-api-level.txt"

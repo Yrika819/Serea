@@ -122,8 +122,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         scripts = re.findall(r"^[ \t]+script: (.+)$", workflow, flags=re.MULTILINE)
         self.assertEqual(
             [
-                "bash ../tools/run_android_instrumentation_campaign.sh 35",
+                "bash ../tools/run_android_api35_campaign.sh",
                 "bash ../tools/run_android_instrumentation_campaign.sh 26",
+                "bash tools/test_personal_beta_identity.sh",
             ],
             scripts,
         )
@@ -140,6 +141,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "run_android_data_sentinel.sh",
             "prepare_isolated_instrumentation_target.sh",
             "run_android_process_death_harness.sh",
+            "test_android_update_compatibility.sh",
+            "test_android_update_compatibility_guard.sh",
+            "run_android_api35_campaign.sh",
         ):
             subprocess.run(["bash", "-n", str(ROOT / "tools" / name)], check=True)
         self.assertIn("connectedIsolatedAndroidTest", script.read_text(encoding="utf-8"))
@@ -149,6 +153,11 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             r"android/\*\|[^\n]*tools/run_android_process_death_harness\.sh[^\n]*android_changed=true",
         )
         self.assertIn("tools/prepare_isolated_instrumentation_target.sh", workflow)
+        self.assertIn("Test Android update emulator guard with Mock ADB", workflow)
+        self.assertIn("tools/test_android_update_compatibility_guard.sh", workflow)
+        api35_campaign = (ROOT / "tools/run_android_api35_campaign.sh").read_text(encoding="utf-8")
+        self.assertIn("run_android_instrumentation_campaign.sh\" 35", api35_campaign)
+        self.assertIn("test_android_update_compatibility.sh", api35_campaign)
         self.assertIn("Save API 35 failure semantics and safety logcat", workflow)
         self.assertIn("Save API 26 failure semantics and safety logcat", workflow)
         self.assertIn("font-scale-gmail-heading", workflow)
@@ -256,6 +265,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             adb = fake_bin / "adb"
             adb.write_text(
                 "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == -s ]]; then shift 2; fi\n"
                 "printf '%q ' \"$@\" >> \"$ADB_TRACE\"\n"
                 "if [[ \"$1\" == devices ]]; then\n"
                 "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
@@ -280,6 +290,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
                 "CI": "true",
                 "GITHUB_ACTIONS": "true",
+                "GITHUB_RUN_ID": "12345",
                 "SEREA_DISPOSABLE_CI_EMULATOR": "1",
                 "EXPECTED_API_LEVEL": "35",
                 "ADB_TRACE": str(trace),
@@ -392,6 +403,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             adb = fake_bin / "adb"
             adb.write_text(
                 "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == -s ]]; then shift 2; fi\n"
                 "if [[ \"$1\" == devices ]]; then\n"
                 "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
                 "elif [[ \"$1 \" == 'shell ' && \"$2 \" == 'getprop ' ]]; then\n"
@@ -413,6 +425,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
                 "CI": "true",
                 "GITHUB_ACTIONS": "true",
+                "GITHUB_RUN_ID": "12345",
                 "SEREA_DISPOSABLE_CI_EMULATOR": "1",
                 "EXPECTED_API_LEVEL": "35",
                 "REQUEST_FILE": str(request_file),
@@ -512,6 +525,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             adb = fake_bin / "adb"
             adb.write_text(
                 "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == -s ]]; then shift 2; fi\n"
                 "if [[ \"$1\" == devices ]]; then\n"
                 "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
                 "elif [[ \"$1\" == shell && \"$2 $3 $4\" == 'getprop ro.build.version.sdk ' ]]; then\n"
@@ -527,6 +541,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
             environment["CI"] = "true"
             environment["GITHUB_ACTIONS"] = "true"
+            environment["GITHUB_RUN_ID"] = "12345"
             environment["SEREA_DISPOSABLE_CI_EMULATOR"] = "1"
             environment["GITHUB_STEP_SUMMARY"] = str(summary)
             result = subprocess.run(
@@ -538,7 +553,11 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(0, result.returncode)
-            self.assertEqual("35\n", (evidence / "device-api-level.txt").read_text())
+            self.assertEqual(
+                "35\n",
+                (evidence / "device-api-level.txt").read_text(),
+                result.stdout + result.stderr,
+            )
             self.assertEqual("NOT_RUN\n", (evidence / "instrumentation-status.txt").read_text())
             self.assertEqual("NOT_RUN\n", (evidence / "process-death-status.txt").read_text())
             self.assertEqual("NOT_RUN\n", (evidence / "data-isolation-status.txt").read_text())
@@ -572,6 +591,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             adb = fake_bin / "adb"
             adb.write_text(
                 "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == -s ]]; then shift 2; fi\n"
                 "touch \"$ADB_MARKER\"\n"
                 "printf '26\\n'\n",
                 encoding="utf-8",
@@ -608,6 +628,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             adb = fake_bin / "adb"
             adb.write_text(
                 "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == -s ]]; then shift 2; fi\n"
                 "if [[ \"$1\" == devices ]]; then\n"
                 "  printf 'List of devices attached\\nPixel7a serial device product:lynx model:Pixel_7a\\n'\n"
                 "else\n"
@@ -622,11 +643,18 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             environment.update({
                 "CI": "true",
                 "GITHUB_ACTIONS": "true",
+                "GITHUB_RUN_ID": "12345",
                 "SEREA_DISPOSABLE_CI_EMULATOR": "1",
                 "EXPECTED_API_LEVEL": "35",
                 "ADB_MUTATION_MARKER": str(marker),
             })
-            result = subprocess.run(["bash", str(guard)], env=environment, capture_output=True, text=True, check=False)
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1"', "mock-guard", str(guard)],
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
             self.assertNotEqual(0, result.returncode)
             self.assertIn("Refusing non-emulator", result.stderr)
             self.assertFalse(marker.exists())
@@ -643,6 +671,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             adb = fake_bin / "adb"
             adb.write_text(
                 "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == -s ]]; then shift 2; fi\n"
                 "printf '%s\\n' \"$*\" >> \"$ADB_CALLS\"\n"
                 "if [[ \"$1\" == devices ]]; then\n"
                 "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"

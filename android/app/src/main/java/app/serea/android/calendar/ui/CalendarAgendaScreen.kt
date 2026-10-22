@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +47,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -59,6 +61,10 @@ import app.serea.android.calendar.FakeCalendarProvider
 import java.time.Clock
 import java.time.LocalDate
 import java.time.ZoneId
+
+/** Exposes the real lazy-list position to Compose tests without adding accessibility text. */
+internal val CalendarLazyListPositionKey =
+    SemanticsPropertyKey<Pair<Int, Int>>("CalendarLazyListPosition")
 
 /**
  * Independent navigation entry point for the read-only Calendar demo.
@@ -120,7 +126,7 @@ fun CalendarAgendaScreen(
     var previousAgendaScope by remember { mutableStateOf(state.query to state.selectedCalendarId) }
     LaunchedEffect(state.query, state.selectedCalendarId) {
         val currentScope = state.query to state.selectedCalendarId
-        if (currentScope != previousAgendaScope) agendaListState.scrollToItem(0)
+        if (currentScope != previousAgendaScope) agendaListState.requestScrollToItem(0)
         previousAgendaScope = currentScope
     }
     val inDetail = when (state) {
@@ -379,8 +385,15 @@ private fun AgendaContent(
     listState: LazyListState,
     onEvent: (CalendarEvent) -> Unit,
 ) {
+    val listPosition by remember(listState) {
+        derivedStateOf {
+            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        }
+    }
     LazyColumn(
-        modifier = Modifier.fillMaxSize().testTag("calendar_agenda_list"),
+        modifier = Modifier.fillMaxSize()
+            .semantics { this[CalendarLazyListPositionKey] = listPosition }
+            .testTag("calendar_agenda_list"),
         state = listState,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

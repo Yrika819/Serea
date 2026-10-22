@@ -188,13 +188,31 @@ def parse_class_requirements(requirements: list[str], parser: argparse.ArgumentP
     return parsed
 
 
+def parse_test_requirements(requirements: list[str], parser: argparse.ArgumentParser) -> set[tuple[str, str]]:
+    parsed: set[tuple[str, str]] = set()
+    for requirement in requirements:
+        try:
+            class_name, method_name = requirement.rsplit("#", 1)
+            if not class_name or not method_name or (class_name, method_name) in parsed:
+                raise ValueError
+        except ValueError:
+            parser.error(f"invalid --require-test value: {requirement!r}")
+        parsed.add((class_name, method_name))
+    return parsed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path, help="Gradle connected Android test results directory")
     parser.add_argument("--minimum", type=int, default=9, help="minimum number of executed tests (default: 9)")
+    parser.add_argument("--exact-count", type=int, help="require exactly this many recorded testcases")
     parser.add_argument(
         "--require-class", action="append", default=[], metavar="CLASS=COUNT",
         help="require an exact executed testcase count for this fully qualified test class",
+    )
+    parser.add_argument(
+        "--require-test", action="append", default=[], metavar="CLASS#METHOD",
+        help="require an exact passing testcase identity",
     )
     parser.add_argument(
         "--source-root", type=Path,
@@ -203,7 +221,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.minimum < 1:
         parser.error("--minimum must be at least 1")
+    if args.exact_count is not None and args.exact_count < 1:
+        parser.error("--exact-count must be at least 1")
     required_classes = parse_class_requirements(args.require_class, parser)
+    required_tests = parse_test_requirements(args.require_test, parser)
     source_total: int | None = None
     if args.source_root is not None:
         try:
@@ -248,6 +269,12 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    if args.exact_count is not None and results.tests != args.exact_count:
+        print(
+            f"FAIL: {results.tests} tests were recorded; expected exactly {args.exact_count}.",
+            file=sys.stderr,
+        )
+        return 1
     if source_total is not None and results.tests != source_total:
         print(
             f"FAIL: JUnit recorded {results.tests} tests but Kotlin source contains {source_total} @Test methods.",
@@ -259,6 +286,18 @@ def main() -> int:
         return 1
     class_counts = collect_class_counts(args.results)
     junit_methods = collect_junit_methods(args.results)
+    actual_tests = {
+        (class_name, method_name)
+        for class_name, methods in junit_methods.items()
+        for method_name in methods
+    }
+    if required_tests and (results.tests != len(required_tests) or actual_tests != required_tests):
+        print(
+            f"FAIL: JUnit testcase identities do not match the required set; "
+            f"expected={sorted(required_tests)}, actual={sorted(actual_tests)}.",
+            file=sys.stderr,
+        )
+        return 1
     for class_name, expected in required_classes.items():
         actual = class_counts.get(class_name, 0)
         if actual != expected:

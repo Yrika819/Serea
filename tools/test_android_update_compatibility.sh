@@ -2,10 +2,16 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# This test always expects the dedicated API 35 disposable emulator. Source the
+# guard before creating outputs, keys, installing APKs, or mutating app data.
+export SEREA_EXPECTED_ANDROID_API=35
+source "$repo_root/tools/assert_disposable_android_emulator.sh"
+adb_cmd=(adb -s "$ANDROID_SERIAL")
+
 android_dir="$repo_root/android"
 test_root=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/serea-update-test.XXXXXX")
 results="$android_dir/app/build/outputs/androidTest-results/update-compatibility.txt"
-package="app.serea.android.demo"
+package="app.serea.android.updatecompat"
 activity="$package/app.serea.android.MainActivity"
 receiver="$package/app.serea.android.ProcessDeathHarnessReceiver"
 action="app.serea.android.action.PROCESS_DEATH_HARNESS"
@@ -24,11 +30,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-command -v adb >/dev/null
 command -v keytool >/dev/null
 command -v openssl >/dev/null
-test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 35
-mkdir -p "$(dirname "$results")"
 cd "$android_dir"
 
 keytool -genkeypair -noprompt \
@@ -52,7 +55,8 @@ build_tools="$ANDROID_HOME/build-tools/35.0.0"
 
 build_version() {
   local version_code="$1"
-  ./gradlew --no-daemon --no-build-cache --no-configuration-cache --rerun-tasks :app:assembleDebug "-PsereaVersionCode=$version_code"
+  ./gradlew --no-daemon --no-build-cache --no-configuration-cache --rerun-tasks :app:assembleDebug \
+    "-PsereaVersionCode=$version_code" -PsereaUpdateCompatibilityTest=true
   cp "$android_dir/app/build/outputs/apk/debug/app-debug.apk" "$2"
   "$build_tools/apksigner" verify --verbose --print-certs "$2" > "$test_root/apksigner-$version_code.txt"
   actual_cert=$(awk -F ': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' "$test_root/apksigner-$version_code.txt" \
@@ -64,47 +68,48 @@ build_version() {
 
 build_version 100 "$apk_v1"
 apk_v1_sha=$(sha256sum "$apk_v1" | awk '{print $1}')
-adb uninstall "$package" >/dev/null 2>&1 || true
-adb install -r "$apk_v1"
+"${adb_cmd[@]}" uninstall "$package" >/dev/null 2>&1 || true
+"${adb_cmd[@]}" install -r "$apk_v1"
 
 broadcast_phase() {
   local phase="$1"
-  adb shell am broadcast -n "$receiver" -a "$action" --es phase "$phase" --es token "$run_token" >/dev/null
+  "${adb_cmd[@]}" shell am broadcast -n "$receiver" -a "$action" --es phase "$phase" --es token "$run_token" >/dev/null
   for _ in $(seq 1 30); do
-    if adb logcat -d -s SereaProcessDeath:I | grep -F "PASS:$run_token:$phase" >/dev/null; then return 0; fi
-    if adb logcat -d -s SereaProcessDeath:E | grep -F "FAIL:$run_token:$phase:" >/dev/null; then
-      adb logcat -d -s SereaProcessDeath:E >&2
+    if "${adb_cmd[@]}" logcat -d -s SereaProcessDeath:I | grep -F "PASS:$run_token:$phase" >/dev/null; then return 0; fi
+    if "${adb_cmd[@]}" logcat -d -s SereaProcessDeath:E | grep -F "FAIL:$run_token:$phase:" >/dev/null; then
+      "${adb_cmd[@]}" logcat -d -s SereaProcessDeath:E >&2
       return 1
     fi
     sleep 1
   done
   echo "Update compatibility harness phase $phase did not report completion." >&2
-  adb logcat -d -s SereaProcessDeath:I SereaProcessDeath:E >&2
+  "${adb_cmd[@]}" logcat -d -s SereaProcessDeath:I SereaProcessDeath:E >&2
   return 1
 }
 
-adb logcat -c
+"${adb_cmd[@]}" logcat -c
 broadcast_phase prepare
-adb shell am force-stop "$package"
-adb shell am start -W -n "$activity" >/dev/null
+"${adb_cmd[@]}" shell am force-stop "$package"
+"${adb_cmd[@]}" shell am start -W -n "$activity" >/dev/null
 sleep 2
-adb logcat -c
+"${adb_cmd[@]}" logcat -c
 broadcast_phase verify
 
 build_version 101 "$apk_v2"
 apk_v2_sha=$(sha256sum "$apk_v2" | awk '{print $1}')
-adb install -r "$apk_v2"
-installed_version=$(adb shell dumpsys package "$package" | sed -n "s/.*versionCode=\([0-9][0-9]*\).*/\1/p" | head -1 | tr -d '\r')
+"${adb_cmd[@]}" install -r "$apk_v2"
+installed_version=$("${adb_cmd[@]}" shell dumpsys package "$package" | sed -n "s/.*versionCode=\([0-9][0-9]*\).*/\1/p" | head -1 | tr -d '\r')
 test "$installed_version" = 101
 
-adb shell am force-stop "$package"
-adb shell am start -W -n "$activity" >/dev/null
+"${adb_cmd[@]}" shell am force-stop "$package"
+"${adb_cmd[@]}" shell am start -W -n "$activity" >/dev/null
 sleep 2
-adb logcat -c
+"${adb_cmd[@]}" logcat -c
 broadcast_phase verify
 
+mkdir -p "$(dirname "$results")"
 {
-  echo 'application_id=app.serea.android.demo'
+  echo "application_id=$package"
   echo 'version_code_v1=100'
   echo 'version_code_v2=101'
   echo 'apk_signature_verification=PASS'

@@ -19,6 +19,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             [
                 "bash ../tools/run_android_instrumentation_campaign.sh 35",
                 "bash ../tools/run_android_instrumentation_campaign.sh 26",
+                "bash tools/test_personal_beta_identity.sh",
             ],
             scripts,
         )

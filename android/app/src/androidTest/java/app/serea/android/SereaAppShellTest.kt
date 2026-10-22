@@ -1,6 +1,7 @@
 package app.serea.android
 
 import android.content.pm.ActivityInfo
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import android.os.Looper
@@ -78,9 +79,15 @@ class SereaAppShellTest {
         )
     }
 
-    /** Scrolls a real LazyColumn with full-viewport gestures and proves each swipe advances it. */
+    /** Scrolls a real LazyColumn with a touch-slop-clearing gesture and proves every swipe advances it. */
     private fun scrollAgendaUntilDisplayed(tag: String, text: String) {
         val list = compose.onNodeWithTag(tag)
+        compose.waitUntil(10_000) {
+            runCatching {
+                val node = list.fetchSemanticsNode()
+                node.size.height > 0 || compose.onNodeWithText(text).assertIsDisplayed().let { true }
+            }.getOrDefault(false)
+        }
         for (index in 0 until 60) {
             if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) return
             val before = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
@@ -88,12 +95,24 @@ class SereaAppShellTest {
             if (before.value() >= before.maxValue() - 1f) break
 
             val swipeHeight = list.fetchSemanticsNode().size.height.toFloat()
-            assertTrue("$tag must have a measurable gesture region", swipeHeight > 1f)
+            val touchSlop = ViewConfiguration.get(compose.activity).scaledTouchSlop.toFloat()
+            assertTrue(
+                "$tag must expose enough visible height for a real scroll gesture " +
+                    "(height=$swipeHeight, touchSlop=$touchSlop)",
+                swipeHeight > touchSlop * 2f + 2f,
+            )
+            val startY = swipeHeight - 1f
+            val endY = 1f
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "GESTURE_REGION|$tag|index=${index + 1}|width=${list.fetchSemanticsNode().size.width}|" +
+                    "height=$swipeHeight|startY=$startY|endY=$endY|touchSlop=$touchSlop",
+            )
             list.performTouchInput {
                 swipeUp(
-                    startY = swipeHeight * 0.9f,
-                    endY = swipeHeight * 0.1f,
-                    durationMillis = 300,
+                    startY = startY,
+                    endY = endY,
+                    durationMillis = 400,
                 )
             }
             compose.waitForIdle()
@@ -434,6 +453,13 @@ class SereaAppShellTest {
         }
         compose.onNodeWithText("Demo Work").assertIsSelected()
         compose.onNodeWithText("今後").assertIsSelected()
+        compose.waitUntil(10_000) {
+            runCatching {
+                val range = compose.onNodeWithTag("calendar_agenda_list")
+                    .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+                range.maxValue() > 0f && range.value() <= 1f
+            }.getOrDefault(false)
+        }
         calendarStage("agenda-semantics", "FINISH")
         calendarStage("scroll-event-50", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 50")

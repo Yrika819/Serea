@@ -40,6 +40,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -72,6 +73,9 @@ fun CalendarAgendaScreen(
     displayZone: ZoneId = ZoneId.systemDefault(),
     modifier: Modifier = Modifier,
 ) {
+    val configuration = LocalConfiguration.current
+    val compactControls = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+        configuration.fontScale >= 1.5f
     var savedMode by rememberSaveable { mutableStateOf(CalendarAgendaMode.TODAY.name) }
     var savedDate by rememberSaveable { mutableStateOf("") }
     var savedCalendarId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -183,41 +187,68 @@ fun CalendarAgendaScreen(
             Text("デモのみ · Google Calendar未接続", style = MaterialTheme.typography.labelMedium)
 
             if (!inDetail) {
-                AgendaModeSelector(
-                    selected = state.query.mode,
-                    dateInput = dateInput,
-                    enabled = agendaControlsEnabled,
-                    onMode = { mode ->
-                        if (mode == CalendarAgendaMode.DATE) {
-                            savedMode = mode.name
-                            dateInput = normalizeSpecifiedDateInput(dateInput, clock, displayZone)
-                            val date = LocalDate.parse(dateInput)
-                            savedDate = date.toString()
-                            controller.selectDate(date)
-                        } else {
-                            savedMode = mode.name
-                            savedDate = ""
-                            controller.selectMode(mode)
-                        }
-                    },
-                    onDateInput = { value ->
-                        dateInput = value
-                        runCatching { LocalDate.parse(value) }.getOrNull()?.let { date ->
-                            savedMode = CalendarAgendaMode.DATE.name
-                            savedDate = date.toString()
-                            controller.selectDate(date)
-                        }
-                    },
-                )
-                CalendarSelector(
-                    calendars = state.calendars,
-                    selectedId = state.selectedCalendarId,
-                    enabled = agendaControlsEnabled,
-                    onSelect = { id ->
-                        savedCalendarId = id
-                        controller.selectCalendar(id)
-                    },
-                )
+                val onMode: (CalendarAgendaMode) -> Unit = { mode ->
+                    if (mode == CalendarAgendaMode.DATE) {
+                        savedMode = mode.name
+                        dateInput = normalizeSpecifiedDateInput(dateInput, clock, displayZone)
+                        val date = LocalDate.parse(dateInput)
+                        savedDate = date.toString()
+                        controller.selectDate(date)
+                    } else {
+                        savedMode = mode.name
+                        savedDate = ""
+                        controller.selectMode(mode)
+                    }
+                }
+                val onDateInput: (String) -> Unit = { value ->
+                    dateInput = value
+                    runCatching { LocalDate.parse(value) }.getOrNull()?.let { date ->
+                        savedMode = CalendarAgendaMode.DATE.name
+                        savedDate = date.toString()
+                        controller.selectDate(date)
+                    }
+                }
+                val onCalendar: (String) -> Unit = { id ->
+                    savedCalendarId = id
+                    controller.selectCalendar(id)
+                }
+                if (compactControls) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AgendaModeSelector(
+                            selected = state.query.mode,
+                            dateInput = dateInput,
+                            enabled = agendaControlsEnabled,
+                            onMode = onMode,
+                            onDateInput = onDateInput,
+                            modifier = Modifier.weight(1f),
+                        )
+                        CalendarSelector(
+                            calendars = state.calendars,
+                            selectedId = state.selectedCalendarId,
+                            enabled = agendaControlsEnabled,
+                            onSelect = onCalendar,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                } else {
+                    AgendaModeSelector(
+                        selected = state.query.mode,
+                        dateInput = dateInput,
+                        enabled = agendaControlsEnabled,
+                        onMode = onMode,
+                        onDateInput = onDateInput,
+                    )
+                    CalendarSelector(
+                        calendars = state.calendars,
+                        selectedId = state.selectedCalendarId,
+                        enabled = agendaControlsEnabled,
+                        onSelect = onCalendar,
+                    )
+                }
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -253,8 +284,9 @@ private fun AgendaModeSelector(
     enabled: Boolean,
     onMode: (CalendarAgendaMode) -> Unit,
     onDateInput: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -288,9 +320,10 @@ private fun CalendarSelector(
     selectedId: String?,
     enabled: Boolean,
     onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     if (calendars.isEmpty()) return
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text("表示するカレンダー", style = MaterialTheme.typography.labelLarge)
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),

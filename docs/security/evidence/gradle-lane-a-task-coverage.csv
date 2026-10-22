@@ -1,0 +1,11 @@
+area,task_or_command,result,evidence_or_blocker
+Gradle runtime,./gradlew --version,PASS,Gradle 8.14.6; launcher JVM 21.0.12.1
+Plugin resolution,./gradlew --write-verification-metadata sha256 help,PASS,Help completed and generated a transient candidate; exact output preserved as gradle-8.14.6-lane-a-help-candidate.xml
+Task discovery,./gradlew tasks --all,FAILED,Task realization could not locate JAVA_COMPILER in /usr/lib/jvm/java-21-openjdk-amd64
+Dependency report,:app:dependencies --configuration _internal-unified-test-platform-android-test-plugin-host-retention,FAILED,Configuration absent in normal configuration-time graph; Gradle reports not found
+Android app build,:app:assembleDebug,BLOCKED,Not run because available Java installation lacks compiler required by Gradle Java 17 toolchain
+Android unit tests,:app:testDebugUnitTest,BLOCKED,Not run because available Java installation lacks compiler required by Gradle Java 17 toolchain
+Android lint,:app:lintDebug,BLOCKED,Not run because available Java installation lacks compiler required by Gradle Java 17 toolchain
+Instrumentation compile,:app:compileIsolatedAndroidTestKotlin,BLOCKED,Not run because available Java installation lacks compiler required by Gradle Java 17 toolchain
+Instrumentation execution,:app:connectedIsolatedAndroidTest,BLOCKED,No attached device or emulator in adb devices -l; execution not attempted
+UTP host-retention resolution,_internal-unified-test-platform-android-test-plugin-host-retention,BLOCKED,The lockfile records it but ordinary help/dependency-report configuration does not instantiate it; task execution required, but Android task graph is blocked by missing Java compiler

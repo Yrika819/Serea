@@ -97,18 +97,27 @@ class SereaAppShellTest {
                 node.size.height > 0 || compose.onNodeWithText(text).assertIsDisplayed().let { true }
             }.getOrDefault(false)
         }
+        if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
+            logVisibleCalendarItemBounds(tag, text)
+            return
+        }
         if (tag == "calendar_agenda_list" && !calendarGestureProbeDone) {
-            calendarGestureProbeDone = true
-            calendarGesturePath = diagnoseCalendarGesturePath(list)
+            val axis = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            if (axis.maxValue() > 0f) {
+                calendarGestureProbeDone = true
+                calendarGesturePath = diagnoseCalendarGesturePath(list)
+            }
         }
         for (index in 0 until 60) {
             if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
                 logVisibleCalendarItemBounds(tag, text)
                 return
             }
-            val before = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-            assertTrue("$tag must be vertically scrollable before searching for $text", before.maxValue() > 0f)
-            if (before.value() >= before.maxValue() - 1f) break
+            val beforeAxis = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            val beforeValue = beforeAxis.value()
+            val beforeMax = beforeAxis.maxValue()
+            assertTrue("$tag must be vertically scrollable before searching for $text", beforeMax > 0f)
+            if (beforeValue >= beforeMax - 1f) break
 
             val swipeHeight = list.fetchSemanticsNode().size.height.toFloat()
             val touchSlop = ViewConfiguration.get(compose.activity).scaledTouchSlop.toFloat()
@@ -117,19 +126,24 @@ class SereaAppShellTest {
                     "(height=$swipeHeight, touchSlop=$touchSlop)",
                 swipeHeight > touchSlop * 2f + 2f,
             )
-            performCalendarGesture(list, calendarGesturePath, swipeHeight, "$tag|loop=${index + 1}")
+            assertTrue(
+                "$tag real Touch swipe ${index + 1} must advance the Calendar list",
+                performCalendarGesture(list, calendarGesturePath, swipeHeight, "$tag|loop=${index + 1}"),
+            )
             compose.waitForIdle()
-            val after = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            val afterAxis = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            val afterValue = afterAxis.value()
+            val afterMax = afterAxis.maxValue()
             Log.i(
                 CALENDAR_STAGE_TAG,
-                "SWIPE|$tag|index=${index + 1}|from=${before.value()}|to=${after.value()}|max=${after.maxValue()}",
+                "SWIPE|$tag|index=${index + 1}|from=$beforeValue|to=$afterValue|max=$afterMax",
             )
             assertTrue(
                 "$tag swipe ${index + 1} did not advance its scroll range " +
-                    "(from=${before.value()}, to=${after.value()}, max=${after.maxValue()})",
-                after.value() > before.value() + 0.5f || after.value() >= after.maxValue() - 1f,
+                    "(from=$beforeValue, to=$afterValue, max=$afterMax)",
+                afterValue > beforeValue + 0.5f || afterValue >= afterMax - 1f,
             )
-            if (after.value() >= after.maxValue() - 1f) break
+            if (afterValue >= afterMax - 1f) break
         }
         compose.onNodeWithText(text).assertIsDisplayed()
         logVisibleCalendarItemBounds(tag, text)
@@ -231,35 +245,56 @@ class SereaAppShellTest {
     }
 
     private fun verifyCalendarSemanticsScrollBy(list: androidx.compose.ui.test.SemanticsNodeInteraction) {
-        val before = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-        val positionBefore = list.fetchSemanticsNode().config[CalendarLazyListPositionKey]
-        val delta = if (before.value() + 80f < before.maxValue()) 80f else -80f
+        val nodeBefore = list.fetchSemanticsNode()
+        val beforeAxis = nodeBefore.config[SemanticsProperties.VerticalScrollAxisRange]
+        val beforeValue = beforeAxis.value()
+        val beforeMax = beforeAxis.maxValue()
+        val positionBefore = nodeBefore.config[CalendarLazyListPositionKey]
+        val delta = if (beforeValue + 1f < beforeMax) 80f else -80f
         var handled = false
         list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
             handled = scrollBy(0f, delta)
         }
         compose.waitForIdle()
-        val after = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-        val positionAfter = list.fetchSemanticsNode().config[CalendarLazyListPositionKey]
+        val nodeAfter = list.fetchSemanticsNode()
+        val afterAxis = nodeAfter.config[SemanticsProperties.VerticalScrollAxisRange]
+        val afterValue = afterAxis.value()
+        val afterMax = afterAxis.maxValue()
+        val positionAfter = nodeAfter.config[CalendarLazyListPositionKey]
+        val movedInExpectedDirection = if (delta > 0f) {
+            afterValue > beforeValue + 0.5f
+        } else {
+            afterValue < beforeValue - 0.5f
+        }
         Log.i(
             CALENDAR_STAGE_TAG,
-            "SEMANTICS_SCROLL_BY|handled=$handled|delta=$delta|from=${before.value()}|" +
-                "to=${after.value()}|max=${after.maxValue()}|" +
+            "SEMANTICS_SCROLL_BY|handled=$handled|delta=$delta|from=$beforeValue|" +
+                "to=$afterValue|max=$afterMax|" +
                 "firstVisible=${positionBefore.first}/${positionBefore.second}->" +
                 "${positionAfter.first}/${positionAfter.second}",
         )
-        assertTrue("Semantics ScrollBy must move the Calendar list", after.value() > before.value() + 0.5f)
+        assertTrue("Semantics ScrollBy action must be handled", handled)
+        assertTrue(
+            "Semantics ScrollBy must move the Calendar list",
+            movedInExpectedDirection && positionAfter != positionBefore,
+        )
         list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
             scrollBy(0f, -delta)
         }
         compose.waitForIdle()
-        val restored = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val restoredNode = list.fetchSemanticsNode()
+        val restoredAxis = restoredNode.config[SemanticsProperties.VerticalScrollAxisRange]
+        val restoredValue = restoredAxis.value()
+        val restoredPosition = restoredNode.config[CalendarLazyListPositionKey]
         Log.i(
             CALENDAR_STAGE_TAG,
-            "SEMANTICS_SCROLL_RESTORE|from=${after.value()}|to=${restored.value()}|" +
-                "firstVisible=${list.fetchSemanticsNode().config[CalendarLazyListPositionKey]}",
+            "SEMANTICS_SCROLL_RESTORE|from=$afterValue|to=$restoredValue|" +
+                "firstVisible=$restoredPosition",
         )
-        assertTrue("Semantics ScrollBy probe must restore its starting offset", kotlin.math.abs(restored.value() - before.value()) < 1f)
+        assertTrue(
+            "Semantics ScrollBy probe must restore its starting offset",
+            kotlin.math.abs(restoredValue - beforeValue) < 1f && restoredPosition == positionBefore,
+        )
     }
 
     private fun performCalendarGesture(
@@ -269,7 +304,10 @@ class SereaAppShellTest {
         label: String,
     ): Boolean {
         val node = list.fetchSemanticsNode()
-        val before = node.config[SemanticsProperties.VerticalScrollAxisRange]
+        val beforeAxis = node.config[SemanticsProperties.VerticalScrollAxisRange]
+        val beforeValue = beforeAxis.value()
+        val beforeMax = beforeAxis.maxValue()
+        val positionBefore = node.config[CalendarLazyListPositionKey]
         val startY = if (path == CalendarGesturePath.NODE_EDGE) height - 1f else height * 0.8f
         val endY = if (path == CalendarGesturePath.NODE_EDGE) 1f else height * 0.2f
         val startRootY = node.boundsInRoot.top + startY
@@ -283,8 +321,8 @@ class SereaAppShellTest {
                 "rootViewportCenterX=${compose.onRoot().fetchSemanticsNode().boundsInRoot.center.x}|" +
                 "window=${node.boundsInWindow.center.x},$startWindowY->${node.boundsInWindow.center.x},$endWindowY|" +
                 "node=${node.boundsInRoot}|windowBounds=${node.boundsInWindow}|" +
-                "scroll=${before.value()}/${before.maxValue()}|" +
-                "firstVisible=${node.config[CalendarLazyListPositionKey].first}/${node.config[CalendarLazyListPositionKey].second}",
+                "scroll=$beforeValue/$beforeMax|" +
+                "firstVisible=${positionBefore.first}/${positionBefore.second}",
         )
         when (path) {
             CalendarGesturePath.NODE_EDGE,
@@ -309,13 +347,15 @@ class SereaAppShellTest {
         }
         compose.waitForIdle()
         val afterNode = list.fetchSemanticsNode()
-        val after = afterNode.config[SemanticsProperties.VerticalScrollAxisRange]
+        val afterAxis = afterNode.config[SemanticsProperties.VerticalScrollAxisRange]
+        val afterValue = afterAxis.value()
+        val afterMax = afterAxis.maxValue()
         val afterPosition = afterNode.config[CalendarLazyListPositionKey]
-        val advanced = after.value() > before.value() + 0.5f
+        val advanced = afterValue > beforeValue + 0.5f && afterPosition != positionBefore
         Log.i(
             CALENDAR_STAGE_TAG,
-            "GESTURE_RESULT|$label|path=$path|from=${before.value()}|to=${after.value()}|" +
-                "max=${after.maxValue()}|advanced=$advanced|" +
+            "GESTURE_RESULT|$label|path=$path|from=$beforeValue|to=$afterValue|" +
+                "max=$afterMax|advanced=$advanced|" +
                 "firstVisible=${afterPosition.first}/${afterPosition.second}",
         )
         return advanced
@@ -638,11 +678,13 @@ class SereaAppShellTest {
             }.isSuccess
         }
         val afterCalendarSelection = compose.onNodeWithTag("calendar_agenda_list").fetchSemanticsNode()
+        val calendarSelectionPosition = afterCalendarSelection.config[CalendarLazyListPositionKey]
         Log.i(
             CALENDAR_STAGE_TAG,
             "AFTER_CALENDAR_SELECTION|scroll=${afterCalendarSelection.config[SemanticsProperties.VerticalScrollAxisRange].value()}|" +
-                "firstVisible=${afterCalendarSelection.config[CalendarLazyListPositionKey]}",
+                "firstVisible=$calendarSelectionPosition",
         )
+        assertEquals("Calendar selection must reset the first visible list position", 0 to 0, calendarSelectionPosition)
         compose.onNodeWithText("今後").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
@@ -657,21 +699,25 @@ class SereaAppShellTest {
             }.getOrDefault(false)
         }
         val afterUpcomingSelection = compose.onNodeWithTag("calendar_agenda_list").fetchSemanticsNode()
+        val upcomingSelectionPosition = afterUpcomingSelection.config[CalendarLazyListPositionKey]
         Log.i(
             CALENDAR_STAGE_TAG,
             "AFTER_UPCOMING_SELECTION|scroll=${afterUpcomingSelection.config[SemanticsProperties.VerticalScrollAxisRange].value()}|" +
                 "max=${afterUpcomingSelection.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()}|" +
-                "firstVisible=${afterUpcomingSelection.config[CalendarLazyListPositionKey]}",
+                "firstVisible=$upcomingSelectionPosition",
         )
+        assertEquals("Upcoming selection must reset the first visible list position", 0 to 0, upcomingSelectionPosition)
         calendarStage("agenda-semantics", "FINISH")
         calendarStage("scroll-event-50", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 50")
         compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
         calendarStage("scroll-event-50", "FINISH")
-        val agendaOffsetBeforeDetail = compose.onNodeWithTag("calendar_agenda_list")
-            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val agendaBeforeDetail = compose.onNodeWithTag("calendar_agenda_list").fetchSemanticsNode()
+        val agendaOffsetBeforeDetail = agendaBeforeDetail.config[SemanticsProperties.VerticalScrollAxisRange]
+        val agendaOffsetBeforeDetailValue = agendaOffsetBeforeDetail.value()
+        val agendaPositionBeforeDetail = agendaBeforeDetail.config[CalendarLazyListPositionKey]
         assertTrue("Calendar agenda must have several scroll positions", agendaOffsetBeforeDetail.maxValue() > 0f)
-        assertTrue("The long agenda test must begin below its first event", agendaOffsetBeforeDetail.value() > 0f)
+        assertTrue("The long agenda test must begin below its first event", agendaOffsetBeforeDetailValue > 0f)
         compose.onNodeWithText("Fictional paged event 50").performClick()
         compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
         calendarStage("event-detail-back", "START")
@@ -679,9 +725,10 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaOffsetAfterDetail = compose.onNodeWithTag("calendar_agenda_list")
-            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-        assertEquals(agendaOffsetBeforeDetail.value(), agendaOffsetAfterDetail.value(), 1f)
+        val agendaAfterDetail = compose.onNodeWithTag("calendar_agenda_list").fetchSemanticsNode()
+        val agendaOffsetAfterDetail = agendaAfterDetail.config[SemanticsProperties.VerticalScrollAxisRange].value()
+        assertEquals(agendaOffsetBeforeDetailValue, agendaOffsetAfterDetail, 1f)
+        assertEquals(agendaPositionBeforeDetail, agendaAfterDetail.config[CalendarLazyListPositionKey])
         calendarStage("event-detail-back", "FINISH")
 
         calendarStage("destination-back", "START")
@@ -690,9 +737,10 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaOffsetAfterDestination = compose.onNodeWithTag("calendar_agenda_list")
-            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-        assertEquals(agendaOffsetBeforeDetail.value(), agendaOffsetAfterDestination.value(), 1f)
+        val agendaAfterDestination = compose.onNodeWithTag("calendar_agenda_list").fetchSemanticsNode()
+        val agendaOffsetAfterDestination = agendaAfterDestination.config[SemanticsProperties.VerticalScrollAxisRange].value()
+        assertEquals(agendaOffsetBeforeDetailValue, agendaOffsetAfterDestination, 1f)
+        assertEquals(agendaPositionBeforeDetail, agendaAfterDestination.config[CalendarLazyListPositionKey])
         calendarStage("destination-back", "FINISH")
 
         calendarStage("activity-recreation", "START")
@@ -700,9 +748,10 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaOffsetAfterRecreation = compose.onNodeWithTag("calendar_agenda_list")
-            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-        assertEquals(agendaOffsetBeforeDetail.value(), agendaOffsetAfterRecreation.value(), 1f)
+        val agendaAfterRecreation = compose.onNodeWithTag("calendar_agenda_list").fetchSemanticsNode()
+        val agendaOffsetAfterRecreation = agendaAfterRecreation.config[SemanticsProperties.VerticalScrollAxisRange].value()
+        assertEquals(agendaOffsetBeforeDetailValue, agendaOffsetAfterRecreation, 1f)
+        assertEquals(agendaPositionBeforeDetail, agendaAfterRecreation.config[CalendarLazyListPositionKey])
         calendarStage("activity-recreation", "FINISH")
 
         // Both query and calendar changes are checked against long lists, avoiding a false pass
@@ -733,8 +782,11 @@ class SereaAppShellTest {
         }
         val agendaOffsetAfterQueryChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val agendaPositionAfterQueryChange = compose.onNodeWithTag("calendar_agenda_list")
+            .fetchSemanticsNode().config[CalendarLazyListPositionKey]
         assertTrue("date query must retain a scrollable Work agenda", agendaOffsetAfterQueryChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterQueryChange.value(), 1f)
+        assertEquals("date query must reset the LazyListState index and offset", 0 to 0, agendaPositionAfterQueryChange)
         calendarStage("date-query-and-ime", "FINISH")
 
         calendarStage("date-change-scroll", "START")
@@ -765,8 +817,11 @@ class SereaAppShellTest {
         }
         val agendaOffsetAfterDateChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val agendaPositionAfterDateChange = compose.onNodeWithTag("calendar_agenda_list")
+            .fetchSemanticsNode().config[CalendarLazyListPositionKey]
         assertTrue("changing the selected date must keep a scrollable Work agenda", agendaOffsetAfterDateChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterDateChange.value(), 1f)
+        assertEquals("date selection must reset the LazyListState index and offset", 0 to 0, agendaPositionAfterDateChange)
         calendarStage("date-change-scroll", "FINISH")
 
         calendarStage("calendar-change-scroll", "START")
@@ -786,8 +841,11 @@ class SereaAppShellTest {
         }
         val agendaOffsetAfterCalendarChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val agendaPositionAfterCalendarChange = compose.onNodeWithTag("calendar_agenda_list")
+            .fetchSemanticsNode().config[CalendarLazyListPositionKey]
         assertTrue("Demo Global must also provide a long agenda for reset verification", agendaOffsetAfterCalendarChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterCalendarChange.value(), 1f)
+        assertEquals("calendar selection must reset the LazyListState index and offset", 0 to 0, agendaPositionAfterCalendarChange)
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
         }
@@ -798,10 +856,11 @@ class SereaAppShellTest {
         }
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "説明")
         compose.onNodeWithText("説明").assertIsDisplayed()
-        val detailScrollBefore = compose.onNodeWithTag("calendar_event_detail_list")
-            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val detailBefore = compose.onNodeWithTag("calendar_event_detail_list").fetchSemanticsNode()
+        val detailScrollBefore = detailBefore.config[SemanticsProperties.VerticalScrollAxisRange]
+        val detailScrollBeforeValue = detailScrollBefore.value()
         assertTrue("calendar detail must be scrollable in this viewport", detailScrollBefore.maxValue() > 0f)
-        assertTrue("calendar detail must have a non-zero saved offset", detailScrollBefore.value() > 0f)
+        assertTrue("calendar detail must have a non-zero saved offset", detailScrollBeforeValue > 0f)
         calendarStage("calendar-change-scroll", "FINISH")
 
         calendarStage("detail-destination-back", "START")
@@ -812,10 +871,10 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val detailScrollAfter = compose.onNodeWithTag("calendar_event_detail_list")
-            .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val detailAfter = compose.onNodeWithTag("calendar_event_detail_list").fetchSemanticsNode()
+        val detailScrollAfter = detailAfter.config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue(detailScrollAfter.maxValue() > 0f)
-        assertEquals(detailScrollBefore.value(), detailScrollAfter.value(), 1f)
+        assertEquals(detailScrollBeforeValue, detailScrollAfter.value(), 1f)
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "Date-line test")
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.onNodeWithText("説明").assertIsDisplayed()

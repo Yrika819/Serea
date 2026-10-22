@@ -698,6 +698,11 @@ internal fun ChatScreen(
     }
     LaunchedEffect(settingsVisible) {
         if (settingsVisible) {
+            // Settings can leave and re-enter the SaveableStateHolder route.
+            // Refresh the editable budget draft from the committed policy on each entry.
+            modelPolicy = modelSettings.load()
+            budgetAmountText = modelPolicy.maxEstimatedCost?.toString().orEmpty()
+            budgetCurrencyText = modelPolicy.budgetCurrencyCode.orEmpty()
             usageSnapshot = runCatching { usage?.snapshot() }.getOrNull()
             usageSnapshot?.limits?.let { limits ->
                 dailyRequestsText = limits.dailyRequests.toString()
@@ -792,10 +797,10 @@ internal fun ChatScreen(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = budgetAmountText, onValueChange = { budgetAmountText = it.filter { c -> c.isDigit() || c == '.' } },
-                        modifier = Modifier.weight(2f), label = { Text("任意の1要求費用上限") },
+                        modifier = Modifier.weight(2f).testTag("model-budget-amount"), label = { Text("任意の1要求費用上限") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
                     OutlinedTextField(value = budgetCurrencyText, onValueChange = { budgetCurrencyText = it.filter(Char::isLetter).take(3).uppercase() },
-                        modifier = Modifier.weight(1f), label = { Text("通貨コード") }, singleLine = true)
+                        modifier = Modifier.weight(1f).testTag("model-budget-currency"), label = { Text("通貨コード") }, singleLine = true)
                 }
                 Button(onClick = {
                     val amount = budgetAmountText.trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull()

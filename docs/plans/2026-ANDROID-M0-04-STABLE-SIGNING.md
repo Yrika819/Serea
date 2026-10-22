@@ -42,10 +42,11 @@ uses the existing Release variant only after the signing preflight passes,
 disables Gradle build/configuration cache, and deletes the temporary key files
 in an `always()` cleanup step. The Release application ID is kept at
 `app.serea.android.demo` to match PR #49's installed Debug package. It does not
-upload the keystore, passwords, Gradle home, or build cache. The uploaded
-artifact contains only the verified APK and a 14-day provenance file with APK
-SHA-256, expected/observed certificate fingerprint, application ID, version
-code, source/build commit SHA, and workflow run identifiers.
+upload the keystore, passwords, Gradle home, build cache, or signed APK. The
+run summary records APK SHA-256, expected/observed certificate fingerprint,
+application ID, version code, source/build commit SHA, and workflow run
+identifiers. The APK remains only in the hosted runner workspace and is removed
+during cleanup; Firebase delivery is handled by the separate REL-C workflow.
 
 The signature check uses `apksigner verify` and compares the APK signer
 fingerprint to the Environment's separately recorded expected fingerprint.
@@ -71,9 +72,10 @@ Before using the route, the Owner should:
    that Environment only. Do not use repository-wide secrets.
 4. Confirm `main` itself is protected under the existing repository policy;
    this change does not alter Branch Protection or required checks.
-5. Confirm the repository's artifact access and retention policy are suitable
-   for internal APKs, then manually dispatch and approve one build.
-6. Verify the run summary and downloaded artifact provenance independently.
+5. Confirm the run summary is visible only to intended repository users, then
+   manually dispatch and approve one build.
+6. Verify the run summary provenance independently. This signing workflow does
+   not provide an APK for manual download or distribution.
 
 The workflow YAML cannot prove that GitHub's Environment reviewer and branch
 restrictions are configured; that setting remains an Owner-controlled gate.
@@ -134,11 +136,12 @@ the update target for fresh installs after the migration/identity decision.
   runner and disables Gradle build/configuration caches.
 - Secret values are passed only to the preflight, materialization, or Gradle
   steps that need them. The workflow does not echo them or add them to
-  provenance. The keystore is outside the workspace and artifact path.
-- The uploaded APK comes from the exact checked-out main commit, passes
-  signature and identity checks, and has provenance recorded alongside it.
-- GitHub Environment protections and artifact reader access cannot be inspected
-  or set from this repository change and remain unverified until Owner setup.
+  provenance. The keystore is outside the checkout and is never uploaded.
+- The APK comes from the exact checked-out main commit and passes signature and
+  identity checks. The workflow records its digest and identity in the run
+  summary and does not create a signed APK artifact.
+- GitHub Environment protections cannot be inspected or set from this
+  repository change and remain unverified until Owner setup.
 
 ## Next steps
 

@@ -1,0 +1,27 @@
+name: Android Firebase distribution contract tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/android-firebase-distribution.yml'
+      - '.github/workflows/android-firebase-distribution-tests.yml'
+      - 'tools/android_firebase_distribution.py'
+      - 'tools/firebase-distribution/**'
+      - 'tests/android_firebase_distribution_tests.py'
+
+permissions:
+  contents: read
+
+jobs:
+  fake-cli-regression:
+    name: Fake Firebase CLI regression tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out pull request source without secrets
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run mocked Firebase distribution checks
+        run: python3 -m unittest discover -s tests -p android_firebase_distribution_tests.py

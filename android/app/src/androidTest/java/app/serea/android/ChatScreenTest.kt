@@ -56,6 +56,12 @@ class ChatScreenTest {
         }
     }
 
+    private fun assertSettingsFieldContains(tag: String, value: String) {
+        assertDisplayedWithEvidence("settings-field-$tag") {
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed().assertTextContains(value)
+        }
+    }
+
     private fun awaitComposerEnabled() {
         composer().assertExists()
         compose.waitUntil(30_000) {
@@ -201,15 +207,28 @@ class ChatScreenTest {
     }
 
     @Test fun modelModeAndPolicyPersistWhenSettingsAreReopened() {
-        ModelSelectionSettings(compose.activity.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE))
-            .save(ModelRoutingPolicy())
+        val modelSettings = ModelSelectionSettings(
+            compose.activity.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE),
+        )
+        modelSettings.save(ModelRoutingPolicy())
         awaitComposerEnabled()
         compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("手動").performScrollTo().performClick()
         compose.onNodeWithText("費用優先").performScrollTo().performClick()
-        compose.onNodeWithText("任意の1要求費用上限").performScrollTo().performTextInput("0.05")
-        compose.onNodeWithText("通貨コード").performScrollTo().performTextInput("USD")
+        compose.onNodeWithTag("model-budget-amount").performScrollTo().performTextInput("0.05")
+        compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextInput("USD")
         compose.onNodeWithText("ルーター設定を保存").performScrollTo().performClick()
+        compose.onNodeWithText("費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。")
+            .performScrollTo().assertIsDisplayed()
+        assertEquals(
+            ModelRoutingPolicy(
+                mode = ModelSelectionMode.MANUAL,
+                autoPolicy = AutoRoutingPolicy.COST_PRIORITY,
+                maxEstimatedCost = 0.05,
+                budgetCurrencyCode = "USD",
+            ),
+            modelSettings.load(),
+        )
         compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("destination_back").performClick()
         compose.onNodeWithTag("open_settings").performClick()
@@ -217,8 +236,8 @@ class ChatScreenTest {
         compose.onNodeWithText("選択モデルID: なし").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。")
             .performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("0.05").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("USD").performScrollTo().assertIsDisplayed()
+        assertSettingsFieldContains("model-budget-amount", "0.05")
+        assertSettingsFieldContains("model-budget-currency", "USD")
     }
 
     private fun openOverflow() {

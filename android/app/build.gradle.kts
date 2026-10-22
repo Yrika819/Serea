@@ -76,10 +76,8 @@ android {
         }
         create("isolated") {
             initWith(getByName("debug"))
-            // The disposable instrumentation target is not attached to a debugger. Keeping this
-            // variant non-debuggable lets AGP package the same dependency baseline profile as
-            // release, so API 35 ProfileVerifier can prove a real embedded profile.
-            isDebuggable = false
+            // Instrumentation's process-death harness uses `run-as` to inspect this app's
+            // private database, so the disposable isolated target must remain debuggable.
             applicationIdSuffix = ".isolated"
             matchingFallbacks += listOf("debug")
         }
@@ -118,6 +116,34 @@ android {
     }
     lint { abortOnError = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
+}
+
+// AGP omits dependency baseline profiles from debuggable APKs. The isolated target stays
+// debuggable for its `run-as` based storage/process-death harness, so copy AGP's compiled
+// variant profile into its asset set explicitly and fail if either artifact is missing.
+val isolatedBaselineProfileAssetDir = layout.buildDirectory.dir("generated/isolatedBaselineProfileAssets")
+val copyIsolatedBaselineProfileAssets = tasks.register<Copy>("copyIsolatedBaselineProfileAssets") {
+    dependsOn("compileIsolatedArtProfile")
+    val profile = layout.buildDirectory.file(
+        "intermediates/binary_art_profile/isolated/compileIsolatedArtProfile/baseline.prof",
+    )
+    val metadata = layout.buildDirectory.file(
+        "intermediates/binary_art_profile_metadata/isolated/compileIsolatedArtProfile/baseline.profm",
+    )
+    from(profile)
+    from(metadata)
+    into(isolatedBaselineProfileAssetDir.map { it.dir("dexopt") })
+    doFirst {
+        listOf(profile.get().asFile, metadata.get().asFile).forEach { artifact ->
+            check(artifact.isFile && artifact.length() > 0L) {
+                "Required isolated baseline profile artifact is missing or empty: ${artifact.path}"
+            }
+        }
+    }
+}
+android.sourceSets.getByName("isolated").assets.srcDir(isolatedBaselineProfileAssetDir)
+tasks.matching { it.name == "mergeIsolatedAssets" }.configureEach {
+    dependsOn(copyIsolatedBaselineProfileAssets)
 }
 
 val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") {

@@ -11,8 +11,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -35,6 +37,18 @@ class UsageLedgerDatabaseTest {
         VerifiedPriceSnapshot(input, output, "USD", "fictional test fixture", "2026-10-20T00:00:00Z", revision = revision)
     private fun rowCount(table: String): Long = database!!.openHelper.readableDatabase
         .query("SELECT COUNT(*) FROM $table").use { cursor -> cursor.moveToFirst(); cursor.getLong(0) }
+
+    private class FakeModelProvider : ModelChatPort {
+        val received = mutableListOf<ModelChatRequest>()
+        var nextFailure: Exception? = null
+        var beforeSend: suspend (ModelChatRequest) -> Unit = {}
+        override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+            received += request
+            beforeSend(request)
+            nextFailure?.let { failure -> nextFailure = null; throw failure }
+            return ModelChatResponse("fictional response", ProviderUsage(7, 2))
+        }
+    }
 
     @Test fun atomicReservationSettlementAndProviderModelSummaries() = runBlocking {
         val db = open()
@@ -263,6 +277,140 @@ class UsageLedgerDatabaseTest {
         assertEquals(null, db.usageDao().reservation("egress-deny"))
         assertTrue(usage.summaries().isEmpty())
         assertEquals(0L, usage.snapshot().dailyRequests)
+    }
+
+    @Test fun fakeProviderBridgeRoutesApprovedDataAndKeepsCostAndUnknownOutcomesDurable() = runBlocking<Unit> {
+        val db = open()
+        val now = Instant.parse("2026-10-20T12:00:00Z")
+        val catalog = FakeModelCatalog(
+            listOf(ModelDescriptor(
+                id = "fixture/model",
+                providerId = "fake-provider",
+                displayName = "Fictional test model",
+                contextWindow = Knowledge.Known(8_192),
+                maxOutput = Knowledge.Known(512),
+                capabilities = ModelCapabilities(input = setOf("text/plain")),
+                availability = ModelAvailability.AVAILABLE,
+                authorized = true,
+                lastVerifiedAt = now.minusSeconds(1).toString(),
+                source = "fictional integration fixture",
+                verificationStatus = ModelVerificationStatus.TEST_FIXTURE,
+            )),
+            clock = { now },
+        )
+        val prices = VerifiedModelPriceCatalog { modelId ->
+            if (modelId == "fixture/model") VerifiedModelPriceSnapshot(
+                modelId,
+                fixturePrice("2", "6", "fake-provider-price-v1"),
+                now.plusSeconds(3_600).toString(),
+            ) else null
+        }
+        val fake = FakeModelProvider()
+        val usage = UsageRepository(db.usageDao()) { now.toEpochMilli() }
+        var sawReservedBeforeDispatch = false
+        fake.beforeSend = { request ->
+            val reservation = checkNotNull(db.usageDao().reservation(request.sendId))
+            val ledger = checkNotNull(db.usageDao().ledger(request.sendId))
+            assertEquals(UsageLedgerState.IN_FLIGHT.name, reservation.state)
+            assertEquals(UsageLedgerState.IN_FLIGHT.name, ledger.usageStatus)
+            assertEquals(CostEstimationStatus.ESTIMATED.name, ledger.costStatus)
+            sawReservedBeforeDispatch = true
+        }
+        val controlled = EgressCheckedModelChatPort(
+            UsageControlledModelChatPort(
+                fake,
+                usage,
+                outputReservationTokens = 16,
+                attributionResolver = CatalogUsageAttributionResolver(catalog, prices, { now }),
+            ),
+        ) { now.toEpochMilli() }
+        val routed = RoutedModelChatPort(
+            controlled,
+            AdaptiveModelRouter(catalog),
+            { ModelRoutingPolicy(
+                mode = ModelSelectionMode.MANUAL,
+                manualModelId = "fixture/model",
+                allowedProviderIds = setOf("fake-provider"),
+                requestedOutputTokens = 16,
+            ) },
+        )
+
+        fun approvedRequest(sendId: String, context: List<ContextMessage> = emptyList()): ModelChatRequest {
+            val message = "fictional public prompt"
+            val contract = EgressContract(
+                conversationId = "conversation-fixture",
+                currentMessageId = sendId,
+                origin = DataOrigin.USER_AUTHORED,
+                classification = DataClassification.PUBLIC,
+                destination = "https://ollama.com/api/chat",
+                plannedBody = message,
+                context = context,
+                preparation = PayloadPreparation.RAW,
+                explicitSendIntentAtMillis = now.toEpochMilli(),
+                expiresAtMillis = now.plusSeconds(30).toEpochMilli(),
+            )
+            return ModelChatRequest(
+                conversationId = "conversation-fixture",
+                message = message,
+                sendId = sendId,
+                classification = DataClassification.PUBLIC,
+                context = context,
+                egressContract = contract,
+            )
+        }
+
+        assertFalse(CloudSettings().enabled)
+        assertEquals("", CloudSettings().modelId)
+        val allowedContext = listOf(ContextMessage(
+            MessageRole.USER,
+            "earlier fictional turn",
+            DataClassification.PUBLIC,
+            "source-public",
+            DataOrigin.USER_AUTHORED,
+            conversationId = "conversation-fixture",
+        ))
+        val success = routed.send(approvedRequest("fake-success", allowedContext))
+        assertEquals("fictional response", success.text)
+        assertTrue(sawReservedBeforeDispatch)
+        assertEquals(1, fake.received.size)
+        assertEquals("fixture/model", fake.received.single().selectedModelId)
+        assertEquals(allowedContext, fake.received.single().context)
+        val settled = checkNotNull(db.usageDao().ledger("fake-success"))
+        assertEquals(UsageLedgerState.SETTLED.name, settled.usageStatus)
+        assertEquals("fake-provider", settled.providerId)
+        assertEquals("fixture/model", settled.modelId)
+        assertEquals(7L, settled.providerInputTokens)
+        assertEquals(2L, settled.providerOutputTokens)
+        assertEquals(CostEstimationStatus.USAGE_REPORTED_COST_ESTIMATED.name, settled.costStatus)
+        assertEquals("fake-provider-price-v1", settled.pricingRevision)
+
+        val privateContext = allowedContext.map { it.copy(text = "private fixture text", classification = DataClassification.PRIVATE) }
+        assertThrows(ModelChatFailure::class.java) {
+            runBlocking { routed.send(approvedRequest("fake-denied", privateContext)) }
+        }
+        assertEquals(1, fake.received.size)
+        assertEquals(null, db.usageDao().reservation("fake-denied"))
+        assertEquals(null, db.usageDao().ledger("fake-denied"))
+
+        usage.updateLimits(UsageLimits(dailyRequests = 1, dailyTokens = 10_000, monthlyRequests = 10, monthlyTokens = 100_000))
+        assertThrows(UsageLimitExceededException::class.java) {
+            runBlocking { routed.send(approvedRequest("fake-budget-denied")) }
+        }
+        assertEquals(1, fake.received.size)
+        assertEquals(null, db.usageDao().reservation("fake-budget-denied"))
+        assertEquals(null, db.usageDao().ledger("fake-budget-denied"))
+
+        fake.nextFailure = CancellationException("fixture cancellation")
+        val cancellation = async { routed.send(approvedRequest("fake-cancelled")) }
+        try {
+            cancellation.await()
+            throw AssertionError("cancellation must propagate")
+        } catch (_: CancellationException) { }
+        val unknown = checkNotNull(db.usageDao().ledger("fake-cancelled"))
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, unknown.usageStatus)
+        assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, unknown.reservationState)
+        assertEquals(2, fake.received.size)
+        assertFalse(fake.received.last().message.contains("private fixture text"))
     }
 
     @Test fun tokenAndWindowLongOverflowRejectsReservationWithoutPartialWrites() = runBlocking {

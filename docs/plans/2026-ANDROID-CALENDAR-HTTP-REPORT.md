@@ -1,0 +1,45 @@
+# Calendar read-only HTTP adapter report
+
+## Scope
+
+Implemented lane B on `codex/android-q4-calendar-http-2026-10-20`, based on the pinned PR #58 head `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`. The adapter is confined to the new `calendar/transport` source and JVM test directories. Existing Calendar domain, parser, policy, app wiring, dependency files, workflows, manifest, and Git identity/security code were not edited.
+
+## Implementation
+
+- Added `GoogleCalendarHttpReadPort`, a read-only OkHttp adapter for calendar list, calendar get, event get, and paged event list operations. It constructs requests only beneath the fixed `https://www.googleapis.com/calendar/v3/` endpoint, disables redirects and automatic connection retries, and sets 5 second connect, 10 second read, and 20 second total call timeouts.
+- Calendar and event parsing delegates to the existing `GoogleCalendarEventParser`; calendar-list metadata is parsed locally. Event list requests use `[timeMin, timeMax)`, `singleEvents=true`, `showDeleted=true`, and `orderBy=startTime`. Page tokens are bounded and encoded by OkHttp. The existing agenda service enforces aggregate event/page limits, rejects repeated page tokens, and deduplicates recurrence instances.
+- Added `CalendarAccessTokenPort`; each request asks the host authorization layer for a short-lived token. The adapter requires `AUTHORIZED` state and the endpoint's read-only scope. Missing, expired, denied, or mock-only authorization does not reach Google. Token-provider exceptions are reduced to a generic permission failure. OAuth acquisition, refresh, and revocation remain outside this adapter.
+- Responses are capped at the existing parser's 512 KiB limit; error bodies are read only up to 16 KiB for status classification and are not included in failures. HTTP errors map to the existing `CalendarReadFailure` codes. No event write method or cache was added. Parsed events retain `DataOrigin.CALENDAR` and `PERSONAL` classification through the existing parser.
+- A package-internal loopback-only base URL seam supports MockWebServer. It cannot redirect the production client to arbitrary hosts.
+
+## Follow-up audit fixes
+
+- `getCalendar` now uses `/users/me/calendarList/{calendarId}`, matching `calendar.calendarlist.readonly`; no scope was added. Its MockWebServer assertion checks the exact route and bearer header.
+- Replaced `InputStream.readNBytes` with an 8 KiB chunk reader that reads at most one sentinel byte beyond the 512 KiB bound. Tests cover exact limit, one byte over, and an I/O error after the first chunk. API 26 device execution: **NOT_RUN**; no API 26 emulator/device was available, and Pixel 7a access is prohibited.
+- `events.list` reads the response `timeZone` and passes it to the existing parser; a fixed `maxResults=100` keeps the expected 20-page aggregate within the domain's 2,000-event default. A field mask limits each item to parser-supported fields while retaining the page token and timezone.
+- Clones an injected OkHttp client with redirects, SSL redirects, and connection retries disabled; a test injects a redirect-enabled client and verifies a second MockWebServer never receives the bearer token.
+- `events.get` honors a timezone embedded in `start`/`end`; RFC3339 offsets remain interpreted by the existing parser. If an all-day single-event payload omits its zone, this domain port has no calendar-zone input and the parser retains the documented UTC fallback. Resolving that case without requiring calendar-list scope needs an Owner-approved domain/API seam.
+- The follow-up adds five test methods beyond the original eleven; final suite size is 16 methods. The final-head test and CI results are recorded in the task handoff.
+- Calendar workflow run `39431755241` on the prior head `246e8171705a1dfef4730d0736ae679ec6752aa0` ran 33 tests and failed 2: the encoded-path assertion expected a specific percent spelling, and a call timeout was classified as cancellation. Follow-up changes now assert decoded path segments and classify `InterruptedIOException` as timeout before checking `Call.isCanceled()`. This old-head failure is not counted as final-head verification.
+
+## Verification
+
+- `git diff --check`: PASS.
+- Requested JVM unit command: `./gradlew :app:testDebugUnitTest --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarDomainParserTest' --tests 'app.serea.android.calendar.CalendarAgendaTest' --tests 'app.serea.android.calendar.CalendarSecurityTest'` — NOT_RUN. Gradle wrapper could not download Gradle 8.11.1 because the distribution request failed with `java.net.ConnectException: Connection refused`; no Gradle tasks started.
+- Android build and lint: NOT_RUN for the same unavailable Gradle distribution.
+- New transport suite contains 16 test methods, including MockWebServer route/scope, pagination, authorization/token handling, status mapping, redirect, timezone, malformed/oversized response, timeout, cancellation, and repeated-token cases, plus bounded-reader boundary and I/O failure cases. Execution status before the follow-up CI dispatch: NOT_RUN; there are no real Google requests.
+- Existing Calendar regression suites: NOT_RUN. No CI workflow was triggered; CI Run ID and final-head status are unavailable.
+- Real Google OAuth, API access, personal calendar data, and device/ADB verification: NOT_RUN.
+
+## Integration notes
+
+- The host authorization implementation should implement `CalendarAuthorizationPort` and `CalendarAccessTokenPort`, return only a short-lived access token after user-approved authorization, refresh or revoke it in that owner-controlled layer, and report missing scopes accurately. Required read scopes remain `calendar.events.readonly` and, for calendar listing, `calendar.calendarlist.readonly`.
+- No production wiring was added, so the adapter is not active in the app. OAuth/UI integration and a workflow base-branch filter update remain owner-lane dependencies. The current `.github/workflows/android-calendar-readonly.yml` triggers only for PRs targeting `codex/android-m0-04-integration-candidate-2026-10-20`, while this lane's required PR base is `codex/android-m0-08-abcd-integration-2026-10-20`; its path filter does include both new source and test directories, but the branch filter currently prevents an automatic run for this PR. No Gradle dependency changes were needed; OkHttp, Gson, coroutines, and MockWebServer are already declared.
+- Event timezone fallback currently follows the existing parser's supplied zone (`UTC` in this transport). If owner integration requires calendar-specific fallback for events lacking timezone fields, the domain seam needs a timezone input or the transport needs an authorized calendar timezone source.
+- API calls are intentionally not automatically retried. A 401 maps to permission denied, 403 distinguishes missing scope/quota when the bounded error body identifies the reason, 404 to not found, 410 to expired sync token, 429 to rate limited, and 5xx to unavailable.
+
+## Git and delivery
+
+- Starting PR #58 was verified OPEN and Draft with head `239aaa181cdcfea756cf6c9ebb5eca9194caf7cf`; the specified base branch exists at that same SHA. The worktree was clean before starting.
+- Repository-local Codex identity settings and versioned hooks were configured according to `docs/git-safety.md`; preflight and reachable-history identity checks passed before edits.
+- Final branch/commit, Git tree, push, and Draft PR details are recorded in the task handoff after delivery.

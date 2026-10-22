@@ -9,7 +9,7 @@ class SecurityPortsTest {
         var providerCalls = 0
         val descriptor = ModelDescriptor("fixture/public-only", "fixture", "Fixture",
             Knowledge.Known(4096), Knowledge.Known(512), ModelCapabilities(setOf("text/plain")),
-            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "unit-test fixture")
+            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "unit-test fixture (fictional)", verificationStatus = ModelVerificationStatus.TEST_FIXTURE)
         val now = 50_000L
         val provider = EgressCheckedModelChatPort(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest): ModelChatResponse {
@@ -17,7 +17,7 @@ class SecurityPortsTest {
                 return ModelChatResponse("unexpected")
             }
         }, { now })
-        val routed = RoutedModelChatPort(provider, AdaptiveModelRouter(LocalModelCatalog(listOf(descriptor)))) {
+        val routed = RoutedModelChatPort(provider, AdaptiveModelRouter(FakeModelCatalog(listOf(descriptor)))) {
             ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = descriptor.id, allowedProviderIds = setOf("fixture"))
         }
         try {

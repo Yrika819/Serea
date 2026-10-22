@@ -145,6 +145,20 @@ class EncryptedHistoryTest {
         assertEquals(listOf("atomic-user", "atomic-assistant"), repository.get("atomic-turn")!!.messages.map { it.id })
     }
 
+    @Test fun statusTransitionReportsMissingAndConflictingRowsAndAllowsIdempotentRetry() = runBlocking {
+        repository.create("status-contract", "Status transition", now = 1)
+        repository.addMessage(StoredMessage(
+            "status-pending", "status-contract", MessageRole.USER, "request", DataClassification.UNKNOWN, 2, "PENDING",
+        ))
+
+        assertTrue(repository.updateStatus("status-pending", "status-contract", "OUTCOME_UNKNOWN"))
+        assertTrue(repository.updateStatus("status-pending", "status-contract", "OUTCOME_UNKNOWN"))
+        assertFalse(repository.updateStatus("status-pending", "status-contract", "FAILED"))
+        assertFalse(repository.updateStatus("missing-message", "status-contract", "FAILED"))
+        assertFalse(repository.updateStatus("status-pending", "wrong-conversation", "OUTCOME_UNKNOWN"))
+        assertEquals("OUTCOME_UNKNOWN", repository.get("status-contract")!!.messages.single().status)
+    }
+
     @Test fun lateInsertRacingWithDeleteCannotReappearWhenConversationIdIsReused() = runBlocking {
         repository.create("racing-delete", "Race", now = 1)
         val start = CompletableDeferred<Unit>()
@@ -313,6 +327,10 @@ class EncryptedHistoryTest {
         assertEquals(1L, snapshot.dailyRequests)
         assertEquals(160L, snapshot.dailyEstimatedInputTokens + snapshot.dailyEstimatedOutputTokens)
         assertEquals(1L, snapshot.uncertainRequests)
+        val restoredLedger = reopenedDb.usageDao().ledger("pending-before-death")!!
+        assertEquals("OUTCOME_UNKNOWN", restoredLedger.usageStatus)
+        assertEquals("UNKNOWN", restoredLedger.modelId)
+        assertEquals("UNKNOWN", restoredLedger.providerId)
         reopenedDb.close()
         context.deleteDatabase(name)
         Unit

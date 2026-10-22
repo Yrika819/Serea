@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -9,6 +11,7 @@ plugins {
 android {
     namespace = "app.serea.android"
     compileSdk = 35
+    testBuildType = "isolated"
 
     defaultConfig {
         applicationId = "app.serea.android"
@@ -16,14 +19,28 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0-demo"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
     }
 
     buildTypes {
         debug { applicationIdSuffix = ".demo" }
+        create("isolated") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".isolated"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    sourceSets {
+        // Instrumentation and the process-death harness use a separate Android
+        // application ID and therefore a separate app-private DB/Preferences area.
+        getByName("isolated") {
+            java.srcDir("src/debug/java")
+            manifest.srcFile("src/debug/AndroidManifest.xml")
         }
     }
 
@@ -31,9 +48,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     lint { abortOnError = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
 }
 
 dependencies {
@@ -52,6 +74,7 @@ dependencies {
     ksp("androidx.room:room-compiler:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.12.1")
+    implementation("com.google.android.gms:play-services-auth:22.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
@@ -65,7 +88,9 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    // Compose test activities must be declared in the isolated target APK so
+    // ActivityScenario launches them in the app process, never in the test APK.
+    add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
@@ -95,7 +120,9 @@ licenseReport {
     configurations = arrayOf(
         "debugRuntimeClasspath",
         "releaseRuntimeClasspath",
+        "isolatedRuntimeClasspath",
         "debugUnitTestRuntimeClasspath",
-        "debugAndroidTestRuntimeClasspath",
+        "isolatedUnitTestRuntimeClasspath",
+        "isolatedAndroidTestRuntimeClasspath",
     )
 }

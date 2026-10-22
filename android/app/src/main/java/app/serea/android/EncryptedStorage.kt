@@ -126,12 +126,21 @@ interface HistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun putMessage(row: MessageRow)
     @Query("UPDATE messages SET status = :status WHERE id = :messageId AND conversationId = :conversationId AND status = 'PENDING'")
     suspend fun transitionPendingMessage(messageId: String, conversationId: String, status: String): Int
+    @Query("SELECT status FROM messages WHERE id = :messageId AND conversationId = :conversationId")
+    suspend fun messageStatus(messageId: String, conversationId: String): String?
     @Transaction
     suspend fun putMessageIfConversationIsActive(row: MessageRow) {
         val conversation = conversation(row.conversationId)
             ?: throw IllegalArgumentException("Conversation does not exist")
         putMessage(row)
         putConversation(conversation.copy(updatedAt = maxOf(conversation.updatedAt, row.createdAt)))
+    }
+    @Transaction
+    suspend fun createConversationWithFirstMessage(conversation: ConversationRow, message: MessageRow) {
+        require(conversation.id == message.conversationId)
+        require(message.role == MessageRole.USER.name && message.status == "PENDING")
+        putConversation(conversation)
+        putMessage(message)
     }
     @Transaction
     suspend fun completePendingTurn(userMessageId: String, assistant: MessageRow) {
@@ -164,7 +173,7 @@ interface HistoryDao {
     }
 }
 
-@Database(entities = [ConversationRow::class, MessageRow::class, UsageWindowRow::class, UsageReservationRow::class, UsageSettingsRow::class], version = 3, exportSchema = true)
+@Database(entities = [ConversationRow::class, MessageRow::class, UsageWindowRow::class, UsageReservationRow::class, UsageSettingsRow::class, ModelUsageLedgerRow::class], version = 4, exportSchema = true)
 abstract class SereaHistoryDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun usageDao(): UsageDao
@@ -173,20 +182,28 @@ abstract class SereaHistoryDatabase : RoomDatabase() {
         @Volatile private var instance: SereaHistoryDatabase? = null
         fun open(context: Context): SereaHistoryDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SereaHistoryDatabase::class.java, "serea-history.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build().also { instance = it }
         }
 
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("CREATE TABLE IF NOT EXISTS usage_windows (windowKey TEXT NOT NULL, requests INTEGER NOT NULL, inputTokens INTEGER NOT NULL, outputTokens INTEGER NOT NULL, PRIMARY KEY(windowKey))")
                 database.execSQL("CREATE TABLE IF NOT EXISTS usage_reservations (requestId TEXT NOT NULL, dayKey TEXT NOT NULL, monthKey TEXT NOT NULL, inputTokens INTEGER NOT NULL, outputTokens INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY(requestId))")
                 database.execSQL("CREATE TABLE IF NOT EXISTS usage_settings (id INTEGER NOT NULL, dailyRequests INTEGER NOT NULL, dailyTokens INTEGER NOT NULL, monthlyRequests INTEGER NOT NULL, monthlyTokens INTEGER NOT NULL, lastObservedAt INTEGER NOT NULL, PRIMARY KEY(id))")
             }
         }
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
+        internal val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'UNKNOWN'")
+            }
+        }
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("CREATE TABLE IF NOT EXISTS model_usage_ledger (requestId TEXT NOT NULL, modelId TEXT NOT NULL, providerId TEXT NOT NULL, createdAt INTEGER NOT NULL, dayKey TEXT NOT NULL, monthKey TEXT NOT NULL, estimatedInputTokens INTEGER NOT NULL, reservedOutputTokens INTEGER NOT NULL, providerInputTokens INTEGER, providerOutputTokens INTEGER, usageStatus TEXT NOT NULL, costStatus TEXT NOT NULL, estimatedCost TEXT, currency TEXT, pricingSource TEXT, pricingVerifiedAt TEXT, inputPricePerMillion TEXT, outputPricePerMillion TEXT, pricingEffectiveAt TEXT, pricingRevision TEXT, reservationState TEXT NOT NULL, settledAt INTEGER, uncertainOutcomeReason TEXT, modelAttributionStatus TEXT NOT NULL, PRIMARY KEY(requestId), FOREIGN KEY(requestId) REFERENCES usage_reservations(requestId) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_model_usage_ledger_dayKey_providerId_modelId ON model_usage_ledger(dayKey, providerId, modelId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_model_usage_ledger_monthKey_providerId_modelId ON model_usage_ledger(monthKey, providerId, modelId)")
+                database.execSQL("INSERT INTO model_usage_ledger (requestId, modelId, providerId, createdAt, dayKey, monthKey, estimatedInputTokens, reservedOutputTokens, providerInputTokens, providerOutputTokens, usageStatus, costStatus, estimatedCost, currency, pricingSource, pricingVerifiedAt, inputPricePerMillion, outputPricePerMillion, pricingEffectiveAt, pricingRevision, reservationState, settledAt, uncertainOutcomeReason, modelAttributionStatus) SELECT requestId, 'UNKNOWN', 'UNKNOWN', 0, dayKey, monthKey, CASE WHEN state = 'SETTLED' THEN 0 ELSE inputTokens END, CASE WHEN state = 'SETTLED' THEN 0 ELSE outputTokens END, CASE WHEN state = 'SETTLED' THEN inputTokens ELSE NULL END, CASE WHEN state = 'SETTLED' THEN outputTokens ELSE NULL END, state, 'UNKNOWN', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, state, NULL, CASE WHEN state IN ('OUTCOME_UNKNOWN', 'USAGE_UNKNOWN') THEN 'Migrated pre-ledger uncertain reservation.' ELSE NULL END, 'UNKNOWN' FROM usage_reservations")
             }
         }
     }
@@ -199,18 +216,38 @@ data class StoredMessage(
 )
 data class StoredConversation(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val modelId: String, val messages: List<StoredMessage>)
 
-internal class ConversationRepository(private val dao: HistoryDao, private val cipher: KeystoreAesGcm) {
+internal interface ConversationHistoryPort {
+    suspend fun list(): List<StoredConversation>
+    suspend fun get(id: String): StoredConversation?
+    suspend fun addMessage(message: StoredMessage)
+    suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String = "demo-local")
+    suspend fun completeTurn(userMessageId: String, assistant: StoredMessage)
+    suspend fun updateStatus(messageId: String, conversationId: String, status: String): Boolean
+    suspend fun delete(id: String, now: Long = System.currentTimeMillis())
+    suspend fun deleteAll()
+}
+
+internal class ConversationRepository(private val dao: HistoryDao, private val cipher: KeystoreAesGcm) : ConversationHistoryPort {
     suspend fun create(id: String, title: String, modelId: String = "demo-local", now: Long = System.currentTimeMillis()) {
         dao.putConversation(ConversationRow(id, encrypt(title, "conversation:$id:title"), now, now, modelId))
     }
-    suspend fun list(): List<StoredConversation> = dao.conversations().map { load(it) }
-    suspend fun get(id: String): StoredConversation? = dao.conversation(id)?.let { load(it) }
-    suspend fun addMessage(message: StoredMessage) {
+    override suspend fun list(): List<StoredConversation> = dao.conversations().map { load(it) }
+    override suspend fun get(id: String): StoredConversation? = dao.conversation(id)?.let { load(it) }
+    override suspend fun addMessage(message: StoredMessage) {
         dao.putMessageIfConversationIsActive(MessageRow(message.id, message.conversationId, message.role.name,
             encrypt(message.text, "message:${message.id}:body"), message.classification.name,
             message.createdAt, message.status, origin = message.origin.name))
     }
-    suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
+    override suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String) {
+        require(message.conversationId == id && message.role == MessageRole.USER && message.status == "PENDING")
+        val timestamp = message.createdAt
+        dao.createConversationWithFirstMessage(
+            ConversationRow(id, encrypt(title, "conversation:$id:title"), timestamp, timestamp, modelId),
+            MessageRow(message.id, id, message.role.name, encrypt(message.text, "message:${message.id}:body"),
+                message.classification.name, timestamp, message.status, origin = message.origin.name),
+        )
+    }
+    override suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
         require(assistant.role == MessageRole.ASSISTANT && assistant.status == "COMPLETED")
         dao.completePendingTurn(userMessageId, MessageRow(
             assistant.id, assistant.conversationId, assistant.role.name,
@@ -218,14 +255,15 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
             assistant.createdAt, assistant.status, origin = assistant.origin.name,
         ))
     }
-    suspend fun updateStatus(messageId: String, conversationId: String, status: String) {
+    override suspend fun updateStatus(messageId: String, conversationId: String, status: String): Boolean {
         require(status in setOf("COMPLETED", "FAILED", "OUTCOME_UNKNOWN"))
-        dao.transitionPendingMessage(messageId, conversationId, status)
+        val updated = dao.transitionPendingMessage(messageId, conversationId, status)
+        return updated == 1 || dao.messageStatus(messageId, conversationId) == status
     }
-    suspend fun delete(id: String, now: Long = System.currentTimeMillis()) {
+    override suspend fun delete(id: String, now: Long) {
         dao.deleteConversationAndMessages(id, now)
     }
-    suspend fun deleteAll() { dao.deleteAllHistory() }
+    override suspend fun deleteAll() { dao.deleteAllHistory() }
     private suspend fun load(row: ConversationRow): StoredConversation = StoredConversation(
         row.id, decrypt(row.encryptedTitle, "conversation:${row.id}:title"), row.createdAt, row.updatedAt, row.modelId,
         dao.messages(row.id).map { message ->

@@ -21,10 +21,16 @@ import kotlin.random.Random
 class OllamaCloudAdapterTest {
     private val server = MockWebServer().apply { start() }
     private val key = "test-only-not-a-real-key"
+    private fun fixtureCatalog(id: String = "gemma4:31b") = FakeModelCatalog(listOf(ModelDescriptor(
+        id, "ollama", "Fictional test model", Knowledge.Known(8192), Knowledge.Known(512),
+        ModelCapabilities(setOf("text/plain")), ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN),
+        ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = java.time.Instant.now().minusSeconds(10).toString(),
+        source = "fictional local test fixture", verificationStatus = ModelVerificationStatus.TEST_FIXTURE,
+    )))
     private fun adapter(enabled: Boolean = true, reader: CredentialReader = object : CredentialReader {
         override fun readForRequest() = key
-    }) = OllamaCloudAdapter(reader, CloudSettings(enabled, "gemma4:31b"), server.url("/api/chat"),
-        OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build())
+    }, catalog: ModelCatalog = fixtureCatalog()) = OllamaCloudAdapter(reader, CloudSettings(enabled, "gemma4:31b"), server.url("/api/chat"),
+        OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build(), catalog)
 
     @After fun close() { server.shutdown() }
 
@@ -70,9 +76,9 @@ class OllamaCloudAdapterTest {
             "source-1", DataOrigin.USER_AUTHORED, conversationId = "conversation-1"))
         val contract = EgressContract("conversation-1", "send-2", DataOrigin.USER_AUTHORED,
             DataClassification.PUBLIC, "https://ollama.com/api/chat", "second question", context,
-            PayloadPreparation.RAW, now, now + 30_000)
+            PayloadPreparation.RAW, now, now + 30_000, selectedModelId = "gemma4:31b")
         val request = ModelChatRequest("conversation-1", "second question", sendId = "send-2",
-            classification = DataClassification.PUBLIC, context = context, egressContract = contract)
+            classification = DataClassification.PUBLIC, context = context, egressContract = contract, selectedModelId = "gemma4:31b")
         val result = OllamaModelChatPort(adapter(), { now }).send(request)
         assertEquals("second answer", result.text)
         assertEquals(ProviderUsage(19, 3), result.usage)
@@ -175,6 +181,23 @@ class OllamaCloudAdapterTest {
         assertEquals(0, server.requestCount)
         val overrideFailure = capture { adapter().send(EgressApprovedPayload.fixedPublicContractProbe(), selectedModelId = "https://attacker.example") }
         assertEquals(ProviderFailureKind.MODEL_UNAVAILABLE, overrideFailure.kind)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun fictionalFixtureCatalogCannotAuthorizeARealProviderDestination() = runBlocking {
+        var credentialReads = 0
+        val modelId = "gemma4:31b"
+        val contract = EgressContract("fixture-conversation", "fixture-send", DataOrigin.USER_AUTHORED,
+            DataClassification.PUBLIC, "https://ollama.com/api/chat", "fixture prompt", emptyList(),
+            PayloadPreparation.RAW, System.currentTimeMillis(), System.currentTimeMillis() + 30_000,
+            selectedModelId = modelId)
+        val payload = ChatEgressGate.evaluate(contract, System.currentTimeMillis()).payload!!
+        val cloudEndpointAdapter = OllamaCloudAdapter(object : CredentialReader {
+            override fun readForRequest(): String { credentialReads++; return key }
+        }, CloudSettings(true), fixtureCatalog())
+        val failure = capture { cloudEndpointAdapter.send(payload, selectedModelId = modelId) }
+        assertEquals(ProviderFailureKind.MODEL_UNAVAILABLE, failure.kind)
+        assertEquals(0, credentialReads)
         assertEquals(0, server.requestCount)
     }
 

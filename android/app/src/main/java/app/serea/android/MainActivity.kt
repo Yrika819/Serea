@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,13 +46,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -68,7 +70,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -86,13 +91,25 @@ class MainActivity : ComponentActivity() {
     }
     private val usage by lazy { UsageRepository(database.usageDao()) }
     private val credentials by lazy { CredentialRepository(this) }
+    private val tasksDatabase by lazy { app.serea.android.tasks.TasksDatabase.open(this) }
+    private val taskClock: () -> Instant = Instant::now
+    private val taskRepository by lazy {
+        app.serea.android.tasks.EncryptedTaskRepository(
+            tasksDatabase.taskDao(), app.serea.android.tasks.KeystoreTaskCipher(), taskClock,
+        )
+    }
+    internal val shellTaskViewModel: app.serea.android.tasks.TaskViewModel by viewModels {
+        app.serea.android.tasks.TaskViewModel.factory(taskRepository, taskClock)
+    }
+    internal val shellCredentials: CredentialRepository get() = credentials
+    internal val shellUsage: UsageRepository get() = usage
     internal val chatViewModel: ChatViewModel by viewModels {
         ChatViewModel.factory(MockModelChatPort(), history, usage)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { SereaTheme { ChatScreen(chatViewModel, credentials, usage) } }
+        setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
     }
 }
 
@@ -123,11 +140,16 @@ data class ChatUiState(
     val conversation: Conversation = Conversation(id = UUID.randomUUID().toString()),
     val input: String = "",
     val isLoading: Boolean = false,
+    val isFinalizing: Boolean = false,
     val isRestoring: Boolean = false,
     val showingHistory: Boolean = false,
     val history: List<StoredConversation> = emptyList(),
     val errorMessage: String? = null,
+    val historyPersistenceWarnings: Map<String, String> = emptyMap(),
     val statusMessage: String? = null,
+    val deleteConfirmation: String = "",
+    val deleteTargetId: String = "",
+    val deleteTargetTitle: String = "",
 )
 
 data class ModelChatRequest(
@@ -148,7 +170,10 @@ interface ModelChatPort {
     suspend fun send(request: ModelChatRequest): ModelChatResponse
 }
 
-class ModelChatFailure(message: String) : Exception(message)
+open class ModelChatFailure(message: String) : Exception(message)
+
+/** A local validation failed before the provider adapter could dispatch a request. */
+internal class PreDispatchModelChatFailure(message: String) : ModelChatFailure(message)
 
 /** Deterministic demo only. It makes no network calls and never claims cloud inference. */
 class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChatPort {
@@ -163,7 +188,7 @@ class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChat
 
 internal class ChatViewModel(
     private val modelChat: ModelChatPort,
-    private val historyRepository: ConversationRepository? = null,
+    private val historyRepository: ConversationHistoryPort? = null,
     private val usageRepository: UsageRepository? = null,
     initialConversation: Conversation? = null,
 ) : ViewModel() {
@@ -174,10 +199,45 @@ internal class ChatViewModel(
     val state: StateFlow<ChatUiState> = mutableState.asStateFlow()
     private var activeJob: Job? = null
     private var activeMessageId: String? = null
+    private val finalizingMessageIds = mutableSetOf<String>()
+    private var selectionGeneration = 0L
+    private val persistedConversationIds = mutableSetOf<String>().apply {
+        if (historyRepository != null && initialConversation != null) add(initialConversation.id)
+    }
 
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
 
     fun updateInput(value: String) = mutableState.update { it.copy(input = value, errorMessage = null) }
+
+    fun requestCurrentConversationDeletionConfirmation() {
+        val conversation = mutableState.value.conversation
+        mutableState.update {
+            it.copy(
+                deleteConfirmation = "current",
+                deleteTargetId = conversation.id,
+                deleteTargetTitle = conversationDisplayTitle(conversation),
+            )
+        }
+    }
+
+    fun requestAllHistoryDeletionConfirmation() = mutableState.update {
+        it.copy(deleteConfirmation = "all", deleteTargetId = "", deleteTargetTitle = "")
+    }
+
+    fun clearDeleteConfirmation() = mutableState.update {
+        it.copy(deleteConfirmation = "", deleteTargetId = "", deleteTargetTitle = "")
+    }
+
+    fun confirmCurrentConversationDeletion() {
+        val id = mutableState.value.deleteTargetId
+        clearDeleteConfirmation()
+        if (id.isNotBlank()) deleteCurrentConversation(id)
+    }
+
+    fun confirmAllHistoryDeletion() {
+        clearDeleteConfirmation()
+        deleteAllHistory()
+    }
 
     fun sendMessage() {
         val snapshot = mutableState.value
@@ -192,37 +252,69 @@ internal class ChatViewModel(
             origin = DataOrigin.USER_AUTHORED, conversationId = conversationId)
         activeMessageId = userMessage.id
         mutableState.update {
-            it.copy(conversation = it.conversation.copy(messages = it.conversation.messages + userMessage), input = "", isLoading = true, errorMessage = null)
+            it.copy(conversation = it.conversation.copy(messages = it.conversation.messages + userMessage), input = "", isLoading = true, isFinalizing = false, errorMessage = null)
         }
         activeJob = viewModelScope.launch {
+            var turnFinalized = false
             try {
-                persist(userMessage, conversationId)
+                if (historyRepository != null) {
+                    if (conversationId in persistedConversationIds) {
+                        persist(userMessage, conversationId)
+                    } else {
+                        historyRepository.createWithFirstMessage(
+                            conversationId, conversationTitle(messageText), userMessage.toStoredMessage(conversationId),
+                        )
+                        persistedConversationIds += conversationId
+                    }
+                }
                 val context = ChatContextBuilder.build(snapshot.conversation.messages, messageText, conversationId)
                 val request = ModelChatRequest(conversationId, messageText, sendId = userMessage.id, context = context)
                 val reply = withTimeout(request.timeoutMillis) { modelChat.send(request) }
+                currentCoroutineContext().ensureActive()
+                if (activeMessageId != userMessage.id || mutableState.value.conversation.id != conversationId) {
+                    markUnknown(userMessage, conversationId, "Request cancelled. A transmitted request may still have completed remotely.")
+                    return@launch
+                }
                 val assistant = ChatMessage(UUID.randomUUID().toString(), MessageRole.ASSISTANT, reply.text,
                     nextMessageTime(snapshot.conversation.copy(messages = snapshot.conversation.messages + userMessage)),
                     origin = DataOrigin.MODEL_OUTPUT, conversationId = conversationId)
-                if (historyRepository != null) {
-                    historyRepository.completeTurn(userMessage.id, assistant.toStoredMessage(conversationId))
-                }
                 mutableState.update { current ->
-                    if (current.conversation.id != conversationId) current
-                    else current.copy(conversation = current.conversation.copy(messages = current.conversation.messages
-                        .map { if (it.id == userMessage.id) it.copy(status = "COMPLETED") else it } + assistant), isLoading = false)
+                    if (current.conversation.id != conversationId || activeMessageId != userMessage.id) current
+                    else current.copy(isFinalizing = true)
+                }
+                finalizingMessageIds += userMessage.id
+                withContext(NonCancellable) {
+                    historyRepository?.completeTurn(userMessage.id, assistant.toStoredMessage(conversationId))
+                    turnFinalized = true
+                    mutableState.update { current ->
+                        if (current.conversation.id != conversationId) current
+                        else {
+                            val ownsActiveRequest = activeMessageId == userMessage.id
+                            current.copy(
+                                conversation = current.conversation.copy(messages = current.conversation.messages
+                                    .map { if (it.id == userMessage.id) it.copy(status = "COMPLETED") else it } + assistant),
+                                isLoading = if (ownsActiveRequest) false else current.isLoading,
+                                isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                                errorMessage = if (ownsActiveRequest) null else current.errorMessage,
+                            )
+                        }
+                    }
                 }
                 refreshHistory()
             } catch (_: TimeoutCancellationException) {
                 markUnknown(userMessage, conversationId, "The request timed out. Its remote outcome is unknown; retry explicitly.")
             } catch (cancelled: CancellationException) {
-                withContext(NonCancellable) { markUnknown(userMessage, conversationId, "Request cancelled. A transmitted request may still have completed remotely.") }
+                if (!turnFinalized) {
+                    withContext(NonCancellable) { markUnknown(userMessage, conversationId, "Request cancelled. A transmitted request may still have completed remotely.") }
+                }
             } catch (failure: ModelChatFailure) {
-                markFailed(userMessage, conversationId, failure.message ?: "The model request failed.")
+                markFailureOrUnknown(userMessage, conversationId, failure.message ?: "The model request failed.")
             } catch (_: UsageLimitExceededException) {
-                markFailed(userMessage, conversationId, "ローカルの日次または月次Soft Limitを超えました。設定で上限を確認してください。")
+                markFailureOrUnknown(userMessage, conversationId, "ローカルの日次または月次Soft Limitを超えました。設定で上限を確認してください。")
             } catch (_: Exception) {
-                markFailed(userMessage, conversationId)
+                markFailureOrUnknown(userMessage, conversationId, "Demo response failed. Please try again.")
             } finally {
+                finalizingMessageIds -= userMessage.id
                 if (activeMessageId == userMessage.id) { activeMessageId = null; activeJob = null }
             }
         }
@@ -230,49 +322,91 @@ internal class ChatViewModel(
 
     fun cancelCurrent() {
         val id = activeMessageId ?: return
-        val conversationId = mutableState.value.conversation.id
+        if (id in finalizingMessageIds) return
         activeJob?.cancel()
         mutableState.update { it.copy(isLoading = false, errorMessage = "Request cancelled. A transmitted request may still have completed remotely.") }
-        viewModelScope.launch { historyRepository?.updateStatus(id, conversationId, "OUTCOME_UNKNOWN") }
     }
 
     fun newConversation() {
         cancelCurrent()
+        selectionGeneration += 1
         val id = UUID.randomUUID().toString()
-        mutableState.update { it.copy(conversation = Conversation(id), input = "", isLoading = false, showingHistory = false,
-            isRestoring = historyRepository != null, errorMessage = null, statusMessage = null) }
-        viewModelScope.launch {
-            try { historyRepository?.create(id, "Conversation ${id.take(8)}") }
-            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not save this conversation securely.") } }
-            finally { mutableState.update { it.copy(isRestoring = false) } }
-        }
+        mutableState.update { it.copy(conversation = Conversation(id), input = "", isLoading = false, isFinalizing = false, showingHistory = false,
+            isRestoring = false, errorMessage = null, statusMessage = null) }
     }
 
     fun showHistory() {
+        if (mutableState.value.isRestoring) return
+        if (finalizingMessageIds.isNotEmpty()) {
+            mutableState.update { it.copy(errorMessage = "応答の保存中は履歴を開けません。") }
+            return
+        }
+        val generation = ++selectionGeneration
         viewModelScope.launch {
-            try { mutableState.update { it.copy(history = historyRepository?.list().orEmpty(), showingHistory = true, isLoading = false) } }
-            catch (_: HistoryUnavailableException) { mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") } }
-            catch (_: Exception) { mutableState.update { it.copy(errorMessage = "Could not open saved history.") } }
+            try {
+                val conversations = historyRepository?.list().orEmpty()
+                if (generation != selectionGeneration) return@launch
+                mutableState.update { it.copy(history = conversations, showingHistory = true, isLoading = false, isFinalizing = false) }
+            } catch (_: HistoryUnavailableException) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
+            } catch (_: Exception) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Could not open saved history.") }
+            }
         }
     }
 
     fun openConversation(id: String) {
+        if (mutableState.value.isRestoring) return
+        if (finalizingMessageIds.isNotEmpty()) {
+            mutableState.update { it.copy(errorMessage = "応答の保存中は履歴を切り替えられません。") }
+            return
+        }
         cancelCurrent()
+        val generation = ++selectionGeneration
         viewModelScope.launch {
             try {
                 val saved = historyRepository?.get(id) ?: return@launch
+                if (generation != selectionGeneration) return@launch
+                persistedConversationIds += saved.id
+                val persistenceWarningUpdates = mutableMapOf<String, String?>()
                 val messages = saved.messages.map { message ->
                     if (message.status == "PENDING") {
-                        historyRepository?.updateStatus(message.id, saved.id, "OUTCOME_UNKNOWN")
+                        val statusPersisted = tryPersistUnknownStatus(message.id, saved.id)
+                        persistenceWarningUpdates[message.id] = if (statusPersisted) null else
+                            "The saved history status for this message could not be updated; reopen history to reconcile."
                         message.copy(status = "OUTCOME_UNKNOWN").toChatMessage()
-                    } else message.toChatMessage()
+                    } else {
+                        persistenceWarningUpdates[message.id] = null
+                        message.toChatMessage()
+                    }
                 }
-                mutableState.update { it.copy(conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)), showingHistory = false, isLoading = false) }
-            } catch (_: HistoryUnavailableException) { mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") } }
+                if (generation != selectionGeneration) return@launch
+                mutableState.update {
+                    val warnings = it.historyPersistenceWarnings.toMutableMap()
+                    persistenceWarningUpdates.forEach { (messageId, warning) ->
+                        if (warning == null) warnings.remove(messageId) else warnings[messageId] = warning
+                    }
+                    it.copy(
+                        conversation = Conversation(saved.id, messages, Instant.ofEpochMilli(saved.createdAt)),
+                        showingHistory = false, isLoading = false, isFinalizing = false,
+                        historyPersistenceWarnings = warnings,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: HistoryUnavailableException) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
+            } catch (_: Exception) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Could not open the selected conversation.") }
+            }
         }
     }
 
     fun deleteCurrentConversation(expectedId: String) {
+        if (finalizingMessageIds.isNotEmpty()) {
+            mutableState.update { it.copy(errorMessage = "応答の保存中は会話を削除できません。") }
+            return
+        }
         val current = mutableState.value
         if (current.isRestoring || current.conversation.id != expectedId) {
             mutableState.update { it.copy(errorMessage = "削除対象の会話が切り替わったため、削除を中止しました。") }
@@ -280,76 +414,191 @@ internal class ChatViewModel(
         }
         val id = expectedId
         cancelCurrent()
-        mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
+        val generation = ++selectionGeneration
+        mutableState.update { it.copy(isRestoring = true, isLoading = false, isFinalizing = false, statusMessage = null) }
         viewModelScope.launch {
             try {
                 historyRepository?.delete(id)
+                if (generation != selectionGeneration) return@launch
                 newConversation()
                 refreshHistory()
-                mutableState.update { it.copy(statusMessage = "この会話を削除しました。") }
-            } catch (_: Exception) { mutableState.update { it.copy(errorMessage = "この会話を削除できませんでした。", isRestoring = false) } }
+                val completedGeneration = selectionGeneration
+                mutableState.update { if (completedGeneration == selectionGeneration) it.copy(statusMessage = "この会話を削除しました。") else it }
+            } catch (_: Exception) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "この会話を削除できませんでした。", isRestoring = false) }
+            }
         }
     }
 
     fun deleteAllHistory() {
         if (mutableState.value.isRestoring) return
+        if (finalizingMessageIds.isNotEmpty()) {
+            mutableState.update { it.copy(errorMessage = "応答の保存中は履歴を削除できません。") }
+            return
+        }
         cancelCurrent()
-        mutableState.update { it.copy(isRestoring = true, isLoading = false, statusMessage = null) }
+        val generation = ++selectionGeneration
+        mutableState.update { it.copy(isRestoring = true, isLoading = false, isFinalizing = false, statusMessage = null) }
         viewModelScope.launch {
             try {
                 historyRepository?.deleteAll()
+                if (generation != selectionGeneration) return@launch
                 newConversation()
-                mutableState.update { it.copy(history = emptyList(), statusMessage = "全会話履歴を削除しました。") }
-            } catch (_: Exception) { mutableState.update { it.copy(errorMessage = "全会話履歴を削除できませんでした。", isRestoring = false) } }
+                val completedGeneration = selectionGeneration
+                mutableState.update { if (completedGeneration == selectionGeneration) it.copy(history = emptyList(), statusMessage = "全会話履歴を削除しました。") else it }
+            } catch (_: Exception) {
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "全会話履歴を削除できませんでした。", isRestoring = false) }
+            }
         }
     }
 
     private fun restoreLatest() {
+        val generation = selectionGeneration
         viewModelScope.launch {
             try {
                 usageRepository?.recoverAfterProcessRestart()
                 val conversations = historyRepository!!.list()
+                if (generation != selectionGeneration) return@launch
                 val latest = conversations.firstOrNull()
                 if (latest == null) {
-                    val id = mutableState.value.conversation.id
-                    historyRepository.create(id, "Conversation ${id.take(8)}")
+                    // Keep the new empty conversation in memory until its first message is sent.
                 } else {
+                    persistedConversationIds += latest.id
+                    val persistenceWarningUpdates = mutableMapOf<String, String?>()
                     val messages = latest.messages.map { message ->
-                        if (message.status == "PENDING") historyRepository.updateStatus(message.id, latest.id, "OUTCOME_UNKNOWN")
+                        if (message.status == "PENDING") {
+                            val statusPersisted = tryPersistUnknownStatus(message.id, latest.id)
+                            persistenceWarningUpdates[message.id] = if (statusPersisted) null else
+                                "The saved history status for this message could not be updated; reopen history to reconcile."
+                        } else {
+                            persistenceWarningUpdates[message.id] = null
+                        }
                         message.copy(status = if (message.status == "PENDING") "OUTCOME_UNKNOWN" else message.status).toChatMessage()
                     }
-                    mutableState.update { it.copy(conversation = Conversation(latest.id, messages, Instant.ofEpochMilli(latest.createdAt))) }
+                    if (generation != selectionGeneration) return@launch
+                    mutableState.update {
+                        val warnings = it.historyPersistenceWarnings.toMutableMap()
+                        persistenceWarningUpdates.forEach { (messageId, warning) ->
+                            if (warning == null) warnings.remove(messageId) else warnings[messageId] = warning
+                        }
+                        it.copy(
+                            conversation = Conversation(latest.id, messages, Instant.ofEpochMilli(latest.createdAt)),
+                            historyPersistenceWarnings = warnings,
+                        )
+                    }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: HistoryUnavailableException) {
-                mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Saved history is unavailable because its encryption key or data is invalid.") }
             } catch (_: Exception) {
-                mutableState.update { it.copy(errorMessage = "Could not restore saved history.") }
-            } finally { mutableState.update { it.copy(isRestoring = false) } }
+                if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Could not restore saved history.") }
+            } finally {
+                if (generation == selectionGeneration) mutableState.update { it.copy(isRestoring = false) }
+            }
         }
     }
 
     private suspend fun persist(message: ChatMessage, conversationId: String) {
         historyRepository?.addMessage(message.toStoredMessage(conversationId))
     }
+    private suspend fun tryPersistUnknownStatus(messageId: String, conversationId: String): Boolean = try {
+        historyRepository?.updateStatus(messageId, conversationId, "OUTCOME_UNKNOWN") ?: true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        false
+    }
     private fun nextMessageTime(conversation: Conversation): Instant = maxOf(
         Instant.now(), (conversation.messages.maxOfOrNull { it.createdAt } ?: Instant.EPOCH).plusMillis(1),
     )
     private suspend fun markUnknown(message: ChatMessage, conversationId: String, reason: String) {
-        historyRepository?.updateStatus(message.id, conversationId, "OUTCOME_UNKNOWN")
-        mutableState.update { current -> if (current.conversation.id == conversationId) current.copy(isLoading = false,
-            conversation = current.conversation.copy(messages = current.conversation.messages.map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
-            errorMessage = reason) else current }
+        withContext(NonCancellable) {
+            val statusPersisted = tryPersistUnknownStatus(message.id, conversationId)
+            val persistenceWarning = if (statusPersisted) null else
+                "The saved history status for this message could not be updated; reopen history to reconcile."
+            mutableState.update { current ->
+                val warnings = current.historyPersistenceWarnings.toMutableMap().apply {
+                    if (persistenceWarning == null) remove(message.id) else put(message.id, persistenceWarning)
+                }
+                if (current.conversation.id != conversationId) {
+                    if (warnings == current.historyPersistenceWarnings) current else current.copy(historyPersistenceWarnings = warnings)
+                } else {
+                    val ownsActiveRequest = activeMessageId == message.id
+                    current.copy(
+                        isLoading = if (ownsActiveRequest) false else current.isLoading,
+                        isFinalizing = if (ownsActiveRequest) false else current.isFinalizing,
+                        conversation = current.conversation.copy(messages = current.conversation.messages
+                            .map { if (it.id == message.id) it.copy(status = "OUTCOME_UNKNOWN") else it }),
+                        errorMessage = if (ownsActiveRequest && statusPersisted) reason else current.errorMessage,
+                        historyPersistenceWarnings = warnings,
+                    )
+                }
+            }
+        }
+    }
+    private suspend fun markFailureOrUnknown(message: ChatMessage, conversationId: String, reason: String) {
+        if (currentCoroutineContext().isActive) {
+            markFailed(message, conversationId, reason)
+        } else {
+            withContext(NonCancellable) {
+                markUnknown(message, conversationId, "Request cancelled. A transmitted request may still have completed remotely.")
+            }
+        }
     }
     private suspend fun markFailed(message: ChatMessage, conversationId: String, reason: String = "Demo response failed. Please try again.") {
-        historyRepository?.updateStatus(message.id, conversationId, "FAILED")
-        mutableState.update { current -> if (current.conversation.id == conversationId) current.copy(isLoading = false,
-            conversation = current.conversation.copy(messages = current.conversation.messages.map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
-            errorMessage = reason) else current }
+        val ownsActiveRequest = activeMessageId == message.id && mutableState.value.conversation.id == conversationId
+        if (ownsActiveRequest) {
+            finalizingMessageIds += message.id
+            mutableState.update { current ->
+                if (current.conversation.id == conversationId && activeMessageId == message.id) {
+                    current.copy(isFinalizing = true)
+                } else current
+            }
+        }
+        try {
+            withContext(NonCancellable) {
+                val statusPersisted = try {
+                    historyRepository?.updateStatus(message.id, conversationId, "FAILED") ?: true
+                } catch (_: Exception) {
+                    false
+                }
+                val persistenceWarning = if (statusPersisted) null else
+                    "The failure status for this message could not be saved; reopen history to check the saved record."
+                mutableState.update { current ->
+                    val warnings = current.historyPersistenceWarnings.toMutableMap().apply {
+                        if (persistenceWarning == null) remove(message.id) else put(message.id, persistenceWarning)
+                    }
+                    if (current.conversation.id != conversationId) {
+                        if (warnings == current.historyPersistenceWarnings) current else current.copy(historyPersistenceWarnings = warnings)
+                    } else {
+                        val stillOwnsActiveRequest = activeMessageId == message.id
+                        current.copy(
+                            isLoading = if (stillOwnsActiveRequest) false else current.isLoading,
+                            isFinalizing = if (stillOwnsActiveRequest) false else current.isFinalizing,
+                            conversation = current.conversation.copy(messages = current.conversation.messages
+                                .map { if (it.id == message.id) it.copy(status = "FAILED") else it }),
+                            errorMessage = if (stillOwnsActiveRequest) reason else current.errorMessage,
+                            historyPersistenceWarnings = warnings,
+                        )
+                    }
+                }
+            }
+        } finally {
+            if (ownsActiveRequest) finalizingMessageIds -= message.id
+        }
     }
-    private fun refreshHistory() { viewModelScope.launch { runCatching { historyRepository?.list().orEmpty() }.onSuccess { list -> mutableState.update { it.copy(history = list) } } } }
+    private fun refreshHistory() {
+        val generation = selectionGeneration
+        viewModelScope.launch {
+            runCatching { historyRepository?.list().orEmpty() }.onSuccess { list ->
+                if (generation == selectionGeneration) mutableState.update { it.copy(history = list) }
+            }
+        }
+    }
 
     companion object {
-        fun factory(port: ModelChatPort, history: ConversationRepository? = null, usage: UsageRepository? = null): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+        fun factory(port: ModelChatPort, history: ConversationHistoryPort? = null, usage: UsageRepository? = null): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ChatViewModel(port, history, usage) as T
         }
@@ -375,6 +624,30 @@ private fun ChatMessage.toStoredMessage(conversationId: String) = StoredMessage(
     id, conversationId, role, text, classification, createdAt.toEpochMilli(), status, origin,
 )
 
+internal fun conversationTitle(firstMessage: String): String {
+    val clean = buildString(firstMessage.length) {
+        firstMessage.forEach { char -> append(if (char.isISOControl() || char == '\u2028' || char == '\u2029') ' ' else char) }
+    }.replace(Regex("\\s+"), " ").trim()
+    if (clean.isEmpty()) return "新しい会話"
+    val limit = 48
+    val codePointCount = clean.codePointCount(0, clean.length)
+    val truncated = codePointCount > limit
+    val visibleCodePoints = if (truncated) limit - 1 else limit
+    val end = clean.offsetByCodePoints(0, minOf(codePointCount, visibleCodePoints))
+    return clean.substring(0, end).trimEnd() + if (truncated) "…" else ""
+}
+
+internal fun conversationDisplayTitle(conversation: Conversation): String =
+    conversation.messages.firstOrNull { it.role == MessageRole.USER }?.text?.let(::conversationTitle)
+        ?: "新しい会話 · ${conversation.id.take(8)}"
+
+internal fun storedConversationDisplayTitle(conversation: StoredConversation): String {
+    val legacyTitle = Regex("^Conversation [0-9a-fA-F]{8}$").matches(conversation.title)
+    if (!legacyTitle) return conversation.title
+    return conversation.messages.firstOrNull { it.role == MessageRole.USER }?.text?.let(::conversationTitle)
+        ?: conversation.title
+}
+
 private fun <T> Knowledge<T>.displayValue(): String = when (this) {
     Knowledge.UNKNOWN -> "UNKNOWN"
     is Knowledge.Known<*> -> value.toString()
@@ -384,7 +657,15 @@ private fun StoredMessage.toChatMessage() = ChatMessage(id, role, text, Instant.
     status, origin, conversationId)
 
 @Composable
-internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmodel.compose.viewModel(), credentials: CredentialRepository? = null, usage: UsageRepository? = null) {
+internal fun ChatScreen(
+    chatViewModel: ChatViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
+    credentials: CredentialRepository? = null,
+    usage: UsageRepository? = null,
+    onOpenTasks: (() -> Unit)? = null,
+    onOpenSettings: (() -> Unit)? = null,
+    settingsDestination: Boolean = false,
+    onSettingsClosed: (() -> Unit)? = null,
+) {
     val state by chatViewModel.state.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
@@ -395,13 +676,11 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
     }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    var settingsVisible by remember { mutableStateOf(false) }
+    var settingsVisible by rememberSaveable(settingsDestination) { mutableStateOf(settingsDestination) }
     var previewVisible by remember { mutableStateOf(false) }
     var secretText by remember { mutableStateOf("") }
     var settingsMessage by remember { mutableStateOf("") }
     var overflowExpanded by remember { mutableStateOf(false) }
-    var deleteConfirmation by rememberSaveable { mutableStateOf("") }
-    var deleteTargetId by rememberSaveable { mutableStateOf("") }
     var credentialReady by remember { mutableStateOf(credentials?.isConfigured() == true) }
     var dailyRequestsText by remember { mutableStateOf("20") }
     var dailyTokensText by remember { mutableStateOf("10000") }
@@ -438,55 +717,73 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
             }
         }
     }
-    SideEffect {
-        hostActivity?.window?.let { window ->
-            if (settingsVisible) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-            else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    DisposableEffect(hostActivity, settingsVisible) {
+        val window = hostActivity?.window
+        if (settingsVisible) window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        else window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose {
+            if (settingsVisible) window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
     }
     val keystoreProfile = remember(credentials, settingsVisible) {
         if (settingsVisible) runCatching { credentials?.securityProfile() }.getOrNull() ?: "未確認" else "未確認"
     }
+    val configuration = LocalConfiguration.current
+    val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         val screenModifier = Modifier.fillMaxSize().imePadding()
             .then(if (settingsVisible) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-            .padding(16.dp)
-        Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Serea", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+            .padding(if (compactChat) 8.dp else 16.dp)
+        Column(modifier = screenModifier, verticalArrangement = Arrangement.spacedBy(if (compactChat) 4.dp else 12.dp)) {
+            Text("Serea", style = if (compactChat) MaterialTheme.typography.labelLarge else MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                 modifier = Modifier.semantics { heading() })
-            Text("DEMO · Mock chat · No cloud AI", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-            Text("Cloud未利用 · Provider利用条件/送信対象未承認 · 資格情報: ${if (credentialReady) "端末内に保存済み" else "未設定"} · OfflineでもDemo会話は利用できます。",
-                style = MaterialTheme.typography.bodySmall)
+            if (!settingsDestination && (!compactChat || onOpenTasks == null)) {
+                Button(onClick = {
+                    if (onOpenTasks != null) onOpenTasks()
+                    else context.startActivity(android.content.Intent(context, app.serea.android.tasks.TasksActivity::class.java))
+                }, modifier = Modifier.testTag("open_tasks")) { Text("タスク") }
+            }
+            if (compactChat) {
+                Text("DEMO · Cloud送信: 無効", color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            } else {
+                Text("DEMO · Mock会話 · クラウドAI未接続", color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Cloud未利用 · Provider利用条件/送信対象未承認 · 資格情報: ${if (credentialReady) "端末内に保存済み" else "未設定"} · オフラインでもデモ会話は利用できます。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             if (settingsVisible) {
-                Text("Model Selection", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-                Text("選択設定は端末内に保存されます。現在は検証済みCatalogが空のため、外部モデルは選択できません。Demo / Mock会話とCloud無効状態は維持されます。",
+                Text("モデル選択", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                Text("選択設定は端末内に保存されます。現在は検証済みCatalogが空のため、外部モデルは選択できません。デモ会話とCloud無効状態は維持されます。",
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
                         modelPolicy = modelPolicy.copy(mode = ModelSelectionMode.AUTO, manualModelId = null)
                         modelSettings.save(modelPolicy)
-                    }, enabled = modelPolicy.mode != ModelSelectionMode.AUTO) { Text("Auto") }
+                    }, enabled = modelPolicy.mode != ModelSelectionMode.AUTO) { Text("自動") }
                     Button(onClick = {
                         modelPolicy = modelPolicy.copy(mode = ModelSelectionMode.MANUAL)
                         modelSettings.save(modelPolicy)
-                    }, enabled = modelPolicy.mode != ModelSelectionMode.MANUAL) { Text("Manual") }
+                    }, enabled = modelPolicy.mode != ModelSelectionMode.MANUAL) { Text("手動") }
                 }
-                Text("Auto Policy", style = MaterialTheme.typography.labelLarge)
+                Text("自動選択方針", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     AutoRoutingPolicy.entries.forEach { option ->
                         TextButton(onClick = {
                             modelPolicy = modelPolicy.copy(autoPolicy = option)
                             modelSettings.save(modelPolicy)
                         }, enabled = modelPolicy.autoPolicy != option) {
-                            Text(when (option) { AutoRoutingPolicy.BALANCED -> "Balanced"; AutoRoutingPolicy.COST_PRIORITY -> "Cost Priority"; AutoRoutingPolicy.QUALITY_PRIORITY -> "Quality Priority" })
+                            Text(when (option) { AutoRoutingPolicy.BALANCED -> "バランス重視"; AutoRoutingPolicy.COST_PRIORITY -> "費用優先"; AutoRoutingPolicy.QUALITY_PRIORITY -> "品質優先" })
                         }
                     }
                 }
-                Text("Mode: ${modelPolicy.mode} · Policy: ${modelPolicy.autoPolicy}", style = MaterialTheme.typography.bodyMedium)
-                Text("選択Model ID: ${routePreview.selectedModelId ?: "なし"}" +
+                Text("選択方式: ${if (modelPolicy.mode == ModelSelectionMode.AUTO) "自動" else "手動"} · 方針: ${when (modelPolicy.autoPolicy) { AutoRoutingPolicy.BALANCED -> "バランス重視"; AutoRoutingPolicy.COST_PRIORITY -> "費用優先"; AutoRoutingPolicy.QUALITY_PRIORITY -> "品質優先" }}", style = MaterialTheme.typography.bodyMedium)
+                Text("選択モデルID: ${routePreview.selectedModelId ?: "なし"}" +
                     (modelPolicy.manualModelId?.let { " · 保存済み手動指定: $it" } ?: ""), style = MaterialTheme.typography.bodyMedium)
                 routePreview.estimatedCost?.let { cost ->
-                    Text("1要求の推定費用: ${cost.amount} ${cost.currencyCode} · 入力予約 ${cost.estimatedInputTokens} tokens / 出力予約 ${cost.reservedOutputTokens} tokens。Provider請求額ではありません。",
+                    Text("1要求の推定費用: ${cost.amount} ${cost.currencyCode} · 入力予約 ${cost.estimatedInputTokens} トークン / 出力予約 ${cost.reservedOutputTokens} トークン。Provider請求額ではありません。",
                         style = MaterialTheme.typography.bodySmall)
                 } ?: Text("推定費用: 料金または通貨が未確認のため算出できません。", style = MaterialTheme.typography.bodySmall)
                 routePreview.model?.let { model ->
@@ -511,9 +808,9 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                         modelSettings.save(updated); modelPolicy = updated
                         settingsMessage = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
                     }.onFailure { settingsMessage = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。" }
-                }) { Text("Router設定を保存") }
+                }) { Text("ルーター設定を保存") }
                 Text(if (modelCatalog.isEmpty()) "利用可能なモデル: 0 · Catalog未取得または未確認" else "利用可能なモデル: ${modelCatalog.size}")
-                if (modelCatalog.isEmpty()) Text("Manual Model Picker: 選択可能なモデルはありません。任意のModel IDやProvider Hostは入力できません。",
+                if (modelCatalog.isEmpty()) Text("手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。",
                     style = MaterialTheme.typography.bodySmall)
                 Text("判定: ${routePreview.task} · ${routePreview.reason}", style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
@@ -523,12 +820,12 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                 Text("料金: 確認済みモデルがないため表示なし · Context: Catalog未確認 · 利用可否: 未確認 · 最終確認日時: なし · 本番Cloud: 無効",
                     style = MaterialTheme.typography.bodySmall)
                 usageSnapshot?.let { usageState ->
-                    Text("ローカルSoft Limit（UTC）: 今日 ${usageState.dailyRequests}/${usageState.limits.dailyRequests} requests · 予約推定 ${usageState.dailyEstimatedInputTokens + usageState.dailyEstimatedOutputTokens} / 実測 ${usageState.dailyProviderInputTokens + usageState.dailyProviderOutputTokens} tokens（上限 ${usageState.limits.dailyTokens}）",
+                    Text("ローカルソフト上限（UTC）: 今日 ${usageState.dailyRequests}/${usageState.limits.dailyRequests} 件 · 予約推定 ${usageState.dailyEstimatedInputTokens + usageState.dailyEstimatedOutputTokens} / 実測 ${usageState.dailyProviderInputTokens + usageState.dailyProviderOutputTokens} トークン（上限 ${usageState.limits.dailyTokens}）",
                         style = MaterialTheme.typography.bodySmall)
-                    Text("今月 ${usageState.monthlyRequests}/${usageState.limits.monthlyRequests} requests · 予約推定 ${usageState.monthlyEstimatedInputTokens + usageState.monthlyEstimatedOutputTokens} / 実測 ${usageState.monthlyProviderInputTokens + usageState.monthlyProviderOutputTokens} tokens（上限 ${usageState.limits.monthlyTokens}） · 未確定 ${usageState.uncertainRequests}件",
+                    Text("今月 ${usageState.monthlyRequests}/${usageState.limits.monthlyRequests} 件 · 予約推定 ${usageState.monthlyEstimatedInputTokens + usageState.monthlyEstimatedOutputTokens} / 実測 ${usageState.monthlyProviderInputTokens + usageState.monthlyProviderOutputTokens} トークン（上限 ${usageState.limits.monthlyTokens}） · 未確定 ${usageState.uncertainRequests}件",
                         style = MaterialTheme.typography.bodySmall)
                 }
-                Text("Token数は入力長からの概算予約とProvider実測を区別します。Timeout/Cancel/使用量欠落では予約を戻しません。端末時計に基づくSoft Limitで、Provider請求上限やクレジット制御ではありません。",
+                Text("トークン数は入力長からの概算予約とProvider実測を区別します。Timeout/Cancel/使用量欠落では予約を戻しません。端末時計に基づくソフト上限で、Provider請求上限やクレジット制御ではありません。",
                     style = MaterialTheme.typography.bodySmall)
                 Text("このカウンターはProvider要求のみ対象です。ローカルDemoとMock HTTPテストは含みません。日次/月次はUTC境界です。",
                     style = MaterialTheme.typography.bodySmall)
@@ -563,64 +860,68 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                     }
                 }, enabled = usage != null && runCatching {
                     validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText)
-                }.isSuccess) { Text("Soft Limitを保存") }
+                }.isSuccess) { Text("ソフト上限を保存") }
                 runCatching { validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText) }
                     .exceptionOrNull()?.message?.let { validationMessage ->
                         Text(validationMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
                     }
             }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = chatViewModel::newConversation, enabled = !state.isRestoring, modifier = Modifier.weight(1f)) { Text("新しい会話") }
-                Button(onClick = chatViewModel::showHistory, enabled = !state.isRestoring, modifier = Modifier.weight(1f)) { Text("履歴") }
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { settingsVisible = !settingsVisible; secretText = "" }, enabled = !state.isRestoring,
-                    modifier = Modifier.weight(1f)) { Text("設定") }
-                Box(modifier = Modifier.weight(1f)) {
-                    TextButton(onClick = { overflowExpanded = true }, enabled = !state.isRestoring,
-                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "その他の操作" }) { Text("その他の操作") }
-                    DropdownMenu(expanded = overflowExpanded, onDismissRequest = { overflowExpanded = false }) {
-                        HorizontalDivider()
-                        DropdownMenuItem(text = { Text("この会話を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
-                            onClick = { overflowExpanded = false; deleteTargetId = state.conversation.id; deleteConfirmation = "current" })
-                        DropdownMenuItem(text = { Text("全履歴を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
-                            onClick = { overflowExpanded = false; deleteTargetId = ""; deleteConfirmation = "all" })
+            if (!settingsDestination) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = chatViewModel::newConversation, enabled = !state.isRestoring, modifier = Modifier.weight(1f)) { Text("新しい会話") }
+                    Button(onClick = chatViewModel::showHistory, enabled = !state.isRestoring, modifier = Modifier.weight(1f)) { Text("履歴") }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        if (onOpenSettings != null) onOpenSettings()
+                        else { settingsVisible = !settingsVisible; secretText = "" }
+                    }, enabled = !state.isRestoring, modifier = Modifier.weight(1f).testTag("open_settings")) { Text("設定") }
+                    Box(modifier = Modifier.weight(1f)) {
+                        TextButton(onClick = { overflowExpanded = true }, enabled = !state.isRestoring,
+                            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "その他の操作" }) { Text("その他の操作") }
+                        DropdownMenu(expanded = overflowExpanded, onDismissRequest = { overflowExpanded = false }) {
+                            HorizontalDivider()
+                            DropdownMenuItem(text = { Text("この会話を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
+                                onClick = { overflowExpanded = false; chatViewModel.requestCurrentConversationDeletionConfirmation() })
+                            DropdownMenuItem(text = { Text("全履歴を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
+                                onClick = { overflowExpanded = false; chatViewModel.requestAllHistoryDeletionConfirmation() })
+                        }
                     }
                 }
             }
             state.statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
             if (settingsVisible) {
-                Text("Provider: Ollama Cloud（候補）", style = MaterialTheme.typography.titleMedium)
-                Text("利用条件: 公式Termsは18歳以上を要求します。利用資格を確認していないため、このアプリからのCloud通信を無効にしています。",
+                Text("Provider候補: Ollama Cloud", style = MaterialTheme.typography.titleMedium)
+                Text("利用条件: 公式利用規約は18歳以上を要求します。利用資格を確認していないため、このアプリからのCloud通信を無効にしています。",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                Text("Cloud送信: disabled · 既存Provider候補のModel IDと価格情報は正式な推奨・既定値として扱いません。",
+                Text("Cloud送信: 無効 · 既存Provider候補のモデルIDと価格情報は正式な推奨・既定値として扱いません。",
                     style = MaterialTheme.typography.bodyMedium)
-                Text("API key: ${if (credentialReady) "設定済み" else "未設定"}", style = MaterialTheme.typography.bodyMedium)
+                Text("APIキー: ${if (credentialReady) "設定済み" else "未設定"}", style = MaterialTheme.typography.bodyMedium)
                 Text("保存先: Android Keystoreで暗号化 · $keystoreProfile",
                     style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(value = secretText, onValueChange = { secretText = it },
-                    modifier = Modifier.fillMaxWidth(), label = { Text("Ollama Cloud API key") },
+                    modifier = Modifier.fillMaxWidth(), label = { Text("Ollama Cloud APIキー") },
                     visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-                    singleLine = true, supportingText = { Text("端末内に暗号化保存します。キーは会話・Saved State・ログへ保存しません。設定を開いている間は画面キャプチャを無効にします。") })
+                    singleLine = true, supportingText = { Text("端末内に暗号化保存します。キーは会話・保存状態・ログへ保存しません。設定を開いている間は画面キャプチャを無効にします。") })
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
                         val secret = secretText
                         secretText = ""
                         scope.launch {
                             runCatching { credentials?.store(secret.toCharArray()) }
-                                .onSuccess { credentialReady = credentials?.isConfigured() == true; settingsMessage = "API keyを暗号化保存しました。Cloud送信は無効のままです。" }
+                                .onSuccess { credentialReady = credentials?.isConfigured() == true; settingsMessage = "APIキーを暗号化保存しました。Cloud送信は無効のままです。" }
                                 .onFailure { error -> settingsMessage = if (error is HardwareBackedKeyRequiredException)
-                                    "Cloud API keyにはHardware-backed Android Keystoreが必要です。この端末ではキーを保存しません。"
-                                else "API keyを安全に保存できませんでした。" }
+                                    "Cloud APIキーにはHardware-backed Android Keystoreが必要です。この端末ではキーを保存しません。"
+                                else "APIキーを安全に保存できませんでした。" }
                         }
                     }, enabled = secretText.isNotEmpty() && credentials != null) { Text("保存") }
                     TextButton(onClick = {
                         scope.launch {
                             runCatching { credentials?.currentHandle()?.let { credentials.delete(it) } }
-                                .onSuccess { credentialReady = false; settingsMessage = "API keyを削除しました。" }
-                                .onFailure { settingsMessage = "API keyを削除できませんでした。" }
+                                .onSuccess { credentialReady = false; settingsMessage = "APIキーを削除しました。" }
+                                .onFailure { settingsMessage = "APIキーを削除できませんでした。" }
                         }
                     }, enabled = credentialReady && credentials != null) { Text("削除") }
                 }
@@ -632,33 +933,41 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                     val contextPreview = ChatContextBuilder.build(state.conversation.messages, state.input.trim(), state.conversation.id)
                     Text("ローカル表示のみ · Cloud送信は無効 · 秘密情報が含まれないことを証明するものではありません。",
                         style = MaterialTheme.typography.bodySmall)
-                    Text("送信先候補: https://ollama.com/api/chat · 出所: USER_AUTHORED · 分類: UNKNOWN · 送信意思: なし · 状態: disabled",
+                    Text("送信先候補: https://ollama.com/api/chat · 出所: USER_AUTHORED · 分類: UNKNOWN · 送信意思: なし · 状態: 無効",
                         style = MaterialTheme.typography.bodySmall)
                     Text("予定本文: ${state.input.trim()}", style = MaterialTheme.typography.bodyMedium)
-                    Text("Context (${contextPreview.size} 件、文字数ベースの保守上限。厳密なToken数ではありません):", style = MaterialTheme.typography.labelMedium)
+                    Text("送信コンテキスト (${contextPreview.size} 件、文字数ベースの保守上限。厳密なトークン数ではありません):", style = MaterialTheme.typography.labelMedium)
                     contextPreview.forEach { item ->
                         Text("${item.role} · ${item.sourceMessageId} · ${item.origin} · ${item.classification} · ${item.status}: ${item.text}",
                             style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (settingsMessage.isNotEmpty()) Text(settingsMessage, style = MaterialTheme.typography.bodySmall)
-                Text("Freeにはstarter creditsとstarter modelsがあり無制限ではありません。通常会話のCloud送信はOwnerポリシー承認まで無効です。",
+                Text("Freeプランの利用枠とモデル数には上限があります。通常会話のCloud送信はOwnerポリシー承認まで無効です。",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                Button(onClick = { settingsVisible = false; secretText = "" }) { Text("設定を閉じる") }
+                if (onSettingsClosed == null) {
+                    Button(onClick = {
+                        secretText = ""
+                        settingsVisible = false
+                    }) { Text("設定を閉じる") }
+                }
             } else if (state.showingHistory) {
                 Text("保存された会話", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(state.history, key = { it.id }) { conversation ->
                         TextButton(onClick = { chatViewModel.openConversation(conversation.id) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("${conversation.title} · ${conversation.messages.size}件")
+                            Text("${storedConversationDisplayTitle(conversation)} · ${conversation.messages.size}件")
                         }
                     }
                     if (state.history.isEmpty()) item { Text("履歴はありません。") }
                 }
             } else {
+                if (!compactChat) Text("会話: ${conversationDisplayTitle(state.conversation)}", style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (state.conversation.messages.isEmpty()) {
-                    Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else "端末内の暗号化履歴に保存されるDemo会話です。Cloud送信は無効です。",
-                        style = MaterialTheme.typography.bodyLarge)
+                    Text(if (state.isRestoring) "暗号化された履歴を復元しています…" else
+                        if (compactChat) "端末内のデモ会話 · Cloud送信なし" else "端末内の暗号化履歴に保存されるデモ会話です。Cloud送信は無効です。",
+                        style = if (compactChat) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge)
                 }
                 LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().testTag("conversation-list"), state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -666,7 +975,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                         Surface(color = if (message.role == MessageRole.USER) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                             shape = MaterialTheme.shapes.medium) {
                             Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                Text(if (message.role == MessageRole.USER) "You · ${message.status}" else "Demo assistant",
+                                Text(if (message.role == MessageRole.USER) "あなた · ${message.status}" else "デモ応答",
                                     style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                                 Text(message.text, style = MaterialTheme.typography.bodyLarge)
                             }
@@ -675,47 +984,64 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
                     if (state.isLoading) item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
                         CircularProgressIndicator(modifier = Modifier.padding(4.dp), strokeWidth = 2.dp)
-                        Text("Demo応答を準備しています…", modifier = Modifier.padding(top = 8.dp))
+                        Text(if (state.isFinalizing) "応答を保存しています…" else "Demo応答を準備しています…",
+                            modifier = Modifier.padding(top = 8.dp))
                     } }
                 }
             }
             state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive }) }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
-                    modifier = Modifier.weight(1f).testTag("chat-composer"), label = { Text("Message") },
-                    enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
-                    maxLines = 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                    supportingText = { Text("Demo only. Cloudへは送信されません。") })
-                if (state.isLoading) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
-                else Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
-                    enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,
-                    modifier = Modifier.padding(top = 8.dp)) { Text("送信") }
+            state.conversation.messages.forEachIndexed { index, message ->
+                state.historyPersistenceWarnings[message.id]?.let { warning ->
+                    Text("Message ${index + 1}: $warning", color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
+                }
             }
-            if (deleteConfirmation == "current") {
+            if (!settingsDestination) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
+                        modifier = Modifier.weight(1f).testTag("chat-composer"), label = { Text("メッセージ") },
+                        enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
+                        maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
+                        supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                    if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
+                    else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
+                        enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,
+                        modifier = Modifier.padding(top = 8.dp)) { Text("送信") }
+                }
+            }
+            if (state.deleteConfirmation == "current") {
                 AlertDialog(
-                    onDismissRequest = { deleteConfirmation = ""; deleteTargetId = "" },
+                    onDismissRequest = chatViewModel::clearDeleteConfirmation,
                     title = { Text("この会話を削除しますか？") },
-                    text = { Text("選択した会話のローカル履歴を削除します。この操作はアプリ内から取り消せません。") },
+                    text = {
+                        Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+                            Text("対象: ${state.deleteTargetTitle}")
+                            Text("選択した会話のローカル履歴を削除します。")
+                            Text("この操作はアプリ内から取り消せません。")
+                        }
+                    },
                     confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
-                        val confirmedId = deleteTargetId
-                        deleteConfirmation = ""
-                        deleteTargetId = ""
-                        chatViewModel.deleteCurrentConversation(confirmedId)
+                        chatViewModel.confirmCurrentConversationDeletion()
                     }) { Text("この会話を削除") } },
-                    dismissButton = { TextButton(onClick = { deleteConfirmation = ""; deleteTargetId = "" }) { Text("キャンセル") } },
+                    dismissButton = { TextButton(onClick = chatViewModel::clearDeleteConfirmation) { Text("キャンセル") } },
                 )
-            } else if (deleteConfirmation == "all") {
+            } else if (state.deleteConfirmation == "all") {
                 AlertDialog(
-                    onDismissRequest = { deleteConfirmation = "" },
+                    onDismissRequest = chatViewModel::clearDeleteConfirmation,
                     title = { Text("全会話履歴を削除しますか？") },
-                    text = { Text("すべてのローカル会話履歴が削除されます。この操作はアプリ内から取り消せません。") },
+                    text = {
+                        Column(Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+                            Text("すべてのローカル会話履歴が削除されます。")
+                            Text("この操作はアプリ内から取り消せません。")
+                        }
+                    },
                     confirmButton = { TextButton(enabled = !state.isRestoring, onClick = {
-                        deleteConfirmation = ""
-                        chatViewModel.deleteAllHistory()
+                        chatViewModel.confirmAllHistoryDeletion()
                     }) { Text("全履歴を削除") } },
-                    dismissButton = { TextButton(onClick = { deleteConfirmation = "" }) { Text("キャンセル") } },
+                    dismissButton = { TextButton(onClick = chatViewModel::clearDeleteConfirmation) { Text("キャンセル") } },
                 )
             }
         }
@@ -723,7 +1049,7 @@ internal fun ChatScreen(chatViewModel: ChatViewModel = androidx.lifecycle.viewmo
 }
 
 @Composable
-fun SereaTheme(content: @Composable () -> Unit) {
-    val colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
+fun SereaTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+    val colors = if (darkTheme) darkColorScheme() else lightColorScheme()
     MaterialTheme(colorScheme = colors, content = content)
 }

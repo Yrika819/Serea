@@ -28,6 +28,31 @@ write_metadata() {
 EOF
 }
 
+write_signature_metadata() {
+  local file="$1" group="$2" name="$3" pom_sha="$4" jar_sha="$5" expected_key="$6"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<verification-metadata xmlns="https://schema.gradle.org/dependency-verification"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="https://schema.gradle.org/dependency-verification https://schema.gradle.org/dependency-verification/dependency-verification-1.3.xsd">
+  <configuration>
+    <verify-metadata>true</verify-metadata>
+    <verify-signatures>true</verify-signatures>
+  </configuration>
+  <components>
+    <component group="$group" name="$name" version="1.0">
+      <artifact name="$name-1.0.pom"><sha256 value="$pom_sha" origin="SEC-A2 negative-test fixture"/></artifact>
+      <artifact name="$name-1.0.jar">
+        <sha256 value="$jar_sha" origin="SEC-A2 negative-test fixture"/>
+        <pgp value="$expected_key"/>
+      </artifact>
+    </component>
+  </components>
+</verification-metadata>
+EOF
+}
+
 make_project() {
   local case_name="$1" group="$2" name="$3"
   local project="$temporary_root/$case_name"
@@ -67,7 +92,7 @@ sha256_file() {
 }
 
 run_case() {
-  local name="$1" project="$2" expected="$3" result=0
+  local name="$1" project="$2" expected="$3" failure_pattern="${4:-dependency verification failed|no checksums|verification metadata|checksum}" result=0
   local output="$temporary_root/$name.log"
   "$gradle_cmd" --no-daemon --offline --console=plain -p "$project" resolveProbe > "$output" 2>&1 || result=$?
   if [[ "$expected" == PASS ]]; then
@@ -77,7 +102,7 @@ run_case() {
       return 1
     fi
   else
-    if [[ "$result" -eq 0 ]] || ! grep -Eiq 'dependency verification failed|no checksums|verification metadata|checksum' "$output"; then
+    if [[ "$result" -eq 0 ]] || ! grep -Eiq "$failure_pattern" "$output"; then
       cat "$output" >&2
       echo "FAIL: $name did not fail specifically at dependency verification." >&2
       return 1
@@ -116,5 +141,47 @@ write_metadata "$tampered_project/gradle/verification-metadata.xml" "$tampered_g
   "$(sha256_file "$tampered_module/fixture-1.0.pom")" "$original_jar_sha"
 printf 'tampered artifact bytes\n' > "$tampered_module/fixture-1.0.jar"
 run_case tampered-artifact "$tampered_project" REJECT
+
+metadata_group="org.serea.sec_a2.fixture.metadata"
+metadata_project="$(make_project metadata-mutation "$metadata_group" fixture)"
+metadata_module="$metadata_project/maven/${metadata_group//./\/}/fixture/1.0"
+metadata_pom_sha="$(sha256_file "$metadata_module/fixture-1.0.pom")"
+write_metadata "$metadata_project/gradle/verification-metadata.xml" "$metadata_group" fixture \
+  "$metadata_pom_sha" "$(sha256_file "$metadata_module/fixture-1.0.jar")"
+cat > "$metadata_module/fixture-1.0.pom" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>$metadata_group</groupId>
+  <artifactId>fixture</artifactId>
+  <version>1.0</version>
+  <description>mutated after its approved metadata digest was recorded</description>
+</project>
+EOF
+run_case metadata-mutation "$metadata_project" REJECT
+
+if ! command -v gpg >/dev/null 2>&1; then
+  echo 'BLOCKED: unexpected-publisher-key (gpg is required to create a local signed fixture).' >&2
+  exit 1
+fi
+signature_group="org.serea.sec_a2.fixture.signature"
+signature_project="$(make_project unexpected-publisher-key "$signature_group" fixture)"
+signature_module="$signature_project/maven/${signature_group//./\/}/fixture/1.0"
+key_home="$temporary_root/signing-key-home"
+mkdir -m 700 -p "$key_home"
+GNUPGHOME="$key_home" gpg --batch --passphrase '' --quick-generate-key \
+  'SEC-A2 unexpected publisher fixture <fixture@example.invalid>' rsa2048 sign 0 >/dev/null 2>&1
+actual_key="$(GNUPGHOME="$key_home" gpg --batch --with-colons --list-keys | awk -F: '$1 == "fpr" {print toupper($10); exit}')"
+if [[ ! "$actual_key" =~ ^[0-9A-F]{40}$ ]]; then
+  echo 'FAIL: could not obtain the generated fixture publisher fingerprint.' >&2
+  exit 1
+fi
+GNUPGHOME="$key_home" gpg --batch --yes --armor --detach-sign "$signature_module/fixture-1.0.jar"
+expected_key='0000000000000000000000000000000000000001'
+while [[ "$actual_key" == "$expected_key" ]]; do expected_key='0000000000000000000000000000000000000002'; done
+write_signature_metadata "$signature_project/gradle/verification-metadata.xml" "$signature_group" fixture \
+  "$(sha256_file "$signature_module/fixture-1.0.pom")" \
+  "$(sha256_file "$signature_module/fixture-1.0.jar")" "$expected_key"
+run_case unexpected-publisher-key "$signature_project" REJECT 'signature|pgp|public key|unknown key|trusted|fingerprint'
 
 echo 'All Gradle dependency verification fixtures behaved as expected.'

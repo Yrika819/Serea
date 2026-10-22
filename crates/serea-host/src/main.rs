@@ -11,6 +11,8 @@ mod host_clock;
 mod synthetic_ids;
 #[cfg(feature = "synthetic")]
 mod synthetic_model;
+#[cfg(feature = "synthetic-test-hooks")]
+mod test_readiness;
 
 #[cfg(feature = "synthetic")]
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
@@ -236,7 +238,20 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
         host_thread.unpark();
     })
     .map_err(|_| "termination handler unavailable")?;
-    println!("{{\"event\":\"host_ready\",\"schema_version\":8,\"mode\":\"synthetic\"}}");
+    {
+        use std::io::Write;
+        let stdout = std::io::stdout();
+        let mut output = stdout.lock();
+        writeln!(
+            output,
+            "{{\"event\":\"host_ready\",\"schema_version\":8,\"mode\":\"synthetic\"}}"
+        )?;
+        output.flush()?;
+    }
+    // Test-only readiness evidence stays behind the test-hooks feature so the
+    // normal development Host has no environment-variable configuration path.
+    #[cfg(feature = "synthetic-test-hooks")]
+    test_readiness::write_ready_marker(model_recovered)?;
     if model_recovered > 0 {
         println!("{{\"event\":\"model_recovery\",\"ambiguous_attempts\":{model_recovered}}}");
     }

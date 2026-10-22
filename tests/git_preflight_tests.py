@@ -318,7 +318,7 @@ class GitFixture(unittest.TestCase):
         rows = self.push_row(head, "main") + self.push_row(head, "topic")
         result = self.run_prepush_hook(env, rows)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("non-main branch", result.stderr)
+        self.assertIn("pre-push local ref does not match its supplied SHA", result.stderr)
 
     @unittest.skipIf(os.name == "nt", "bare remote routing fixture is POSIX-only")
     def test_actual_prepush_hook_rejects_multiple_branch_targets(self):
@@ -326,13 +326,13 @@ class GitFixture(unittest.TestCase):
         rows = self.push_row(head, "topic") + self.push_row(head, "other")
         result = self.run_prepush_hook(env, rows)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("does not match the current branch", result.stderr)
+        self.assertIn("pre-push local ref is unavailable", result.stderr)
 
     def test_actual_prepush_hook_rejects_main_push(self):
         _, head, env = self.make_hook_fixture()
         result = self.run_prepush_hook(env, self.push_row(head, "main"))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("non-main branch", result.stderr)
+        self.assertIn("pre-push local ref does not match its supplied SHA", result.stderr)
 
     def test_actual_prepush_hook_rejects_commit_author_override_before_remote_check(self):
         self.make_hook_fixture()

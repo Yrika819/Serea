@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.verify_android_instrumentation import collect_class_counts, collect_results, collect_source_test_counts
+from tools.verify_android_instrumentation import (
+    collect_class_counts,
+    collect_results,
+    collect_source_test_counts,
+    verify_profile_verifier_evidence,
+)
 
 
 class InstrumentationResultTests(unittest.TestCase):
@@ -93,68 +98,109 @@ class InstrumentationResultTests(unittest.TestCase):
             )
             self.assertNotEqual(0, wrong_case.returncode)
 
-    def test_partial_103_case_junit_cannot_pass_the_complete_campaign_gate(self) -> None:
-        required = {
-            "app.serea.android.EncryptedHistoryTest": 17,
-            "app.serea.android.ChatScreenTest": 16,
-            "app.serea.android.ChatHttpE2ETest": 4,
-            "app.serea.android.UsageLedgerDatabaseTest": 12,
-            "app.serea.android.tasks.TasksDatabaseTest": 6,
-            "app.serea.android.tasks.TaskScreenTest": 6,
-            "app.serea.android.InstrumentationStorageIsolationTest": 1,
-            "app.serea.android.ChatTasksDatabaseIntegrationTest": 1,
-            "app.serea.android.ChatHistoryUxTest": 4,
-            "app.serea.android.tasks.TaskDateTimePickerTest": 6,
-            "app.serea.android.assistant.taskproposal.TaskProposalReviewScreenTest": 2,
-            "app.serea.android.SereaAppShellTest": 19,
-            "app.serea.android.assistant.taskproposal.TaskProposalDemoScreenTest": 3,
-            "app.serea.android.SereaThemeTest": 2,
-            "app.serea.android.MockUiStateIntegrationTest": 4,
+    def test_103_required_plus_two_additional_testcases_are_verified_by_identity(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        required_manifest = repo / "tools/android-instrumentation-required-tests.txt"
+        additional_manifest = repo / "tools/android-instrumentation-additional-tests.txt"
+        required_tests = {
+            tuple(line.split("#", 1))
+            for line in required_manifest.read_text(encoding="utf-8").splitlines()
+            if line.strip()
         }
-        self.assertEqual(103, sum(required.values()))
+        additional_tests = {
+            tuple(line.split("#", 1))
+            for line in additional_manifest.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+        self.assertEqual(103, len(required_tests))
+        self.assertEqual(2, len(additional_tests))
+        self.assertFalse(required_tests & additional_tests)
+        required: dict[str, int] = {}
+        for class_name, _ in required_tests:
+            required[class_name] = required.get(class_name, 0) + 1
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             results = root / "junit"
             source_root = root / "androidTest"
+            profile_log = root / "profile-verifier-logcat.txt"
+            profile_log.write_text(
+                "I/SereaProfileVerifierEvidence( 1234): api=35 status=COMPLETED "
+                "resultCode=327680 compiled=false enqueued=false embedded=false marker=valid\n",
+                encoding="utf-8",
+            )
             results.mkdir()
             cases: list[str] = []
-            for class_name, count in required.items():
+            all_tests = required_tests | additional_tests
+            by_class: dict[str, set[str]] = {}
+            for class_name, method in all_tests:
+                by_class.setdefault(class_name, set()).add(method)
+            for class_name, methods in by_class.items():
                 source = source_root.joinpath(*class_name.split(".")).with_suffix(".kt")
                 source.parent.mkdir(parents=True, exist_ok=True)
-                methods = [f"test_{index}" for index in range(count)]
                 source.write_text(
                     "package " + class_name.rpartition(".")[0] + "\nclass " + class_name.rpartition(".")[2] + " {\n"
-                    + "\n".join(f"@Test fun {method}() {{}}" for method in methods)
+                    + "\n".join(f"@Test fun {method}() {{}}" for method in sorted(methods))
                     + "\n}\n",
                     encoding="utf-8",
                 )
-                cases.extend(f'<testcase classname="{class_name}" name="{method}"/>' for method in methods)
+                cases.extend(f'<testcase classname="{class_name}" name="{method}"/>' for method in sorted(methods))
 
             suite = results / "TEST-campaign.xml"
             suite.write_text(
-                f'<testsuite tests="103" failures="0" errors="0" skipped="0">'
+                f'<testsuite tests="105" failures="0" errors="0" skipped="0">'
                 + "".join(cases)
                 + "</testsuite>",
                 encoding="utf-8",
             )
-            verifier = Path(__file__).resolve().parents[1] / "tools/verify_android_instrumentation.py"
+            verifier = repo / "tools/verify_android_instrumentation.py"
             args = [
-                "python3", str(verifier), str(results), "--minimum", "103", "--source-root", str(source_root),
+                "python3", str(verifier), str(results), "--minimum", "105", "--exact-count", "105",
+                "--source-root", str(source_root), "--required-test-manifest", str(required_manifest),
+                "--additional-test-manifest", str(additional_manifest), "--required-count", "103",
+                "--additional-count", "2", "--api-level", "35", "--profile-verifier-log", str(profile_log),
             ]
             for class_name, count in required.items():
                 args.extend(("--require-class", f"{class_name}={count}"))
             complete = subprocess.run(args, capture_output=True, text=True)
             self.assertEqual(0, complete.returncode, complete.stderr)
+            self.assertIn("Original Required Set: 103/103 PASS", complete.stdout)
+            self.assertIn("Additional Tests: 2/2 PASS; total=105", complete.stdout)
+            self.assertIn("ProfileVerifier runtime evidence: API 35", complete.stdout)
 
             suite.write_text(
-                f'<testsuite tests="102" failures="0" errors="0" skipped="0">'
+                f'<testsuite tests="104" failures="0" errors="0" skipped="0">'
                 + "".join(cases[:-1])
                 + "</testsuite>",
                 encoding="utf-8",
             )
             partial = subprocess.run(args, capture_output=True, text=True)
             self.assertNotEqual(0, partial.returncode)
-            self.assertIn("only 102 tests were recorded", partial.stderr)
+        self.assertIn("only 104 tests were recorded; expected at least 105", partial.stderr)
+
+    def test_profile_verifier_runtime_evidence_is_api_specific_and_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "logcat.txt"
+            log.write_text(
+                "I/SereaProfileVerifierEvidence( 10): api=35 status=COMPLETED "
+                "resultCode=2 compiled=false enqueued=true embedded=true marker=valid\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(verify_profile_verifier_evidence(log, 35)[0])
+            self.assertFalse(verify_profile_verifier_evidence(log, 26)[0])
+            log.write_text(
+                "I/SereaProfileVerifierEvidence( 10): api=35 status=COMPLETED "
+                "resultCode=262144 compiled=false enqueued=false embedded=false marker=absent\n",
+                encoding="utf-8",
+            )
+            valid, message = verify_profile_verifier_evidence(log, 35)
+            self.assertFalse(valid)
+            self.assertIn("expected status=COMPLETED", message)
+            log.write_text(
+                "I/SereaProfileVerifierEvidence( 10): api=26 status=UNSUPPORTED "
+                "resultCode=262144 marker=absent\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(verify_profile_verifier_evidence(log, 26)[0])
 
     def test_source_counts_ignore_comments_and_string_literals_and_reject_unlisted_tests(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

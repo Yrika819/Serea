@@ -49,7 +49,7 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|.github/workflows/android-personal-beta.yml|.github/workflows/android-personal-beta-contract-tests.yml|tools/verify_android_instrumentation.py|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_api35_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tools/test_personal_beta_identity.sh|tools/verify_personal_beta_apk.sh|tools/android_firebase_distribution.py|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py|tests/android_firebase_distribution_tests.py) android_changed=true ;;
+              android/*|.github/workflows/android.yml|.github/workflows/android-personal-beta.yml|.github/workflows/android-personal-beta-contract-tests.yml|tools/verify_android_instrumentation.py|tools/android-instrumentation-required-tests.txt|tools/android-instrumentation-additional-tests.txt|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_api35_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tools/test_personal_beta_identity.sh|tools/verify_personal_beta_apk.sh|tools/android_firebase_distribution.py|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py|tests/android_firebase_distribution_tests.py) android_changed=true ;;
             esac
           done <<< "$changed"
           echo "android=$android_changed" >> "$GITHUB_OUTPUT"
@@ -311,7 +311,7 @@ jobs:
               font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
               chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
               chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
-              SereaProcessDeath AndroidRuntime > "$output"
+              SereaProcessDeath SereaProfileVerifierEvidence AndroidRuntime > "$output"
           else
             printf 'NOT_AVAILABLE: API 35 emulator was no longer attached after its test step.\n' > "$output"
           fi
@@ -374,7 +374,7 @@ jobs:
               font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
               chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
               chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
-              SereaProcessDeath AndroidRuntime > "$output"
+              SereaProcessDeath SereaProfileVerifierEvidence AndroidRuntime > "$output"
           else
             printf 'NOT_AVAILABLE: API 26 emulator was no longer attached after its test step.\n' > "$output"
           fi
@@ -658,8 +658,8 @@ jobs:
             echo "api26_and_api35_emulator_job=$EMULATOR_RESULT"
             echo "android_dependency_audit=$AUDIT_RESULT"
             echo "instrumentation_gate_output=$INSTRUMENTATION_RESULT"
-            echo 'api26_expected_junit_cases=103 (sum of fifteen exact required class counts, verified against source and JUnit XML)'
-            echo 'api35_expected_junit_cases=103 (sum of fifteen exact required class counts, verified against source and JUnit XML)'
+            echo 'api26_expected_junit_cases=105 (Original Required Set 103 plus Additional Tests 2; both identity manifests verified against source and JUnit XML)'
+            echo 'api35_expected_junit_cases=105 (Original Required Set 103 plus Additional Tests 2; both identity manifests verified against source and JUnit XML)'
             echo 'physical_pixel7a_reacceptance=NOT_RUN (Mac Local MCP v3 handoff required)'
             echo 'apk_source_sha256_and_certificate=search for provenance.txt in build/ and api-tests-and-process-death/'
             echo 'device_steps_and_pass_fail=search for pixel7a-reacceptance.md in api-tests-and-process-death/'
@@ -783,4 +783,4 @@ jobs:
             echo 'FAIL: changed documentation validation did not pass.'
             exit 1
           fi
-          echo 'PASS: API 26 and API 35 instrumentation matched source counts; Process Death and demo sentinel data isolation passed on both disposable emulators.'
+          echo 'PASS: API 26 and API 35 each passed Original Required Set 103/103 and Additional Tests 2/2 with zero failures, errors, or skips; Process Death and demo sentinel data isolation passed on both disposable emulators.'

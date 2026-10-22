@@ -66,6 +66,30 @@ import java.time.ZoneId
 internal val CalendarLazyListPositionKey =
     SemanticsPropertyKey<Pair<Int, Int>>("CalendarLazyListPosition")
 
+/** Immutable layout data for test diagnostics; no LazyListState or snapshot lambda escapes. */
+internal data class CalendarLazyListViewportSnapshot(
+    val totalItems: Int,
+    val visibleItemIndices: List<Int>,
+    val viewportStartOffset: Int,
+    val viewportEndOffset: Int,
+    val canScrollForward: Boolean,
+)
+
+internal val CalendarLazyListViewportKey =
+    SemanticsPropertyKey<CalendarLazyListViewportSnapshot>("CalendarLazyListViewport")
+
+internal val CalendarAgendaLoadedEventCountKey =
+    SemanticsPropertyKey<Int>("CalendarAgendaLoadedEventCount")
+
+/** Synthetic agenda page results and their realized LazyColumn positions for bounded UI tests. */
+internal data class CalendarAgendaItemsSnapshot(
+    val eventCount: Int,
+    val eventItemIndices: Map<String, Int>,
+)
+
+internal val CalendarAgendaItemsKey =
+    SemanticsPropertyKey<CalendarAgendaItemsSnapshot>("CalendarAgendaItems")
+
 /**
  * Independent navigation entry point for the read-only Calendar demo.
  * The provider type is deliberately FakeCalendarProvider: this UI cannot start OAuth or select
@@ -385,6 +409,18 @@ private fun AgendaContent(
     listState: LazyListState,
     onEvent: (CalendarEvent) -> Unit,
 ) {
+    val eventItemIndices = buildMap {
+        var itemIndex = 1 // Agenda heading is item zero.
+        state.events.groupBy { eventGroupDate(it, state.query, clock, displayZone) }
+            .toSortedMap()
+            .values
+            .forEach { events ->
+                itemIndex++ // Date heading.
+                events.forEach { event ->
+                    put(event.key.eventId.value, itemIndex++)
+                }
+            }
+    }
     val listPosition by remember(listState) {
         derivedStateOf {
             listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
@@ -392,7 +428,21 @@ private fun AgendaContent(
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize()
-            .semantics { this[CalendarLazyListPositionKey] = listPosition }
+            .semantics {
+                this[CalendarLazyListPositionKey] = listPosition
+                this[CalendarLazyListViewportKey] = CalendarLazyListViewportSnapshot(
+                    totalItems = listState.layoutInfo.totalItemsCount,
+                    visibleItemIndices = listState.layoutInfo.visibleItemsInfo.map { it.index }.toList(),
+                    viewportStartOffset = listState.layoutInfo.viewportStartOffset,
+                    viewportEndOffset = listState.layoutInfo.viewportEndOffset,
+                    canScrollForward = listState.canScrollForward,
+                )
+                this[CalendarAgendaLoadedEventCountKey] = state.events.size
+                this[CalendarAgendaItemsKey] = CalendarAgendaItemsSnapshot(
+                    eventCount = state.events.size,
+                    eventItemIndices = eventItemIndices.toMap(),
+                )
+            }
             .testTag("calendar_agenda_list"),
         state = listState,
         verticalArrangement = Arrangement.spacedBy(8.dp),

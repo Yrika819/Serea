@@ -1,9 +1,13 @@
 #![cfg(feature = "synthetic")]
 
-use std::io::{BufRead, BufReader};
+use std::collections::VecDeque;
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -14,14 +18,25 @@ fn monotonic_now() -> Instant {
     Instant::now()
 }
 
+fn configure_ready_marker(command: &mut Command, directory: &Path) {
+    let marker = directory.join("host.ready");
+    match std::fs::remove_file(&marker) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => panic!("remove prior Host readiness marker: {error}"),
+    }
+    command.env("SEREA_TEST_READY_MARKER", marker);
+}
+
 fn start(directory: &Path) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_serea-host"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_serea-host"));
+    command
         .args(["run", "--synthetic", "--data-dir"])
         .arg(directory)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("launch synthetic host")
+        .stderr(Stdio::piped());
+    configure_ready_marker(&mut command, directory);
+    command.spawn().expect("launch synthetic host")
 }
 
 #[cfg(feature = "synthetic-test-hooks")]
@@ -50,39 +65,297 @@ fn wait_for_barrier(child: &mut Child, barrier_dir: &Path, phase: &str) {
     }
 }
 
-fn wait_ready(child: &mut Child) -> BufReader<std::process::ChildStdout> {
-    let stdout = child.stdout.take().expect("captured stdout");
-    let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    let started = monotonic_now();
-    loop {
-        assert!(
-            started.elapsed() < Duration::from_secs(30),
-            "host startup deadline"
-        );
-        line.clear();
-        let bytes = reader.read_line(&mut line).expect("host output");
-        assert_ne!(
-            bytes,
-            0,
-            "host exited before readiness: {:?}; stderr={}",
-            child.try_wait(),
-            {
-                use std::io::Read;
-                let mut stderr = String::new();
-                if let Some(mut stream) = child.stderr.take() {
-                    let _ = stream.read_to_string(&mut stderr);
-                }
-                stderr
-            }
-        );
-        if line.contains("\"event\":\"host_ready\"") {
-            return reader;
+#[derive(Debug, PartialEq, Eq)]
+struct ReadyMarker {
+    pid: u32,
+    model_recovered: usize,
+}
+
+fn parse_ready_marker(contents: &str, expected_pid: u32) -> Result<ReadyMarker, String> {
+    let mut fields = std::collections::BTreeMap::new();
+    for line in contents.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("malformed readiness field {line:?}"));
+        };
+        if fields.insert(key, value).is_some() {
+            return Err(format!("duplicate readiness field {key:?}"));
+        }
+    }
+    if fields.len() != 4
+        || fields.get("schema_version") != Some(&"8")
+        || fields.get("mode") != Some(&"synthetic")
+    {
+        return Err("readiness marker has an unexpected schema or mode".into());
+    }
+    let pid = fields
+        .get("pid")
+        .ok_or_else(|| "readiness marker is missing pid".to_string())?
+        .parse::<u32>()
+        .map_err(|_| "readiness marker pid is invalid".to_string())?;
+    if pid != expected_pid {
+        return Err(format!(
+            "readiness marker pid {pid} does not match child {expected_pid}"
+        ));
+    }
+    let model_recovered = fields
+        .get("model_recovered")
+        .ok_or_else(|| "readiness marker is missing model_recovered".to_string())?
+        .parse::<usize>()
+        .map_err(|_| "readiness marker model_recovered is invalid".to_string())?;
+    Ok(ReadyMarker {
+        pid,
+        model_recovered,
+    })
+}
+
+fn read_ready_marker(directory: &Path, expected_pid: u32) -> Result<Option<ReadyMarker>, String> {
+    match std::fs::read_to_string(directory.join("host.ready")) {
+        Ok(contents) => parse_ready_marker(&contents, expected_pid).map(Some),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("read readiness marker: {error}")),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ReadinessDecision {
+    Ready,
+    WaitForOutput,
+    WaitForReceipt,
+    Exited,
+}
+
+fn readiness_decision(
+    child_running: bool,
+    stdout_eof: bool,
+    valid_receipt: bool,
+) -> ReadinessDecision {
+    if !child_running {
+        ReadinessDecision::Exited
+    } else if valid_receipt {
+        ReadinessDecision::Ready
+    } else if stdout_eof {
+        ReadinessDecision::WaitForReceipt
+    } else {
+        ReadinessDecision::WaitForOutput
+    }
+}
+
+enum ChildOutputEvent {
+    Line(Vec<u8>),
+    Eof,
+    Error(String),
+}
+
+struct HostOutput {
+    receiver: Receiver<ChildOutputEvent>,
+    pending: VecDeque<Vec<u8>>,
+    current: Vec<u8>,
+    position: usize,
+    eof: bool,
+}
+
+impl HostOutput {
+    fn new(receiver: Receiver<ChildOutputEvent>) -> Self {
+        Self {
+            receiver,
+            pending: VecDeque::new(),
+            current: Vec::new(),
+            position: 0,
+            eof: false,
         }
     }
 }
 
-fn stop(directory: &Path, mut child: Child, _stdout: BufReader<std::process::ChildStdout>) {
+impl Read for HostOutput {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let available = self.fill_buf()?;
+        let count = available.len().min(buffer.len());
+        buffer[..count].copy_from_slice(&available[..count]);
+        self.consume(count);
+        Ok(count)
+    }
+}
+
+impl BufRead for HostOutput {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.position >= self.current.len() {
+            if let Some(line) = self.pending.pop_front() {
+                self.current = line;
+                self.position = 0;
+            } else if !self.eof {
+                match self.receiver.recv() {
+                    Ok(ChildOutputEvent::Line(line)) => {
+                        self.current = line;
+                        self.position = 0;
+                    }
+                    Ok(ChildOutputEvent::Eof) => self.eof = true,
+                    Ok(ChildOutputEvent::Error(message)) => {
+                        return Err(io::Error::new(io::ErrorKind::Other, message));
+                    }
+                    Err(_) => self.eof = true,
+                }
+            }
+        }
+        if self.eof && self.position >= self.current.len() {
+            Ok(&[])
+        } else {
+            Ok(&self.current[self.position..])
+        }
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.position = (self.position + amount).min(self.current.len());
+    }
+}
+
+fn fail_readiness(
+    child: &mut Child,
+    initial_status: Option<ExitStatus>,
+    stderr_thread: thread::JoinHandle<()>,
+    stderr_text: Arc<Mutex<String>>,
+    reason: &str,
+) -> ! {
+    if initial_status.is_none() {
+        let _ = child.kill();
+    }
+    let final_status = child.wait().ok();
+    let _ = stderr_thread.join();
+    let stderr = stderr_text
+        .lock()
+        .map(|text| text.clone())
+        .unwrap_or_else(|_| "stderr capture lock poisoned".into());
+    panic!(
+        "Host failed readiness: {reason}; initial_status={initial_status:?}; final_status={final_status:?}; stderr={stderr}"
+    );
+}
+
+fn wait_ready(child: &mut Child, directory: &Path) -> HostOutput {
+    let stdout = child.stdout.take().expect("captured stdout");
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || forward_stdout(stdout, sender));
+
+    let stderr_text = Arc::new(Mutex::new(String::new()));
+    let stderr_capture = Arc::clone(&stderr_text);
+    let mut stderr = child.stderr.take().expect("captured stderr");
+    let stderr_thread = thread::spawn(move || {
+        let mut captured = String::new();
+        let _ = stderr.read_to_string(&mut captured);
+        if let Ok(mut output) = stderr_capture.lock() {
+            *output = captured;
+        }
+    });
+
+    let deadline = monotonic_now() + Duration::from_secs(30);
+    let mut output = HostOutput::new(receiver);
+    let mut saw_ready_line = false;
+    let mut stdout_eof = false;
+    let mut marker_problem = None;
+    loop {
+        let marker = match read_ready_marker(directory, child.id()) {
+            Ok(marker) => marker,
+            Err(error) => {
+                marker_problem = Some(error);
+                None
+            }
+        };
+
+        let status = match child.try_wait() {
+            Ok(status) => status,
+            Err(error) => fail_readiness(
+                child,
+                None,
+                stderr_thread,
+                stderr_text,
+                &format!("poll child process: {error}"),
+            ),
+        };
+        let child_running = status.is_none();
+        if let Some(status) = status {
+            fail_readiness(
+                child,
+                Some(status),
+                stderr_thread,
+                stderr_text,
+                "child exited before a valid readiness receipt",
+            );
+        }
+        match readiness_decision(child_running, stdout_eof, marker.is_some()) {
+            ReadinessDecision::Ready => return output,
+            ReadinessDecision::WaitForOutput | ReadinessDecision::WaitForReceipt => {}
+            ReadinessDecision::Exited => unreachable!("child exit is handled above"),
+        }
+        if monotonic_now() >= deadline {
+            let reason = if stdout_eof {
+                format!(
+                    "stdout reached EOF while child remained alive; no valid readiness receipt arrived{}",
+                    marker_problem
+                        .as_deref()
+                        .map(|detail| format!(" ({detail})"))
+                        .unwrap_or_default(),
+                )
+            } else {
+                "startup deadline elapsed without a readiness line and receipt".to_string()
+            };
+            fail_readiness(child, None, stderr_thread, stderr_text, &reason);
+        }
+
+        if stdout_eof {
+            thread::park_timeout(Duration::from_millis(20));
+            continue;
+        }
+        match output.receiver.recv_timeout(Duration::from_millis(20)) {
+            Ok(ChildOutputEvent::Line(line)) => {
+                let text = String::from_utf8_lossy(&line);
+                if text.contains("\"event\":\"host_ready\"")
+                    && text.contains("\"schema_version\":8")
+                    && text.contains("\"mode\":\"synthetic\"")
+                {
+                    saw_ready_line = true;
+                } else if saw_ready_line {
+                    output.pending.push_back(line);
+                }
+            }
+            Ok(ChildOutputEvent::Eof) => {
+                stdout_eof = true;
+                output.eof = true;
+            }
+            Ok(ChildOutputEvent::Error(error)) => {
+                marker_problem = Some(format!("stdout read failed: {error}"));
+                stdout_eof = true;
+                output.eof = true;
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                stdout_eof = true;
+                output.eof = true;
+            }
+        }
+    }
+}
+
+fn forward_stdout(stdout: ChildStdout, sender: mpsc::Sender<ChildOutputEvent>) {
+    let mut reader = BufReader::new(stdout);
+    loop {
+        let mut line = Vec::new();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) => {
+                let _ = sender.send(ChildOutputEvent::Eof);
+                return;
+            }
+            Ok(_) => {
+                if sender.send(ChildOutputEvent::Line(line)).is_err() {
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(ChildOutputEvent::Error(error.to_string()));
+                return;
+            }
+        }
+    }
+}
+
+fn stop(directory: &Path, mut child: Child, _stdout: HostOutput) {
     let status = Command::new(env!("CARGO_BIN_EXE_serea-host"))
         .args(["stop", "--synthetic", "--data-dir"])
         .arg(directory)
@@ -101,6 +374,49 @@ fn stop(directory: &Path, mut child: Child, _stdout: BufReader<std::process::Chi
 }
 
 #[test]
+fn readiness_receipt_requires_a_fresh_supported_host_identity() {
+    let valid = "pid=41\nschema_version=8\nmode=synthetic\nmodel_recovered=2\n";
+    let parsed = parse_ready_marker(valid, 41).expect("valid readiness receipt");
+    assert_eq!(parsed.pid, 41);
+    assert_eq!(parsed.model_recovered, 2);
+    assert!(
+        parse_ready_marker(valid, 42).is_err(),
+        "stale child pid is rejected"
+    );
+    assert!(
+        parse_ready_marker(&valid.replace("schema_version=8", "schema_version=7"), 41).is_err(),
+        "unsupported schema is rejected"
+    );
+    assert!(
+        parse_ready_marker(&valid.replace("mode=synthetic", "mode=production"), 41).is_err(),
+        "non-synthetic receipt is rejected"
+    );
+}
+
+#[test]
+fn stdout_eof_does_not_pass_readiness_without_a_live_host_receipt() {
+    assert_eq!(
+        readiness_decision(true, true, true),
+        ReadinessDecision::Ready,
+        "a flushed receipt from a live child resolves stdout EOF",
+    );
+    assert_eq!(
+        readiness_decision(true, true, false),
+        ReadinessDecision::WaitForReceipt,
+        "EOF while the child is alive is still pending without positive evidence",
+    );
+    assert_eq!(
+        readiness_decision(false, true, true),
+        ReadinessDecision::Exited,
+        "a receipt cannot make an exited process ready",
+    );
+    assert_eq!(
+        readiness_decision(true, false, false),
+        ReadinessDecision::WaitForOutput,
+    );
+}
+
+#[test]
 fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
     let directory = std::env::temp_dir().join(format!(
         "serea-host-lifecycle-{}-{}",
@@ -110,7 +426,7 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
     std::fs::create_dir_all(&directory).expect("create disposable data directory");
 
     let mut first = start(&directory);
-    let first_stdout = wait_ready(&mut first);
+    let first_stdout = wait_ready(&mut first, &directory);
     let second = Command::new(env!("CARGO_BIN_EXE_serea-host"))
         .args(["run", "--synthetic", "--data-dir"])
         .arg(&directory)
@@ -123,12 +439,12 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
     assert!(directory.join("host.lock").exists());
 
     let mut crashed_run = start(&directory);
-    let _crashed_stdout = wait_ready(&mut crashed_run);
+    let _crashed_stdout = wait_ready(&mut crashed_run, &directory);
     crashed_run.kill().expect("terminate host process");
     assert!(!crashed_run.wait().expect("reap terminated host").success());
 
     let mut recovered_run = start(&directory);
-    let recovered_stdout = wait_ready(&mut recovered_run);
+    let recovered_stdout = wait_ready(&mut recovered_run, &directory);
     stop(&directory, recovered_run, recovered_stdout);
     assert!(directory.join("core.sqlite").exists());
     std::fs::remove_dir_all(&directory).expect("clean disposable data directory");
@@ -144,7 +460,7 @@ fn unix_sigterm_requests_bounded_cooperative_host_shutdown() {
     ));
     std::fs::create_dir_all(&directory).expect("create disposable signal test directory");
     let mut child = start(&directory);
-    let mut output = wait_ready(&mut child);
+    let mut output = wait_ready(&mut child, &directory);
     let started = monotonic_now();
     let signal_status = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -215,7 +531,7 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             .stderr(Stdio::piped())
             .spawn()
             .expect("start Host with isolated console");
-        let mut output = wait_ready(&mut child);
+        let mut output = wait_ready(&mut child, &directory);
 
         // Console control events are broadcast within a console, so attach
         // temporarily to the isolated child console. Restore the parent's
@@ -534,7 +850,7 @@ fn actual_host_model_policy_and_accounting_scenarios_survive_database_reopen() {
         // A fresh normal Host performs startup reconciliation but must never
         // auto-dispatch or create a replacement RequestId for this probe.
         let mut restarted = start(&directory);
-        let output = wait_ready(&mut restarted);
+        let output = wait_ready(&mut restarted, &directory);
         stop(&directory, restarted, output);
         let reopened = Store::open(&directory.join("core.sqlite"), &clock)
             .expect("reopen policy DB after normal Host restart");
@@ -599,7 +915,7 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
     assert!(seeded.status.success());
 
     let mut host = start(&directory);
-    let output = wait_ready(&mut host);
+    let output = wait_ready(&mut host, &directory);
     stop(&directory, host, output);
 
     let clock = serea_testkit::TestClock::at_epoch();
@@ -849,7 +1165,7 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
     // Startup recovery is read-only for completed calls and does not duplicate
     // their terminal audit or settle usage a second time.
     let mut restarted = start(&directory);
-    let output = wait_ready(&mut restarted);
+    let output = wait_ready(&mut restarted, &directory);
     stop(&directory, restarted, output);
     let after_restart =
         Store::open(&directory.join("core.sqlite"), &clock).expect("reopen after Host startup");
@@ -1068,7 +1384,7 @@ fn compiled_host_creates_one_durable_task_for_a_due_calendar_occurrence() {
     // publishes readiness. Kill at that process boundary, before the later
     // scheduler diagnostic/acknowledgement, then inspect SQLite independently.
     let mut first = start(&directory);
-    let _output = wait_ready(&mut first);
+    let _output = wait_ready(&mut first, &directory);
     first
         .kill()
         .expect("kill Host after durable Scheduler recovery");
@@ -1152,7 +1468,7 @@ fn compiled_host_creates_one_durable_task_for_a_due_calendar_occurrence() {
 
     // A fresh Host startup repeats recovery/wakeup against the same database.
     let mut restarted = start(&directory);
-    let restarted_output = wait_ready(&mut restarted);
+    let restarted_output = wait_ready(&mut restarted, &directory);
     stop(&directory, restarted, restarted_output);
     let audit_after_restart = store
         .replay_events(None, None, 256)
@@ -1195,7 +1511,7 @@ fn bounded_scheduler_throughput_sample() {
 
     let started = monotonic_now();
     let mut child = start(&directory);
-    let output = wait_ready(&mut child);
+    let output = wait_ready(&mut child, &directory);
     let elapsed = started.elapsed();
     let clock = serea_testkit::TestClock::at_epoch();
     let store = serea_storage::Store::open(&directory.join("core.sqlite"), &clock)
@@ -1391,8 +1707,9 @@ fn actual_host_scheduler_crash_barriers_recover_durable_occurrences() {
         // fence and any occurrence claim. This exercises lease recovery
         // without waiting in real time.
         restart.env("SEREA_TEST_CLOCK_NOW_MS", "4000000000000");
+        configure_ready_marker(&mut restart, &directory);
         let mut restarted = restart.spawn().expect("restart Host after Scheduler crash");
-        let output = wait_ready(&mut restarted);
+        let output = wait_ready(&mut restarted, &directory);
         stop(&directory, restarted, output);
 
         let recovered =
@@ -1478,29 +1795,13 @@ fn fresh_host_startup_reconciles_unresolved_model_dispatch_once() {
     drop(store);
 
     let mut first = start(&directory);
-    let mut output = wait_ready(&mut first);
-    let mut line = String::new();
-    let started = monotonic_now();
-    let mut recovery_reported = false;
-    while started.elapsed() < Duration::from_secs(5) {
-        line.clear();
-        if output
-            .read_line(&mut line)
-            .expect("read startup diagnostics")
-            == 0
-        {
-            break;
-        }
-        if line.contains("\"event\":\"model_recovery\"")
-            && line.contains("\"ambiguous_attempts\":1")
-        {
-            recovery_reported = true;
-            break;
-        }
-    }
-    assert!(
-        recovery_reported,
-        "Host did not report startup reconciliation"
+    let output = wait_ready(&mut first, &directory);
+    let receipt = read_ready_marker(&directory, first.id())
+        .expect("read Host startup receipt")
+        .expect("Host wrote a readiness receipt");
+    assert_eq!(
+        receipt.model_recovered, 1,
+        "Host reports startup reconciliation"
     );
     stop(&directory, first, output);
 
@@ -1537,7 +1838,7 @@ fn fresh_host_startup_reconciles_unresolved_model_dispatch_once() {
     // A second real process startup is idempotent: terminal state and its
     // content-free failure audit record remain singular.
     let mut second = start(&directory);
-    let output = wait_ready(&mut second);
+    let output = wait_ready(&mut second, &directory);
     stop(&directory, second, output);
     assert_eq!(failed_count(), 1);
     assert!(
@@ -1656,7 +1957,7 @@ fn actual_host_model_dispatch_crash_barriers_recover_without_redispatch() {
         assert!(!child.wait().expect("reap killed model Host").success());
 
         let mut restarted = start(&directory);
-        let output = wait_ready(&mut restarted);
+        let output = wait_ready(&mut restarted, &directory);
         stop(&directory, restarted, output);
 
         let reopened =

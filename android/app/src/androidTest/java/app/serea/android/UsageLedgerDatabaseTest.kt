@@ -400,6 +400,10 @@ class UsageLedgerDatabaseTest {
         assertEquals(null, db.usageDao().reservation("fake-budget-denied"))
         assertEquals(null, db.usageDao().ledger("fake-budget-denied"))
 
+        // The deliberate limit-denial case above leaves this in-memory policy at one request.
+        // Restore the fixture budget before exercising provider cancellation so that the
+        // cancellation path reaches the fake provider and settles as OUTCOME_UNKNOWN.
+        usage.updateLimits(UsageLimits())
         fake.nextFailure = CancellationException("fixture cancellation")
         val cancellation = async { routed.send(approvedRequest("fake-cancelled")) }
         try {
@@ -410,6 +414,8 @@ class UsageLedgerDatabaseTest {
         assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, unknown.usageStatus)
         assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, unknown.reservationState)
         assertEquals(2, fake.received.size)
+        assertEquals("fake-cancelled", fake.received.last().sendId)
+        assertEquals(2L, usage.snapshot().dailyRequests)
         assertFalse(fake.received.last().message.contains("private fixture text"))
     }
 

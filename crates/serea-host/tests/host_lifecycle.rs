@@ -544,7 +544,8 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             } else {
                 0
             };
-        let mut command = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_serea-host"));
+        command
             .args(["run", "--synthetic", "--data-dir"])
             .arg(&directory)
             .creation_flags(flags)

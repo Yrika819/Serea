@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,6 +77,21 @@ class InstrumentationResultTests(unittest.TestCase):
             root = Path(temporary)
             self.write_xml(root, "results.xml", '<testsuite tests="2"><testcase classname="a.Storage" name="first"/><testcase classname="a.Chat" name="second"/></testsuite>')
             self.assertEqual({"a.Storage": 1, "a.Chat": 1}, collect_class_counts(root))
+            verifier = Path(__file__).resolve().parents[1] / "tools/verify_android_instrumentation.py"
+            exact_case = subprocess.run(
+                ["python3", str(verifier), str(root), "--minimum", "2", "--exact-count", "2",
+                 "--require-test", "a.Storage#first", "--require-test", "a.Chat#second"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, exact_case.returncode, exact_case.stderr)
+            wrong_case = subprocess.run(
+                ["python3", str(verifier), str(root), "--minimum", "2", "--exact-count", "2",
+                 "--require-test", "a.Storage#first", "--require-test", "a.Chat#missing"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, wrong_case.returncode)
 
     def test_source_counts_ignore_comments_and_string_literals_and_reject_unlisted_tests(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -22,8 +22,44 @@ if [[ "$mode" == process-death ]]; then
   phase='process-death-seed'
 fi
 test -n "$(adb shell pm path "$package" | tr -d '\r')"
-# The isolated package has just been installed and is still stopped. Include it
-# explicitly so only the guarded fresh-storage marker receiver is started.
+if [[ "$mode" == instrumentation ]]; then
+  # Seed only the fresh debug-only package namespace. Starting its process here
+  # would run ProfileVerifier before UTP's connected-test install and leave a
+  # cache timestamp from the pre-UTP package install. run-as writes only this
+  # one-use marker and does not launch the app.
+  adb shell run-as "$package" sh -c '
+    set -eu
+    for directory in shared_prefs files databases no_backup; do
+      if [ -L "$directory" ]; then exit 40; fi
+      if [ -e "$directory" ]; then
+        [ -d "$directory" ] || exit 41
+        [ -z "$(ls -A "$directory")" ] || exit 42
+      fi
+    done
+    if [ -e files/profileInstalled ] || [ -L files/profileInstalled ]; then exit 43; fi
+    mkdir -p no_backup
+    [ -d no_backup ] && [ ! -L no_backup ] || exit 44
+    marker=no_backup/serea-instrumentation-token
+    temporary=no_backup/.serea-instrumentation-token.tmp
+    [ ! -e "$marker" ] && [ ! -L "$marker" ] || exit 45
+    [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || exit 46
+    (umask 077; set -C; printf "%s" "$1" > "$temporary")
+    mv "$temporary" "$marker"
+    [ -f "$marker" ] && [ ! -L "$marker" ] || exit 47
+    [ "$(cat "$marker")" = "$1" ] || exit 48
+    [ "$(ls -A no_backup)" = serea-instrumentation-token ] || exit 49
+  ' s "$token"
+  adb shell run-as "$package" sh -c '
+    set -eu
+    [ ! -e files/profileInstalled ] && [ ! -L files/profileInstalled ]
+  ' s
+  echo 'profileVerifierMarkerBeforeUtp=ABSENT'
+  echo 'PASS: fresh isolated namespace received a one-use host seed without starting the app.'
+  exit 0
+fi
+
+# Process Death preparation intentionally starts the debug-only target after
+# all UTP installations have completed; it does not precede another install.
 adb shell am broadcast -f 0x20 -n "$receiver" -a "$action" \
   --es phase "$phase" --es token "$token" --es requestId "$request_id"
 for _ in $(seq 1 30); do

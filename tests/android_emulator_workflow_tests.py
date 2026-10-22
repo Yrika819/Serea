@@ -74,7 +74,13 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('resultCode in persistedResultCodes', profile_marker)
         self.assertIn('Files.isSymbolicLink(markerPath)', profile_marker)
         self.assertIn('Files.isRegularFile(markerPath, LinkOption.NOFOLLOW_LINKS)', profile_marker)
-        self.assertIn('Files.size(markerPath) != BYTE_COUNT.toLong()', profile_marker)
+        self.assertIn('channel.size() != BYTE_COUNT.toLong()', profile_marker)
+        self.assertIn('Files.newByteChannel(path, setOf(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))', profile_marker)
+        self.assertIn('channel.read(ByteBuffer.allocate(1)) != -1', profile_marker)
+        self.assertIn('schema == SCHEMA', profile_marker)
+        self.assertIn('resultCode in persistedResultCodes', profile_marker)
+        self.assertIn('storedPackageUpdateTime == packageLastUpdateTime', profile_marker)
+        self.assertIn('installedCurrentProfileSize >= 0L', profile_marker)
         self.assertIn('entries.size != 1 || entries.single().name != FILE_NAME', profile_marker)
         self.assertIn('Build.VERSION.SDK_INT >= 28 && Build.VERSION.SDK_INT != 30', runner)
         self.assertIn('filesDirEntries=${filesDirectoryEntries?.sorted()}', runner)
@@ -93,6 +99,19 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertLess(runner.index('marker.renameTo(claimedMarker)'), runner.index('super.onStart()'))
         self.assertIn('connectedIsolatedAndroidTest', (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8"))
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        target_helper = (ROOT / "tools/prepare_isolated_instrumentation_target.sh").read_text(encoding="utf-8")
+        self.assertIn('run-as "$package"', target_helper)
+        self.assertIn('profileVerifierMarkerBeforeUtp=ABSENT', target_helper)
+        self.assertIn('if [[ "$mode" == process-death ]]', target_helper)
+        self.assertIn('am broadcast -f 0x20 -n "$receiver"', target_helper)
+        self.assertIn('calendar-target', campaign)
+        self.assertIn('calendar-class', campaign)
+        self.assertIn('app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination', campaign)
+        self.assertIn('app.serea.android.SereaAppShellTest 900 19', campaign)
+        self.assertIn('--require-test', campaign)
+        self.assertIn('--exact-count', campaign)
+        self.assertIn('SereaCalendarStage', campaign)
+        self.assertIn('PROFILE_MARKER_CHECK', runner)
         self.assertIn('SereaInstrumentationLifecycleListener', campaign)
         self.assertIn('logcat-live.txt', campaign)
         self.assertIn('timeout --signal=INT --kill-after=120s 40m ./gradlew', campaign)
@@ -604,6 +623,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "10-21 16:00:00.000 123 456 I SereaTestLifecycle: START|1792598400000|a.First#done\n"
                 "10-21 16:00:01.000 123 456 I SereaTestLifecycle: FINISH|1792598401000|a.First#done\n"
                 "10-21 16:00:02.000 123 456 I SereaTestLifecycle: START|1792598402000|a.Second#blocked\n"
+                "10-21 16:00:02.100 123 456 I SereaCalendarStage: START|scroll-event-50|testThread=Instr:1|uiThread=main:2|onUiThread=false\n"
                 "10-21 16:00:03.000 123 456 I SereaTestLifecycle: RUN_FINISH|1792598403000|2|0|0\n",
                 encoding="utf-8",
             )
@@ -620,6 +640,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertIn("tests_started_without_finish=1", contents)
             self.assertIn("runner_test_count=2", contents)
             self.assertIn("runner_failure_count=0", contents)
+            self.assertIn("calendar_last_stage_started=scroll-event-50", contents)
+            self.assertIn("calendar_stage_incomplete=scroll-event-50", contents)
 
 
 if __name__ == "__main__":

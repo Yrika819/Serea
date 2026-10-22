@@ -1,6 +1,7 @@
 package app.serea.android
 
 import android.os.Build
+import android.util.Log
 import androidx.test.runner.AndroidJUnitRunner
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
@@ -32,11 +33,16 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         val profileVerifierApiSupported = Build.VERSION.SDK_INT >= 28 && Build.VERSION.SDK_INT != 30
         val onlyKnownPlatformProfileMarker = profileVerifierApiSupported &&
             ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, packageLastUpdateTime)
-        val profileMarkerRejectionDetails = if (profileVerifierApiSupported && !filesEmpty && !onlyKnownPlatformProfileMarker) {
+        val profileMarkerDetails = if (profileVerifierApiSupported && !filesEmpty) {
             ProfileVerifierCacheMarker.rejectionDetails(filesDirectory, packageLastUpdateTime)
         } else {
-            "not-applicable"
+            if (profileVerifierApiSupported) "marker=absent" else "api=unsupported"
         }
+        Log.i(
+            PROFILE_LOG_TAG,
+            "PROFILE_MARKER_CHECK api=${Build.VERSION.SDK_INT} present=${!filesEmpty} " +
+                "valid=$onlyKnownPlatformProfileMarker details=$profileMarkerDetails",
+        )
         val filesSafe = filesEmpty || onlyKnownPlatformProfileMarker
         val databaseDirectory = File(dataDir, "databases")
         val databasesEmpty = target.databaseList().isEmpty() &&
@@ -58,7 +64,7 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
             "Refusing instrumentation without a fresh isolated namespace and matching CI campaign marker " +
                 "(preferencesEmpty=$preferencesEmpty, filesEmpty=$filesEmpty, filesDirEntries=${filesDirectoryEntries?.sorted()}, " +
                 "knownProfileInstallerMarker=$onlyKnownPlatformProfileMarker, databasesEmpty=$databasesEmpty, " +
-                "knownProfileInstallerMarkerDetails=$profileMarkerRejectionDetails, " +
+                "knownProfileInstallerMarkerDetails=$profileMarkerDetails, " +
                 "campaignTokenPresent=${campaignToken != null}, markerMatches=$campaignMarkerMatches, " +
                 "noBackupEntries=${noBackupFiles?.sorted()}, claimedMarkerExists=${claimedMarker.exists()})."
         }
@@ -79,6 +85,7 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
     }
 
     private companion object {
+        const val PROFILE_LOG_TAG = "SereaIsolatedRunner"
         const val ISOLATED_PACKAGE = "app.serea.android.isolated"
         const val CAMPAIGN_TOKEN_ARGUMENT = "sereaCampaignToken"
         const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"

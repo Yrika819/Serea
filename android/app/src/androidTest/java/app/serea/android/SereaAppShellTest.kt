@@ -3,6 +3,8 @@ package app.serea.android
 import android.content.pm.ActivityInfo
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
+import android.os.Looper
+import android.util.Log
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -47,6 +49,10 @@ import java.time.ZoneId
 
 @RunWith(AndroidJUnit4::class)
 class SereaAppShellTest {
+    private companion object {
+        const val CALENDAR_STAGE_TAG = "SereaCalendarStage"
+    }
+
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Before fun waitUntilChatCanAcceptInput() {
@@ -61,6 +67,16 @@ class SereaAppShellTest {
 
     private fun pressBack() {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+    }
+
+    private fun calendarStage(name: String, outcome: String) {
+        val testThread = Thread.currentThread()
+        val uiThread = Looper.getMainLooper().thread
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "$outcome|$name|testThread=${testThread.name}:${testThread.id}|" +
+                "uiThread=${uiThread.name}:${uiThread.id}|onUiThread=${testThread === uiThread}",
+        )
     }
 
     private fun shell(command: String): String {
@@ -350,6 +366,7 @@ class SereaAppShellTest {
     }
 
     @Test fun calendarDetailAndSelectedCalendarSurviveAnotherDestination() {
+        calendarStage("orientation-landscape", "START")
         compose.activityRule.scenario.onActivity { activity ->
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
@@ -357,12 +374,16 @@ class SereaAppShellTest {
             val size = compose.onRoot().fetchSemanticsNode().size
             size.width > size.height
         }
+        calendarStage("orientation-landscape", "FINISH")
 
+        calendarStage("calendar-destination-semantics", "START")
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("表示するカレンダー").fetchSemanticsNodes().isNotEmpty()
         }
+        calendarStage("calendar-destination-semantics", "FINISH")
+        calendarStage("agenda-semantics", "START")
         compose.onNodeWithText("Demo Work").performClick()
         compose.waitUntil(10_000) {
             runCatching { compose.onNodeWithText("今後").assertIsEnabled() }.isSuccess
@@ -371,14 +392,18 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
+        calendarStage("agenda-semantics", "FINISH")
+        calendarStage("scroll-event-50", "START")
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 50"))
         compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
+        calendarStage("scroll-event-50", "FINISH")
         val agendaOffsetBeforeDetail = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("Calendar agenda must have several scroll positions", agendaOffsetBeforeDetail.maxValue() > 0f)
         assertTrue("The long agenda test must begin below its first event", agendaOffsetBeforeDetail.value() > 0f)
         compose.onNodeWithText("Fictional paged event 50").performClick()
         compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
+        calendarStage("event-detail-back", "START")
         pressBack()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
@@ -386,7 +411,9 @@ class SereaAppShellTest {
         val agendaOffsetAfterDetail = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertEquals(agendaOffsetBeforeDetail.value(), agendaOffsetAfterDetail.value(), 1f)
+        calendarStage("event-detail-back", "FINISH")
 
+        calendarStage("destination-back", "START")
         select(SereaDestination.GMAIL)
         pressBack()
         compose.waitUntil(10_000) {
@@ -395,7 +422,9 @@ class SereaAppShellTest {
         val agendaOffsetAfterDestination = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertEquals(agendaOffsetBeforeDetail.value(), agendaOffsetAfterDestination.value(), 1f)
+        calendarStage("destination-back", "FINISH")
 
+        calendarStage("activity-recreation", "START")
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
@@ -403,9 +432,11 @@ class SereaAppShellTest {
         val agendaOffsetAfterRecreation = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertEquals(agendaOffsetBeforeDetail.value(), agendaOffsetAfterRecreation.value(), 1f)
+        calendarStage("activity-recreation", "FINISH")
 
         // Both query and calendar changes are checked against long lists, avoiding a false pass
         // caused by a short list clamping a stale scroll offset to zero.
+        calendarStage("date-query-and-ime", "START")
         compose.onNodeWithText("指定日").performClick()
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
         val displayZone = ZoneId.systemDefault()
@@ -433,7 +464,9 @@ class SereaAppShellTest {
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("date query must retain a scrollable Work agenda", agendaOffsetAfterQueryChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterQueryChange.value(), 1f)
+        calendarStage("date-query-and-ime", "FINISH")
 
+        calendarStage("date-change-scroll", "START")
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 40"))
         compose.onNodeWithText("Fictional paged event 40").assertIsDisplayed()
         val workOffsetBeforeDateChange = compose.onNodeWithTag("calendar_agenda_list")
@@ -463,7 +496,9 @@ class SereaAppShellTest {
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("changing the selected date must keep a scrollable Work agenda", agendaOffsetAfterDateChange.maxValue() > 0f)
         assertEquals(0f, agendaOffsetAfterDateChange.value(), 1f)
+        calendarStage("date-change-scroll", "FINISH")
 
+        calendarStage("calendar-change-scroll", "START")
         compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 64"))
         compose.onNodeWithText("Fictional paged event 64").assertIsDisplayed()
         val workOffsetBeforeCalendarChange = compose.onNodeWithTag("calendar_agenda_list")
@@ -496,7 +531,9 @@ class SereaAppShellTest {
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue("calendar detail must be scrollable in this viewport", detailScrollBefore.maxValue() > 0f)
         assertTrue("calendar detail must have a non-zero saved offset", detailScrollBefore.value() > 0f)
+        calendarStage("calendar-change-scroll", "FINISH")
 
+        calendarStage("detail-destination-back", "START")
         select(SereaDestination.GMAIL)
         compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed()
         pressBack()
@@ -515,6 +552,7 @@ class SereaAppShellTest {
         compose.onNodeWithText("開始・終了").assertIsDisplayed()
         pressBack()
         compose.onNodeWithText("Demo Global").assertIsSelected()
+        calendarStage("detail-destination-back", "FINISH")
     }
 
     @Test fun taskEditorDraftSurvivesActivityRecreation() {

@@ -14,6 +14,10 @@ EVENT = re.compile(
     r"(START|FINISH|FAIL|RUN_FINISH)\|([0-9]+)\|(.+)$"
 )
 EXPECTED_TESTS = 103
+CALENDAR_STAGE = re.compile(
+    r"^.*(?:I/SereaCalendarStage\([^)]*\):|I SereaCalendarStage:)\s+"
+    r"(START|FINISH)\|([a-z0-9-]+)\|(.+)$"
+)
 
 
 def utc_timestamp(epoch_ms: int) -> str:
@@ -22,11 +26,15 @@ def utc_timestamp(epoch_ms: int) -> str:
 
 def summarize(source: Path) -> str:
     events: list[tuple[str, int, list[str]]] = []
+    calendar_stages: list[tuple[str, str, str]] = []
     for line in source.read_text(encoding="utf-8", errors="replace").splitlines():
         match = EVENT.match(line)
         if match:
             kind, timestamp, payload = match.groups()
             events.append((kind, int(timestamp), payload.split("|")))
+        stage_match = CALENDAR_STAGE.match(line)
+        if stage_match:
+            calendar_stages.append(stage_match.groups())
 
     starts = [event for event in events if event[0] == "START"]
     finishes = [event for event in events if event[0] == "FINISH"]
@@ -69,6 +77,18 @@ def summarize(source: Path) -> str:
             lines.append("runner_result_fields=INCOMPLETE")
     else:
         lines.append("test_run_finished=NOT_RECORDED")
+    stage_starts = [stage for stage in calendar_stages if stage[0] == "START"]
+    stage_finishes = [stage for stage in calendar_stages if stage[0] == "FINISH"]
+    lines.extend((
+        f"calendar_stage_start_events={len(stage_starts)}",
+        f"calendar_stage_finish_events={len(stage_finishes)}",
+        f"calendar_last_stage_started={stage_starts[-1][1] if stage_starts else 'NOT_RECORDED'}",
+        f"calendar_last_stage_finished={stage_finishes[-1][1] if stage_finishes else 'NOT_RECORDED'}",
+    ))
+    if stage_starts and (not stage_finishes or stage_starts[-1][1] != stage_finishes[-1][1]):
+        lines.append(f"calendar_stage_incomplete={stage_starts[-1][1]}")
+    else:
+        lines.append("calendar_stage_incomplete=NONE_RECORDED")
     return "\n".join(lines) + "\n"
 
 

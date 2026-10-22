@@ -93,13 +93,15 @@ class SereaAppShellTest {
         val visibleSemantics: String,
     )
 
-    /** Evaluate ScrollAxisRange lambdas on the Compose UI thread, then return immutable primitives. */
+    /** Fetch through the test owner, then read Compose-owned state and bounds on the UI thread. */
     private fun snapshotSemantics(interaction: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarSemanticsSnapshot {
+        compose.waitForIdle()
+        val node = interaction.fetchSemanticsNode()
         var result: CalendarSemanticsSnapshot? = null
-        compose.runOnIdle {
-            // Fetching a node can itself drive Compose Owner layout/semantics work. Keep that
-            // access on the same UI thread as bounds, properties, and scroll-range evaluation.
-            val node = interaction.fetchSemanticsNode()
+        compose.runOnUiThread {
+            // SemanticsNodeInteraction synchronizes through the test owner and must be fetched
+            // from the instrumentation thread. Its config lambdas, child bounds, and Compose
+            // Owner layout/draw state must then be evaluated together on the Compose UI thread.
             val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
             val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
             val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {

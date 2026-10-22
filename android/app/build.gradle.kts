@@ -1,4 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.KeyStore
+import java.security.MessageDigest
+import java.util.Locale
 
 plugins {
     id("com.android.application")
@@ -6,6 +9,29 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.github.jk1.dependency-license-report")
+}
+
+val betaStorePath = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH").orNull
+val betaStorePassword = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD").orNull
+val betaKeyAlias = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS").orNull
+val betaKeyPassword = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD").orNull
+val betaExpectedFingerprint = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256").orNull
+val betaVersionCode = providers.gradleProperty("sereaBetaVersionCode").orNull?.toIntOrNull()
+val betaSigningInputsReady = listOf(
+    betaStorePath, betaStorePassword, betaKeyAlias, betaKeyPassword, betaExpectedFingerprint,
+).all { !it.isNullOrBlank() }
+val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidationHarness").orNull == "true"
+val updateCompatibilityTest = providers.gradleProperty("sereaUpdateCompatibilityTest").orNull == "true"
+val updateTestStorePath = providers.environmentVariable("SEREA_UPDATE_TEST_KEYSTORE_PATH").orNull
+val updateTestStorePassword = providers.environmentVariable("SEREA_UPDATE_TEST_STORE_PASSWORD").orNull
+val updateTestKeyAlias = providers.environmentVariable("SEREA_UPDATE_TEST_KEY_ALIAS").orNull
+val updateTestKeyPassword = providers.environmentVariable("SEREA_UPDATE_TEST_KEY_PASSWORD").orNull
+val updateTestSigningInputsReady = listOf(
+    updateTestStorePath, updateTestStorePassword, updateTestKeyAlias, updateTestKeyPassword,
+).all { !it.isNullOrBlank() }
+
+if (updateCompatibilityTest && !updateTestSigningInputsReady) {
+    error("The isolated update compatibility variant requires its disposable test keystore inputs.")
 }
 
 android {
@@ -22,8 +48,32 @@ android {
         testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (betaSigningInputsReady) {
+            create("personalBeta") {
+                storeFile = file(checkNotNull(betaStorePath))
+                storeType = "PKCS12"
+                storePassword = checkNotNull(betaStorePassword)
+                keyAlias = checkNotNull(betaKeyAlias)
+                keyPassword = checkNotNull(betaKeyPassword)
+            }
+        }
+        if (updateTestSigningInputsReady) {
+            create("ephemeralUpdateTest") {
+                storeFile = file(checkNotNull(updateTestStorePath))
+                storeType = "PKCS12"
+                storePassword = checkNotNull(updateTestStorePassword)
+                keyAlias = checkNotNull(updateTestKeyAlias)
+                keyPassword = checkNotNull(updateTestKeyPassword)
+            }
+        }
+    }
+
     buildTypes {
-        debug { applicationIdSuffix = ".demo" }
+        debug {
+            applicationIdSuffix = if (updateCompatibilityTest) ".updatecompat" else ".demo"
+            if (updateCompatibilityTest) signingConfig = signingConfigs.getByName("ephemeralUpdateTest")
+        }
         create("isolated") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".isolated"
@@ -32,6 +82,12 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        create("beta") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".beta"
+            matchingFallbacks += listOf("release")
+            if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
         }
     }
 
@@ -42,6 +98,14 @@ android {
             java.srcDir("src/debug/java")
             manifest.srcFile("src/debug/AndroidManifest.xml")
         }
+        if (betaValidationHarness) {
+            // Only the disposable-emulator verifier opts into the debug-only
+            // process-death receiver. The protected signing workflow never sets this.
+            getByName("beta") {
+                java.srcDir("src/debug/java")
+                manifest.srcFile("src/betaValidation/AndroidManifest.xml")
+            }
+        }
     }
 
     compileOptions {
@@ -50,6 +114,90 @@ android {
     }
     lint { abortOnError = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
+}
+
+val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") {
+    group = "verification"
+    description = "Require and verify the Owner-managed Personal Beta signing identity before packaging."
+    outputs.upToDateWhen { false }
+    doLast {
+        fun failClosed(message: String): Nothing {
+            layout.buildDirectory.dir("outputs/apk/beta").get().asFile.deleteRecursively()
+            layout.buildDirectory.dir("outputs/bundle/beta").get().asFile.deleteRecursively()
+            error(message)
+        }
+
+        val required = mapOf(
+            "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH" to betaStorePath,
+            "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD" to betaStorePassword,
+            "SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS" to betaKeyAlias,
+            "SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD" to betaKeyPassword,
+            "SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256" to betaExpectedFingerprint,
+            "-PsereaBetaVersionCode" to betaVersionCode?.toString(),
+        )
+        val missing = required.filterValues { it.isNullOrBlank() }.keys
+        if (missing.isNotEmpty()) {
+            failClosed("Personal Beta APK packaging is blocked; missing required Owner signing configuration: ${missing.joinToString()}")
+        }
+
+        val keystoreFile = file(checkNotNull(betaStorePath))
+        if (!keystoreFile.isFile) failClosed("Personal Beta keystore path is not a file.")
+        if (checkNotNull(betaVersionCode) <= 1) {
+            failClosed("Personal Beta versionCode must be greater than 1; provide -PsereaBetaVersionCode.")
+        }
+
+        val expected = checkNotNull(betaExpectedFingerprint)
+            .replace(":", "")
+            .replace(Regex("\\s"), "")
+            .uppercase(Locale.ROOT)
+        if (!expected.matches(Regex("[0-9A-F]{64}"))) {
+            failClosed("SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256 must be a SHA-256 certificate fingerprint.")
+        }
+
+        val store = try {
+            KeyStore.getInstance("PKCS12").apply {
+                keystoreFile.inputStream().use { load(it, checkNotNull(betaStorePassword).toCharArray()) }
+            }
+        } catch (_: Exception) {
+            failClosed("Personal Beta PKCS12 keystore could not be opened with the configured password.")
+        }
+        if (!store.isKeyEntry(checkNotNull(betaKeyAlias))) {
+            failClosed("The configured Personal Beta alias is not a private-key entry in the PKCS12 keystore.")
+        }
+        val certificate = store.getCertificate(checkNotNull(betaKeyAlias))
+            ?: failClosed("The configured Personal Beta alias has no signing certificate.")
+        val actual = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
+            .joinToString("") { "%02X".format(Locale.ROOT, it.toInt() and 0xff) }
+        if (actual != expected) {
+            failClosed("Personal Beta keystore certificate does not match SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256.")
+        }
+        val privateKey = try {
+            store.getKey(checkNotNull(betaKeyAlias), checkNotNull(betaKeyPassword).toCharArray())
+        } catch (_: Exception) {
+            failClosed("Personal Beta key password could not unlock the configured private key.")
+        }
+        if (privateKey !is java.security.PrivateKey) {
+            failClosed("The configured Personal Beta alias is not an accessible private signing key.")
+        }
+    }
+}
+
+tasks.matching { it.name in setOf("assembleBeta", "packageBeta", "bundleBeta", "signBetaBundle") }
+    .configureEach { dependsOn(validatePersonalBetaSigning) }
+
+tasks.configureEach {
+    if (name.contains("Beta") && name != "validatePersonalBetaSigning") {
+        mustRunAfter(validatePersonalBetaSigning)
+    }
+}
+
+androidComponents.onVariants { variant ->
+    if (variant.buildType == "beta") {
+        check(variant.applicationId.get() == "app.serea.android.beta") {
+            "Personal Beta applicationId drifted: expected app.serea.android.beta, got ${variant.applicationId.get()}"
+        }
+        betaVersionCode?.let { code -> variant.outputs.forEach { it.versionCode.set(code) } }
+    }
 }
 
 kotlin {
@@ -121,6 +269,7 @@ licenseReport {
         "debugRuntimeClasspath",
         "releaseRuntimeClasspath",
         "isolatedRuntimeClasspath",
+        "betaRuntimeClasspath",
         "debugUnitTestRuntimeClasspath",
         "isolatedUnitTestRuntimeClasspath",
         "isolatedAndroidTestRuntimeClasspath",

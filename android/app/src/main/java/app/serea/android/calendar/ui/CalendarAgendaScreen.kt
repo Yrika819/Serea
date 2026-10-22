@@ -126,7 +126,7 @@ fun CalendarAgendaScreen(
     var previousAgendaScope by remember { mutableStateOf(state.query to state.selectedCalendarId) }
     LaunchedEffect(state.query, state.selectedCalendarId) {
         val currentScope = state.query to state.selectedCalendarId
-        if (currentScope != previousAgendaScope) agendaListState.scrollToItem(0)
+        if (currentScope != previousAgendaScope) agendaListState.requestScrollToItem(0)
         previousAgendaScope = currentScope
     }
     val inDetail = when (state) {

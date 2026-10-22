@@ -118,6 +118,39 @@ class CalendarAgendaUiControllerTest {
         controller.close()
     }
 
+    @Test fun selectingCalendarThenUpcomingKeepsLatestScopeAndLoadsPagedEventFifty() = runTest {
+        val provider = FakeCalendarProvider(
+            events = FakeCalendarProvider.Fixtures.appShellEvents,
+            pageSize = 50,
+        )
+        val uiFake = CalendarAgendaUiFake(provider)
+        val controller = CalendarAgendaUiController(
+            uiFake,
+            uiFake,
+            UI_TEST_CLOCK,
+            ZoneId.of("UTC"),
+            this,
+        )
+        advanceUntilIdle()
+
+        controller.selectCalendar("demo-work")
+        controller.selectMode(CalendarAgendaMode.UPCOMING)
+        advanceUntilIdle()
+
+        val state = agenda(controller)
+        assertEquals(CalendarAgendaMode.UPCOMING, state.query.mode)
+        assertEquals("demo-work", state.selectedCalendarId)
+        assertEquals(72, state.events.count { it.key.eventId.value.startsWith("bulk-") })
+        assertEquals(
+            "bulk-50",
+            state.events.single { it.title == "Fictional paged event 50" }.key.eventId.value,
+        )
+        assertTrue(state.events.zipWithNext().all { (first, second) ->
+            CalendarAgendaService.EVENT_ORDER.compare(first, second) <= 0
+        })
+        controller.close()
+    }
+
     @Test fun emptyAgendaAndEmptyCalendarListAreDistinctSuccessfulStates() = runTest {
         val emptyAgendaProvider = fakeProvider(listOf(calendar("empty")), emptyList())
         val emptyAgendaFake = CalendarAgendaUiFake(emptyAgendaProvider)

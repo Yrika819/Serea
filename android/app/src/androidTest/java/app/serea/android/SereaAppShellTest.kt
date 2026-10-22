@@ -24,6 +24,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
@@ -32,11 +33,13 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
 import app.serea.android.assistant.taskproposal.TaskProposalDemoScreenForTest
+import app.serea.android.calendar.ui.CalendarLazyListPositionKey
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Before
 import org.junit.Assert.assertEquals
@@ -55,7 +58,13 @@ class SereaAppShellTest {
 
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    private enum class CalendarGesturePath { NODE_EDGE, NODE_INTERIOR, ROOT_INTERIOR }
+    private var calendarGestureProbeDone = false
+    private var calendarGesturePath = CalendarGesturePath.NODE_INTERIOR
+
     @Before fun waitUntilChatCanAcceptInput() {
+        calendarGestureProbeDone = false
+        calendarGesturePath = CalendarGesturePath.NODE_INTERIOR
         compose.waitUntil(30_000) {
             runCatching { compose.onNodeWithTag("chat-composer").assertIsEnabled() }.isSuccess
         }
@@ -88,8 +97,15 @@ class SereaAppShellTest {
                 node.size.height > 0 || compose.onNodeWithText(text).assertIsDisplayed().let { true }
             }.getOrDefault(false)
         }
+        if (tag == "calendar_agenda_list" && !calendarGestureProbeDone) {
+            calendarGestureProbeDone = true
+            calendarGesturePath = diagnoseCalendarGesturePath(list)
+        }
         for (index in 0 until 60) {
-            if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) return
+            if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
+                logVisibleCalendarItemBounds(tag, text)
+                return
+            }
             val before = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
             assertTrue("$tag must be vertically scrollable before searching for $text", before.maxValue() > 0f)
             if (before.value() >= before.maxValue() - 1f) break
@@ -101,20 +117,7 @@ class SereaAppShellTest {
                     "(height=$swipeHeight, touchSlop=$touchSlop)",
                 swipeHeight > touchSlop * 2f + 2f,
             )
-            val startY = swipeHeight - 1f
-            val endY = 1f
-            Log.i(
-                CALENDAR_STAGE_TAG,
-                "GESTURE_REGION|$tag|index=${index + 1}|width=${list.fetchSemanticsNode().size.width}|" +
-                    "height=$swipeHeight|startY=$startY|endY=$endY|touchSlop=$touchSlop",
-            )
-            list.performTouchInput {
-                swipeUp(
-                    startY = startY,
-                    endY = endY,
-                    durationMillis = 400,
-                )
-            }
+            performCalendarGesture(list, calendarGesturePath, swipeHeight, "$tag|loop=${index + 1}")
             compose.waitForIdle()
             val after = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
             Log.i(
@@ -129,6 +132,180 @@ class SereaAppShellTest {
             if (after.value() >= after.maxValue() - 1f) break
         }
         compose.onNodeWithText(text).assertIsDisplayed()
+        logVisibleCalendarItemBounds(tag, text)
+    }
+
+    private fun logVisibleCalendarItemBounds(tag: String, text: String) {
+        val item = compose.onNodeWithText(text).fetchSemanticsNode()
+        val list = compose.onNodeWithTag(tag).fetchSemanticsNode()
+        val root = compose.onRoot().fetchSemanticsNode()
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "VISIBLE_ITEM|tag=$tag|text=$text|itemRoot=${item.boundsInRoot}|itemWindow=${item.boundsInWindow}|" +
+                "listRoot=${list.boundsInRoot}|listWindow=${list.boundsInWindow}|root=${root.boundsInRoot}",
+        )
+    }
+
+    /** Separates scroll semantics from touch hit testing before searching a long agenda. */
+    private fun diagnoseCalendarGesturePath(list: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarGesturePath {
+        val node = list.fetchSemanticsNode()
+        val rootInteraction = compose.onRoot()
+        val root = rootInteraction.fetchSemanticsNode()
+        val destination = compose.onNodeWithTag("calendar_destination").fetchSemanticsNode()
+        val bounds = node.boundsInRoot
+        val rootBounds = root.boundsInRoot
+        val visibleLeft = maxOf(bounds.left, rootBounds.left, destination.boundsInRoot.left)
+        val visibleTop = maxOf(bounds.top, rootBounds.top, destination.boundsInRoot.top)
+        val visibleRight = minOf(bounds.right, rootBounds.right, destination.boundsInRoot.right)
+        val visibleBottom = minOf(bounds.bottom, rootBounds.bottom, destination.boundsInRoot.bottom)
+        val height = node.size.height.toFloat()
+        val edgeStartY = height - 1f
+        val edgeEndY = 1f
+        val interiorStartY = height * 0.8f
+        val interiorEndY = height * 0.2f
+        val axis = node.config[SemanticsProperties.VerticalScrollAxisRange]
+        val position = node.config[CalendarLazyListPositionKey]
+        val semanticsDelta = if (axis.value() + 80f < axis.maxValue()) 80f else -80f
+        var semanticsHandled = false
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
+            semanticsHandled = scrollBy(0f, semanticsDelta)
+        }
+        compose.waitForIdle()
+        val afterSemantics = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val positionAfterSemantics = list.fetchSemanticsNode().config[CalendarLazyListPositionKey]
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "SEMANTICS_SCROLL_BY|handled=$semanticsHandled|delta=$semanticsDelta|" +
+                "from=${axis.value()}|to=${afterSemantics.value()}|max=${afterSemantics.maxValue()}|" +
+                "firstVisible=${positionAfterSemantics.first}/${positionAfterSemantics.second}",
+        )
+        assertTrue(
+            "Semantics ScrollBy must move the long Calendar list before comparing actual touch input",
+            afterSemantics.value() > axis.value() + 0.5f,
+        )
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
+            scrollBy(0f, -semanticsDelta)
+        }
+        compose.waitForIdle()
+        val restored = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "SEMANTICS_SCROLL_RESTORE|from=${afterSemantics.value()}|to=${restored.value()}|" +
+                "firstVisible=${list.fetchSemanticsNode().config[CalendarLazyListPositionKey]}",
+        )
+        assertTrue("Semantics ScrollBy probe must restore its starting offset", kotlin.math.abs(restored.value() - axis.value()) < 1f)
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "GEOMETRY|boundsInRoot=${node.boundsInRoot}|boundsInWindow=${node.boundsInWindow}|" +
+                "root=${root.boundsInRoot}|destination=${destination.boundsInRoot}|" +
+                "visibleIntersection=[$visibleLeft,$visibleTop,$visibleRight,$visibleBottom]|" +
+                "size=${node.size}|rootCenterX=${rootBounds.center.x}|listCenterX=${bounds.center.x}|" +
+                "windowOffset=${node.boundsInWindow.top - node.boundsInRoot.top}|" +
+                "scroll=${axis.value()}/${axis.maxValue()}|firstVisible=${position.first}/${position.second}|" +
+                "edgeLocal=$edgeStartY->$edgeEndY|" +
+                "edgeRoot=${bounds.center.x},${bounds.top + edgeStartY}->${bounds.center.x},${bounds.top + edgeEndY}|" +
+                "interiorLocal=$interiorStartY->$interiorEndY",
+        )
+        assertTrue("Calendar list must intersect its visible root and destination bounds", visibleRight > visibleLeft && visibleBottom > visibleTop)
+        assertTrue("Root-center input must fall inside the Calendar list horizontally", rootBounds.center.x in visibleLeft..visibleRight)
+        assertTrue("Current 1px edge start must be inside the Calendar list bounds", edgeStartY in 0f..height)
+        assertTrue("Current 1px edge end must be inside the Calendar list bounds", edgeEndY in 0f..height)
+        assertTrue("Current edge gesture points must be inside the clipped visible list region",
+            bounds.center.x in visibleLeft..visibleRight &&
+                bounds.top + edgeStartY in visibleTop..visibleBottom &&
+                bounds.top + edgeEndY in visibleTop..visibleBottom)
+        assertTrue("Interior gesture points must be inside the clipped visible list region",
+            bounds.center.x in visibleLeft..visibleRight &&
+                bounds.top + interiorStartY in visibleTop..visibleBottom &&
+                bounds.top + interiorEndY in visibleTop..visibleBottom)
+
+        val edgeProgress = performCalendarGesture(
+            list,
+            CalendarGesturePath.NODE_EDGE,
+            height,
+            "probe-edge",
+        )
+        if (edgeProgress) return CalendarGesturePath.NODE_EDGE
+
+        val interiorProgress = performCalendarGesture(
+            list,
+            CalendarGesturePath.NODE_INTERIOR,
+            height,
+            "probe-node-interior",
+        )
+        if (interiorProgress) return CalendarGesturePath.NODE_INTERIOR
+
+        val rootProgress = performCalendarGesture(
+            list,
+            CalendarGesturePath.ROOT_INTERIOR,
+            height,
+            "probe-root-interior",
+        )
+        if (rootProgress) return CalendarGesturePath.ROOT_INTERIOR
+        throw AssertionError(
+            "Calendar list moved through Semantics ScrollBy but none of the three real Touch Gesture paths moved it; " +
+                "boundsInRoot=${node.boundsInRoot}, boundsInWindow=${node.boundsInWindow}, " +
+                "root=${root.boundsInRoot}, visibleIntersection=[$visibleLeft,$visibleTop,$visibleRight,$visibleBottom]",
+        )
+    }
+
+    private fun performCalendarGesture(
+        list: androidx.compose.ui.test.SemanticsNodeInteraction,
+        path: CalendarGesturePath,
+        height: Float,
+        label: String,
+    ): Boolean {
+        val node = list.fetchSemanticsNode()
+        val before = node.config[SemanticsProperties.VerticalScrollAxisRange]
+        val startY = if (path == CalendarGesturePath.NODE_EDGE) height - 1f else height * 0.8f
+        val endY = if (path == CalendarGesturePath.NODE_EDGE) 1f else height * 0.2f
+        val startRootY = node.boundsInRoot.top + startY
+        val endRootY = node.boundsInRoot.top + endY
+        val startWindowY = node.boundsInWindow.top + startY
+        val endWindowY = node.boundsInWindow.top + endY
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "GESTURE_TARGET|$label|path=$path|local=${node.size.width / 2f},$startY->${node.size.width / 2f},$endY|" +
+                "root=${node.boundsInRoot.center.x},$startRootY->${node.boundsInRoot.center.x},$endRootY|" +
+                "rootViewportCenterX=${compose.onRoot().fetchSemanticsNode().boundsInRoot.center.x}|" +
+                "window=${node.boundsInWindow.center.x},$startWindowY->${node.boundsInWindow.center.x},$endWindowY|" +
+                "node=${node.boundsInRoot}|windowBounds=${node.boundsInWindow}|" +
+                "scroll=${before.value()}/${before.maxValue()}|" +
+                "firstVisible=${node.config[CalendarLazyListPositionKey].first}/${node.config[CalendarLazyListPositionKey].second}",
+        )
+        when (path) {
+            CalendarGesturePath.NODE_EDGE,
+            CalendarGesturePath.NODE_INTERIOR -> list.performTouchInput {
+                swipeUp(
+                    startY = startY,
+                    endY = endY,
+                    durationMillis = 400,
+                )
+            }
+            CalendarGesturePath.ROOT_INTERIOR -> {
+                val root = compose.onRoot()
+                val rootBounds = root.fetchSemanticsNode().boundsInRoot
+                root.performTouchInput {
+                    swipeUp(
+                        startY = startRootY - rootBounds.top,
+                        endY = endRootY - rootBounds.top,
+                        durationMillis = 400,
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        val afterNode = list.fetchSemanticsNode()
+        val after = afterNode.config[SemanticsProperties.VerticalScrollAxisRange]
+        val afterPosition = afterNode.config[CalendarLazyListPositionKey]
+        val advanced = after.value() > before.value() + 0.5f
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "GESTURE_RESULT|$label|path=$path|from=${before.value()}|to=${after.value()}|" +
+                "max=${after.maxValue()}|advanced=$advanced|" +
+                "firstVisible=${afterPosition.first}/${afterPosition.second}",
+        )
+        return advanced
     }
 
     private fun shell(command: String): String {
@@ -447,6 +624,12 @@ class SereaAppShellTest {
                 compose.onNodeWithText("今後").assertIsEnabled()
             }.isSuccess
         }
+        val afterCalendarSelection = compose.onNodeWithTag("calendar_agenda_list").fetchSemanticsNode()
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "AFTER_CALENDAR_SELECTION|scroll=${afterCalendarSelection.config[SemanticsProperties.VerticalScrollAxisRange].value()}|" +
+                "firstVisible=${afterCalendarSelection.config[CalendarLazyListPositionKey]}",
+        )
         compose.onNodeWithText("今後").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
@@ -460,6 +643,13 @@ class SereaAppShellTest {
                 range.maxValue() > 0f && range.value() <= 1f
             }.getOrDefault(false)
         }
+        val afterUpcomingSelection = compose.onNodeWithTag("calendar_agenda_list").fetchSemanticsNode()
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "AFTER_UPCOMING_SELECTION|scroll=${afterUpcomingSelection.config[SemanticsProperties.VerticalScrollAxisRange].value()}|" +
+                "max=${afterUpcomingSelection.config[SemanticsProperties.VerticalScrollAxisRange].maxValue()}|" +
+                "firstVisible=${afterUpcomingSelection.config[CalendarLazyListPositionKey]}",
+        )
         calendarStage("agenda-semantics", "FINISH")
         calendarStage("scroll-event-50", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 50")

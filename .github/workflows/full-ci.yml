@@ -5,6 +5,15 @@ on:
   push:
     branches: [main, 'p3/**']
   workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Exact base commit SHA for the identity check
+        required: true
+        type: string
+      head_sha:
+        description: Exact checked-out head commit SHA for the identity check
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -54,6 +63,15 @@ jobs:
           exit 0
 
   linux-stable:
+    env:
+      SEREA_EVENT_NAME: ${{ github.event_name }}
+      SEREA_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      SEREA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      SEREA_PUSH_BEFORE_SHA: ${{ github.event.before }}
+      SEREA_PUSH_AFTER_SHA: ${{ github.sha }}
+      SEREA_DISPATCH_BASE_SHA: ${{ inputs.base_sha }}
+      SEREA_DISPATCH_HEAD_SHA: ${{ inputs.head_sha }}
+      SEREA_DISPATCH_REF_SHA: ${{ github.sha }}
     name: Linux stable full validation
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -63,6 +81,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
 
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy

@@ -79,7 +79,7 @@ fun CalendarAgendaScreen(
     var savedDetailEventId by rememberSaveable { mutableStateOf<String?>(null) }
     var dateInput by rememberSaveable { mutableStateOf("") }
     val agendaListState = rememberLazyListState()
-    val query = remember(savedMode, savedDate) {
+    val query: CalendarAgendaQuery = remember(savedMode, savedDate) {
         when (runCatching { CalendarAgendaMode.valueOf(savedMode) }.getOrDefault(CalendarAgendaMode.TODAY)) {
             CalendarAgendaMode.TODAY -> CalendarAgendaQuery(CalendarAgendaMode.TODAY)
             CalendarAgendaMode.TOMORROW -> CalendarAgendaQuery(CalendarAgendaMode.TOMORROW)

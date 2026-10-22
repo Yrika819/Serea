@@ -165,35 +165,6 @@ class SereaAppShellTest {
         val interiorEndY = height * 0.2f
         val axis = node.config[SemanticsProperties.VerticalScrollAxisRange]
         val position = node.config[CalendarLazyListPositionKey]
-        val semanticsDelta = if (axis.value() + 80f < axis.maxValue()) 80f else -80f
-        var semanticsHandled = false
-        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
-            semanticsHandled = scrollBy(0f, semanticsDelta)
-        }
-        compose.waitForIdle()
-        val afterSemantics = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-        val positionAfterSemantics = list.fetchSemanticsNode().config[CalendarLazyListPositionKey]
-        Log.i(
-            CALENDAR_STAGE_TAG,
-            "SEMANTICS_SCROLL_BY|handled=$semanticsHandled|delta=$semanticsDelta|" +
-                "from=${axis.value()}|to=${afterSemantics.value()}|max=${afterSemantics.maxValue()}|" +
-                "firstVisible=${positionAfterSemantics.first}/${positionAfterSemantics.second}",
-        )
-        assertTrue(
-            "Semantics ScrollBy must move the long Calendar list before comparing actual touch input",
-            afterSemantics.value() > axis.value() + 0.5f,
-        )
-        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
-            scrollBy(0f, -semanticsDelta)
-        }
-        compose.waitForIdle()
-        val restored = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
-        Log.i(
-            CALENDAR_STAGE_TAG,
-            "SEMANTICS_SCROLL_RESTORE|from=${afterSemantics.value()}|to=${restored.value()}|" +
-                "firstVisible=${list.fetchSemanticsNode().config[CalendarLazyListPositionKey]}",
-        )
-        assertTrue("Semantics ScrollBy probe must restore its starting offset", kotlin.math.abs(restored.value() - axis.value()) < 1f)
         Log.i(
             CALENDAR_STAGE_TAG,
             "GEOMETRY|boundsInRoot=${node.boundsInRoot}|boundsInWindow=${node.boundsInWindow}|" +
@@ -225,7 +196,10 @@ class SereaAppShellTest {
             height,
             "probe-edge",
         )
-        if (edgeProgress) return CalendarGesturePath.NODE_EDGE
+        if (edgeProgress) {
+            verifyCalendarSemanticsScrollBy(list)
+            return CalendarGesturePath.NODE_EDGE
+        }
 
         val interiorProgress = performCalendarGesture(
             list,
@@ -233,7 +207,10 @@ class SereaAppShellTest {
             height,
             "probe-node-interior",
         )
-        if (interiorProgress) return CalendarGesturePath.NODE_INTERIOR
+        if (interiorProgress) {
+            verifyCalendarSemanticsScrollBy(list)
+            return CalendarGesturePath.NODE_INTERIOR
+        }
 
         val rootProgress = performCalendarGesture(
             list,
@@ -241,12 +218,48 @@ class SereaAppShellTest {
             height,
             "probe-root-interior",
         )
-        if (rootProgress) return CalendarGesturePath.ROOT_INTERIOR
+        if (rootProgress) {
+            verifyCalendarSemanticsScrollBy(list)
+            return CalendarGesturePath.ROOT_INTERIOR
+        }
+        verifyCalendarSemanticsScrollBy(list)
         throw AssertionError(
             "Calendar list moved through Semantics ScrollBy but none of the three real Touch Gesture paths moved it; " +
                 "boundsInRoot=${node.boundsInRoot}, boundsInWindow=${node.boundsInWindow}, " +
                 "root=${root.boundsInRoot}, visibleIntersection=[$visibleLeft,$visibleTop,$visibleRight,$visibleBottom]",
         )
+    }
+
+    private fun verifyCalendarSemanticsScrollBy(list: androidx.compose.ui.test.SemanticsNodeInteraction) {
+        val before = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val positionBefore = list.fetchSemanticsNode().config[CalendarLazyListPositionKey]
+        val delta = if (before.value() + 80f < before.maxValue()) 80f else -80f
+        var handled = false
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
+            handled = scrollBy(0f, delta)
+        }
+        compose.waitForIdle()
+        val after = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val positionAfter = list.fetchSemanticsNode().config[CalendarLazyListPositionKey]
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "SEMANTICS_SCROLL_BY|handled=$handled|delta=$delta|from=${before.value()}|" +
+                "to=${after.value()}|max=${after.maxValue()}|" +
+                "firstVisible=${positionBefore.first}/${positionBefore.second}->" +
+                "${positionAfter.first}/${positionAfter.second}",
+        )
+        assertTrue("Semantics ScrollBy must move the Calendar list", after.value() > before.value() + 0.5f)
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
+            scrollBy(0f, -delta)
+        }
+        compose.waitForIdle()
+        val restored = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "SEMANTICS_SCROLL_RESTORE|from=${after.value()}|to=${restored.value()}|" +
+                "firstVisible=${list.fetchSemanticsNode().config[CalendarLazyListPositionKey]}",
+        )
+        assertTrue("Semantics ScrollBy probe must restore its starting offset", kotlin.math.abs(restored.value() - before.value()) < 1f)
     }
 
     private fun performCalendarGesture(

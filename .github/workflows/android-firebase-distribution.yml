@@ -1,0 +1,258 @@
+name: Android Owner Personal Beta to Firebase App Distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      distribute:
+        description: Explicitly distribute to the Owner-approved Firebase tester group.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  actions: read
+  attestations: write
+  checks: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: android-owner-personal-beta-distribution
+  cancel-in-progress: false
+
+jobs:
+  build-verify-distribute:
+    name: Build, attest, and optionally distribute exact protected-main source
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment:
+      name: android-internal-beta
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+      DISTRIBUTE_REQUESTED: ${{ inputs.distribute }}
+    steps:
+      - name: Check out exact dispatch source SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify protected-main source and record source provenance
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Yrika819/Serea'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "${GITHUB_WORKFLOW_REF%%@*}" = 'Yrika819/Serea/.github/workflows/android-firebase-distribution.yml'
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
+          tree_sha=$(git rev-parse "${SOURCE_SHA}^{tree}")
+          version_code=$((GITHUB_RUN_NUMBER + 1))
+          test "$version_code" -gt 1
+          workflow_path="${GITHUB_WORKFLOW_REF%%@*}"
+          printf 'source_tree_sha=%s\n' "$tree_sha" >> "$GITHUB_OUTPUT"
+          printf 'version_code=%s\n' "$version_code" >> "$GITHUB_OUTPUT"
+          printf 'SOURCE_TREE_SHA=%s\n' "$tree_sha" >> "$GITHUB_ENV"
+          printf 'WORKFLOW_PATH=%s\n' "$workflow_path" >> "$GITHUB_ENV"
+
+      - name: Record numeric workflow ID
+        id: workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          workflow_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')
+          [[ "$workflow_id" =~ ^[0-9]+$ ]]
+          printf 'WORKFLOW_ID=%s\n' "$workflow_id" >> "$GITHUB_ENV"
+
+      - name: Require all Owner-configured required checks on the exact SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEREA_REQUIRED_CHECKS_JSON: ${{ vars.SEREA_REQUIRED_CHECKS_JSON }}
+        run: |
+          set -euo pipefail
+          check_file="$RUNNER_TEMP/serea-rel-c-check-runs.json"
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
+            --jq '.check_runs[]' | jq -s '{check_runs: .}' > "$check_file"
+          python3 tools/android_firebase_distribution.py check-required --check-runs "$check_file"
+
+      - name: Require protected Lane B signing and distribution settings
+        env:
+          SEREA_ANDROID_KEYSTORE_BASE64: ${{ secrets.SEREA_ANDROID_KEYSTORE_BASE64 }}
+          SEREA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.SEREA_ANDROID_KEYSTORE_PASSWORD }}
+          SEREA_ANDROID_KEY_ALIAS: ${{ secrets.SEREA_ANDROID_KEY_ALIAS }}
+          SEREA_ANDROID_KEY_PASSWORD: ${{ secrets.SEREA_ANDROID_KEY_PASSWORD }}
+          SEREA_ANDROID_SIGNING_CERT_SHA256: ${{ vars.SEREA_ANDROID_SIGNING_CERT_SHA256 }}
+          SEREA_REQUIRED_CHECKS_JSON: ${{ vars.SEREA_REQUIRED_CHECKS_JSON }}
+          SEREA_FIREBASE_DISTRIBUTION_ENABLED: ${{ vars.SEREA_FIREBASE_DISTRIBUTION_ENABLED }}
+          SEREA_GCP_WIF_PROVIDER: ${{ vars.SEREA_GCP_WIF_PROVIDER }}
+          SEREA_GCP_SERVICE_ACCOUNT: ${{ vars.SEREA_GCP_SERVICE_ACCOUNT }}
+          SEREA_FIREBASE_APP_ID: ${{ vars.SEREA_FIREBASE_APP_ID }}
+          SEREA_FIREBASE_APPROVED_TESTER_GROUP: ${{ vars.SEREA_FIREBASE_APPROVED_TESTER_GROUP }}
+        run: python3 tools/android_firebase_distribution.py preflight --distribute-requested "$DISTRIBUTE_REQUESTED"
+
+      - name: Mask distribution identity values from logs
+        if: inputs.distribute
+        env:
+          SEREA_FIREBASE_APPROVED_TESTER_GROUP: ${{ vars.SEREA_FIREBASE_APPROVED_TESTER_GROUP }}
+          SEREA_GCP_SERVICE_ACCOUNT: ${{ vars.SEREA_GCP_SERVICE_ACCOUNT }}
+          SEREA_GCP_WIF_PROVIDER: ${{ vars.SEREA_GCP_WIF_PROVIDER }}
+        shell: bash
+        run: |
+          printf '::add-mask::%s\n' "$SEREA_FIREBASE_APPROVED_TESTER_GROUP"
+          printf '::add-mask::%s\n' "$SEREA_GCP_SERVICE_ACCOUNT"
+          printf '::add-mask::%s\n' "$SEREA_GCP_WIF_PROVIDER"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK build tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android platform and build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Set up Node for the pinned Firebase CLI
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Install Firebase CLI without package lifecycle scripts
+        run: |
+          set -euo pipefail
+          unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          cli_dir="$RUNNER_TEMP/serea-firebase-cli"
+          install -d -m 700 "$cli_dir"
+          cp tools/firebase-distribution/package.json tools/firebase-distribution/package-lock.json "$cli_dir/"
+          (cd "$cli_dir" && npm ci --ignore-scripts --no-audit --no-fund)
+          printf '%s\n' "$cli_dir/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Materialize Owner keystore in runner temporary storage
+        shell: bash
+        env:
+          SEREA_ANDROID_KEYSTORE_BASE64: ${{ secrets.SEREA_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          key_dir="$RUNNER_TEMP/serea-rel-c-signing-key"
+          install -d -m 700 "$key_dir"
+          key_file="$key_dir/owner-signing.p12"
+          umask 077
+          printf '%s' "$SEREA_ANDROID_KEYSTORE_BASE64" | base64 --decode 2>/dev/null > "$key_file"
+          test -s "$key_file"
+          chmod 600 "$key_file"
+          printf 'SEREA_ANDROID_KEYSTORE_PATH=%s\n' "$key_file" >> "$GITHUB_ENV"
+
+      - name: Build the Lane B Owner-signed Release APK
+        working-directory: android
+        env:
+          SEREA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.SEREA_ANDROID_KEYSTORE_PASSWORD }}
+          SEREA_ANDROID_KEY_ALIAS: ${{ secrets.SEREA_ANDROID_KEY_ALIAS }}
+          SEREA_ANDROID_KEY_PASSWORD: ${{ secrets.SEREA_ANDROID_KEY_PASSWORD }}
+          SEREA_ANDROID_SIGNING_CERT_SHA256: ${{ vars.SEREA_ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          trap 'printf "SEREA_ANDROID_KEYSTORE_PATH=\\n" >> "$GITHUB_ENV"' EXIT
+          ./gradlew --no-daemon --no-build-cache --no-configuration-cache clean \
+            :app:verifyInternalBetaSigning :app:assembleRelease \
+            "-PsereaVersionCode=${{ steps.source.outputs.version_code }}"
+
+      - name: Verify Release APK identity, checksum, and Owner certificate
+        id: apk
+        env:
+          BUILD_TOOLS_VERSION: '35.0.0'
+          SEREA_ANDROID_SIGNING_CERT_SHA256: ${{ vars.SEREA_ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          python3 tools/android_firebase_distribution.py verify \
+            --apk android/app/build/outputs/apk/release/app-release.apk \
+            --application-id app.serea.android.demo \
+            --version-code '${{ steps.source.outputs.version_code }}' \
+            --aapt "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
+
+      - name: Create generic Firebase release notes
+        if: steps.apk.outcome == 'success'
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/serea-rel-c-release-notes.txt"
+          printf 'Serea Personal Beta build %s. Source %s.\n' \
+            '${{ steps.source.outputs.version_code }}' "$SOURCE_SHA" > "$notes"
+          chmod 600 "$notes"
+          printf 'FIREBASE_RELEASE_NOTES_FILE=%s\n' "$notes" >> "$GITHUB_ENV"
+
+      - name: Publish public GitHub build provenance attestation for the APK digest
+        id: provenance
+        if: steps.apk.outcome == 'success'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: android/app/build/outputs/apk/release/app-release.apk
+          push-to-registry: false
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        id: firebase-auth
+        if: inputs.distribute && steps.provenance.outcome == 'success'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.SEREA_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.SEREA_GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Distribute the verified APK directly to the approved Firebase group
+        id: firebase
+        if: inputs.distribute && steps.firebase-auth.outcome == 'success'
+        env:
+          FIREBASE_CLI: firebase
+          ACTIONS_ID_TOKEN_REQUEST_URL: ''
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ''
+          SEREA_FIREBASE_APP_ID: ${{ vars.SEREA_FIREBASE_APP_ID }}
+          SEREA_FIREBASE_APPROVED_TESTER_GROUP: ${{ vars.SEREA_FIREBASE_APPROVED_TESTER_GROUP }}
+          SEREA_FIREBASE_DISTRIBUTION_ENABLED: ${{ vars.SEREA_FIREBASE_DISTRIBUTION_ENABLED }}
+        run: |
+          set -euo pipefail
+          python3 tools/android_firebase_distribution.py distribute \
+            --apk android/app/build/outputs/apk/release/app-release.apk \
+            --expected-sha256 '${{ steps.apk.outputs.apk_sha256 }}' \
+            --release-notes-file "$FIREBASE_RELEASE_NOTES_FILE" \
+            --result-file "$RUNNER_TEMP/serea-rel-c-distribution-result.txt"
+
+      - name: Record provenance and Firebase result
+        if: always()
+        env:
+          VERIFIED_APPLICATION_ID: ${{ steps.apk.outputs.application_id }}
+          VERIFIED_VERSION_CODE: ${{ steps.apk.outputs.version_code }}
+          VERIFIED_APK_SHA256: ${{ steps.apk.outputs.apk_sha256 }}
+          VERIFIED_CERTIFICATE_SHA256: ${{ steps.apk.outputs.certificate_sha256 }}
+          APK_VERIFY_OUTCOME: ${{ steps.apk.outcome }}
+          FIREBASE_AUTH_OUTCOME: ${{ steps.firebase-auth.outcome }}
+          SEREA_FIREBASE_APP_ID: ${{ vars.SEREA_FIREBASE_APP_ID }}
+        run: |
+          python3 tools/android_firebase_distribution.py report \
+            --distribute-requested "$DISTRIBUTE_REQUESTED" \
+            --result-file "$RUNNER_TEMP/serea-rel-c-distribution-result.txt" \
+            --apk-outcome "$APK_VERIFY_OUTCOME" \
+            --auth-outcome "$FIREBASE_AUTH_OUTCOME"
+
+      - name: Remove signing key, private CLI output, and local APK build outputs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          rm -rf "$RUNNER_TEMP/serea-rel-c-signing-key" \
+            "$RUNNER_TEMP/serea-firebase-cli" \
+            "$RUNNER_TEMP/serea-rel-c-release-notes.txt" \
+            "$RUNNER_TEMP/serea-rel-c-check-runs.json" \
+            "$RUNNER_TEMP/serea-rel-c-distribution-result.txt" \
+            android/app/build
+          rm -f "$RUNNER_TEMP"/gha-creds-*.json

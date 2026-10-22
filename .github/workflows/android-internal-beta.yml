@@ -100,8 +100,6 @@ jobs:
           version_code=$((GITHUB_RUN_NUMBER + 1))
           apk='android/app/build/outputs/apk/release/app-release.apk'
           test -s "$apk"
-          output_dir="$RUNNER_TEMP/serea-internal-beta-output"
-          install -d -m 700 "$output_dir"
           aapt="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt"
           apksigner="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
           badging="$RUNNER_TEMP/serea-internal-beta-badging.txt"
@@ -115,7 +113,6 @@ jobs:
           test "${#actual_fingerprint}" -eq 64
           test "$actual_fingerprint" = "$expected_fingerprint"
           apk_sha256=$(sha256sum "$apk" | awk '{print $1}')
-          cp "$apk" "$output_dir/serea-android-internal-beta.apk"
           {
             echo 'application_id=app.serea.android.demo'
             echo "version_code=$version_code"
@@ -127,18 +124,9 @@ jobs:
             echo "workflow_run_id=$GITHUB_RUN_ID"
             echo "workflow_run_attempt=$GITHUB_RUN_ATTEMPT"
             echo "workflow_ref=$GITHUB_REF"
-            echo 'signing_key_material_in_artifact=no'
-          } > "$output_dir/provenance.txt"
-          cat "$output_dir/provenance.txt" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload verified APK and provenance
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: serea-android-internal-beta-${{ github.run_number }}
-          path: ${{ runner.temp }}/serea-internal-beta-output/*
-          if-no-files-found: error
-          retention-days: 14
+            echo 'signing_key_material_in_run_summary=no'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove temporary signing material
         if: always()
-        run: rm -rf "$RUNNER_TEMP/serea-internal-beta-key" "$RUNNER_TEMP/serea-internal-beta-output" "$RUNNER_TEMP/serea-internal-beta-signature.txt" "$RUNNER_TEMP/serea-internal-beta-badging.txt"
+        run: rm -rf "$RUNNER_TEMP/serea-internal-beta-key" "$RUNNER_TEMP/serea-internal-beta-signature.txt" "$RUNNER_TEMP/serea-internal-beta-badging.txt" android/app/build

@@ -1,7 +1,7 @@
 # Android AND-M0-04 integration audit
 
-Date: 2026-10-20  
-Candidate source: PR #49 head `083edcffcbaebbbada3828a0304a7a431b648f0d`  
+Date: 2026-10-20
+Candidate source: PR #49 head `083edcffcbaebbbada3828a0304a7a431b648f0d`
 Base observed: `main` at `e0acb0254820c381dd97828824bef86a1db5176c`
 
 ## Git state and candidate shape

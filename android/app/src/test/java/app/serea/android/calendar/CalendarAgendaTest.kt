@@ -37,6 +37,31 @@ class CalendarAgendaTest {
         assertNotEquals(sameInstant[0].key.calendarId, sameInstant[1].key.calendarId)
     }
 
+    @Test fun appShellDemoWorkUpcomingContainsPagedEventFiftyInSortedSecondPage() = runBlocking {
+        val provider = FakeCalendarProvider(
+            events = FakeCalendarProvider.Fixtures.appShellEvents,
+            pageSize = 50,
+        )
+        val work = FakeCalendarProvider.Fixtures.calendars.single { it.id.value == "demo-work" }
+        val selectedCalendarPort = object : CalendarReadPort by provider {
+            override suspend fun listCalendars() = listOf(work)
+        }
+        val now = fixed.instant()
+        val events = CalendarAgendaService(selectedCalendarPort, fixed, ZoneId.of("UTC"))
+            .eventsInRange(CalendarDateRange(now, now.plus(Duration.ofDays(30))))
+            .filter { event ->
+                event.key.calendarId == work.id &&
+                    (event.time as? EventTime.Timed)?.start?.let { !it.isBefore(now) } == true
+            }
+
+        assertEquals(72, events.count { it.key.eventId.value.startsWith("bulk-") })
+        assertEquals("bulk-50", events.single { it.title == "Fictional paged event 50" }.key.eventId.value)
+        assertTrue(events.zipWithNext().all { (first, second) ->
+            CalendarAgendaService.EVENT_ORDER.compare(first, second) <= 0
+        })
+        assertTrue(events.indexOfFirst { it.key.eventId.value == "bulk-50" } >= 50)
+    }
+
     @Test fun pageAggregationDeduplicatesInstancesAndHandlesEmptyIntermediatePages() = runBlocking {
         val provider = FakeCalendarProvider(pageSize = 20, options = FakeCalendarProvider.Options(
             duplicateFirstEventAcrossPages = true, emptyPageIndexes = setOf(1), reverseEventOrder = true,

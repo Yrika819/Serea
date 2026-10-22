@@ -23,7 +23,11 @@ printf 'NOT_RUN\n' > "$evidence/data-isolation.log" || exit 1
 printf 'NOT_RUN\n' > "$evidence/instrumentation-timeout.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/test-lifecycle-host.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/test-device-state.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/test-device-state-status.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/instrumentation-gradle-exit-code.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/logcat-live.txt" || exit 1
+printf 'NOT_READY\n' > "$evidence/process-death-readiness-status.txt" || exit 1
+printf 'NOT_READY\n' > "$evidence/process-death-readiness.log" || exit 1
 
 logcat_pid=''
 stop_live_capture() {
@@ -40,6 +44,46 @@ stop_live_capture() {
 trap stop_live_capture EXIT
 trap 'stop_live_capture; exit 130' INT
 trap 'stop_live_capture; exit 143' TERM
+
+capture_device_state() {
+  local output_file="$1" status_file="$2" capture_result=0 dump_file="${1}.instrumentation.tmp"
+  local adb_state adb_status boot_state boot_status target_pid test_pid
+  {
+    printf 'captured_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+    adb_state="$(timeout 10s adb -s "$ANDROID_SERIAL" get-state 2>&1)"
+    adb_status=$?
+    printf 'adb_state=%s\n' "$adb_state"
+    if [[ "$adb_status" -ne 0 ]]; then capture_result=1; fi
+    boot_state="$(timeout 10s adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>&1)"
+    boot_status=$?
+    boot_state="${boot_state//$'\r'/}"
+    printf 'boot_completed=%s\n' "$boot_state"
+    if [[ "$boot_status" -ne 0 ]]; then capture_result=1; fi
+    target_pid="$(timeout 10s adb -s "$ANDROID_SERIAL" shell pidof app.serea.android.isolated 2>&1)"
+    test_pid="$(timeout 10s adb -s "$ANDROID_SERIAL" shell pidof app.serea.android.isolated.test 2>&1)"
+    printf 'isolated_target_pid=%s\n' "${target_pid//$'\r'/}"
+    printf 'isolated_test_pid=%s\n' "${test_pid//$'\r'/}"
+    printf 'instrumentation_state:\n'
+    if timeout 10s adb -s "$ANDROID_SERIAL" shell dumpsys activity instrumentation > "$dump_file" 2>&1; then
+      if grep -E -q 'Instrumentation|mFinished|mWatcher|target=|runner=' "$dump_file"; then
+        grep -E 'Instrumentation|mFinished|mWatcher|target=|runner=' "$dump_file" | head -40
+      else
+        printf 'No matching active instrumentation record was returned.\n'
+      fi
+    else
+      printf 'Instrumentation state could not be retrieved.\n'
+      capture_result=1
+    fi
+    rm -f "$dump_file"
+  } > "$output_file"
+  if [[ "$capture_result" -eq 0 ]]; then
+    printf 'PASS\n' > "$status_file"
+  else
+    printf 'FAIL\n' > "$status_file"
+  fi
+  # Device diagnostics are observational; their status never replaces Gradle's exit code.
+  return 0
+}
 
 run_diagnostic_stage() {
   local name="$1" filter="$2" timeout_seconds="$3" expected_count="$4" exact_test="$5"
@@ -71,22 +115,14 @@ run_diagnostic_stage() {
     -Pandroid.testInstrumentationRunnerArguments.class="$filter" connectedIsolatedAndroidTest \
     > "$stage_dir/gradle.log" 2>&1
   gradle_status=$?
+  printf '%s\n' "$gradle_status" > "$stage_dir/gradle-exit-code.txt"
   printf 'stage_finished_at_utc=%s\nstage_exit_code=%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$gradle_status" >> "$stage_dir/host-lifecycle.txt"
   if [[ -d "$root/connected" ]]; then
     mv "$root/connected" "$stage_dir/junit"
   fi
   if [[ "$gradle_status" -ne 0 ]]; then
-    {
-      printf 'captured_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
-      printf 'adb_state='; timeout 10s adb -s "$ANDROID_SERIAL" get-state 2>&1 || true
-      printf 'boot_completed='; timeout 10s adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>&1 | tr -d '\r' || true
-      printf 'isolated_target_pid='; timeout 10s adb -s "$ANDROID_SERIAL" shell pidof app.serea.android.isolated 2>&1 | tr -d '\r' || true
-      printf 'isolated_test_pid='; timeout 10s adb -s "$ANDROID_SERIAL" shell pidof app.serea.android.isolated.test 2>&1 | tr -d '\r' || true
-      printf 'instrumentation_state:\n'
-      timeout 10s adb -s "$ANDROID_SERIAL" shell dumpsys activity instrumentation 2>&1 | \
-        rg 'Instrumentation|mFinished|mWatcher|target=|runner=' | head -40 || true
-    } > "$stage_dir/device-state.txt"
+    capture_device_state "$stage_dir/device-state.txt" "$stage_dir/device-state-status.txt"
   fi
   if [[ "$gradle_status" -eq 0 ]]; then
     local verify_args=("$stage_dir/junit" --minimum "$expected_count" --exact-count "$expected_count")
@@ -164,7 +200,7 @@ junit_result=NOT_RUN
 data_isolation_result=NOT_RUN
 data_sentinel_token=''
 isolated_target_result=NOT_RUN
-process_death_target_ready=true
+process_death_target_ready=false
 if [[ "$sdk_ok" == true ]]; then
   diagnostics_result=NOT_RUN
   demo_package='app.serea.android.demo'
@@ -264,6 +300,7 @@ if [[ "$sdk_ok" == true ]]; then
           -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
           connectedIsolatedAndroidTest
         gradle_result=$?
+        printf '%s\n' "$gradle_result" > "$evidence/instrumentation-gradle-exit-code.txt"
         printf 'instrumentation_finished_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$evidence/test-lifecycle-host.txt"
         printf 'instrumentation_exit_code=%s\n' "$gradle_result" >> "$evidence/test-lifecycle-host.txt"
         if [[ "$gradle_result" -eq 124 || "$gradle_result" -eq 137 ]]; then
@@ -275,16 +312,7 @@ if [[ "$sdk_ok" == true ]]; then
         fi
 
         if [[ "$gradle_result" -ne 0 ]]; then
-          {
-            printf 'captured_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
-            printf 'adb_state='; timeout 10s adb -s "$ANDROID_SERIAL" get-state 2>&1 || true
-            printf 'boot_completed='; timeout 10s adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>&1 | tr -d '\r' || true
-            printf 'isolated_target_pid='; timeout 10s adb -s "$ANDROID_SERIAL" shell pidof "$isolated_package" 2>&1 | tr -d '\r' || true
-            printf 'isolated_test_pid='; timeout 10s adb -s "$ANDROID_SERIAL" shell pidof "$test_package" 2>&1 | tr -d '\r' || true
-            printf 'instrumentation_state:\n'
-            timeout 10s adb -s "$ANDROID_SERIAL" shell dumpsys activity instrumentation 2>&1 | \
-              rg 'Instrumentation|mFinished|mWatcher|target=|runner=' | head -40 || true
-          } > "$evidence/test-device-state.txt"
+          capture_device_state "$evidence/test-device-state.txt" "$evidence/test-device-state-status.txt"
         fi
       else
         gradle_result=1
@@ -323,23 +351,50 @@ if [[ "$sdk_ok" == true ]]; then
     mv "$root/connected" "$evidence/junit"
   fi
 
-  # UTP uninstalls both instrumentation APKs after connectedAndroidTest. Keep
-  # Process Death coverage on a fresh isolated install without touching the
-  # separate demo package or any pre-existing user namespace.
-  if [[ "$data_isolation_result" == PASS && -n "$campaign_token" && \
-        -z "$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')" ]]; then
-    echo "Instrumentation runner uninstalled the isolated target; reinstalling the fresh isolated APK for Process Death."
-    if adb install "$isolated_apk" && [[ -s "$isolated_apk" ]]; then
+  # Always create a new isolated namespace for Process Death. Never trust a marker
+  # left by diagnostics, UTP, or a partially completed instrumentation run.
+  if [[ "$data_isolation_result" == PASS && -n "$campaign_token" ]]; then
+    isolated_path="$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')"
+    uninstall_result=0
+    if [[ -n "$isolated_path" ]]; then
+      echo "Removing the campaign-owned isolated target before a fresh Process Death seed." \
+        >> "$evidence/process-death-readiness.log"
+      adb uninstall "$isolated_package" >> "$evidence/data-isolation.log" 2>&1
+      uninstall_result=$?
+    fi
+    isolated_path_after_uninstall="$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')"
+    if [[ "$api_level" == 26 ]]; then
+      retained_after_uninstall="$(adb shell pm list packages -u 2>/dev/null)"
+    else
+      retained_after_uninstall="$(adb shell pm list packages -u --user all 2>/dev/null)"
+    fi
+    package_inventory_result=$?
+    retained_target_count="$(printf '%s\n' "$retained_after_uninstall" | grep -F -x -c "package:$isolated_package")"
+    if [[ "$uninstall_result" -ne 0 || -n "$isolated_path_after_uninstall" || \
+          "$package_inventory_result" -ne 0 || "$retained_target_count" -ne 0 ]]; then
+      echo "FAIL: isolated Process Death target could not be proven absent before reseeding." \
+        >> "$evidence/process-death-readiness.log"
+      printf 'FAIL\n' > "$evidence/process-death-readiness-status.txt"
+    elif adb install "$isolated_apk" && [[ -s "$isolated_apk" ]]; then
       EXPECTED_API_LEVEL="$api_level" bash "$tool_dir/prepare_isolated_instrumentation_target.sh" \
         "serea-isolated-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" process-death \
         >> "$evidence/data-isolation.log" 2>&1
       reseed_result=$?
+      if [[ "$reseed_result" -eq 0 && -s "$isolated_apk" && \
+            -n "$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')" ]]; then
+        process_death_target_ready=true
+        printf 'PASS\n' > "$evidence/process-death-readiness-status.txt"
+        echo "PASS: freshly installed isolated target accepted the Process Death seed." \
+          >> "$evidence/process-death-readiness.log"
+      else
+        printf 'FAIL\n' > "$evidence/process-death-readiness-status.txt"
+        echo "FAIL: fresh Process Death target installation or seed was not verified." \
+          >> "$evidence/process-death-readiness.log"
+      fi
     else
-      reseed_result=1
-    fi
-    if [[ "$reseed_result" -ne 0 ]]; then
-      echo "Could not reinstall and authorize the fresh isolated Process Death target." > "$evidence/process-death.log"
-      process_death_target_ready=false
+      printf 'FAIL\n' > "$evidence/process-death-readiness-status.txt"
+      echo "FAIL: could not install the isolated APK for a fresh Process Death seed." \
+        >> "$evidence/process-death-readiness.log"
     fi
   fi
 

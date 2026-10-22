@@ -2,6 +2,7 @@ package app.serea.android.assistant.taskproposal
 
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -51,7 +52,7 @@ class TaskProposalDemoScreenTest {
         allowMutation.complete(Unit)
         compose.waitUntil(5_000) { repository.writeCount() == 1 }
         compose.onNodeWithTag("task_proposal_operation_create").assertExists()
-        compose.onNodeWithTag("task_proposal_status").assertTextContains("承認済み")
+        compose.onNodeWithTag("task_proposal_status").assertTextEquals("承認済みです。変更を適用しました。")
         compose.onNodeWithTag("task_proposal_close").assertIsEnabled()
     }
 
@@ -74,7 +75,9 @@ class TaskProposalDemoScreenTest {
         compose.onNodeWithTag("task_proposal_approve").assertIsNotEnabled()
         compose.onNodeWithTag("task_proposal_close").assertIsEnabled()
         compose.onNodeWithText("Fake Repository 書き込み回数: 0").assertExists()
-        compose.onNodeWithTag("task_proposal_status").assertTextContains("同じ承認は再実行できません")
+        compose.onNodeWithTag("task_proposal_status").assertTextEquals(
+            "処理結果を確認できません。対象タスク一覧を再読み込みし、変更の有無を確認してください。同じ承認は再実行できません。",
+        )
     }
 
     @Test fun changingOperationImmediatelyHidesThePreviousReviewUntilFreshSessionIsReady() {

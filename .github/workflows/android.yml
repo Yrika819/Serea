@@ -49,7 +49,7 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py) android_changed=true ;;
+              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py) android_changed=true ;;
             esac
           done <<< "$changed"
           echo "android=$android_changed" >> "$GITHUB_OUTPUT"
@@ -313,6 +313,13 @@ jobs:
           else
             printf 'NOT_AVAILABLE: API 35 emulator was no longer attached after its test step.\n' > "$output"
           fi
+      - name: Upload API 35 instrumentation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-instrumentation-api35
+          if-no-files-found: error
+          path: android/app/build/outputs/androidTest-results/api35/
       - name: Install API 26 emulator image
         if: always() && !cancelled()
         run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
@@ -369,6 +376,13 @@ jobs:
           else
             printf 'NOT_AVAILABLE: API 26 emulator was no longer attached after its test step.\n' > "$output"
           fi
+      - name: Upload API 26 instrumentation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-instrumentation-api26
+          if-no-files-found: error
+          path: android/app/build/outputs/androidTest-results/api26/
       - id: instrumentation
         name: Combine API-specific required evidence
         if: always()
@@ -461,11 +475,17 @@ jobs:
             echo "android_storage_emulator_job=$JOB_RESULT"
             echo "api35_verified_device_api_level=$api35_device"
             echo "api35_instrumentation=$api35_instrumentation"
+            echo 'api35_evidence_artifact=serea-android-instrumentation-api35'
+            echo 'api35_evidence_bundle_path=tests/api35/'
+            echo "api35_test_lifecycle_summary=$bundle/tests/api35/test-lifecycle-summary.txt"
             echo "api35_data_isolation=$api35_data_isolation"
             echo "api35_junit_artifact_present=$([ -d "$bundle/tests/api35/junit" ] && echo yes || echo no)"
             echo "api35_junit_cases=$api35_cases"
             echo "api26_verified_device_api_level=$api26_device"
             echo "api26_instrumentation=$api26_instrumentation"
+            echo 'api26_evidence_artifact=serea-android-instrumentation-api26'
+            echo 'api26_evidence_bundle_path=tests/api26/'
+            echo "api26_test_lifecycle_summary=$bundle/tests/api26/test-lifecycle-summary.txt"
             echo "api26_data_isolation=$api26_data_isolation"
             echo "api26_junit_artifact_present=$([ -d "$bundle/tests/api26/junit" ] && echo yes || echo no)"
             echo "api26_junit_cases=$api26_cases"

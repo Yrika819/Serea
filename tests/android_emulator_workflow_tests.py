@@ -7,11 +7,116 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tools.summarize_android_test_lifecycle import summarize
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class AndroidEmulatorWorkflowTests(unittest.TestCase):
+    def test_lifecycle_summary_links_failures_ui_state_and_process_death(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "api35"
+            stages = evidence / "stages" / "calendar-target"
+            stages.mkdir(parents=True)
+            log = evidence / "logcat-live.txt"
+            evidence.joinpath("test-lifecycle-host.txt").write_text(
+                "api_level=35\n"
+                "campaign_token=serea-isolated-api35-run-attempt\n"
+                "instrumentation_started_at_utc=2026-10-22T11:00:00.000Z\n"
+                "instrumentation_finished_at_utc=2026-10-22T11:00:00.300Z\n",
+                encoding="utf-8",
+            )
+            evidence.joinpath("instrumentation-gradle-exit-code.txt").write_text("0\n", encoding="utf-8")
+            evidence.joinpath("instrumentation-verification-exit-code.txt").write_text("1\n", encoding="utf-8")
+            evidence.joinpath("instrumentation-status.txt").write_text("FAIL\n", encoding="utf-8")
+            evidence.joinpath("diagnostic-status.txt").write_text("PASS\n", encoding="utf-8")
+            evidence.joinpath("process-death-status.txt").write_text("PASS\n", encoding="utf-8")
+            evidence.joinpath("process-death-host-lifecycle.txt").write_text(
+                "process_death_started_at_utc=2026-10-22T11:00:01Z\n"
+                "process_death_finished_at_utc=2026-10-22T11:00:02Z\n"
+                "process_death_exit_code=0\n",
+                encoding="utf-8",
+            )
+            stages.joinpath("host-lifecycle.txt").write_text(
+                "stage=calendar-target\n"
+                "test_filter=app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination\n"
+                "stage_started_at_utc=2026-10-22T10:59:59Z\n"
+                "stage_finished_at_utc=2026-10-22T11:00:00.500Z\n",
+                encoding="utf-8",
+            )
+            stages.joinpath("gradle-exit-code.txt").write_text("1\n", encoding="utf-8")
+            stages.joinpath("verification-exit-code.txt").write_text("1\n", encoding="utf-8")
+            stages.joinpath("status.txt").write_text("FAIL\n", encoding="utf-8")
+            log.write_text(
+                "10-22 11:00:00.000  42  42 I/SereaTestLifecycle(  42): "
+                "START|1792666800000|app.serea.android.ChatScreenTest#deleteCurrent\n"
+                "10-22 11:00:00.100  42  42 I/chat-current-delete-confirmation(  42): "
+                "Delete this conversation?\n"
+                "10-22 11:00:00.200  42  42 I/SereaTestLifecycle(  42): "
+                "FAIL|1792666800200|app.serea.android.ChatScreenTest#deleteCurrent|AssertionError\n"
+                "10-22 11:00:00.300  42  42 I/SereaTestLifecycle(  42): "
+                "FINISH|1792666800300|app.serea.android.ChatScreenTest#deleteCurrent\n"
+                "10-22 11:00:01.000  42  42 I/SereaProcessDeath(  42): "
+                "PASS:campaign-token:prepare:request-1\n",
+                encoding="utf-8",
+            )
+            report = summarize(log, evidence)
+            self.assertIn("campaign_api_level=35", report)
+            self.assertIn("campaign_token=serea-isolated-api35-run-attempt", report)
+            self.assertIn("test_event.1.window=diagnostic:calendar-target", report)
+            self.assertIn("test_failure.1=app.serea.android.ChatScreenTest#deleteCurrent", report)
+            self.assertIn("test_failure.1.type=AssertionError", report)
+            self.assertIn("ui_state_event.1.test=app.serea.android.ChatScreenTest#deleteCurrent", report)
+            self.assertIn("ui_state_event.1.tag=chat-current-delete-confirmation", report)
+            self.assertIn("process_death_event.1.outcome=PASS", report)
+            self.assertIn("process_death_event.1.phase=prepare", report)
+            self.assertIn("process_death_event.1.logcat_time=10-22 11:00:01.000", report)
+            self.assertIn("instrumentation_verification_exit_code=1", report)
+            self.assertIn("process_death_status=PASS", report)
+            self.assertIn("diagnostic_stage.1.gradle_exit_code=1", report)
+            self.assertIn("diagnostic_stage.1.verification_exit_code=1", report)
+
+    def test_instrumentation_stage_results_are_independent_and_stale_evidence_is_removed(self) -> None:
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        self.assertIn('"$evidence/stages"', campaign)
+        self.assertRegex(campaign, r"rm -rf[^\n]*\$evidence/stages")
+        self.assertIn('verification-exit-code.txt', campaign)
+        self.assertIn('instrumentation-verification-exit-code.txt', campaign)
+        self.assertIn('stage_dir/gradle-exit-code.txt', campaign)
+        self.assertIn('stage_dir/verification-exit-code.txt', campaign)
+        self.assertIn('stage_dir/gradle.log', campaign)
+        stage_body = campaign.split("run_diagnostic_stage() {", 1)[1].split("\n}\n\ncleanup_failed()", 1)[0]
+        self.assertIn('if [[ -d "$stage_dir/junit" ]]; then', stage_body)
+        self.assertIn('if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 ]]', stage_body)
+        self.assertIn('if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 ]]', stage_body)
+
+    def test_pr82_dependency_seed_and_process_death_gates_remain_fail_closed(self) -> None:
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        self.assertNotRegex(campaign, r"(^|\s)rg(\s|$)")
+        self.assertIn('sentinel_seed_result" -eq 0 && -z "$(adb shell pm path "$isolated_package"', campaign)
+        self.assertIn('[[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_target_ready" == true ]]', campaign)
+        self.assertIn('"$data_isolation_result" == PASS', campaign)
+        self.assertIn('--minimum 103', campaign)
+        self.assertIn('timeout --signal=INT --kill-after=120s 40m ./gradlew', campaign)
+
+    def test_api_instrumentation_evidence_has_distinct_artifact_names(self) -> None:
+        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        for api in ("26", "35"):
+            self.assertIn(f"name: serea-android-instrumentation-api{api}", workflow)
+            self.assertRegex(
+                workflow,
+                rf"name: serea-android-instrumentation-api{api}[\s\S]{{0,500}}"
+                rf"path:[^\n]*androidTest-results/api{api}/",
+            )
+            self.assertIn(f"api{api}_evidence_artifact=serea-android-instrumentation-api{api}", workflow)
+
+    def test_api_artifact_split_preserves_combined_evidence_layout(self) -> None:
+        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        self.assertIn('cp -R android/app/build/outputs/androidTest-results/api35 "$bundle/tests/api35"', workflow)
+        self.assertIn('cp -R android/app/build/outputs/androidTest-results/api26 "$bundle/tests/api26"', workflow)
+        self.assertIn('name: serea-android-emulator-evidence', workflow)
+
     def test_api_scripts_are_single_process_commands(self) -> None:
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
         scripts = re.findall(r"^[ \t]+script: (.+)$", workflow, flags=re.MULTILINE)

@@ -25,6 +25,10 @@ printf 'NOT_RUN\n' > "$evidence/test-lifecycle-host.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/test-device-state.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/test-device-state-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/instrumentation-gradle-exit-code.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/instrumentation-verification-exit-code.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/diagnostic-status.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/instrumentation-gradle.log" || exit 1
+printf 'NOT_RUN\n' > "$evidence/process-death-host-lifecycle.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/logcat-live.txt" || exit 1
 printf 'NOT_READY\n' > "$evidence/process-death-readiness-status.txt" || exit 1
 printf 'NOT_READY\n' > "$evidence/process-death-readiness.log" || exit 1
@@ -38,7 +42,7 @@ stop_live_capture() {
   fi
   if [[ -s "$evidence/logcat-live.txt" ]]; then
     python3 "$tool_dir/summarize_android_test_lifecycle.py" \
-      "$evidence/logcat-live.txt" "$evidence/test-lifecycle-summary.txt" || true
+      "$evidence/logcat-live.txt" "$evidence/test-lifecycle-summary.txt" "$evidence" || true
   fi
 }
 trap stop_live_capture EXIT
@@ -87,9 +91,18 @@ capture_device_state() {
 
 run_diagnostic_stage() {
   local name="$1" filter="$2" timeout_seconds="$3" expected_count="$4" exact_test="$5"
-  local stage_dir="$evidence/stages/$name" stage_token gradle_status verify_status
+  local stage_dir="$evidence/stages/$name" stage_token gradle_status verify_status verify_exit_code
+  if ! rm -rf "$stage_dir" || [[ -e "$stage_dir" ]]; then
+    echo "FAIL: could not clear stale evidence for diagnostic stage $name." >&2
+    return 1
+  fi
   mkdir -p "$stage_dir" || return 1
   printf 'NOT_RUN\n' > "$stage_dir/status.txt"
+  printf 'NOT_RUN\n' > "$stage_dir/gradle-status.txt"
+  printf 'NOT_RUN\n' > "$stage_dir/gradle-exit-code.txt"
+  printf 'NOT_RUN\n' > "$stage_dir/verification-status.txt"
+  printf 'NOT_RUN\n' > "$stage_dir/verification-exit-code.txt"
+  printf 'NOT_RUN\n' > "$stage_dir/device-state-status.txt"
   if [[ -n "$(adb shell pm path app.serea.android.isolated 2>/dev/null | tr -d '\r')" || \
         -n "$(adb shell pm path app.serea.android.isolated.test 2>/dev/null | tr -d '\r')" ]]; then
     echo 'FAIL: UTP left a stage package installed; refusing to replace it or clear its data.' > "$stage_dir/result.txt"
@@ -108,7 +121,8 @@ run_diagnostic_stage() {
       printf 'FAIL\n' > "$stage_dir/status.txt"
       return 1
     }
-  printf 'stage_started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$stage_dir/host-lifecycle.txt"
+  printf 'stage=%s\ntest_filter=%s\nstage_started_at_utc=%s\n' \
+    "$name" "$filter" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$stage_dir/host-lifecycle.txt"
   timeout --signal=INT --kill-after=30s "${timeout_seconds}s" ./gradlew --no-daemon \
     -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$stage_token" \
     -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
@@ -116,15 +130,19 @@ run_diagnostic_stage() {
     > "$stage_dir/gradle.log" 2>&1
   gradle_status=$?
   printf '%s\n' "$gradle_status" > "$stage_dir/gradle-exit-code.txt"
+  if [[ "$gradle_status" -eq 0 ]]; then
+    printf 'PASS\n' > "$stage_dir/gradle-status.txt"
+  elif [[ "$gradle_status" -eq 124 || "$gradle_status" -eq 137 ]]; then
+    printf 'TIMEOUT\n' > "$stage_dir/gradle-status.txt"
+  else
+    printf 'FAIL\n' > "$stage_dir/gradle-status.txt"
+  fi
   printf 'stage_finished_at_utc=%s\nstage_exit_code=%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$gradle_status" >> "$stage_dir/host-lifecycle.txt"
   if [[ -d "$root/connected" ]]; then
     mv "$root/connected" "$stage_dir/junit"
   fi
-  if [[ "$gradle_status" -ne 0 ]]; then
-    capture_device_state "$stage_dir/device-state.txt" "$stage_dir/device-state-status.txt"
-  fi
-  if [[ "$gradle_status" -eq 0 ]]; then
+  if [[ -d "$stage_dir/junit" ]]; then
     local verify_args=("$stage_dir/junit" --minimum "$expected_count" --exact-count "$expected_count")
     if [[ -n "$exact_test" ]]; then
       verify_args+=(--require-test "$exact_test")
@@ -133,23 +151,35 @@ run_diagnostic_stage() {
     fi
     python3 "$tool_dir/verify_android_instrumentation.py" "${verify_args[@]}" \
       > "$stage_dir/verification.log" 2>&1
-    verify_status=$?
+    verify_exit_code=$?
+    printf '%s\n' "$verify_exit_code" > "$stage_dir/verification-exit-code.txt"
+    if [[ "$verify_exit_code" -eq 0 ]]; then
+      verify_status=0
+      printf 'PASS\n' > "$stage_dir/verification-status.txt"
+    else
+      verify_status=1
+      printf 'FAIL\n' > "$stage_dir/verification-status.txt"
+    fi
   else
     verify_status=1
-    if [[ "$gradle_status" -eq 124 || "$gradle_status" -eq 137 ]]; then
-      echo "NOT_RUN: diagnostic stage timed out after ${timeout_seconds}s; any partial JUnit remains evidence only." \
-        > "$stage_dir/verification.log"
-    else
-      echo "FAIL: diagnostic Gradle stage exited $gradle_status; partial tests are not a passing stage." \
-        > "$stage_dir/verification.log"
-    fi
+    verify_exit_code=125
+    printf 'NOT_RUN\n' > "$stage_dir/verification-exit-code.txt"
+    printf 'NOT_RUN\n' > "$stage_dir/verification-status.txt"
+    echo 'NOT_RUN: diagnostic Gradle stage produced no JUnit directory to verify.' > "$stage_dir/verification.log"
+  fi
+  if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 ]]; then
+    capture_device_state "$stage_dir/device-state.txt" "$stage_dir/device-state-status.txt"
   fi
   cat "$stage_dir/verification.log"
-  if [[ "$gradle_status" -eq 0 && "$verify_status" -eq 0 ]]; then
+  if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 ]]; then
     printf 'PASS\n' > "$stage_dir/status.txt"
-    echo 'PASS' > "$stage_dir/result.txt"
+    echo 'PASS: Gradle exit=0 and exact JUnit verification passed.' > "$stage_dir/result.txt"
     return 0
   fi
+  printf 'FAIL: gradle_status=%s gradle_exit_code=%s verification_status=%s verification_exit_code=%s\n' \
+    "$(cat "$stage_dir/gradle-status.txt")" "$gradle_status" \
+    "$(cat "$stage_dir/verification-status.txt")" "$(cat "$stage_dir/verification-exit-code.txt")" \
+    > "$stage_dir/result.txt"
   if [[ "$gradle_status" -eq 124 || "$gradle_status" -eq 137 ]]; then
     printf 'NOT_RUN\n' > "$stage_dir/status.txt"
   else
@@ -168,7 +198,8 @@ cleanup_failed() {
   exit 1
 }
 
-if ! rm -rf "$root/connected" "$evidence/junit" || [[ -e "$root/connected" || -e "$evidence/junit" ]]; then
+if ! rm -rf "$root/connected" "$evidence/junit" "$evidence/stages" || \
+   [[ -e "$root/connected" || -e "$evidence/junit" || -e "$evidence/stages" ]]; then
   cleanup_failed
 fi
 if ! rm -f \
@@ -259,12 +290,16 @@ if [[ "$sdk_ok" == true ]]; then
     if [[ "$sentinel_seed_result" -eq 0 && -z "$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')" && \
           -z "$(adb shell pm path "$test_package" 2>/dev/null | tr -d '\r')" ]]; then
       campaign_token="serea-isolated-api${api_level}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-      printf 'campaign_started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$evidence/test-lifecycle-host.txt"
+      printf 'api_level=%s\ncampaign_token=%s\ncampaign_started_at_utc=%s\n' \
+        "$api_level" "$campaign_token" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$evidence/test-lifecycle-host.txt"
       adb -s "$ANDROID_SERIAL" logcat -v threadtime -s \
         SereaTestLifecycle:I SereaCalendarStage:I SereaIsolatedRunner:I \
+        SereaProcessDeath:I \
         chat-demo-label:I chat-current-delete-confirmation:I \
         chat-current-delete-status:I chat-delete-all-confirmation:I chat-delete-all-status:I \
-        chat-restored-conversation:I task-proposal-font-scale:I AndroidRuntime:E \
+        chat-restored-conversation:I chat-draft-gmail-search-timeout:I \
+        font-scale-gmail-heading:I gmail-search-result-timeout:I \
+        gmail-repeat-search-result-timeout:I task-proposal-font-scale:I AndroidRuntime:E \
         > "$evidence/logcat-live.txt" 2>&1 &
       logcat_pid=$!
       diagnostics_result=0
@@ -293,13 +328,19 @@ if [[ "$sdk_ok" == true ]]; then
       else
         isolated_target_result=1
       fi
+      if [[ "$diagnostics_result" -eq 0 ]]; then
+        printf 'PASS\n' > "$evidence/diagnostic-status.txt"
+      else
+        printf 'FAIL\n' > "$evidence/diagnostic-status.txt"
+      fi
       if [[ "$isolated_target_result" -eq 0 ]]; then
         printf 'instrumentation_started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$evidence/test-lifecycle-host.txt"
         timeout --signal=INT --kill-after=120s 40m ./gradlew --no-daemon \
           -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$campaign_token" \
           -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
-          connectedIsolatedAndroidTest
+          connectedIsolatedAndroidTest > "$evidence/instrumentation-gradle.log" 2>&1
         gradle_result=$?
+        cat "$evidence/instrumentation-gradle.log"
         printf '%s\n' "$gradle_result" > "$evidence/instrumentation-gradle-exit-code.txt"
         printf 'instrumentation_finished_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$evidence/test-lifecycle-host.txt"
         printf 'instrumentation_exit_code=%s\n' "$gradle_result" >> "$evidence/test-lifecycle-host.txt"
@@ -418,6 +459,7 @@ if [[ "$sdk_ok" == true ]]; then
       --require-class app.serea.android.MockUiStateIntegrationTest=4 \
       > "$evidence/junit-verification.log" 2>&1
     verify_result=$?
+    printf '%s\n' "$verify_result" > "$evidence/instrumentation-verification-exit-code.txt"
     cat "$evidence/junit-verification.log"
     if [[ "$verify_result" -eq 0 ]]; then
       junit_result=PASS
@@ -427,28 +469,39 @@ if [[ "$sdk_ok" == true ]]; then
   elif [[ "$gradle_result" -ne 0 ]]; then
     if [[ "$diagnostics_result" != NOT_RUN && "$diagnostics_result" -ne 0 ]]; then
       junit_result=NOT_RUN
+      printf 'NOT_RUN\n' > "$evidence/instrumentation-verification-exit-code.txt"
       echo "Full instrumentation was NOT_RUN after a failed bounded diagnostic stage; partial stage output is retained separately." \
         > "$evidence/junit-verification.log"
     else
       junit_result=FAIL
+      printf 'NOT_RUN\n' > "$evidence/instrumentation-verification-exit-code.txt"
       echo "Instrumentation Gradle command failed with exit code $gradle_result and produced no connected JUnit directory." \
         > "$evidence/junit-verification.log"
     fi
   else
     junit_result=FAIL
+    printf 'NOT_RUN\n' > "$evidence/instrumentation-verification-exit-code.txt"
     echo "Instrumentation Gradle command succeeded but produced no connected JUnit directory." \
       > "$evidence/junit-verification.log"
+  fi
+  if [[ "$gradle_result" -eq 0 && "$junit_result" == FAIL ]]; then
+    capture_device_state "$evidence/test-device-state.txt" "$evidence/test-device-state-status.txt"
   fi
 fi
 printf '%s\n' "$junit_result" > "$evidence/instrumentation-status.txt"
 
 death_result=NOT_RUN
 if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_target_ready" == true ]]; then
+  printf 'process_death_started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
+    > "$evidence/process-death-host-lifecycle.txt"
   EXPECTED_API_LEVEL="$api_level" SEREA_SENTINEL_TOKEN="$data_sentinel_token" \
     SEREA_CAMPAIGN_TOKEN="serea-isolated-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" \
     bash "$tool_dir/run_android_process_death_harness.sh" \
     > "$evidence/process-death.log" 2>&1
   death_exit=$?
+  printf 'process_death_finished_at_utc=%s\nprocess_death_exit_code=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$death_exit" \
+    >> "$evidence/process-death-host-lifecycle.txt"
   cat "$evidence/process-death.log"
   if [[ "$death_exit" -eq 0 ]]; then
     death_result=PASS
@@ -456,6 +509,7 @@ if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_t
     death_result=FAIL
   fi
 elif [[ "$sdk_ok" == true ]]; then
+  printf 'NOT_RUN\n' > "$evidence/process-death-host-lifecycle.txt"
   echo "Process Death not run because the disposable-device, demo-sentinel, or isolated-target readiness gate did not pass." \
     > "$evidence/process-death.log"
 fi

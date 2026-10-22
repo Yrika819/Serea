@@ -90,6 +90,16 @@ class CommitIdentityScopeTests(unittest.TestCase):
         return subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "tools/check_commit_identity.py")],
                               cwd=self.repo, env=env, capture_output=True, text=True)
 
+    def pre_push(self, input_text, remote="origin"):
+        import os
+        import subprocess
+        env = os.environ.copy()
+        return subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parents[1] / "tools/check_commit_identity.py"),
+             "--pre-push", "--remote", remote],
+            cwd=self.repo, env=env, input=input_text, capture_output=True, text=True,
+        )
+
     def pr(self, base, head):
         return self.check("pull_request", SEREA_PR_BASE_SHA=base, SEREA_PR_HEAD_SHA=head)
 
@@ -133,11 +143,21 @@ class CommitIdentityScopeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 introduced commit", result.stdout)
 
-    def test_non_fast_forward_pr_fails_closed(self):
+    def test_pr_accepts_base_advanced_after_branch_creation(self):
         head = self.commit()
         self.git("checkout", "-q", "--detach", self.base)
-        alternate = self.commit(author_email="alternate@example.com")
-        result = self.pr(alternate, head)
+        advanced_base = self.commit(author_email="base-only@example.com")
+        self.git("checkout", "-q", "--detach", head)
+        result = self.pr(advanced_base, head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1 introduced commit", result.stdout)
+
+    def test_pr_still_rejects_unrelated_history(self):
+        head = self.commit()
+        self.git("checkout", "-q", "--orphan", "unrelated")
+        unrelated = self.commit(author_email="unrelated@example.com")
+        self.git("checkout", "-q", "--detach", head)
+        result = self.pr(unrelated, head)
         self.assertEqual(result.returncode, 2, result.stderr)
 
     def test_push_uses_before_after_and_rejects_missing_range(self):
@@ -149,6 +169,91 @@ class CommitIdentityScopeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         missing = self.check("push", SEREA_PUSH_BEFORE_SHA="0" * 40, SEREA_PUSH_AFTER_SHA=self.base)
         self.assertEqual(missing.returncode, 2)
+
+    def test_new_p3_branch_uses_safe_main_as_base(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        head = self.commit()
+        result = self.check(
+            "push", SEREA_PUSH_BEFORE_SHA="0" * 40, SEREA_PUSH_AFTER_SHA=head,
+            SEREA_PUSH_CREATED="true", SEREA_PUSH_DELETED="false",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_new_branch_unrelated_to_main_and_branch_deletion_fail_closed(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        self.git("checkout", "-q", "--orphan", "unrelated")
+        head = self.commit(author_name="Unrelated branch")
+        self.assertEqual(self.git("show", "-s", "--format=%P", head), "")
+        self.assertNotEqual(head, self.base)
+        unrelated = self.check(
+            "push", SEREA_PUSH_BEFORE_SHA="0" * 40, SEREA_PUSH_AFTER_SHA=head,
+            SEREA_PUSH_CREATED="true",
+        )
+        self.assertEqual(unrelated.returncode, 2, unrelated.stdout + unrelated.stderr)
+        deleted = self.check(
+            "push", SEREA_PUSH_BEFORE_SHA=self.base, SEREA_PUSH_AFTER_SHA="0" * 40,
+            SEREA_PUSH_DELETED="true",
+        )
+        self.assertEqual(deleted.returncode, 2)
+
+    def test_pre_push_checks_multiple_refs_at_their_own_tips(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        good = self.commit()
+        self.git("branch", "good-ref", good)
+        self.git("checkout", "-q", "--detach", self.base)
+        bad = self.commit(author_email="bad@example.com")
+        self.git("branch", "bad-ref", bad)
+        self.git("update-ref", "refs/remotes/origin/good-ref", self.base)
+        self.git("update-ref", "refs/remotes/origin/bad-ref", self.base)
+        rows = (
+            f"refs/heads/good-ref {good} refs/heads/good-ref {self.base}\n"
+            f"refs/heads/bad-ref {bad} refs/heads/bad-ref {self.base}\n"
+        )
+        result = self.pre_push(rows)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(bad, result.stderr)
+        self.assertNotIn(good, result.stderr)
+
+    def test_pre_push_accepts_multiple_valid_refs(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        first = self.commit()
+        self.git("branch", "first-ref", first)
+        self.git("checkout", "-q", "--detach", self.base)
+        second = self.commit(author_name="Second valid author")
+        self.git("branch", "second-ref", second)
+        self.git("update-ref", "refs/remotes/origin/first-ref", self.base)
+        self.git("update-ref", "refs/remotes/origin/second-ref", self.base)
+        rows = (
+            f"refs/heads/first-ref {first} refs/heads/first-ref {self.base}\n"
+            f"refs/heads/second-ref {second} refs/heads/second-ref {self.base}\n"
+        )
+        result = self.pre_push(rows)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_pre_push_rejects_stale_tracking_ref_and_deletion(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        self.git("checkout", "-q", "--detach", self.base)
+        remote_tip = self.commit()
+        local_tip = self.commit()
+        self.git("branch", "feature", local_tip)
+        self.git("update-ref", "refs/remotes/origin/feature", self.base)
+        stale = self.pre_push(
+            f"refs/heads/feature {local_tip} refs/heads/feature {remote_tip}\n"
+        )
+        self.assertEqual(stale.returncode, 2, stale.stderr)
+        deleted = self.pre_push(f"refs/heads/feature {'0' * 40} refs/heads/feature {self.base}\n")
+        self.assertEqual(deleted.returncode, 2, deleted.stderr)
+
+    def test_pre_push_rejects_malformed_rows_and_remote(self):
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        head = self.commit()
+        self.git("branch", "feature", head)
+        self.assertEqual(self.pre_push("").returncode, 2)
+        self.assertEqual(self.pre_push(f"refs/heads/feature {head} refs/heads/feature\n").returncode, 2)
+        malformed_remote = self.pre_push(
+            f"refs/heads/feature {head} refs/heads/feature {'0' * 40}\n", remote="../origin"
+        )
+        self.assertEqual(malformed_remote.returncode, 2)
 
     def test_workflow_dispatch_requires_explicit_matching_scope(self):
         head = self.commit()

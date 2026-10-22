@@ -69,6 +69,8 @@ jobs:
       SEREA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       SEREA_PUSH_BEFORE_SHA: ${{ github.event.before }}
       SEREA_PUSH_AFTER_SHA: ${{ github.sha }}
+      SEREA_PUSH_CREATED: ${{ github.event.created }}
+      SEREA_PUSH_DELETED: ${{ github.event.deleted }}
       SEREA_DISPATCH_BASE_SHA: ${{ inputs.base_sha }}
       SEREA_DISPATCH_HEAD_SHA: ${{ inputs.head_sha }}
       SEREA_DISPATCH_REF_SHA: ${{ github.sha }}

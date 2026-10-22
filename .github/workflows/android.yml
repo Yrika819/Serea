@@ -49,7 +49,7 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tests/android_instrumentation_results_tests.py) android_changed=true ;;
+              android/*|.github/workflows/android.yml|tools/verify_android_instrumentation.py|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tests/android_instrumentation_results_tests.py) android_changed=true ;;
             esac
           done <<< "$changed"
           echo "android=$android_changed" >> "$GITHUB_OUTPUT"
@@ -67,6 +67,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test Android update emulator guard with Mock ADB
+        run: bash tools/test_android_update_compatibility_guard.sh
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -279,7 +281,7 @@ jobs:
             python3 ../tools/verify_android_instrumentation.py app/build/outputs/androidTest-results/connected --minimum 34 --require-class app.serea.android.EncryptedHistoryTest=16 --require-class app.serea.android.ChatScreenTest=16 --require-class app.serea.android.ChatHttpE2ETest=2
             mv app/build/outputs/androidTest-results/connected app/build/outputs/androidTest-results/api35
             EXPECTED_API_LEVEL=35 bash ../tools/run_android_process_death_harness.sh > app/build/outputs/androidTest-results/process-death-api35.log 2>&1; result=$?; cat app/build/outputs/androidTest-results/process-death-api35.log; test "$result" -eq 0
-            bash ../tools/test_android_update_compatibility.sh
+            SEREA_DISPOSABLE_CI_EMULATOR=1 bash ../tools/test_android_update_compatibility.sh
             echo '### Android API 35 Instrumentation: PASS (34 tests, zero failures/errors/skips); OS Process Death and same-signer update compatibility: PASS' >> "$GITHUB_STEP_SUMMARY"
             echo 'result=PASS' >> "$GITHUB_OUTPUT"
         id: instrumentation

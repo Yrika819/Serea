@@ -11,6 +11,7 @@ val appVersionCode = requestedVersionCode?.let {
     it.toIntOrNull() ?: error("sereaVersionCode must be a positive integer")
 } ?: 1
 require(appVersionCode > 0) { "sereaVersionCode must be a positive integer" }
+val updateCompatibilityTest = providers.gradleProperty("sereaUpdateCompatibilityTest").orNull == "true"
 
 // The update-compatibility test creates this short-lived key in RUNNER_TEMP.
 // Ordinary PR builds and internal Beta builds use separate signing inputs.
@@ -34,7 +35,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "app.serea.android"
+        applicationId = if (updateCompatibilityTest) "app.serea.android.updatecompat" else "app.serea.android"
         minSdk = 26
         targetSdk = 35
         versionCode = appVersionCode
@@ -63,7 +64,7 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".demo"
+            applicationIdSuffix = if (updateCompatibilityTest) "" else ".demo"
             if (updateTestSigningReady) signingConfig = signingConfigs.getByName("ephemeralUpdateTest")
         }
         release {

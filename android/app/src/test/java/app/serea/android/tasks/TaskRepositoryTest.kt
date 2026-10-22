@@ -3,6 +3,9 @@ package app.serea.android.tasks
 import java.time.Instant
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicLong
+import app.serea.android.assistant.taskproposal.TaskProposalReviewSession
+import app.serea.android.assistant.taskproposal.TaskProposalReviewResult
+import app.serea.android.assistant.taskproposal.TaskProposalReviewStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -36,7 +39,8 @@ class TaskRepositoryTest {
         override fun decrypt(id: String, ciphertext: String) = java.util.Base64.getDecoder().decode(ciphertext)
     }
     private val tick = AtomicLong(1_800_000_000_000)
-    private val repository = EncryptedTaskRepository(MemoryDao(), TestCipher(), { Instant.ofEpochMilli(tick.getAndIncrement()) }, { "00000000-0000-0000-0000-000000000001" })
+    private val dao = MemoryDao()
+    private val repository = EncryptedTaskRepository(dao, TestCipher(), { Instant.ofEpochMilli(tick.getAndIncrement()) }, { "00000000-0000-0000-0000-000000000001" })
 
     @Test fun createReadUpdateCompleteReopenAndDelete() {
         runBlocking {
@@ -100,5 +104,151 @@ class TaskRepositoryTest {
         assertEquals("DAO update was cancelled", error.message)
         cancelWrites = false
         assertEquals(created, repository.get(created.id))
+    }
+
+    @Test fun approvedMutationsConsumeDurableProposalReceiptsAcrossRepositoryRecreation() = runBlocking {
+        val sharedDao = MemoryDao()
+        val nextId = AtomicLong(1)
+        val clock = { Instant.ofEpochMilli(tick.getAndIncrement()) }
+        fun reopenedRepository() = EncryptedTaskRepository(sharedDao, TestCipher(), clock) {
+            "00000000-0000-0000-0000-${nextId.getAndIncrement().toString().padStart(12, '0')}"
+        }
+        val first = reopenedRepository()
+        val confirmer = TaskProposalConfirmer(first)
+        val create = TaskProposal(
+            proposalId = "10000000-0000-0000-0000-000000000001",
+            operation = TaskProposalOperation.CREATE,
+            title = "approved create",
+        )
+        val created = checkNotNull(confirmer.confirm(create, explicitlyApproved = true))
+        assertThrows(TaskConflictException::class.java) {
+            runBlocking { TaskProposalConfirmer(reopenedRepository()).confirm(create, explicitlyApproved = true) }
+        }
+
+        val target = first.create(TaskDraft("before update"))
+        val update = TaskProposal(
+            proposalId = "10000000-0000-0000-0000-000000000002",
+            operation = TaskProposalOperation.UPDATE,
+            title = "after update",
+            targetTaskId = target.id,
+            expectedRevision = target.revision,
+        )
+        val updated = checkNotNull(confirmer.confirm(update, true, target.id))
+        assertEquals(2L, updated.revision)
+        assertThrows(TaskConflictException::class.java) {
+            runBlocking { TaskProposalConfirmer(reopenedRepository()).confirm(update, true, target.id) }
+        }
+
+        val complete = TaskProposal(
+            proposalId = "10000000-0000-0000-0000-000000000003",
+            operation = TaskProposalOperation.COMPLETE,
+            targetTaskId = updated.id,
+            expectedRevision = updated.revision,
+        )
+        val completed = checkNotNull(confirmer.confirm(complete, true, updated.id))
+        assertEquals(TaskStatus.COMPLETED, completed.status)
+        assertThrows(TaskConflictException::class.java) {
+            runBlocking { TaskProposalConfirmer(reopenedRepository()).confirm(complete, true, updated.id) }
+        }
+
+        val removeTarget = first.create(TaskDraft("approved delete"))
+        val delete = TaskProposal(
+            proposalId = "10000000-0000-0000-0000-000000000004",
+            operation = TaskProposalOperation.DELETE,
+            targetTaskId = removeTarget.id,
+            expectedRevision = removeTarget.revision,
+        )
+        assertNull(confirmer.confirm(delete, true, removeTarget.id))
+        assertThrows(TaskConflictException::class.java) {
+            runBlocking { TaskProposalConfirmer(reopenedRepository()).confirm(delete, true, removeTarget.id) }
+        }
+
+        val restored = reopenedRepository()
+        assertEquals(created, restored.get(created.id))
+        assertEquals("after update", restored.get(updated.id)?.title)
+        assertEquals(TaskStatus.COMPLETED, restored.get(updated.id)?.status)
+        assertNull(restored.get(removeTarget.id))
+        assertEquals(removeTarget.id, sharedDao.receipt(delete.proposalId)?.taskId)
+    }
+
+    @Test fun lostMutationOutcomeRemainsUnknownAndReceiptBlocksReplayAfterRecreation() = runBlocking {
+        val backing = MemoryDao()
+        var loseNextResult = false
+        val faultingDao = object : TaskDao by backing {
+            override suspend fun compareAndSetTaskForProposal(
+                id: String,
+                expectedRevision: Long,
+                nextRevision: Long,
+                encrypted: String,
+                receipt: ProposalReceiptRow,
+            ) {
+                backing.compareAndSetTaskForProposal(id, expectedRevision, nextRevision, encrypted, receipt)
+                if (loseNextResult) throw CancellationException("fixture lost the committed result")
+            }
+        }
+        val stableClock = { Instant.parse("2026-10-20T10:00:00Z") }
+        val initialRepository = EncryptedTaskRepository(faultingDao, TestCipher(), stableClock) {
+            "00000000-0000-0000-0000-000000000099"
+        }
+        val target = initialRepository.create(TaskDraft("before"))
+        val proposal = TaskProposal(
+            proposalId = "10000000-0000-0000-0000-000000000009",
+            operation = TaskProposalOperation.UPDATE,
+            targetTaskId = target.id,
+            expectedRevision = target.revision,
+            title = "committed but result lost",
+        )
+        val session = TaskProposalReviewSession.prepare(proposal, initialRepository, stableClock)
+        loseNextResult = true
+        val call = async { session.approve(explicitlyApproved = true, selectedTaskId = target.id) }
+        try {
+            call.await()
+            fail("the simulated lost result must propagate cancellation")
+        } catch (_: CancellationException) { }
+        assertEquals(TaskProposalReviewStatus.OUTCOME_UNKNOWN, session.status)
+
+        val reopened = EncryptedTaskRepository(backing, TestCipher(), stableClock) {
+            "00000000-0000-0000-0000-000000000100"
+        }
+        assertEquals("committed but result lost", reopened.get(target.id)?.title)
+        assertEquals(2L, reopened.get(target.id)?.revision)
+        assertThrows(TaskConflictException::class.java) {
+            runBlocking { TaskProposalConfirmer(reopened).confirm(proposal, true, target.id) }
+        }
+        assertEquals(2L, reopened.get(target.id)?.revision)
+    }
+
+    @Test fun durableBridgeStillRequiresApprovalMatchingDeleteTargetAndFreshReview() = runBlocking {
+        val sharedDao = MemoryDao()
+        val now = Instant.parse("2026-10-20T10:00:00Z")
+        val repository = EncryptedTaskRepository(sharedDao, TestCipher(), { now }) {
+            "00000000-0000-0000-0000-000000000101"
+        }
+        val target = repository.create(TaskDraft("delete only after confirmation"))
+        val proposal = TaskProposal(
+            proposalId = "10000000-0000-0000-0000-000000000010",
+            operation = TaskProposalOperation.DELETE,
+            targetTaskId = target.id,
+            expectedRevision = target.revision,
+        )
+        val confirmer = TaskProposalConfirmer(repository)
+
+        assertThrows(SecurityException::class.java) {
+            runBlocking { confirmer.confirm(proposal, explicitlyApproved = false, confirmedTargetTaskId = target.id) }
+        }
+        assertThrows(SecurityException::class.java) {
+            runBlocking { confirmer.confirm(proposal, explicitlyApproved = true, confirmedTargetTaskId = null) }
+        }
+        assertEquals(target, repository.get(target.id))
+        assertEquals(null, sharedDao.receipt(proposal.proposalId))
+
+        var reviewClock = now
+        val review = TaskProposalReviewSession.prepare(proposal, repository) { reviewClock }
+        reviewClock = review.snapshot.expiresAt.plusMillis(1)
+        assertTrue(review.expireIfNeeded())
+        assertEquals(TaskProposalReviewStatus.EXPIRED, review.status)
+        assertEquals(TaskProposalReviewResult.Expired, review.approve(true, selectedTaskId = target.id))
+        assertEquals(target, repository.get(target.id))
+        assertEquals(null, sharedDao.receipt(proposal.proposalId))
     }
 }

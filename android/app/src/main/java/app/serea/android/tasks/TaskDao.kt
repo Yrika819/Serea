@@ -30,6 +30,24 @@ interface TaskDao {
         insert(task)
         insertReceipt(receipt)
     }
+    @Transaction
+    suspend fun compareAndSetTaskForProposal(
+        id: String,
+        expectedRevision: Long,
+        nextRevision: Long,
+        encrypted: String,
+        receipt: ProposalReceiptRow,
+    ) {
+        if (receipt(receipt.proposalId) != null) throw TaskConflictException()
+        if (compareAndSet(id, expectedRevision, nextRevision, encrypted) != 1) throw TaskConflictException()
+        insertReceipt(receipt)
+    }
+    @Transaction
+    suspend fun deleteTaskForProposal(id: String, expectedRevision: Long, receipt: ProposalReceiptRow) {
+        if (receipt(receipt.proposalId) != null) throw TaskConflictException()
+        if (deleteIfRevisionMatches(id, expectedRevision) != 1) throw TaskConflictException()
+        insertReceipt(receipt)
+    }
     @Query("UPDATE tasks SET revision = :nextRevision, encryptedRecord = :encrypted WHERE id = :id AND revision = :expectedRevision")
     suspend fun compareAndSet(id: String, expectedRevision: Long, nextRevision: Long, encrypted: String): Int
     @Query("DELETE FROM tasks WHERE id = :id AND revision = :expectedRevision") suspend fun deleteIfRevisionMatches(id: String, expectedRevision: Long): Int

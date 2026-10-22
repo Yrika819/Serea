@@ -217,31 +217,36 @@ def verify_profile_verifier_evidence(path: Path, api_level: int) -> tuple[bool, 
         return False, f"could not read ProfileVerifier runtime evidence: {path}: {error}"
     pattern = re.compile(
         r"SereaProfileVerifierEvidence.*?\bapi=(\d+)\s+status=([A-Z_]+)\s+"
-        r"resultCode=(\d+).*?\bmarker=([a-z]+)\b"
+        r"resultCode=(\d+).*?\bembedded=(true|false)\s+marker=([a-z]+)\b"
     )
     matches = [pattern.search(line) for line in lines]
     evidence = [match.groups() for match in matches if match and int(match.group(1)) == api_level]
     if not evidence:
         return False, f"no SereaProfileVerifierEvidence runtime record found for API {api_level}"
-    api_text, status, result_code_text, marker = evidence[-1]
+    api_text, status, result_code_text, embedded_text, marker = evidence[-1]
     result_code = int(result_code_text)
     if api_level == 26:
         valid = status == "UNSUPPORTED" and result_code == (4 << 16) and marker == "absent"
         expected = "status=UNSUPPORTED resultCode=262144 marker=absent"
     elif api_level == 35:
-        persisted_codes = {0, 1, 2, 3, 5 << 16}
-        valid = status == "COMPLETED" and result_code in persisted_codes and marker == "valid"
-        expected = "status=COMPLETED, a persisted result code, and marker=valid"
+        installed_profile_codes = {1, 2, 3}
+        valid = (
+            status == "COMPLETED"
+            and result_code in installed_profile_codes
+            and embedded_text == "true"
+            and marker == "valid"
+        )
+        expected = "status=COMPLETED, resultCode in {1, 2, 3}, embedded=true, and marker=valid"
     else:
         return False, f"ProfileVerifier evidence validation is not defined for API {api_level}"
     if not valid:
         return False, (
             f"API {api_text} ProfileVerifier evidence was status={status} "
-            f"resultCode={result_code} marker={marker}; expected {expected}"
+            f"resultCode={result_code} embedded={embedded_text} marker={marker}; expected {expected}"
         )
     return True, (
         f"ProfileVerifier runtime evidence: API {api_level} status={status} "
-        f"resultCode={result_code} marker={marker}"
+        f"resultCode={result_code} embedded={embedded_text} marker={marker}"
     )
 
 

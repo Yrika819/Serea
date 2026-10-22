@@ -14,9 +14,9 @@ internal object ProfileVerifierCacheMarker {
     private const val SCHEMA = 1
     private const val BYTE_COUNT = 24
 
-    // ProfileVerifier 1.4.0 may persist these results. Its other error results return before
-    // writing the cache (or are unsupported on API 35).
-    private val persistedResultCodes = setOf(0, 1, 2, 3, 5 shl 16)
+    // A cache entry alone does not prove that a profile was installed: result 0 means no profile,
+    // and 5 << 16 is the embedded-profile failure. Only successful installation outcomes qualify.
+    private val persistedResultCodes = setOf(1, 2, 3)
 
     fun isOnlyValidMarker(filesDirectory: File, packageLastUpdateTime: Long): Boolean {
         return try {

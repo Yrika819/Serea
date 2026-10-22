@@ -16,6 +16,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
@@ -84,7 +86,10 @@ class ChatScreenTest {
                 compose.activityRule.scenario.onActivity { activity ->
                     val decor = activity.window.decorView
                     hasWindowFocus = decor.hasWindowFocus()
-                    snapshot = "stage=$stage lifecycle=${activity.lifecycle.currentState} " +
+                    snapshot = "stage=$stage activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                        "window=${System.identityHashCode(activity.window)} token=${decor.windowToken} " +
+                        "attached=${decor.isAttachedToWindow} display=${decor.display?.displayId} " +
+                        "lifecycle=${activity.lifecycle.currentState} " +
                         "windowFocus=$hasWindowFocus decorFocus=${decor.hasFocus()} " +
                         "decorFocused=${decor.isFocused} visible=${decor.isShown}"
                 }
@@ -141,8 +146,10 @@ class ChatScreenTest {
     }
 
     private fun send(text: String) {
-        awaitMainWindowFocus("before composer tap")
-        composer().performClick()
+        // A resumed Activity can still be behind the instrumentation host's window. A real
+        // composer tap is the user action that activates this window; assert ownership after it.
+        composer().performTouchInput { click() }
+        awaitMainWindowFocus("after composer tap, before typing")
         composer().assertIsFocused()
         awaitComposerInputConnection("after composer tap, before typing")
         composer().performTextInput(text)

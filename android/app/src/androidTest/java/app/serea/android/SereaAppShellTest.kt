@@ -89,14 +89,17 @@ class SereaAppShellTest {
         val agendaItems: app.serea.android.calendar.ui.CalendarAgendaItemsSnapshot?,
         val boundsInRoot: CalendarBoundsSnapshot,
         val boundsInWindow: CalendarBoundsSnapshot,
+        val hasClickAction: Boolean,
         val visibleSemantics: String,
     )
 
     /** Evaluate ScrollAxisRange lambdas on the Compose UI thread, then return immutable primitives. */
     private fun snapshotSemantics(interaction: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarSemanticsSnapshot {
-        val node = interaction.fetchSemanticsNode()
         var result: CalendarSemanticsSnapshot? = null
         compose.runOnIdle {
+            // Fetching a node can itself drive Compose Owner layout/semantics work. Keep that
+            // access on the same UI thread as bounds, properties, and scroll-range evaluation.
+            val node = interaction.fetchSemanticsNode()
             val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
             val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
             val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {
@@ -124,6 +127,7 @@ class SereaAppShellTest {
                 agendaItems = agendaItems,
                 boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
                 boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
+                hasClickAction = SemanticsActions.OnClick in node.config,
                 visibleSemantics = children,
             )
         }
@@ -192,7 +196,7 @@ class SereaAppShellTest {
                     "visible=${initial.visibleSemantics}",
             )
         }
-        if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
+        if (runCatching { calendarTargetTextNode(text).assertIsDisplayed() }.isSuccess) {
             logVisibleCalendarItemBounds(tag, text)
             return
         }
@@ -224,7 +228,7 @@ class SereaAppShellTest {
         var stopReason = "finite search budget exhausted"
         var swipeIndex = 0
         while (swipeIndex < searchBudget && swipeIndex < 128) {
-            if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
+            if (runCatching { calendarTargetTextNode(text).assertIsDisplayed() }.isSuccess) {
                 logVisibleCalendarItemBounds(tag, text)
                 return
             }
@@ -290,11 +294,11 @@ class SereaAppShellTest {
                 )
             }
             if (activeTargetIndex != null && after.viewport?.visibleItemIndices?.contains(activeTargetIndex) == true) {
-                throw AssertionError(
-                    "Calendar target item entered the visible LazyColumn range without its text semantics: " +
-                        "target=$text targetItemIndex=$activeTargetIndex position=${after.position} " +
-                        "viewport=${after.viewport} loadedEvents=${after.loadedEventCount} " +
-                        "bounds=${after.boundsInRoot} visible=${after.visibleSemantics}",
+                Log.i(
+                    CALENDAR_STAGE_TAG,
+                    "TARGET_ITEM_RANGE_REACHED|target=$text|targetItemIndex=$activeTargetIndex|" +
+                        "textDisplayed=false|position=${after.position}|viewport=${after.viewport}|" +
+                        "bounds=${after.boundsInRoot}|visible=${after.visibleSemantics}",
                 )
             }
             val currentVisibleItems = after.viewport?.visibleItemIndices?.size?.coerceAtLeast(1)
@@ -310,7 +314,7 @@ class SereaAppShellTest {
                 break
             }
         }
-        if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
+        if (runCatching { calendarTargetTextNode(text).assertIsDisplayed() }.isSuccess) {
             logVisibleCalendarItemBounds(tag, text)
             return
         }
@@ -325,16 +329,45 @@ class SereaAppShellTest {
     }
 
     private fun logVisibleCalendarItemBounds(tag: String, text: String) {
-        val item = snapshotSemantics(compose.onNodeWithText(text))
+        // EventCard merges its descendants. Read the unmerged Text node for actual glyph bounds,
+        // and the merged card separately for its user-operable click semantics.
+        val textSemantics = snapshotSemantics(calendarTargetTextNode(text))
+        val item = if (tag == "calendar_agenda_list") {
+            snapshotSemantics(compose.onNodeWithText(text, substring = true))
+        } else {
+            textSemantics
+        }
         val list = snapshotSemantics(compose.onNodeWithTag(tag))
         val root = snapshotSemantics(compose.onRoot())
+        val viewport = checkNotNull(list.viewport) { "$tag must expose its real LazyColumn viewport." }
+        val viewportTop = list.boundsInRoot.top + viewport.viewportStartOffset
+        val viewportBottom = list.boundsInRoot.top + viewport.viewportEndOffset
+        val visibleTop = maxOf(textSemantics.boundsInRoot.top, viewportTop, root.boundsInRoot.top)
+        val visibleBottom = minOf(textSemantics.boundsInRoot.bottom, viewportBottom, root.boundsInRoot.bottom)
+        val visibleHeight = (visibleBottom - visibleTop).coerceAtLeast(0f)
+        val visibleFraction = visibleHeight / textSemantics.boundsInRoot.height.coerceAtLeast(1f)
+        if (tag == "calendar_agenda_list") {
+            assertTrue("Calendar agenda target must expose its tappable event semantics: $text", item.hasClickAction)
+        }
+        assertTrue(
+            "Calendar target text semantics must intersect the clipped visible LazyColumn viewport: " +
+                "target=$text text=${textSemantics.boundsInRoot} item=${item.boundsInRoot} " +
+                "viewport=$viewport list=${list.boundsInRoot} " +
+                "root=${root.boundsInRoot}",
+            visibleHeight > 0f,
+        )
         Log.i(
             CALENDAR_STAGE_TAG,
-            "VISIBLE_ITEM|tag=$tag|text=$text|itemRoot=${item.boundsInRoot}|itemWindow=${item.boundsInWindow}|" +
+            "VISIBLE_ITEM|tag=$tag|text=$text|textRoot=${textSemantics.boundsInRoot}|" +
+                "textWindow=${textSemantics.boundsInWindow}|itemRoot=${item.boundsInRoot}|itemWindow=${item.boundsInWindow}|" +
                 "listRoot=${list.boundsInRoot}|listWindow=${list.boundsInWindow}|root=${root.boundsInRoot}|" +
-                "position=${list.position}|viewport=${list.viewport}|loadedEvents=${list.loadedEventCount}",
+                "position=${list.position}|viewport=$viewport|visibleFraction=$visibleFraction|" +
+                "tappable=${item.hasClickAction}|loadedEvents=${list.loadedEventCount}",
         )
     }
+
+    private fun calendarTargetTextNode(text: String) =
+        compose.onNodeWithText(text, substring = true, useUnmergedTree = true)
 
     /** Separates scroll semantics from touch hit testing before searching a long agenda. */
     private fun diagnoseCalendarGesturePath(list: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarGesturePath {

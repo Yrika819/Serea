@@ -14,12 +14,17 @@ class ProfileVerifierCacheMarkerTest {
     @get:Rule val temporary = TemporaryFolder()
 
     @Test fun acceptsOnlyCanonicalPersistedProfileVerifierResults() {
-        for (resultCode in listOf(0, 1, 2, 3, 5 shl 16)) {
+        for (resultCode in listOf(1, 2, 3)) {
             assertTrue(
                 "Expected ProfileVerifier result $resultCode to be a persisted schema 1 value",
                 ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = resultCode), PACKAGE_UPDATE_TIME),
             )
         }
+    }
+
+    @Test fun rejectsNoProfileAndEmbeddedProfileFailureResults() {
+        assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 0), PACKAGE_UPDATE_TIME))
+        assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 5 shl 16), PACKAGE_UPDATE_TIME))
     }
 
     @Test fun rejectsUnknownSchemaOrResultAndStalePackageUpdateTime() {
@@ -66,7 +71,7 @@ class ProfileVerifierCacheMarkerTest {
 
     private fun cacheBytes(
         schema: Int = 1,
-        resultCode: Int = 0,
+        resultCode: Int = 1,
         packageUpdateTime: Long = PACKAGE_UPDATE_TIME,
         installedProfileSize: Long = 128L,
     ): ByteArray = ByteBuffer.allocate(24)

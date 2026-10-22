@@ -50,8 +50,19 @@ class InstrumentationStorageIsolationTest {
                 resultCode,
             )
             assertTrue("unsupported API 26 must not persist a ProfileVerifier marker", target.filesDir.listFiles().isNullOrEmpty())
-            Log.i(PROFILE_VERIFIER_EVIDENCE_TAG, "api=26 status=UNSUPPORTED resultCode=$resultCode marker=absent")
+            Log.i(
+                PROFILE_VERIFIER_EVIDENCE_TAG,
+                "api=26 status=UNSUPPORTED resultCode=$resultCode embedded=false marker=absent",
+            )
         } else {
+            assertTrue(
+                "API 35 must report an installed profile, resultCode=$resultCode",
+                resultCode in setOf(1, 2, 3),
+            )
+            assertTrue(
+                "API 35 APK must embed the profile, resultCode=$resultCode",
+                compilationStatus.appApkHasEmbeddedProfile(),
+            )
             @Suppress("DEPRECATION")
             val packageUpdateTime = target.packageManager.getPackageInfo(target.packageName, 0).lastUpdateTime
             assertTrue(

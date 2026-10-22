@@ -125,7 +125,7 @@ class InstrumentationResultTests(unittest.TestCase):
             profile_log = root / "profile-verifier-logcat.txt"
             profile_log.write_text(
                 "I/SereaProfileVerifierEvidence( 1234): api=35 status=COMPLETED "
-                "resultCode=327680 compiled=false enqueued=false embedded=false marker=valid\n",
+                "resultCode=2 compiled=false enqueued=true embedded=true marker=valid\n",
                 encoding="utf-8",
             )
             results.mkdir()
@@ -189,15 +189,21 @@ class InstrumentationResultTests(unittest.TestCase):
             self.assertFalse(verify_profile_verifier_evidence(log, 26)[0])
             log.write_text(
                 "I/SereaProfileVerifierEvidence( 10): api=35 status=COMPLETED "
+                "resultCode=0 compiled=false enqueued=false embedded=false marker=valid\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(verify_profile_verifier_evidence(log, 35)[0])
+            log.write_text(
+                "I/SereaProfileVerifierEvidence( 10): api=35 status=COMPLETED "
                 "resultCode=262144 compiled=false enqueued=false embedded=false marker=absent\n",
                 encoding="utf-8",
             )
             valid, message = verify_profile_verifier_evidence(log, 35)
             self.assertFalse(valid)
-            self.assertIn("expected status=COMPLETED", message)
+            self.assertIn("resultCode in {1, 2, 3}", message)
             log.write_text(
                 "I/SereaProfileVerifierEvidence( 10): api=26 status=UNSUPPORTED "
-                "resultCode=262144 marker=absent\n",
+                "resultCode=262144 embedded=false marker=absent\n",
                 encoding="utf-8",
             )
             self.assertTrue(verify_profile_verifier_evidence(log, 26)[0])

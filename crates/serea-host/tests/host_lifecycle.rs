@@ -120,6 +120,7 @@ fn read_ready_marker(directory: &Path, expected_pid: u32) -> Result<Option<Ready
 enum ReadinessDecision {
     Ready,
     WaitForOutput,
+    WaitForReadyLine,
     WaitForReceipt,
     Exited,
 }
@@ -127,12 +128,15 @@ enum ReadinessDecision {
 fn readiness_decision(
     child_running: bool,
     stdout_eof: bool,
+    saw_ready_line: bool,
     valid_receipt: bool,
 ) -> ReadinessDecision {
     if !child_running {
         ReadinessDecision::Exited
-    } else if valid_receipt {
+    } else if saw_ready_line && valid_receipt {
         ReadinessDecision::Ready
+    } else if !saw_ready_line {
+        ReadinessDecision::WaitForReadyLine
     } else if stdout_eof {
         ReadinessDecision::WaitForReceipt
     } else {
@@ -190,7 +194,7 @@ impl BufRead for HostOutput {
                     }
                     Ok(ChildOutputEvent::Eof) => self.eof = true,
                     Ok(ChildOutputEvent::Error(message)) => {
-                        return Err(io::Error::new(io::ErrorKind::Other, message));
+                        return Err(io::Error::other(message));
                     }
                     Err(_) => self.eof = true,
                 }
@@ -279,13 +283,25 @@ fn wait_ready(child: &mut Child, directory: &Path) -> HostOutput {
                 "child exited before a valid readiness receipt",
             );
         }
-        match readiness_decision(child_running, stdout_eof, marker.is_some()) {
+        match readiness_decision(child_running, stdout_eof, saw_ready_line, marker.is_some()) {
             ReadinessDecision::Ready => return output,
-            ReadinessDecision::WaitForOutput | ReadinessDecision::WaitForReceipt => {}
+            ReadinessDecision::WaitForOutput
+            | ReadinessDecision::WaitForReadyLine
+            | ReadinessDecision::WaitForReceipt => {}
             ReadinessDecision::Exited => unreachable!("child exit is handled above"),
         }
         if monotonic_now() >= deadline {
-            let reason = if stdout_eof {
+            let reason = if !saw_ready_line && marker.is_some() {
+                "a valid receipt arrived without the required host_ready line".to_string()
+            } else if !saw_ready_line && stdout_eof {
+                format!(
+                    "stdout reached EOF without the required host_ready line{}",
+                    marker_problem
+                        .as_deref()
+                        .map(|detail| format!(" ({detail})"))
+                        .unwrap_or_default(),
+                )
+            } else if stdout_eof {
                 format!(
                     "stdout reached EOF while child remained alive; no valid readiness receipt arrived{}",
                     marker_problem
@@ -396,23 +412,28 @@ fn readiness_receipt_requires_a_fresh_supported_host_identity() {
 #[test]
 fn stdout_eof_does_not_pass_readiness_without_a_live_host_receipt() {
     assert_eq!(
-        readiness_decision(true, true, true),
+        readiness_decision(true, true, true, true),
         ReadinessDecision::Ready,
-        "a flushed receipt from a live child resolves stdout EOF",
+        "a readiness line and matching receipt from a live child resolve stdout EOF",
     );
     assert_eq!(
-        readiness_decision(true, true, false),
+        readiness_decision(true, true, true, false),
         ReadinessDecision::WaitForReceipt,
-        "EOF while the child is alive is still pending without positive evidence",
+        "a readiness line alone is not enough without the receipt",
     );
     assert_eq!(
-        readiness_decision(false, true, true),
+        readiness_decision(true, true, false, true),
+        ReadinessDecision::WaitForReadyLine,
+        "a receipt alone is not enough without the readiness line",
+    );
+    assert_eq!(
+        readiness_decision(false, true, true, true),
         ReadinessDecision::Exited,
-        "a receipt cannot make an exited process ready",
+        "readiness evidence cannot make an exited process ready",
     );
     assert_eq!(
-        readiness_decision(true, false, false),
-        ReadinessDecision::WaitForOutput,
+        readiness_decision(true, false, false, false),
+        ReadinessDecision::WaitForReadyLine,
     );
 }
 
@@ -523,14 +544,14 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             } else {
                 0
             };
-        let mut child = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_serea-host"))
             .args(["run", "--synthetic", "--data-dir"])
             .arg(&directory)
             .creation_flags(flags)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("start Host with isolated console");
+            .stderr(Stdio::piped());
+        configure_ready_marker(&mut command, &directory);
+        let mut child = command.spawn().expect("start Host with isolated console");
         let mut output = wait_ready(&mut child, &directory);
 
         // Console control events are broadcast within a console, so attach

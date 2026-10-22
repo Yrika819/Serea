@@ -118,6 +118,64 @@ class TasksDatabaseTest {
         assertEquals(1, dao.allRows().count { it.id == dao.receipt(proposalId)?.taskId })
     }
 
+    @Test fun approvedProposalMutationsAndSingleUseReceiptsSurviveDatabaseReopen() = runBlocking {
+        val repository = repo(db)
+        val updateTarget = repository.create(TaskDraft("before proposal"))
+        val completeTarget = repository.create(TaskDraft("complete proposal"))
+        val deleteTarget = repository.create(TaskDraft("delete proposal"))
+        val confirmer = TaskProposalConfirmer(repository)
+
+        val createProposal = TaskProposal(
+            proposalId = "20000000-0000-0000-0000-000000000001",
+            operation = TaskProposalOperation.CREATE,
+            title = "created after approval",
+        )
+        val created = checkNotNull(confirmer.confirm(createProposal, explicitlyApproved = true))
+        val updateProposal = TaskProposal(
+            proposalId = "20000000-0000-0000-0000-000000000002",
+            operation = TaskProposalOperation.UPDATE,
+            targetTaskId = updateTarget.id,
+            expectedRevision = updateTarget.revision,
+            title = "updated after approval",
+        )
+        val updated = checkNotNull(confirmer.confirm(updateProposal, true, updateTarget.id))
+        val completeProposal = TaskProposal(
+            proposalId = "20000000-0000-0000-0000-000000000003",
+            operation = TaskProposalOperation.COMPLETE,
+            targetTaskId = completeTarget.id,
+            expectedRevision = completeTarget.revision,
+        )
+        confirmer.confirm(completeProposal, true, completeTarget.id)
+        val deleteProposal = TaskProposal(
+            proposalId = "20000000-0000-0000-0000-000000000004",
+            operation = TaskProposalOperation.DELETE,
+            targetTaskId = deleteTarget.id,
+            expectedRevision = deleteTarget.revision,
+        )
+        assertNull(confirmer.confirm(deleteProposal, true, deleteTarget.id))
+
+        db.close()
+        db = Room.databaseBuilder(context, TasksDatabase::class.java, dbName).allowMainThreadQueries().build()
+        val restored = repo(db)
+        assertEquals(created, restored.get(created.id))
+        assertEquals("updated after approval", restored.get(updateTarget.id)?.title)
+        assertEquals(2L, restored.get(updateTarget.id)?.revision)
+        assertEquals(TaskStatus.COMPLETED, restored.get(completeTarget.id)?.status)
+        assertNull(restored.get(deleteTarget.id))
+        assertEquals(deleteTarget.id, db.taskDao().receipt(deleteProposal.proposalId)?.taskId)
+
+        for ((proposal, targetId) in listOf(
+            createProposal to null,
+            updateProposal to updateTarget.id,
+            completeProposal to completeTarget.id,
+            deleteProposal to deleteTarget.id,
+        )) {
+            assertThrows(TaskConflictException::class.java) {
+                runBlocking { TaskProposalConfirmer(restored).confirm(proposal, true, targetId) }
+            }
+        }
+    }
+
     @Test fun completedStateAndDeletePersistAcrossDatabaseReopen() = runBlocking {
         val repository = repo(db)
         val keep = repository.create(TaskDraft("keep"))

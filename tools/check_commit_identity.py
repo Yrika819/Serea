@@ -65,14 +65,16 @@ def require_commit(sha: str, label: str) -> None:
     git(["cat-file", "-e", f"{sha}^{{commit}}"])
 
 
-def introduced_commits(base: str, head: str) -> list[str]:
-    """Return commits in base..head, rejecting missing objects and non-FF scopes."""
+def introduced_commits(
+    base: str, head: str, *, require_base_ancestor: bool = True
+) -> list[str]:
+    """Return commits reachable from head but not base, rejecting unrelated scopes."""
     require_commit(base, "base")
     require_commit(head, "head")
     merge_base = git(["merge-base", base, head]).strip()
     if not _SHA.fullmatch(merge_base):
         raise ScopeError("merge-base is missing or malformed")
-    if merge_base.lower() != base.lower():
+    if require_base_ancestor and merge_base.lower() != base.lower():
         raise ScopeError("base is not an ancestor of head; refusing non-fast-forward scope")
     raw = git(["rev-list", "--reverse", f"{base}..{head}"])
     commits = raw.splitlines()
@@ -93,8 +95,14 @@ def event_scope(environ: dict[str, str] | None = None) -> tuple[str, str, str]:
         base, head = env.get("SEREA_PR_BASE_SHA", ""), env.get("SEREA_PR_HEAD_SHA", "")
     elif event == "push":
         base, head = env.get("SEREA_PUSH_BEFORE_SHA", ""), env.get("SEREA_PUSH_AFTER_SHA", "")
-        if base == _ZERO_SHA or head == _ZERO_SHA:
-            raise ScopeError("branch creation/deletion push has no bounded before/after range")
+        if head == _ZERO_SHA:
+            if env.get("SEREA_PUSH_DELETED", "").lower() == "true" and _SHA.fullmatch(base):
+                raise ScopeError("branch deletion is explicitly unsupported by the identity guard")
+            raise ScopeError("push after SHA is missing or zero")
+        if base == _ZERO_SHA:
+            if env.get("SEREA_PUSH_CREATED", "").lower() != "true":
+                raise ScopeError("zero before SHA is accepted only for a confirmed branch creation")
+            base = git(["rev-parse", "refs/remotes/origin/main"]).strip()
     elif event == "workflow_dispatch":
         base, head = env.get("SEREA_DISPATCH_BASE_SHA", ""), env.get("SEREA_DISPATCH_HEAD_SHA", "")
         selected_ref = env.get("SEREA_DISPATCH_REF_SHA", "")
@@ -136,11 +144,19 @@ def pre_push_commits(input_text: str, remote: str) -> list[str]:
             if ref == "HEAD":
                 continue
             git(["check-ref-format", ref])
-        if not _SHA.fullmatch(local_sha) or local_sha.lower() != head.lower():
-            raise ScopeError("pre-push local SHA must exactly match inspected HEAD")
+        if not _SHA.fullmatch(local_sha):
+            raise ScopeError("pre-push local SHA is missing or malformed")
+        try:
+            local_tip = head if local_ref == "HEAD" else git(["rev-parse", local_ref]).strip()
+        except ScopeError as exc:
+            raise ScopeError("pre-push local ref is unavailable") from exc
+        if local_tip.lower() != local_sha.lower():
+            raise ScopeError("pre-push local ref does not match its supplied SHA")
         if remote_sha == _ZERO_SHA:
             # git_preflight also requires new branches to descend from current origin/main.
-            base = git(["rev-parse", f"refs/remotes/{remote}/main"]).strip()
+            tracking_main = f"refs/remotes/{remote}/main"
+            git(["check-ref-format", tracking_main])
+            base = git(["rev-parse", tracking_main]).strip()
         else:
             tracking_ref = f"refs/remotes/{remote}/" + remote_ref.removeprefix("refs/heads/")
             git(["check-ref-format", tracking_ref])
@@ -168,7 +184,9 @@ def main() -> int:
             commits = pre_push_commits(sys.stdin.read(), args.remote)
         else:
             event, base, head = event_scope()
-            commits = introduced_commits(base, head)
+            commits = introduced_commits(
+                base, head, require_base_ancestor=event != "pull_request"
+            )
         bad: list[str] = []
         for sha in commits:
             record = commit_record(sha)

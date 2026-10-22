@@ -78,12 +78,36 @@ class SereaAppShellTest {
         )
     }
 
-    /** Scrolls a real LazyColumn with bounded gestures so missing items fail instead of hanging. */
+    /** Scrolls a real LazyColumn with full-viewport gestures and proves each swipe advances it. */
     private fun scrollAgendaUntilDisplayed(tag: String, text: String) {
         val list = compose.onNodeWithTag(tag)
-        repeat(60) {
+        for (index in 0 until 60) {
             if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) return
-            list.performTouchInput { swipeUp() }
+            val before = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            assertTrue("$tag must be vertically scrollable before searching for $text", before.maxValue() > 0f)
+            if (before.value() >= before.maxValue() - 1f) break
+
+            val swipeHeight = list.fetchSemanticsNode().size.height.toFloat()
+            assertTrue("$tag must have a measurable gesture region", swipeHeight > 1f)
+            list.performTouchInput {
+                swipeUp(
+                    startY = swipeHeight * 0.9f,
+                    endY = swipeHeight * 0.1f,
+                    durationMillis = 300,
+                )
+            }
+            compose.waitForIdle()
+            val after = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "SWIPE|$tag|index=${index + 1}|from=${before.value()}|to=${after.value()}|max=${after.maxValue()}",
+            )
+            assertTrue(
+                "$tag swipe ${index + 1} did not advance its scroll range " +
+                    "(from=${before.value()}, to=${after.value()}, max=${after.maxValue()})",
+                after.value() > before.value() + 0.5f || after.value() >= after.maxValue() - 1f,
+            )
+            if (after.value() >= after.maxValue() - 1f) break
         }
         compose.onNodeWithText(text).assertIsDisplayed()
     }
@@ -265,11 +289,15 @@ class SereaAppShellTest {
         allowMutation.complete(Unit)
         compose.waitUntil(5_000) { repository.writeCount() == 1 }
         compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithTag("task_proposal_status").assertTextContains("承認済み") }.isSuccess
+            runCatching {
+                compose.onNodeWithTag("task_proposal_status")
+                    .assertTextEquals("承認済みです。変更を適用しました。")
+            }.isSuccess
         }
         compose.waitUntil(5_000) {
             runCatching { compose.onNodeWithTag("destination_chat").assertIsEnabled() }.isSuccess
         }
+        compose.onNodeWithTag("task_proposal_status").assertTextEquals("承認済みです。変更を適用しました。")
         pressBack()
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
     }
@@ -395,12 +423,17 @@ class SereaAppShellTest {
         calendarStage("agenda-semantics", "START")
         compose.onNodeWithText("Demo Work").performClick()
         compose.waitUntil(10_000) {
-            runCatching { compose.onNodeWithText("今後").assertIsEnabled() }.isSuccess
+            runCatching {
+                compose.onNodeWithText("Demo Work").assertIsSelected()
+                compose.onNodeWithText("今後").assertIsEnabled()
+            }.isSuccess
         }
         compose.onNodeWithText("今後").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("Demo Work").assertIsSelected()
+        compose.onNodeWithText("今後").assertIsSelected()
         calendarStage("agenda-semantics", "FINISH")
         calendarStage("scroll-event-50", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 50")

@@ -1,5 +1,8 @@
 package app.serea.android
 
+import android.os.Build
+import android.util.Log
+import androidx.profileinstaller.ProfileVerifier
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
@@ -34,5 +37,38 @@ class InstrumentationStorageIsolationTest {
         assertTrue(preferences.path.contains("app.serea.android.isolated"))
         assertFalse(preferences.path.contains("app.serea.android.demo"))
         assertTrue("tests require an atomically claimed one-run campaign marker", campaignMarker.isFile)
+
+        // Instrumentation test methods run off the main thread; this worker-thread API executes
+        // ProfileVerifier directly and returns its own result rather than inferring execution
+        // from an empty-before-run cache check.
+        val compilationStatus = ProfileVerifier.writeProfileVerification(target)
+        val resultCode = compilationStatus.profileInstallResultCode
+        if (Build.VERSION.SDK_INT == 26) {
+            assertEquals(
+                "API 26 must report ProfileVerifier's explicit unsupported result",
+                ProfileVerifier.CompilationStatus.RESULT_CODE_ERROR_UNSUPPORTED_API_VERSION,
+                resultCode,
+            )
+            assertTrue("unsupported API 26 must not persist a ProfileVerifier marker", target.filesDir.listFiles().isNullOrEmpty())
+            Log.i(PROFILE_VERIFIER_EVIDENCE_TAG, "api=26 status=UNSUPPORTED resultCode=$resultCode marker=absent")
+        } else {
+            @Suppress("DEPRECATION")
+            val packageUpdateTime = target.packageManager.getPackageInfo(target.packageName, 0).lastUpdateTime
+            assertTrue(
+                "API 35 ProfileVerifier must return a persisted result, resultCode=$resultCode",
+                ProfileVerifierCacheMarker.isOnlyValidMarker(target.filesDir, packageUpdateTime),
+            )
+            Log.i(
+                PROFILE_VERIFIER_EVIDENCE_TAG,
+                "api=${Build.VERSION.SDK_INT} status=COMPLETED resultCode=$resultCode " +
+                    "compiled=${compilationStatus.isCompiledWithProfile} " +
+                    "enqueued=${compilationStatus.hasProfileEnqueuedForCompilation()} " +
+                    "embedded=${compilationStatus.appApkHasEmbeddedProfile()} marker=valid",
+            )
+        }
+    }
+
+    private companion object {
+        const val PROFILE_VERIFIER_EVIDENCE_TAG = "SereaProfileVerifierEvidence"
     }
 }

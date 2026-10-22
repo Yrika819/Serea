@@ -13,7 +13,9 @@ EVENT = re.compile(
     r"^.*(?:I/SereaTestLifecycle\([^)]*\):|I SereaTestLifecycle:)\s+"
     r"(START|FINISH|FAIL|RUN_FINISH)\|([0-9]+)\|(.+)$"
 )
-EXPECTED_TESTS = 103
+EXPECTED_REQUIRED_TESTS = 103
+EXPECTED_ADDITIONAL_TESTS = 2
+EXPECTED_TESTS = EXPECTED_REQUIRED_TESTS + EXPECTED_ADDITIONAL_TESTS
 CALENDAR_STAGE = re.compile(
     r"^.*(?:I/SereaCalendarStage\([^)]*\):|I SereaCalendarStage:)\s+"
     r"(START|FINISH)\|([a-z0-9-]+)\|(.+)$"
@@ -68,6 +70,15 @@ def _epoch_ms(value: str | None) -> int | None:
         return None
 
 
+def _read_test_manifest(path: Path) -> set[str]:
+    identities: set[str] = set()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line and not line.startswith("#"):
+            identities.add(line)
+    return identities
+
+
 def _window_for(timestamp: int, windows: list[tuple[str, int | None, int | None]]) -> str:
     for name, started, finished in windows:
         if started is not None and timestamp >= started and (finished is None or timestamp <= finished):
@@ -115,6 +126,14 @@ def summarize(source: Path, evidence_root: Path | None = None) -> str:
     finishes = [event for event in events if event[0] == "FINISH"]
     failures = [event for event in events if event[0] == "FAIL"]
     run_finish = next((event for event in reversed(events) if event[0] == "RUN_FINISH"), None)
+    required_manifest = _read_test_manifest(
+        Path(__file__).resolve().parent / "android-instrumentation-required-tests.txt"
+    )
+    additional_manifest = _read_test_manifest(
+        Path(__file__).resolve().parent / "android-instrumentation-additional-tests.txt"
+    )
+    started_identities = {event[2][0] for event in starts if event[2]}
+    finished_identities = {event[2][0] for event in finishes if event[2]}
 
     host = _read_fields(evidence_root / "test-lifecycle-host.txt") if evidence_root else {}
     windows: list[tuple[str, int | None, int | None]] = []
@@ -134,6 +153,12 @@ def summarize(source: Path, evidence_root: Path | None = None) -> str:
 
     lines = [
         f"expected_test_cases={EXPECTED_TESTS}",
+        f"original_required_test_cases={EXPECTED_REQUIRED_TESTS}",
+        f"additional_test_cases={EXPECTED_ADDITIONAL_TESTS}",
+        f"original_required_started={len(required_manifest & started_identities)}/{EXPECTED_REQUIRED_TESTS}",
+        f"additional_started={len(additional_manifest & started_identities)}/{EXPECTED_ADDITIONAL_TESTS}",
+        f"original_required_finished={len(required_manifest & finished_identities)}/{EXPECTED_REQUIRED_TESTS}",
+        f"additional_finished={len(additional_manifest & finished_identities)}/{EXPECTED_ADDITIONAL_TESTS}",
         f"test_start_events={len(starts)}",
         f"test_finish_events={len(finishes)}",
         f"test_failure_events={len(failures)}",

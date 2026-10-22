@@ -1,6 +1,7 @@
 package app.serea.android
 
 import android.content.pm.ActivityInfo
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import android.os.Looper
@@ -23,14 +24,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -77,6 +77,58 @@ class SereaAppShellTest {
             "$outcome|$name|testThread=${testThread.name}:${testThread.id}|" +
                 "uiThread=${uiThread.name}:${uiThread.id}|onUiThread=${testThread === uiThread}",
         )
+    }
+
+    /** Scrolls a real LazyColumn with a touch-slop-clearing gesture and proves every swipe advances it. */
+    private fun scrollAgendaUntilDisplayed(tag: String, text: String) {
+        val list = compose.onNodeWithTag(tag)
+        compose.waitUntil(10_000) {
+            runCatching {
+                val node = list.fetchSemanticsNode()
+                node.size.height > 0 || compose.onNodeWithText(text).assertIsDisplayed().let { true }
+            }.getOrDefault(false)
+        }
+        for (index in 0 until 60) {
+            if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) return
+            val before = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            assertTrue("$tag must be vertically scrollable before searching for $text", before.maxValue() > 0f)
+            if (before.value() >= before.maxValue() - 1f) break
+
+            val swipeHeight = list.fetchSemanticsNode().size.height.toFloat()
+            val touchSlop = ViewConfiguration.get(compose.activity).scaledTouchSlop.toFloat()
+            assertTrue(
+                "$tag must expose enough visible height for a real scroll gesture " +
+                    "(height=$swipeHeight, touchSlop=$touchSlop)",
+                swipeHeight > touchSlop * 2f + 2f,
+            )
+            val startY = swipeHeight - 1f
+            val endY = 1f
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "GESTURE_REGION|$tag|index=${index + 1}|width=${list.fetchSemanticsNode().size.width}|" +
+                    "height=$swipeHeight|startY=$startY|endY=$endY|touchSlop=$touchSlop",
+            )
+            list.performTouchInput {
+                swipeUp(
+                    startY = startY,
+                    endY = endY,
+                    durationMillis = 400,
+                )
+            }
+            compose.waitForIdle()
+            val after = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "SWIPE|$tag|index=${index + 1}|from=${before.value()}|to=${after.value()}|max=${after.maxValue()}",
+            )
+            assertTrue(
+                "$tag swipe ${index + 1} did not advance its scroll range " +
+                    "(from=${before.value()}, to=${after.value()}, max=${after.maxValue()})",
+                after.value() > before.value() + 0.5f || after.value() >= after.maxValue() - 1f,
+            )
+            if (after.value() >= after.maxValue() - 1f) break
+        }
+        compose.onNodeWithText(text).assertIsDisplayed()
     }
 
     private fun shell(command: String): String {
@@ -180,7 +232,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
+        scrollAgendaUntilDisplayed("calendar_agenda_list", "Date-line test")
         compose.onNodeWithText("Date-line test").performClick()
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
         pressBack() // Event detail -> agenda.
@@ -256,11 +308,15 @@ class SereaAppShellTest {
         allowMutation.complete(Unit)
         compose.waitUntil(5_000) { repository.writeCount() == 1 }
         compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithTag("task_proposal_status").assertTextContains("承認済み") }.isSuccess
+            runCatching {
+                compose.onNodeWithTag("task_proposal_status")
+                    .assertTextEquals("承認済みです。変更を適用しました。")
+            }.isSuccess
         }
         compose.waitUntil(5_000) {
             runCatching { compose.onNodeWithTag("destination_chat").assertIsEnabled() }.isSuccess
         }
+        compose.onNodeWithTag("task_proposal_status").assertTextEquals("承認済みです。変更を適用しました。")
         pressBack()
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
     }
@@ -386,15 +442,27 @@ class SereaAppShellTest {
         calendarStage("agenda-semantics", "START")
         compose.onNodeWithText("Demo Work").performClick()
         compose.waitUntil(10_000) {
-            runCatching { compose.onNodeWithText("今後").assertIsEnabled() }.isSuccess
+            runCatching {
+                compose.onNodeWithText("Demo Work").assertIsSelected()
+                compose.onNodeWithText("今後").assertIsEnabled()
+            }.isSuccess
         }
         compose.onNodeWithText("今後").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("Demo Work").assertIsSelected()
+        compose.onNodeWithText("今後").assertIsSelected()
+        compose.waitUntil(10_000) {
+            runCatching {
+                val range = compose.onNodeWithTag("calendar_agenda_list")
+                    .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+                range.maxValue() > 0f && range.value() <= 1f
+            }.getOrDefault(false)
+        }
         calendarStage("agenda-semantics", "FINISH")
         calendarStage("scroll-event-50", "START")
-        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 50"))
+        scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 50")
         compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
         calendarStage("scroll-event-50", "FINISH")
         val agendaOffsetBeforeDetail = compose.onNodeWithTag("calendar_agenda_list")
@@ -467,7 +535,7 @@ class SereaAppShellTest {
         calendarStage("date-query-and-ime", "FINISH")
 
         calendarStage("date-change-scroll", "START")
-        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 40"))
+        scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 40")
         compose.onNodeWithText("Fictional paged event 40").assertIsDisplayed()
         val workOffsetBeforeDateChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
@@ -499,7 +567,7 @@ class SereaAppShellTest {
         calendarStage("date-change-scroll", "FINISH")
 
         calendarStage("calendar-change-scroll", "START")
-        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Fictional paged event 64"))
+        scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 64")
         compose.onNodeWithText("Fictional paged event 64").assertIsDisplayed()
         val workOffsetBeforeCalendarChange = compose.onNodeWithTag("calendar_agenda_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
@@ -520,12 +588,12 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
+        scrollAgendaUntilDisplayed("calendar_agenda_list", "Date-line test")
         compose.onNodeWithText("Date-line test").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("説明"))
+        scrollAgendaUntilDisplayed("calendar_event_detail_list", "説明")
         compose.onNodeWithText("説明").assertIsDisplayed()
         val detailScrollBefore = compose.onNodeWithTag("calendar_event_detail_list")
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
@@ -545,10 +613,10 @@ class SereaAppShellTest {
             .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertTrue(detailScrollAfter.maxValue() > 0f)
         assertEquals(detailScrollBefore.value(), detailScrollAfter.value(), 1f)
-        compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("Date-line test"))
+        scrollAgendaUntilDisplayed("calendar_event_detail_list", "Date-line test")
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
         compose.onNodeWithText("説明").assertIsDisplayed()
-        compose.onNodeWithTag("calendar_event_detail_list").performScrollToNode(hasText("開始・終了"))
+        scrollAgendaUntilDisplayed("calendar_event_detail_list", "開始・終了")
         compose.onNodeWithText("開始・終了").assertIsDisplayed()
         pressBack()
         compose.onNodeWithText("Demo Global").assertIsSelected()
@@ -608,7 +676,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("Date-line test").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Date-line test"))
+        scrollAgendaUntilDisplayed("calendar_agenda_list", "Date-line test")
         compose.onNodeWithText("Date-line test").performClick()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("Date-line test").assertIsDisplayed()
@@ -682,7 +750,7 @@ class SereaAppShellTest {
             compose.waitUntil(10_000) {
                 compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithTag("calendar_agenda_list").performScrollToNode(hasText("Design review"))
+            scrollAgendaUntilDisplayed("calendar_agenda_list", "Design review")
             compose.onNodeWithText("Design review").assertIsDisplayed()
 
             select(SereaDestination.TASK_PROPOSAL_DEMO)

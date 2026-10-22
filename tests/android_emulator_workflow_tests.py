@@ -128,23 +128,118 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             manifest_lock,
         )
 
+    def test_host_seed_uses_stdin_and_fails_closed_on_uid_or_package_path(self) -> None:
+        helper = ROOT / "tools/prepare_isolated_instrumentation_target.sh"
+        source = helper.read_text(encoding="utf-8")
+        self.assertNotIn("run-as \"$package\" sh -c", source)
+        self.assertIn('adb shell run-as "$package" sh', source)
+        self.assertIn('app_data_dir="$(adb shell run-as "$package" pwd', source)
+        self.assertIn('app_uid="$(adb shell run-as "$package" id -u', source)
+        self.assertIn('"$app_data_dir" != "/data/user/0/$package"', source)
+        self.assertIn('"$app_data_dir" != "/data/data/$package"', source)
+        self.assertIn('[ -w no_backup ] && [ -x no_backup ]', source)
+        self.assertIn('[ -L "$directory" ]', source)
+        self.assertIn('files/profileInstalled', source)
+        self.assertIn('no_backup/serea-instrumentation-token', source)
+        self.assertNotIn("app.serea.android.demo", source)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            trace = root / "adb-trace"
+            adb = fake_bin / "adb"
+            adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%q ' \"$@\" >> \"$ADB_TRACE\"\n"
+                "if [[ \"$1\" == devices ]]; then\n"
+                "  printf 'List of devices attached\\nemulator-5554 device product:ci model:ci\\n'\n"
+                "elif [[ \"$1\" == shell && \"$2\" == getprop && \"$3\" == ro.build.version.sdk ]]; then\n"
+                "  printf '35\\n'\n"
+                "elif [[ \"$1\" == shell && \"$2\" == getprop && \"$3\" == ro.kernel.qemu ]]; then\n"
+                "  printf '1\\n'\n"
+                "elif [[ \"$1\" == shell && \"$2\" == pm && \"$3\" == path ]]; then\n"
+                "  printf 'package:/data/app/isolated.apk\\n'\n"
+                "elif [[ \"$1\" == shell && \"$2\" == run-as && \"$4\" == id ]]; then\n"
+                "  printf '%s\\n' \"${ADB_UID:-10142}\"\n"
+                "elif [[ \"$1\" == shell && \"$2\" == run-as && \"$4\" == pwd ]]; then\n"
+                "  printf '%s\\n' \"${ADB_DATA_DIR:-/data/user/0/app.serea.android.isolated}\"\n"
+                "elif [[ \"$1\" == shell && \"$2\" == run-as && \"$4\" == sh ]]; then\n"
+                "  cat > \"$SEED_STDIN\"\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            adb.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update({
+                "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+                "CI": "true",
+                "GITHUB_ACTIONS": "true",
+                "SEREA_DISPOSABLE_CI_EMULATOR": "1",
+                "EXPECTED_API_LEVEL": "35",
+                "ADB_TRACE": str(trace),
+                "SEED_STDIN": str(root / "seed-stdin"),
+            })
+
+            invalid = subprocess.run(
+                ["bash", str(helper), "bad token"], env=environment,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(0, invalid.returncode)
+            self.assertFalse(trace.exists())
+
+            wrong_path_env = environment | {"ADB_DATA_DIR": "/data/user/0/app.serea.android.demo"}
+            wrong_path = subprocess.run(
+                ["bash", str(helper), "campaign-token"], env=wrong_path_env,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(0, wrong_path.returncode)
+            self.assertIn("not the target package data directory", wrong_path.stderr)
+            self.assertFalse((root / "seed-stdin").exists())
+
+            wrong_uid_env = environment | {"ADB_UID": "2000"}
+            wrong_uid = subprocess.run(
+                ["bash", str(helper), "campaign-token"], env=wrong_uid_env,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(0, wrong_uid.returncode)
+            self.assertIn("unexpected UID", wrong_uid.stderr)
+            self.assertFalse((root / "seed-stdin").exists())
+
+            seeded = subprocess.run(
+                ["bash", str(helper), "campaign-token"], env=environment,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(0, seeded.returncode, seeded.stderr)
+            seed_program = (root / "seed-stdin").read_text(encoding="utf-8")
+            self.assertIn("token='campaign-token'", seed_program)
+            self.assertIn("expected_dir='/data/user/0/app.serea.android.isolated'", seed_program)
+            self.assertIn("[ -L \"$directory\" ]", seed_program)
+            self.assertIn("serea-instrumentation-token", seed_program)
+
     def test_process_death_reinstalls_only_isolated_target_after_utp_cleanup(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
         harness = (ROOT / "tools/run_android_process_death_harness.sh").read_text(encoding="utf-8")
         receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(encoding="utf-8")
         target_helper = (ROOT / "tools/prepare_isolated_instrumentation_target.sh").read_text(encoding="utf-8")
-        reinstall = campaign.index('Instrumentation runner uninstalled the isolated target')
-        reseed = campaign.index('prepare_isolated_instrumentation_target.sh', reinstall)
-        readiness = campaign.index('process_death_target_ready=false', reseed)
+        readiness_initial = campaign.index('process_death_target_ready=false')
+        fresh_target = campaign.index('Always create a new isolated namespace for Process Death')
+        uninstall = campaign.index('adb uninstall "$isolated_package"', fresh_target)
+        reseed = campaign.index('prepare_isolated_instrumentation_target.sh', fresh_target)
+        readiness = campaign.index('process_death_target_ready=true', reseed)
         process_death = campaign.index('if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_target_ready" == true ]]')
-        self.assertLess(reinstall, reseed)
+        self.assertLess(readiness_initial, fresh_target)
+        self.assertLess(fresh_target, uninstall)
         self.assertLess(reseed, readiness)
         self.assertLess(readiness, process_death)
-        self.assertIn('adb install "$isolated_apk"', campaign[reinstall:reseed])
+        self.assertIn('adb install "$isolated_apk"', campaign[uninstall:reseed])
+        self.assertIn('process-death-readiness-status.txt', campaign)
+        self.assertIn("pm list packages -u", campaign)
+        self.assertIn('"$reseed_result" -eq 0', campaign[reseed:readiness])
         self.assertNotIn('pm clear', campaign.lower())
         self.assertNotIn('pm clear', harness.lower())
         self.assertNotIn('pm path "${package}.test"', harness)
-        self.assertIn(' process-death \\', campaign[reinstall:readiness])
+        self.assertIn(' process-death \\', campaign[reseed:readiness])
         self.assertIn('"$mode" == process-death', target_helper)
         self.assertIn('phase == "process-death-seed"', receiver)
         process_death_seed = receiver.split('if (phase == "process-death-seed") {', 1)[1].split("}", 1)[0]
@@ -158,6 +253,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('marker.renameTo(authorization)', promote)
         self.assertIn("phase='process-death-seed'", target_helper)
         self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
+
+    def test_device_diagnostics_use_posix_grep_and_keep_gradle_result_separate(self) -> None:
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        self.assertNotIn("rg ", campaign)
+        self.assertIn("grep -E", campaign)
+        self.assertIn('capture_device_state "$evidence/test-device-state.txt" "$evidence/test-device-state-status.txt"', campaign)
+        self.assertIn('instrumentation-gradle-exit-code.txt', campaign)
+        self.assertIn('stage_dir/gradle-exit-code.txt', campaign)
+        self.assertIn('# Device diagnostics are observational; their status never replaces Gradle\'s exit code.', campaign)
 
     def test_sentinel_rejects_stale_pass_and_current_failure_wins(self) -> None:
         script = (ROOT / "tools/run_android_data_sentinel.sh").read_text(encoding="utf-8")

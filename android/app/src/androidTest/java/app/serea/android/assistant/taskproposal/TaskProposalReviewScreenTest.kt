@@ -17,6 +17,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -196,7 +197,8 @@ class TaskProposalReviewScreenTest {
                 onResult = { results.add(it) },
             )
         }
-        assertTrue(runBlocking { expired.expireIfNeeded() })
+        runBlocking { expired.expireIfNeeded() }
+        assertEquals(TaskProposalReviewStatus.EXPIRED, expired.status)
         compose.onNodeWithText("期限切れです。状態を再取得・再検証し、新しいレビューで改めて承認してください。同じレビューは再実行できません。").assertExists()
         compose.onNodeWithTag("task_proposal_approve").assertIsNotEnabled()
         assertTrue(!repository.deleted)

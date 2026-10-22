@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -184,21 +185,23 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
             state.messages.isEmpty() -> EmptyBlock("検索結果はありません", Modifier.weight(1f))
             else -> {
                 state.listError?.let { InlineError(it, viewModel::retry) }
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(state.messages, key = { it.id.value }) { message ->
-                        GmailMessageRow(message) { viewModel.openMessage(message.id) }
-                    }
-                    if (state.isLoadingMore) item(key = "gmail-page-progress") { LoadingBlock("続きを読み込み中…") }
-                    if (state.hasMore) {
-                        item(key = "gmail-load-more") {
-                            OutlinedButton(
-                                onClick = viewModel::loadNextPage,
-                                enabled = !state.isLoadingMore && !state.isLoading,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            ) { Text("続きを読み込む") }
+                key(route.mode, route.query) {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(state.messages, key = { it.id.value }) { message ->
+                            GmailMessageRow(message) { viewModel.openMessage(message.id) }
+                        }
+                        if (state.isLoadingMore) item(key = "gmail-page-progress") { LoadingBlock("続きを読み込み中…") }
+                        if (state.hasMore) {
+                            item(key = "gmail-load-more") {
+                                OutlinedButton(
+                                    onClick = viewModel::loadNextPage,
+                                    enabled = !state.isLoadingMore && !state.isLoading,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                ) { Text("続きを読み込む") }
+                            }
                         }
                     }
                 }

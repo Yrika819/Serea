@@ -3,6 +3,7 @@ package app.serea.android
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
@@ -22,7 +23,9 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.espresso.Espresso
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Before
 import org.junit.Assert.assertEquals
@@ -47,6 +50,10 @@ class ChatScreenTest {
 
     private fun composer() = compose.onNodeWithTag("chat-composer")
 
+    private companion object {
+        const val FOCUS_LOG_TAG = "SereaChatWindowFocus"
+    }
+
     private fun assertDisplayedWithEvidence(tag: String, assertion: () -> Unit) {
         try {
             assertion()
@@ -67,6 +74,47 @@ class ChatScreenTest {
         compose.waitUntil(30_000) {
             runCatching { composer().assertIsEnabled() }.isSuccess
         }
+    }
+
+    private fun awaitMainWindowFocus(stage: String) {
+        var snapshot = "MainActivity unavailable"
+        val focused = runCatching {
+            compose.waitUntil(10_000) {
+                var hasWindowFocus = false
+                compose.activityRule.scenario.onActivity { activity ->
+                    val decor = activity.window.decorView
+                    hasWindowFocus = decor.hasWindowFocus()
+                    snapshot = "stage=$stage lifecycle=${activity.lifecycle.currentState} " +
+                        "windowFocus=$hasWindowFocus decorFocus=${decor.hasFocus()} " +
+                        "decorFocused=${decor.isFocused} visible=${decor.isShown}"
+                }
+                hasWindowFocus
+            }
+        }.isSuccess
+        Log.i(FOCUS_LOG_TAG, snapshot)
+        assertTrue("MainActivity did not own window focus at $stage: $snapshot", focused)
+    }
+
+    private fun awaitComposerInputConnection(stage: String) {
+        var snapshot = "MainActivity unavailable"
+        val inputReady = runCatching {
+            compose.waitUntil(10_000) {
+                var ready = false
+                compose.activityRule.scenario.onActivity { activity ->
+                    val decor = activity.window.decorView
+                    val hasWindowFocus = decor.hasWindowFocus()
+                    val acceptingText = activity.getSystemService(InputMethodManager::class.java)
+                        ?.isAcceptingText == true
+                    ready = hasWindowFocus && acceptingText
+                    snapshot = "stage=$stage lifecycle=${activity.lifecycle.currentState} " +
+                        "windowFocus=$hasWindowFocus imeAcceptingText=$acceptingText " +
+                        "decorFocus=${decor.hasFocus()} visible=${decor.isShown}"
+                }
+                ready
+            }
+        }.isSuccess
+        Log.i(FOCUS_LOG_TAG, snapshot)
+        assertTrue("Composer input connection was unavailable at $stage: $snapshot", inputReady)
     }
 
     private fun stateSnapshot(): ChatUiState {
@@ -93,9 +141,15 @@ class ChatScreenTest {
     }
 
     private fun send(text: String) {
+        awaitMainWindowFocus("before composer tap")
+        composer().performClick()
+        composer().assertIsFocused()
+        awaitComposerInputConnection("after composer tap, before typing")
         composer().performTextInput(text)
         compose.waitUntil(30_000) { stateSnapshot().input == text }
+        awaitComposerInputConnection("after typing, before keyboard dismissal")
         Espresso.closeSoftKeyboard()
+        awaitMainWindowFocus("after keyboard dismissal")
         val sendButton = compose.onNodeWithText("送信", substring = false)
         try {
             sendButton.assertIsDisplayed().assertIsEnabled().performClick()

@@ -24,13 +24,21 @@ interface TaskRepository {
     suspend fun overdue(now: Instant, fallbackZone: ZoneId = ZoneId.systemDefault()): List<Task>
 }
 
+/** Confirmer-created value passed only to durable repositories after explicit approval. */
+internal class ApprovedTaskProposal internal constructor(val proposal: TaskProposal)
+
+/** Optional stronger boundary; fake/demo repositories keep the existing TaskRepository contract. */
+internal interface DurableTaskProposalApplyPort {
+    suspend fun applyApprovedProposal(approval: ApprovedTaskProposal): Task?
+}
+
 /** The DAO only stores opaque ciphertext. CAS revisions and SQLite writes prevent stale updates from resurrecting deletes. */
 internal class EncryptedTaskRepository(
     private val dao: TaskDao,
     private val cipher: TaskCipher,
     private val clock: () -> Instant = Instant::now,
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
-) : TaskRepository {
+) : TaskRepository, DurableTaskProposalApplyPort {
     private val mutex = Mutex()
 
     override suspend fun create(draft: TaskDraft): Task = mutex.withLock { createLocked(draft, null) }
@@ -39,6 +47,63 @@ internal class EncryptedTaskRepository(
         TaskValidation.validateId(proposalId)
         if (dao.receipt(proposalId) != null) throw TaskConflictException()
         createLocked(draft, proposalId)
+    }
+
+    override suspend fun applyApprovedProposal(approval: ApprovedTaskProposal): Task? = mutex.withLock {
+        val proposal = approval.proposal
+        when (val validation = proposal.validate()) {
+            ProposalValidation.Valid -> Unit
+            is ProposalValidation.Invalid -> throw InvalidTaskException(validation.reason)
+        }
+        if (dao.receipt(proposal.proposalId) != null) throw TaskConflictException()
+        when (proposal.operation) {
+            TaskProposalOperation.CREATE -> createLocked(proposal.toDraft(), proposal.proposalId)
+            TaskProposalOperation.UPDATE -> {
+                val taskId = proposal.targetTaskId!!
+                val old = readForMutation(taskId, proposal.expectedRevision!!)
+                val updated = old.copy(
+                    title = proposal.title!!,
+                    description = proposal.description.orEmpty(),
+                    priority = proposal.priority ?: TaskPriority.NORMAL,
+                    dueDate = proposal.dueDate,
+                    dueTime = proposal.dueTime,
+                    timeZoneId = proposal.timeZoneId,
+                    updatedAt = monotonicNow(old.updatedAt),
+                    revision = old.revision + 1,
+                )
+                saveForProposal(updated, proposal.proposalId)
+                updated
+            }
+            TaskProposalOperation.COMPLETE -> {
+                val taskId = proposal.targetTaskId!!
+                val old = readForMutation(taskId, proposal.expectedRevision!!)
+                if (old.status != TaskStatus.TODO) throw TaskConflictException()
+                val completedAt = monotonicNow(old.updatedAt)
+                val completed = old.copy(
+                    status = TaskStatus.COMPLETED,
+                    completedAt = completedAt,
+                    updatedAt = completedAt,
+                    revision = old.revision + 1,
+                )
+                saveForProposal(completed, proposal.proposalId)
+                completed
+            }
+            TaskProposalOperation.DELETE -> {
+                val taskId = proposal.targetTaskId!!
+                readForMutation(taskId, proposal.expectedRevision!!)
+                try {
+                    dao.deleteTaskForProposal(
+                        taskId,
+                        proposal.expectedRevision,
+                        ProposalReceiptRow(proposal.proposalId, taskId),
+                    )
+                } catch (error: TaskConflictException) { throw error }
+                catch (error: SQLiteConstraintException) { throw TaskConflictException() }
+                catch (error: CancellationException) { throw error }
+                catch (error: Exception) { throw TaskStorageUnavailableException("Task could not be deleted.", error) }
+                null
+            }
+        }
     }
 
     private suspend fun createLocked(draft: TaskDraft, proposalId: String?): Task {
@@ -138,6 +203,34 @@ internal class EncryptedTaskRepository(
         if (changed != 1) throw TaskConflictException()
         return task
     }
+
+    private suspend fun saveForProposal(task: Task, proposalId: String) {
+        TaskValidation.validate(task)
+        val encoded = try { cipher.encrypt(task.id, TaskPayloadCodec.encode(task)) }
+            catch (error: CancellationException) { throw error }
+            catch (error: Exception) { throw TaskStorageUnavailableException("Task could not be encrypted and saved.", error) }
+        try {
+            dao.compareAndSetTaskForProposal(
+                task.id,
+                task.revision - 1,
+                task.revision,
+                encoded,
+                ProposalReceiptRow(proposalId, task.id),
+            )
+        } catch (error: TaskConflictException) { throw error }
+        catch (error: SQLiteConstraintException) { throw TaskConflictException() }
+        catch (error: CancellationException) { throw error }
+        catch (error: Exception) { throw TaskStorageUnavailableException("Task could not be saved.", error) }
+    }
+
+    private fun TaskProposal.toDraft() = TaskDraft(
+        title!!,
+        description.orEmpty(),
+        priority ?: TaskPriority.NORMAL,
+        dueDate,
+        dueTime,
+        timeZoneId,
+    )
 
     private fun monotonicNow(previous: Instant): Instant {
         val now = clock()

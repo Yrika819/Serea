@@ -55,6 +55,10 @@ class TaskProposalConfirmer(private val repository: TaskRepository) {
             ProposalValidation.Valid -> Unit
             is ProposalValidation.Invalid -> throw InvalidTaskException(validation.reason)
         }
+        val durableRepository = repository as? DurableTaskProposalApplyPort
+        if (durableRepository != null) {
+            return durableRepository.applyApprovedProposal(ApprovedTaskProposal(proposal))
+        }
         return when (proposal.operation) {
                 TaskProposalOperation.CREATE -> repository.createFromApprovedProposal(TaskDraft(proposal.title!!, proposal.description.orEmpty(), proposal.priority ?: TaskPriority.NORMAL, proposal.dueDate, proposal.dueTime, proposal.timeZoneId), proposal.proposalId)
                 TaskProposalOperation.UPDATE -> repository.update(proposal.targetTaskId!!, proposal.expectedRevision!!, TaskDraft(proposal.title!!, proposal.description.orEmpty(), proposal.priority ?: TaskPriority.NORMAL, proposal.dueDate, proposal.dueTime, proposal.timeZoneId))

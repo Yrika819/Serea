@@ -76,6 +76,10 @@ android {
         }
         create("isolated") {
             initWith(getByName("debug"))
+            // The disposable instrumentation target is not attached to a debugger. Keeping this
+            // variant non-debuggable lets AGP package the same dependency baseline profile as
+            // release, so API 35 ProfileVerifier can prove a real embedded profile.
+            isDebuggable = false
             applicationIdSuffix = ".isolated"
             matchingFallbacks += listOf("debug")
         }

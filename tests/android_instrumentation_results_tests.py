@@ -219,6 +219,12 @@ class InstrumentationResultTests(unittest.TestCase):
             self.assertFalse(valid)
             self.assertIn("resultCode in {1, 2, 3}", message)
             log.write_text(
+                f"I/SereaProfileVerifier( 10): api=35 status=COMPLETED "
+                f"resultCode={5 << 16} compiled=false enqueued=false embedded=false marker=absent\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(verify_profile_verifier_evidence(log, 35)[0])
+            log.write_text(
                 "I/SereaProfileVerifier( 10): api=26 status=UNSUPPORTED "
                 "resultCode=262144 embedded=false marker=absent\n",
                 encoding="utf-8",

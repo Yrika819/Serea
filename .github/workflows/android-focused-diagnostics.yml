@@ -1,0 +1,152 @@
+name: Android Focused Emulator Diagnostics (debug only; non-required)
+
+on:
+  push:
+    branches:
+      - codex/android-focused-emulator-diagnostics
+      - codex/pr100-root-cause-diagnostics
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-focused-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused:
+    name: API ${{ matrix.api }} focused instrumentation (debug only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 35
+            arch: x86_64
+            profile: pixel_7
+          - api: 26
+            arch: x86
+            profile: pixel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout PR #100 candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: codex/pr99-ci-recovery
+          path: serea-pr100
+          persist-credentials: false
+
+      - name: Initialize focused evidence
+        run: mkdir -p "root-cause/focused/api${{ matrix.api }}"
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install compile platform and API-specific emulator image
+        run: |
+          set -euo pipefail
+          sdkmanager 'emulator' 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+          sdkmanager "platforms;android-${{ matrix.api }}" \
+            "system-images;android-${{ matrix.api }};google_apis;${{ matrix.arch }}"
+
+      - name: Diagnose and enable hosted-runner KVM
+        run: |
+          set -euo pipefail
+          output="root-cause/focused/api${{ matrix.api }}/kvm-preflight.txt"
+          {
+            echo '### KVM before permission rule'
+            id
+            printf 'groups: '; id -nG
+            ls -l /dev/kvm
+            stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm
+            grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+            lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:' || true
+            if command -v kvm-ok >/dev/null; then sudo kvm-ok; else echo 'kvm-ok unavailable'; fi
+            "$ANDROID_HOME/emulator/emulator" -accel-check
+          } > "$output" 2>&1 || true
+          echo '### KVM after official udev permission rule' >> "$output"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm | tee -a "$output"
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check >> "$output" 2>&1
+
+      - name: Build isolated target and instrumentation once
+        working-directory: serea-pr100/android
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleIsolated :app:assembleIsolatedAndroidTest \
+            2>&1 | tee "$GITHUB_WORKSPACE/root-cause/focused/api${{ matrix.api }}/build.log"
+
+      - name: Record emulator launch start
+        run: |
+          echo "FOCUSED_EMULATOR_LAUNCH_START_EPOCH_MS=$(date +%s%3N)" >> "$GITHUB_ENV"
+          echo "FOCUSED_EMULATOR_LAUNCH_START_UTC=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_ENV"
+
+      - name: Boot emulator and run three focused repetitions
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+        timeout-minutes: 55
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: ${{ matrix.arch }}
+          profile: ${{ matrix.profile }}
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash tools/run_android_focused_instrumentation.sh ${{ matrix.api }} 3 serea-pr100
+
+      - name: Upload focused Android evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-focused-api${{ matrix.api }}
+          path: root-cause/focused/api${{ matrix.api }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+  summarize:
+    name: Focused diagnostics summary (debug only)
+    if: always()
+    needs: [focused]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download API evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: android-focused-api*
+          path: focused-results
+          merge-multiple: false
+        continue-on-error: true
+
+      - name: Summarize measurements without changing gate results
+        run: |
+          {
+            echo '## Android focused emulator diagnostics'
+            echo
+            echo 'Debug-only evidence. This job does not replace or satisfy the Android Required Gate.'
+            echo
+            if [ -d focused-results ]; then
+              find focused-results -name campaign-summary.txt -print -exec cat {} \;
+              find focused-results -name manifest.txt -print -exec grep -E '^(api|stage|iteration|status|install_elapsed_ms|seed_elapsed_ms|focused_test_elapsed_ms|log_capture_elapsed_ms)=' {} \; || true
+            else
+              echo 'No API artifacts were available; inspect the API job result.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -4,7 +4,7 @@
 
 - Repository: `Yrika819/Serea`.
 - Provider worktree base: PR #98 fixed HEAD `00e0453f83970a2b7d2bd26ce01462e421f75f46` (base `e0acb0254820c381dd97828824bef86a1db5176c`).
-- PR #99 is a gate-recovery draft based on #98 at `8140bd759e7a01041364ebc443ba452f546d325a`.
+- PR #99 is a gate-recovery draft with head `8140bd759e7a01041364ebc443ba452f546d325a`, based on PR #98's fixed head above.
 - PR #100 is a gate-recovery draft based on #99. Its head moved from `9dbf5df768a2aeef8f68e2da8e60b2556f310952` to `497f06fbc604a527c870960092d59176d81e39ae` during this review; the latest inspected head is `497f06f`.
 - This work changes Provider Domain, Adapter, Authorization, Session, Egress tests, and this report. It does not modify PR #98/#99/#100, Android UI, Calendar instrumentation, CI harnesses, or native lifecycle code.
 - No real Google account, Calendar, Gmail, Cloud AI, OAuth credential, or owner-managed Google/Firebase setting was used.

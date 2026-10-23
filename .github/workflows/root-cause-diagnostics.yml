@@ -1,0 +1,115 @@
+name: PR 100 Root Cause Diagnostics (non-required)
+
+on:
+  push:
+    branches: [codex/pr100-root-cause-diagnostics]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr100-root-cause-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    name: Android API ${{ matrix.api }} isolated diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 35
+            arch: x86_64
+            profile: pixel_7
+          - api: 26
+            arch: x86
+            profile: pixel_2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install API-specific emulator image
+        run: |
+          set -euo pipefail
+          sdkmanager 'emulator' "platforms;android-${{ matrix.api }}"
+          if [ '${{ matrix.api }}' = '35' ]; then
+            sdkmanager 'build-tools;35.0.0' 'system-images;android-35;google_apis;x86_64'
+          else
+            sdkmanager 'system-images;android-26;google_apis;x86'
+          fi
+
+      - name: Run baseline and instrumented focused/full-suite comparisons
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+        timeout-minutes: 250
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: ${{ matrix.arch }}
+          profile: ${{ matrix.profile }}
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          script: bash tools/run_android_root_cause_diagnostics.sh ${{ matrix.api }}
+
+      - name: Upload Android root-cause evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr100-root-cause-android-api${{ matrix.api }}
+          path: root-cause/android/api${{ matrix.api }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+  native:
+    name: Native ${{ matrix.platform }} focused diagnostics
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS ARM64 Rust 1.85
+            runner: macos-15
+            toolchain: '1.85.0'
+            test: long_running_host_is_single_instance_and_restarts_from_durable_schema
+          - platform: Windows x64 Stable
+            runner: windows-2025
+            toolchain: stable
+            test: actual_host_model_policy_and_accounting_scenarios_survive_database_reopen
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install exact diagnostic Rust toolchain
+        shell: bash
+        run: rustup toolchain install '${{ matrix.toolchain }}' --profile minimal
+
+      - name: Run repeated focused test and the host_lifecycle integration suite
+        shell: bash
+        run: bash tools/run_native_root_cause_diagnostics.sh '${{ matrix.toolchain }}' '${{ matrix.test }}' '${{ matrix.platform }}'
+
+      - name: Upload native root-cause evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr100-root-cause-native-${{ matrix.runner }}-${{ matrix.toolchain }}
+          path: root-cause/native/
+          if-no-files-found: warn
+          retention-days: 30
+

@@ -18,6 +18,185 @@ fn monotonic_now() -> Instant {
     Instant::now()
 }
 
+#[allow(clippy::disallowed_methods)]
+fn current_epoch_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
+}
+
+fn observe_host_lock_and_durable_lease(directory: &Path, stage: &str, started: Instant) {
+    use fs2::FileExt;
+    use std::fs::OpenOptions;
+
+    let lock_path = directory.join("host.lock");
+    let os_lock = match OpenOptions::new().read(true).write(true).open(&lock_path) {
+        Ok(file) => match FileExt::try_lock_exclusive(&file) {
+            Ok(()) => {
+                let _ = FileExt::unlock(&file);
+                "available".to_owned()
+            }
+            Err(error) => format!("held_or_error:{error}"),
+        },
+        Err(error) => format!("unavailable:{error}"),
+    };
+    let database = directory.join("core.sqlite");
+    let query = "SELECT s.task_id || char(9) || s.step_id || char(9) || s.status || char(9) || l.owner || char(9) || l.generation || char(9) || l.acquired_at_ms || char(9) || l.expires_at_ms || char(9) || COALESCE(l.released_at_ms,'NULL') FROM leases l JOIN task_steps s ON s.step_id=l.step_id ORDER BY s.step_id;";
+    let durable = Command::new("sqlite3")
+        .args(["-readonly", "-separator", "\t"])
+        .arg(&database)
+        .arg(query)
+        .output();
+    match durable {
+        Ok(output) => println!(
+            "SEREA_ROOT_CAUSE_HOST|stage={stage}|pid={}|elapsed_ms={}|epoch_ms={}|os_lock={os_lock}|db_exit={:?}|leases_stdout={:?}|leases_stderr={:?}",
+            std::process::id(),
+            started.elapsed().as_millis(),
+            current_epoch_ms(),
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ),
+        Err(error) => println!(
+            "SEREA_ROOT_CAUSE_HOST|stage={stage}|pid={}|elapsed_ms={}|epoch_ms={}|os_lock={os_lock}|sqlite3_spawn_error={error}",
+            std::process::id(),
+            started.elapsed().as_millis(),
+            current_epoch_ms(),
+        ),
+    }
+}
+
+enum DiagnosticChildOutput {
+    Chunk(&'static str, Vec<u8>),
+}
+
+fn forward_diagnostic_child_stream<R: Read + Send + 'static>(
+    stream_name: &'static str,
+    stream: R,
+    sender: mpsc::Sender<DiagnosticChildOutput>,
+) {
+    let mut reader = BufReader::new(stream);
+    loop {
+        let mut line = Vec::new();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) => return,
+            Ok(_) => {
+                if sender
+                    .send(DiagnosticChildOutput::Chunk(stream_name, line))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(DiagnosticChildOutput::Chunk(
+                    stream_name,
+                    format!("<reader error: {error}>\n").into_bytes(),
+                ));
+                return;
+            }
+        }
+    }
+}
+
+fn run_diagnostic_child(
+    command: &mut Command,
+    scenario: &str,
+) -> io::Result<(std::process::Output, Duration, bool)> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let started = monotonic_now();
+    let mut child = command.spawn()?;
+    println!(
+        "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=child_spawned|pid={}|epoch_ms={}|elapsed_ms=0",
+        child.id(),
+        current_epoch_ms(),
+    );
+    let stdout = child.stdout.take().expect("captured child stdout");
+    let stderr = child.stderr.take().expect("captured child stderr");
+    let (sender, receiver) = mpsc::channel();
+    let stdout_thread = {
+        let sender = sender.clone();
+        thread::spawn(move || forward_diagnostic_child_stream("stdout", stdout, sender))
+    };
+    let stderr_thread =
+        thread::spawn(move || forward_diagnostic_child_stream("stderr", stderr, sender));
+    let deadline = started + Duration::from_secs(30);
+    let mut next_progress = started + Duration::from_secs(1);
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
+    let mut forced_timeout = false;
+    loop {
+        while let Ok(DiagnosticChildOutput::Chunk(stream, bytes)) = receiver.try_recv() {
+            let destination = if stream == "stdout" {
+                &mut stdout_bytes
+            } else {
+                &mut stderr_bytes
+            };
+            destination.extend_from_slice(&bytes);
+            println!(
+                "SEREA_ROOT_CAUSE_MODEL_CHILD|scenario={scenario}|stream={stream}|line={:?}",
+                String::from_utf8_lossy(&bytes).trim_end(),
+            );
+        }
+        if let Some(status) = child.try_wait()? {
+            println!(
+                "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=child_exit_observed|pid={}|status={status:?}|exit_code={:?}|elapsed_ms={}",
+                child.id(),
+                status.code(),
+                started.elapsed().as_millis(),
+            );
+            break;
+        }
+        if monotonic_now() >= deadline {
+            forced_timeout = true;
+            println!(
+                "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=diagnostic_watchdog_kill|pid={}|elapsed_ms={}",
+                child.id(),
+                started.elapsed().as_millis(),
+            );
+            let _ = child.kill();
+            break;
+        }
+        if monotonic_now() >= next_progress {
+            println!(
+                "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=child_running|pid={}|elapsed_ms={}|stdout_bytes={}|stderr_bytes={}",
+                child.id(),
+                started.elapsed().as_millis(),
+                stdout_bytes.len(),
+                stderr_bytes.len(),
+            );
+            next_progress += Duration::from_secs(1);
+        }
+        thread::park_timeout(Duration::from_millis(25));
+    }
+    let status = child.wait()?;
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
+    while let Ok(DiagnosticChildOutput::Chunk(stream, bytes)) = receiver.try_recv() {
+        let destination = if stream == "stdout" {
+            &mut stdout_bytes
+        } else {
+            &mut stderr_bytes
+        };
+        destination.extend_from_slice(&bytes);
+        println!(
+            "SEREA_ROOT_CAUSE_MODEL_CHILD|scenario={scenario}|stream={stream}|line={:?}",
+            String::from_utf8_lossy(&bytes).trim_end(),
+        );
+    }
+    let elapsed = started.elapsed();
+    Ok((
+        std::process::Output {
+            status,
+            stdout: stdout_bytes,
+            stderr: stderr_bytes,
+        },
+        elapsed,
+        forced_timeout,
+    ))
+}
+
 fn configure_ready_marker(command: &mut Command, directory: &Path) {
     let marker = directory.join("host.ready");
     match std::fs::remove_file(&marker) {
@@ -445,9 +624,12 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
         NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&directory).expect("create disposable data directory");
+    let diagnostic_started = monotonic_now();
+    observe_host_lock_and_durable_lease(&directory, "directory-created", diagnostic_started);
 
     let mut first = start(&directory);
     let first_stdout = wait_ready(&mut first, &directory);
+    observe_host_lock_and_durable_lease(&directory, "first-host-ready", diagnostic_started);
     let second = Command::new(env!("CARGO_BIN_EXE_serea-host"))
         .args(["run", "--synthetic", "--data-dir"])
         .arg(&directory)
@@ -458,15 +640,33 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
     assert!(!second.success());
     stop(&directory, first, first_stdout);
     assert!(directory.join("host.lock").exists());
+    observe_host_lock_and_durable_lease(&directory, "first-host-stopped", diagnostic_started);
 
     let mut crashed_run = start(&directory);
     let _crashed_stdout = wait_ready(&mut crashed_run, &directory);
+    observe_host_lock_and_durable_lease(&directory, "crashed-host-before-kill", diagnostic_started);
     crashed_run.kill().expect("terminate host process");
-    assert!(!crashed_run.wait().expect("reap terminated host").success());
+    let crashed_status = crashed_run.wait().expect("reap terminated host");
+    println!(
+        "SEREA_ROOT_CAUSE_HOST|stage=crashed-host-exit-confirmed|pid={}|status={crashed_status:?}|exit_code={:?}|elapsed_ms={}",
+        crashed_run.id(),
+        crashed_status.code(),
+        diagnostic_started.elapsed().as_millis(),
+    );
+    assert!(!crashed_status.success());
+    observe_host_lock_and_durable_lease(&directory, "crashed-host-after-exit", diagnostic_started);
 
-    let mut recovered_run = start(&directory);
-    let recovered_stdout = wait_ready(&mut recovered_run, &directory);
-    stop(&directory, recovered_run, recovered_stdout);
+    observe_host_lock_and_durable_lease(&directory, "restart-before-launch", diagnostic_started);
+    let restart_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut recovered_run = start(&directory);
+        let recovered_stdout = wait_ready(&mut recovered_run, &directory);
+        observe_host_lock_and_durable_lease(&directory, "restart-ready", diagnostic_started);
+        stop(&directory, recovered_run, recovered_stdout);
+    }));
+    observe_host_lock_and_durable_lease(&directory, "restart-attempt-finished", diagnostic_started);
+    if let Err(panic) = restart_result {
+        std::panic::resume_unwind(panic);
+    }
     assert!(directory.join("core.sqlite").exists());
     std::fs::remove_dir_all(&directory).expect("clean disposable data directory");
 }
@@ -714,15 +914,46 @@ fn actual_host_model_policy_and_accounting_scenarios_survive_database_reopen() {
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&directory).expect("create disposable scenario directory");
-        let output = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_serea-host"));
+        command
             .args(["model-smoke", "--synthetic", "--data-dir"])
             .arg(&directory)
             .args(["--scenario", scenario])
-            .output()
+            .env("SEREA_ROOT_CAUSE_TRACE", "1");
+        println!(
+            "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=launch_requested|epoch_ms={}|args={:?}",
+            current_epoch_ms(),
+            [
+                "model-smoke",
+                "--synthetic",
+                "--data-dir",
+                "<disposable-directory>",
+                "--scenario",
+                scenario
+            ],
+        );
+        let (output, elapsed, forced_timeout) = run_diagnostic_child(&mut command, scenario)
             .expect("run compiled synthetic Host scenario");
+        println!(
+            "SEREA_ROOT_CAUSE_MODEL_RESULT|scenario={scenario}|exit_code={:?}|status={:?}|elapsed_ms={}|termination={}|stdout={:?}|stderr={:?}",
+            output.status.code(),
+            output.status,
+            elapsed.as_millis(),
+            if forced_timeout {
+                "diagnostic_watchdog_kill"
+            } else {
+                "child_exit"
+            },
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
         assert!(
-            output.status.success(),
-            "Host {scenario} scenario failed: stdout={} stderr={}",
+            output.status.success() && !forced_timeout,
+            "Host {scenario} scenario failed: exit_code={:?} status={:?} elapsed_ms={} forced_timeout={} stdout={} stderr={}",
+            output.status.code(),
+            output.status,
+            elapsed.as_millis(),
+            forced_timeout,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );

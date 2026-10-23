@@ -51,6 +51,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import android.util.Log
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -1014,6 +1015,12 @@ internal fun ChatScreen(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val composerModifier = Modifier.weight(1f).testTag("chat-composer")
                     key(focusClearRequest) {
+                        DisposableEffect(Unit) {
+                            Log.i("SereaRootCauseFocusOrder", "COMPOSER_GENERATION_CREATE|settingsDestination=$settingsDestination|focusClearRequest=$focusClearRequest|viewModel=${System.identityHashCode(chatViewModel)}")
+                            onDispose {
+                                Log.i("SereaRootCauseFocusOrder", "COMPOSER_GENERATION_DISPOSE|settingsDestination=$settingsDestination|focusClearRequest=$focusClearRequest|viewModel=${System.identityHashCode(chatViewModel)}")
+                            }
+                        }
                         OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
                             modifier = composerModifier, label = { Text("メッセージ") },
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,

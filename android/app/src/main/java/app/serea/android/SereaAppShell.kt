@@ -29,6 +29,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.util.Log
 import app.serea.android.assistant.taskproposal.TaskProposalDemoScreen
 import app.serea.android.calendar.FakeCalendarProvider
 import app.serea.android.calendar.ui.CalendarAgendaScreen
@@ -38,6 +39,8 @@ import app.serea.android.gmail.ui.GmailViewModel
 import app.serea.android.tasks.TaskScreen
 import app.serea.android.tasks.TaskViewModel
 import java.time.ZoneId
+
+private const val ROOT_CAUSE_FOCUS_ORDER_TAG = "SereaRootCauseFocusOrder"
 
 @Composable
 internal fun SereaAppShell(
@@ -72,20 +75,26 @@ internal fun SereaAppShell(
     val navigationColumns = 3
 
     fun navigate(target: SereaDestination) {
+        Log.i(ROOT_CAUSE_FOCUS_ORDER_TAG, "NAVIGATE_BEGIN|from=$destinationName|to=${target.name}|focusClearRequest=$focusClearRequest")
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
         focusClearRequest += 1
+        Log.i(ROOT_CAUSE_FOCUS_ORDER_TAG, "NAVIGATE_FOCUS_CLEARED|to=${target.name}|focusClearRequest=$focusClearRequest")
         val state = SereaNavigationState.restore(destinationName, backStackNames).navigate(target)
         destinationName = state.current.name
         backStackNames = state.backStack.takeLast(SereaNavigationState.MAX_BACK_STACK).map { it.name }
+        Log.i(ROOT_CAUSE_FOCUS_ORDER_TAG, "NAVIGATE_STATE_SET|destination=$destinationName|backStack=${backStackNames.joinToString()}|focusClearRequest=$focusClearRequest")
     }
     fun goBack() {
+        Log.i(ROOT_CAUSE_FOCUS_ORDER_TAG, "BACK_BEGIN|destination=$destinationName|focusClearRequest=$focusClearRequest")
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
         focusClearRequest += 1
+        Log.i(ROOT_CAUSE_FOCUS_ORDER_TAG, "BACK_FOCUS_CLEARED|destination=$destinationName|focusClearRequest=$focusClearRequest")
         val state = SereaNavigationState.restore(destinationName, backStackNames).back()
         destinationName = state.current.name
         backStackNames = state.backStack.map { it.name }
+        Log.i(ROOT_CAUSE_FOCUS_ORDER_TAG, "BACK_STATE_SET|destination=$destinationName|backStack=${backStackNames.joinToString()}|focusClearRequest=$focusClearRequest")
     }
 
     BackHandler(enabled = taskProposalActionPending || canGoBack) {
@@ -143,6 +152,12 @@ internal fun SereaAppShell(
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 saveableStateHolder.SaveableStateProvider(destination.name) {
+                    androidx.compose.runtime.DisposableEffect(destination, focusClearRequest) {
+                        Log.i(ROOT_CAUSE_FOCUS_ORDER_TAG, "SAVEABLE_PROVIDER_ENTER|destination=${destination.name}|focusClearRequest=$focusClearRequest")
+                        onDispose {
+                            Log.i(ROOT_CAUSE_FOCUS_ORDER_TAG, "SAVEABLE_PROVIDER_EXIT|destination=${destination.name}|focusClearRequest=$focusClearRequest")
+                        }
+                    }
                     when (destination) {
                         SereaDestination.CHAT -> ChatScreen(
                             chatViewModel = chatViewModel,

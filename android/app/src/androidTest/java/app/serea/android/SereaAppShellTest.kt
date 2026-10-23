@@ -29,6 +29,9 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextInputSelection
+import androidx.compose.ui.test.assertHasSetTextAction
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
@@ -1136,7 +1139,10 @@ class SereaAppShellTest {
     }
 
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
-        compose.onNodeWithTag("chat-composer").performTextInput("draft survives navigation")
+        val composer = compose.onNodeWithTag("chat-composer")
+        composer.assertHasSetTextAction()
+        composer.performTextInput("draft survives navigation")
+        composer.performTextInputSelection(TextRange(6, 6))
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
@@ -1161,14 +1167,20 @@ class SereaAppShellTest {
         }.isSuccess
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
+        compose.waitForIdle()
+        composer.assertHasSetTextAction()
+        composer.performTextInput("!")
+        assertEquals("draft! survives navigation", compose.activity.chatViewModel.state.value.input)
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
         pressBack()
-        compose.onNodeWithTag("chat-composer").assertIsDisplayed()
-        compose.onNodeWithTag("chat-composer").assertTextContains("draft survives navigation")
+        composer.assertIsDisplayed().assertHasSetTextAction()
+        composer.assertTextContains("draft! survives navigation")
+        composer.performTextInput("?")
+        assertEquals("draft!? survives navigation", compose.activity.chatViewModel.state.value.input)
     }
 
     @Test fun navigationDestinationsRemainSemanticallyAvailable() {

@@ -14,6 +14,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -81,6 +82,13 @@ internal fun SereaAppShell(
         val state = SereaNavigationState.restore(destinationName, backStackNames).back()
         destinationName = state.current.name
         backStackNames = state.backStack.map { it.name }
+    }
+
+    // SaveableStateHolder can restore a previously focused TextField when a destination
+    // returns to the composition. Clear that restored focus after the destination switch.
+    LaunchedEffect(destination) {
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
     }
 
     BackHandler(enabled = taskProposalActionPending || canGoBack) {

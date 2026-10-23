@@ -50,6 +50,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalContext
@@ -64,6 +65,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -740,6 +743,15 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
+    var composerValue by rememberSaveable(state.conversation.id, saver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(state.input))
+    }
+    LaunchedEffect(state.input) {
+        if (composerValue.text != state.input) {
+            val cursor = composerValue.selection.start.coerceIn(0, state.input.length)
+            composerValue = TextFieldValue(state.input, TextRange(cursor))
+        }
+    }
     var composerFocusAllowed by remember(focusClearRequest) {
         mutableStateOf(focusClearRequest == 0)
     }
@@ -1031,12 +1043,18 @@ internal fun ChatScreen(
                     val composerModifier = Modifier.weight(1f)
                         .focusProperties { canFocus = composerFocusAllowed }
                         .testTag("chat-composer")
-                    OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
-                        modifier = composerModifier, label = { Text("メッセージ") },
-                        enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
-                        maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                        supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                    key(focusClearRequest) {
+                        OutlinedTextField(value = composerValue,
+                            onValueChange = { value ->
+                                composerValue = value
+                                chatViewModel.updateInput(value.text)
+                            },
+                            modifier = composerModifier, label = { Text("メッセージ") },
+                            enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
+                            maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
+                            supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                    }
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                         enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,

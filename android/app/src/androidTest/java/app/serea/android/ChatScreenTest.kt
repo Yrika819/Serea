@@ -205,14 +205,20 @@ class ChatScreenTest {
         awaitComposerEnabled()
         compose.onNodeWithText("新しい会話").performClick()
         awaitComposerEnabled()
-        val compactChat = compose.activity.resources.configuration.fontScale >= 1.5f ||
-            compose.activity.resources.configuration.screenWidthDp < 340
-        assertDisplayedWithEvidence("chat-demo-label") {
-            compose.onNodeWithText(
-                if (compactChat) "DEMO · Cloud送信: 無効" else "DEMO · Mock会話 · クラウドAI未接続",
-                substring = false,
-            ).assertIsDisplayed()
-        }
+        val demoLabelSettled = runCatching {
+            compose.waitUntil(5_000) {
+                val compactChat = compose.activity.resources.configuration.fontScale >= 1.5f ||
+                    compose.activity.resources.configuration.screenWidthDp < 340
+                runCatching {
+                    compose.onNodeWithText(
+                        if (compactChat) "DEMO · Cloud送信: 無効" else "DEMO · Mock会話 · クラウドAI未接続",
+                        substring = false,
+                    ).assertIsDisplayed()
+                }.isSuccess
+            }
+        }.isSuccess
+        if (!demoLabelSettled) compose.onRoot(useUnmergedTree = true).printToLog("chat-demo-label")
+        assertTrue("The correct responsive demo label must become visible.", demoLabelSettled)
         send("hello")
         awaitResponse("Demo response: I received “hello”.")
         val sentIndex = stateSnapshot().conversation.messages.indexOfFirst {

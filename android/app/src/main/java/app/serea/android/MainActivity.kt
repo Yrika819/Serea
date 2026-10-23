@@ -51,6 +51,8 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
@@ -666,10 +668,12 @@ internal fun ChatScreen(
     onOpenSettings: (() -> Unit)? = null,
     settingsDestination: Boolean = false,
     onSettingsClosed: (() -> Unit)? = null,
+    focusClearRequest: Int = 0,
 ) {
     val state by chatViewModel.state.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val composerFocusRequester = remember { FocusRequester() }
     val context = LocalContext.current
     val hostActivity = remember(context) {
         var current: android.content.Context? = context
@@ -688,6 +692,16 @@ internal fun ChatScreen(
     var dailyTokensText by remember { mutableStateOf("10000") }
     var monthlyRequestsText by remember { mutableStateOf("100") }
     var monthlyTokensText by remember { mutableStateOf("50000") }
+
+    LaunchedEffect(focusClearRequest, settingsDestination) {
+        if (focusClearRequest > 0 && !settingsDestination) {
+            // SaveableStateHolder can restore the composer focus target after navigation.
+            // Wait for that target to reattach, then release this exact field.
+            withFrameNanos { }
+            composerFocusRequester.freeFocus()
+            focusManager.clearFocus(force = true)
+        }
+    }
     var usageSnapshot by remember { mutableStateOf<UsageSnapshot?>(null) }
     val modelSettings = remember(context) { ModelSelectionSettings(context.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE)) }
     val modelRouter = remember { AdaptiveModelRouter(LocalModelCatalog()) }
@@ -1010,7 +1024,8 @@ internal fun ChatScreen(
             if (!settingsDestination) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
-                        modifier = Modifier.weight(1f).testTag("chat-composer"), label = { Text("メッセージ") },
+                        modifier = Modifier.weight(1f).focusRequester(composerFocusRequester)
+                            .testTag("chat-composer"), label = { Text("メッセージ") },
                         enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                         maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),

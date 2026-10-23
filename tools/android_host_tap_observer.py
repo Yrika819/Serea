@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 REQUEST = re.compile(r"HOST_INPUT_REQUEST\|id=(\d+)\|x=(-?\d+)\|y=(-?\d+)")
-RESTORE = re.compile(r"RESTORE_STATE\|stage=([^|]+)")
+HOST_DUMPSYS_REQUEST = re.compile(r"HOST_DUMPSYS_REQUEST\|id=(\d+)\|stage=([^|]+)")
 PACKAGE = "app.serea.android.isolated"
 DEVICE_DIRECTORY = f"/sdcard/Android/data/{PACKAGE}/files/root-cause"
 FULL_DUMPSYS_STAGES = {"focused-before-1", "chat-screen-class", "app-shell-class", "full-suite", "focused-after-1"}
@@ -140,6 +140,39 @@ def inject_tap(output_dir: Path, event_log, request_id: str, x: int, y: int, sta
     print(json.dumps(result, ensure_ascii=False), flush=True)
 
 
+def capture_synchronized_request(output_dir: Path, event_log, request_id: str, stage_name: str, stage: str) -> None:
+    capture_snapshot(output_dir, request_id, "synchronized-request", stage)
+    result = {
+        "request_id": request_id,
+        "stage_name": stage_name,
+        "stage": stage,
+        "captured_at_epoch_ms": round(time.time() * 1000),
+        "window_snapshot": f"dumpsys-window-{request_id}-synchronized-request.txt",
+    }
+    response = output_dir / f"device-dumpsys-result-{request_id}.txt"
+    response.write_text(json.dumps(result, ensure_ascii=False) + "\n", encoding="utf-8")
+    subprocess.run(
+        ["adb", "shell", "mkdir", "-p", DEVICE_DIRECTORY],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    push = subprocess.run(
+        ["adb", "push", str(response), f"{DEVICE_DIRECTORY}/dumpsys-result-{request_id}.txt"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    result["response_push_exit_code"] = push.returncode
+    result["response_push_stdout"] = push.stdout
+    result["response_push_stderr"] = push.stderr
+    event_log.write(json.dumps(result, ensure_ascii=False) + "\n")
+    event_log.flush()
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+
+
 def main() -> int:
     if len(sys.argv) not in (2, 3):
         print("usage: android_host_tap_observer.py OUTPUT_DIR [--inject-system-taps]", file=sys.stderr)
@@ -158,20 +191,13 @@ def main() -> int:
     )
     assert process.stdout is not None
     seen: set[str] = set()
-    event_number = 0
     stage = Path(output_dir).name
     try:
         for line in process.stdout:
-            restore_match = RESTORE.search(line)
-            if restore_match is not None:
-                event_number += 1
-                event_id = f"restore-{event_number}"
-                event_stage = restore_match.group(1)
-                capture_snapshot(output_dir, event_id, "restore-state", stage)
-                print(
-                    json.dumps({"event_id": event_id, "stage": event_stage, "type": "restore-window-snapshot"}),
-                    flush=True,
-                )
+            host_request = HOST_DUMPSYS_REQUEST.search(line)
+            if host_request is not None:
+                request_id, stage_name = host_request.groups()
+                capture_synchronized_request(output_dir, event_log, request_id, stage_name, stage)
                 continue
 
             match = REQUEST.search(line)

@@ -222,6 +222,7 @@ class SereaAppShellTest {
         }
         val evidence = "RESTORE_STATE|stage=$stage|mergedCount=${merged.size}|unmergedCount=${unmerged.size}|nodes=$nodes|$activityDetails"
         Log.i("SereaRootCauseFocusOrder", evidence)
+        awaitHostWindowSnapshot(stage)
         val directory = java.io.File(
             InstrumentationRegistry.getInstrumentation().targetContext.filesDir,
             "root-cause/android-draft",
@@ -237,6 +238,22 @@ class SereaAppShellTest {
                 Log.i("SereaRootCauseRaw", "SAVED|stage=$stage|service=$service|bytes=${raw.toByteArray().size}")
             }
         }
+    }
+
+    private fun awaitHostWindowSnapshot(stage: String) {
+        if (InstrumentationRegistry.getArguments().getString("rootCauseHostDiagnostics") != "true") return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = requireNotNull(context.getExternalFilesDir("root-cause"))
+        directory.mkdirs()
+        val requestId = System.nanoTime().toString()
+        val response = java.io.File(directory, "dumpsys-result-$requestId.txt")
+        Log.i("SereaRootCauseFocusOrder", "HOST_DUMPSYS_REQUEST|id=$requestId|stage=$stage")
+        val deadline = android.os.SystemClock.uptimeMillis() + 15_000
+        while (!response.isFile && android.os.SystemClock.uptimeMillis() < deadline) {
+            android.os.SystemClock.sleep(25)
+        }
+        val result = if (response.isFile) response.readText().trim().replace('\n', ' ') else "HOST_RESULT_TIMEOUT"
+        Log.i("SereaRootCauseFocusOrder", "HOST_DUMPSYS_RESULT|id=$requestId|stage=$stage|result=$result")
     }
 
     private fun calendarStage(name: String, outcome: String) {

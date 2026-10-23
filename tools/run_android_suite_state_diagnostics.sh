@@ -121,6 +121,7 @@ run_stage() {
   if [[ -n "$test_filter" ]]; then
     gradle_args+=("-Pandroid.testInstrumentationRunnerArguments.class=$test_filter")
   fi
+  gradle_args+=(-Pandroid.testInstrumentationRunnerArguments.rootCauseHostDiagnostics=true)
   local observer_args=()
   if [[ "$api_level" == 35 ]]; then
     gradle_args+=(-Pandroid.testInstrumentationRunnerArguments.rootCauseHostInput=true)

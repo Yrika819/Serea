@@ -33,11 +33,11 @@
 Focused unit tests passed on the provider branch for:
 
 - `GoogleAuthorizationTest`
-- `CalendarProviderSessionsTest` and `GoogleCalendarHttpReadPortTest`
+- `CalendarProviderSessionsTest`, `GoogleCalendarHttpReadPortTest`, and `CalendarDomainParserTest` (including recurrence exceptions and timezone handling)
 - `GmailProviderSessionsTest`, `GmailHttpReadPortTest`, and `GmailSecurityPortsTest` (Gmail domain, MIME, read-only boundary, and safe handling)
 - `OllamaCloudAdapterTest` and `SecurityPortsTest`
 
-Result: **106 tests, 0 failures, 0 errors, 0 skips** across the eight suites above. `:app:lintDebug` and `git diff --check` also passed. Existing Android instrumentation `UsageLedgerDatabaseTest` exercises Fake-provider reservation/settlement, cancellation to `OUTCOME_UNKNOWN`, duplicate-send rejection, and database reopen recovery; it was not run in this provider-only local validation. That reopen test is not a real OS process-death test. Real OAuth, real Google API, real Cloud AI, device authorization, and Android instrumentation remain **NOT RUN**. PR #100 owns the Calendar instrumentation and Android lifecycle gates; this report does not change or replace those gates.
+Result: **115 tests, 0 failures, 0 errors, 0 skips** across the nine suites above, run in two filtered Gradle invocations. `:app:lintDebug` and `git diff --check` also passed. Existing Android instrumentation `UsageLedgerDatabaseTest` exercises Fake-provider reservation/settlement, cancellation to `OUTCOME_UNKNOWN`, duplicate-send rejection, and database reopen recovery; it was not run in this provider-only local validation. That reopen test is not a real OS process-death test. Real OAuth, real Google API, real Cloud AI, device authorization, and Android instrumentation remain **NOT RUN**. PR #100 owns the Calendar instrumentation and Android lifecycle gates; this report does not change or replace those gates.
 
 At the latest CI status check, PR #100's exact head `497f06f` still had Full CI and Native platform validation in progress, with Cross-architecture SQLite and Android Required Gate queued. Provider PR creation is deferred until this campaign completes so its workflows do not compete with those required checks.
 

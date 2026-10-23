@@ -1,6 +1,7 @@
 package app.serea.android.gmail.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -166,7 +167,8 @@ private fun GmailListContent(
             )
             Button(
                 onClick = { submitSearch() },
-                modifier = Modifier.focusRequester(searchSubmitFocusRequester).testTag("gmail_search_submit"),
+                modifier = Modifier.focusRequester(searchSubmitFocusRequester).focusable()
+                    .testTag("gmail_search_submit"),
             ) { Text("検索") }
         }
         if (route.mode == GmailListMode.SEARCH) {

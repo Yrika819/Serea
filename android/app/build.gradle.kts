@@ -22,6 +22,7 @@ val betaSigningInputsReady = listOf(
 ).all { !it.isNullOrBlank() }
 val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidationHarness").orNull == "true"
 val updateCompatibilityTest = providers.gradleProperty("sereaUpdateCompatibilityTest").orNull == "true"
+val updateTestVersionCode = providers.gradleProperty("sereaVersionCode").orNull?.toIntOrNull()
 val updateTestStorePath = providers.environmentVariable("SEREA_UPDATE_TEST_KEYSTORE_PATH").orNull
 val updateTestStorePassword = providers.environmentVariable("SEREA_UPDATE_TEST_STORE_PASSWORD").orNull
 val updateTestKeyAlias = providers.environmentVariable("SEREA_UPDATE_TEST_KEY_ALIAS").orNull
@@ -33,6 +34,9 @@ val updateTestSigningInputsReady = listOf(
 if (updateCompatibilityTest && !updateTestSigningInputsReady) {
     error("The isolated update compatibility variant requires its disposable test keystore inputs.")
 }
+if (updateCompatibilityTest && (updateTestVersionCode == null || updateTestVersionCode <= 0)) {
+    error("The isolated update compatibility variant requires a positive -PsereaVersionCode.")
+}
 
 android {
     namespace = "app.serea.android"
@@ -43,7 +47,7 @@ android {
         applicationId = "app.serea.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = updateTestVersionCode ?: 1
         versionName = "0.1.0-demo"
         testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
     }

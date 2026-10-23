@@ -356,6 +356,13 @@ class SereaAppShellTest {
                 break
             }
         }
+        // The final Touch can expose the target at the same time it reaches canScrollForward=false.
+        // Re-read the Text Semantics and its clipped bounds after that layout before declaring the
+        // finite gesture search exhausted.
+        if (isCalendarTargetTextFullyVisible(list, text)) {
+            logVisibleCalendarItemBounds(tag, text)
+            return
+        }
         if (targetIndex != null) {
             list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
                 scrollToIndex(targetIndex)
@@ -374,6 +381,47 @@ class SereaAppShellTest {
                 return
             }
             stopReason = "finite Touch search ended; ScrollToIndex did not fully expose target Text"
+        } else if (tag == "calendar_event_detail_list") {
+            // Detail labels are not backed by the agenda event-id map. Enumerate the finite
+            // LazyColumn semantics range until the real unmerged Text node is composed, then use
+            // its ancestor CollectionItemInfo rather than guessing from visible item indices.
+            val itemCount = checkNotNull(last.viewport) {
+                "Calendar detail list must expose its LazyColumn item count."
+            }.totalItems
+            var actualTargetIndex: Int? = null
+            for (requestedIndex in 0 until itemCount) {
+                scrollCalendarToSemanticsIndex(list, requestedIndex)
+                last = snapshotSemantics(list)
+                val discoveredIndex = calendarTextCollectionItemIndex(text) ?: continue
+                actualTargetIndex = discoveredIndex
+                Log.i(
+                    CALENDAR_STAGE_TAG,
+                    "SEMANTICS_TEXT_INDEX_DISCOVERED|tag=$tag|target=$text|requestedIndex=$requestedIndex|" +
+                        "actualItemIndex=$discoveredIndex|viewport=" + last.viewport +
+                        "|scroll=" + last.scrollValue + "/" + last.scrollMax,
+                )
+                scrollCalendarToSemanticsIndex(list, discoveredIndex)
+                last = snapshotSemantics(list)
+                val confirmedIndex = calendarTextCollectionItemIndex(text)
+                assertEquals(
+                    "Calendar detail Text CollectionItemInfo index must remain stable after ScrollToIndex",
+                    discoveredIndex,
+                    confirmedIndex,
+                )
+                if (last.viewport?.visibleItemIndices?.contains(discoveredIndex) == true &&
+                    isCalendarTargetTextFullyVisible(list, text)
+                ) {
+                    logVisibleCalendarItemBounds(tag, text)
+                    return
+                }
+                stopReason = "ScrollToIndex resolved item " + discoveredIndex +
+                    " but target Text bounds were not fully visible"
+                break
+            }
+            if (actualTargetIndex == null) {
+                stopReason = "finite ScrollToIndex scan found no exact Text CollectionItemInfo in 0 until " +
+                    itemCount + "; lastViewport=" + last.viewport
+            }
         }
         throw AssertionError(
             "Calendar target was not displayed after a finite search: target=$text " +
@@ -389,6 +437,7 @@ class SereaAppShellTest {
         // EventCard merges its descendants. Read the unmerged Text node for actual glyph bounds,
         // and the merged card separately for its user-operable click semantics.
         val textSemantics = snapshotSemantics(calendarTargetTextTarget(text))
+        val semanticsItemIndex = calendarTextCollectionItemIndex(text)
         val item = if (tag == "calendar_agenda_list") {
             snapshotSemantics(calendarNodeWithText(text))
         } else {
@@ -413,6 +462,11 @@ class SereaAppShellTest {
             textSemantics.boundsInRoot.bottom <= root.boundsInRoot.bottom + 1f
         if (tag == "calendar_agenda_list") {
             assertTrue("Calendar agenda target must expose its tappable event semantics: $text", item.hasClickAction)
+        } else {
+            assertTrue(
+                "Calendar detail Text must resolve to its actual LazyColumn CollectionItemInfo index: $text",
+                semanticsItemIndex != null,
+            )
         }
         assertTrue(
             "Calendar target text semantics must intersect the clipped visible LazyColumn viewport: " +
@@ -428,6 +482,7 @@ class SereaAppShellTest {
                 "visibleFraction=$visibleFraction",
             textFullyVisible,
         )
+        Log.i(CALENDAR_STAGE_TAG, "TEXT_COLLECTION_ITEM_INDEX|tag=$tag|text=$text|index=$semanticsItemIndex")
         Log.i(
             CALENDAR_STAGE_TAG,
             "VISIBLE_ITEM|tag=$tag|text=$text|textRoot=${textSemantics.boundsInRoot}|" +
@@ -506,6 +561,39 @@ class SereaAppShellTest {
             )
         }
         return displayed
+    }
+
+    /**
+     * Resolves a rendered Text node to its LazyColumn collection item through the actual
+     * unmerged Semantics parent chain. CollectionItemInfo is snapshot backed and read on UI.
+     */
+    private fun calendarTextCollectionItemIndex(text: String): Int? {
+        val matches = calendarTargetTextTarget(text).nodes.fetchSemanticsNodes()
+        if (matches.isEmpty()) return null
+        check(matches.size == 1) {
+            "Expected one exact unmerged Calendar Text semantics node for '" +
+                text + "', found " + matches.size + "."
+        }
+        var itemIndex: Int? = null
+        compose.runOnIdle {
+            var node: androidx.compose.ui.semantics.SemanticsNode? = matches.single()
+            while (node != null) {
+                val item = node.config.getOrElseNullable(SemanticsProperties.CollectionItemInfo) { null }
+                if (item != null) {
+                    itemIndex = item.rowIndex
+                    break
+                }
+                node = node.parent
+            }
+        }
+        return itemIndex
+    }
+
+    private fun scrollCalendarToSemanticsIndex(list: CalendarSemanticsTarget, index: Int) {
+        list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+            scrollToIndex(index)
+        }
+        compose.waitForIdle()
     }
 
     /** Records card visibility separately from its merged and unmerged Text semantics bounds. */

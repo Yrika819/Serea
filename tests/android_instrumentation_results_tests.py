@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from tools.verify_android_instrumentation import (
+    _source_test_count,
+    _source_test_methods,
     collect_class_counts,
     collect_failure_details,
     collect_results,
@@ -246,6 +248,35 @@ class InstrumentationResultTests(unittest.TestCase):
             (root / "a" / "Other.kt").write_text("package a\nclass Other { @Test fun added() {} }\n", encoding="utf-8")
             _, total, _ = collect_source_test_counts(root, {"a.Storage": 2})
             self.assertEqual(3, total)
+
+    def test_kotlin_source_scanner_keeps_multiline_comments_and_literals_separate(self) -> None:
+        source = r'''package a
+val raw = """@Test fun rawStringFake() {} // /* '"""
+val escaped = "escaped quote: \" and @Test fun escapedStringFake() {}"
+// Calendar owner's note has an unmatched apostrophe; it must not swallow later declarations.
+@Test fun swallowedByOldCrossLineQuoteRegex() {}
+val apostrophe = '\''
+/* A nested block comment with @Test fun blockFake() {} and a ' quote.
+   /* nested with \" and another ' quote */
+*/
+@Test fun firstRealTest() {}
+@org.junit.Test fun secondRealTest() {}
+'''
+        self.assertEqual(3, _source_test_count(source))
+        self.assertEqual(
+            {"swallowedByOldCrossLineQuoteRegex", "firstRealTest", "secondRealTest"},
+            _source_test_methods(source),
+        )
+
+    def test_real_serea_app_shell_source_has_all_nineteen_instrumentation_tests(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt"
+        ).read_text(encoding="utf-8")
+        methods = _source_test_methods(source)
+        self.assertEqual(19, _source_test_count(source))
+        self.assertEqual(19, len(methods))
+        self.assertIn("calendarDetailAndSelectedCalendarSurviveAnotherDestination", methods)
 
 
 if __name__ == "__main__":

@@ -122,22 +122,100 @@ def collect_class_counts(directory: Path) -> dict[str, int]:
     return counts
 
 
+def _mask_kotlin_comments_and_literals(source: str) -> str:
+    """Blank Kotlin comments and literals without crossing token boundaries."""
+    masked = list(source)
+    length = len(source)
+
+    def blank(start: int, end: int) -> None:
+        for position in range(start, end):
+            if source[position] not in "\r\n":
+                masked[position] = " "
+
+    index = 0
+    while index < length:
+        if source.startswith("//", index):
+            end = index + 2
+            while end < length and source[end] not in "\r\n":
+                end += 1
+            blank(index, end)
+            index = end
+            continue
+
+        if source.startswith("/*", index):
+            start = index
+            index += 2
+            depth = 1
+            while index < length and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            blank(start, index)
+            continue
+
+        if source.startswith('"""', index):
+            start = index
+            end = source.find('"""', index + 3)
+            index = length if end < 0 else end + 3
+            blank(start, index)
+            continue
+
+        if source[index] == '"':
+            start = index
+            index += 1
+            while index < length:
+                if source[index] == "\\":
+                    index = min(index + 2, length)
+                elif source[index] == '"':
+                    index += 1
+                    break
+                elif source[index] in "\r\n":
+                    # Kotlin regular strings cannot span physical lines. Keep malformed source
+                    # visible to the annotation scan instead of swallowing later declarations.
+                    break
+                else:
+                    index += 1
+            blank(start, index)
+            continue
+
+        if source[index] == "'":
+            # Character literals are one physical line. An unmatched apostrophe is left as code,
+            # so it cannot consume an annotation on a later line.
+            start = index
+            cursor = index + 1
+            while cursor < length and source[cursor] not in "\r\n":
+                if source[cursor] == "\\":
+                    cursor = min(cursor + 2, length)
+                elif source[cursor] == "'":
+                    cursor += 1
+                    blank(start, cursor)
+                    index = cursor
+                    break
+                else:
+                    cursor += 1
+            else:
+                index += 1
+                continue
+            continue
+
+        index += 1
+
+    return "".join(masked)
+
+
 def _source_test_count(source: str) -> int:
     # Ignore comments and literals so examples do not look like executable tests.
-    source = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
-    source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source)
-    source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source)
-    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    source = re.sub(r"//[^\n]*", "", source)
+    source = _mask_kotlin_comments_and_literals(source)
     return len(re.findall(r"@(?:org\.junit\.)?Test\b", source))
 
 
 def _source_test_methods(source: str) -> set[str]:
-    source = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
-    source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source)
-    source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source)
-    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    source = re.sub(r"//[^\n]*", "", source)
+    source = _mask_kotlin_comments_and_literals(source)
     pattern = re.compile(
         r"@(?:org\.junit\.)?Test\b(?:\s*\([^)]*\))?\s*"
         r"(?:(?:public|private|protected|internal|suspend|open|override|final)\s+)*"

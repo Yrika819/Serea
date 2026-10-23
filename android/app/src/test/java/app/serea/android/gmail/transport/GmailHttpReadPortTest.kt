@@ -139,13 +139,15 @@ class GmailHttpReadPortTest {
         val acquisitions = mutableListOf<Pair<GoogleFeature, Set<GoogleScope>>>()
         val gateway = object : GoogleAuthorizationGateway {
             override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "gmail-fixture-session"
             override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
                 GoogleServiceState.AVAILABLE,
                 scopes.associateWith { ScopePermission.GRANTED },
             )
             override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
                 acquisitions += feature to scopes
-                return TokenSupplyResult.Available(AccessTokenLease("fixture-gmail-token", scopes, null))
+                return TokenSupplyResult.Available(AccessTokenLease("fixture-gmail-token", scopes, null,
+                    authorizationSessionId = authorizationSessionId))
             }
         }
         val disabled = GoogleGmailAuthorizationAdapter(gateway)
@@ -166,12 +168,14 @@ class GmailHttpReadPortTest {
 
         val insufficient = GoogleGmailAuthorizationAdapter(object : GoogleAuthorizationGateway {
             override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "gmail-insufficient-session"
             override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
                 GoogleServiceState.AVAILABLE,
                 scopes.associateWith { ScopePermission.GRANTED },
             )
             override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
-                TokenSupplyResult.Available(AccessTokenLease("fixture-wrong-scope-token", emptySet(), null))
+                TokenSupplyResult.Available(AccessTokenLease("fixture-wrong-scope-token", emptySet(), null,
+                    authorizationSessionId = authorizationSessionId))
         }, googleHttpEnabledByOwner = true)
         assertEquals(null, insufficient.accessToken(GMAIL_SCOPE))
         assertEquals(1, server.requestCount)

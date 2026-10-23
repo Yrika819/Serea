@@ -6,6 +6,8 @@ class FakeGoogleAuthorizationGateway(
     private val fixtureToken: String = "fixture-access-token-never-real",
 ) : GoogleAuthorizationGateway {
     override val mode = GoogleAuthorizationMode.MOCK_ONLY
+    override var authorizationSessionId: String = java.util.UUID.randomUUID().toString()
+        private set
     private val grantedScopes = initialScopes.toMutableSet()
     private var service = GoogleServiceState.AVAILABLE
     private var nextFailure: AuthorizationFailure? = null
@@ -22,7 +24,11 @@ class FakeGoogleAuthorizationGateway(
     fun setGooglePlayServices(state: GoogleServiceState) { service = state }
     fun setEnabled(value: Boolean) { enabled = value }
     fun setExpired(value: Boolean) { expired = value }
-    fun switchAccount() { accountChanged = true }
+    fun switchAccount() {
+        accountChanged = true
+        grantedScopes.clear()
+        authorizationSessionId = java.util.UUID.randomUUID().toString()
+    }
 
     override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
         if (!enabled) return TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
@@ -62,9 +68,17 @@ class FakeGoogleAuthorizationGateway(
             val features = GoogleFeature.entries.filter { feature -> scopes.any { it in feature.scopes } }
             if (features.any { it in disabledInApp }) return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
             val versions = features.associateWith { featureVersions.getValue(it) }
-            AuthorizationOutcome.Authorized(AccessTokenLease(fixtureToken, grantedScopes.toSet(), null) {
-                versions.all { (feature, version) -> feature !in disabledInApp && featureVersions[feature] == version }
-            })
+            val sessionId = authorizationSessionId
+            AuthorizationOutcome.Authorized(AccessTokenLease(
+                fixtureToken,
+                grantedScopes.toSet(),
+                null,
+                validityCheck = {
+                    authorizationSessionId == sessionId &&
+                        versions.all { (feature, version) -> feature !in disabledInApp && featureVersions[feature] == version }
+                },
+                authorizationSessionId = sessionId,
+            ))
         }
     }
 
@@ -73,6 +87,7 @@ class FakeGoogleAuthorizationGateway(
             !enabled -> AuthorizationFailure.NOT_CONFIGURED
             service == GoogleServiceState.MISSING -> AuthorizationFailure.SERVICE_MISSING
             service == GoogleServiceState.OUTDATED -> AuthorizationFailure.SERVICE_OUTDATED
+            accountChanged -> AuthorizationFailure.ACCOUNT_CHANGED
             expired -> AuthorizationFailure.EXPIRED
             else -> null
         }

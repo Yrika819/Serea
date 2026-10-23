@@ -108,6 +108,50 @@ class OllamaCloudAdapterTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test fun gmailAndCalendarContextAreDeniedBeforeCredentialReadOrHttpDispatch() = runBlocking {
+        var credentialReads = 0
+        val cloud = OllamaModelChatPort(adapter(reader = object : CredentialReader {
+            override fun readForRequest(): String { credentialReads++; return key }
+        }), { 20_000 })
+        for (origin in listOf(DataOrigin.GMAIL, DataOrigin.CALENDAR)) {
+            val context = listOf(ContextMessage(
+                MessageRole.USER,
+                "provider fixture content",
+                DataClassification.PUBLIC,
+                "provider-source",
+                origin,
+                conversationId = "conversation-provider-test",
+            ))
+            val contract = EgressContract(
+                "conversation-provider-test",
+                "send-provider-test",
+                DataOrigin.USER_AUTHORED,
+                DataClassification.PUBLIC,
+                "https://ollama.com/api/chat",
+                "current user message",
+                context,
+                PayloadPreparation.RAW,
+                10_000,
+                30_000,
+                selectedModelId = "gemma4:31b",
+            )
+            try {
+                cloud.send(ModelChatRequest(
+                    "conversation-provider-test",
+                    "current user message",
+                    sendId = "send-provider-test",
+                    classification = DataClassification.PUBLIC,
+                    context = context,
+                    egressContract = contract,
+                    selectedModelId = "gemma4:31b",
+                ))
+                throw AssertionError("Provider-derived context must be denied by the egress gate")
+            } catch (_: ModelChatFailure) { }
+        }
+        assertEquals(0, credentialReads)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun streamsSeededManyShortDeltasAcrossFragmentedTransportChunks() = runBlocking {
         val seed = 0x5E2EA
         val chunks = (0 until 256).map { index ->

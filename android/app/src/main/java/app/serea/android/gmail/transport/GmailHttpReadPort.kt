@@ -1,6 +1,7 @@
 package app.serea.android.gmail.transport
 
 import app.serea.android.gmail.GmailAuthorizationPort
+import app.serea.android.gmail.GmailAuthorizationState
 import app.serea.android.gmail.GmailMessage
 import app.serea.android.gmail.GmailMessageId
 import app.serea.android.gmail.GmailMessagePage
@@ -147,7 +148,9 @@ class GmailHttpReadPort internal constructor(
     private suspend fun getBounded(url: HttpUrl, maximumBytes: Int): Pair<String, Int> {
         val status = authorization.status()
         if (!GmailPermissionPolicy.mayRead(status)) {
-            val code = if (GmailPermissionPolicy.GMAIL_READ_ONLY in status.missingScopes) {
+            val code = if (status.state == GmailAuthorizationState.AUTHORIZATION_REQUIRED &&
+                GmailPermissionPolicy.GMAIL_READ_ONLY in status.missingScopes
+            ) {
                 GmailReadFailureCode.MISSING_SCOPE
             } else {
                 GmailReadFailureCode.PERMISSION_DENIED

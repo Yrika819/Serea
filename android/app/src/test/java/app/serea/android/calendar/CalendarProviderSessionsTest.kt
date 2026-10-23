@@ -34,16 +34,33 @@ class CalendarProviderSessionsTest {
         private val permission: ScopePermission = ScopePermission.GRANTED,
     ) : GoogleAuthorizationGateway {
         override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+        override var authorizationSessionId: String? = "calendar-session-fixture"
+        var tokenRequests = 0
+        var rotateAfterNextToken = false
+        private var accountChanged = false
         override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
             if (feature != GoogleFeature.CALENDAR || !granted.containsAll(scopes)) {
                 return TokenSupplyResult.UserActionRequired(scopes - granted)
             }
-            return TokenSupplyResult.Available(AccessTokenLease("fixture-never-valid", granted, null))
+            tokenRequests++
+            val boundSession = authorizationSessionId
+            val lease = AccessTokenLease("fixture-never-valid", granted, null,
+                authorizationSessionId = boundSession)
+            if (rotateAfterNextToken) {
+                rotateAfterNextToken = false
+                authorizationSessionId = "calendar-session-second"
+                accountChanged = true
+            }
+            return TokenSupplyResult.Available(lease)
         }
         override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
             GoogleServiceState.AVAILABLE,
             scopes.associateWith { scope -> if (scope in granted) permission else ScopePermission.NEEDS_CONSENT },
-            if (permission == ScopePermission.DENIED) AuthorizationFailure.DENIED else null,
+            when {
+                accountChanged -> AuthorizationFailure.ACCOUNT_CHANGED
+                permission == ScopePermission.DENIED -> AuthorizationFailure.DENIED
+                else -> null
+            },
         )
     }
 
@@ -88,6 +105,7 @@ class CalendarProviderSessionsTest {
             PlayServicesFixture(permission = ScopePermission.DENIED),
             object : GoogleAuthorizationGateway {
                 override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+                override val authorizationSessionId = "expired-calendar-session-fixture"
                 override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
                     TokenSupplyResult.Unavailable(AuthorizationFailure.EXPIRED)
                 override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
@@ -107,4 +125,49 @@ class CalendarProviderSessionsTest {
             assertEquals(0, server.requestCount)
         }
     }
+
+    @Test fun accountSwitchBetweenCalendarPagesStopsBeforeMixingAccounts() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"items":[{"id":"first@example.test","timeZone":"UTC","accessRole":"reader"}],"nextPageToken":"second-page"}"""))
+        val gateway = PlayServicesFixture().apply { rotateAfterNextToken = true }
+        val session = CalendarProviderSessions(googleHttpEnabledByOwner = true)
+            .openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
+
+        val failure = runCatching { session.listCalendars() }.exceptionOrNull()
+        assertTrue(failure is CalendarReadFailure)
+        assertEquals(CalendarAuthorizationState.REVOKED, session.status().state)
+        assertEquals(1, gateway.tokenRequests)
+        assertEquals(1, server.requestCount)
+        assertEquals("Bearer fixture-never-valid", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun unknownAccountBindingIsNotAuthorizedAndCannotReachCalendarHttp() = runBlocking {
+        var tokenRequests = 0
+        val unboundGateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId: String? = null
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+                tokenRequests++
+                return TokenSupplyResult.Available(AccessTokenLease("must-not-be-used", scopes, null))
+            }
+            override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                GoogleServiceState.AVAILABLE,
+                scopes.associateWith { ScopePermission.GRANTED },
+            )
+        }
+        val session = CalendarProviderSessions(googleHttpEnabledByOwner = true)
+            .openGoogleReadOnly(unboundGateway, baseUrl = server.url("/calendar/v3/"))
+
+        assertEquals(CalendarAuthorizationState.NOT_CONNECTED, session.status().state)
+        val failure = runCatching {
+            session.listEventsPage(CalendarId("fixture@example.test"), range())
+        }.exceptionOrNull()
+        assertTrue(failure is CalendarReadFailure)
+        assertEquals(0, tokenRequests)
+        assertEquals(0, server.requestCount)
+    }
+
+    private fun range() = CalendarDateRange(
+        java.time.Instant.parse("2026-10-20T00:00:00Z"),
+        java.time.Instant.parse("2026-10-21T00:00:00Z"),
+    )
 }

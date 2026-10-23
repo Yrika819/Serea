@@ -19,6 +19,8 @@ import app.serea.android.calendar.EventId
 import app.serea.android.calendar.GoogleCalendarEventParser
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
@@ -132,10 +134,12 @@ class GoogleCalendarHttpReadPort internal constructor(
         catch (_: Exception) { throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar access token is unavailable.") }
         if (token == null) throw failure(CalendarApiFailureCode.PERMISSION_DENIED, "Calendar access token is unavailable.")
         try {
+            currentCoroutineContext().ensureActive()
             val request = token.useToken { value ->
                 Request.Builder().url(url).header("Authorization", "Bearer $value")
                     .header("Accept", "application/json").get().build()
             }
+            currentCoroutineContext().ensureActive()
             val response = execute(safeClient.newCall(request))
             response.use {
             if (it.code !in 200..299) throw responseFailure(it)

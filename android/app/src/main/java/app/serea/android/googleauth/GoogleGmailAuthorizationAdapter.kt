@@ -12,6 +12,7 @@ class GoogleGmailAuthorizationAdapter(
     private val gateway: GoogleAuthorizationGateway,
     private val googleHttpEnabledByOwner: Boolean = false,
 ) : GmailAuthorizationPort, GmailAccessTokenPort {
+    private val authorizationSessionId = gateway.authorizationSessionId
     private val gmailScopes = setOf(GoogleScope.GMAIL_READ_ONLY)
 
     override suspend fun status(): GmailAuthorizationStatus {
@@ -23,8 +24,11 @@ class GoogleGmailAuthorizationAdapter(
             gateway.mode == GoogleAuthorizationMode.MOCK_ONLY -> GmailAuthorizationState.MOCK_ONLY
             !googleHttpEnabledByOwner -> GmailAuthorizationState.NOT_CONFIGURED
             googleStatus.failure == AuthorizationFailure.NOT_CONFIGURED -> GmailAuthorizationState.NOT_CONFIGURED
+            authorizationSessionId == null -> GmailAuthorizationState.NOT_CONNECTED
+            gateway.authorizationSessionId != authorizationSessionId -> GmailAuthorizationState.REVOKED
             !gateway.isEnabledInApp(GoogleFeature.GMAIL) -> GmailAuthorizationState.ERROR
             googleStatus.failure == AuthorizationFailure.ACCOUNT_CHANGED -> GmailAuthorizationState.REVOKED
+            googleStatus.failure == AuthorizationFailure.ACCOUNT_REQUIRED -> GmailAuthorizationState.NOT_CONNECTED
             googleStatus.service == GoogleServiceState.MISSING ||
                 googleStatus.failure == AuthorizationFailure.SERVICE_MISSING -> GmailAuthorizationState.NOT_CONNECTED
             googleStatus.service == GoogleServiceState.OUTDATED ||
@@ -41,11 +45,17 @@ class GoogleGmailAuthorizationAdapter(
         if (scope != GmailPermissionPolicy.GMAIL_READ_ONLY ||
             !googleHttpEnabledByOwner ||
             gateway.mode != GoogleAuthorizationMode.PLAY_SERVICES ||
+            authorizationSessionId == null ||
+            gateway.authorizationSessionId != authorizationSessionId ||
             !gateway.isEnabledInApp(GoogleFeature.GMAIL)
         ) return null
         val result = gateway.acquire(GoogleFeature.GMAIL, setOf(GoogleScope.GMAIL_READ_ONLY))
         val lease = (result as? TokenSupplyResult.Available)?.lease ?: return null
-        if (GoogleScope.GMAIL_READ_ONLY !in lease.grantedScopes) {
+        if (GoogleScope.GMAIL_READ_ONLY !in lease.grantedScopes ||
+            lease.authorizationSessionId != authorizationSessionId ||
+            gateway.authorizationSessionId != authorizationSessionId ||
+            !gateway.isEnabledInApp(GoogleFeature.GMAIL)
+        ) {
             lease.close()
             return null
         }

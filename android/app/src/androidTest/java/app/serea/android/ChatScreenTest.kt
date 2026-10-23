@@ -104,11 +104,30 @@ class ChatScreenTest {
             }
         }.isSuccess
         if (!focused) {
-            captureFocusEvidence("window-focus-timeout-$stage", includeRawDumpsys = true)
-            snapshot += " rawDumpsysSaved=true"
+            captureFocusEvidence("window-focus-timeout-$stage")
+            requestHostWindowSnapshot("window-focus-timeout-$stage")
+            snapshot += " hostWindowSnapshotRequested=true"
         }
         Log.i(FOCUS_LOG_TAG, snapshot)
         assertTrue("MainActivity did not own window focus at $stage: $snapshot", focused)
+    }
+
+    private fun requestHostWindowSnapshot(stage: String) {
+        if (InstrumentationRegistry.getArguments().getString("rootCauseHostDiagnostics") != "true") return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = requireNotNull(context.getExternalFilesDir("root-cause"))
+        directory.mkdirs()
+        val requestId = System.nanoTime().toString()
+        val response = File(directory, "dumpsys-result-$requestId.txt")
+        Log.i("SereaRootCauseFocusOrder", "HOST_DUMPSYS_REQUEST|id=$requestId|stage=$stage")
+        val deadline = android.os.SystemClock.uptimeMillis() + 15_000
+        while (!response.isFile && android.os.SystemClock.uptimeMillis() < deadline) {
+            android.os.SystemClock.sleep(25)
+        }
+        Log.i(
+            "SereaRootCauseFocusOrder",
+            "HOST_DUMPSYS_RESULT|id=$requestId|stage=$stage|result=${if (response.isFile) response.readText().trim() else "HOST_RESULT_TIMEOUT"}",
+        )
     }
 
     private fun tapComposerThroughSystemInput() {

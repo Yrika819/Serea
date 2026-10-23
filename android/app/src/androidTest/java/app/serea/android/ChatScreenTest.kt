@@ -111,7 +111,7 @@ class ChatScreenTest {
     }
 
     private fun tapComposerThroughSystemInput() {
-        captureFocusEvidence("system-tap-before", includeRawDumpsys = true)
+        captureFocusEvidence("system-tap-before")
         val bounds = composer().fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)
         compose.activityRule.scenario.onActivity { activity ->
@@ -142,7 +142,7 @@ class ChatScreenTest {
         lastComposerTouch = "boundsInWindow=$bounds screenOrigin=${origin.toList()} " +
             "screenPoint=($x,$y) result=$commandResult"
         Log.i(FOCUS_LOG_TAG, "SYSTEM_TOUCH|$lastComposerTouch")
-        captureFocusEvidence("system-tap-after", includeRawDumpsys = true)
+        captureFocusEvidence("system-tap-after")
     }
 
     private fun composerInputConnectionReady(stage: String): Boolean {
@@ -297,7 +297,8 @@ class ChatScreenTest {
                 composer().performTextInput(probe)
                 compose.waitUntil(5_000) { stateSnapshot().input == probe }
             }.isSuccess
-            val sent = if (typed) runCatching {
+            var sendFailure = "not attempted"
+            val sendOutcome = if (typed) runCatching {
                 Espresso.closeSoftKeyboard()
                 compose.onNodeWithText("送信", substring = false).performClick()
                 compose.waitUntil(10_000) {
@@ -305,9 +306,20 @@ class ChatScreenTest {
                         it.role == MessageRole.USER && it.text == probe
                     }
                 }
-            }.isSuccess else false
-            outcomes += "probe(route=$focusedRoute,typed=$typed,messageSent=$sent)"
-            Log.i(FOCUS_LOG_TAG, "INPUT_PROBE|route=$focusedRoute|typed=$typed|messageSent=$sent")
+            }.onSuccess { sendFailure = "none" }
+                .onFailure { sendFailure = (it.message ?: it.javaClass.simpleName).replace('\n', ' ') }
+            else null
+            val sent = sendOutcome?.isSuccess == true
+            val afterProbe = stateSnapshot()
+            val latestMessage = afterProbe.conversation.messages.lastOrNull()?.let { "${it.role}:${it.text}" } ?: "none"
+            outcomes += "probe(route=$focusedRoute,typed=$typed,messageSent=$sent,sendFailure=$sendFailure," +
+                "input=${afterProbe.input},loading=${afterProbe.isLoading},error=${afterProbe.errorMessage},latest=$latestMessage)"
+            Log.i(
+                FOCUS_LOG_TAG,
+                "INPUT_PROBE|route=$focusedRoute|typed=$typed|messageSent=$sent|" +
+                    "sendFailure=$sendFailure|input=${afterProbe.input}|loading=${afterProbe.isLoading}|" +
+                    "error=${afterProbe.errorMessage}|latest=$latestMessage",
+            )
         }
         return outcomes.joinToString(";")
     }

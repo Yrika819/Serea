@@ -1195,11 +1195,15 @@ class SereaAppShellTest {
     }
 
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
+        recordComposerRestoreEvidence("chat-before-draft-input")
         compose.onNodeWithTag("chat-composer").performTextInput("draft survives navigation")
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
+        recordComposerRestoreEvidence("chat-after-draft-input")
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
+        recordComposerRestoreEvidence("gmail-after-chat-save-and-navigation")
         compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
+        recordComposerRestoreEvidence("gmail-after-search-input")
         compose.onNodeWithTag("gmail_search_input").performImeAction()
         val emptySearchSettled = runCatching { compose.waitUntil(10_000) {
             runCatching {
@@ -1209,10 +1213,13 @@ class SereaAppShellTest {
         } }.isSuccess
         if (!emptySearchSettled) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-gmail-search-timeout")
         assertTrue("Gmail IME search must settle before navigation and release TextField focus.", emptySearchSettled)
+        recordComposerRestoreEvidence("gmail-after-ime-action-and-focus-release")
         pressBack()
         compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱").assertIsDisplayed()
+        recordComposerRestoreEvidence("gmail-after-first-back")
         pressBack()
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
+        recordComposerRestoreEvidence("chat-immediately-after-return")
         val chatFocusReleased = runCatching {
             compose.waitUntil(5_000) {
                 runCatching { compose.onNodeWithTag("chat-composer").assertIsNotFocused() }.isSuccess
@@ -1220,7 +1227,6 @@ class SereaAppShellTest {
         }.isSuccess
         recordComposerRestoreEvidence(
             if (chatFocusReleased) "chat-return-from-gmail-focus-released" else "chat-return-from-gmail-focus-failed",
-            includeRawDumpsys = true,
         )
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)

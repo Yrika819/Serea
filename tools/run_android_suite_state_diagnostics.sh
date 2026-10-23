@@ -121,23 +121,23 @@ run_stage() {
   if [[ -n "$test_filter" ]]; then
     gradle_args+=("-Pandroid.testInstrumentationRunnerArguments.class=$test_filter")
   fi
+  local observer_args=()
   if [[ "$api_level" == 35 ]]; then
     gradle_args+=(-Pandroid.testInstrumentationRunnerArguments.rootCauseHostInput=true)
-    python3 "$repo_root/tools/android_host_tap_observer.py" "$output_dir" \
-      > "$output_dir/tap-observer.log" 2>&1 &
-    observer_pid=$!
-    sleep 1
+    observer_args+=(--inject-system-taps)
   fi
+  python3 "$repo_root/tools/android_host_tap_observer.py" "$output_dir" "${observer_args[@]}" \
+    > "$output_dir/tap-observer.log" 2>&1 &
+  observer_pid=$!
+  sleep 1
   started="$(date +%s%3N)"
   (
     cd "$source_repo/android" || exit 1
     ./gradlew "${gradle_args[@]}" connectedIsolatedAndroidTest
   ) > "$output_dir/gradle.log" 2>&1
   gradle_status=$?
-  if [[ -n "$observer_pid" ]]; then
-    kill "$observer_pid" >/dev/null 2>&1 || true
-    wait "$observer_pid" >/dev/null 2>&1 || true
-  fi
+  kill "$observer_pid" >/dev/null 2>&1 || true
+  wait "$observer_pid" >/dev/null 2>&1 || true
   printf 'gradle_exit_code=%s\ntest_elapsed_ms=%s\n' "$gradle_status" "$(( $(date +%s%3N) - started ))" >> "$output_dir/manifest.txt"
   printf 'stage_finished_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$output_dir/manifest.txt"
 

@@ -29,8 +29,8 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.performTextInputSelection
-import androidx.compose.ui.test.assertHasSetTextAction
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
@@ -1138,9 +1138,10 @@ class SereaAppShellTest {
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
     }
 
+    @OptIn(ExperimentalTestApi::class)
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
         val composer = compose.onNodeWithTag("chat-composer")
-        composer.assertHasSetTextAction()
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
         composer.performTextInput("draft survives navigation")
         composer.performTextInputSelection(TextRange(6, 6))
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
@@ -1168,7 +1169,7 @@ class SereaAppShellTest {
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
         compose.waitForIdle()
-        composer.assertHasSetTextAction()
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
         composer.performTextInput("!")
         assertEquals("draft! survives navigation", compose.activity.chatViewModel.state.value.input)
         select(SereaDestination.CALENDAR)

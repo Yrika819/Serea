@@ -125,22 +125,25 @@ class ChatScreenTest {
         var snapshot = "MainActivity unavailable"
         val inputReady = runCatching {
             compose.waitUntil(10_000) {
-                var ready = false
+                var activityReady = false
                 compose.activityRule.scenario.onActivity { activity ->
                     val decor = activity.window.decorView
                     val hasWindowFocus = decor.hasWindowFocus()
                     val acceptingText = activity.getSystemService(InputMethodManager::class.java)
                         ?.isAcceptingText == true
-                    ready = hasWindowFocus && acceptingText
+                    activityReady = activity.lifecycle.currentState == androidx.lifecycle.Lifecycle.State.RESUMED &&
+                        acceptingText
                     snapshot = "stage=$stage lifecycle=${activity.lifecycle.currentState} " +
                         "windowFocus=$hasWindowFocus imeAcceptingText=$acceptingText " +
                         "decorFocus=${decor.hasFocus()} visible=${decor.isShown}"
                 }
-                ready
+                val composerFocused = runCatching { composer().assertIsFocused() }.isSuccess
+                snapshot += " composerFocused=$composerFocused"
+                activityReady && composerFocused
             }
         }.isSuccess
         Log.i(FOCUS_LOG_TAG, snapshot)
-        assertTrue("Composer input connection was unavailable at $stage: $snapshot", inputReady)
+        assertTrue("Composer did not have a live focused input connection at $stage: $snapshot", inputReady)
     }
 
     private fun stateSnapshot(): ChatUiState {
@@ -170,9 +173,11 @@ class ChatScreenTest {
         // Inject a screen-coordinate tap through Android's input dispatcher so it can activate
         // a resumed window that Compose's root-targeted touch injection cannot focus.
         tapComposerThroughSystemInput()
-        awaitMainWindowFocus("after composer tap, before typing")
-        composer().assertIsFocused()
+        // The soft keyboard may own Android window focus while the composer is the active
+        // input target. Require the Activity to remain resumed and the real IME connection
+        // to accept text, then verify the Compose field itself owns focus.
         awaitComposerInputConnection("after composer tap, before typing")
+        composer().assertIsFocused()
         composer().performTextInput(text)
         compose.waitUntil(30_000) { stateSnapshot().input == text }
         awaitComposerInputConnection("after typing, before keyboard dismissal")

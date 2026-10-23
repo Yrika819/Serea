@@ -1154,7 +1154,13 @@ class SereaAppShellTest {
         compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱").assertIsDisplayed()
         pressBack()
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
-        compose.onNodeWithTag("chat-composer").assertIsNotFocused()
+        val chatFocusReleased = runCatching {
+            compose.waitUntil(5_000) {
+                runCatching { compose.onNodeWithTag("chat-composer").assertIsNotFocused() }.isSuccess
+            }
+        }.isSuccess
+        if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
+        assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {

@@ -14,7 +14,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -87,13 +86,6 @@ internal fun SereaAppShell(
         val state = SereaNavigationState.restore(destinationName, backStackNames).back()
         destinationName = state.current.name
         backStackNames = state.backStack.map { it.name }
-    }
-
-    // Hide the IME and clear the outgoing destination's focus synchronously. ChatScreen
-    // receives focusClearRequest so it can clear a restored composer after reattachment.
-    LaunchedEffect(destination) {
-        keyboardController?.hide()
-        focusManager.clearFocus(force = true)
     }
 
     BackHandler(enabled = taskProposalActionPending || canGoBack) {

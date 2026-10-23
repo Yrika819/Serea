@@ -38,6 +38,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ChatScreenTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    private var lastComposerTouch = "not attempted"
 
     @Before fun startWithAnExplicitNewConversation() {
         awaitComposerEnabled()
@@ -114,10 +115,11 @@ class ChatScreenTest {
         val x = origin[0] + bounds.center.x.toInt()
         val y = origin[1] + bounds.center.y.toInt()
         val commandResult = shell("input tap $x $y")
+        lastComposerTouch = "boundsInWindow=$bounds screenOrigin=${origin.toList()} " +
+            "screenPoint=($x,$y) result=$commandResult"
         Log.i(
             FOCUS_LOG_TAG,
-            "SYSTEM_TOUCH|composer boundsInWindow=$bounds screenOrigin=${origin.toList()} " +
-                "screenPoint=($x,$y) result=$commandResult",
+            "SYSTEM_TOUCH|$lastComposerTouch",
         )
     }
 
@@ -142,6 +144,12 @@ class ChatScreenTest {
                 activityReady && composerFocused
             }
         }.isSuccess
+        if (!inputReady) {
+            val systemFocus = runCatching {
+                shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+            }.getOrDefault("unavailable")
+            snapshot += " lastTouch={$lastComposerTouch} systemFocus={$systemFocus}"
+        }
         Log.i(FOCUS_LOG_TAG, snapshot)
         assertTrue("Composer did not have a live focused input connection at $stage: $snapshot", inputReady)
     }

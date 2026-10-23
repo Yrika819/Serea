@@ -49,7 +49,9 @@ verify_apks_unchanged() {
 }
 
 run_stage() {
-  local stage="$1" test_filter="$2" output_dir="$evidence_root/$stage"
+  local stage="$1"
+  local test_filter="$2"
+  local output_dir="$evidence_root/$stage"
   local token="serea-suite-api${api_level}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${stage}"
   local started gradle_status seed_status observer_pid='' log_capture_status=0
   mkdir -p "$output_dir"

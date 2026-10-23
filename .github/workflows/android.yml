@@ -312,12 +312,12 @@ jobs:
               SereaFontScale SereaCalendarStage \
               chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
               chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
-              SereaProcessDeath SereaProfileVerifierEvidence AndroidRuntime > "$output"
+              SereaProcessDeath SereaProfileVerifier AndroidRuntime > "$output"
           else
             printf 'NOT_AVAILABLE: API 35 emulator was no longer attached after its test step.\n' > "$output"
           fi
           echo 'Selected API 35 font-scale, Calendar bounds/scroll, and ProfileVerifier runtime evidence:'
-          grep -E 'SereaFontScale|SereaProfileVerifierEvidence|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
+          grep -E 'SereaFontScale|SereaProfileVerifier|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
       - name: Upload API 35 instrumentation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -378,12 +378,12 @@ jobs:
               SereaFontScale SereaCalendarStage \
               chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
               chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
-              SereaProcessDeath SereaProfileVerifierEvidence AndroidRuntime > "$output"
+              SereaProcessDeath SereaProfileVerifier AndroidRuntime > "$output"
           else
             printf 'NOT_AVAILABLE: API 26 emulator was no longer attached after its test step.\n' > "$output"
           fi
           echo 'Selected API 26 font-scale, Calendar bounds/scroll, and ProfileVerifier runtime evidence:'
-          grep -E 'SereaFontScale|SereaProfileVerifierEvidence|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
+          grep -E 'SereaFontScale|SereaProfileVerifier|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
       - name: Upload API 26 instrumentation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

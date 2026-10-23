@@ -88,6 +88,6 @@ class InstrumentationStorageIsolationTest {
     }
 
     private companion object {
-        const val PROFILE_VERIFIER_EVIDENCE_TAG = "SereaProfileVerifierEvidence"
+        const val PROFILE_VERIFIER_EVIDENCE_TAG = "SereaProfileVerifier"
     }
 }

@@ -230,13 +230,13 @@ def verify_profile_verifier_evidence(path: Path, api_level: int) -> tuple[bool, 
     except OSError as error:
         return False, f"could not read ProfileVerifier runtime evidence: {path}: {error}"
     pattern = re.compile(
-        r"SereaProfileVerifierEvidence.*?\bapi=(\d+)\s+status=([A-Z_]+)\s+"
+        r"SereaProfileVerifier.*?\bapi=(\d+)\s+status=([A-Z_]+)\s+"
         r"resultCode=(\d+).*?\bembedded=(true|false)\s+marker=([a-z]+)\b"
     )
     matches = [pattern.search(line) for line in lines]
     evidence = [match.groups() for match in matches if match and int(match.group(1)) == api_level]
     if not evidence:
-        return False, f"no SereaProfileVerifierEvidence runtime record found for API {api_level}"
+        return False, f"no SereaProfileVerifier runtime record found for API {api_level}"
     api_text, status, result_code_text, embedded_text, marker = evidence[-1]
     result_code = int(result_code_text)
     if api_level == 26:
@@ -318,7 +318,7 @@ def main() -> int:
     parser.add_argument("--api-level", type=int, choices=(26, 35), help="emulator API for ProfileVerifier evidence")
     parser.add_argument(
         "--profile-verifier-log", type=Path,
-        help="logcat file containing positive SereaProfileVerifierEvidence runtime output",
+        help="logcat file containing positive SereaProfileVerifier runtime output",
     )
     parser.add_argument(
         "--source-root", type=Path,

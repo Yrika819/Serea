@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -273,11 +274,7 @@ class TaskDateTimePickerTest {
         compose.onNodeWithTag("task_due_time").performTextInput("09:30")
         compose.onNodeWithTag("task_save").performClick()
         val errorText = "時刻を設定するには期限日が必要です。"
-        compose.onNodeWithTag("task_editor_scroll").performScrollToNode(SemanticsMatcher("time-needs-date inline error") { node ->
-            SemanticsProperties.Text in node.config &&
-                node.config[SemanticsProperties.Text].any { it.text == errorText }
-        })
-        compose.onNodeWithText(errorText).assertIsDisplayed()
+        compose.onNodeWithText(errorText, useUnmergedTree = true).performScrollTo().assertIsDisplayed()
         assertTrue(repository.createDrafts.isEmpty())
     }
 }

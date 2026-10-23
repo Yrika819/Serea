@@ -93,6 +93,20 @@ def collect_results(directory: Path) -> Results:
     return Results(*totals, files=used_files)
 
 
+def collect_failure_details(directory: Path) -> list[str]:
+    details: list[str] = []
+    for file in sorted(directory.rglob("*.xml")):
+        root = ET.parse(file).getroot()
+        for case in root.iter():
+            if case.tag.rsplit("}", 1)[-1] != "testcase":
+                continue
+            class_name, method_name = _case_identity(case, file)
+            for result in (*case.findall("./failure"), *case.findall("./error")):
+                detail = result.get("message") or " ".join("".join(result.itertext()).split()) or "no failure detail"
+                details.append(f"{class_name}#{method_name}: {detail[:320]}")
+    return details
+
+
 def collect_class_counts(directory: Path) -> dict[str, int]:
     counts: dict[str, int] = {}
     for file in sorted(directory.rglob("*.xml")):
@@ -454,6 +468,8 @@ def main() -> int:
         )
         return 1
     if results.failures or results.errors or results.skipped:
+        for detail in collect_failure_details(args.results):
+            print(f"JUnit failure detail: {detail}", file=sys.stderr)
         print("FAIL: every instrumentation test must pass without failures, errors, or skips.", file=sys.stderr)
         return 1
     class_counts = collect_class_counts(args.results)

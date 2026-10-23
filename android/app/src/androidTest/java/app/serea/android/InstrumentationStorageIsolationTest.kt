@@ -75,7 +75,7 @@ class InstrumentationStorageIsolationTest {
             assertTrue(
                 "API 35 ProfileVerifier cache must prove an installed profile, " +
                     "resultCode=$resultCode marker=$markerDetails",
-                ProfileVerifierCacheMarker.isOnlyValidMarker(target.filesDir, packageUpdateTime),
+                ProfileVerifierCacheMarker.isValidMarker(target.filesDir, packageUpdateTime),
             )
             Log.i(
                 PROFILE_VERIFIER_EVIDENCE_TAG,

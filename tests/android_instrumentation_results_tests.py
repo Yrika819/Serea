@@ -7,6 +7,7 @@ from pathlib import Path
 
 from tools.verify_android_instrumentation import (
     collect_class_counts,
+    collect_failure_details,
     collect_results,
     collect_source_test_counts,
     verify_profile_verifier_evidence,
@@ -35,6 +36,22 @@ class InstrumentationResultTests(unittest.TestCase):
             result = collect_results(root)
             self.assertEqual(1, result.tests)
             self.assertEqual(1, result.failures)
+
+    def test_failure_details_identify_failing_instrumentation_case(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_xml(
+                root,
+                "failed.xml",
+                '<testsuite tests="1" failures="1" errors="0" skipped="0">'
+                '<testcase classname="a.CalendarTest" name="scrollsToTarget">'
+                '<failure message="visible text bounds were clipped">stack trace</failure>'
+                '</testcase></testsuite>',
+            )
+            self.assertEqual(
+                ["a.CalendarTest#scrollsToTarget: visible text bounds were clipped"],
+                collect_failure_details(root),
+            )
 
     def test_rejects_non_junit_xml(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -45,20 +45,24 @@ class ProfileVerifierCacheMarkerTest {
         assertFalse(ProfileVerifierCacheMarker.isValidBytes(canonical + byteArrayOf(0), PACKAGE_UPDATE_TIME))
     }
 
-    @Test fun acceptsOnlyOneRegularDirectChildWithTheExactPlatformName() {
+    @Test fun runtimeValidationAllowsUnrelatedFilesButFreshNamespaceRequiresOnlyThePlatformMarker() {
         val filesDirectory = temporary.newFolder("files")
+        assertFalse(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
 
         File(filesDirectory, ProfileVerifierCacheMarker.FILE_NAME).writeBytes(cacheBytes())
+        assertTrue(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertTrue(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
 
         File(filesDirectory, "extra").writeText("unexpected")
+        assertTrue(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
     }
 
     @Test fun rejectsWrongNameAndSymbolicLink() {
         val filesDirectory = temporary.newFolder("files")
         File(filesDirectory, "profileinstaller_profileWrittenFor_lastUpdateTime.dat").writeBytes(cacheBytes())
+        assertFalse(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
 
         val marker = File(filesDirectory, ProfileVerifierCacheMarker.FILE_NAME)
@@ -66,6 +70,7 @@ class ProfileVerifierCacheMarkerTest {
         val outside = temporary.newFile("outside")
         outside.writeBytes(cacheBytes())
         Files.createSymbolicLink(marker.toPath(), outside.toPath())
+        assertFalse(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
     }
 

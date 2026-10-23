@@ -309,6 +309,7 @@ jobs:
           if [ -n "$serial" ]; then
             adb -s "$serial" logcat -d -v threadtime -s \
               font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
+              SereaFontScale \
               chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
               chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
               SereaProcessDeath SereaProfileVerifierEvidence AndroidRuntime > "$output"
@@ -372,6 +373,7 @@ jobs:
           if [ -n "$serial" ]; then
             adb -s "$serial" logcat -d -v threadtime -s \
               font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
+              SereaFontScale \
               chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
               chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
               SereaProcessDeath SereaProfileVerifierEvidence AndroidRuntime > "$output"

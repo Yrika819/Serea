@@ -9,7 +9,7 @@ import android.util.Log
 import android.graphics.Rect
 import android.view.inputmethod.InputMethodManager
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.toWindowInsetsCompat
+import androidx.core.view.ViewCompat
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -192,7 +192,7 @@ class SereaAppShellTest {
             compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
         }.getOrDefault(emptyList())
         val nodes = (merged + unmerged).mapIndexed { index, node ->
-            "node$index(focused=${node.config.getOrNull(SemanticsProperties.Focused)}, " +
+            "node$index(focused=${node.config.getOrElseNullable(SemanticsProperties.Focused) { null }}, " +
                 "root=${node.boundsInRoot},window=${node.boundsInWindow})"
         }
         var activityDetails = "Activity unavailable"
@@ -202,7 +202,7 @@ class SereaAppShellTest {
             val visibleFrame = Rect()
             decor.getLocationOnScreen(origin)
             decor.getWindowVisibleDisplayFrame(visibleFrame)
-            val insets = decor.rootWindowInsets?.toWindowInsetsCompat(decor)
+            val insets = ViewCompat.getRootWindowInsets(decor)
             val currentFocus = activity.currentFocus
             val state = activity.chatViewModel.state.value
             activityDetails = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +

@@ -33,7 +33,7 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.toWindowInsetsCompat
+import androidx.core.view.ViewCompat
 import java.io.File
 import org.junit.Before
 import org.junit.Assert.assertEquals
@@ -184,7 +184,7 @@ class ChatScreenTest {
             compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
         }.getOrDefault(emptyList())
         val nodeDetails = (mergedNodes + unmergedNodes).mapIndexed { index, node ->
-            "node$index(focused=${node.config.getOrNull(SemanticsProperties.Focused)}, " +
+            "node$index(focused=${node.config.getOrElseNullable(SemanticsProperties.Focused) { null }}, " +
                 "root=${node.boundsInRoot}, window=${node.boundsInWindow})"
         }
         val rootDetails = runCatching {
@@ -200,7 +200,7 @@ class ChatScreenTest {
             decor.getLocationOnScreen(screenOrigin)
             decor.getLocationInWindow(windowOrigin)
             decor.getWindowVisibleDisplayFrame(visibleFrame)
-            val insets = decor.rootWindowInsets?.toWindowInsetsCompat(decor)
+            val insets = ViewCompat.getRootWindowInsets(decor)
             val inputManager = activity.getSystemService(InputMethodManager::class.java)
             val focusedView = activity.currentFocus
             activityDetails = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +

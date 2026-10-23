@@ -63,7 +63,9 @@ jobs:
           arch: ${{ matrix.arch }}
           profile: ${{ matrix.profile }}
           emulator-boot-timeout: 900
-          disable-linux-hw-accel: false
+          # The hosted Linux runners for this run lack /dev/kvm permissions.
+          # Use the emulator's software backend so diagnostics can still boot.
+          disable-linux-hw-accel: true
           script: bash tools/run_android_root_cause_diagnostics.sh ${{ matrix.api }}
 
       - name: Upload Android root-cause evidence

@@ -506,9 +506,10 @@ class SereaAppShellTest {
     }
 
     private fun calendarTargetTextNode(text: String) =
-        compose.onNodeWithText(text, substring = true, useUnmergedTree = true)
+        compose.onNodeWithText(text, substring = false, useUnmergedTree = true)
 
-    private fun calendarTargetTextTarget(text: String) = calendarNodeWithText(text, unmerged = true)
+    private fun calendarTargetTextTarget(text: String) =
+        calendarNodeWithText(text, substring = false, unmerged = true)
 
     /** Separates scroll semantics from touch hit testing before searching a long agenda. */
     private fun diagnoseCalendarGesturePath(list: CalendarSemanticsTarget): CalendarGesturePath {

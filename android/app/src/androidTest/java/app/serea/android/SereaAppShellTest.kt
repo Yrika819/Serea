@@ -100,7 +100,7 @@ class SereaAppShellTest {
         compose.waitForIdle()
         // The plural API selects nodes through Compose's test owner without serializing the
         // selected node's lazy, snapshot-backed properties for its last-seen failure message.
-        val nodes = interaction.fetchSemanticsNodes()
+        val nodes = interaction.fetchSemanticsNodes(atLeastOneRootRequired = true).selectedNodes
         check(nodes.size == 1) { "Expected one Calendar semantics node, found ${nodes.size}." }
         val node = nodes.single()
         var result: CalendarSemanticsSnapshot? = null

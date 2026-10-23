@@ -564,29 +564,42 @@ class SereaAppShellTest {
     }
 
     /**
-     * Resolves a rendered Text node to its LazyColumn collection item through the actual
-     * unmerged Semantics parent chain. CollectionItemInfo is snapshot backed and read on UI.
+     * Resolves a rendered Text node to its LazyColumn collection item through merged and
+     * unmerged Semantics parent chains. Lazy item CollectionItemInfo can be carried by the
+     * merged item node while the unmerged Text child exposes glyph text and bounds.
      */
     private fun calendarTextCollectionItemIndex(text: String): Int? {
-        val matches = calendarTargetTextTarget(text).nodes.fetchSemanticsNodes()
-        if (matches.isEmpty()) return null
-        check(matches.size == 1) {
-            "Expected one exact unmerged Calendar Text semantics node for '" +
-                text + "', found " + matches.size + "."
+        val targets = listOf(
+            "merged" to calendarNodeWithText(text, substring = false),
+            "unmerged" to calendarTargetTextTarget(text),
+        )
+        val matchingNodes = targets.mapNotNull { (tree, target) ->
+            val matches = target.nodes.fetchSemanticsNodes()
+            check(matches.size <= 1) {
+                "Expected at most one exact $tree Calendar Text semantics node for '$text', found ${matches.size}."
+            }
+            matches.singleOrNull()?.let { tree to it }
         }
-        var itemIndex: Int? = null
+        if (matchingNodes.isEmpty()) return null
+        var indices = emptyList<Pair<String, Int>>()
         compose.runOnIdle {
-            var node: androidx.compose.ui.semantics.SemanticsNode? = matches.single()
-            while (node != null) {
-                val item = node.config.getOrElseNullable(SemanticsProperties.CollectionItemInfo) { null }
-                if (item != null) {
-                    itemIndex = item.rowIndex
-                    break
+            indices = matchingNodes.mapNotNull { (tree, matchedNode) ->
+                var node: androidx.compose.ui.semantics.SemanticsNode? = matchedNode
+                while (node != null) {
+                    val item = node.config.getOrElseNullable(SemanticsProperties.CollectionItemInfo) { null }
+                    if (item != null) {
+                        return@mapNotNull tree to item.rowIndex
+                    }
+                    node = node.parent
                 }
-                node = node.parent
+                null
             }
         }
-        return itemIndex
+        val distinctIndices = indices.map { it.second }.distinct()
+        check(distinctIndices.size <= 1) {
+            "Merged and unmerged Calendar Text semantics resolved to different LazyColumn indices for '$text': $indices"
+        }
+        return distinctIndices.singleOrNull()
     }
 
     private fun scrollCalendarToSemanticsIndex(list: CalendarSemanticsTarget, index: Int) {

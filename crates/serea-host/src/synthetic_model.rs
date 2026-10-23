@@ -43,13 +43,11 @@ fn diagnostic_instant_now() -> Instant {
 
 #[cfg(feature = "synthetic-test-hooks")]
 fn diagnostic_stage(scenario: &str, started: Instant, stage: &str) {
-    if std::env::var_os("SEREA_ROOT_CAUSE_TRACE").is_some() {
-        eprintln!(
-            "SEREA_ROOT_CAUSE_MODEL|pid={}|scenario={scenario}|stage={stage}|elapsed_ms={}",
-            std::process::id(),
-            started.elapsed().as_millis(),
-        );
-    }
+    eprintln!(
+        "SEREA_ROOT_CAUSE_MODEL|pid={}|scenario={scenario}|stage={stage}|elapsed_ms={}",
+        std::process::id(),
+        started.elapsed().as_millis(),
+    );
 }
 
 impl ModelDispatchGateSource for OfflineGate {

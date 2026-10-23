@@ -788,8 +788,7 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             .arg(&directory)
             .creation_flags(flags)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env("SEREA_ROOT_CAUSE_TRACE", "1");
+            .stderr(Stdio::piped());
         configure_ready_marker(&mut command, &directory);
         let mut child = command.spawn().expect("start Host with isolated console");
         let mut output = wait_ready(&mut child, &directory);
@@ -1067,8 +1066,7 @@ fn actual_host_model_policy_and_accounting_scenarios_survive_database_reopen() {
         command
             .args(["model-smoke", "--synthetic", "--data-dir"])
             .arg(&directory)
-            .args(["--scenario", scenario])
-            .env("SEREA_ROOT_CAUSE_TRACE", "1");
+            .args(["--scenario", scenario]);
         println!(
             "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=launch_requested|epoch_ms={}|args={:?}",
             current_epoch_ms(),

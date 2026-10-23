@@ -235,16 +235,12 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let signal_flag = std::sync::Arc::clone(&shutdown_requested);
     let host_thread = std::thread::current();
-    #[cfg(feature = "synthetic-test-hooks")]
-    let diagnostic_signal_trace = std::env::var_os("SEREA_ROOT_CAUSE_TRACE").is_some();
     ctrlc::set_handler(move || {
         #[cfg(feature = "synthetic-test-hooks")]
-        if diagnostic_signal_trace {
-            eprintln!(
-                "SEREA_ROOT_CAUSE_SIGNAL|pid={}|received=console_control_event",
-                std::process::id(),
-            );
-        }
+        eprintln!(
+            "SEREA_ROOT_CAUSE_SIGNAL|pid={}|received=console_control_event",
+            std::process::id(),
+        );
         signal_flag.store(true, std::sync::atomic::Ordering::Release);
         host_thread.unpark();
     })

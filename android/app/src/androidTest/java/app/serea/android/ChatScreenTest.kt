@@ -131,7 +131,9 @@ class ChatScreenTest {
     }
 
     private fun tapComposerThroughSystemInput() {
-        awaitMainWindowFocus("before composer system tap")
+        // Capture the current owner, then let the real system-coordinate tap establish
+        // whether input can reach the composer. The composer focus and live IME checks
+        // immediately after the tap remain the acceptance criteria.
         captureFocusEvidence("system-tap-before")
         val bounds = composer().fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)

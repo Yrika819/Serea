@@ -445,7 +445,32 @@ class SereaAppShellTest {
     ): Boolean {
         val textTarget = calendarTargetTextTarget(text)
         val textMatches = textTarget.nodes.fetchSemanticsNodes()
-        if (textMatches.isEmpty()) return false
+        if (textMatches.isEmpty()) {
+            if (text == "説明") {
+                val partialMatches = compose.onAllNodesWithText(
+                    text,
+                    substring = true,
+                    useUnmergedTree = true,
+                ).fetchSemanticsNodes()
+                var candidateDetails: List<String> = emptyList()
+                if (partialMatches.isNotEmpty()) {
+                    compose.runOnIdle {
+                        candidateDetails = partialMatches.map { node ->
+                            val labels = node.config.getOrElseNullable(SemanticsProperties.Text) { null }
+                                ?.joinToString(" ") { it.text }
+                                .orEmpty()
+                            "$labels@${node.boundsInRoot}"
+                        }
+                    }
+                }
+                Log.i(
+                    CALENDAR_STAGE_TAG,
+                    "EXACT_TEXT_SEMANTICS_MISSING|target=$text|partialMatches=${partialMatches.size}|" +
+                        "candidates=$candidateDetails",
+                )
+            }
+            return false
+        }
         check(textMatches.size == 1) {
             "Expected one exact unmerged Calendar Text semantics node for '$text', found ${textMatches.size}."
         }

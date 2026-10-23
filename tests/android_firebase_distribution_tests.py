@@ -588,6 +588,8 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
         self.assertIn("actionlint", workflow)
         self.assertIn(".github/workflows/android-personal-beta.yml", workflow)
         self.assertIn(":app:assembleBeta -PsereaBetaVersionCode=101", workflow)
+        self.assertIn("find app/build/outputs/apk/beta -maxdepth 1 -type f -name '*.apk' -print", workflow)
+        self.assertNotIn("app/build/outputs/apk/beta/app-beta.apk", workflow)
 
     def test_firebase_cli_and_transitive_dependencies_are_locked(self):
         package = json.loads((ROOT / "tools/firebase-distribution/package.json").read_text(encoding="utf-8"))

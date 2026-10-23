@@ -86,7 +86,9 @@ jobs:
             -u SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256 \
             ./gradlew --no-daemon --no-build-cache --no-configuration-cache clean \
             :app:assembleBeta -PsereaBetaVersionCode=101
-          apk=app/build/outputs/apk/beta/app-beta.apk
+          mapfile -t apks < <(find app/build/outputs/apk/beta -maxdepth 1 -type f -name '*.apk' -print)
+          [[ "${#apks[@]}" == 1 ]]
+          apk="${apks[0]}"
           test -s "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" \
             | grep -F "package: name='app.serea.android.beta' versionCode='101'" >/dev/null

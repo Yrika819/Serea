@@ -7,6 +7,12 @@ use std::error::Error;
 use std::io::Write;
 use std::path::PathBuf;
 
+pub(super) fn report_host_error(error: &dyn std::fmt::Debug) {
+    if std::env::var_os("SEREA_TEST_READY_MARKER").is_some() {
+        eprintln!("synthetic_host_error_detail={error:?}");
+    }
+}
+
 pub(super) fn write_ready_marker(model_recovered: usize) -> Result<(), Box<dyn Error>> {
     let Some(marker) = std::env::var_os("SEREA_TEST_READY_MARKER") else {
         return Ok(());

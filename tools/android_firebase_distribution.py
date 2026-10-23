@@ -59,21 +59,92 @@ def validate_source(
         raise PipelineError("Checked-out source SHA does not match the exact workflow dispatch SHA.")
 
 
-def validate_environment_protection(environment: Any, expected_name: str) -> None:
+def validate_main_tip(source_sha: str, main_sha: str) -> None:
+    if not COMMIT_SHA_RE.fullmatch(source_sha) or not COMMIT_SHA_RE.fullmatch(main_sha):
+        raise PipelineError("Protected main tip or workflow source SHA is missing or malformed.")
+    if source_sha.lower() != main_sha.lower():
+        raise PipelineError("Workflow source is no longer the current protected-main tip.")
+
+
+def verify_main_branch_protected(branch: Any) -> None:
+    """Check the coarse branch summary available to a read-only GITHUB_TOKEN.
+
+    Full protection rules are verified in the isolated Signing and
+    Distribution jobs with a repository-scoped, administration-read-only App
+    token. This preliminary check never treats a missing API field as success.
+    """
+    if not isinstance(branch, dict) or branch.get("name") != "main" or branch.get("protected") is not True:
+        raise PipelineError("GitHub does not report main as protected; release processing is blocked.")
+
+
+def validate_environment_protection(
+    environment: Any,
+    expected_name: str,
+    expected_reviewer_id: str | None = None,
+    expected_reviewer_type: str | None = None,
+    deployment_branch_policies: Any = None,
+) -> None:
     if not isinstance(environment, dict) or environment.get("name") != expected_name:
         raise PipelineError("Personal Beta GitHub Environment is missing or has the wrong name.")
+    protection_rules = environment.get("protection_rules", [])
+    if not isinstance(protection_rules, list):
+        raise PipelineError("Personal Beta Environment protection rules are invalid.")
     reviewers = [
-        rule
-        for rule in environment.get("protection_rules", [])
+        reviewer
+        for rule in protection_rules
         if isinstance(rule, dict) and rule.get("type") == "required_reviewers"
+        and isinstance(rule.get("reviewers"), list)
+        for reviewer in rule["reviewers"]
+        if isinstance(reviewer, dict)
+        and reviewer.get("type") in {"User", "Team"}
+        and isinstance(reviewer.get("reviewer"), dict)
+        and isinstance(reviewer["reviewer"].get("id"), int)
+        and not isinstance(reviewer["reviewer"].get("id"), bool)
+        and reviewer["reviewer"]["id"] > 0
     ]
-    if not reviewers or not reviewers[0].get("reviewers"):
+    if not reviewers:
         raise PipelineError("Personal Beta Environment has no required reviewers; Owner approval is mandatory.")
+    if expected_reviewer_id is not None:
+        if not expected_reviewer_id.isdigit() or int(expected_reviewer_id) <= 0:
+            raise PipelineError("The configured Owner Environment reviewer ID is missing or invalid.")
+        if expected_reviewer_type not in {"User", "Team"}:
+            raise PipelineError("The configured Owner Environment reviewer type is missing or invalid.")
+        matching_reviewers = [
+            reviewer
+            for reviewer in reviewers
+            if reviewer["type"] == expected_reviewer_type
+            and str(reviewer["reviewer"]["id"]) == expected_reviewer_id
+        ]
+        if len(reviewers) != 1 or len(matching_reviewers) != 1:
+            raise PipelineError("Personal Beta Environment must restrict approval to the configured Owner reviewer.")
+        required_reviewer_rules = [
+            rule for rule in protection_rules
+            if isinstance(rule, dict) and rule.get("type") == "required_reviewers"
+        ]
+        raw_reviewers = (
+            required_reviewer_rules[0].get("reviewers")
+            if len(required_reviewer_rules) == 1 else None
+        )
+        if (
+            not isinstance(raw_reviewers, list)
+            or len(raw_reviewers) != 1
+            or len(reviewers) != 1
+            or required_reviewer_rules[0].get("prevent_self_review") is not True
+        ):
+            raise PipelineError("Personal Beta Environment must prevent self-review by the dispatching actor.")
     branch_policy = environment.get("deployment_branch_policy")
-    if not isinstance(branch_policy, dict) or branch_policy.get("protected_branches") is not True:
-        raise PipelineError("Personal Beta Environment must restrict deployments to protected branches.")
-    if branch_policy.get("custom_branch_policies") is not False:
-        raise PipelineError("Personal Beta Environment must use the protected-branches restriction.")
+    policies = deployment_branch_policies.get("branch_policies") if isinstance(deployment_branch_policies, dict) else None
+    if (
+        not isinstance(branch_policy, dict)
+        or branch_policy.get("protected_branches") is not False
+        or branch_policy.get("custom_branch_policies") is not True
+        or not isinstance(policies, list)
+        or len(policies) != 1
+        or not isinstance(policies[0], dict)
+        or policies[0].get("name") != "main"
+        or policies[0].get("type") != "branch"
+    ):
+        raise PipelineError("Personal Beta Environment must allow the main branch only.")
 
 
 def validate_main_branch_protection(protection: Any, required_names: list[str]) -> None:
@@ -90,6 +161,8 @@ def validate_main_branch_protection(protection: Any, required_names: list[str]) 
     status_checks = protection.get("required_status_checks")
     if not isinstance(status_checks, dict):
         raise PipelineError("Protected main must require status checks.")
+    if status_checks.get("strict") is not True:
+        raise PipelineError("Protected main must require strict up-to-date status checks.")
     contexts = status_checks.get("contexts", []) or []
     checks = status_checks.get("checks", []) or []
     if not isinstance(contexts, list) or not isinstance(checks, list):
@@ -388,6 +461,55 @@ def run_preflight(distribute_requested: bool) -> None:
             raise PipelineError("Approved Firebase tester group alias is missing or invalid.")
 
 
+def run_distribution_preflight() -> None:
+    """Validate only Firebase/WIF settings in the isolated Distribution job."""
+    required = (
+        "SEREA_PERSONAL_BETA_VERSION_CODE_BASELINE",
+        "SEREA_REQUIRED_CHECKS_JSON",
+        "SEREA_FIREBASE_DISTRIBUTION_ENABLED",
+        "SEREA_GCP_WIF_PROVIDER",
+        "SEREA_GCP_SERVICE_ACCOUNT",
+        "SEREA_FIREBASE_PROJECT_ID",
+        "SEREA_FIREBASE_APP_ID",
+        "SEREA_FIREBASE_APPROVED_TESTER_GROUP",
+    )
+    if any(not os.environ.get(name, "").strip() for name in required):
+        raise PipelineError("Required protected Distribution Environment configuration is missing.")
+    if os.environ["SEREA_FIREBASE_DISTRIBUTION_ENABLED"] != "true":
+        raise PipelineError("Owner has not explicitly enabled Firebase distribution.")
+    baseline = os.environ["SEREA_PERSONAL_BETA_VERSION_CODE_BASELINE"]
+    if not baseline.isdigit() or int(baseline) < 1 or int(baseline) > 2_147_483_646:
+        raise PipelineError("Owner Personal Beta versionCode baseline is invalid.")
+    try:
+        required_checks = json.loads(os.environ["SEREA_REQUIRED_CHECKS_JSON"])
+    except json.JSONDecodeError as error:
+        raise PipelineError("Owner-required check configuration is invalid.") from error
+    if (
+        not isinstance(required_checks, list)
+        or not required_checks
+        or any(not isinstance(name, str) or not name.strip() for name in required_checks)
+        or len(set(required_checks)) != len(required_checks)
+    ):
+        raise PipelineError("Owner-required check configuration is invalid.")
+    provider = os.environ["SEREA_GCP_WIF_PROVIDER"]
+    if not re.fullmatch(
+        r"projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]+/providers/[A-Za-z0-9_-]+",
+        provider,
+    ):
+        raise PipelineError("Google Workload Identity Federation provider is invalid.")
+    if not re.fullmatch(
+        r"[a-z][a-z0-9-]*@[a-z0-9.-]+\.iam\.gserviceaccount\.com",
+        os.environ["SEREA_GCP_SERVICE_ACCOUNT"],
+    ):
+        raise PipelineError("Google Workload Identity Federation service account is invalid.")
+    if not FIREBASE_PROJECT_ID_RE.fullmatch(os.environ["SEREA_FIREBASE_PROJECT_ID"]):
+        raise PipelineError("Firebase project ID is invalid.")
+    if not FIREBASE_APP_ID_RE.fullmatch(os.environ["SEREA_FIREBASE_APP_ID"]):
+        raise PipelineError("Firebase Android App ID is invalid.")
+    if not GROUP_ALIAS_RE.fullmatch(os.environ["SEREA_FIREBASE_APPROVED_TESTER_GROUP"]):
+        raise PipelineError("Firebase tester group alias is invalid.")
+
+
 def write_report(args: argparse.Namespace) -> None:
     requested = args.distribute_requested == "true"
     result_file = Path(args.result_file) if args.result_file else None
@@ -449,6 +571,8 @@ def _build_parser() -> argparse.ArgumentParser:
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--distribute-requested", choices=("true", "false"), required=True)
 
+    subparsers.add_parser("distribution-preflight")
+
     source = subparsers.add_parser("validate-source")
     source.add_argument("--repository", required=True)
     source.add_argument("--ref", required=True)
@@ -456,13 +580,23 @@ def _build_parser() -> argparse.ArgumentParser:
     source.add_argument("--source-sha", required=True)
     source.add_argument("--checkout-sha", required=True)
 
+    main_tip = subparsers.add_parser("validate-main-tip")
+    main_tip.add_argument("--source-sha", required=True)
+    main_tip.add_argument("--main-sha", required=True)
+
+    branch_protected = subparsers.add_parser("verify-main-branch-protected")
+    branch_protected.add_argument("--branch-file", type=Path, required=True)
+
     version = subparsers.add_parser("version-code")
     version.add_argument("--run-number", required=True)
     version.add_argument("--run-attempt", required=True)
 
     environment = subparsers.add_parser("verify-environment")
     environment.add_argument("--environment-file", type=Path, required=True)
+    environment.add_argument("--branch-policies-file", type=Path, required=True)
     environment.add_argument("--name", required=True)
+    environment.add_argument("--owner-reviewer-id")
+    environment.add_argument("--owner-reviewer-type", choices=("User", "Team"))
 
     main_protection = subparsers.add_parser("verify-main-protection")
     main_protection.add_argument("--protection-file", type=Path, required=True)
@@ -502,8 +636,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "preflight":
             run_preflight(args.distribute_requested == "true")
+        elif args.command == "distribution-preflight":
+            run_distribution_preflight()
         elif args.command == "validate-source":
             validate_source(args.repository, args.ref, args.workflow_ref, args.source_sha, args.checkout_sha)
+        elif args.command == "validate-main-tip":
+            validate_main_tip(args.source_sha, args.main_sha)
+        elif args.command == "verify-main-branch-protected":
+            verify_main_branch_protected(json.loads(args.branch_file.read_text(encoding="utf-8")))
         elif args.command == "version-code":
             version_code = version_code_for_run(
                 args.run_number,
@@ -514,7 +654,11 @@ def main(argv: list[str] | None = None) -> int:
             if not os.environ.get("GITHUB_OUTPUT"):
                 print(f"version_code={version_code}")
         elif args.command == "verify-environment":
-            validate_environment_protection(_load_json(args.environment_file), args.name)
+            validate_environment_protection(
+                _load_json(args.environment_file), args.name,
+                args.owner_reviewer_id, args.owner_reviewer_type,
+                _load_json(args.branch_policies_file),
+            )
         elif args.command == "verify-main-protection":
             required_names = json.loads(os.environ.get("SEREA_REQUIRED_CHECKS_JSON", "null"))
             validate_main_branch_protection(_load_json(args.protection_file), required_names)

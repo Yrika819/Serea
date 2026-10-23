@@ -1,7 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.security.KeyStore
-import java.security.MessageDigest
-import java.util.Locale
 
 plugins {
     id("com.android.application")
@@ -11,15 +8,7 @@ plugins {
     id("com.github.jk1.dependency-license-report")
 }
 
-val betaStorePath = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH").orNull
-val betaStorePassword = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD").orNull
-val betaKeyAlias = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS").orNull
-val betaKeyPassword = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD").orNull
-val betaExpectedFingerprint = providers.environmentVariable("SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256").orNull
 val betaVersionCode = providers.gradleProperty("sereaBetaVersionCode").orNull?.toIntOrNull()
-val betaSigningInputsReady = listOf(
-    betaStorePath, betaStorePassword, betaKeyAlias, betaKeyPassword, betaExpectedFingerprint,
-).all { !it.isNullOrBlank() }
 val betaValidationHarness = providers.gradleProperty("sereaPersonalBetaValidationHarness").orNull == "true"
 val updateCompatibilityTest = providers.gradleProperty("sereaUpdateCompatibilityTest").orNull == "true"
 val updateTestStorePath = providers.environmentVariable("SEREA_UPDATE_TEST_KEYSTORE_PATH").orNull
@@ -49,15 +38,6 @@ android {
     }
 
     signingConfigs {
-        if (betaSigningInputsReady) {
-            create("personalBeta") {
-                storeFile = file(checkNotNull(betaStorePath))
-                storeType = "PKCS12"
-                storePassword = checkNotNull(betaStorePassword)
-                keyAlias = checkNotNull(betaKeyAlias)
-                keyPassword = checkNotNull(betaKeyPassword)
-            }
-        }
         if (updateTestSigningInputsReady) {
             create("ephemeralUpdateTest") {
                 storeFile = file(checkNotNull(updateTestStorePath))
@@ -87,7 +67,8 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".beta"
             matchingFallbacks += listOf("release")
-            if (betaSigningInputsReady) signingConfig = signingConfigs.getByName("personalBeta")
+            // The Owner's long-lived Beta key is intentionally not configured in Gradle.
+            // Gradle builds an unsigned APK; the isolated release signer signs it later.
         }
     }
 
@@ -116,80 +97,6 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
-val validatePersonalBetaSigning = tasks.register("validatePersonalBetaSigning") {
-    group = "verification"
-    description = "Require and verify the Owner-managed Personal Beta signing identity before packaging."
-    outputs.upToDateWhen { false }
-    doLast {
-        fun failClosed(message: String): Nothing {
-            layout.buildDirectory.dir("outputs/apk/beta").get().asFile.deleteRecursively()
-            layout.buildDirectory.dir("outputs/bundle/beta").get().asFile.deleteRecursively()
-            error(message)
-        }
-
-        val required = mapOf(
-            "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH" to betaStorePath,
-            "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD" to betaStorePassword,
-            "SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS" to betaKeyAlias,
-            "SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD" to betaKeyPassword,
-            "SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256" to betaExpectedFingerprint,
-            "-PsereaBetaVersionCode" to betaVersionCode?.toString(),
-        )
-        val missing = required.filterValues { it.isNullOrBlank() }.keys
-        if (missing.isNotEmpty()) {
-            failClosed("Personal Beta APK packaging is blocked; missing required Owner signing configuration: ${missing.joinToString()}")
-        }
-
-        val keystoreFile = file(checkNotNull(betaStorePath))
-        if (!keystoreFile.isFile) failClosed("Personal Beta keystore path is not a file.")
-        if (checkNotNull(betaVersionCode) <= 1) {
-            failClosed("Personal Beta versionCode must be greater than 1; provide -PsereaBetaVersionCode.")
-        }
-
-        val expected = checkNotNull(betaExpectedFingerprint)
-            .replace(":", "")
-            .replace(Regex("\\s"), "")
-            .uppercase(Locale.ROOT)
-        if (!expected.matches(Regex("[0-9A-F]{64}"))) {
-            failClosed("SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256 must be a SHA-256 certificate fingerprint.")
-        }
-
-        val store = try {
-            KeyStore.getInstance("PKCS12").apply {
-                keystoreFile.inputStream().use { load(it, checkNotNull(betaStorePassword).toCharArray()) }
-            }
-        } catch (_: Exception) {
-            failClosed("Personal Beta PKCS12 keystore could not be opened with the configured password.")
-        }
-        if (!store.isKeyEntry(checkNotNull(betaKeyAlias))) {
-            failClosed("The configured Personal Beta alias is not a private-key entry in the PKCS12 keystore.")
-        }
-        val certificate = store.getCertificate(checkNotNull(betaKeyAlias))
-            ?: failClosed("The configured Personal Beta alias has no signing certificate.")
-        val actual = MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
-            .joinToString("") { "%02X".format(Locale.ROOT, it.toInt() and 0xff) }
-        if (actual != expected) {
-            failClosed("Personal Beta keystore certificate does not match SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256.")
-        }
-        val privateKey = try {
-            store.getKey(checkNotNull(betaKeyAlias), checkNotNull(betaKeyPassword).toCharArray())
-        } catch (_: Exception) {
-            failClosed("Personal Beta key password could not unlock the configured private key.")
-        }
-        if (privateKey !is java.security.PrivateKey) {
-            failClosed("The configured Personal Beta alias is not an accessible private signing key.")
-        }
-    }
-}
-
-tasks.matching { it.name in setOf("assembleBeta", "packageBeta", "bundleBeta", "signBetaBundle") }
-    .configureEach { dependsOn(validatePersonalBetaSigning) }
-
-tasks.configureEach {
-    if (name.contains("Beta") && name != "validatePersonalBetaSigning") {
-        mustRunAfter(validatePersonalBetaSigning)
-    }
-}
 
 androidComponents.onVariants { variant ->
     if (variant.buildType == "beta") {

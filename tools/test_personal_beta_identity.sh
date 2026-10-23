@@ -145,13 +145,28 @@ make_key() {
 }
 
 build_beta() {
-  local version="$1" harness="$2" output="$3"
+  local version="$1" harness="$2" output="$3" keystore="$4" alias="$5" expected_cert="$6"
   local args=(--no-daemon --no-build-cache --no-configuration-cache --rerun-tasks :app:assembleBeta "-PsereaBetaVersionCode=$version")
   if [[ "$harness" == true ]]; then args+=("-PsereaPersonalBetaValidationHarness=true"); fi
-  (cd "$android_dir" && ./gradlew "${args[@]}")
-  cp "$android_dir/app/build/outputs/apk/beta/app-beta.apk" "$output"
+  rm -rf "$android_dir/app/build/outputs/apk/beta"
+  (
+    cd "$android_dir"
+    env -u SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH \
+      -u SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD \
+      -u SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS \
+      -u SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD \
+      -u SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256 ./gradlew "${args[@]}"
+  )
+  local unsigned_apk
+  unsigned_apk=$(find "$android_dir/app/build/outputs/apk/beta" -maxdepth 1 -type f -name '*.apk' -print)
+  [[ -n "$unsigned_apk" && "$(printf '%s\n' "$unsigned_apk" | wc -l | tr -d ' ')" == 1 ]]
+  SEREA_TEST_BETA_STORE_PASSWORD="$SEREA_TEST_BETA_STORE_PASSWORD" \
+    SEREA_TEST_BETA_KEY_PASSWORD="$SEREA_TEST_BETA_KEY_PASSWORD" \
+    "$apksigner" sign --ks "$keystore" --ks-key-alias "$alias" \
+      --ks-pass env:SEREA_TEST_BETA_STORE_PASSWORD --key-pass env:SEREA_TEST_BETA_KEY_PASSWORD \
+      --out "$output" "$unsigned_apk"
   bash "$repo_root/tools/verify_personal_beta_apk.sh" "$output" "$version" \
-    "$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256"
+    "$expected_cert"
 }
 
 cd "$android_dir"
@@ -169,17 +184,16 @@ demo_fingerprint_before=$(apk_fingerprint "$test_root/demo-before.apk")
 demo_version_before=$(demo_package_version)
 demo_data_before=$(demo_data_snapshot)
 
-export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$test_root/personal-beta-test.p12"
-export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
-export SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS='serea-personal-beta-test'
-export SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD="$SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD"
-SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256=$(make_key \
-  "$SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH" "$SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS" \
-  SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD)
-export SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256
-beta_test_fingerprint="$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256"
+beta_test_keystore="$test_root/personal-beta-test.p12"
+beta_test_store_password="$(openssl rand -hex 32)"
+beta_test_key_password="$beta_test_store_password"
+beta_test_alias='serea-personal-beta-test'
+export SEREA_TEST_BETA_STORE_PASSWORD="$beta_test_store_password"
+export SEREA_TEST_BETA_KEY_PASSWORD="$beta_test_key_password"
+beta_test_fingerprint=$(make_key "$beta_test_keystore" "$beta_test_alias" SEREA_TEST_BETA_STORE_PASSWORD)
+beta_test_fingerprint=$(printf '%s' "$beta_test_fingerprint" | normalize_fingerprint)
 demo_fingerprint="$demo_fingerprint_before"
-if [[ "$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256" == "$demo_fingerprint" ]]; then
+if [[ "$beta_test_fingerprint" == "$demo_fingerprint" ]]; then
   echo 'Disposable Beta signing key unexpectedly matches the Demo signer.' >&2
   exit 1
 fi
@@ -188,12 +202,12 @@ apk_v99="$test_root/personal-beta-v99.apk"
 apk_v100="$test_root/personal-beta-v100.apk"
 apk_v101="$test_root/personal-beta-v101.apk"
 apk_wrong="$test_root/personal-beta-wrong-signer-v102.apk"
-build_beta 99 false "$apk_v99"
+build_beta 99 false "$apk_v99" "$beta_test_keystore" "$beta_test_alias" "$beta_test_fingerprint"
 adb install "$apk_v99"
 [[ -n "$(adb shell pm path "$demo_package" | tr -d '\r')" ]]
 [[ -n "$(adb shell pm path "$beta_package" | tr -d '\r')" ]]
 
-build_beta 100 true "$apk_v100"
+build_beta 100 true "$apk_v100" "$beta_test_keystore" "$beta_test_alias" "$beta_test_fingerprint"
 adb install -r "$apk_v100"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
@@ -219,7 +233,7 @@ reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
 phase verify
-build_beta 101 true "$apk_v101"
+build_beta 101 true "$apk_v101" "$beta_test_keystore" "$beta_test_alias" "$beta_test_fingerprint"
 adb install -r "$apk_v101"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
@@ -230,14 +244,14 @@ sleep 2
 phase verify
 
 wrong_key="$test_root/wrong-signer.p12"
-export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$wrong_key"
-export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
-export SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS='serea-personal-beta-wrong-test'
-export SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD="$SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD"
-SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256=$(make_key "$wrong_key" \
-  "$SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS" SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD)
-export SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256
-build_beta 102 true "$apk_wrong"
+wrong_store_password="$(openssl rand -hex 32)"
+wrong_key_password="$wrong_store_password"
+wrong_alias='serea-personal-beta-wrong-test'
+export SEREA_TEST_BETA_STORE_PASSWORD="$wrong_store_password"
+export SEREA_TEST_BETA_KEY_PASSWORD="$wrong_key_password"
+wrong_fingerprint=$(make_key "$wrong_key" "$wrong_alias" SEREA_TEST_BETA_STORE_PASSWORD)
+wrong_fingerprint=$(printf '%s' "$wrong_fingerprint" | normalize_fingerprint)
+build_beta 102 true "$apk_wrong" "$wrong_key" "$wrong_alias" "$wrong_fingerprint"
 if adb install -r "$apk_wrong" > "$test_root/wrong-signer-install.txt" 2>&1; then
   echo 'Android unexpectedly accepted an update signed by a different certificate.' >&2
   exit 1

@@ -10,6 +10,7 @@ mkdir -p "$mock_bin"
 mock_log="$test_root/adb.log"
 mock_logcat="$test_root/logcat.txt"
 mock_cert=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+mock_other_cert=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 
 cat > "$mock_bin/adb" <<'MOCK_ADB'
 #!/usr/bin/env bash
@@ -51,10 +52,21 @@ case "${1:-}" in
       done
       printf 'I/SereaProcessDeath: PASS:%s:%s\n' "$token" "$phase" >> "$MOCK_ADB_LOGCAT"
     elif [[ "${1:-}" == "dumpsys" && "${2:-}" == "package" ]]; then
-      printf 'Package [app.serea.android.updatecompat] versionCode=101 minSdk=26\n'
+      installed_version=$(cat "$MOCK_INSTALLED_VERSION_FILE" 2>/dev/null || printf '0')
+      printf 'Package [app.serea.android.updatecompat] versionCode=%s minSdk=26\n' "$installed_version"
     fi
     ;;
-  uninstall|install)
+  uninstall)
+    rm -f "$MOCK_INSTALLED_VERSION_FILE"
+    printf 'Success\n'
+    ;;
+  install)
+    apk="${@: -1}"
+    if grep -q '^signing=wrong$' "$apk"; then
+      printf 'Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match]\n'
+      exit 1
+    fi
+    sed -n 's/^versionCode=//p' "$apk" > "$MOCK_INSTALLED_VERSION_FILE"
     printf 'Success\n'
     ;;
   logcat)
@@ -149,7 +161,9 @@ for arg in "$@"; do
 done
 [[ "$isolated" == true && ( "$version" == 100 || "$version" == 101 ) ]]
 mkdir -p app/build/outputs/apk/debug
-printf 'applicationId=app.serea.android.updatecompat\nversionCode=%s\n' "$version" > app/build/outputs/apk/debug/app-debug.apk
+signing=primary
+if [[ "${SEREA_UPDATE_TEST_KEYSTORE_PATH:-}" == *wrong-signer* ]]; then signing=wrong; fi
+printf 'applicationId=app.serea.android.updatecompat\nversionCode=%s\nsigning=%s\n' "$version" "$signing" > app/build/outputs/apk/debug/app-debug.apk
 MOCK_GRADLE
 chmod +x "$fixture_repo/android/gradlew"
 
@@ -166,14 +180,28 @@ if [[ "${1:-}" == "-genkeypair" ]]; then
     shift
   done
 else
-  printf 'SHA256: %s\n' "$MOCK_CERT_SHA256"
+  store=
+  while (($#)); do
+    if [[ "$1" == "-keystore" ]]; then store="$2"; break; fi
+    shift
+  done
+  if [[ "$store" == *wrong-signer* ]]; then
+    printf 'SHA256: %s\n' "$MOCK_OTHER_CERT_SHA256"
+  else
+    printf 'SHA256: %s\n' "$MOCK_CERT_SHA256"
+  fi
 fi
 MOCK_KEYTOOL
 chmod +x "$mock_bin/openssl" "$mock_bin/keytool"
 
 cat > "$test_root/android-sdk/build-tools/35.0.0/apksigner" <<'MOCK_APKSIGNER'
 #!/usr/bin/env bash
-printf 'Signer #1 certificate SHA-256 digest: %s\n' "$MOCK_CERT_SHA256"
+apk="${@: -1}"
+if grep -q '^signing=wrong$' "$apk"; then
+  printf 'Signer #1 certificate SHA-256 digest: %s\n' "$MOCK_OTHER_CERT_SHA256"
+else
+  printf 'Signer #1 certificate SHA-256 digest: %s\n' "$MOCK_CERT_SHA256"
+fi
 MOCK_APKSIGNER
 cat > "$test_root/android-sdk/build-tools/35.0.0/aapt" <<'MOCK_AAPT'
 #!/usr/bin/env bash
@@ -193,7 +221,9 @@ if ! env \
   "MOCK_ADB_CASE=valid" \
   "MOCK_ADB_LOG=$mock_log" \
   "MOCK_ADB_LOGCAT=$mock_logcat" \
+  "MOCK_INSTALLED_VERSION_FILE=$test_root/installed-version.txt" \
   "MOCK_CERT_SHA256=$mock_cert" \
+  "MOCK_OTHER_CERT_SHA256=$mock_other_cert" \
   ANDROID_HOME="$test_root/android-sdk" \
   RUNNER_TEMP="$test_root/runner" \
   GITHUB_STEP_SUMMARY="$summary" \
@@ -207,12 +237,13 @@ fi
 grep -F 'Disposable emulator accepted: serial=emulator-5554 api=35 qemu=1' "$test_root/allowed.out" >/dev/null || fail 'valid emulator was not accepted'
 grep -F -- '-s emulator-5554 uninstall app.serea.android.updatecompat' "$mock_log" >/dev/null || fail 'isolated package was not the uninstall target'
 install_count=$(grep -F -c -- '-s emulator-5554 install -r' "$mock_log")
-[[ "$install_count" -eq 2 ]] || fail 'both replacement APK installs must use the verified serial'
+[[ "$install_count" -eq 3 ]] || fail 'the test must attempt v1, different-key rejection, and same-key v2 installs'
 grep -F 'app.serea.android.demo' "$mock_log" >/dev/null && fail 'production demo package appeared in ADB commands'
 result_file="$fixture_repo/android/app/build/outputs/androidTest-results/update-compatibility.txt"
 grep -F 'application_id=app.serea.android.updatecompat' "$result_file" >/dev/null || fail 'isolated package ID missing from results'
 grep -F 'version_code_v1=100' "$result_file" >/dev/null || fail 'v100 evidence missing'
 grep -F 'version_code_v2=101' "$result_file" >/dev/null || fail 'v101 evidence missing'
+grep -F 'different_key_update_rejected=PASS' "$result_file" >/dev/null || fail 'different-key rejection evidence missing'
 grep -F 'room_encrypted_history_settings_keystore_reference=PASS' "$result_file" >/dev/null || fail 'Room/Keystore evidence missing'
 grep -F 'process_death_recovery_after_update=PASS' "$result_file" >/dev/null || fail 'Process Death evidence missing'
-echo 'PASS: only the disposable API 35 emulator reached the mocked v100-to-v101 update flow'
+echo 'PASS: disposable API 35 update flow accepts same-key v101, rejects a different-key APK, and preserves app data'

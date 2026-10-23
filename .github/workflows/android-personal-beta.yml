@@ -79,7 +79,9 @@ jobs:
             --workflow-ref "$GITHUB_WORKFLOW_REF" \
             --source-sha "$SOURCE_SHA" \
             --checkout-sha "$(git rev-parse HEAD)"
-          git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
+          main_sha=$(git rev-parse refs/remotes/origin/main)
+          python3 tools/android_firebase_distribution.py validate-main-tip \
+            --source-sha "$SOURCE_SHA" --main-sha "$main_sha"
           tree_sha=$(git rev-parse "${SOURCE_SHA}^{tree}")
           workflow_path="${GITHUB_WORKFLOW_REF%%@*}"
           printf 'source_tree_sha=%s\n' "$tree_sha" >> "$GITHUB_OUTPUT"
@@ -201,6 +203,9 @@ jobs:
           SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256: ${{ vars.SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256 }}
         run: |
           set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          python3 ../tools/android_firebase_distribution.py validate-main-tip \
+            --source-sha "$SOURCE_SHA" --main-sha "$(git -C .. rev-parse refs/remotes/origin/main)"
           ./gradlew --no-daemon --no-build-cache --no-configuration-cache clean \
             :app:validatePersonalBetaSigning :app:assembleBeta \
             "-PsereaBetaVersionCode=${{ steps.version.outputs.version_code }}"
@@ -229,6 +234,14 @@ jobs:
             echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
             echo 'signed_apk_actions_artifact=none'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require the source to remain the protected-main tip before attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          python3 tools/android_firebase_distribution.py validate-main-tip \
+            --source-sha "$SOURCE_SHA" --main-sha "$(git rev-parse refs/remotes/origin/main)"
 
       - name: Publish build provenance attestation for the APK digest
         id: provenance
@@ -272,6 +285,15 @@ jobs:
             '${{ steps.version.outputs.version_code }}' "$SOURCE_SHA" > "$notes"
           chmod 600 "$notes"
           printf 'SEREA_FIREBASE_RELEASE_NOTES_FILE=%s\n' "$notes" >> "$GITHUB_ENV"
+
+      - name: Reconfirm protected-main source immediately before Firebase delivery
+        if: inputs.distribute
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          python3 tools/android_firebase_distribution.py validate-main-tip \
+            --source-sha "$SOURCE_SHA" --main-sha "$(git rev-parse refs/remotes/origin/main)"
 
       - name: Distribute the verified APK directly to the approved Firebase group
         id: firebase

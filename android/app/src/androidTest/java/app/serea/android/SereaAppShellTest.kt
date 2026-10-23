@@ -1387,6 +1387,7 @@ class SereaAppShellTest {
         assertEquals(detailScrollBeforeValue, checkNotNull(detailAfter.scrollValue), 1f)
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "Date-line test")
         calendarTargetTextNode("Date-line test").assertIsDisplayed()
+        scrollAgendaUntilDisplayed("calendar_event_detail_list", "説明")
         calendarTargetTextNode("説明").assertIsDisplayed()
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "開始・終了")
         calendarTargetTextNode("開始・終了").assertIsDisplayed()

@@ -14,6 +14,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -86,6 +88,16 @@ internal fun SereaAppShell(
         val state = SereaNavigationState.restore(destinationName, backStackNames).back()
         destinationName = state.current.name
         backStackNames = state.backStack.map { it.name }
+    }
+
+    LaunchedEffect(destination, focusClearRequest) {
+        if (destination == SereaDestination.CHAT && focusClearRequest > 0) {
+            // Clear after the SaveableStateProvider restores its child composition. A pre-
+            // navigation clear can run before the restored composer reattaches to the IME.
+            withFrameNanos { }
+            keyboardController?.hide()
+            focusManager.clearFocus(force = true)
+        }
     }
 
     BackHandler(enabled = taskProposalActionPending || canGoBack) {

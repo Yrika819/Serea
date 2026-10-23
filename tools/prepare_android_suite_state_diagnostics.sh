@@ -24,19 +24,22 @@ git -C "$repo_root" worktree add --detach "$source_repo" "$source_sha"
 
 for path in \
   android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt \
-  android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt; do
+  android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt \
+  android/app/src/main/java/app/serea/android/SereaAppShell.kt; do
   install -D "$repo_root/$path" "$source_repo/$path"
 done
 
-expected=$'android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt\nandroid/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt'
+expected=$'android/app/src/androidTest/java/app/serea/android/ChatScreenTest.kt\nandroid/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt\nandroid/app/src/main/java/app/serea/android/SereaAppShell.kt'
 actual="$(git -C "$source_repo" diff --name-only)"
 if [[ "$actual" != "$expected" ]]; then
   echo "Unexpected files differ from the fixed source tree." >&2
   printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$actual" >&2
   exit 1
 fi
-if [[ -n "$(git -C "$source_repo" diff -- android/app/src/main)" ]]; then
-  echo 'Production Android source differs from the fixed source tree.' >&2
+production_actual="$(git -C "$source_repo" diff --name-only -- android/app/src/main)"
+production_expected='android/app/src/main/java/app/serea/android/SereaAppShell.kt'
+if [[ "$production_actual" != "$production_expected" ]]; then
+  echo 'The only allowed product candidate overlay is SereaAppShell.kt.' >&2
   exit 1
 fi
 if [[ "$(git -C "$source_repo" rev-parse HEAD)" != "$source_sha" ]]; then
@@ -56,7 +59,10 @@ fi
   printf 'api=%s\n' "$api_level"
   printf 'test_subject_sha=%s\n' "$(git -C "$source_repo" rev-parse HEAD)"
   printf 'diagnostic_checkout_sha=%s\n' "$(git -C "$repo_root" rev-parse HEAD)"
-  printf 'app_main_tree_sha=%s\n' "$(git -C "$source_repo" rev-parse "$source_sha:android/app/src/main")"
+  printf 'base_app_main_tree_sha=%s\n' "$(git -C "$source_repo" rev-parse "$source_sha:android/app/src/main")"
+  printf 'diagnostic_product_overlay_sha256='; sha256sum \
+    "$source_repo/android/app/src/main/java/app/serea/android/SereaAppShell.kt"
+  printf 'diagnostic_product_overlay_paths:\n%s\n' "$production_actual"
   printf 'required_test_count=%s\nadditional_test_count=%s\nfull_suite_test_count=%s\n' \
     "$required_count" "$additional_count" "$total_count"
   printf 'diagnostic_test_overlay_sha256='; sha256sum \

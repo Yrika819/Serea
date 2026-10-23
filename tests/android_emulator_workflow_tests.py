@@ -160,6 +160,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("test_android_update_compatibility.sh", api35_campaign)
         self.assertIn("Save API 35 failure semantics and safety logcat", workflow)
         self.assertIn("Save API 26 failure semantics and safety logcat", workflow)
+        self.assertEqual(2, workflow.count("live='android/app/build/outputs/androidTest-results/api"))
+        self.assertEqual(2, workflow.count("' \"$live\" >> \"$output\""))
+        self.assertIn("Emulator detached after test step; captured instrumentation logcat is preserved above.", workflow)
         self.assertIn("font-scale-gmail-heading", workflow)
         self.assertIn("chat-draft-gmail-search-timeout", workflow)
         self.assertLess(

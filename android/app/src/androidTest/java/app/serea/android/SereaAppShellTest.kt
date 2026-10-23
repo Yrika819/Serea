@@ -95,14 +95,17 @@ class SereaAppShellTest {
         val visibleSemantics: String,
     )
 
-    /** Fetch semantics and read Compose-owned state on the UI thread as one idle snapshot. */
+    /** Select a semantics node on the test thread; read snapshot-backed values on the UI thread. */
     private fun snapshotSemantics(interaction: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarSemanticsSnapshot {
         compose.waitForIdle()
+        // The plural API selects nodes through Compose's test owner without serializing the
+        // selected node's lazy, snapshot-backed properties for its last-seen failure message.
+        val nodes = interaction.fetchSemanticsNodes()
+        check(nodes.size == 1) { "Expected one Calendar semantics node, found ${nodes.size}." }
+        val node = nodes.single()
         var result: CalendarSemanticsSnapshot? = null
         compose.runOnIdle {
-            // Fetching a SemanticsNode can itself read Compose snapshot state through the owner.
-            // Keep acquisition, config lambdas, child bounds, and Owner geometry on one thread.
-            val node = interaction.fetchSemanticsNode()
+            // Evaluate config lambdas, child bounds, and Owner geometry together on the UI thread.
             val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
             val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
             val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {

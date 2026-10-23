@@ -232,12 +232,9 @@ class SereaAppShellTest {
         if (includeRawDumpsys) {
             listOf("window", "activity activities", "input_method").forEach { service ->
                 val raw = shell("dumpsys $service")
-                java.io.File(directory, "$safeStage-dumpsys-${service.replace(' ', '-')}.txt").writeText(raw)
-                Log.i("SereaRootCauseRaw", "BEGIN|stage=$stage|service=$service")
-                raw.lineSequence().forEach { line ->
-                    Log.i("SereaRootCauseRaw", "RAW|stage=$stage|service=$service|$line")
-                }
-                Log.i("SereaRootCauseRaw", "END|stage=$stage|service=$service")
+                val rawFile = java.io.File(directory, "$safeStage-dumpsys-${service.replace(' ', '-')}.txt")
+                rawFile.writeText(raw)
+                Log.i("SereaRootCauseRaw", "SAVED|stage=$stage|service=$service|bytes=${raw.toByteArray().size}")
             }
         }
     }
@@ -1198,13 +1195,10 @@ class SereaAppShellTest {
     }
 
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
-        recordComposerRestoreEvidence("draft-start", includeRawDumpsys = true)
         compose.onNodeWithTag("chat-composer").performTextInput("draft survives navigation")
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
-        recordComposerRestoreEvidence("draft-typed")
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
-        recordComposerRestoreEvidence("gmail-destination", includeRawDumpsys = true)
         compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
         compose.onNodeWithTag("gmail_search_input").performImeAction()
         val emptySearchSettled = runCatching { compose.waitUntil(10_000) {
@@ -1215,28 +1209,27 @@ class SereaAppShellTest {
         } }.isSuccess
         if (!emptySearchSettled) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-gmail-search-timeout")
         assertTrue("Gmail IME search must settle before navigation and release TextField focus.", emptySearchSettled)
-        recordComposerRestoreEvidence("gmail-search-settled")
         pressBack()
         compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱").assertIsDisplayed()
         pressBack()
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
-        recordComposerRestoreEvidence("chat-return-from-gmail", includeRawDumpsys = true)
         val chatFocusReleased = runCatching {
             compose.waitUntil(5_000) {
                 runCatching { compose.onNodeWithTag("chat-composer").assertIsNotFocused() }.isSuccess
             }
         }.isSuccess
-        recordComposerRestoreEvidence("chat-return-from-gmail-focus-settled")
+        recordComposerRestoreEvidence(
+            if (chatFocusReleased) "chat-return-from-gmail-focus-released" else "chat-return-from-gmail-focus-failed",
+            includeRawDumpsys = true,
+        )
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
         select(SereaDestination.CALENDAR)
-        recordComposerRestoreEvidence("calendar-destination", includeRawDumpsys = true)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
         pressBack()
-        recordComposerRestoreEvidence("chat-return-from-calendar", includeRawDumpsys = true)
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
         compose.onNodeWithTag("chat-composer").assertTextContains("draft survives navigation")
     }

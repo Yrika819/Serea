@@ -48,6 +48,32 @@ verify_apks_unchanged() {
   fi
 }
 
+export_device_diagnostics() {
+  local output_dir="$1"
+  local file_list="$output_dir/device-files.txt"
+  local export_log="$output_dir/device-export.log"
+  local device_path relative_path destination export_status=0
+  adb shell run-as "$package" find files/root-cause -type f \
+    > "$file_list" 2> "$export_log"
+  if [[ "$?" -ne 0 ]]; then
+    printf 'find_exit=1\n' >> "$export_log"
+    return 0
+  fi
+  while IFS= read -r device_path; do
+    [[ "$device_path" == files/root-cause/* ]] || continue
+    relative_path="${device_path#files/root-cause/}"
+    destination="$output_dir/app-files/$relative_path"
+    mkdir -p "$(dirname "$destination")"
+    if ! adb exec-out run-as "$package" cat "$device_path" \
+      > "$destination" 2>> "$export_log"; then
+      printf 'export_failed=%s\n' "$device_path" >> "$export_log"
+      export_status=1
+    fi
+  done < "$file_list"
+  printf 'export_status=%s\n' "$export_status" >> "$export_log"
+  return 0
+}
+
 run_stage() {
   local stage="$1"
   local test_filter="$2"
@@ -118,9 +144,9 @@ run_stage() {
   if [[ -d "$source_repo/android/app/build/outputs/androidTest-results/connected" ]]; then
     cp -a "$source_repo/android/app/build/outputs/androidTest-results/connected" "$output_dir/junit"
   fi
+  export_device_diagnostics "$output_dir"
   if [[ "$stage" == full-suite && -d "$output_dir/junit" ]]; then
     python3 "$source_repo/tools/verify_android_instrumentation.py" "$output_dir/junit" \
-      --source-root "$source_repo/android/app/src/androidTest/java" \
       --minimum 105 --exact-count 105 \
       > "$output_dir/junit-verification.log" 2>&1 || true
   fi
@@ -128,8 +154,8 @@ run_stage() {
     SereaRootCauseRaw:I SereaRootCauseFocusOrder:I SereaChatWindowFocus:I \
     SereaTestLifecycle:I AndroidRuntime:E > "$output_dir/logcat-raw.txt" 2>&1 || log_capture_status=$?
   printf 'log_capture_exit_code=%s\n' "$log_capture_status" >> "$output_dir/manifest.txt"
-  python3 "$repo_root/tools/summarize_android_root_cause.py" \
-    "$output_dir/logcat-raw.txt" "$output_dir/focus-owner-summary.txt" \
+  python3 "$repo_root/tools/summarize_android_root_cause_files.py" \
+    "$output_dir/app-files" "$output_dir/focus-owner-summary.txt" \
     > "$output_dir/focus-owner-extraction.log" 2>&1 || true
   python3 "$repo_root/tools/summarize_android_suite_neighbors.py" \
     "$output_dir/logcat-raw.txt" "$output_dir/junit" \

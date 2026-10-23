@@ -238,12 +238,9 @@ class ChatScreenTest {
         if (includeRawDumpsys) {
             listOf("window", "activity activities", "input_method").forEach { service ->
                 val raw = shell("dumpsys $service")
-                File(directory, "${safeStage}-dumpsys-${service.replace(' ', '-')}.txt").writeText(raw)
-                Log.i("SereaRootCauseRaw", "BEGIN|stage=$stage|service=$service")
-                raw.lineSequence().forEach { line ->
-                    Log.i("SereaRootCauseRaw", "RAW|stage=$stage|service=$service|$line")
-                }
-                Log.i("SereaRootCauseRaw", "END|stage=$stage|service=$service")
+                val rawFile = File(directory, "${safeStage}-dumpsys-${service.replace(' ', '-')}.txt")
+                rawFile.writeText(raw)
+                Log.i("SereaRootCauseRaw", "SAVED|stage=$stage|service=$service|bytes=${raw.toByteArray().size}")
             }
         }
         return evidence

@@ -1,0 +1,46 @@
+name: Native Windows Host root cause campaign
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/native-root-cause-campaign.yml'
+      - 'crates/serea-host/**'
+      - 'tools/run_native_root_cause_diagnostics.sh'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-root-cause-campaign-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64-stable:
+    name: Windows x64 Stable focused and full lifecycle repetition
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - name: Checkout campaign baseline and parent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Install Stable Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Run repeated focused tests and full Host lifecycle suites
+        shell: bash
+        run: bash tools/run_native_root_cause_diagnostics.sh stable "Windows x64 Stable"
+
+      - name: Upload native root cause evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-windows-x64-stable-root-cause
+          path: root-cause/native/
+          if-no-files-found: error
+          retention-days: 30

@@ -18,6 +18,196 @@ fn monotonic_now() -> Instant {
     Instant::now()
 }
 
+#[allow(clippy::disallowed_methods)]
+fn current_epoch_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
+}
+
+fn observe_host_lock_and_durable_lease(directory: &Path, stage: &str, started: Instant) {
+    use fs2::FileExt;
+    use rusqlite::{Connection, OpenFlags};
+    use std::fs::OpenOptions;
+
+    let lock_path = directory.join("host.lock");
+    let os_lock = match OpenOptions::new().read(true).write(true).open(&lock_path) {
+        Ok(file) => match FileExt::try_lock_exclusive(&file) {
+            Ok(()) => {
+                let _ = FileExt::unlock(&file);
+                "available".to_owned()
+            }
+            Err(error) => format!("held_or_error:{error}"),
+        },
+        Err(error) => format!("unavailable:{error}"),
+    };
+    let database = directory.join("core.sqlite");
+    let lease_state = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .and_then(|connection| {
+            connection.busy_timeout(Duration::from_millis(250))?;
+            let mut statement = connection.prepare(
+                "SELECT s.task_id, s.step_id, s.status, l.owner, l.generation, l.acquired_at_ms, l.expires_at_ms, l.released_at_ms FROM leases l JOIN task_steps s ON s.step_id=l.step_id ORDER BY s.step_id",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok(format!(
+                    "task={} step={} status={} owner={} generation={} acquired_at_ms={} expires_at_ms={} released_at_ms={}",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, Option<i64>>(7)?.map_or_else(|| "NULL".into(), |value| value.to_string()),
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map(|rows| if rows.is_empty() { "<none>".into() } else { rows.join(";") })
+        .unwrap_or_else(|error| format!("unavailable:{error}"));
+    let wal_bytes = std::fs::metadata(directory.join("core.sqlite-wal"))
+        .map(|metadata| metadata.len().to_string())
+        .unwrap_or_else(|_| "absent".into());
+    println!(
+        "SEREA_ROOT_CAUSE_HOST|stage={stage}|pid={}|elapsed_ms={}|epoch_ms={}|os_lock={os_lock}|db_exists={}|wal_bytes={wal_bytes}|leases={lease_state}",
+        std::process::id(),
+        started.elapsed().as_millis(),
+        current_epoch_ms(),
+        database.exists(),
+    );
+}
+
+enum DiagnosticChildOutput {
+    Chunk(&'static str, Vec<u8>),
+}
+
+fn forward_diagnostic_child_stream<R: Read + Send + 'static>(
+    stream_name: &'static str,
+    stream: R,
+    sender: mpsc::Sender<DiagnosticChildOutput>,
+) {
+    let mut reader = BufReader::new(stream);
+    loop {
+        let mut line = Vec::new();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) => return,
+            Ok(_) => {
+                if sender
+                    .send(DiagnosticChildOutput::Chunk(stream_name, line))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(DiagnosticChildOutput::Chunk(
+                    stream_name,
+                    format!("<reader error: {error}>\n").into_bytes(),
+                ));
+                return;
+            }
+        }
+    }
+}
+
+fn run_diagnostic_child(
+    command: &mut Command,
+    scenario: &str,
+) -> io::Result<(std::process::Output, Duration, bool)> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let started = monotonic_now();
+    let mut child = command.spawn()?;
+    println!(
+        "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=child_spawned|pid={}|epoch_ms={}|elapsed_ms=0",
+        child.id(),
+        current_epoch_ms(),
+    );
+    let stdout = child.stdout.take().expect("captured child stdout");
+    let stderr = child.stderr.take().expect("captured child stderr");
+    let (sender, receiver) = mpsc::channel();
+    let stdout_thread = {
+        let sender = sender.clone();
+        thread::spawn(move || forward_diagnostic_child_stream("stdout", stdout, sender))
+    };
+    let stderr_thread =
+        thread::spawn(move || forward_diagnostic_child_stream("stderr", stderr, sender));
+    let deadline = started + Duration::from_secs(30);
+    let mut next_progress = started + Duration::from_secs(1);
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
+    let mut forced_timeout = false;
+    loop {
+        while let Ok(DiagnosticChildOutput::Chunk(stream, bytes)) = receiver.try_recv() {
+            let destination = if stream == "stdout" {
+                &mut stdout_bytes
+            } else {
+                &mut stderr_bytes
+            };
+            destination.extend_from_slice(&bytes);
+            println!(
+                "SEREA_ROOT_CAUSE_MODEL_CHILD|scenario={scenario}|stream={stream}|line={:?}",
+                String::from_utf8_lossy(&bytes).trim_end(),
+            );
+        }
+        if let Some(status) = child.try_wait()? {
+            println!(
+                "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=child_exit_observed|pid={}|status={status:?}|exit_code={:?}|elapsed_ms={}",
+                child.id(),
+                status.code(),
+                started.elapsed().as_millis(),
+            );
+            break;
+        }
+        if monotonic_now() >= deadline {
+            forced_timeout = true;
+            println!(
+                "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=diagnostic_watchdog_kill|pid={}|elapsed_ms={}",
+                child.id(),
+                started.elapsed().as_millis(),
+            );
+            let _ = child.kill();
+            break;
+        }
+        if monotonic_now() >= next_progress {
+            println!(
+                "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=child_running|pid={}|elapsed_ms={}|stdout_bytes={}|stderr_bytes={}",
+                child.id(),
+                started.elapsed().as_millis(),
+                stdout_bytes.len(),
+                stderr_bytes.len(),
+            );
+            next_progress += Duration::from_secs(1);
+        }
+        thread::park_timeout(Duration::from_millis(25));
+    }
+    let status = child.wait()?;
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
+    while let Ok(DiagnosticChildOutput::Chunk(stream, bytes)) = receiver.try_recv() {
+        let destination = if stream == "stdout" {
+            &mut stdout_bytes
+        } else {
+            &mut stderr_bytes
+        };
+        destination.extend_from_slice(&bytes);
+        println!(
+            "SEREA_ROOT_CAUSE_MODEL_CHILD|scenario={scenario}|stream={stream}|line={:?}",
+            String::from_utf8_lossy(&bytes).trim_end(),
+        );
+    }
+    let elapsed = started.elapsed();
+    Ok((
+        std::process::Output {
+            status,
+            stdout: stdout_bytes,
+            stderr: stderr_bytes,
+        },
+        elapsed,
+        forced_timeout,
+    ))
+}
+
 fn configure_ready_marker(command: &mut Command, directory: &Path) {
     let marker = directory.join("host.ready");
     match std::fs::remove_file(&marker) {
@@ -156,6 +346,10 @@ struct HostOutput {
     current: Vec<u8>,
     position: usize,
     eof: bool,
+    #[cfg(windows)]
+    stderr_text: Option<Arc<Mutex<String>>>,
+    #[cfg(windows)]
+    stderr_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl HostOutput {
@@ -166,7 +360,22 @@ impl HostOutput {
             current: Vec::new(),
             position: 0,
             eof: false,
+            #[cfg(windows)]
+            stderr_text: None,
+            #[cfg(windows)]
+            stderr_thread: None,
         }
+    }
+
+    #[cfg(windows)]
+    fn finish_stderr(&mut self) -> String {
+        if let Some(stderr_thread) = self.stderr_thread.take() {
+            let _ = stderr_thread.join();
+        }
+        self.stderr_text
+            .as_ref()
+            .and_then(|stderr_text| stderr_text.lock().ok().map(|text| text.clone()))
+            .unwrap_or_else(|| "stderr capture unavailable".into())
     }
 }
 
@@ -284,7 +493,14 @@ fn wait_ready(child: &mut Child, directory: &Path) -> HostOutput {
             );
         }
         match readiness_decision(child_running, stdout_eof, saw_ready_line, marker.is_some()) {
-            ReadinessDecision::Ready => return output,
+            ReadinessDecision::Ready => {
+                #[cfg(windows)]
+                {
+                    output.stderr_text = Some(Arc::clone(&stderr_text));
+                    output.stderr_thread = Some(stderr_thread);
+                }
+                return output;
+            }
             ReadinessDecision::WaitForOutput
             | ReadinessDecision::WaitForReadyLine
             | ReadinessDecision::WaitForReceipt => {}
@@ -445,9 +661,12 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
         NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&directory).expect("create disposable data directory");
+    let diagnostic_started = monotonic_now();
+    observe_host_lock_and_durable_lease(&directory, "directory-created", diagnostic_started);
 
     let mut first = start(&directory);
     let first_stdout = wait_ready(&mut first, &directory);
+    observe_host_lock_and_durable_lease(&directory, "first-host-ready", diagnostic_started);
     let second = Command::new(env!("CARGO_BIN_EXE_serea-host"))
         .args(["run", "--synthetic", "--data-dir"])
         .arg(&directory)
@@ -458,15 +677,33 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
     assert!(!second.success());
     stop(&directory, first, first_stdout);
     assert!(directory.join("host.lock").exists());
+    observe_host_lock_and_durable_lease(&directory, "first-host-stopped", diagnostic_started);
 
     let mut crashed_run = start(&directory);
     let _crashed_stdout = wait_ready(&mut crashed_run, &directory);
+    observe_host_lock_and_durable_lease(&directory, "crashed-host-before-kill", diagnostic_started);
     crashed_run.kill().expect("terminate host process");
-    assert!(!crashed_run.wait().expect("reap terminated host").success());
+    let crashed_status = crashed_run.wait().expect("reap terminated host");
+    println!(
+        "SEREA_ROOT_CAUSE_HOST|stage=crashed-host-exit-confirmed|pid={}|status={crashed_status:?}|exit_code={:?}|elapsed_ms={}",
+        crashed_run.id(),
+        crashed_status.code(),
+        diagnostic_started.elapsed().as_millis(),
+    );
+    assert!(!crashed_status.success());
+    observe_host_lock_and_durable_lease(&directory, "crashed-host-after-exit", diagnostic_started);
 
-    let mut recovered_run = start(&directory);
-    let recovered_stdout = wait_ready(&mut recovered_run, &directory);
-    stop(&directory, recovered_run, recovered_stdout);
+    observe_host_lock_and_durable_lease(&directory, "restart-before-launch", diagnostic_started);
+    let restart_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut recovered_run = start(&directory);
+        let recovered_stdout = wait_ready(&mut recovered_run, &directory);
+        observe_host_lock_and_durable_lease(&directory, "restart-ready", diagnostic_started);
+        stop(&directory, recovered_run, recovered_stdout);
+    }));
+    observe_host_lock_and_durable_lease(&directory, "restart-attempt-finished", diagnostic_started);
+    if let Err(panic) = restart_result {
+        std::panic::resume_unwind(panic);
+    }
     assert!(directory.join("core.sqlite").exists());
     std::fs::remove_dir_all(&directory).expect("clean disposable data directory");
 }
@@ -520,7 +757,7 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
     use std::os::windows::process::CommandExt;
     use windows_sys::Win32::System::Console::{
         AttachConsole, CTRL_BREAK_EVENT, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent,
-        SetConsoleCtrlHandler,
+        GetConsoleProcessList, SetConsoleCtrlHandler,
     };
 
     // CTRL_C_EVENT cannot be addressed to one process group. Give the Host
@@ -538,6 +775,7 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&directory).expect("create disposable Windows Host directory");
+        let started = monotonic_now();
         let flags = CREATE_NEW_CONSOLE
             | if new_group {
                 CREATE_NEW_PROCESS_GROUP
@@ -552,8 +790,27 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         configure_ready_marker(&mut command, &directory);
+
+        // Windows copies the parent's Ctrl-C ignore setting into a newly
+        // created child. Leave Ctrl-C enabled while creating the Host so its
+        // registered handler can receive CTRL_C_EVENT. Shield this test
+        // process immediately after spawn, before attaching to the child's
+        // console.
+        let ctrl_c_inheritance_reset = unsafe { SetConsoleCtrlHandler(None, 0) };
+        assert_ne!(
+            ctrl_c_inheritance_reset,
+            0,
+            "enable Ctrl-C before spawning Host so the child inherits delivery"
+        );
         let mut child = command.spawn().expect("start Host with isolated console");
+        let sender_spawn_shield = unsafe { SetConsoleCtrlHandler(None, 1) };
+        if sender_spawn_shield == 0 {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("suppress Ctrl-C in test sender immediately after Host spawn");
+        }
         let mut output = wait_ready(&mut child, &directory);
+        let group = if new_group { child.id() } else { 0 };
 
         // Console control events are broadcast within a console, so attach
         // temporarily to the isolated child console. Restore the parent's
@@ -561,24 +818,85 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
         // targets every process attached to the child console, including this
         // test process, so suppress Ctrl-C handling in the sender while the
         // event is in flight.
-        unsafe {
+        let (
+            suppressed,
+            suppressed_error,
+            attached,
+            attach_error,
+            console_processes,
+            generated,
+            generate_error,
+            sender_restore,
+        ) = unsafe {
             let _ = FreeConsole();
-            assert_ne!(
-                SetConsoleCtrlHandler(None, 1),
-                0,
-                "suppress Ctrl-C in the test sender"
-            );
-            assert_ne!(AttachConsole(child.id()), 0, "attach to Host console");
-            let group = if new_group { child.id() } else { 0 };
-            assert_ne!(
-                GenerateConsoleCtrlEvent(event, group),
-                0,
-                "deliver real Windows {label} control event"
-            );
+            let suppressed = SetConsoleCtrlHandler(None, 1);
+            let suppressed_error =
+                (suppressed == 0).then(|| io::Error::last_os_error().to_string());
+            let attached = if suppressed != 0 {
+                AttachConsole(child.id())
+            } else {
+                0
+            };
+            let attach_error = (attached == 0).then(|| io::Error::last_os_error().to_string());
+            let console_processes = if attached != 0 {
+                let mut process_ids = [0u32; 64];
+                let count =
+                    GetConsoleProcessList(process_ids.as_mut_ptr(), process_ids.len() as u32);
+                if count == 0 {
+                    format!("error:{}", io::Error::last_os_error())
+                } else {
+                    let used = (count as usize).min(process_ids.len());
+                    format!("{:?}", &process_ids[..used])
+                }
+            } else {
+                "unavailable".to_owned()
+            };
+            let generated = if attached != 0 && suppressed != 0 {
+                GenerateConsoleCtrlEvent(event, group)
+            } else {
+                0
+            };
+            let generate_error = (generated == 0).then(|| io::Error::last_os_error().to_string());
             let _ = FreeConsole();
             // ATTACH_PARENT_PROCESS = (DWORD)-1. A service runner may have no
             // console, so restoration is best-effort and not a test condition.
-            let _ = AttachConsole(u32::MAX);
+            let sender_restore = AttachConsole(u32::MAX);
+            (
+                suppressed,
+                suppressed_error,
+                attached,
+                attach_error,
+                console_processes,
+                generated,
+                generate_error,
+                sender_restore,
+            )
+        };
+        println!(
+            "SEREA_ROOT_CAUSE_CONSOLE|stage=signal_sent|label={label}|test_pid={}|child_pid={}|signal={label}|event_code={event}|creation_flags=0x{flags:08x}|console_group_target={group}|console_processes={console_processes}|ctrl_c_inheritance_reset={ctrl_c_inheritance_reset}|sender_spawn_shield={sender_spawn_shield}|suppress_ctrl_c={suppressed}|suppress_error={suppressed_error:?}|attach_result={attached}|attach_error={attach_error:?}|generate_result={generated}|generate_error={generate_error:?}|sender_restore_result={sender_restore}|elapsed_ms={}",
+            std::process::id(),
+            child.id(),
+            started.elapsed().as_millis(),
+        );
+        observe_host_lock_and_durable_lease(&directory, &format!("{label}-signal-sent"), started);
+        if suppressed == 0 || attached == 0 || generated == 0 {
+            unsafe {
+                let _ = SetConsoleCtrlHandler(None, 0);
+            }
+            let _ = child.kill();
+            let status = child
+                .wait()
+                .expect("reap Windows Host after control-event setup failure");
+            let mut stdout = String::new();
+            output
+                .read_to_string(&mut stdout)
+                .expect("read Windows Host stdout after control-event setup failure");
+            let stderr = output.finish_stderr();
+            panic!(
+                "failed to deliver Windows {label} event; child_pid={} status={status:?} exit_code={:?} group={group} suppress_error={suppressed_error:?} attach_error={attach_error:?} generate_error={generate_error:?} stdout={stdout:?} stderr={stderr:?}",
+                child.id(),
+                status.code(),
+            );
         }
 
         let deadline = monotonic_now() + Duration::from_secs(15);
@@ -586,7 +904,39 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             if let Some(status) = child.try_wait().expect("poll Windows Host shutdown") {
                 break status;
             }
-            assert!(monotonic_now() < deadline, "bounded {label} shutdown");
+            if monotonic_now() >= deadline {
+                observe_host_lock_and_durable_lease(
+                    &directory,
+                    &format!("{label}-shutdown-timeout-before-kill"),
+                    started,
+                );
+                let _ = child.kill();
+                let status = child.wait().expect("reap timed-out Windows Host");
+                let mut stdout = String::new();
+                output
+                    .read_to_string(&mut stdout)
+                    .expect("read timed-out Windows lifecycle stdout");
+                let stderr = output.finish_stderr();
+                let elapsed = started.elapsed();
+                println!(
+                    "SEREA_ROOT_CAUSE_CONSOLE|stage=shutdown_timeout|label={label}|test_pid={}|child_pid={}|signal={label}|event_code={event}|console_group_target={group}|exit_code={:?}|status={status:?}|elapsed_ms={}|stdout={stdout:?}|stderr={stderr:?}",
+                    std::process::id(),
+                    child.id(),
+                    status.code(),
+                    elapsed.as_millis(),
+                );
+                observe_host_lock_and_durable_lease(
+                    &directory,
+                    &format!("{label}-shutdown-timeout-after-kill"),
+                    started,
+                );
+                panic!(
+                    "bounded {label} shutdown expired after {} ms; child_pid={} status={status:?} exit_code={:?} group={group} stdout={stdout:?} stderr={stderr:?}",
+                    elapsed.as_millis(),
+                    child.id(),
+                    status.code(),
+                );
+            }
             std::thread::park_timeout(Duration::from_millis(20));
         };
         // GenerateConsoleCtrlEvent is asynchronous. Keep the sender shielded
@@ -595,15 +945,31 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
         unsafe {
             let _ = SetConsoleCtrlHandler(None, 0);
         }
-        assert!(
-            status.success(),
-            "{label} should request cooperative shutdown"
-        );
+        let elapsed = started.elapsed();
         let mut tail = String::new();
         output
             .read_to_string(&mut tail)
             .expect("read final Windows lifecycle diagnostics");
-        assert!(tail.contains("\"event\":\"host_stopped\""));
+        let stderr = output.finish_stderr();
+        println!(
+            "SEREA_ROOT_CAUSE_CONSOLE|stage=child_exited|label={label}|test_pid={}|child_pid={}|signal={label}|event_code={event}|console_group_target={group}|exit_code={:?}|status={status:?}|elapsed_ms={}|stdout={tail:?}|stderr={stderr:?}",
+            std::process::id(),
+            child.id(),
+            status.code(),
+            elapsed.as_millis(),
+        );
+        observe_host_lock_and_durable_lease(&directory, &format!("{label}-child-exited"), started);
+        assert!(
+            status.success(),
+            "{label} should request cooperative shutdown; child_pid={} exit_code={:?} elapsed_ms={} group={group} stdout={tail:?} stderr={stderr:?}",
+            child.id(),
+            status.code(),
+            elapsed.as_millis(),
+        );
+        assert!(
+            tail.contains("\"event\":\"host_stopped\""),
+            "stdout={tail:?} stderr={stderr:?}"
+        );
 
         let clock = serea_testkit::TestClock::at_epoch();
         let store = serea_storage::Store::open(&directory.join("core.sqlite"), &clock)
@@ -714,15 +1080,45 @@ fn actual_host_model_policy_and_accounting_scenarios_survive_database_reopen() {
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&directory).expect("create disposable scenario directory");
-        let output = Command::new(env!("CARGO_BIN_EXE_serea-host"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_serea-host"));
+        command
             .args(["model-smoke", "--synthetic", "--data-dir"])
             .arg(&directory)
-            .args(["--scenario", scenario])
-            .output()
+            .args(["--scenario", scenario]);
+        println!(
+            "SEREA_ROOT_CAUSE_MODEL_PARENT|scenario={scenario}|stage=launch_requested|epoch_ms={}|args={:?}",
+            current_epoch_ms(),
+            [
+                "model-smoke",
+                "--synthetic",
+                "--data-dir",
+                "<disposable-directory>",
+                "--scenario",
+                scenario
+            ],
+        );
+        let (output, elapsed, forced_timeout) = run_diagnostic_child(&mut command, scenario)
             .expect("run compiled synthetic Host scenario");
+        println!(
+            "SEREA_ROOT_CAUSE_MODEL_RESULT|scenario={scenario}|exit_code={:?}|status={:?}|elapsed_ms={}|termination={}|stdout={:?}|stderr={:?}",
+            output.status.code(),
+            output.status,
+            elapsed.as_millis(),
+            if forced_timeout {
+                "diagnostic_watchdog_kill"
+            } else {
+                "child_exit"
+            },
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
         assert!(
-            output.status.success(),
-            "Host {scenario} scenario failed: stdout={} stderr={}",
+            output.status.success() && !forced_timeout,
+            "Host {scenario} scenario failed: exit_code={:?} status={:?} elapsed_ms={} forced_timeout={} stdout={} stderr={}",
+            output.status.code(),
+            output.status,
+            elapsed.as_millis(),
+            forced_timeout,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );

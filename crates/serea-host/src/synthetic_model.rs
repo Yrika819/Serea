@@ -6,6 +6,8 @@ use std::path::Path;
 use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
+#[cfg(feature = "synthetic-test-hooks")]
+use std::time::Instant;
 
 use serea_event_bus::EventBus;
 #[cfg(feature = "synthetic-test-hooks")]
@@ -31,6 +33,21 @@ struct OfflineGate {
     cancel_after_initial: bool,
     deadline_ms: u32,
     snapshots: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+#[allow(clippy::disallowed_methods)]
+fn diagnostic_instant_now() -> Instant {
+    Instant::now()
+}
+
+#[cfg(feature = "synthetic-test-hooks")]
+fn diagnostic_stage(scenario: &str, started: Instant, stage: &str) {
+    eprintln!(
+        "SEREA_ROOT_CAUSE_MODEL|pid={}|scenario={scenario}|stage={stage}|elapsed_ms={}",
+        std::process::id(),
+        started.elapsed().as_millis(),
+    );
 }
 
 impl ModelDispatchGateSource for OfflineGate {
@@ -498,7 +515,13 @@ fn execute_once_inner(
     #[cfg(feature = "synthetic-test-hooks")] cancel_marker: Option<std::path::PathBuf>,
     #[cfg(not(feature = "synthetic-test-hooks"))] _cancel_marker: Option<()>,
 ) -> Result<(), String> {
+    #[cfg(feature = "synthetic-test-hooks")]
+    let diagnostic_started = diagnostic_instant_now();
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "child_entry");
     std::fs::create_dir_all(root).map_err(|_| "synthetic data directory unavailable")?;
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "data_directory_ready");
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
@@ -508,6 +531,8 @@ fn execute_once_inner(
         .map_err(|_| "synthetic host lock unavailable")?;
     fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| "synthetic host is already running")?;
     let _lock_guard = ModelLock(lock);
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "host_os_lock_acquired");
     let db_path = root.join("core.sqlite");
     let clock = super::host_clock::WallClock;
     let now = clock.now_ms().map_err(|_| "synthetic clock unavailable")?;
@@ -518,6 +543,8 @@ fn execute_once_inner(
         .map_err(|_| "synthetic identifier entropy unavailable")?;
     let events = EventBus::new(ids);
     let store = Store::open(&db_path, &clock).map_err(|_| "synthetic storage unavailable")?;
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "database_opened");
     #[cfg(feature = "synthetic-test-hooks")]
     let provider_barrier = barrier
         .clone()
@@ -535,9 +562,13 @@ fn execute_once_inner(
     let call = prepared_call(task_id)?;
     let host = ModelRouterHostContextV1::new(&store, &events, &clock, &gate);
     #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "router_and_call_prepared");
+    #[cfg(feature = "synthetic-test-hooks")]
     if let Some(barrier) = barrier.clone().filter(|b| b.phase == "pre-dispatch") {
         barrier.wait()?;
     }
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "dispatch_started");
     #[cfg(feature = "synthetic-test-hooks")]
     let (outcome, cancelled_during_provider) = match block_on_control(
         router.execute(&call, &host),
@@ -554,6 +585,16 @@ fn execute_once_inner(
             (None, true)
         }
     };
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(
+        scenario,
+        diagnostic_started,
+        if outcome.is_some() {
+            "dispatch_completed"
+        } else {
+            "dispatch_timed_out_or_cancelled"
+        },
+    );
     #[cfg(not(feature = "synthetic-test-hooks"))]
     let (outcome, _cancelled_during_provider) =
         match block_on_timeout(router.execute(&call, &host), timeout) {
@@ -568,6 +609,8 @@ fn execute_once_inner(
     if let Some(barrier) = barrier.filter(|b| b.phase == "terminal") {
         barrier.wait()?;
     }
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "terminal_barrier_complete");
     #[cfg(feature = "synthetic-test-hooks")]
     let expected = match scenario {
         "cancelled" => matches!(
@@ -631,6 +674,8 @@ fn execute_once_inner(
     if !expected {
         return Err("synthetic Router result did not match scripted outcome".to_owned());
     }
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "expected_outcome_confirmed");
     #[cfg(not(feature = "synthetic-test-hooks"))]
     if !matches!((&outcome, failure), (Some(Ok(response)), false) if response.content == "synthetic response")
         && !matches!(
@@ -673,6 +718,8 @@ fn execute_once_inner(
     {
         return Err("synthetic dispatch left an unresolved attempt".to_owned());
     }
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "accounting_verified");
     match outcome {
         Some(Ok(_)) => println!(
             "{{\"event\":\"synthetic_model_completed\",\"provider\":\"in_process_fake\",\"result\":\"success\"}}"
@@ -687,6 +734,8 @@ fn execute_once_inner(
     store
         .checkpoint_for_close()
         .map_err(|_| "synthetic database checkpoint failed")?;
+    #[cfg(feature = "synthetic-test-hooks")]
+    diagnostic_stage(scenario, diagnostic_started, "database_checkpointed");
     Ok(())
 }
 

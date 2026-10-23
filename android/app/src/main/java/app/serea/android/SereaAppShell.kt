@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -88,6 +89,10 @@ internal fun SereaAppShell(
     // returns to the composition. Clear that restored focus after the destination switch.
     LaunchedEffect(destination) {
         keyboardController?.hide()
+        // SaveableStateProvider restores the previous destination's focus node as that
+        // destination re-enters the tree. Clear focus after that restoration frame so the
+        // restored TextField cannot immediately reclaim focus.
+        withFrameNanos { }
         focusManager.clearFocus(force = true)
     }
 

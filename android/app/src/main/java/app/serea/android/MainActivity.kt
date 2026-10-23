@@ -3,6 +3,7 @@ package app.serea.android
 import android.app.Activity
 import android.content.ContextWrapper
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -740,6 +741,20 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
+    LaunchedEffect(focusClearRequest) {
+        if (focusClearRequest > 0) {
+            val debuggable = context.applicationInfo.flags and
+                android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+            if (debuggable) Log.i("SereaChatFocusRestore", "CLEAR_EFFECT_START|request=$focusClearRequest")
+            withFrameNanos { }
+            if (debuggable) Log.i("SereaChatFocusRestore", "CLEAR_EFFECT_FRAME_1|request=$focusClearRequest")
+            withFrameNanos { }
+            if (debuggable) Log.i("SereaChatFocusRestore", "CLEAR_EFFECT_FRAME_2|request=$focusClearRequest")
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
+            if (debuggable) Log.i("SereaChatFocusRestore", "CLEAR_EFFECT_ISSUED|request=$focusClearRequest")
+        }
+    }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         val screenModifier = Modifier.fillMaxSize().imePadding()
             .then(if (settingsVisible) Modifier.verticalScroll(rememberScrollState()) else Modifier)

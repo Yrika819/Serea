@@ -104,6 +104,7 @@ class ChatScreenTest {
             }
         }.isSuccess
         if (!focused) {
+            captureFocusEvidence("window-focus-timeout-$stage", includeRawDumpsys = true)
             snapshot += " rawDumpsysSaved=true"
         }
         Log.i(FOCUS_LOG_TAG, snapshot)
@@ -111,6 +112,7 @@ class ChatScreenTest {
     }
 
     private fun tapComposerThroughSystemInput() {
+        awaitMainWindowFocus("before composer system tap")
         captureFocusEvidence("system-tap-before")
         val bounds = composer().fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)

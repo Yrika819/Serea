@@ -152,7 +152,7 @@ run_stage() {
       > "$output_dir/junit-verification.log" 2>&1 || true
   fi
   adb logcat -d -v raw -s \
-    SereaRootCauseRaw:I SereaRootCauseFocusOrder:I SereaChatWindowFocus:I \
+    SereaRootCauseRaw:I SereaRootCauseFocusOrder:I SereaChatWindowFocus:I SereaChatFocusRestore:I \
     SereaTestLifecycle:I AndroidRuntime:E > "$output_dir/logcat-raw.txt" 2>&1 || log_capture_status=$?
   printf 'log_capture_exit_code=%s\n' "$log_capture_status" >> "$output_dir/manifest.txt"
   python3 "$repo_root/tools/summarize_android_root_cause_files.py" \

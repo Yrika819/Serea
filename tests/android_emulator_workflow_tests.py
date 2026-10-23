@@ -186,7 +186,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('private const val SCHEMA = 1', profile_marker)
         self.assertIn('private const val BYTE_COUNT = 24', profile_marker)
         self.assertIn('storedPackageUpdateTime == packageLastUpdateTime', profile_marker)
-        self.assertIn('private val installedProfileResultCodes = setOf(1, 3)', profile_marker)
+        self.assertIn('private val installedProfileResultCodes = setOf(1, 2, 3)', profile_marker)
         self.assertIn('resultCode in installedProfileResultCodes', profile_marker)
         self.assertIn('Files.isSymbolicLink(markerPath)', profile_marker)
         self.assertIn('Files.isRegularFile(markerPath, LinkOption.NOFOLLOW_LINKS)', profile_marker)

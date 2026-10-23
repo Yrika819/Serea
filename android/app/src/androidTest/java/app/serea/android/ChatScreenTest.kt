@@ -277,8 +277,10 @@ class ChatScreenTest {
         compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("手動").performScrollTo().performClick()
         compose.onNodeWithText("費用優先").performScrollTo().performClick()
-        compose.onNodeWithTag("model-budget-amount").performScrollTo().performTextInput("0.05")
-        compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextInput("USD")
+        compose.onNodeWithTag("model-budget-amount").performScrollTo().performTextClearance()
+        compose.onNodeWithTag("model-budget-amount").performTextInput("0.05")
+        compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextClearance()
+        compose.onNodeWithTag("model-budget-currency").performTextInput("USD")
         compose.onNodeWithText("ルーター設定を保存").performScrollTo().performClick()
         val saveSucceeded = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
         val saveFailed = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。"

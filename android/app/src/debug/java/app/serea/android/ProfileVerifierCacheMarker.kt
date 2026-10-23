@@ -14,11 +14,10 @@ internal object ProfileVerifierCacheMarker {
     private const val SCHEMA = 1
     private const val BYTE_COUNT = 24
 
-    // A cache entry alone does not prove that a profile was installed: result 0 means no profile,
-    // and 5 << 16 is the embedded-profile failure. Only successful installation outcomes qualify.
-    // 2 only means that compilation was queued; the profile has not yet been applied.
-    // Accept the two runtime outcomes that affirm a compiled profile is installed.
-    private val installedProfileResultCodes = setOf(1, 3)
+    // AndroidX defines 1 as compiled, 2 as installed and queued for background compilation,
+    // and 3 as compiled with a non-matching profile. Code 0 means no profile is installed;
+    // 5 << 16 means the APK has no embedded profile.
+    private val installedProfileResultCodes = setOf(1, 2, 3)
 
     fun isOnlyValidMarker(filesDirectory: File, packageLastUpdateTime: Long): Boolean {
         return try {

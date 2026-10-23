@@ -55,11 +55,16 @@ class InstrumentationStorageIsolationTest {
                 "api=26 status=UNSUPPORTED resultCode=$resultCode embedded=false marker=absent",
             )
         } else {
+            @Suppress("DEPRECATION")
+            val packageUpdateTime = target.packageManager.getPackageInfo(target.packageName, 0).lastUpdateTime
+            val markerDetails = ProfileVerifierCacheMarker.rejectionDetails(target.filesDir, packageUpdateTime)
             assertTrue(
-                "API 35 must report a compiled and installed profile, resultCode=$resultCode " +
-                    "(1=compiled, 3=compiled with a non-matching profile; 2=queued only)",
+                "API 35 ProfileVerifier must run and report an installed profile, resultCode=$resultCode " +
+                    "(1=compiled, 2=installed and queued for compilation, 3=compiled with a non-matching profile) " +
+                    "embedded=${compilationStatus.appApkHasEmbeddedProfile()} marker=$markerDetails",
                 resultCode in setOf(
                     ProfileVerifier.CompilationStatus.RESULT_CODE_COMPILED_WITH_PROFILE,
+                    ProfileVerifier.CompilationStatus.RESULT_CODE_PROFILE_ENQUEUED_FOR_COMPILATION,
                     ProfileVerifier.CompilationStatus.RESULT_CODE_COMPILED_WITH_PROFILE_NON_MATCHING,
                 ),
             )
@@ -67,11 +72,9 @@ class InstrumentationStorageIsolationTest {
                 "API 35 APK must embed the profile, resultCode=$resultCode",
                 compilationStatus.appApkHasEmbeddedProfile(),
             )
-            @Suppress("DEPRECATION")
-            val packageUpdateTime = target.packageManager.getPackageInfo(target.packageName, 0).lastUpdateTime
             assertTrue(
-                "API 35 ProfileVerifier cache must prove a compiled and installed profile, " +
-                    "resultCode=$resultCode marker=${ProfileVerifierCacheMarker.rejectionDetails(target.filesDir, packageUpdateTime)}",
+                "API 35 ProfileVerifier cache must prove an installed profile, " +
+                    "resultCode=$resultCode marker=$markerDetails",
                 ProfileVerifierCacheMarker.isOnlyValidMarker(target.filesDir, packageUpdateTime),
             )
             Log.i(

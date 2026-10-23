@@ -229,15 +229,15 @@ def verify_profile_verifier_evidence(path: Path, api_level: int) -> tuple[bool, 
         valid = status == "UNSUPPORTED" and result_code == (4 << 16) and marker == "absent"
         expected = "status=UNSUPPORTED resultCode=262144 marker=absent"
     elif api_level == 35:
-        # Code 2 only queues compilation; it does not prove that ART installed the profile.
-        installed_profile_codes = {1, 3}
+        # AndroidX code 2 means the profile is installed and queued for background compilation.
+        installed_profile_codes = {1, 2, 3}
         valid = (
             status == "COMPLETED"
             and result_code in installed_profile_codes
             and embedded_text == "true"
             and marker == "valid"
         )
-        expected = "status=COMPLETED, resultCode in {1, 3}, embedded=true, and marker=valid"
+        expected = "status=COMPLETED, resultCode in {1, 2, 3}, embedded=true, and marker=valid"
     else:
         return False, f"ProfileVerifier evidence validation is not defined for API {api_level}"
     if not valid:

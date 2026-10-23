@@ -198,7 +198,7 @@ class SereaAppShellTest {
                     "visible=${initial.visibleSemantics}",
             )
         }
-        if (runCatching { calendarTargetTextNode(text).assertIsDisplayed() }.isSuccess) {
+        if (isCalendarTargetTextFullyVisible(list, text)) {
             logVisibleCalendarItemBounds(tag, text)
             return
         }
@@ -230,7 +230,7 @@ class SereaAppShellTest {
         var stopReason = "finite search budget exhausted"
         var swipeIndex = 0
         while (swipeIndex < searchBudget && swipeIndex < 128) {
-            if (runCatching { calendarTargetTextNode(text).assertIsDisplayed() }.isSuccess) {
+            if (isCalendarTargetTextFullyVisible(list, text)) {
                 logVisibleCalendarItemBounds(tag, text)
                 return
             }
@@ -311,9 +311,24 @@ class SereaAppShellTest {
                 break
             }
         }
-        if (runCatching { calendarTargetTextNode(text).assertIsDisplayed() }.isSuccess) {
-            logVisibleCalendarItemBounds(tag, text)
-            return
+        if (targetIndex != null) {
+            list.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+                scrollToIndex(targetIndex)
+            }
+            compose.waitForIdle()
+            last = snapshotSemantics(list)
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "SEMANTICS_SCROLL_TO_TARGET|tag=$tag|target=$text|targetItemIndex=$targetIndex|" +
+                    "position=${last.position}|viewport=${last.viewport}|bounds=${last.boundsInRoot}",
+            )
+            if (last.viewport?.visibleItemIndices?.contains(targetIndex) == true &&
+                isCalendarTargetTextFullyVisible(list, text)
+            ) {
+                logVisibleCalendarItemBounds(tag, text)
+                return
+            }
+            stopReason = "finite Touch search ended; ScrollToIndex did not fully expose target Text"
         }
         throw AssertionError(
             "Calendar target was not displayed after a finite search: target=$text " +
@@ -343,6 +358,14 @@ class SereaAppShellTest {
         val visibleBottom = minOf(textSemantics.boundsInRoot.bottom, viewportBottom, root.boundsInRoot.bottom)
         val visibleHeight = (visibleBottom - visibleTop).coerceAtLeast(0f)
         val visibleFraction = visibleHeight / textSemantics.boundsInRoot.height.coerceAtLeast(1f)
+        val viewportLeft = maxOf(list.boundsInRoot.left, root.boundsInRoot.left)
+        val viewportRight = minOf(list.boundsInRoot.right, root.boundsInRoot.right)
+        val textFullyVisible = textSemantics.boundsInRoot.left >= viewportLeft - 1f &&
+            textSemantics.boundsInRoot.right <= viewportRight + 1f &&
+            textSemantics.boundsInRoot.top >= viewportTop - 1f &&
+            textSemantics.boundsInRoot.bottom <= viewportBottom + 1f &&
+            textSemantics.boundsInRoot.top >= root.boundsInRoot.top - 1f &&
+            textSemantics.boundsInRoot.bottom <= root.boundsInRoot.bottom + 1f
         if (tag == "calendar_agenda_list") {
             assertTrue("Calendar agenda target must expose its tappable event semantics: $text", item.hasClickAction)
         }
@@ -353,14 +376,39 @@ class SereaAppShellTest {
                 "root=${root.boundsInRoot}",
             visibleHeight > 0f,
         )
+        assertTrue(
+            "Calendar target Text must be fully inside the visible viewport before it is treated as readable: " +
+                "target=$text text=${textSemantics.boundsInRoot} item=${item.boundsInRoot} " +
+                "viewport=$viewport list=${list.boundsInRoot} root=${root.boundsInRoot} " +
+                "visibleFraction=$visibleFraction",
+            textFullyVisible,
+        )
         Log.i(
             CALENDAR_STAGE_TAG,
             "VISIBLE_ITEM|tag=$tag|text=$text|textRoot=${textSemantics.boundsInRoot}|" +
                 "textWindow=${textSemantics.boundsInWindow}|itemRoot=${item.boundsInRoot}|itemWindow=${item.boundsInWindow}|" +
                 "listRoot=${list.boundsInRoot}|listWindow=${list.boundsInWindow}|root=${root.boundsInRoot}|" +
                 "position=${list.position}|viewport=$viewport|visibleFraction=$visibleFraction|" +
-                "tappable=${item.hasClickAction}|loadedEvents=${list.loadedEventCount}",
+                "textFullyVisible=$textFullyVisible|tappable=${item.hasClickAction}|" +
+                "loadedEvents=${list.loadedEventCount}",
         )
+    }
+
+    private fun isCalendarTargetTextFullyVisible(
+        listInteraction: androidx.compose.ui.test.SemanticsNodeInteraction,
+        text: String,
+    ): Boolean {
+        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextNode(text)) }.getOrNull() ?: return false
+        val list = runCatching { snapshotSemantics(listInteraction) }.getOrNull() ?: return false
+        val root = runCatching { snapshotSemantics(compose.onRoot()) }.getOrNull() ?: return false
+        val viewport = list.viewport ?: return false
+        val left = maxOf(list.boundsInRoot.left, root.boundsInRoot.left)
+        val right = minOf(list.boundsInRoot.right, root.boundsInRoot.right)
+        val top = maxOf(list.boundsInRoot.top + viewport.viewportStartOffset, root.boundsInRoot.top)
+        val bottom = minOf(list.boundsInRoot.top + viewport.viewportEndOffset, root.boundsInRoot.bottom)
+        val bounds = textSnapshot.boundsInRoot
+        return bounds.left >= left - 1f && bounds.right <= right + 1f &&
+            bounds.top >= top - 1f && bounds.bottom <= bottom + 1f
     }
 
     /** Records card visibility separately from its merged and unmerged Text semantics bounds. */

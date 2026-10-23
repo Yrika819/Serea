@@ -790,7 +790,25 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         configure_ready_marker(&mut command, &directory);
+
+        // Windows copies the parent's Ctrl-C ignore setting into a newly
+        // created child. Leave Ctrl-C enabled while creating the Host so its
+        // registered handler can receive CTRL_C_EVENT. Shield this test
+        // process immediately after spawn, before attaching to the child's
+        // console.
+        let ctrl_c_inheritance_reset = unsafe { SetConsoleCtrlHandler(None, 0) };
+        assert_ne!(
+            ctrl_c_inheritance_reset,
+            0,
+            "enable Ctrl-C before spawning Host so the child inherits delivery"
+        );
         let mut child = command.spawn().expect("start Host with isolated console");
+        let sender_spawn_shield = unsafe { SetConsoleCtrlHandler(None, 1) };
+        if sender_spawn_shield == 0 {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("suppress Ctrl-C in test sender immediately after Host spawn");
+        }
         let mut output = wait_ready(&mut child, &directory);
         let group = if new_group { child.id() } else { 0 };
 
@@ -855,7 +873,7 @@ fn windows_console_ctrl_c_and_ctrl_break_shutdown_reopens_sqlite() {
             )
         };
         println!(
-            "SEREA_ROOT_CAUSE_CONSOLE|stage=signal_sent|label={label}|test_pid={}|child_pid={}|signal={label}|event_code={event}|creation_flags=0x{flags:08x}|console_group_target={group}|console_processes={console_processes}|suppress_ctrl_c={suppressed}|suppress_error={suppressed_error:?}|attach_result={attached}|attach_error={attach_error:?}|generate_result={generated}|generate_error={generate_error:?}|sender_restore_result={sender_restore}|elapsed_ms={}",
+            "SEREA_ROOT_CAUSE_CONSOLE|stage=signal_sent|label={label}|test_pid={}|child_pid={}|signal={label}|event_code={event}|creation_flags=0x{flags:08x}|console_group_target={group}|console_processes={console_processes}|ctrl_c_inheritance_reset={ctrl_c_inheritance_reset}|sender_spawn_shield={sender_spawn_shield}|suppress_ctrl_c={suppressed}|suppress_error={suppressed_error:?}|attach_result={attached}|attach_error={attach_error:?}|generate_result={generated}|generate_error={generate_error:?}|sender_restore_result={sender_restore}|elapsed_ms={}",
             std::process::id(),
             child.id(),
             started.elapsed().as_millis(),

@@ -6,6 +6,10 @@ import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import android.os.Looper
 import android.util.Log
+import android.graphics.Rect
+import android.view.inputmethod.InputMethodManager
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.ViewCompat
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -178,6 +182,64 @@ class SereaAppShellTest {
 
     private fun pressBack() {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+    }
+
+    private fun recordComposerRestoreEvidence(stage: String, includeRawDumpsys: Boolean = false) {
+        val merged = runCatching {
+            compose.onAllNodesWithTag("chat-composer").fetchSemanticsNodes()
+        }.getOrDefault(emptyList())
+        val unmerged = runCatching {
+            compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
+        }.getOrDefault(emptyList())
+        var nodes = emptyList<String>()
+        runCatching {
+            compose.runOnIdle {
+                nodes = (merged + unmerged).mapIndexed { index, node ->
+                    "node$index(focused=${node.config.getOrElseNullable(SemanticsProperties.Focused) { null }}, " +
+                        "root=${node.boundsInRoot},window=${node.boundsInWindow})"
+                }
+            }
+        }
+        var activityDetails = "Activity unavailable"
+        compose.activityRule.scenario.onActivity { activity ->
+            val decor = activity.window.decorView
+            val origin = IntArray(2)
+            val visibleFrame = Rect()
+            decor.getLocationOnScreen(origin)
+            decor.getWindowVisibleDisplayFrame(visibleFrame)
+            val insets = ViewCompat.getRootWindowInsets(decor)
+            val currentFocus = activity.currentFocus
+            val state = activity.chatViewModel.state.value
+            activityDetails = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                "window=${System.identityHashCode(activity.window)} lifecycle=${activity.lifecycle.currentState} " +
+                "windowFocus=${decor.hasWindowFocus()} decorFocus=${decor.hasFocus()} " +
+                "currentFocus=${currentFocus?.javaClass?.name}@${currentFocus?.id} " +
+                "imeAcceptingText=${activity.getSystemService(InputMethodManager::class.java)?.isAcceptingText == true} " +
+                "imeVisible=${insets?.isVisible(WindowInsetsCompat.Type.ime())} " +
+                "screenOrigin=${origin.toList()} decorSize=${decor.width}x${decor.height} " +
+                "displayPixels=${activity.resources.displayMetrics.widthPixels}x${activity.resources.displayMetrics.heightPixels} " +
+                "visibleFrame=$visibleFrame draft=${state.input}"
+        }
+        val evidence = "RESTORE_STATE|stage=$stage|mergedCount=${merged.size}|unmergedCount=${unmerged.size}|nodes=$nodes|$activityDetails"
+        Log.i("SereaRootCauseFocusOrder", evidence)
+        val directory = java.io.File(
+            InstrumentationRegistry.getInstrumentation().targetContext.filesDir,
+            "root-cause/android-draft",
+        )
+        directory.mkdirs()
+        val safeStage = stage.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        java.io.File(directory, "$safeStage.txt").writeText(evidence)
+        if (includeRawDumpsys) {
+            listOf("window", "activity activities", "input_method").forEach { service ->
+                val raw = shell("dumpsys $service")
+                java.io.File(directory, "$safeStage-dumpsys-${service.replace(' ', '-')}.txt").writeText(raw)
+                Log.i("SereaRootCauseRaw", "BEGIN|stage=$stage|service=$service")
+                raw.lineSequence().forEach { line ->
+                    Log.i("SereaRootCauseRaw", "RAW|stage=$stage|service=$service|$line")
+                }
+                Log.i("SereaRootCauseRaw", "END|stage=$stage|service=$service")
+            }
+        }
     }
 
     private fun calendarStage(name: String, outcome: String) {
@@ -1136,10 +1198,13 @@ class SereaAppShellTest {
     }
 
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
+        recordComposerRestoreEvidence("draft-start", includeRawDumpsys = true)
         compose.onNodeWithTag("chat-composer").performTextInput("draft survives navigation")
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
+        recordComposerRestoreEvidence("draft-typed")
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
+        recordComposerRestoreEvidence("gmail-destination", includeRawDumpsys = true)
         compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
         compose.onNodeWithTag("gmail_search_input").performImeAction()
         val emptySearchSettled = runCatching { compose.waitUntil(10_000) {
@@ -1150,23 +1215,28 @@ class SereaAppShellTest {
         } }.isSuccess
         if (!emptySearchSettled) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-gmail-search-timeout")
         assertTrue("Gmail IME search must settle before navigation and release TextField focus.", emptySearchSettled)
+        recordComposerRestoreEvidence("gmail-search-settled")
         pressBack()
         compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱").assertIsDisplayed()
         pressBack()
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
+        recordComposerRestoreEvidence("chat-return-from-gmail", includeRawDumpsys = true)
         val chatFocusReleased = runCatching {
             compose.waitUntil(5_000) {
                 runCatching { compose.onNodeWithTag("chat-composer").assertIsNotFocused() }.isSuccess
             }
         }.isSuccess
+        recordComposerRestoreEvidence("chat-return-from-gmail-focus-settled")
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
         select(SereaDestination.CALENDAR)
+        recordComposerRestoreEvidence("calendar-destination", includeRawDumpsys = true)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
         pressBack()
+        recordComposerRestoreEvidence("chat-return-from-calendar", includeRawDumpsys = true)
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
         compose.onNodeWithTag("chat-composer").assertTextContains("draft survives navigation")
     }

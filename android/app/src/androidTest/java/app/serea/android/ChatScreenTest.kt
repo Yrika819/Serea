@@ -21,13 +21,20 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.espresso.Espresso
-import android.view.WindowManager
+import android.graphics.Rect
 import android.view.inputmethod.InputMethodManager
+import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.ViewCompat
+import java.io.File
 import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -97,16 +104,14 @@ class ChatScreenTest {
             }
         }.isSuccess
         if (!focused) {
-            val systemFocus = runCatching {
-                shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-            }.getOrDefault("unavailable")
-            snapshot += " systemFocus=$systemFocus"
+            snapshot += " rawDumpsysSaved=true"
         }
         Log.i(FOCUS_LOG_TAG, snapshot)
         assertTrue("MainActivity did not own window focus at $stage: $snapshot", focused)
     }
 
     private fun tapComposerThroughSystemInput() {
+        captureFocusEvidence("system-tap-before", includeRawDumpsys = true)
         val bounds = composer().fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)
         compose.activityRule.scenario.onActivity { activity ->
@@ -114,16 +119,33 @@ class ChatScreenTest {
         }
         val x = origin[0] + bounds.center.x.toInt()
         val y = origin[1] + bounds.center.y.toInt()
-        val commandResult = shell("input tap $x $y")
+        val commandResult = if (
+            InstrumentationRegistry.getArguments().getString("rootCauseHostInput") == "true"
+        ) {
+            val requestId = System.nanoTime().toString()
+            val externalDirectory = requireNotNull(
+                InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir("root-cause"),
+            )
+            externalDirectory.mkdirs()
+            val resultFile = File(externalDirectory, "tap-result-$requestId.txt")
+            Log.i(FOCUS_LOG_TAG, "HOST_INPUT_REQUEST|id=$requestId|x=$x|y=$y")
+            val received = runCatching {
+                compose.waitUntil(15_000) { resultFile.isFile }
+            }.isSuccess
+            if (received) resultFile.readText().trim() else "HOST_RESULT_TIMEOUT"
+        } else {
+            // UiAutomation returns shell output but not the process exit status. The raw
+            // command result is retained for baseline comparison; the isolated diagnostic
+            // lane uses the host observer to capture the exact adb shell exit code.
+            shell("input tap $x $y")
+        }
         lastComposerTouch = "boundsInWindow=$bounds screenOrigin=${origin.toList()} " +
             "screenPoint=($x,$y) result=$commandResult"
-        Log.i(
-            FOCUS_LOG_TAG,
-            "SYSTEM_TOUCH|$lastComposerTouch",
-        )
+        Log.i(FOCUS_LOG_TAG, "SYSTEM_TOUCH|$lastComposerTouch")
+        captureFocusEvidence("system-tap-after", includeRawDumpsys = true)
     }
 
-    private fun awaitComposerInputConnection(stage: String) {
+    private fun composerInputConnectionReady(stage: String): Boolean {
         var snapshot = "MainActivity unavailable"
         val inputReady = runCatching {
             compose.waitUntil(10_000) {
@@ -144,14 +166,153 @@ class ChatScreenTest {
                 activityReady && composerFocused
             }
         }.isSuccess
-        if (!inputReady) {
-            val systemFocus = runCatching {
-                shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-            }.getOrDefault("unavailable")
-            snapshot += " lastTouch={$lastComposerTouch} systemFocus={$systemFocus}"
-        }
+        if (!inputReady) snapshot += " lastTouch={$lastComposerTouch}"
         Log.i(FOCUS_LOG_TAG, snapshot)
-        assertTrue("Composer did not have a live focused input connection at $stage: $snapshot", inputReady)
+        return inputReady
+    }
+
+    private fun awaitComposerInputConnection(stage: String) {
+        val ready = composerInputConnectionReady(stage)
+        assertTrue("Composer did not have a live focused input connection at $stage", ready)
+    }
+
+    private fun captureFocusEvidence(stage: String, includeRawDumpsys: Boolean = false): String {
+        val mergedNodes = runCatching {
+            compose.onAllNodesWithTag("chat-composer").fetchSemanticsNodes()
+        }.getOrDefault(emptyList())
+        val unmergedNodes = runCatching {
+            compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
+        }.getOrDefault(emptyList())
+        var nodeDetails = emptyList<String>()
+        runCatching {
+            compose.runOnIdle {
+                nodeDetails = (mergedNodes + unmergedNodes).mapIndexed { index, node ->
+                    "node$index(focused=${node.config.getOrElseNullable(SemanticsProperties.Focused) { null }}, " +
+                        "root=${node.boundsInRoot}, window=${node.boundsInWindow})"
+                }
+            }
+        }
+        val rootDetails = runCatching {
+            val root = compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()
+            "boundsInRoot=${root.boundsInRoot},boundsInWindow=${root.boundsInWindow}"
+        }.getOrDefault("unavailable")
+        var activityDetails = "Activity unavailable"
+        compose.activityRule.scenario.onActivity { activity ->
+            val decor = activity.window.decorView
+            val screenOrigin = IntArray(2)
+            val windowOrigin = IntArray(2)
+            val visibleFrame = Rect()
+            decor.getLocationOnScreen(screenOrigin)
+            decor.getLocationInWindow(windowOrigin)
+            decor.getWindowVisibleDisplayFrame(visibleFrame)
+            val insets = ViewCompat.getRootWindowInsets(decor)
+            val inputManager = activity.getSystemService(InputMethodManager::class.java)
+            val focusedView = activity.currentFocus
+            activityDetails = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                "window=${System.identityHashCode(activity.window)} token=${decor.windowToken} " +
+                "lifecycle=${activity.lifecycle.currentState} attached=${decor.isAttachedToWindow} " +
+                "windowFocus=${decor.hasWindowFocus()} decorHasFocus=${decor.hasFocus()} " +
+                "currentFocus=${focusedView?.javaClass?.name}@${focusedView?.id} " +
+                "currentFocusFocused=${focusedView?.hasFocus()} " +
+                "imeAcceptingText=${inputManager?.isAcceptingText == true} " +
+                "imeVisible=${insets?.isVisible(WindowInsetsCompat.Type.ime())} " +
+                "statusBarsVisible=${insets?.isVisible(WindowInsetsCompat.Type.statusBars())} " +
+                "navigationBarsVisible=${insets?.isVisible(WindowInsetsCompat.Type.navigationBars())} " +
+                "decorScreenOrigin=${screenOrigin.toList()} decorWindowOrigin=${windowOrigin.toList()} " +
+                "decorSize=${decor.width}x${decor.height} displayPixels=" +
+                "${activity.resources.displayMetrics.widthPixels}x${activity.resources.displayMetrics.heightPixels} " +
+                "density=${activity.resources.displayMetrics.density} visibleFrame=$visibleFrame " +
+                "rotation=${activity.windowManager.defaultDisplay.rotation} " +
+                "softInputMode=${activity.window.attributes.softInputMode} flags=${activity.window.attributes.flags}"
+        }
+        val evidence = "stage=$stage $activityDetails root={$rootDetails} " +
+            "composerMergedCount=${mergedNodes.size} composerUnmergedCount=${unmergedNodes.size} " +
+            "composerNodes=$nodeDetails"
+        Log.i(FOCUS_LOG_TAG, "FOCUS_EVIDENCE|$evidence")
+
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.filesDir, "root-cause/android-focus")
+        directory.mkdirs()
+        val safeStage = stage.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        File(directory, "${safeStage}.txt").writeText(evidence)
+        if (includeRawDumpsys) {
+            listOf("window", "activity activities", "input_method").forEach { service ->
+                val raw = shell("dumpsys $service")
+                File(directory, "${safeStage}-dumpsys-${service.replace(' ', '-')}.txt").writeText(raw)
+                Log.i("SereaRootCauseRaw", "BEGIN|stage=$stage|service=$service")
+                raw.lineSequence().forEach { line ->
+                    Log.i("SereaRootCauseRaw", "RAW|stage=$stage|service=$service|$line")
+                }
+                Log.i("SereaRootCauseRaw", "END|stage=$stage|service=$service")
+            }
+        }
+        return evidence
+    }
+
+    private fun clearComposerFocusForProbe() {
+        compose.activityRule.scenario.onActivity { activity ->
+            val decor = activity.window.decorView
+            activity.getSystemService(InputMethodManager::class.java)
+                ?.hideSoftInputFromWindow(decor.windowToken, 0)
+            activity.currentFocus?.clearFocus()
+        }
+        compose.waitForIdle()
+    }
+
+    /** Diagnostic-only alternate routes run after the system-coordinate path already failed. */
+    private fun compareInputRoutesAfterSystemTapFailure(): String {
+        val outcomes = mutableListOf<String>()
+        captureFocusEvidence("route-comparison-start")
+
+        clearComposerFocusForProbe()
+        val semanticsAction = runCatching { composer().performClick() }.isSuccess
+        compose.waitForIdle()
+        val semanticsFocused = runCatching { composer().assertIsFocused() }.isSuccess
+        outcomes += "semanticsClick(command=$semanticsAction,focused=$semanticsFocused)"
+        captureFocusEvidence("route-semantics-click")
+
+        clearComposerFocusForProbe()
+        val composeTouch = runCatching { composer().performTouchInput { click() } }.isSuccess
+        compose.waitForIdle()
+        val composeTouchFocused = runCatching { composer().assertIsFocused() }.isSuccess
+        outcomes += "composeTouch(command=$composeTouch,focused=$composeTouchFocused)"
+        captureFocusEvidence("route-compose-touch")
+
+        val focusedRoute = when {
+            composeTouchFocused -> "compose-touch"
+            semanticsFocused -> "semantics-click"
+            else -> null
+        }
+        if (focusedRoute == null) {
+            Log.i(FOCUS_LOG_TAG, "INPUT_PROBE|route=none|typed=false|messageSent=false")
+        } else {
+            val probe = "root-cause-probe"
+            clearComposerFocusForProbe()
+            val routeReapplied = runCatching {
+                if (focusedRoute == "compose-touch") composer().performTouchInput { click() }
+                else composer().performClick()
+            }.isSuccess
+            val routeFocusedBeforeType = runCatching { composer().assertIsFocused() }.isSuccess
+            val typed = runCatching {
+                check(routeReapplied && routeFocusedBeforeType) {
+                    "selected alternate route did not restore composer focus"
+                }
+                composer().performTextInput(probe)
+                compose.waitUntil(5_000) { stateSnapshot().input == probe }
+            }.isSuccess
+            val sent = if (typed) runCatching {
+                Espresso.closeSoftKeyboard()
+                compose.onNodeWithText("送信", substring = false).performClick()
+                compose.waitUntil(10_000) {
+                    stateSnapshot().conversation.messages.any {
+                        it.role == MessageRole.USER && it.text == probe
+                    }
+                }
+            }.isSuccess else false
+            outcomes += "probe(route=$focusedRoute,typed=$typed,messageSent=$sent)"
+            Log.i(FOCUS_LOG_TAG, "INPUT_PROBE|route=$focusedRoute|typed=$typed|messageSent=$sent")
+        }
+        return outcomes.joinToString(";")
     }
 
     private fun stateSnapshot(): ChatUiState {
@@ -184,10 +345,17 @@ class ChatScreenTest {
         // The soft keyboard may own Android window focus while the composer is the active
         // input target. Require the Activity to remain resumed and the real IME connection
         // to accept text, then verify the Compose field itself owns focus.
-        awaitComposerInputConnection("after composer tap, before typing")
+        if (!composerInputConnectionReady("after composer tap, before typing")) {
+            val routes = compareInputRoutesAfterSystemTapFailure()
+            assertTrue(
+                "System-coordinate tap did not focus the composer; alternate input route evidence: $routes",
+                false,
+            )
+        }
         composer().assertIsFocused()
         composer().performTextInput(text)
         compose.waitUntil(30_000) { stateSnapshot().input == text }
+        Log.i(FOCUS_LOG_TAG, "INPUT_TEXT|expected=$text|actual=${stateSnapshot().input}")
         awaitComposerInputConnection("after typing, before keyboard dismissal")
         Espresso.closeSoftKeyboard()
         awaitMainWindowFocus("after keyboard dismissal")
@@ -207,6 +375,7 @@ class ChatScreenTest {
                 "error=${state.errorMessage}, statuses=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
             submitted,
         )
+        Log.i(FOCUS_LOG_TAG, "MESSAGE_SEND|expected=$text|submitted=$submitted")
     }
 
     @Test fun demoLabelAndConversationTitleAreVisible() {

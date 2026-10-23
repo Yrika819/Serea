@@ -1,0 +1,102 @@
+name: Android Suite State Diagnostics (debug only; non-required)
+
+on:
+  push:
+    branches:
+      - codex/pr100-suite-state-diagnostics
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-suite-state-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    name: API ${{ matrix.api }} focused, class, and full suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 35
+            arch: x86_64
+            profile: pixel_7
+          - api: 26
+            arch: x86
+            profile: pixel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install compile platform and API-specific emulator image
+        run: |
+          set -euo pipefail
+          sdkmanager 'emulator' 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+          sdkmanager "platforms;android-${{ matrix.api }}" \
+            "system-images;android-${{ matrix.api }};google_apis;${{ matrix.arch }}"
+
+      - name: Diagnose and enable hosted-runner KVM
+        run: |
+          set -euo pipefail
+          mkdir -p "root-cause/suite-state/api${{ matrix.api }}"
+          output="root-cause/suite-state/api${{ matrix.api }}/kvm-preflight.txt"
+          {
+            echo '### KVM before permission rule'
+            id
+            printf 'groups: '; id -nG
+            ls -l /dev/kvm
+            stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm
+            grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+            lscpu | grep -E 'Architecture:|Vendor ID:|Model name:|Hypervisor vendor:|Virtualization:|Virtualization type:' || true
+            if command -v kvm-ok >/dev/null; then sudo kvm-ok; else echo 'kvm-ok unavailable'; fi
+            "$ANDROID_HOME/emulator/emulator" -accel-check
+          } > "$output" 2>&1 || true
+          echo '### KVM after official udev permission rule' >> "$output"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm | tee -a "$output"
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check >> "$output" 2>&1
+
+      - name: Prepare exact PR #100 source and build APKs once
+        run: bash tools/prepare_android_suite_state_diagnostics.sh '${{ matrix.api }}'
+
+      - name: Boot one KVM-enabled emulator and run all comparisons
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+        timeout-minutes: 250
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: ${{ matrix.arch }}
+          profile: ${{ matrix.profile }}
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          script: bash tools/run_android_suite_state_diagnostics.sh '${{ matrix.api }}'
+
+      - name: Upload Android suite-state evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-suite-state-api${{ matrix.api }}
+          path: root-cause/suite-state/api${{ matrix.api }}/
+          if-no-files-found: warn
+          retention-days: 30

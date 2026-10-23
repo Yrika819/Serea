@@ -15,7 +15,9 @@ import app.serea.android.gmail.GmailThreadId
 import app.serea.android.gmail.GmailMimeParser
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.currentCoroutineContext
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -162,10 +164,12 @@ class GmailHttpReadPort internal constructor(
         catch (_: Exception) { throw GmailReadFailure(GmailReadFailureCode.PERMISSION_DENIED) }
         if (token == null) throw GmailReadFailure(GmailReadFailureCode.PERMISSION_DENIED)
         try {
+            currentCoroutineContext().ensureActive()
             val request = token.useToken { value ->
                 Request.Builder().url(url).header("Authorization", "Bearer $value")
                     .header("Accept", "application/json").get().build()
             }
+            currentCoroutineContext().ensureActive()
             execute(safeClient.newCall(request)).use { response ->
                 if (response.code !in 200..299) throw responseFailure(response)
                 val body = response.body ?: throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)

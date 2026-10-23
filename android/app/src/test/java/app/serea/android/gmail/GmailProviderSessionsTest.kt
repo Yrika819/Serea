@@ -11,7 +11,17 @@ import app.serea.android.googleauth.GoogleScope
 import app.serea.android.googleauth.GoogleServiceState
 import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -32,6 +42,7 @@ class GmailProviderSessionsTest {
         override val mode = GoogleAuthorizationMode.PLAY_SERVICES
         var tokenRequests = 0
         var rotateAfterNextToken = false
+        var onLeaseUse: (() -> Unit)? = null
         private var failure: AuthorizationFailure? = null
 
         override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
@@ -48,6 +59,10 @@ class GmailProviderSessionsTest {
                 setOf(GoogleScope.GMAIL_READ_ONLY),
                 null,
                 authorizationSessionId = boundSession,
+                validityCheck = {
+                    onLeaseUse?.invoke()
+                    true
+                },
             )
             if (rotateAfterNextToken) {
                 rotateAfterNextToken = false
@@ -120,8 +135,7 @@ class GmailProviderSessionsTest {
         assertEquals(0, server.requestCount)
     }
 
-    @Test fun accountSwitchBetweenListAndMessageFetchCannotReturnMixedOrPartialMailboxData() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"messages":[{"id":"message_1","threadId":"thread_1"}]}"""))
+    @Test fun accountSwitchDuringTokenLeaseAcquisitionCannotDispatchAGmailRequest() = runBlocking {
         val gateway = PlayServicesFixture().apply { rotateAfterNextToken = true }
         val session = GmailProviderSessions(googleHttpEnabledByOwner = true)
             .openGoogleReadOnly(gateway, baseUrl = server.url("/gmail/v1/"))
@@ -129,8 +143,126 @@ class GmailProviderSessionsTest {
         assertEquals(GmailReadFailureCode.PERMISSION_DENIED, failure { session.listInbox() }.code)
         assertEquals(GmailAuthorizationState.REVOKED, session.status().state)
         assertEquals(1, gateway.tokenRequests)
-        assertEquals(1, server.requestCount)
-        assertEquals("Bearer fixture-token-gmail-session-first", server.takeRequest().getHeader("Authorization"))
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun replacingSessionImmediatelyAfterLeaseAcquisitionPreventsHttpDispatch() = runBlocking {
+        lateinit var sessions: GmailProviderSessions
+        var replacement: GmailProviderSession? = null
+        val gateway = PlayServicesFixture().apply {
+            onLeaseUse = { replacement = sessions.openFake() }
+        }
+        sessions = GmailProviderSessions(googleHttpEnabledByOwner = true)
+        val oldSession = sessions.openGoogleReadOnly(gateway, baseUrl = server.url("/gmail/v1/"))
+
+        assertEquals(
+            GmailReadFailureCode.PERMISSION_DENIED,
+            failure { oldSession.getMessage(GmailMessageId("message_1")) }.code,
+        )
+        assertTrue(currentCoroutineContext().isActive)
+        assertEquals(GmailProviderKind.FAKE, replacement?.kind)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun replacingSessionCancelsConcurrentReadsWithoutCancellingTheirParentOrSiblingCommunication() = runBlocking {
+        val message = FakeGmailProvider.fixtures.messages.first()
+        val delegate = GatedGmailReadPort(message)
+        val session = testSession(delegate)
+        val unrelatedResult = CompletableDeferred<String>()
+
+        val caller = launch {
+            coroutineScope {
+                val unrelated = async { unrelatedResult.await() }
+                val firstRead = async { failure { session.getMessage(message.id) }.code }
+                val secondRead = async { failure { session.getMessage(message.id) }.code }
+
+                delegate.started.receive()
+                delegate.started.receive()
+                session.invalidateFromController()
+
+                assertEquals(GmailReadFailureCode.PERMISSION_DENIED, firstRead.await())
+                assertEquals(GmailReadFailureCode.PERMISSION_DENIED, secondRead.await())
+                assertTrue(currentCoroutineContext().isActive)
+                assertTrue("unrelated sibling communication must remain active", unrelated.isActive)
+                unrelatedResult.complete("unrelated communication survived")
+                assertEquals("unrelated communication survived", unrelated.await())
+            }
+        }
+
+        caller.join()
+        assertTrue("provider replacement must not cancel the caller job", caller.isCompleted && !caller.isCancelled)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun responseAlreadyProducedByOldSessionIsDeniedWhenAccountSwitchWinsBeforeDelivery() = runBlocking {
+        val message = FakeGmailProvider.fixtures.messages.first()
+        val delegate = GatedGmailReadPort(message, finishResponseAfterCancellation = true)
+        val session = testSession(delegate)
+        val result = async { failure { session.getMessage(message.id) }.code }
+
+        delegate.started.receive()
+        // Model a parsed HTTP response buffered by the adapter while its caller is suspended.
+        session.invalidateFromController()
+        delegate.releaseResponse.complete(Unit)
+
+        assertEquals(GmailReadFailureCode.PERMISSION_DENIED, result.await())
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun callerCancellationStillCancelsItsOwnGmailRead() = runBlocking {
+        val message = FakeGmailProvider.fixtures.messages.first()
+        val delegate = GatedGmailReadPort(message)
+        val session = testSession(delegate)
+        val read = async { session.getMessage(message.id) }
+
+        delegate.started.receive()
+        read.cancelAndJoin()
+
+        assertTrue(read.isCancelled)
+        assertTrue("caller cancellation must not close the provider session", currentCoroutineContext().isActive)
+        assertEquals(GmailAuthorizationState.MOCK_ONLY, session.status().state)
+        assertEquals(0, server.requestCount)
+    }
+
+    private fun testSession(delegate: GmailReadPort) = GmailProviderSession(
+        id = 7,
+        kind = GmailProviderKind.FAKE,
+        delegate = delegate,
+        authorizationDelegate = FakeGmailProvider(),
+        isCurrent = { true },
+        onClose = {},
+    )
+
+    private class GatedGmailReadPort(
+        private val response: GmailMessage,
+        private val finishResponseAfterCancellation: Boolean = false,
+    ) : GmailReadPort {
+        val started = Channel<Unit>(Channel.UNLIMITED)
+        val releaseResponse = CompletableDeferred<Unit>()
+
+        override suspend fun listInbox(pageToken: String?, pageSize: Int): GmailMessagePage {
+            awaitResponseDelivery()
+            return GmailMessagePage(listOf(response))
+        }
+        override suspend fun search(query: String, pageToken: String?, pageSize: Int): GmailMessagePage {
+            awaitResponseDelivery()
+            return GmailMessagePage(listOf(response))
+        }
+        override suspend fun getMessage(id: GmailMessageId): GmailMessage {
+            val parsedResponse = response
+            awaitResponseDelivery()
+            return parsedResponse
+        }
+        override suspend fun getThread(id: GmailThreadId): GmailThread = error("not used by this contract test")
+
+        private suspend fun awaitResponseDelivery() {
+            started.send(Unit)
+            if (finishResponseAfterCancellation) {
+                withContext(NonCancellable) { releaseResponse.await() }
+            } else {
+                releaseResponse.await()
+            }
+        }
     }
 
     private suspend fun failure(block: suspend () -> Any): GmailReadFailure = try {

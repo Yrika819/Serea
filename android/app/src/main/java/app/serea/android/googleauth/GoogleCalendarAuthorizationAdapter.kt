@@ -59,7 +59,11 @@ class GoogleCalendarAuthorizationAdapter(
         }
         val result = gateway.acquire(GoogleFeature.CALENDAR, setOf(googleScope))
         val lease = (result as? TokenSupplyResult.Available)?.lease ?: return null
-        if (googleScope !in lease.grantedScopes || lease.authorizationSessionId != authorizationSessionId) {
+        if (googleScope !in lease.grantedScopes ||
+            lease.authorizationSessionId != authorizationSessionId ||
+            gateway.authorizationSessionId != authorizationSessionId ||
+            !gateway.isEnabledInApp(GoogleFeature.CALENDAR)
+        ) {
             lease.close()
             return null
         }

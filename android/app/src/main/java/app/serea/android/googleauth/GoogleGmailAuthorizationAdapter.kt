@@ -52,7 +52,9 @@ class GoogleGmailAuthorizationAdapter(
         val result = gateway.acquire(GoogleFeature.GMAIL, setOf(GoogleScope.GMAIL_READ_ONLY))
         val lease = (result as? TokenSupplyResult.Available)?.lease ?: return null
         if (GoogleScope.GMAIL_READ_ONLY !in lease.grantedScopes ||
-            lease.authorizationSessionId != authorizationSessionId
+            lease.authorizationSessionId != authorizationSessionId ||
+            gateway.authorizationSessionId != authorizationSessionId ||
+            !gateway.isEnabledInApp(GoogleFeature.GMAIL)
         ) {
             lease.close()
             return null

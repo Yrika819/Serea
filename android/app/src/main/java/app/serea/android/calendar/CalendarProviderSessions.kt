@@ -6,7 +6,9 @@ import app.serea.android.googleauth.GoogleAuthorizationGateway
 import app.serea.android.googleauth.GoogleCalendarAuthorizationAdapter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import java.util.concurrent.atomic.AtomicLong
@@ -114,18 +116,30 @@ class CalendarProviderSession internal constructor(
     }
 
     private suspend fun <T> withActiveSession(block: suspend () -> T): T {
-        val job = currentCoroutineContext()[Job]
+        val callerJob = currentCoroutineContext()[Job]
+        val requestJob = SupervisorJob(callerJob)
         synchronized(lock) {
-            if (closed) throw inactiveSession()
-            job?.let(activeJobs::add)
+            if (closed) {
+                requestJob.cancel()
+                throw inactiveSession()
+            }
+            activeJobs += requestJob
         }
         try {
             if (!isCurrent()) throw inactiveSession()
-            val value = block()
-            if (!isActive()) throw inactiveSession()
+            val value = withContext(requestJob) { block() }
+            // invalidate() closes this session under the same lock before replacement, so a
+            // response racing account/session replacement cannot cross this delivery gate.
+            synchronized(lock) {
+                if (closed) throw inactiveSession()
+            }
             return value
+        } catch (cancelled: CancellationException) {
+            if (callerJob?.isActive != false && synchronized(lock) { closed }) throw inactiveSession()
+            throw cancelled
         } finally {
-            synchronized(lock) { job?.let(activeJobs::remove) }
+            synchronized(lock) { activeJobs.remove(requestJob) }
+            requestJob.cancel()
         }
     }
 

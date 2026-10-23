@@ -6,7 +6,9 @@ import app.serea.android.googleauth.GoogleAuthorizationMode
 import app.serea.android.googleauth.GoogleGmailAuthorizationAdapter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import java.util.concurrent.atomic.AtomicLong
@@ -111,18 +113,32 @@ class GmailProviderSession internal constructor(
     }
 
     private suspend fun <T> withActiveSession(block: suspend () -> T): T {
-        val job = currentCoroutineContext()[Job]
+        val callerJob = currentCoroutineContext()[Job]
+        val requestJob = SupervisorJob(callerJob)
         synchronized(lock) {
-            if (closed) throw inactiveSession()
-            job?.let(activeJobs::add)
+            if (closed) {
+                requestJob.cancel()
+                throw inactiveSession()
+            }
+            activeJobs += requestJob
         }
         try {
             if (!isCurrent()) throw inactiveSession()
-            val value = block()
-            if (!isActive()) throw inactiveSession()
+            val value = withContext(requestJob) { block() }
+            // invalidate() marks this session closed under the same lock before a replacement
+            // becomes current, making this the result-delivery linearization point.
+            synchronized(lock) {
+                if (closed) throw inactiveSession()
+            }
             return value
+        } catch (cancelled: CancellationException) {
+            // A session replacement cancels only requestJob. Preserve ordinary caller
+            // cancellation, but report session teardown as a typed provider denial.
+            if (callerJob?.isActive != false && synchronized(lock) { closed }) throw inactiveSession()
+            throw cancelled
         } finally {
-            synchronized(lock) { job?.let(activeJobs::remove) }
+            synchronized(lock) { activeJobs.remove(requestJob) }
+            requestJob.cancel()
         }
     }
 

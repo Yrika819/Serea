@@ -11,6 +11,13 @@ import app.serea.android.googleauth.GoogleScope
 import app.serea.android.googleauth.GoogleServiceState
 import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -126,8 +133,7 @@ class CalendarProviderSessionsTest {
         }
     }
 
-    @Test fun accountSwitchBetweenCalendarPagesStopsBeforeMixingAccounts() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"items":[{"id":"first@example.test","timeZone":"UTC","accessRole":"reader"}],"nextPageToken":"second-page"}"""))
+    @Test fun accountSwitchDuringTokenLeaseAcquisitionCannotDispatchACalendarRequest() = runBlocking {
         val gateway = PlayServicesFixture().apply { rotateAfterNextToken = true }
         val session = CalendarProviderSessions(googleHttpEnabledByOwner = true)
             .openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
@@ -136,8 +142,41 @@ class CalendarProviderSessionsTest {
         assertTrue(failure is CalendarReadFailure)
         assertEquals(CalendarAuthorizationState.REVOKED, session.status().state)
         assertEquals(1, gateway.tokenRequests)
-        assertEquals(1, server.requestCount)
-        assertEquals("Bearer fixture-never-valid", server.takeRequest().getHeader("Authorization"))
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun replacingSessionImmediatelyAfterLeaseAcquisitionPreventsCalendarHttpDispatch() = runBlocking {
+        lateinit var sessions: CalendarProviderSessions
+        var replacement: CalendarProviderSession? = null
+        val gateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "calendar-session-bound-to-first-account"
+            override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                GoogleServiceState.AVAILABLE,
+                scopes.associateWith { ScopePermission.GRANTED },
+            )
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+                val lease = AccessTokenLease(
+                    "fixture-calendar-token-before-replacement",
+                    scopes,
+                    null,
+                    authorizationSessionId = authorizationSessionId,
+                    validityCheck = {
+                        replacement = sessions.openFake()
+                        true
+                    },
+                )
+                return TokenSupplyResult.Available(lease)
+            }
+        }
+        sessions = CalendarProviderSessions(googleHttpEnabledByOwner = true)
+        val oldSession = sessions.openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
+
+        val failure = runCatching { oldSession.getCalendar(CalendarId("fixture@example.test")) }.exceptionOrNull()
+        assertTrue(failure is CalendarReadFailure)
+        assertTrue(currentCoroutineContext().isActive)
+        assertEquals(CalendarProviderKind.FAKE, replacement?.kind)
+        assertEquals(0, server.requestCount)
     }
 
     @Test fun unknownAccountBindingIsNotAuthorizedAndCannotReachCalendarHttp() = runBlocking {
@@ -164,6 +203,59 @@ class CalendarProviderSessionsTest {
         assertTrue(failure is CalendarReadFailure)
         assertEquals(0, tokenRequests)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun replacingSessionCancelsItsReadWithoutCancellingParentOrSiblingCommunication() = runBlocking {
+        val started = Channel<Unit>(Channel.UNLIMITED)
+        val pendingResponse = CompletableDeferred<List<CalendarDescriptor>>()
+        val delegate = object : CalendarReadPort {
+            override suspend fun listCalendars(): List<CalendarDescriptor> {
+                started.send(Unit)
+                return pendingResponse.await()
+            }
+            override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor = error("not used")
+            override suspend fun getEvent(key: CalendarEventKey): CalendarEvent = error("not used")
+            override suspend fun listEventsPage(
+                calendarId: CalendarId,
+                range: CalendarDateRange,
+                pageToken: String?,
+            ): CalendarEventPage = error("not used")
+        }
+        val session = CalendarProviderSession(
+            id = 8,
+            kind = CalendarProviderKind.FAKE,
+            delegate = delegate,
+            authorizationDelegate = FakeCalendarProvider(),
+            isCurrent = { true },
+            onClose = {},
+        )
+        val unrelatedResult = CompletableDeferred<String>()
+        val caller = launch {
+            coroutineScope {
+                val unrelated = async { unrelatedResult.await() }
+                val read = async { calendarFailure { session.listCalendars() }.code }
+
+                started.receive()
+                session.invalidateFromController()
+
+                assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, read.await())
+                assertTrue(currentCoroutineContext().isActive)
+                assertTrue("unrelated sibling communication must remain active", unrelated.isActive)
+                unrelatedResult.complete("unrelated communication survived")
+                assertEquals("unrelated communication survived", unrelated.await())
+            }
+        }
+
+        caller.join()
+        assertTrue("provider replacement must not cancel the caller job", caller.isCompleted && !caller.isCancelled)
+        assertEquals(0, server.requestCount)
+    }
+
+    private suspend fun calendarFailure(block: suspend () -> Any): CalendarReadFailure = try {
+        block()
+        throw AssertionError("Expected CalendarReadFailure")
+    } catch (failure: CalendarReadFailure) {
+        failure
     }
 
     private fun range() = CalendarDateRange(

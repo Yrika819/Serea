@@ -61,6 +61,7 @@ class SereaAppShellTest {
     private companion object {
         const val CALENDAR_STAGE_TAG = "SereaCalendarStage"
         const val FONT_SCALE_STAGE_TAG = "SereaFontScale"
+        const val TASKS_DESTINATION_STAGE_TAG = "SereaTasksDestination"
     }
 
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -907,6 +908,24 @@ class SereaAppShellTest {
         val viewModel = compose.activity.chatViewModel
         compose.onNodeWithTag("chat-composer").performTextInput("unsent task transition draft")
         compose.onNodeWithTag("open_tasks").performClick()
+        val taskScreenDisplayed = runCatching {
+            compose.waitUntil(10_000) {
+                !compose.activity.shellTaskViewModel.state.value.loading &&
+                    runCatching {
+                        compose.onNodeWithTag("tasks_heading").assertIsDisplayed()
+                        compose.onNodeWithTag("task_add").assertIsDisplayed()
+                    }.isSuccess
+            }
+        }.isSuccess
+        if (!taskScreenDisplayed) {
+            Log.i(
+                TASKS_DESTINATION_STAGE_TAG,
+                "TASKS_DESTINATION|state=${compose.activity.shellTaskViewModel.state.value} " +
+                    "route=${compose.activity.toString()}",
+            )
+            compose.onRoot(useUnmergedTree = true).printToLog("chat-tasks-destination")
+        }
+        assertTrue("Tasks destination heading and add action must both become displayed", taskScreenDisplayed)
         compose.onNodeWithTag("task_add").assertIsDisplayed()
         pressBack()
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
@@ -1584,7 +1603,14 @@ class SereaAppShellTest {
             val restoredDensityOverride = shell("wm density").lineSequence()
                 .firstOrNull { it.startsWith("Override density:") }
                 ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-            assertEquals(originalFontScaleSetting, shell("settings get system font_scale"))
+            val restoredFontScaleSetting = shell("settings get system font_scale")
+            val originalSettingIsPlatformDefault = originalFontScaleSetting == "null" &&
+                originalScale == 1f && restoredFontScaleSetting.toFloatOrNull() == 1f
+            assertTrue(
+                "System font scale setting was not restored: original=$originalFontScaleSetting " +
+                    "restored=$restoredFontScaleSetting effectiveOriginal=$originalScale",
+                originalFontScaleSetting == restoredFontScaleSetting || originalSettingIsPlatformDefault,
+            )
             assertEquals(originalSizeOverride, restoredSizeOverride)
             assertEquals(originalDensityOverride, restoredDensityOverride)
             compose.waitUntil(15_000) {

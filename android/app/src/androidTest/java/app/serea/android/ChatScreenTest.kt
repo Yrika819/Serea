@@ -17,8 +17,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
@@ -97,8 +95,30 @@ class ChatScreenTest {
                 hasWindowFocus
             }
         }.isSuccess
+        if (!focused) {
+            val systemFocus = runCatching {
+                shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+            }.getOrDefault("unavailable")
+            snapshot += " systemFocus=$systemFocus"
+        }
         Log.i(FOCUS_LOG_TAG, snapshot)
         assertTrue("MainActivity did not own window focus at $stage: $snapshot", focused)
+    }
+
+    private fun tapComposerThroughSystemInput() {
+        val bounds = composer().fetchSemanticsNode().boundsInWindow
+        val origin = IntArray(2)
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.window.decorView.getLocationOnScreen(origin)
+        }
+        val x = origin[0] + bounds.center.x.toInt()
+        val y = origin[1] + bounds.center.y.toInt()
+        val commandResult = shell("input tap $x $y")
+        Log.i(
+            FOCUS_LOG_TAG,
+            "SYSTEM_TOUCH|composer boundsInWindow=$bounds screenOrigin=${origin.toList()} " +
+                "screenPoint=($x,$y) result=$commandResult",
+        )
     }
 
     private fun awaitComposerInputConnection(stage: String) {
@@ -147,9 +167,9 @@ class ChatScreenTest {
     }
 
     private fun send(text: String) {
-        // A resumed Activity can still be behind the instrumentation host's window. A real
-        // composer tap is the user action that activates this window; assert ownership after it.
-        composer().performTouchInput { click() }
+        // Inject a screen-coordinate tap through Android's input dispatcher so it can activate
+        // a resumed window that Compose's root-targeted touch injection cannot focus.
+        tapComposerThroughSystemInput()
         awaitMainWindowFocus("after composer tap, before typing")
         composer().assertIsFocused()
         awaitComposerInputConnection("after composer tap, before typing")

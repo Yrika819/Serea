@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-if [[ "$#" -ne 2 ]]; then
-  echo "Usage: $0 {26|35} REPEAT_COUNT" >&2
+if [[ "$#" -ne 3 ]]; then
+  echo "Usage: $0 {26|35} REPEAT_COUNT SOURCE_DIR" >&2
   exit 2
 fi
 api_level="$1"
 repeat_count="$2"
+source_dir="$3"
 if [[ "$api_level" != 26 && "$api_level" != 35 ]] || [[ ! "$repeat_count" =~ ^[1-9][0-9]*$ ]]; then
   echo "Expected API 26 or 35 and a positive repeat count." >&2
   exit 2
 fi
 
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+tools_repo="$(cd "$(dirname "$0")/.." && pwd)"
+source_repo="$GITHUB_WORKSPACE/$source_dir"
+source_sha="$(git -C "$source_repo" rev-parse HEAD)"
 evidence_root="$GITHUB_WORKSPACE/root-cause/focused/api$api_level"
 mkdir -p "$evidence_root"
 
 EXPECTED_API_LEVEL="$api_level"
 SEREA_EXPECTED_ANDROID_API="$api_level"
 export EXPECTED_API_LEVEL SEREA_EXPECTED_ANDROID_API
-source "$repo_root/tools/assert_disposable_android_emulator.sh" || exit 1
+source "$source_repo/tools/assert_disposable_android_emulator.sh" || exit 1
 
 if [[ "$api_level" == 35 ]]; then
   test_filter='app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.ChatScreenTest#currentConversationDeletionRequiresConfirmationAndCancelKeepsMessages,app.serea.android.ChatScreenTest#confirmedCurrentConversationDeletionRemovesSelectedConversation,app.serea.android.ChatScreenTest#deleteAllConfirmationCancelKeepsConversationAndConfirmClearsHistory'
@@ -39,7 +42,7 @@ startup_elapsed_ms=$((ready_epoch_ms - launch_epoch_ms))
 cat "$evidence_root/emulator-startup.txt" >> "$GITHUB_STEP_SUMMARY"
 
 package='app.serea.android.isolated'
-target_apk="$repo_root/android/app/build/outputs/apk/isolated/app-isolated.apk"
+target_apk="$source_repo/android/app/build/outputs/apk/isolated/app-isolated.apk"
 if [[ ! -s "$target_apk" ]]; then
   echo "Expected isolated APK is missing: $target_apk" >&2
   exit 1
@@ -52,7 +55,7 @@ for iteration in $(seq 1 "$repeat_count"); do
   stage="focused-$iteration"
   output_dir="$evidence_root/$stage"
   mkdir -p "$output_dir"
-  rm -rf "$repo_root/android/app/build/outputs/androidTest-results/connected"
+  rm -rf "$source_repo/android/app/build/outputs/androidTest-results/connected"
   stage_started_utc="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
   test_started_utc='NOT_RUN'
 
@@ -76,7 +79,7 @@ for iteration in $(seq 1 "$repeat_count"); do
     status='INSTALL_FAIL'
   else
     token="serea-focused-api$api_level-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$iteration"
-    EXPECTED_API_LEVEL="$api_level" bash "$repo_root/tools/prepare_isolated_instrumentation_target.sh" "$token" \
+    EXPECTED_API_LEVEL="$api_level" bash "$source_repo/tools/prepare_isolated_instrumentation_target.sh" "$token" \
       > "$output_dir/seed.log" 2>&1
     seed_status=$?
     seed_elapsed_ms=$(( $(date +%s%3N) - seed_started_ms ))
@@ -87,26 +90,14 @@ for iteration in $(seq 1 "$repeat_count"); do
         "-Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken=$token"
         -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener
         "-Pandroid.testInstrumentationRunnerArguments.class=$test_filter")
-      observer_pid=''
-      if [[ "$api_level" == 35 ]]; then
-        args+=(-Pandroid.testInstrumentationRunnerArguments.rootCauseHostInput=true)
-        python3 "$repo_root/tools/android_host_tap_observer.py" "$output_dir" \
-          > "$output_dir/tap-observer.log" 2>&1 &
-        observer_pid=$!
-        sleep 1
-      fi
       test_started_utc="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
       test_started_ms="$(date +%s%3N)"
       (
-        cd "$repo_root/android" || exit 1
+        cd "$source_repo/android" || exit 1
         ./gradlew "${args[@]}" connectedIsolatedAndroidTest
       ) > "$output_dir/gradle.log" 2>&1
       gradle_status=$?
       test_elapsed_ms=$(( $(date +%s%3N) - test_started_ms ))
-      if [[ -n "$observer_pid" ]]; then
-        kill "$observer_pid" >/dev/null 2>&1 || true
-        wait "$observer_pid" >/dev/null 2>&1 || true
-      fi
       printf '%s\n' "$gradle_status" > "$output_dir/gradle-exit-code.txt"
       if [[ "$gradle_status" -eq 0 ]]; then
         status='PASS'
@@ -123,8 +114,8 @@ for iteration in $(seq 1 "$repeat_count"); do
     SereaProcessDeath:V SereaProfileVerifier:I AndroidRuntime:E \
     > "$output_dir/logcat-raw.txt" 2>&1
   log_status=$?
-  if [[ -d "$repo_root/android/app/build/outputs/androidTest-results/connected" ]]; then
-    cp -a "$repo_root/android/app/build/outputs/androidTest-results/connected" "$output_dir/junit"
+  if [[ -d "$source_repo/android/app/build/outputs/androidTest-results/connected" ]]; then
+    cp -a "$source_repo/android/app/build/outputs/androidTest-results/connected" "$output_dir/junit"
   fi
   log_elapsed_ms=$(( $(date +%s%3N) - log_started_ms ))
   if [[ "$log_status" -ne 0 && "$status" == 'PASS' ]]; then
@@ -141,6 +132,7 @@ for iteration in $(seq 1 "$repeat_count"); do
 
   {
     printf 'api=%s\n' "$api_level"
+    printf 'source_sha=%s\n' "$source_sha"
     printf 'stage=%s\n' "$stage"
     printf 'iteration=%s\n' "$iteration"
     printf 'test_filter=%s\n' "$test_filter"
@@ -160,6 +152,7 @@ done
 
 {
   printf 'api=%s\n' "$api_level"
+  printf 'source_sha=%s\n' "$source_sha"
   printf 'requested_repetitions=%s\n' "$repeat_count"
   printf 'passed_repetitions=%s\n' "$passes"
   printf 'failed_repetitions=%s\n' "$failed_repetitions"

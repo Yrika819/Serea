@@ -35,6 +35,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Checkout PR #100 candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: codex/pr99-ci-recovery
+          path: serea-pr100
+          persist-credentials: false
+
       - name: Initialize focused evidence
         run: mkdir -p "root-cause/focused/api${{ matrix.api }}"
 
@@ -79,11 +86,11 @@ jobs:
           "$ANDROID_HOME/emulator/emulator" -accel-check >> "$output" 2>&1
 
       - name: Build isolated target and instrumentation once
-        working-directory: android
+        working-directory: serea-pr100/android
         run: |
           set -o pipefail
           ./gradlew --no-daemon :app:assembleIsolated :app:assembleIsolatedAndroidTest \
-            2>&1 | tee "../root-cause/focused/api${{ matrix.api }}/build.log"
+            2>&1 | tee "$GITHUB_WORKSPACE/root-cause/focused/api${{ matrix.api }}/build.log"
 
       - name: Record emulator launch start
         run: |
@@ -103,7 +110,7 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
-          script: bash tools/run_android_focused_instrumentation.sh ${{ matrix.api }} 3
+          script: bash tools/run_android_focused_instrumentation.sh ${{ matrix.api }} 3 serea-pr100
 
       - name: Upload focused Android evidence
         if: always()

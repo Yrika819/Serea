@@ -53,6 +53,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
@@ -741,18 +743,25 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
+    var composerFocusAllowed by remember(focusClearRequest) {
+        mutableStateOf(focusClearRequest == 0)
+    }
+    var composerFocusedForDiagnostics by remember { mutableStateOf(false) }
     LaunchedEffect(focusClearRequest) {
         if (focusClearRequest > 0) {
-            val debuggable = context.applicationInfo.flags and
-                android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
-            if (debuggable) Log.i("SereaChatFocusRestore", "CLEAR_EFFECT_START|request=$focusClearRequest")
-            withFrameNanos { }
-            if (debuggable) Log.i("SereaChatFocusRestore", "CLEAR_EFFECT_FRAME_1|request=$focusClearRequest")
-            withFrameNanos { }
-            if (debuggable) Log.i("SereaChatFocusRestore", "CLEAR_EFFECT_FRAME_2|request=$focusClearRequest")
+            composerFocusAllowed = false
+            Log.i("SereaChatFocusRestore", "FOCUS_BLOCK_START|request=$focusClearRequest|focused=$composerFocusedForDiagnostics")
             keyboard?.hide()
             focusManager.clearFocus(force = true)
-            if (debuggable) Log.i("SereaChatFocusRestore", "CLEAR_EFFECT_ISSUED|request=$focusClearRequest")
+            withFrameNanos { }
+            Log.i("SereaChatFocusRestore", "FOCUS_BLOCK_FRAME_1|request=$focusClearRequest|focused=$composerFocusedForDiagnostics")
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
+            withFrameNanos { }
+            Log.i("SereaChatFocusRestore", "FOCUS_BLOCK_FRAME_2|request=$focusClearRequest|focused=$composerFocusedForDiagnostics")
+            composerFocusAllowed = true
+            focusManager.clearFocus(force = true)
+            Log.i("SereaChatFocusRestore", "FOCUS_BLOCK_RELEASE|request=$focusClearRequest|focused=$composerFocusedForDiagnostics")
         }
     }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -1027,7 +1036,16 @@ internal fun ChatScreen(
             }
             if (!settingsDestination) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val composerModifier = Modifier.weight(1f).testTag("chat-composer")
+                    val composerModifier = Modifier.weight(1f)
+                        .onFocusChanged { focusState ->
+                            composerFocusedForDiagnostics = focusState.isFocused
+                            Log.i(
+                                "SereaChatFocusRestore",
+                                "COMPOSER_FOCUS|request=$focusClearRequest|focused=${focusState.isFocused}|hasFocus=${focusState.hasFocus}",
+                            )
+                        }
+                        .focusProperties { canFocus = composerFocusAllowed }
+                        .testTag("chat-composer")
                     key(focusClearRequest) {
                         OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
                             modifier = composerModifier, label = { Text("メッセージ") },

@@ -743,7 +743,7 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
-    var composerValue by rememberSaveable(state.conversation.id, saver = TextFieldValue.Saver) {
+    var composerValue by rememberSaveable(state.conversation.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(state.input))
     }
     LaunchedEffect(state.input) {

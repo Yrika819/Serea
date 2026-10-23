@@ -22,6 +22,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
@@ -95,12 +96,17 @@ class SereaAppShellTest {
         val visibleSemantics: String,
     )
 
+    private data class CalendarSemanticsTarget(
+        val interaction: androidx.compose.ui.test.SemanticsNodeInteraction,
+        val nodes: androidx.compose.ui.test.SemanticsNodeInteractionCollection,
+    )
+
     /** Select a semantics node on the test thread; read snapshot-backed values on the UI thread. */
-    private fun snapshotSemantics(interaction: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarSemanticsSnapshot {
+    private fun snapshotSemantics(target: CalendarSemanticsTarget): CalendarSemanticsSnapshot {
         compose.waitForIdle()
-        // The plural API selects nodes through Compose's test owner without serializing the
-        // selected node's lazy, snapshot-backed properties for its last-seen failure message.
-        val nodes = interaction.fetchSemanticsNodes(atLeastOneRootRequired = true).selectedNodes
+        // The public collection API selects without serializing lazy, snapshot-backed properties
+        // into SemanticsNodeInteraction's last-seen failure message.
+        val nodes = target.nodes.fetchSemanticsNodes()
         check(nodes.size == 1) { "Expected one Calendar semantics node, found ${nodes.size}." }
         val node = nodes.single()
         var result: CalendarSemanticsSnapshot? = null
@@ -140,6 +146,22 @@ class SereaAppShellTest {
         return checkNotNull(result) { "Compose UI thread did not produce a Calendar semantics snapshot." }
     }
 
+    private fun calendarNodeWithTag(tag: String) = CalendarSemanticsTarget(
+        interaction = compose.onNodeWithTag(tag),
+        nodes = compose.onAllNodesWithTag(tag),
+    )
+
+    private fun calendarNodeWithText(text: String, substring: Boolean = true, unmerged: Boolean = false) =
+        CalendarSemanticsTarget(
+            interaction = compose.onNodeWithText(text, substring = substring, useUnmergedTree = unmerged),
+            nodes = compose.onAllNodesWithText(text, substring = substring, useUnmergedTree = unmerged),
+        )
+
+    private fun calendarRootNode() = CalendarSemanticsTarget(
+        interaction = compose.onRoot(),
+        nodes = compose.onAllNodes(isRoot()),
+    )
+
     @Before fun waitUntilChatCanAcceptInput() {
         calendarGestureProbeDone = false
         calendarDetailSemanticsProbeDone = false
@@ -173,7 +195,7 @@ class SereaAppShellTest {
 
     /** Scrolls a real LazyColumn and uses the loaded item map to bound the search and detect a skip. */
     private fun scrollAgendaUntilDisplayed(tag: String, text: String) {
-        val list = compose.onNodeWithTag(tag)
+        val list = calendarNodeWithTag(tag)
         val fixtureTarget = if (tag == "calendar_agenda_list") {
             FakeCalendarProvider.Fixtures.events.singleOrNull { it.title == text }
         } else {
@@ -335,7 +357,7 @@ class SereaAppShellTest {
             }
         }
         if (targetIndex != null) {
-            list.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+            list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
                 scrollToIndex(targetIndex)
             }
             compose.waitForIdle()
@@ -366,14 +388,14 @@ class SereaAppShellTest {
     private fun logVisibleCalendarItemBounds(tag: String, text: String) {
         // EventCard merges its descendants. Read the unmerged Text node for actual glyph bounds,
         // and the merged card separately for its user-operable click semantics.
-        val textSemantics = snapshotSemantics(calendarTargetTextNode(text))
+        val textSemantics = snapshotSemantics(calendarTargetTextTarget(text))
         val item = if (tag == "calendar_agenda_list") {
-            snapshotSemantics(compose.onNodeWithText(text, substring = true))
+            snapshotSemantics(calendarNodeWithText(text))
         } else {
             textSemantics
         }
-        val list = snapshotSemantics(compose.onNodeWithTag(tag))
-        val root = snapshotSemantics(compose.onRoot())
+        val list = snapshotSemantics(calendarNodeWithTag(tag))
+        val root = snapshotSemantics(calendarRootNode())
         val viewport = checkNotNull(list.viewport) { "$tag must expose its real LazyColumn viewport." }
         val viewportTop = list.boundsInRoot.top + viewport.viewportStartOffset
         val viewportBottom = list.boundsInRoot.top + viewport.viewportEndOffset
@@ -418,12 +440,12 @@ class SereaAppShellTest {
     }
 
     private fun isCalendarTargetTextFullyVisible(
-        listInteraction: androidx.compose.ui.test.SemanticsNodeInteraction,
+        listInteraction: CalendarSemanticsTarget,
         text: String,
     ): Boolean {
-        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextNode(text)) }.getOrNull() ?: return false
+        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextTarget(text)) }.getOrNull() ?: return false
         val list = runCatching { snapshotSemantics(listInteraction) }.getOrNull() ?: return false
-        val root = runCatching { snapshotSemantics(compose.onRoot()) }.getOrNull() ?: return false
+        val root = runCatching { snapshotSemantics(calendarRootNode()) }.getOrNull() ?: return false
         val viewport = list.viewport ?: return false
         val left = maxOf(list.boundsInRoot.left, root.boundsInRoot.left)
         val right = minOf(list.boundsInRoot.right, root.boundsInRoot.right)
@@ -456,8 +478,8 @@ class SereaAppShellTest {
         list: CalendarSemanticsSnapshot,
     ) {
         val viewport = list.viewport ?: return
-        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextNode(text)) }.getOrNull()
-        val cardSnapshot = runCatching { snapshotSemantics(compose.onNodeWithText(text, substring = true)) }.getOrNull()
+        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextTarget(text)) }.getOrNull()
+        val cardSnapshot = runCatching { snapshotSemantics(calendarNodeWithText(text)) }.getOrNull()
         if (textSnapshot == null) {
             Log.i(
                 CALENDAR_STAGE_TAG,
@@ -486,11 +508,13 @@ class SereaAppShellTest {
     private fun calendarTargetTextNode(text: String) =
         compose.onNodeWithText(text, substring = true, useUnmergedTree = true)
 
+    private fun calendarTargetTextTarget(text: String) = calendarNodeWithText(text, unmerged = true)
+
     /** Separates scroll semantics from touch hit testing before searching a long agenda. */
-    private fun diagnoseCalendarGesturePath(list: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarGesturePath {
+    private fun diagnoseCalendarGesturePath(list: CalendarSemanticsTarget): CalendarGesturePath {
         val node = snapshotSemantics(list)
-        val root = snapshotSemantics(compose.onRoot())
-        val destination = snapshotSemantics(compose.onNodeWithTag("calendar_destination"))
+        val root = snapshotSemantics(calendarRootNode())
+        val destination = snapshotSemantics(calendarNodeWithTag("calendar_destination"))
         val bounds = node.boundsInRoot
         val rootBounds = root.boundsInRoot
         val destinationBounds = destination.boundsInRoot
@@ -570,7 +594,7 @@ class SereaAppShellTest {
         )
     }
 
-    private fun verifyCalendarSemanticsScrollToIndex(list: androidx.compose.ui.test.SemanticsNodeInteraction) {
+    private fun verifyCalendarSemanticsScrollToIndex(list: CalendarSemanticsTarget) {
         val before = snapshotSemantics(list)
         val viewportBefore = checkNotNull(before.viewport)
         val visibleBefore = viewportBefore.visibleItemIndices
@@ -583,7 +607,7 @@ class SereaAppShellTest {
             (firstBefore - 1).coerceAtLeast(0)
         }
         assertTrue("Calendar Semantics probe must select a different item", targetIndex !in visibleBefore)
-        list.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+        list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
             scrollToIndex(targetIndex)
         }
         compose.waitForIdle()
@@ -600,7 +624,7 @@ class SereaAppShellTest {
             "Semantics ScrollToIndex must make the requested Calendar item visible",
             targetIndex in visibleAfter && visibleAfter != visibleBefore,
         )
-        list.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+        list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
             scrollToIndex(firstBefore)
         }
         compose.waitForIdle()
@@ -618,7 +642,7 @@ class SereaAppShellTest {
     }
 
     private fun performCalendarGesture(
-        list: androidx.compose.ui.test.SemanticsNodeInteraction,
+        list: CalendarSemanticsTarget,
         path: CalendarGesturePath,
         height: Float,
         label: String,
@@ -634,7 +658,7 @@ class SereaAppShellTest {
         val endRootY = before.boundsInRoot.top + endY
         val startWindowY = before.boundsInWindow.top + startY
         val endWindowY = before.boundsInWindow.top + endY
-        val root = snapshotSemantics(compose.onRoot())
+        val root = snapshotSemantics(calendarRootNode())
         Log.i(
             CALENDAR_STAGE_TAG,
             "GESTURE_TARGET|$label|path=$path|local=${before.boundsInRoot.width / 2f},$startY->${before.boundsInRoot.width / 2f},$endY|" +
@@ -647,7 +671,7 @@ class SereaAppShellTest {
         )
         when (path) {
             CalendarGesturePath.NODE_EDGE,
-            CalendarGesturePath.NODE_INTERIOR -> list.performTouchInput {
+            CalendarGesturePath.NODE_INTERIOR -> list.interaction.performTouchInput {
                 swipeUp(
                     startY = startY,
                     endY = endY,
@@ -655,7 +679,7 @@ class SereaAppShellTest {
                 )
             }
             CalendarGesturePath.ROOT_INTERIOR -> {
-                val rootInteraction = compose.onRoot()
+                val rootInteraction = calendarRootNode().interaction
                 val rootBounds = root.boundsInRoot
                 rootInteraction.performTouchInput {
                     swipeUp(
@@ -1005,7 +1029,7 @@ class SereaAppShellTest {
                 compose.onNodeWithText("今後").assertIsEnabled()
             }.isSuccess
         }
-        val afterCalendarSelection = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val afterCalendarSelection = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val calendarSelectionPosition = checkNotNull(afterCalendarSelection.position)
         Log.i(
             CALENDAR_STAGE_TAG,
@@ -1021,11 +1045,11 @@ class SereaAppShellTest {
         compose.onNodeWithText("今後").assertIsSelected()
         compose.waitUntil(10_000) {
             runCatching {
-                val snapshot = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+                val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
                 (snapshot.scrollMax ?: 0f) > 0f && (snapshot.scrollValue ?: Float.MAX_VALUE) <= 1f
             }.getOrDefault(false)
         }
-        val afterUpcomingSelection = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val afterUpcomingSelection = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val upcomingSelectionPosition = checkNotNull(afterUpcomingSelection.position)
         Log.i(
             CALENDAR_STAGE_TAG,
@@ -1039,7 +1063,7 @@ class SereaAppShellTest {
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 50")
         calendarTargetTextNode("Fictional paged event 50").assertIsDisplayed()
         calendarStage("scroll-event-50", "FINISH")
-        val agendaBeforeDetail = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaBeforeDetail = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val agendaOffsetBeforeDetailValue = checkNotNull(agendaBeforeDetail.scrollValue)
         val agendaPositionBeforeDetail = checkNotNull(agendaBeforeDetail.position)
         assertTrue("Calendar agenda must have several scroll positions", checkNotNull(agendaBeforeDetail.scrollMax) > 0f)
@@ -1051,7 +1075,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaAfterDetail = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaAfterDetail = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertEquals(agendaOffsetBeforeDetailValue, checkNotNull(agendaAfterDetail.scrollValue), 1f)
         assertEquals(agendaPositionBeforeDetail, agendaAfterDetail.position)
         calendarStage("event-detail-back", "FINISH")
@@ -1062,7 +1086,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaAfterDestination = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaAfterDestination = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertEquals(agendaOffsetBeforeDetailValue, checkNotNull(agendaAfterDestination.scrollValue), 1f)
         assertEquals(agendaPositionBeforeDetail, agendaAfterDestination.position)
         calendarStage("destination-back", "FINISH")
@@ -1072,7 +1096,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaAfterRecreation = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaAfterRecreation = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertEquals(agendaOffsetBeforeDetailValue, checkNotNull(agendaAfterRecreation.scrollValue), 1f)
         assertEquals(agendaPositionBeforeDetail, agendaAfterRecreation.position)
         calendarStage("activity-recreation", "FINISH")
@@ -1098,11 +1122,11 @@ class SereaAppShellTest {
         }
         compose.waitUntil(10_000) {
             runCatching {
-                val snapshot = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+                val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
                 (snapshot.scrollMax ?: 0f) > 0f && snapshot.scrollValue == 0f
             }.getOrDefault(false)
         }
-        val agendaOffsetAfterQueryChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaOffsetAfterQueryChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val agendaPositionAfterQueryChange = checkNotNull(agendaOffsetAfterQueryChange.position)
         assertTrue("date query must retain a scrollable Work agenda", checkNotNull(agendaOffsetAfterQueryChange.scrollMax) > 0f)
         assertEquals(0f, checkNotNull(agendaOffsetAfterQueryChange.scrollValue), 1f)
@@ -1112,7 +1136,7 @@ class SereaAppShellTest {
         calendarStage("date-change-scroll", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 40")
         calendarTargetTextNode("Fictional paged event 40").assertIsDisplayed()
-        val workOffsetBeforeDateChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val workOffsetBeforeDateChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertTrue("date-change test must start below the first Work event", checkNotNull(workOffsetBeforeDateChange.scrollValue) > 0f)
 
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
@@ -1129,11 +1153,11 @@ class SereaAppShellTest {
         }
         compose.waitUntil(10_000) {
             runCatching {
-                val snapshot = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+                val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
                 (snapshot.scrollMax ?: 0f) > 0f && snapshot.scrollValue == 0f
             }.getOrDefault(false)
         }
-        val agendaOffsetAfterDateChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaOffsetAfterDateChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val agendaPositionAfterDateChange = checkNotNull(agendaOffsetAfterDateChange.position)
         assertTrue("changing the selected date must keep a scrollable Work agenda", checkNotNull(agendaOffsetAfterDateChange.scrollMax) > 0f)
         assertEquals(0f, checkNotNull(agendaOffsetAfterDateChange.scrollValue), 1f)
@@ -1143,17 +1167,17 @@ class SereaAppShellTest {
         calendarStage("calendar-change-scroll", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 64")
         calendarTargetTextNode("Fictional paged event 64").assertIsDisplayed()
-        val workOffsetBeforeCalendarChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val workOffsetBeforeCalendarChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertTrue("calendar switch test must start below the first Work event", checkNotNull(workOffsetBeforeCalendarChange.scrollValue) > 0f)
         compose.onNodeWithText("今後").performClick()
         compose.onNodeWithText("Demo Global").performClick()
         compose.waitUntil(10_000) {
             runCatching {
-                val snapshot = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+                val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
                 (snapshot.scrollMax ?: 0f) > 0f && snapshot.scrollValue == 0f
             }.getOrDefault(false)
         }
-        val agendaOffsetAfterCalendarChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaOffsetAfterCalendarChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val agendaPositionAfterCalendarChange = checkNotNull(agendaOffsetAfterCalendarChange.position)
         assertTrue("Demo Global must also provide a long agenda for reset verification", checkNotNull(agendaOffsetAfterCalendarChange.scrollMax) > 0f)
         assertEquals(0f, checkNotNull(agendaOffsetAfterCalendarChange.scrollValue), 1f)
@@ -1168,7 +1192,7 @@ class SereaAppShellTest {
         }
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "説明")
         calendarTargetTextNode("説明").assertIsDisplayed()
-        val detailBefore = snapshotSemantics(compose.onNodeWithTag("calendar_event_detail_list"))
+        val detailBefore = snapshotSemantics(calendarNodeWithTag("calendar_event_detail_list"))
         val detailScrollBeforeValue = checkNotNull(detailBefore.scrollValue)
         assertTrue("calendar detail must be scrollable in this viewport", checkNotNull(detailBefore.scrollMax) > 0f)
         assertTrue("calendar detail must have a non-zero saved offset", detailScrollBeforeValue > 0f)
@@ -1182,7 +1206,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val detailAfter = snapshotSemantics(compose.onNodeWithTag("calendar_event_detail_list"))
+        val detailAfter = snapshotSemantics(calendarNodeWithTag("calendar_event_detail_list"))
         assertTrue(checkNotNull(detailAfter.scrollMax) > 0f)
         assertEquals(detailScrollBeforeValue, checkNotNull(detailAfter.scrollValue), 1f)
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "Date-line test")

@@ -296,12 +296,7 @@ class SereaAppShellTest {
                 )
             }
             if (activeTargetIndex != null && after.viewport?.visibleItemIndices?.contains(activeTargetIndex) == true) {
-                Log.i(
-                    CALENDAR_STAGE_TAG,
-                    "TARGET_ITEM_RANGE_REACHED|target=$text|targetItemIndex=$activeTargetIndex|" +
-                        "textDisplayed=false|position=${after.position}|viewport=${after.viewport}|" +
-                        "bounds=${after.boundsInRoot}|visible=${after.visibleSemantics}",
-                )
+                logCalendarTargetVisibilityAtItemRange(tag, text, activeTargetIndex, after)
             }
             val currentVisibleItems = after.viewport?.visibleItemIndices?.size?.coerceAtLeast(1)
                 ?: initiallyVisibleItems
@@ -365,6 +360,41 @@ class SereaAppShellTest {
                 "listRoot=${list.boundsInRoot}|listWindow=${list.boundsInWindow}|root=${root.boundsInRoot}|" +
                 "position=${list.position}|viewport=$viewport|visibleFraction=$visibleFraction|" +
                 "tappable=${item.hasClickAction}|loadedEvents=${list.loadedEventCount}",
+        )
+    }
+
+    /** Records card visibility separately from its merged and unmerged Text semantics bounds. */
+    private fun logCalendarTargetVisibilityAtItemRange(
+        tag: String,
+        text: String,
+        targetItemIndex: Int,
+        list: CalendarSemanticsSnapshot,
+    ) {
+        val viewport = list.viewport ?: return
+        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextNode(text)) }.getOrNull()
+        val cardSnapshot = runCatching { snapshotSemantics(compose.onNodeWithText(text, substring = true)) }.getOrNull()
+        if (textSnapshot == null) {
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "TARGET_ITEM_RANGE_REACHED|tag=$tag|target=$text|targetItemIndex=$targetItemIndex|" +
+                    "textNode=absent|cardBounds=${cardSnapshot?.boundsInRoot}|" +
+                    "position=${list.position}|viewport=$viewport|listBounds=${list.boundsInRoot}",
+            )
+            return
+        }
+        val viewportTop = list.boundsInRoot.top + viewport.viewportStartOffset
+        val viewportBottom = list.boundsInRoot.top + viewport.viewportEndOffset
+        val clippedTop = maxOf(textSnapshot.boundsInRoot.top, viewportTop)
+        val clippedBottom = minOf(textSnapshot.boundsInRoot.bottom, viewportBottom)
+        val visibleHeight = (clippedBottom - clippedTop).coerceAtLeast(0f)
+        val textHeight = textSnapshot.boundsInRoot.height.coerceAtLeast(1f)
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "TARGET_ITEM_RANGE_REACHED|tag=$tag|target=$text|targetItemIndex=$targetItemIndex|" +
+                "textRoot=${textSnapshot.boundsInRoot}|textWindow=${textSnapshot.boundsInWindow}|" +
+                "cardBounds=${cardSnapshot?.boundsInRoot}|listBounds=${list.boundsInRoot}|" +
+                "viewport=$viewport|visibleTextFraction=${visibleHeight / textHeight}|" +
+                "textIntersectsViewport=${visibleHeight > 0f}|position=${list.position}",
         )
     }
 

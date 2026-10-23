@@ -16,7 +16,9 @@ internal object ProfileVerifierCacheMarker {
 
     // A cache entry alone does not prove that a profile was installed: result 0 means no profile,
     // and 5 << 16 is the embedded-profile failure. Only successful installation outcomes qualify.
-    private val persistedResultCodes = setOf(1, 2, 3)
+    // 2 only means that compilation was queued; the profile has not yet been applied.
+    // Accept the two runtime outcomes that affirm a compiled profile is installed.
+    private val installedProfileResultCodes = setOf(1, 3)
 
     fun isOnlyValidMarker(filesDirectory: File, packageLastUpdateTime: Long): Boolean {
         return try {
@@ -100,7 +102,7 @@ internal object ProfileVerifierCacheMarker {
             val installedCurrentProfileSize = cache.long
             !cache.hasRemaining() &&
                 schema == SCHEMA &&
-                resultCode in persistedResultCodes &&
+                resultCode in installedProfileResultCodes &&
                 storedPackageUpdateTime == packageLastUpdateTime &&
                 installedCurrentProfileSize >= 0L
         } catch (_: RuntimeException) {

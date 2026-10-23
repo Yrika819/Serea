@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
@@ -279,8 +280,13 @@ class ChatScreenTest {
         compose.onNodeWithTag("model-budget-amount").performScrollTo().performTextInput("0.05")
         compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextInput("USD")
         compose.onNodeWithText("ルーター設定を保存").performScrollTo().performClick()
-        compose.onNodeWithText("費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。")
-            .performScrollTo().assertIsDisplayed()
+        val saveSucceeded = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
+        val saveFailed = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。"
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText(saveSucceeded).fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodesWithText(saveFailed).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText(saveSucceeded).performScrollTo().assertIsDisplayed()
         assertEquals(
             ModelRoutingPolicy(
                 mode = ModelSelectionMode.MANUAL,

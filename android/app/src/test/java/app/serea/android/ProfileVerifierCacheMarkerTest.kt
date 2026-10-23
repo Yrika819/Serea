@@ -13,8 +13,8 @@ import org.junit.rules.TemporaryFolder
 class ProfileVerifierCacheMarkerTest {
     @get:Rule val temporary = TemporaryFolder()
 
-    @Test fun acceptsOnlyCanonicalPersistedProfileVerifierResults() {
-        for (resultCode in listOf(1, 2, 3)) {
+    @Test fun acceptsOnlyCanonicalInstalledProfileVerifierResults() {
+        for (resultCode in listOf(1, 3)) {
             assertTrue(
                 "Expected ProfileVerifier result $resultCode to be a persisted schema 1 value",
                 ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = resultCode), PACKAGE_UPDATE_TIME),
@@ -24,6 +24,7 @@ class ProfileVerifierCacheMarkerTest {
 
     @Test fun rejectsNoProfileAndEmbeddedProfileFailureResults() {
         assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 0), PACKAGE_UPDATE_TIME))
+        assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 2), PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 5 shl 16), PACKAGE_UPDATE_TIME))
     }
 

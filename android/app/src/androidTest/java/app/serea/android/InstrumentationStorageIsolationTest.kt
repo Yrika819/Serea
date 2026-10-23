@@ -56,8 +56,12 @@ class InstrumentationStorageIsolationTest {
             )
         } else {
             assertTrue(
-                "API 35 must report an installed profile, resultCode=$resultCode",
-                resultCode in setOf(1, 2, 3),
+                "API 35 must report a compiled and installed profile, resultCode=$resultCode " +
+                    "(1=compiled, 3=compiled with a non-matching profile; 2=queued only)",
+                resultCode in setOf(
+                    ProfileVerifier.CompilationStatus.RESULT_CODE_COMPILED_WITH_PROFILE,
+                    ProfileVerifier.CompilationStatus.RESULT_CODE_COMPILED_WITH_PROFILE_NON_MATCHING,
+                ),
             )
             assertTrue(
                 "API 35 APK must embed the profile, resultCode=$resultCode",
@@ -66,7 +70,8 @@ class InstrumentationStorageIsolationTest {
             @Suppress("DEPRECATION")
             val packageUpdateTime = target.packageManager.getPackageInfo(target.packageName, 0).lastUpdateTime
             assertTrue(
-                "API 35 ProfileVerifier must return a persisted result, resultCode=$resultCode",
+                "API 35 ProfileVerifier cache must prove a compiled and installed profile, " +
+                    "resultCode=$resultCode marker=${ProfileVerifierCacheMarker.rejectionDetails(target.filesDir, packageUpdateTime)}",
                 ProfileVerifierCacheMarker.isOnlyValidMarker(target.filesDir, packageUpdateTime),
             )
             Log.i(

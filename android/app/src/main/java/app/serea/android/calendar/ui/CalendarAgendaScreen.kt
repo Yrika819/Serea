@@ -535,8 +535,26 @@ private fun EventDetailContent(
     calendar: CalendarDescriptor?,
     displayZone: ZoneId,
 ) {
+    val listState = rememberLazyListState()
+    val listPosition by remember(listState) {
+        derivedStateOf {
+            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        }
+    }
     LazyColumn(
-        modifier = Modifier.fillMaxSize().testTag("calendar_event_detail_list"),
+        state = listState,
+        modifier = Modifier.fillMaxSize()
+            .semantics {
+                this[CalendarLazyListPositionKey] = listPosition
+                this[CalendarLazyListViewportKey] = CalendarLazyListViewportSnapshot(
+                    totalItems = listState.layoutInfo.totalItemsCount,
+                    visibleItemIndices = listState.layoutInfo.visibleItemsInfo.map { it.index }.toList(),
+                    viewportStartOffset = listState.layoutInfo.viewportStartOffset,
+                    viewportEndOffset = listState.layoutInfo.viewportEndOffset,
+                    canScrollForward = listState.canScrollForward,
+                )
+            }
+            .testTag("calendar_event_detail_list"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {

@@ -66,6 +66,7 @@ class SereaAppShellTest {
 
     private enum class CalendarGesturePath { NODE_EDGE, NODE_INTERIOR, ROOT_INTERIOR }
     private var calendarGestureProbeDone = false
+    private var calendarDetailSemanticsProbeDone = false
     private var calendarGesturePath = CalendarGesturePath.NODE_INTERIOR
 
     private data class CalendarBoundsSnapshot(
@@ -139,6 +140,7 @@ class SereaAppShellTest {
 
     @Before fun waitUntilChatCanAcceptInput() {
         calendarGestureProbeDone = false
+        calendarDetailSemanticsProbeDone = false
         calendarGesturePath = CalendarGesturePath.NODE_INTERIOR
         compose.waitUntil(30_000) {
             runCatching { compose.onNodeWithTag("chat-composer").assertIsEnabled() }.isSuccess
@@ -193,6 +195,12 @@ class SereaAppShellTest {
             }
         }
         val initial = snapshotSemantics(list)
+        if (tag == "calendar_event_detail_list" && !calendarDetailSemanticsProbeDone &&
+            (initial.scrollMax ?: 0f) > 0f
+        ) {
+            calendarDetailSemanticsProbeDone = true
+            verifyCalendarSemanticsScrollToIndex(list)
+        }
         val targetIndex = fixtureTarget?.let { initial.agendaItems?.eventItemIndices?.get(it.key.eventId.value) }
         if (fixtureTarget != null && targetIndex == null) {
             throw AssertionError(
@@ -420,8 +428,22 @@ class SereaAppShellTest {
         val top = maxOf(list.boundsInRoot.top + viewport.viewportStartOffset, root.boundsInRoot.top)
         val bottom = minOf(list.boundsInRoot.top + viewport.viewportEndOffset, root.boundsInRoot.bottom)
         val bounds = textSnapshot.boundsInRoot
-        return bounds.left >= left - 1f && bounds.right <= right + 1f &&
+        val insideViewport = bounds.left >= left - 1f && bounds.right <= right + 1f &&
             bounds.top >= top - 1f && bounds.bottom <= bottom + 1f
+        val composeAssertDisplayed = runCatching {
+            calendarTargetTextNode(text).assertIsDisplayed()
+        }.isSuccess
+        val displayed = insideViewport && composeAssertDisplayed
+        if (!displayed) {
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "TEXT_NOT_FULLY_DISPLAYED|text=$text|textRoot=${textSnapshot.boundsInRoot}|" +
+                    "textWindow=${textSnapshot.boundsInWindow}|listRoot=${list.boundsInRoot}|" +
+                    "listWindow=${list.boundsInWindow}|viewport=$viewport|root=${root.boundsInRoot}|" +
+                    "insideViewport=$insideViewport|composeAssertDisplayed=$composeAssertDisplayed",
+            )
+        }
+        return displayed
     }
 
     /** Records card visibility separately from its merged and unmerged Text semantics bounds. */

@@ -50,7 +50,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import android.util.Log
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -1014,20 +1013,18 @@ internal fun ChatScreen(
             if (!settingsDestination) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val composerModifier = Modifier.weight(1f).testTag("chat-composer")
-                    key(focusClearRequest) {
-                        DisposableEffect(Unit) {
-                            Log.i("SereaRootCauseFocusOrder", "COMPOSER_GENERATION_CREATE|settingsDestination=$settingsDestination|focusClearRequest=$focusClearRequest|viewModel=${System.identityHashCode(chatViewModel)}")
-                            onDispose {
-                                Log.i("SereaRootCauseFocusOrder", "COMPOSER_GENERATION_DISPOSE|settingsDestination=$settingsDestination|focusClearRequest=$focusClearRequest|viewModel=${System.identityHashCode(chatViewModel)}")
-                            }
+                    DisposableEffect(Unit) {
+                        Log.i("SereaRootCauseFocusOrder", "COMPOSER_SCOPE_ENTER|settingsDestination=$settingsDestination|focusClearRequest=$focusClearRequest|viewModel=${System.identityHashCode(chatViewModel)}")
+                        onDispose {
+                            Log.i("SereaRootCauseFocusOrder", "COMPOSER_SCOPE_EXIT|settingsDestination=$settingsDestination|focusClearRequest=$focusClearRequest|viewModel=${System.identityHashCode(chatViewModel)}")
                         }
-                        OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
-                            modifier = composerModifier, label = { Text("メッセージ") },
-                            enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
-                            maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                            supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
                     }
+                    OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
+                        modifier = composerModifier, label = { Text("メッセージ") },
+                        enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
+                        maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
+                        supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                         enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,

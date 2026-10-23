@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import fnmatch
 import json
 import os
 import re
@@ -207,10 +208,20 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
                 "Yrika819/Serea", "refs/heads/feature", workflow_ref, SOURCE_SHA, SOURCE_SHA
             )
 
+    def test_release_source_must_still_be_the_current_protected_main_tip(self):
+        pipeline.validate_main_tip(SOURCE_SHA, SOURCE_SHA.upper())
+        with self.assertRaisesRegex(pipeline.PipelineError, "current protected-main tip"):
+            pipeline.validate_main_tip(SOURCE_SHA, "c" * 40)
+        for missing_or_invalid in ("", "not-a-commit"):
+            with self.assertRaisesRegex(pipeline.PipelineError, "missing or malformed"):
+                pipeline.validate_main_tip(SOURCE_SHA, missing_or_invalid)
+
     def test_missing_environment_reviewer_or_protected_branch_policy_is_rejected(self):
         approved_environment = {
             "name": "serea-personal-beta",
-            "protection_rules": [{"type": "required_reviewers", "reviewers": [{"type": "User", "id": 1}]}],
+            "protection_rules": [{"type": "required_reviewers", "reviewers": [
+                {"type": "User", "reviewer": {"login": "owner", "id": 1}}
+            ]}],
             "deployment_branch_policy": {"protected_branches": True, "custom_branch_policies": False},
         }
         pipeline.validate_environment_protection(approved_environment, "serea-personal-beta")
@@ -218,6 +229,21 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
         no_reviewers = {**approved_environment, "protection_rules": []}
         with self.assertRaisesRegex(pipeline.PipelineError, "no required reviewers"):
             pipeline.validate_environment_protection(no_reviewers, "serea-personal-beta")
+
+        malformed_reviewers = {
+            **approved_environment,
+            "protection_rules": [{"type": "required_reviewers", "reviewers": "owner"}],
+        }
+        with self.assertRaisesRegex(pipeline.PipelineError, "no required reviewers"):
+            pipeline.validate_environment_protection(malformed_reviewers, "serea-personal-beta")
+        invalid_reviewer = {
+            **approved_environment,
+            "protection_rules": [{"type": "required_reviewers", "reviewers": [
+                {"type": "User", "reviewer": {"login": "owner", "id": 0}}
+            ]}],
+        }
+        with self.assertRaisesRegex(pipeline.PipelineError, "no required reviewers"):
+            pipeline.validate_environment_protection(invalid_reviewer, "serea-personal-beta")
         unrestricted = {
             **approved_environment,
             "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True},
@@ -278,6 +304,38 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
             with self.assertRaisesRegex(pipeline.PipelineError, "not configured"):
                 pipeline.run_preflight(distribute_requested=True)
 
+    def test_malformed_release_configuration_fails_closed(self):
+        valid = {
+            "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_BASE64": "temporary-mock-key-bytes",
+            "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD": "temporary-mock-store-password",
+            "SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS": "personal-beta-test",
+            "SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD": "temporary-mock-key-password",
+            "SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256": CERTIFICATE,
+            "SEREA_PERSONAL_BETA_VERSION_CODE_BASELINE": "100",
+            "SEREA_REQUIRED_CHECKS_JSON": json.dumps(["Linux fast checks"]),
+            "SEREA_FIREBASE_DISTRIBUTION_ENABLED": "true",
+            "SEREA_GCP_WIF_PROVIDER": "projects/123456/locations/global/workloadIdentityPools/serea/providers/github",
+            "SEREA_GCP_SERVICE_ACCOUNT": "serea-beta@serea-project.iam.gserviceaccount.com",
+            "SEREA_FIREBASE_PROJECT_ID": "serea-beta-project",
+            "SEREA_FIREBASE_APP_ID": FIREBASE_APP_ID,
+            "SEREA_FIREBASE_APPROVED_TESTER_GROUP": "serea-personal-beta",
+        }
+        invalid_values = (
+            ("SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256", "not-a-fingerprint"),
+            ("SEREA_PERSONAL_BETA_VERSION_CODE_BASELINE", "0"),
+            ("SEREA_REQUIRED_CHECKS_JSON", "[]"),
+            ("SEREA_FIREBASE_DISTRIBUTION_ENABLED", "false"),
+            ("SEREA_GCP_WIF_PROVIDER", "projects/123456/locations/global/workloadIdentityPools"),
+            ("SEREA_GCP_SERVICE_ACCOUNT", "long-lived-key.json"),
+            ("SEREA_FIREBASE_PROJECT_ID", "invalid project id"),
+            ("SEREA_FIREBASE_APP_ID", "not-an-app-id"),
+            ("SEREA_FIREBASE_APPROVED_TESTER_GROUP", "unreviewed group"),
+        )
+        for key, value in invalid_values:
+            with self.subTest(key=key, value=value), patch.dict(os.environ, {**valid, key: value}, clear=True):
+                with self.assertRaises(pipeline.PipelineError):
+                    pipeline.run_preflight(distribute_requested=True)
+
     def test_manual_workflow_is_main_only_protected_and_has_no_signed_apk_artifact(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", workflow)
@@ -286,6 +344,9 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
         self.assertNotIn("actions/upload-artifact", workflow)
         self.assertIn("ref: ${{ github.sha }}", workflow)
         self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("validate-main-tip", workflow)
+        self.assertNotIn("merge-base --is-ancestor", workflow)
+        self.assertGreaterEqual(workflow.count("git fetch --no-tags origin refs/heads/main"), 4)
         self.assertIn("name: serea-personal-beta", workflow)
         self.assertIn("branches/main/protection", workflow)
         self.assertIn("verify-main-protection", workflow)
@@ -302,7 +363,45 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
             for start in (match.start() for match in re.finditer(r"uses:\s*actions/upload-artifact@", text)):
                 next_step = text.find("\n      - name:", start + 1)
                 artifact_blocks.append(text[start : next_step if next_step >= 0 else len(text)])
-        self.assertFalse(any("app-beta.apk" in block or "outputs/apk/beta" in block for block in artifact_blocks))
+
+        beta_apk = "android/app/build/outputs/apk/beta/app-beta.apk"
+
+        def artifact_patterns(block: str) -> list[str]:
+            lines = block.splitlines()
+            patterns: list[str] = []
+            for index, line in enumerate(lines):
+                match = re.match(r"^(\s*)path:\s*(.*)$", line)
+                if not match:
+                    continue
+                indent = len(match.group(1))
+                scalar = match.group(2).strip()
+                if scalar and scalar not in {"|", ">"}:
+                    patterns.append(scalar)
+                    continue
+                for child in lines[index + 1 :]:
+                    if child.strip() and len(child) - len(child.lstrip()) <= indent:
+                        break
+                    value = child.strip()
+                    if value and not value.startswith("#"):
+                        patterns.append(value)
+            return patterns
+
+        def artifact_includes_beta(patterns: list[str]) -> bool:
+            included = False
+            for pattern in patterns:
+                exclude = pattern.startswith("!")
+                candidate = pattern[1:] if exclude else pattern
+                if fnmatch.fnmatchcase(beta_apk, candidate):
+                    included = not exclude
+            return included
+
+        self.assertTrue(artifact_includes_beta(["android/app/build/**"]))
+        self.assertTrue(artifact_includes_beta(["android/app/build/outputs/apk/**/*.apk"]))
+        self.assertTrue(artifact_includes_beta(["**/*.apk"]))
+        self.assertFalse(artifact_includes_beta(["android/app/build/**", "!android/app/build/outputs/apk/beta/**"]))
+        for block in artifact_blocks:
+            with self.subTest(artifact_block=block[:120]):
+                self.assertFalse(artifact_includes_beta(artifact_patterns(block)))
 
         ci_workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
         self.assertIn("assembleDebug assembleRelease assembleIsolated", ci_workflow)

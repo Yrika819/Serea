@@ -59,15 +59,33 @@ def validate_source(
         raise PipelineError("Checked-out source SHA does not match the exact workflow dispatch SHA.")
 
 
+def validate_main_tip(source_sha: str, main_sha: str) -> None:
+    if not COMMIT_SHA_RE.fullmatch(source_sha) or not COMMIT_SHA_RE.fullmatch(main_sha):
+        raise PipelineError("Protected main tip or workflow source SHA is missing or malformed.")
+    if source_sha.lower() != main_sha.lower():
+        raise PipelineError("Workflow source is no longer the current protected-main tip.")
+
+
 def validate_environment_protection(environment: Any, expected_name: str) -> None:
     if not isinstance(environment, dict) or environment.get("name") != expected_name:
         raise PipelineError("Personal Beta GitHub Environment is missing or has the wrong name.")
+    protection_rules = environment.get("protection_rules", [])
+    if not isinstance(protection_rules, list):
+        raise PipelineError("Personal Beta Environment protection rules are invalid.")
     reviewers = [
-        rule
-        for rule in environment.get("protection_rules", [])
+        reviewer
+        for rule in protection_rules
         if isinstance(rule, dict) and rule.get("type") == "required_reviewers"
+        and isinstance(rule.get("reviewers"), list)
+        for reviewer in rule["reviewers"]
+        if isinstance(reviewer, dict)
+        and reviewer.get("type") in {"User", "Team"}
+        and isinstance(reviewer.get("reviewer"), dict)
+        and isinstance(reviewer["reviewer"].get("id"), int)
+        and not isinstance(reviewer["reviewer"].get("id"), bool)
+        and reviewer["reviewer"]["id"] > 0
     ]
-    if not reviewers or not reviewers[0].get("reviewers"):
+    if not reviewers:
         raise PipelineError("Personal Beta Environment has no required reviewers; Owner approval is mandatory.")
     branch_policy = environment.get("deployment_branch_policy")
     if not isinstance(branch_policy, dict) or branch_policy.get("protected_branches") is not True:
@@ -456,6 +474,10 @@ def _build_parser() -> argparse.ArgumentParser:
     source.add_argument("--source-sha", required=True)
     source.add_argument("--checkout-sha", required=True)
 
+    main_tip = subparsers.add_parser("validate-main-tip")
+    main_tip.add_argument("--source-sha", required=True)
+    main_tip.add_argument("--main-sha", required=True)
+
     version = subparsers.add_parser("version-code")
     version.add_argument("--run-number", required=True)
     version.add_argument("--run-attempt", required=True)
@@ -504,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
             run_preflight(args.distribute_requested == "true")
         elif args.command == "validate-source":
             validate_source(args.repository, args.ref, args.workflow_ref, args.source_sha, args.checkout_sha)
+        elif args.command == "validate-main-tip":
+            validate_main_tip(args.source_sha, args.main_sha)
         elif args.command == "version-code":
             version_code = version_code_for_run(
                 args.run_number,

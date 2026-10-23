@@ -443,9 +443,17 @@ class SereaAppShellTest {
         listInteraction: CalendarSemanticsTarget,
         text: String,
     ): Boolean {
-        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextTarget(text)) }.getOrNull() ?: return false
-        val list = runCatching { snapshotSemantics(listInteraction) }.getOrNull() ?: return false
-        val root = runCatching { snapshotSemantics(calendarRootNode()) }.getOrNull() ?: return false
+        val textTarget = calendarTargetTextTarget(text)
+        val textMatches = textTarget.nodes.fetchSemanticsNodes()
+        if (textMatches.isEmpty()) return false
+        check(textMatches.size == 1) {
+            "Expected one exact unmerged Calendar Text semantics node for '$text', found ${textMatches.size}."
+        }
+        // Snapshot-backed Semantics failures must surface here with their cause; treating one as
+        // an invisible node hid the distinction between missing, ambiguous, and unreadable Text.
+        val textSnapshot = snapshotSemantics(textTarget)
+        val list = snapshotSemantics(listInteraction)
+        val root = snapshotSemantics(calendarRootNode())
         val viewport = list.viewport ?: return false
         val left = maxOf(list.boundsInRoot.left, root.boundsInRoot.left)
         val right = minOf(list.boundsInRoot.right, root.boundsInRoot.right)
@@ -454,9 +462,13 @@ class SereaAppShellTest {
         val bounds = textSnapshot.boundsInRoot
         val insideViewport = bounds.left >= left - 1f && bounds.right <= right + 1f &&
             bounds.top >= top - 1f && bounds.bottom <= bottom + 1f
-        val composeAssertDisplayed = runCatching {
+        val assertionFailure = try {
             calendarTargetTextNode(text).assertIsDisplayed()
-        }.isSuccess
+            null
+        } catch (failure: AssertionError) {
+            failure
+        }
+        val composeAssertDisplayed = assertionFailure == null
         val displayed = insideViewport && composeAssertDisplayed
         if (!displayed) {
             Log.i(
@@ -464,7 +476,8 @@ class SereaAppShellTest {
                 "TEXT_NOT_FULLY_DISPLAYED|text=$text|textRoot=${textSnapshot.boundsInRoot}|" +
                     "textWindow=${textSnapshot.boundsInWindow}|listRoot=${list.boundsInRoot}|" +
                     "listWindow=${list.boundsInWindow}|viewport=$viewport|root=${root.boundsInRoot}|" +
-                    "insideViewport=$insideViewport|composeAssertDisplayed=$composeAssertDisplayed",
+                    "insideViewport=$insideViewport|composeAssertDisplayed=$composeAssertDisplayed|" +
+                    "assertionFailure=${assertionFailure?.message}",
             )
         }
         return displayed

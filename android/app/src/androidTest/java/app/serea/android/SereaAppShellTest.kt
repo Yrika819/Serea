@@ -392,7 +392,7 @@ class SereaAppShellTest {
             for (requestedIndex in 0 until itemCount) {
                 scrollCalendarToSemanticsIndex(list, requestedIndex)
                 last = snapshotSemantics(list)
-                val discoveredIndex = calendarTextCollectionItemIndex(text) ?: continue
+                val discoveredIndex = calendarTextCollectionItemIndex(text, tag) ?: continue
                 actualTargetIndex = discoveredIndex
                 Log.i(
                     CALENDAR_STAGE_TAG,
@@ -402,7 +402,7 @@ class SereaAppShellTest {
                 )
                 scrollCalendarToSemanticsIndex(list, discoveredIndex)
                 last = snapshotSemantics(list)
-                val confirmedIndex = calendarTextCollectionItemIndex(text)
+                val confirmedIndex = calendarTextCollectionItemIndex(text, tag)
                 assertEquals(
                     "Calendar detail Text CollectionItemInfo index must remain stable after ScrollToIndex",
                     discoveredIndex,
@@ -437,9 +437,11 @@ class SereaAppShellTest {
         // EventCard merges its descendants. Read the unmerged Text node for actual glyph bounds,
         // and the merged card separately for its user-operable click semantics.
         val textSemantics = snapshotSemantics(calendarTargetTextTarget(text))
-        val semanticsItemIndex = calendarTextCollectionItemIndex(text)
+        val semanticsItemIndex = calendarTextCollectionItemIndex(text, tag)
         val item = if (tag == "calendar_agenda_list") {
             snapshotSemantics(calendarNodeWithText(text))
+        } else if (semanticsItemIndex != null) {
+            snapshotSemantics(calendarNodeWithTag("calendar_event_detail_item_$semanticsItemIndex"))
         } else {
             textSemantics
         }
@@ -464,8 +466,13 @@ class SereaAppShellTest {
             assertTrue("Calendar agenda target must expose its tappable event semantics: $text", item.hasClickAction)
         } else {
             assertTrue(
-                "Calendar detail Text must resolve to its actual LazyColumn CollectionItemInfo index: $text",
+                "Calendar detail Text bounds must resolve to one indexed LazyColumn item semantics node: $text",
                 semanticsItemIndex != null,
+            )
+            assertTrue(
+                "Calendar detail Text item index must be in the actual visible LazyColumn range: " +
+                    "$text index=$semanticsItemIndex visible=${viewport.visibleItemIndices}",
+                semanticsItemIndex in viewport.visibleItemIndices,
             )
         }
         assertTrue(
@@ -482,7 +489,11 @@ class SereaAppShellTest {
                 "visibleFraction=$visibleFraction",
             textFullyVisible,
         )
-        Log.i(CALENDAR_STAGE_TAG, "TEXT_COLLECTION_ITEM_INDEX|tag=$tag|text=$text|index=$semanticsItemIndex")
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "TEXT_COLLECTION_ITEM_INDEX|tag=$tag|text=$text|index=$semanticsItemIndex|" +
+                "itemRoot=${item.boundsInRoot}|itemWindow=${item.boundsInWindow}",
+        )
         Log.i(
             CALENDAR_STAGE_TAG,
             "VISIBLE_ITEM|tag=$tag|text=$text|textRoot=${textSemantics.boundsInRoot}|" +
@@ -563,12 +574,11 @@ class SereaAppShellTest {
         return displayed
     }
 
-    /**
-     * Resolves a rendered Text node to its LazyColumn collection item through merged and
-     * unmerged Semantics parent chains. Lazy item CollectionItemInfo can be carried by the
-     * merged item node while the unmerged Text child exposes glyph text and bounds.
-     */
-    private fun calendarTextCollectionItemIndex(text: String): Int? {
+    /** Resolves Text to its list item from merged/unmerged nodes or the explicit detail item node. */
+    private fun calendarTextCollectionItemIndex(text: String, tag: String): Int? {
+        if (tag == "calendar_event_detail_list") {
+            return calendarDetailTextItemIndex(text)
+        }
         val targets = listOf(
             "merged" to calendarNodeWithText(text, substring = false),
             "unmerged" to calendarTargetTextTarget(text),
@@ -600,6 +610,32 @@ class SereaAppShellTest {
             "Merged and unmerged Calendar Text semantics resolved to different LazyColumn indices for '$text': $indices"
         }
         return distinctIndices.singleOrNull()
+    }
+
+    /**
+     * Compose 1.7.8 does not expose CollectionItemInfo on this detail Text's semantics parent
+     * chain. Resolve its actual item through an explicit item semantics tag and require the
+     * unmerged Text bounds to be contained by exactly one currently visible indexed item node.
+     */
+    private fun calendarDetailTextItemIndex(text: String): Int? {
+        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextTarget(text)) }.getOrNull()
+            ?: return null
+        val list = snapshotSemantics(calendarNodeWithTag("calendar_event_detail_list"))
+        val visibleIndices = checkNotNull(list.viewport).visibleItemIndices
+        val matchingIndices = visibleIndices.filter { index ->
+            val item = runCatching {
+                snapshotSemantics(calendarNodeWithTag("calendar_event_detail_item_$index"))
+            }.getOrNull() ?: return@filter false
+            val textBounds = textSnapshot.boundsInRoot
+            val itemBounds = item.boundsInRoot
+            textBounds.left >= itemBounds.left - 1f && textBounds.right <= itemBounds.right + 1f &&
+                textBounds.top >= itemBounds.top - 1f && textBounds.bottom <= itemBounds.bottom + 1f
+        }
+        check(matchingIndices.size <= 1) {
+            "Calendar detail Text must resolve to one indexed item by Semantics bounds: " +
+                "text=$text visible=$visibleIndices matching=$matchingIndices"
+        }
+        return matchingIndices.singleOrNull()
     }
 
     private fun scrollCalendarToSemanticsIndex(list: CalendarSemanticsTarget, index: Int) {

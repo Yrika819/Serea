@@ -16,6 +16,94 @@ test_package='app.serea.android.isolated.test'
 target_apk="$source_repo/android/app/build/outputs/apk/isolated/app-isolated.apk"
 failures=0
 
+capture_system_health() {
+  local label="$1"
+  local destination="$evidence_root/system-health-$label"
+  mkdir -p "$destination"
+  # Preserve each raw command output so host-side analysis can distinguish a
+  # launcher ANR overlay from an app Activity or IME focus failure.
+  adb shell dumpsys window > "$destination/dumpsys-window.txt" 2> "$destination/dumpsys-window.stderr" || true
+  adb shell dumpsys activity activities > "$destination/dumpsys-activity-activities.txt" 2> "$destination/dumpsys-activity-activities.stderr" || true
+  adb shell dumpsys activity lastanr > "$destination/dumpsys-activity-lastanr.txt" 2> "$destination/dumpsys-activity-lastanr.stderr" || true
+  adb shell dumpsys activity exit-info com.google.android.apps.nexuslauncher > "$destination/dumpsys-launcher-exit-info.txt" 2> "$destination/dumpsys-launcher-exit-info.stderr" || true
+  adb shell dumpsys meminfo com.google.android.apps.nexuslauncher > "$destination/dumpsys-launcher-meminfo.txt" 2> "$destination/dumpsys-launcher-meminfo.stderr" || true
+  adb logcat -b events -d -v threadtime > "$destination/logcat-events-raw.txt" 2> "$destination/logcat-events.stderr" || true
+  adb logcat -b system -d -v threadtime > "$destination/logcat-system-raw.txt" 2> "$destination/logcat-system.stderr" || true
+  python3 - "$destination" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+directory = Path(sys.argv[1])
+window = (directory / "dumpsys-window.txt").read_text(encoding="utf-8", errors="replace")
+summary = []
+for line in window.splitlines():
+    if re.search(r"mCurrentFocus|mFocusedWindow|mFocusedApp", line):
+        summary.append(line.strip())
+(directory / "focus-owner-summary.txt").write_text("\n".join(summary) + "\n", encoding="utf-8")
+pattern = re.compile(r"ANR in|am_anr|Application Not Responding|not responding", re.IGNORECASE)
+for filename in ("logcat-events-raw.txt", "logcat-system-raw.txt", "dumpsys-activity-lastanr.txt"):
+    lines = (directory / filename).read_text(encoding="utf-8", errors="replace").splitlines()
+    matches = [line for line in lines if pattern.search(line)]
+    (directory / f"{filename}.anr-extract.txt").write_text("\n".join(matches[-300:]) + "\n", encoding="utf-8")
+PY
+}
+
+recover_disposable_launcher_anr() {
+  local window_dump="$evidence_root/system-health-focused-before-1/dumpsys-window.txt"
+  local recovery_dir="$evidence_root/system-health-launcher-recovery"
+  [[ "$api_level" == 35 ]] || return 0
+  if ! rg -q 'mCurrentFocus=.*Application Not Responding: com\.google\.android\.apps\.nexuslauncher' "$window_dump"; then
+    echo 'Launcher ANR recovery not applied: focused-before-1 had no matching ANR window.' \
+      > "$evidence_root/system-health-launcher-recovery/status.txt"
+    return 0
+  fi
+
+  if [[ "${SEREA_DISPOSABLE_CI_EMULATOR:-}" != 1 || "${GITHUB_ACTIONS:-}" != true ]]; then
+    echo 'Refusing system-app recovery outside the disposable GitHub Actions emulator.' \
+      > "$evidence_root/system-health-launcher-recovery/status.txt"
+    return 1
+  fi
+  mkdir -p "$recovery_dir"
+  {
+    printf 'action=force-stop-and-restart-default-home-only-after-observed-launcher-anr\n'
+    printf 'observed_window_dump_sha256='; sha256sum "$window_dump" | awk '{print $1}'
+    printf 'started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+    printf 'launcher_apk_path:\n'; adb shell pm path com.google.android.apps.nexuslauncher
+  } > "$recovery_dir/recovery-manifest.txt" 2>&1
+  if ! adb shell pm path com.google.android.apps.nexuslauncher | grep -q '^package:'; then
+    echo 'Launcher package is absent; no recovery action was taken.' > "$recovery_dir/status.txt"
+    return 1
+  fi
+  adb shell am force-stop com.google.android.apps.nexuslauncher \
+    > "$recovery_dir/force-stop.stdout.txt" 2> "$recovery_dir/force-stop.stderr.txt"
+  printf '%s\n' "$?" > "$recovery_dir/force-stop.exit-code.txt"
+  adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME \
+    > "$recovery_dir/start-home.stdout.txt" 2> "$recovery_dir/start-home.stderr.txt"
+  printf '%s\n' "$?" > "$recovery_dir/start-home.exit-code.txt"
+
+  local recovered=false
+  for _ in $(seq 1 30); do
+    adb shell dumpsys window > "$recovery_dir/dumpsys-window-poll.txt" 2> "$recovery_dir/dumpsys-window-poll.stderr.txt" || true
+    if ! rg -q 'mCurrentFocus=.*Application Not Responding: com\.google\.android\.apps\.nexuslauncher' \
+      "$recovery_dir/dumpsys-window-poll.txt"; then
+      recovered=true
+      break
+    fi
+    sleep 1
+  done
+  capture_system_health launcher-recovery
+  printf 'recovered=%s\nfinished_at_utc=%s\n' "$recovered" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
+    >> "$recovery_dir/recovery-manifest.txt"
+  if [[ "$recovered" == true ]]; then
+    echo 'PASS: observed launcher ANR overlay cleared on the disposable emulator; no app data was cleared.' \
+      > "$recovery_dir/status.txt"
+    return 0
+  fi
+  echo 'FAIL: launcher ANR overlay remained after the isolated recovery attempt.' > "$recovery_dir/status.txt"
+  return 1
+}
+
 EXPECTED_API_LEVEL="$api_level"
 SEREA_EXPECTED_ANDROID_API="$api_level"
 export EXPECTED_API_LEVEL SEREA_EXPECTED_ANDROID_API
@@ -175,7 +263,10 @@ run_stage() {
 
 if [[ "$api_level" == 35 ]]; then
   focused_filter='app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.ChatScreenTest#currentConversationDeletionRequiresConfirmationAndCancelKeepsMessages,app.serea.android.ChatScreenTest#confirmedCurrentConversationDeletionRemovesSelectedConversation,app.serea.android.ChatScreenTest#deleteAllConfirmationCancelKeepsConversationAndConfirmClearsHistory'
+  capture_system_health boot-before-focused
   run_stage focused-before-1 "$focused_filter"
+  capture_system_health focused-before-1
+  recover_disposable_launcher_anr || failures=1
   run_stage focused-before-2 "$focused_filter"
   run_stage focused-before-3 "$focused_filter"
   run_stage chat-screen-class app.serea.android.ChatScreenTest

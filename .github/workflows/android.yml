@@ -49,7 +49,7 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|.github/workflows/android-personal-beta.yml|.github/workflows/android-personal-beta-contract-tests.yml|tools/verify_android_instrumentation.py|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_api35_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tools/test_personal_beta_identity.sh|tools/verify_personal_beta_apk.sh|tools/android_firebase_distribution.py|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py|tests/android_firebase_distribution_tests.py) android_changed=true ;;
+              android/*|.github/workflows/android.yml|.github/workflows/android-personal-beta.yml|.github/workflows/android-personal-beta-contract-tests.yml|tools/verify_android_instrumentation.py|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_api35_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tools/test_personal_beta_identity.sh|tools/verify_personal_beta_apk.sh|tools/android_firebase_distribution.py|tools/android_beta_release.py|tools/install_pinned_android_release_tools.sh|tools/install_pinned_gh_cli.sh|tools/run_pinned_osv_scanner.sh|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py|tests/android_firebase_distribution_tests.py|tests/android_beta_release_tests.py) android_changed=true ;;
             esac
           done <<< "$changed"
           echo "android=$android_changed" >> "$GITHUB_OUTPUT"
@@ -131,6 +131,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -548,6 +550,8 @@ jobs:
     if: needs.android-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
@@ -559,19 +563,13 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon :app:dependencies :app:generateLicenseReport > "$RUNNER_TEMP/android-dependency-audit.log" 2>&1
       - name: Scan Android dependency vulnerabilities
-        uses: google/osv-scanner-action/osv-scanner-action@8018483926dd235b3013d8c88023e644b9f8e09e # v2.3.3
-        with:
-          scan-args: |-
-            --format=json
-            --output=osv-android-dependencies.json
-            --recursive
-            android/
+        run: bash tools/run_pinned_osv_scanner.sh
       - name: Upload dependency audit report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-android-dependency-audit
-          if-no-files-found: warn
+          if-no-files-found: error
           path: |
             osv-android-dependencies.json
             android/app/build/reports/dependency-license/**

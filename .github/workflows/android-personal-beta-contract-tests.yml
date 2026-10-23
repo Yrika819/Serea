@@ -12,7 +12,14 @@ on:
       - 'tools/assert_disposable_android_emulator.sh'
       - 'tools/test_android_update_compatibility.sh'
       - 'tools/test_android_update_compatibility_guard.sh'
+      - 'tools/android_beta_release.py'
+      - 'tools/install_pinned_android_release_tools.sh'
+      - 'tools/install_pinned_gh_cli.sh'
+      - 'tools/run_pinned_osv_scanner.sh'
+      - 'tools/test_android_beta_release_pipeline.sh'
       - 'tests/android_firebase_distribution_tests.py'
+      - 'tests/android_beta_release_tests.py'
+      - 'docs/security/ANDROID-BETA-SIGNING-ISOLATION.md'
 
 permissions:
   contents: read
@@ -35,6 +42,12 @@ jobs:
       - name: Run mock Firebase and signing contract tests
         run: python3 -m unittest discover -s tests -p android_firebase_distribution_tests.py
 
+      - name: Run isolated Beta signer and OSV negative contract tests
+        run: python3 -m unittest discover -s tests -p android_beta_release_tests.py
+
+      - name: Run disposable-key APK signing and encrypted handoff E2E
+        run: bash tools/test_android_beta_release_pipeline.sh
+
       - name: Test update emulator guard using Mock ADB
         run: bash tools/test_android_update_compatibility_guard.sh
 
@@ -44,6 +57,10 @@ jobs:
             tools/assert_disposable_android_emulator.sh \
             tools/test_android_update_compatibility.sh \
             tools/test_android_update_compatibility_guard.sh \
+            tools/install_pinned_android_release_tools.sh \
+            tools/install_pinned_gh_cli.sh \
+            tools/run_pinned_osv_scanner.sh \
+            tools/test_android_beta_release_pipeline.sh \
             tools/test_personal_beta_identity.sh \
             tools/verify_personal_beta_apk.sh; do
             bash -n "$script"

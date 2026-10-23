@@ -216,26 +216,30 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
             with self.assertRaisesRegex(pipeline.PipelineError, "missing or malformed"):
                 pipeline.validate_main_tip(SOURCE_SHA, missing_or_invalid)
 
-    def test_missing_environment_reviewer_or_protected_branch_policy_is_rejected(self):
+    def test_environment_must_allow_main_only_and_have_owner_reviewers(self):
+        main_only = {"branch_policies": [{"name": "main", "type": "branch"}]}
         approved_environment = {
             "name": "serea-personal-beta",
             "protection_rules": [{"type": "required_reviewers", "reviewers": [
                 {"type": "User", "reviewer": {"login": "owner", "id": 1}}
             ]}],
-            "deployment_branch_policy": {"protected_branches": True, "custom_branch_policies": False},
+            "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True},
         }
-        pipeline.validate_environment_protection(approved_environment, "serea-personal-beta")
+        pipeline.validate_environment_protection(approved_environment, "serea-personal-beta",
+                                                 deployment_branch_policies=main_only)
 
         no_reviewers = {**approved_environment, "protection_rules": []}
         with self.assertRaisesRegex(pipeline.PipelineError, "no required reviewers"):
-            pipeline.validate_environment_protection(no_reviewers, "serea-personal-beta")
+            pipeline.validate_environment_protection(no_reviewers, "serea-personal-beta",
+                                                     deployment_branch_policies=main_only)
 
         malformed_reviewers = {
             **approved_environment,
             "protection_rules": [{"type": "required_reviewers", "reviewers": "owner"}],
         }
         with self.assertRaisesRegex(pipeline.PipelineError, "no required reviewers"):
-            pipeline.validate_environment_protection(malformed_reviewers, "serea-personal-beta")
+            pipeline.validate_environment_protection(malformed_reviewers, "serea-personal-beta",
+                                                     deployment_branch_policies=main_only)
         invalid_reviewer = {
             **approved_environment,
             "protection_rules": [{"type": "required_reviewers", "reviewers": [
@@ -243,13 +247,54 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
             ]}],
         }
         with self.assertRaisesRegex(pipeline.PipelineError, "no required reviewers"):
-            pipeline.validate_environment_protection(invalid_reviewer, "serea-personal-beta")
-        unrestricted = {
-            **approved_environment,
+            pipeline.validate_environment_protection(invalid_reviewer, "serea-personal-beta",
+                                                     deployment_branch_policies=main_only)
+        for branch_policy, branches in (
+            ({"protected_branches": True, "custom_branch_policies": False}, main_only),
+            ({"protected_branches": False, "custom_branch_policies": True}, {"branch_policies": []}),
+            ({"protected_branches": False, "custom_branch_policies": True},
+             {"branch_policies": [{"name": "main", "type": "branch"}, {"name": "release/*", "type": "branch"}]}),
+            ({"protected_branches": False, "custom_branch_policies": True},
+             {"branch_policies": [{"name": "release/*", "type": "branch"}]}),
+        ):
+            with self.assertRaisesRegex(pipeline.PipelineError, "main branch only"):
+                pipeline.validate_environment_protection(
+                    {**approved_environment, "deployment_branch_policy": branch_policy},
+                    "serea-personal-beta", deployment_branch_policies=branches,
+                )
+
+    def test_sign_and_distribution_environments_require_only_the_configured_owner_and_no_self_review(self):
+        main_only = {"branch_policies": [{"name": "main", "type": "branch"}]}
+        approved_environment = {
+            "name": "serea-personal-beta-signing",
+            "protection_rules": [{
+                "type": "required_reviewers",
+                "prevent_self_review": True,
+                "reviewers": [{"type": "Team", "reviewer": {"name": "Serea Owners", "id": 42}}],
+            }],
             "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True},
         }
-        with self.assertRaisesRegex(pipeline.PipelineError, "protected branches"):
-            pipeline.validate_environment_protection(unrestricted, "serea-personal-beta")
+        pipeline.validate_environment_protection(approved_environment, "serea-personal-beta-signing", "42", "Team", main_only)
+        with self.assertRaisesRegex(pipeline.PipelineError, "configured Owner reviewer"):
+            pipeline.validate_environment_protection(approved_environment, "serea-personal-beta-signing", "43", "Team", main_only)
+        with self.assertRaisesRegex(pipeline.PipelineError, "configured Owner reviewer"):
+            pipeline.validate_environment_protection(
+                {**approved_environment, "protection_rules": [{
+                    **approved_environment["protection_rules"][0],
+                    "reviewers": [
+                        {"type": "Team", "reviewer": {"name": "Serea Owners", "id": 42}},
+                        {"type": "User", "reviewer": {"login": "other", "id": 43}},
+                    ],
+                }]},
+                "serea-personal-beta-signing", "42", "Team", main_only,
+            )
+        with self.assertRaisesRegex(pipeline.PipelineError, "prevent self-review"):
+            pipeline.validate_environment_protection(
+                {**approved_environment, "protection_rules": [{
+                    **approved_environment["protection_rules"][0], "prevent_self_review": False,
+                }]},
+                "serea-personal-beta-signing", "42", "Team", main_only,
+            )
 
     def test_missing_or_unprotected_main_is_rejected(self):
         valid_protection = {
@@ -262,6 +307,7 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
             {},
             {**valid_protection, "required_status_checks": None},
             {**valid_protection, "required_status_checks": {"contexts": []}},
+            {**valid_protection, "required_status_checks": {"strict": False, "contexts": ["Linux fast checks"]}},
             {**valid_protection, "required_pull_request_reviews": None},
             {**valid_protection, "enforce_admins": {"enabled": False}},
         ):
@@ -304,6 +350,33 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
             with self.assertRaisesRegex(pipeline.PipelineError, "not configured"):
                 pipeline.run_preflight(distribute_requested=True)
 
+    def test_distribution_only_preflight_requires_valid_wif_firebase_and_required_check_settings(self):
+        valid = {
+            "SEREA_PERSONAL_BETA_VERSION_CODE_BASELINE": "100",
+            "SEREA_REQUIRED_CHECKS_JSON": json.dumps(["Linux fast checks"]),
+            "SEREA_FIREBASE_DISTRIBUTION_ENABLED": "true",
+            "SEREA_GCP_WIF_PROVIDER": "projects/123456/locations/global/workloadIdentityPools/serea/providers/github",
+            "SEREA_GCP_SERVICE_ACCOUNT": "serea-beta@serea-project.iam.gserviceaccount.com",
+            "SEREA_FIREBASE_PROJECT_ID": "serea-beta-project",
+            "SEREA_FIREBASE_APP_ID": FIREBASE_APP_ID,
+            "SEREA_FIREBASE_APPROVED_TESTER_GROUP": "serea-personal-beta",
+        }
+        with patch.dict(os.environ, valid, clear=True):
+            pipeline.run_distribution_preflight()
+        invalid = (
+            ("SEREA_FIREBASE_DISTRIBUTION_ENABLED", "false"),
+            ("SEREA_GCP_WIF_PROVIDER", "projects/not-a-number/locations/global/workloadIdentityPools/p/providers/x"),
+            ("SEREA_GCP_SERVICE_ACCOUNT", "service-account-key.json"),
+            ("SEREA_FIREBASE_PROJECT_ID", "bad project"),
+            ("SEREA_FIREBASE_APP_ID", "not-an-android-app"),
+            ("SEREA_FIREBASE_APPROVED_TESTER_GROUP", "unapproved group"),
+            ("SEREA_REQUIRED_CHECKS_JSON", "[]"),
+        )
+        for key, value in invalid:
+            with self.subTest(key=key), patch.dict(os.environ, {**valid, key: value}, clear=True):
+                with self.assertRaises(pipeline.PipelineError):
+                    pipeline.run_distribution_preflight()
+
     def test_malformed_release_configuration_fails_closed(self):
         valid = {
             "SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_BASE64": "temporary-mock-key-bytes",
@@ -336,18 +409,20 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
                 with self.assertRaises(pipeline.PipelineError):
                     pipeline.run_preflight(distribute_requested=True)
 
-    def test_manual_workflow_is_main_only_protected_and_has_no_signed_apk_artifact(self):
+    def test_manual_workflow_is_main_only_and_has_no_public_signed_apk_artifact(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", workflow)
         self.assertNotIn("pull_request:", workflow)
         self.assertNotIn("pull_request_target:", workflow)
-        self.assertNotIn("actions/upload-artifact", workflow)
+        self.assertIn("actions/upload-artifact", workflow)
         self.assertIn("ref: ${{ github.sha }}", workflow)
-        self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("--ref \"$GITHUB_REF\"", workflow)
+        self.assertIn("Distribution requires an explicit signing request", workflow)
         self.assertIn("validate-main-tip", workflow)
         self.assertNotIn("merge-base --is-ancestor", workflow)
-        self.assertGreaterEqual(workflow.count("git fetch --no-tags origin refs/heads/main"), 4)
-        self.assertIn("name: serea-personal-beta", workflow)
+        self.assertEqual(workflow.count("git fetch --no-tags origin refs/heads/main"), 1)
+        self.assertIn("name: serea-personal-beta-signing", workflow)
+        self.assertIn("name: serea-personal-beta-distribution", workflow)
         self.assertIn("branches/main/protection", workflow)
         self.assertIn("verify-main-protection", workflow)
         self.assertIn("actions/attest-build-provenance", workflow)
@@ -356,6 +431,38 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
         self.assertNotIn("credentials_json:", workflow)
         self.assertNotIn("GOOGLE_APPLICATION_CREDENTIALS_JSON", workflow)
         self.assertNotIn("app.serea.android.demo", workflow)
+        self.assertIn("serea-personal-beta-unsigned-", workflow)
+        self.assertIn("serea-personal-beta-ciphertext-", workflow)
+        self.assertIn("attestation verify", workflow)
+        self.assertIn("--source-digest \"$EXPECTED_SOURCE_SHA\"", workflow)
+
+        signer_job = workflow.split("\n  sign:\n", 1)[1].split("\n  distribute:\n", 1)[0]
+        distribution_job = workflow.split("\n  distribute:\n", 1)[1]
+        build_job = workflow.split("\n  build-unsigned:\n", 1)[1].split("\n  sign:\n", 1)[0]
+        self.assertNotIn("actions/checkout", signer_job + distribution_job)
+        self.assertNotIn("gradlew", signer_job + distribution_job)
+        self.assertNotIn("tools/android_", signer_job + distribution_job)
+        self.assertIn("deployment-branch-policies", signer_job)
+        self.assertIn("deployment-branch-policies", distribution_job)
+        self.assertIn('policies[0].get("name") == "main"', signer_job)
+        self.assertIn('policies[0].get("name") == "main"', distribution_job)
+        self.assertIn("serea-personal-beta-signed.apk.cms", signer_job)
+        self.assertNotIn("SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_BASE64", build_job)
+        distribution_job = workflow.split("\n  distribute:\n", 1)[1]
+        self.assertNotIn("secrets.", build_job)
+        self.assertNotIn("SEREA_FIREBASE", build_job)
+        self.assertNotIn("SEREA_GCP", build_job)
+        self.assertNotIn("gradlew", signer_job)
+        self.assertNotIn("secrets.SEREA_FIREBASE", signer_job)
+        self.assertNotIn("secrets.SEREA_GCP", signer_job)
+        self.assertNotIn("SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_BASE64", distribution_job)
+        self.assertNotIn("SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD", distribution_job)
+        self.assertIn("SEREA_BETA_TRANSPORT_PRIVATE_KEY_BASE64", distribution_job)
+        self.assertIn("id-token: write", distribution_job)
+        upload_signer = signer_job.split("- name: Upload encrypted handoff only", 1)[1]
+        upload_signer = upload_signer.split("- name: Remove signing inputs", 1)[0]
+        self.assertIn("serea-personal-beta-signed.apk.cms", upload_signer)
+        self.assertNotIn("path: ${{ runner.temp }}/serea-personal-beta-signed.apk\n", upload_signer)
 
         artifact_blocks = []
         for path in (ROOT / ".github/workflows").glob("*.yml"):
@@ -424,13 +531,15 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
 
     def test_environment_review_gate_is_present_and_documented_for_owner_configuration(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        runbook = (ROOT / "docs/plans/2026-ANDROID-PERSONAL-BETA-SECURE-DISTRIBUTION.md").read_text(
+        runbook = (ROOT / "docs/security/ANDROID-BETA-SIGNING-ISOLATION.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("environment:\n      name: serea-personal-beta", workflow)
+        self.assertIn("serea-personal-beta-signing", workflow)
+        self.assertIn("serea-personal-beta-distribution", workflow)
+        self.assertIn("SEREA_BETA_OWNER_REVIEWER_ID", workflow)
         self.assertIn("required reviewers", runbook.lower())
-        self.assertIn("protected branches", runbook.lower())
-        self.assertIn("at least one pull request approval", runbook.lower())
+        self.assertIn("exactly `main`", runbook.lower())
+        self.assertIn("pull request approval", runbook.lower())
 
     def test_contract_workflow_has_no_credentials_or_oidc_permission(self):
         workflow = (ROOT / ".github/workflows/android-personal-beta-contract-tests.yml").read_text(

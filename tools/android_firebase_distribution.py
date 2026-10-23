@@ -66,6 +66,17 @@ def validate_main_tip(source_sha: str, main_sha: str) -> None:
         raise PipelineError("Workflow source is no longer the current protected-main tip.")
 
 
+def verify_main_branch_protected(branch: Any) -> None:
+    """Check the coarse branch summary available to a read-only GITHUB_TOKEN.
+
+    Full protection rules are verified in the isolated Signing and
+    Distribution jobs with a repository-scoped, administration-read-only App
+    token. This preliminary check never treats a missing API field as success.
+    """
+    if not isinstance(branch, dict) or branch.get("name") != "main" or branch.get("protected") is not True:
+        raise PipelineError("GitHub does not report main as protected; release processing is blocked.")
+
+
 def validate_environment_protection(
     environment: Any,
     expected_name: str,
@@ -573,6 +584,9 @@ def _build_parser() -> argparse.ArgumentParser:
     main_tip.add_argument("--source-sha", required=True)
     main_tip.add_argument("--main-sha", required=True)
 
+    branch_protected = subparsers.add_parser("verify-main-branch-protected")
+    branch_protected.add_argument("--branch-file", type=Path, required=True)
+
     version = subparsers.add_parser("version-code")
     version.add_argument("--run-number", required=True)
     version.add_argument("--run-attempt", required=True)
@@ -628,6 +642,8 @@ def main(argv: list[str] | None = None) -> int:
             validate_source(args.repository, args.ref, args.workflow_ref, args.source_sha, args.checkout_sha)
         elif args.command == "validate-main-tip":
             validate_main_tip(args.source_sha, args.main_sha)
+        elif args.command == "verify-main-branch-protected":
+            verify_main_branch_protected(json.loads(args.branch_file.read_text(encoding="utf-8")))
         elif args.command == "version-code":
             version_code = version_code_for_run(
                 args.run_number,

@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
-      administration: read
+      actions: read
       attestations: write
       checks: read
       contents: read
@@ -70,15 +70,15 @@ jobs:
           python3 tools/android_firebase_distribution.py validate-main-tip \
             --source-sha "$SOURCE_SHA" --main-sha "$(git rev-parse refs/remotes/origin/main)"
 
-      - name: Require active protected-main rules
+      - name: Require GitHub to report main as protected
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          protection_file="$RUNNER_TEMP/serea-main-branch-protection.json"
-          gh api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
-          python3 tools/android_firebase_distribution.py verify-main-protection \
-            --protection-file "$protection_file"
+          branch_file="$RUNNER_TEMP/serea-main-branch.json"
+          gh api "repos/$GITHUB_REPOSITORY/branches/main" > "$branch_file"
+          python3 tools/android_firebase_distribution.py verify-main-branch-protected \
+            --branch-file "$branch_file"
 
       - name: Require every Owner-configured check on this exact SHA
         env:
@@ -201,7 +201,6 @@ jobs:
       name: serea-personal-beta-signing
     permissions:
       actions: read
-      administration: read
       attestations: read
       checks: read
       contents: read
@@ -229,14 +228,14 @@ jobs:
           curl --silent --show-error --fail --location --proto '=https' --tlsv1.2 --retry 2 --retry-all-errors \
             --max-time 180 'https://github.com/cli/cli/releases/download/v2.103.0/gh_2.103.0_linux_amd64.tar.gz' \
             --output "$temporary/gh.tar.gz"
-          printf '%s  %s\n' 'fdd768eb70f6409f80fcfa9f3a1c0adf0c98d827ab3ce0bed2ac22762c5d786' \
+          printf '%s  %s\n' 'fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786' \
             "$temporary/gh.tar.gz" | sha256sum --check --status
           curl --silent --show-error --fail --location --proto '=https' --tlsv1.2 --retry 2 --retry-all-errors \
             --max-time 60 'https://github.com/cli/cli/releases/download/v2.103.0/gh_2.103.0_checksums.txt' \
             --output "$temporary/checksums.txt"
           printf '%s  %s\n' '075bb954e2b113d0d2ac788d318b516280cb87103e601e788c34f3557acb15df' \
             "$temporary/checksums.txt" | sha256sum --check --status
-          grep -E '^fdd768eb70f6409f80fcfa9f3a1c0adf0c98d827ab3ce0bed2ac22762c5d786[[:space:]]+gh_2\.103\.0_linux_amd64\.tar\.gz$' \
+          grep -E '^fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786[[:space:]]+gh_2\.103\.0_linux_amd64\.tar\.gz$' \
             "$temporary/checksums.txt" >/dev/null
           tar -xzf "$temporary/gh.tar.gz" -C "$temporary"
           install -m 0755 "$temporary/gh_2.103.0_linux_amd64/bin/gh" "$destination/gh"
@@ -245,9 +244,20 @@ jobs:
           "$destination/gh" attestation verify --help | grep -F -- '--deny-self-hosted-runners' >/dev/null
           echo "$destination" >> "$GITHUB_PATH"
 
+      - name: Create a repository-scoped branch-policy read token
+        id: branch-policy-token
+        uses: actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42 # v2.1.4
+        with:
+          app-id: ${{ vars.SEREA_BRANCH_POLICY_APP_ID }}
+          private-key: ${{ secrets.SEREA_BRANCH_POLICY_APP_PRIVATE_KEY }}
+          owner: Yrika819
+          repositories: Serea
+          permission-administration: read
+
       - name: Verify Owner review policy, exact source, Required Checks, and release version
         env:
           GH_TOKEN: ${{ github.token }}
+          BRANCH_POLICY_TOKEN: ${{ steps.branch-policy-token.outputs.token }}
           SEREA_BETA_OWNER_REVIEWER_ID: ${{ vars.SEREA_BETA_OWNER_REVIEWER_ID }}
           SEREA_BETA_OWNER_REVIEWER_TYPE: ${{ vars.SEREA_BETA_OWNER_REVIEWER_TYPE }}
         run: |
@@ -259,9 +269,9 @@ jobs:
           main_file="$RUNNER_TEMP/serea-main-commit.json"
           checks_file="$RUNNER_TEMP/serea-required-checks.json"
           gh="$RUNNER_TEMP/serea-gh-cli/gh"
-          "$gh" api "repos/$GITHUB_REPOSITORY/environments/serea-personal-beta-signing" > "$env_file"
-          "$gh" api "repos/$GITHUB_REPOSITORY/environments/serea-personal-beta-signing/deployment-branch-policies?per_page=100" > "$branch_policy_file"
-          "$gh" api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
+          env GH_TOKEN="$BRANCH_POLICY_TOKEN" "$gh" api "repos/$GITHUB_REPOSITORY/environments/serea-personal-beta-signing" > "$env_file"
+          env GH_TOKEN="$BRANCH_POLICY_TOKEN" "$gh" api "repos/$GITHUB_REPOSITORY/environments/serea-personal-beta-signing/deployment-branch-policies?per_page=100" > "$branch_policy_file"
+          env GH_TOKEN="$BRANCH_POLICY_TOKEN" "$gh" api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
           "$gh" api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" > "$commit_file"
           "$gh" api "repos/$GITHUB_REPOSITORY/commits/main" > "$main_file"
           "$gh" api --paginate "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
@@ -321,7 +331,8 @@ jobs:
           configured = set(x for x in status.get("contexts", []) if isinstance(x, str))
           configured.update(x.get("context") for x in status.get("checks", [])
                             if isinstance(x, dict) and isinstance(x.get("context"), str))
-          require(set(required).issubset(configured), "Main protection omits an Owner Required Check.")
+          require(set(required) == configured,
+                  "Owner Required Checks must exactly match the protected main branch policy.")
           reviews = protection.get("required_pull_request_reviews") or {}
           require(isinstance(reviews.get("required_approving_review_count"), int) and
                   reviews["required_approving_review_count"] >= 1 and
@@ -427,9 +438,22 @@ jobs:
           tools = Path(os.environ["RUNNER_TEMP"]) / "serea-android-release-tools/build-tools"
           badging = subprocess.run([str(tools / "aapt"), "dump", "badging", str(apk)],
                                    capture_output=True, text=True, check=True).stdout
+          manifest = subprocess.run([str(tools / "aapt"), "dump", "xmltree", str(apk), "AndroidManifest.xml"],
+                                    capture_output=True, text=True, check=True).stdout
           identity = re.search(r"^package: name='([^']+)' versionCode='([0-9]+)'", badging, re.M)
-          if not identity or identity.group(1) != expected["application_id"] or int(identity.group(2)) != expected["version_code"]:
-              raise SystemExit("Unsigned APK package or versionCode does not match the approved record.")
+          permissions = re.findall(r"^uses-permission: name='([^']+)'", badging, re.M)
+          manifest_valid = (
+              identity is not None and identity.group(1) == expected["application_id"] and
+              int(identity.group(2)) == expected["version_code"] and
+              "sdkVersion:'26'" in badging and "targetSdkVersion:'35'" in badging and
+              "application-label:'Serea Personal Beta'" in badging and
+              sorted(permissions) == ["android.permission.INTERNET"] and
+              "application-debuggable" not in badging and
+              re.search(r"^\s+A: android:allowBackup\([^)]*\)=\(type 0x12\)0x0$", manifest, re.M) is not None and
+              re.search(r"^\s+A: android:usesCleartextTraffic\([^)]*\)=\(type 0x12\)0x0$", manifest, re.M) is not None
+          )
+          if not manifest_valid:
+              raise SystemExit("Unsigned APK manifest violates the independent Beta release policy.")
           verification = subprocess.run([str(tools / "apksigner"), "verify", "--verbose", str(apk)],
                                         capture_output=True, text=True)
           if verification.returncode == 0 or "DOES NOT VERIFY" not in verification.stdout + verification.stderr:
@@ -446,7 +470,37 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/android-personal-beta.yml" \
             --source-ref refs/heads/main --source-digest "$EXPECTED_SOURCE_SHA" \
-            --deny-self-hosted-runners
+            --deny-self-hosted-runners --format json > "$RUNNER_TEMP/serea-beta-provenance.json"
+          python3 - "$RUNNER_TEMP/serea-beta-provenance.json" <<'PY'
+          import json, os, re, sys
+          def require(ok, reason):
+              if not ok:
+                  raise SystemExit(reason)
+          results = json.load(open(sys.argv[1], encoding="utf-8"))
+          require(isinstance(results, list) and len(results) == 1,
+                  "Unsigned APK must have exactly one verified Build attestation.")
+          result = results[0].get("verificationResult", {})
+          statement = result.get("statement", {})
+          subjects = statement.get("subject", [])
+          require(statement.get("predicateType") == "https://slsa.dev/provenance/v1" and
+                  isinstance(subjects, list) and len(subjects) == 1 and
+                  subjects[0].get("digest", {}).get("sha256", "").lower() == os.environ["EXPECTED_APK_SHA256"].lower(),
+                  "Verified attestation subject does not bind the exact unsigned APK digest.")
+          cert = result.get("signature", {}).get("certificate", {})
+          expected_run = "https://github.com/Yrika819/Serea/actions/runs/{}/attempts/{}".format(
+              os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"])
+          source_digest = str(cert.get("sourceRepositoryDigest", "")).lower().split(":")[-1]
+          require(cert.get("issuer") == "https://token.actions.githubusercontent.com" and
+                  cert.get("sourceRepositoryURI") == "https://github.com/Yrika819/Serea" and
+                  source_digest == os.environ["EXPECTED_SOURCE_SHA"].lower() and
+                  cert.get("sourceRepositoryRef") == "refs/heads/main" and
+                  cert.get("buildSignerURI") ==
+                  "https://github.com/Yrika819/Serea/.github/workflows/android-personal-beta.yml@refs/heads/main" and
+                  cert.get("runInvocationURI") == expected_run and
+                  cert.get("runnerEnvironment") == "github-hosted",
+                  "Attestation certificate does not bind the approved repository, workflow, commit, run, and runner.")
+          print("PASS attestation signature, repository, workflow, source commit, run ID/attempt, and APK digest")
+          PY
 
       - name: Validate pinned transport certificate before signing
         env:
@@ -506,7 +560,7 @@ jobs:
           configured.update(x.get("context") for x in status.get("checks", [])
                             if isinstance(x, dict) and isinstance(x.get("context"), str))
           reviews = protection.get("required_pull_request_reviews") or {}
-          if not set(required).issubset(configured) or reviews.get("required_approving_review_count", 0) < 1 or \
+          if set(required) != configured or reviews.get("required_approving_review_count", 0) < 1 or \
              protection.get("enforce_admins", {}).get("enabled") is not True:
               raise SystemExit("Main protection no longer matches the release policy.")
           checks = response.get("check_runs")
@@ -611,21 +665,50 @@ jobs:
         env:
           SEREA_BETA_TRANSPORT_CERT_PEM: ${{ vars.SEREA_BETA_TRANSPORT_CERT_PEM }}
           SEREA_BETA_TRANSPORT_CERT_SHA256: ${{ vars.SEREA_BETA_TRANSPORT_CERT_SHA256 }}
+          SIGNING_CERTIFICATE_SHA256: ${{ steps.sign-apk.outputs.certificate_sha256 }}
         run: |
           set -euo pipefail
           certificate="$RUNNER_TEMP/serea-beta-transport-cert.pem"
           ciphertext="$RUNNER_TEMP/serea-personal-beta-signed.apk.cms"
+          handoff="$RUNNER_TEMP/serea-personal-beta-handoff.zip"
           printf '%s\n' "$SEREA_BETA_TRANSPORT_CERT_PEM" > "$certificate"
           chmod 600 "$certificate"
           actual=$(openssl x509 -in "$certificate" -noout -fingerprint -sha256 | sed 's/.*=//' | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')
           expected=$(printf '%s' "$SEREA_BETA_TRANSPORT_CERT_SHA256" | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')
           [[ "$actual" =~ ^[0-9A-F]{64}$ && "$actual" == "$expected" ]]
-          openssl cms -encrypt -binary -aes-256-cbc -in "$RUNNER_TEMP/serea-personal-beta-signed.apk" \
+          python3 - "$RUNNER_TEMP/serea-personal-beta-signed.apk" "$handoff" <<'PY'
+          import hashlib, json, os, sys
+          from pathlib import Path
+          from zipfile import ZIP_STORED, ZipFile
+          apk, output = Path(sys.argv[1]), Path(sys.argv[2])
+          manifest = {
+              "schema": 1,
+              "repository": "Yrika819/Serea",
+              "workflow_path": ".github/workflows/android-personal-beta.yml",
+              "source_sha": os.environ["SOURCE_SHA"].lower(),
+              "source_tree_sha": os.environ["EXPECTED_TREE_SHA"].lower(),
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "application_id": "app.serea.android.beta",
+              "version_code": int(os.environ["EXPECTED_VERSION_CODE"]),
+              "signature_state": "signed",
+              "signing_certificate_sha256": os.environ["SIGNING_CERTIFICATE_SHA256"].replace(":", "").upper(),
+              "signed_apk_sha256": hashlib.sha256(apk.read_bytes()).hexdigest(),
+              "encryption": "CMS-EnvelopedData/AES-256-GCM",
+          }
+          with ZipFile(output, "w", compression=ZIP_STORED) as archive:
+              archive.writestr("release.json", json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n")
+              archive.write(apk, "signed.apk")
+          output.chmod(0o600)
+          PY
+          # CMS creates a fresh random content-encryption key and GCM nonce for this message.
+          # The encrypted manifest binds the authenticated payload to this repository, source, run, and APK digest.
+          openssl cms -encrypt -binary -aes-256-gcm -in "$handoff" \
             -outform DER -out "$ciphertext" "$certificate" >/dev/null 2>&1
           digest=$(sha256sum "$ciphertext" | awk '{print $1}')
           printf 'ciphertext_sha256=%s\n' "$digest" >> "$GITHUB_OUTPUT"
-          rm -f "$RUNNER_TEMP/serea-personal-beta-signed.apk" "$RUNNER_TEMP/serea-personal-beta-signed.apk.idsig" "$certificate"
-          echo 'PASS encrypted handoff created'
+          rm -f "$RUNNER_TEMP/serea-personal-beta-signed.apk" "$RUNNER_TEMP/serea-personal-beta-signed.apk.idsig" "$certificate" "$handoff"
+          echo 'PASS authenticated AES-256-GCM handoff bound to the current workflow run'
 
       - name: Upload encrypted handoff only
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -649,6 +732,7 @@ jobs:
             "$RUNNER_TEMP/serea-owner-certificate.txt" "$RUNNER_TEMP/serea-signed-certificate.txt" \
             "$RUNNER_TEMP/serea-apksigner.log" "$RUNNER_TEMP/serea-beta-transport-cert.pem" \
             "$RUNNER_TEMP/serea-personal-beta-signed.apk" "$RUNNER_TEMP/serea-personal-beta-signed.apk.idsig" \
+            "$RUNNER_TEMP/serea-personal-beta-handoff.zip" "$RUNNER_TEMP/serea-beta-provenance.json" \
             "$RUNNER_TEMP/serea-personal-beta-signed.apk.cms"
 
   distribute:
@@ -661,7 +745,6 @@ jobs:
       name: serea-personal-beta-distribution
     permissions:
       actions: read
-      administration: read
       checks: read
       contents: read
       id-token: write
@@ -693,23 +776,34 @@ jobs:
           curl --silent --show-error --fail --location --proto '=https' --tlsv1.2 --retry 2 --retry-all-errors \
             --max-time 180 'https://github.com/cli/cli/releases/download/v2.103.0/gh_2.103.0_linux_amd64.tar.gz' \
             --output "$temporary/gh.tar.gz"
-          printf '%s  %s\n' 'fdd768eb70f6409f80fcfa9f3a1c0adf0c98d827ab3ce0bed2ac22762c5d786' \
+          printf '%s  %s\n' 'fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786' \
             "$temporary/gh.tar.gz" | sha256sum --check --status
           curl --silent --show-error --fail --location --proto '=https' --tlsv1.2 --retry 2 --retry-all-errors \
             --max-time 60 'https://github.com/cli/cli/releases/download/v2.103.0/gh_2.103.0_checksums.txt' \
             --output "$temporary/checksums.txt"
           printf '%s  %s\n' '075bb954e2b113d0d2ac788d318b516280cb87103e601e788c34f3557acb15df' \
             "$temporary/checksums.txt" | sha256sum --check --status
-          grep -E '^fdd768eb70f6409f80fcfa9f3a1c0adf0c98d827ab3ce0bed2ac22762c5d786[[:space:]]+gh_2\.103\.0_linux_amd64\.tar\.gz$' \
+          grep -E '^fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786[[:space:]]+gh_2\.103\.0_linux_amd64\.tar\.gz$' \
             "$temporary/checksums.txt" >/dev/null
           tar -xzf "$temporary/gh.tar.gz" -C "$temporary"
           install -m 0755 "$temporary/gh_2.103.0_linux_amd64/bin/gh" "$destination/gh"
           "$destination/gh" version | grep -F 'gh version 2.103.0 '
           echo "$destination" >> "$GITHUB_PATH"
 
+      - name: Create a repository-scoped branch-policy read token
+        id: branch-policy-token
+        uses: actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42 # v2.1.4
+        with:
+          app-id: ${{ vars.SEREA_BRANCH_POLICY_APP_ID }}
+          private-key: ${{ secrets.SEREA_BRANCH_POLICY_APP_PRIVATE_KEY }}
+          owner: Yrika819
+          repositories: Serea
+          permission-administration: read
+
       - name: Validate Distribution review, protected source, Required Checks, and WIF configuration
         env:
           GH_TOKEN: ${{ github.token }}
+          BRANCH_POLICY_TOKEN: ${{ steps.branch-policy-token.outputs.token }}
           SEREA_BETA_OWNER_REVIEWER_ID: ${{ vars.SEREA_BETA_OWNER_REVIEWER_ID }}
           SEREA_BETA_OWNER_REVIEWER_TYPE: ${{ vars.SEREA_BETA_OWNER_REVIEWER_TYPE }}
         run: |
@@ -721,9 +815,9 @@ jobs:
           commit_file="$RUNNER_TEMP/serea-source-commit.json"
           main_file="$RUNNER_TEMP/serea-main-commit.json"
           checks_file="$RUNNER_TEMP/serea-required-checks.json"
-          "$gh" api "repos/$GITHUB_REPOSITORY/environments/serea-personal-beta-distribution" > "$env_file"
-          "$gh" api "repos/$GITHUB_REPOSITORY/environments/serea-personal-beta-distribution/deployment-branch-policies?per_page=100" > "$branch_policy_file"
-          "$gh" api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
+          env GH_TOKEN="$BRANCH_POLICY_TOKEN" "$gh" api "repos/$GITHUB_REPOSITORY/environments/serea-personal-beta-distribution" > "$env_file"
+          env GH_TOKEN="$BRANCH_POLICY_TOKEN" "$gh" api "repos/$GITHUB_REPOSITORY/environments/serea-personal-beta-distribution/deployment-branch-policies?per_page=100" > "$branch_policy_file"
+          env GH_TOKEN="$BRANCH_POLICY_TOKEN" "$gh" api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
           "$gh" api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" > "$commit_file"
           "$gh" api "repos/$GITHUB_REPOSITORY/commits/main" > "$main_file"
           "$gh" api --paginate "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
@@ -781,7 +875,8 @@ jobs:
           configured = set(x for x in status.get("contexts", []) if isinstance(x, str))
           configured.update(x.get("context") for x in status.get("checks", [])
                             if isinstance(x, dict) and isinstance(x.get("context"), str))
-          require(set(required).issubset(configured), "Main protection omits an Owner Required Check.")
+          require(set(required) == configured,
+                  "Owner Required Checks must exactly match the protected main branch policy.")
           reviews = protection.get("required_pull_request_reviews") or {}
           require(isinstance(reviews.get("required_approving_review_count"), int) and
                   reviews["required_approving_review_count"] >= 1 and
@@ -914,14 +1009,60 @@ jobs:
             -in "$handoff/serea-personal-beta-signed.apk.cms" \
             -recip "$key_dir/transport-cert.pem" -inkey "$key_dir/transport-key.pem" \
             -passin env:SEREA_BETA_TRANSPORT_KEY_PASSWORD \
-            -out "$RUNNER_TEMP/serea-personal-beta-signed.apk" >/dev/null 2>&1 || {
+            -out "$RUNNER_TEMP/serea-personal-beta-handoff.zip" >/dev/null 2>&1 || {
               echo 'Encrypted release handoff could not be authenticated or decrypted.' >&2
               exit 1
             }
+          python3 - "$RUNNER_TEMP/serea-personal-beta-handoff.zip" "$RUNNER_TEMP/serea-personal-beta-signed.apk" <<'PY'
+          import hashlib, json, os, stat, sys
+          from pathlib import Path
+          from zipfile import BadZipFile, ZipFile
+          package = Path(sys.argv[1])
+          destination = Path(sys.argv[2])
+          try:
+              with ZipFile(package, "r") as archive:
+                  entries = archive.infolist()
+                  if len(entries) != 2 or {entry.filename for entry in entries} != {"release.json", "signed.apk"}:
+                      raise SystemExit("Authenticated handoff has missing, duplicate, or unexpected entries.")
+                  if any(entry.is_dir() or stat.S_ISLNK(entry.external_attr >> 16) for entry in entries):
+                      raise SystemExit("Authenticated handoff contains a directory or symbolic link.")
+                  manifest_info = next(entry for entry in entries if entry.filename == "release.json")
+                  apk_info = next(entry for entry in entries if entry.filename == "signed.apk")
+                  if not 0 < manifest_info.file_size <= 16384 or not 0 < apk_info.file_size <= 134217728:
+                      raise SystemExit("Authenticated handoff entry size is invalid.")
+                  manifest = json.loads(archive.read(manifest_info).decode("utf-8"))
+                  expected = {
+                      "schema": 1,
+                      "repository": "Yrika819/Serea",
+                      "workflow_path": ".github/workflows/android-personal-beta.yml",
+                      "source_sha": os.environ["SOURCE_SHA"].lower(),
+                      "source_tree_sha": os.environ["EXPECTED_TREE_SHA"].lower(),
+                      "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+                      "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                      "application_id": "app.serea.android.beta",
+                      "version_code": int(os.environ["EXPECTED_VERSION_CODE"]),
+                      "signature_state": "signed",
+                      "signing_certificate_sha256": os.environ["EXPECTED_SIGNER_CERTIFICATE_SHA256"].replace(":", "").upper(),
+                      "signed_apk_sha256": os.environ["EXPECTED_SIGNED_APK_SHA256"].lower(),
+                      "encryption": "CMS-EnvelopedData/AES-256-GCM",
+                  }
+                  if manifest != expected:
+                      raise SystemExit("Authenticated handoff manifest is stale or bound to another release run.")
+                  with archive.open(apk_info, "r") as source, destination.open("xb") as output:
+                      for block in iter(lambda: source.read(1024 * 1024), b""):
+                          output.write(block)
+          except (BadZipFile, KeyError, json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+              destination.unlink(missing_ok=True)
+              raise SystemExit("Authenticated release handoff is malformed.") from error
+          actual = hashlib.sha256(destination.read_bytes()).hexdigest()
+          if actual != os.environ["EXPECTED_SIGNED_APK_SHA256"].lower():
+              destination.unlink(missing_ok=True)
+              raise SystemExit("Decrypted APK digest does not match the Signing job output.")
+          PY
           digest=$(sha256sum "$RUNNER_TEMP/serea-personal-beta-signed.apk" | awk '{print $1}')
           [[ "$digest" == "$EXPECTED_SIGNED_APK_SHA256" ]]
           rm -rf "$key_dir"
-          echo 'PASS ciphertext, transport identity, and decrypted APK hash'
+          echo 'PASS GCM authentication, run-bound manifest, transport identity, and APK hash'
 
       - name: Verify signed APK package, version, certificate, and digest before WIF
         env:
@@ -938,7 +1079,10 @@ jobs:
           tools = Path(os.environ["RUNNER_TEMP"]) / "serea-android-release-tools/build-tools"
           badging = subprocess.run([str(tools / "aapt"), "dump", "badging", str(apk)],
                                    capture_output=True, text=True, check=True).stdout
+          manifest = subprocess.run([str(tools / "aapt"), "dump", "xmltree", str(apk), "AndroidManifest.xml"],
+                                    capture_output=True, text=True, check=True).stdout
           identity = re.search(r"^package: name='([^']+)' versionCode='([0-9]+)'", badging, re.M)
+          permissions = re.findall(r"^uses-permission: name='([^']+)'", badging, re.M)
           cert_text = Path(sys.argv[2]).read_text(encoding="utf-8", errors="replace")
           certs = re.findall(r"Signer #\d+ certificate SHA-256 digest:\s*([0-9A-Fa-f:]+)", cert_text)
           normalize = lambda value: re.sub(r"[:\s]", "", value).upper()
@@ -946,8 +1090,18 @@ jobs:
           signer_output = normalize(os.environ["EXPECTED_SIGNER_CERTIFICATE_SHA256"])
           actual = normalize(certs[0]) if len(certs) == 1 else ""
           digest = hashlib.sha256(apk.read_bytes()).hexdigest()
-          if not identity or identity.group(1) != "app.serea.android.beta" or int(identity.group(2)) != int(os.environ["EXPECTED_VERSION_CODE"]):
-              raise SystemExit("Signed APK package or versionCode does not match the release record.")
+          manifest_valid = (
+              identity is not None and identity.group(1) == "app.serea.android.beta" and
+              int(identity.group(2)) == int(os.environ["EXPECTED_VERSION_CODE"]) and
+              "sdkVersion:'26'" in badging and "targetSdkVersion:'35'" in badging and
+              "application-label:'Serea Personal Beta'" in badging and
+              sorted(permissions) == ["android.permission.INTERNET"] and
+              "application-debuggable" not in badging and
+              re.search(r"^\s+A: android:allowBackup\([^)]*\)=\(type 0x12\)0x0$", manifest, re.M) is not None and
+              re.search(r"^\s+A: android:usesCleartextTraffic\([^)]*\)=\(type 0x12\)0x0$", manifest, re.M) is not None
+          )
+          if not manifest_valid:
+              raise SystemExit("Signed APK manifest violates the independent Beta release policy.")
           if actual != expected or actual != signer_output:
               raise SystemExit("APK signing certificate does not match both Owner and Signing pins.")
           if digest != os.environ["EXPECTED_SIGNED_APK_SHA256"].lower():
@@ -995,12 +1149,13 @@ jobs:
       - name: Reconfirm protected source and Required Checks before WIF
         env:
           GH_TOKEN: ${{ github.token }}
+          BRANCH_POLICY_TOKEN: ${{ steps.branch-policy-token.outputs.token }}
         run: |
           set -euo pipefail
           gh="$RUNNER_TEMP/serea-gh-cli/gh"
           test "$( "$gh" api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha )" = "$SOURCE_SHA"
           protection_file="$RUNNER_TEMP/serea-main-protection-before-wif.json"
-          "$gh" api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
+          env GH_TOKEN="$BRANCH_POLICY_TOKEN" "$gh" api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
           checks_file="$RUNNER_TEMP/serea-checks-before-wif.json"
           "$gh" api --paginate "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
             --jq '.check_runs[]' | jq -s '{check_runs: .}' > "$checks_file"
@@ -1016,7 +1171,7 @@ jobs:
                                 if isinstance(x, dict) and isinstance(x.get("context"), str))
           reviews = protection.get("required_pull_request_reviews") or {}
           if not isinstance(status, dict) or status.get("strict") is not True or \
-             not set(required).issubset(configured) or reviews.get("required_approving_review_count", 0) < 1 or \
+             set(required) != configured or reviews.get("required_approving_review_count", 0) < 1 or \
              protection.get("enforce_admins", {}).get("enabled") is not True:
               raise SystemExit("Main protection no longer matches the release policy.")
           if not isinstance(checks, list):
@@ -1065,12 +1220,13 @@ jobs:
       - name: Reconfirm source and Required Checks immediately before upload
         env:
           GH_TOKEN: ${{ github.token }}
+          BRANCH_POLICY_TOKEN: ${{ steps.branch-policy-token.outputs.token }}
         run: |
           set -euo pipefail
           gh="$RUNNER_TEMP/serea-gh-cli/gh"
           test "$( "$gh" api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha )" = "$SOURCE_SHA"
           protection_file="$RUNNER_TEMP/serea-main-protection-before-upload.json"
-          "$gh" api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
+          env GH_TOKEN="$BRANCH_POLICY_TOKEN" "$gh" api "repos/$GITHUB_REPOSITORY/branches/main/protection" > "$protection_file"
           checks_file="$RUNNER_TEMP/serea-checks-before-upload.json"
           "$gh" api --paginate "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100" \
             --jq '.check_runs[]' | jq -s '{check_runs: .}' > "$checks_file"
@@ -1086,7 +1242,7 @@ jobs:
                                 if isinstance(x, dict) and isinstance(x.get("context"), str))
           reviews = protection.get("required_pull_request_reviews") or {}
           if not isinstance(status, dict) or status.get("strict") is not True or \
-             not set(required).issubset(configured) or reviews.get("required_approving_review_count", 0) < 1 or \
+             set(required) != configured or reviews.get("required_approving_review_count", 0) < 1 or \
              protection.get("enforce_admins", {}).get("enabled") is not True:
               raise SystemExit("Main protection no longer matches the release policy.")
           if not isinstance(checks, list):
@@ -1139,4 +1295,6 @@ jobs:
             "$RUNNER_TEMP/serea-main-protection-before-upload.json" "$RUNNER_TEMP/serea-firebase-apps.json" \
             "$RUNNER_TEMP/serea-beta-release-notes.txt" "$RUNNER_TEMP/serea-firebase-upload.log"
           rm -f "$RUNNER_TEMP/serea-personal-beta-signed.apk" \
-            "$RUNNER_TEMP/serea-personal-beta-signed.apk.idsig" "$RUNNER_TEMP/gha-creds-"*.json
+            "$RUNNER_TEMP/serea-personal-beta-signed.apk.idsig" \
+            "$RUNNER_TEMP/serea-personal-beta-handoff.zip" "$RUNNER_TEMP/serea-beta-release-notes.txt" \
+            "$RUNNER_TEMP/serea-beta-provenance.json" "$RUNNER_TEMP/gha-creds-"*.json

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -125,6 +126,143 @@ class AndroidBetaReleaseTests(unittest.TestCase):
             release.verify_signed(signed, "0" * 64, 17, "a" * 64, str(self.aapt), str(self.apksigner))
         with self.assertRaisesRegex(release.ReleaseError, "certificate"):
             release.verify_signed(signed, expected_sha, 17, "b" * 64, str(self.aapt), str(self.apksigner))
+
+    def test_inline_attestation_policy_rejects_wrong_repo_workflow_commit_run_or_subject(self):
+        workflow = (ROOT / ".github/workflows/android-personal-beta.yml").read_text(encoding="utf-8")
+        step = workflow.split("- name: Verify Build provenance before the Owner key is materialized", 1)[1]
+        python_block = step.split('python3 - "$RUNNER_TEMP/serea-beta-provenance.json" <<\'PY\'\n', 1)[1]
+        python_block = python_block.split("\n          PY", 1)[0]
+        script = textwrap.dedent(python_block)
+        source = "d" * 40
+        tree = "e" * 40
+        apk_digest = "f" * 64
+        certificate = {
+            "issuer": "https://token.actions.githubusercontent.com",
+            "sourceRepositoryURI": "https://github.com/Yrika819/Serea",
+            "sourceRepositoryDigest": f"sha1:{source}",
+            "sourceRepositoryRef": "refs/heads/main",
+            "buildSignerURI": "https://github.com/Yrika819/Serea/.github/workflows/android-personal-beta.yml@refs/heads/main",
+            "runInvocationURI": "https://github.com/Yrika819/Serea/actions/runs/123456789/attempts/1",
+            "runnerEnvironment": "github-hosted",
+        }
+        valid = [{"verificationResult": {
+            "statement": {
+                "predicateType": "https://slsa.dev/provenance/v1",
+                "subject": [{"digest": {"sha256": apk_digest}}],
+            },
+            "signature": {"certificate": certificate},
+        }}]
+
+        def run_policy(document):
+            provenance = self.root / "attestation.json"
+            provenance.write_text(json.dumps(document), encoding="utf-8")
+            env = os.environ.copy()
+            env.update({
+                "EXPECTED_APK_SHA256": apk_digest,
+                "EXPECTED_SOURCE_SHA": source,
+                "EXPECTED_TREE_SHA": tree,
+                "GITHUB_RUN_ID": "123456789",
+                "GITHUB_RUN_ATTEMPT": "1",
+            })
+            return subprocess.run(
+                [sys.executable, "-c", script, str(provenance)], env=env,
+                capture_output=True, text=True, check=False,
+            )
+
+        self.assertEqual(run_policy(valid).returncode, 0)
+        mutations = (
+            lambda doc: doc[0]["verificationResult"]["signature"]["certificate"].update(
+                sourceRepositoryURI="https://github.com/attacker/other"),
+            lambda doc: doc[0]["verificationResult"]["signature"]["certificate"].update(
+                buildSignerURI="https://github.com/Yrika819/Serea/.github/workflows/other.yml@refs/heads/main"),
+            lambda doc: doc[0]["verificationResult"]["signature"]["certificate"].update(
+                sourceRepositoryDigest="sha1:" + "a" * 40),
+            lambda doc: doc[0]["verificationResult"]["signature"]["certificate"].update(
+                runInvocationURI="https://github.com/Yrika819/Serea/actions/runs/987654321/attempts/1"),
+            lambda doc: doc[0]["verificationResult"]["statement"]["subject"][0]["digest"].update(
+                sha256="0" * 64),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                candidate = json.loads(json.dumps(valid))
+                mutate(candidate)
+                self.assertNotEqual(run_policy(candidate).returncode, 0)
+
+    def test_gcm_handoff_authenticates_manifest_randomizes_and_rejects_tampering_or_replay(self):
+        env_password = "SEREA_BETA_TRANSPORT_KEY_PASSWORD"
+        password = "disposable-transport-only-test-password"
+        original_password = os.environ.get(env_password)
+        os.environ[env_password] = password
+        try:
+            key_plain = self.root / "transport-private-plain.pem"
+            key = self.root / "transport-private.pem"
+            certificate = self.root / "transport-cert.pem"
+            subprocess.run(
+                ["openssl", "req", "-new", "-x509", "-newkey", "rsa:2048", "-nodes",
+                 "-keyout", str(key_plain), "-out", str(certificate), "-subj", "/CN=Serea throwaway transport",
+                 "-days", "1"],
+                check=True, capture_output=True, text=True,
+            )
+            subprocess.run(
+                ["openssl", "pkcs8", "-topk8", "-in", str(key_plain), "-out", str(key),
+                 "-passout", f"env:{env_password}"],
+                check=True, capture_output=True, text=True,
+            )
+            key_plain.unlink()
+            fingerprint = release.certificate_sha256(certificate, "openssl")
+            cipher = self.root / "handoff.cms"
+            randomized = self.root / "handoff-second.cms"
+            manifest_args = {
+                "apk": self.apk,
+                "certificate": certificate,
+                "openssl": "openssl",
+                "expected_cert": fingerprint,
+                "source_sha": "1" * 40,
+                "tree_sha": "2" * 40,
+                "run_id": "123456789",
+                "run_attempt": "1",
+                "version_code": 17,
+                "signing_certificate_sha256": "a" * 64,
+            }
+            release.encrypt_apk(Namespace(**{**manifest_args, "output": cipher}))
+            release.encrypt_apk(Namespace(**{**manifest_args, "output": randomized}))
+            self.assertNotEqual(cipher.read_bytes(), randomized.read_bytes(), "CMS GCM must use fresh encryption randomness")
+
+            decrypt_args = {
+                "ciphertext": cipher,
+                "certificate": certificate,
+                "private_key": key,
+                "openssl": "openssl",
+                "expected_cert": fingerprint,
+                "expected_sha256": release.sha256_file(self.apk),
+                "expected_signing_certificate_sha256": "a" * 64,
+                "source_sha": "1" * 40,
+                "tree_sha": "2" * 40,
+                "run_id": "123456789",
+                "run_attempt": "1",
+                "version_code": 17,
+            }
+            decrypted = self.root / "decrypted.apk"
+            release.decrypt_apk(Namespace(**{**decrypt_args, "output": decrypted}))
+            self.assertEqual(decrypted.read_bytes(), self.apk.read_bytes())
+
+            tampered = self.root / "tampered.cms"
+            data = bytearray(cipher.read_bytes())
+            data[-1] ^= 1
+            tampered.write_bytes(data)
+            with self.assertRaisesRegex(release.ReleaseError, "authenticated, decrypted, or parsed"):
+                release.decrypt_apk(Namespace(**{**decrypt_args, "ciphertext": tampered,
+                                                  "output": self.root / "tampered.apk"}))
+
+            with self.assertRaisesRegex(release.ReleaseError, "another run"):
+                release.decrypt_apk(Namespace(**{**decrypt_args, "run_id": "987654321",
+                                                  "output": self.root / "replayed.apk"}))
+            self.assertFalse((self.root / "replayed.apk").exists())
+        finally:
+            if original_password is None:
+                os.environ.pop(env_password, None)
+            else:
+                os.environ[env_password] = original_password
 
     def _fake_docker(self, bin_dir: Path):
         docker = bin_dir / "docker"

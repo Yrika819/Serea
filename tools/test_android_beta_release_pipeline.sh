@@ -140,14 +140,57 @@ transport_cert_sha=$(openssl x509 -in "$test_root/transport-cert.pem" -noout -fi
 ciphertext="$test_root/signed.apk.cms"
 python3 "$repo_root/tools/android_beta_release.py" encrypt \
   --apk "$signed" --certificate "$test_root/transport-cert.pem" \
-  --expected-cert "$transport_cert_sha" --output "$ciphertext"
+  --expected-cert "$transport_cert_sha" --source-sha "$source_sha" --tree-sha "$tree_sha" \
+  --run-id "$run_id" --run-attempt 1 --version-code "$version_code" \
+  --signing-certificate-sha256 "$cert1" --output "$ciphertext"
 export SEREA_BETA_TRANSPORT_KEY_PASSWORD="$TEST_TRANSPORT_PASSWORD"
 decrypted="$test_root/decrypted.apk"
 python3 "$repo_root/tools/android_beta_release.py" decrypt \
   --ciphertext "$ciphertext" --certificate "$test_root/transport-cert.pem" \
   --private-key "$test_root/transport-key.pem" --expected-cert "$transport_cert_sha" \
-  --expected-sha256 "$signed_sha" --output "$decrypted"
+  --expected-sha256 "$signed_sha" --expected-signing-certificate-sha256 "$cert1" \
+  --source-sha "$source_sha" --tree-sha "$tree_sha" --run-id "$run_id" --run-attempt 1 \
+  --version-code "$version_code" --output "$decrypted"
 cmp --silent "$signed" "$decrypted"
+
+randomized_ciphertext="$test_root/signed-randomized.apk.cms"
+python3 "$repo_root/tools/android_beta_release.py" encrypt \
+  --apk "$signed" --certificate "$test_root/transport-cert.pem" \
+  --expected-cert "$transport_cert_sha" --source-sha "$source_sha" --tree-sha "$tree_sha" \
+  --run-id "$run_id" --run-attempt 1 --version-code "$version_code" \
+  --signing-certificate-sha256 "$cert1" --output "$randomized_ciphertext" >/dev/null
+if cmp --silent "$ciphertext" "$randomized_ciphertext"; then
+  echo 'CMS AES-GCM encryption unexpectedly reused the same ciphertext for a new encryption.' >&2
+  exit 1
+fi
+
+tampered_ciphertext="$test_root/tampered.apk.cms"
+python3 - "$ciphertext" "$tampered_ciphertext" <<'PY'
+from pathlib import Path
+import sys
+data = bytearray(Path(sys.argv[1]).read_bytes())
+data[len(data) // 2] ^= 1
+Path(sys.argv[2]).write_bytes(data)
+PY
+if python3 "$repo_root/tools/android_beta_release.py" decrypt \
+  --ciphertext "$tampered_ciphertext" --certificate "$test_root/transport-cert.pem" \
+  --private-key "$test_root/transport-key.pem" --expected-cert "$transport_cert_sha" \
+  --expected-sha256 "$signed_sha" --expected-signing-certificate-sha256 "$cert1" \
+  --source-sha "$source_sha" --tree-sha "$tree_sha" --run-id "$run_id" --run-attempt 1 \
+  --version-code "$version_code" --output "$test_root/tampered.apk"; then
+  echo 'CMS AES-GCM accepted a tampered encrypted handoff.' >&2
+  exit 1
+fi
+
+if python3 "$repo_root/tools/android_beta_release.py" decrypt \
+  --ciphertext "$ciphertext" --certificate "$test_root/transport-cert.pem" \
+  --private-key "$test_root/transport-key.pem" --expected-cert "$transport_cert_sha" \
+  --expected-sha256 "$signed_sha" --expected-signing-certificate-sha256 "$cert1" \
+  --source-sha "$source_sha" --tree-sha "$tree_sha" --run-id 987654321 --run-attempt 1 \
+  --version-code "$version_code" --output "$test_root/replayed.apk"; then
+  echo 'Encrypted handoff replayed across workflow runs.' >&2
+  exit 1
+fi
 
 export TEST_TRANSPORT_PASSWORD_WRONG="$(openssl rand -hex 32)"
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
@@ -157,8 +200,10 @@ export SEREA_BETA_TRANSPORT_KEY_PASSWORD="$TEST_TRANSPORT_PASSWORD_WRONG"
 if python3 "$repo_root/tools/android_beta_release.py" decrypt \
   --ciphertext "$ciphertext" --certificate "$test_root/transport-cert.pem" \
   --private-key "$test_root/wrong-transport-key.pem" --expected-cert "$transport_cert_sha" \
-  --expected-sha256 "$signed_sha" --output "$test_root/wrong-decrypted.apk"; then
+  --expected-sha256 "$signed_sha" --expected-signing-certificate-sha256 "$cert1" \
+  --source-sha "$source_sha" --tree-sha "$tree_sha" --run-id "$run_id" --run-attempt 1 \
+  --version-code "$version_code" --output "$test_root/wrong-decrypted.apk"; then
   echo 'Encrypted handoff unexpectedly accepted a mismatched private key.' >&2
   exit 1
 fi
-printf 'TEST_KEY_SIGN_AND_VERIFY=PASS\nSAME_KEY_VERSION_101_TO_102_CERTIFICATE=PASS\nDIFFERENT_SIGNING_KEY_REJECTED=PASS\nPACKAGE_MISMATCH_REJECTED=PASS\nCMS_ENCRYPT_DECRYPT_EXACT_BYTES=PASS\nWRONG_TRANSPORT_KEY_REJECTED=PASS\nOWNER_CREDENTIALS_USED=NO\n'
+printf 'TEST_KEY_SIGN_AND_VERIFY=PASS\nSAME_KEY_VERSION_101_TO_102_CERTIFICATE=PASS\nDIFFERENT_SIGNING_KEY_REJECTED=PASS\nPACKAGE_MISMATCH_REJECTED=PASS\nCMS_AES_256_GCM_AUTHENTICATED_ENCRYPTION=PASS\nFRESH_KEY_NONCE_RANDOMIZATION=PASS\nGCM_TAMPER_REJECTED=PASS\nCROSS_RUN_REPLAY_REJECTED=PASS\nWRONG_TRANSPORT_KEY_REJECTED=PASS\nOWNER_CREDENTIALS_USED=NO\n'

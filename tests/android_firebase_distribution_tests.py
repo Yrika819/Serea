@@ -216,6 +216,18 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
             with self.assertRaisesRegex(pipeline.PipelineError, "missing or malformed"):
                 pipeline.validate_main_tip(SOURCE_SHA, missing_or_invalid)
 
+    def test_build_branch_summary_fails_closed_when_protection_is_missing(self):
+        pipeline.verify_main_branch_protected({"name": "main", "protected": True})
+        for missing_or_unprotected in (
+            None,
+            {},
+            {"name": "main", "protected": False},
+            {"name": "main"},
+            {"name": "release", "protected": True},
+        ):
+            with self.subTest(branch=missing_or_unprotected), self.assertRaises(pipeline.PipelineError):
+                pipeline.verify_main_branch_protected(missing_or_unprotected)
+
     def test_environment_must_allow_main_only_and_have_owner_reviewers(self):
         main_only = {"branch_policies": [{"name": "main", "type": "branch"}]}
         approved_environment = {
@@ -424,7 +436,18 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
         self.assertIn("name: serea-personal-beta-signing", workflow)
         self.assertIn("name: serea-personal-beta-distribution", workflow)
         self.assertIn("branches/main/protection", workflow)
-        self.assertIn("verify-main-protection", workflow)
+        self.assertNotIn("\n      administration: read", workflow)
+        self.assertEqual(workflow.count("actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42"), 2)
+        self.assertEqual(workflow.count("permission-administration: read"), 2)
+        self.assertEqual(workflow.count("SEREA_BRANCH_POLICY_APP_PRIVATE_KEY"), 2)
+        self.assertIn("verify-main-branch-protected", workflow)
+        self.assertIn("BRANCH_POLICY_TOKEN", workflow)
+        self.assertEqual(
+            workflow.count("set(required) == configured")
+            + workflow.count("set(required) != configured"),
+            5,
+        )
+        self.assertNotIn("set(required).issubset(configured)", workflow)
         self.assertIn("actions/attest-build-provenance", workflow)
         self.assertIn("google-github-actions/auth", workflow)
         self.assertIn("workload_identity_provider:", workflow)
@@ -435,6 +458,18 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
         self.assertIn("serea-personal-beta-ciphertext-", workflow)
         self.assertIn("attestation verify", workflow)
         self.assertIn("--source-digest \"$EXPECTED_SOURCE_SHA\"", workflow)
+        self.assertIn("--format json", workflow)
+        self.assertIn("sourceRepositoryDigest", workflow)
+        self.assertIn("runInvocationURI", workflow)
+        self.assertIn("-aes-256-gcm", workflow)
+        self.assertNotIn("-aes-256-cbc", workflow)
+        self.assertIn("workflow_run_attempt", workflow)
+        self.assertIn("Authenticated handoff manifest is stale or bound to another release run.", workflow)
+        self.assertIn("APK manifest violates the independent Beta release policy.", workflow)
+        self.assertIn("android.permission.INTERNET", workflow)
+        self.assertIn("android:allowBackup", workflow)
+        self.assertIn("android:usesCleartextTraffic", workflow)
+        self.assertIn("targetSdkVersion:'35'", workflow)
 
         signer_job = workflow.split("\n  sign:\n", 1)[1].split("\n  distribute:\n", 1)[0]
         distribution_job = workflow.split("\n  distribute:\n", 1)[1]
@@ -540,6 +575,8 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
         self.assertIn("required reviewers", runbook.lower())
         self.assertIn("exactly `main`", runbook.lower())
         self.assertIn("pull request approval", runbook.lower())
+        self.assertIn("must exactly match the protected main branch policy", workflow)
+        self.assertIn("exact Required Check names", runbook)
 
     def test_contract_workflow_has_no_credentials_or_oidc_permission(self):
         workflow = (ROOT / ".github/workflows/android-personal-beta-contract-tests.yml").read_text(
@@ -548,6 +585,9 @@ class AndroidPersonalBetaDistributionTests(unittest.TestCase):
         self.assertIn("pull_request:", workflow)
         self.assertNotIn("secrets.", workflow)
         self.assertNotIn("id-token:", workflow)
+        self.assertIn("actionlint", workflow)
+        self.assertIn(".github/workflows/android-personal-beta.yml", workflow)
+        self.assertIn(":app:assembleBeta -PsereaBetaVersionCode=101", workflow)
 
     def test_firebase_cli_and_transitive_dependencies_are_locked(self):
         package = json.loads((ROOT / "tools/firebase-distribution/package.json").read_text(encoding="utf-8"))

@@ -11,11 +11,16 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
 
 APPLICATION_ID = "app.serea.android.beta"
+REPOSITORY = "Yrika819/Serea"
+WORKFLOW_PATH = ".github/workflows/android-personal-beta.yml"
+HANDOFF_ENCRYPTION = "CMS-EnvelopedData/AES-256-GCM"
 SHA256_RE = re.compile(r"(?i)^[0-9a-f]{64}$")
 SHA1_RE = re.compile(r"(?i)^[0-9a-f]{40}$")
 
@@ -211,15 +216,63 @@ def certificate_sha256(certificate: Path, openssl: str) -> str:
     return normalize_fingerprint(match.group(1))
 
 
+def _handoff_manifest(
+    apk: Path,
+    *,
+    source_sha: str,
+    tree_sha: str,
+    run_id: str,
+    run_attempt: str,
+    version_code: int,
+    signing_certificate_sha256: str,
+) -> dict[str, Any]:
+    if not SHA1_RE.fullmatch(source_sha) or not SHA1_RE.fullmatch(tree_sha):
+        raise ReleaseError("Handoff source commit and tree identifiers are invalid.")
+    if not run_id.isdigit() or int(run_id) <= 0 or not run_attempt.isdigit() or int(run_attempt) <= 0:
+        raise ReleaseError("Handoff workflow run or attempt is invalid.")
+    if version_code <= 1 or version_code > 2_147_483_647:
+        raise ReleaseError("Handoff versionCode is outside Android limits.")
+    return {
+        "schema": 1,
+        "repository": REPOSITORY,
+        "workflow_path": WORKFLOW_PATH,
+        "source_sha": source_sha.lower(),
+        "source_tree_sha": tree_sha.lower(),
+        "workflow_run_id": run_id,
+        "workflow_run_attempt": run_attempt,
+        "application_id": APPLICATION_ID,
+        "version_code": version_code,
+        "signature_state": "signed",
+        "signing_certificate_sha256": normalize_fingerprint(signing_certificate_sha256),
+        "signed_apk_sha256": sha256_file(apk),
+        "encryption": HANDOFF_ENCRYPTION,
+    }
+
+
 def encrypt_apk(args: argparse.Namespace) -> None:
     if certificate_sha256(args.certificate, args.openssl) != normalize_fingerprint(args.expected_cert):
         raise ReleaseError("Transfer certificate does not match its pinned fingerprint.")
-    sha256_file(args.apk)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    run_quietly([
-        args.openssl, "cms", "-encrypt", "-binary", "-aes-256-cbc", "-in", str(args.apk),
-        "-outform", "DER", "-out", str(args.output), str(args.certificate),
-    ])
+    manifest = _handoff_manifest(
+        args.apk,
+        source_sha=args.source_sha,
+        tree_sha=args.tree_sha,
+        run_id=args.run_id,
+        run_attempt=args.run_attempt,
+        version_code=args.version_code,
+        signing_certificate_sha256=args.signing_certificate_sha256,
+    )
+    with tempfile.TemporaryDirectory(prefix="serea-handoff-", dir=args.output.parent) as temporary:
+        handoff = Path(temporary) / "handoff.zip"
+        with zipfile.ZipFile(handoff, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("release.json", json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n")
+            archive.write(args.apk, "signed.apk")
+        handoff.chmod(0o600)
+        # OpenSSL creates a fresh content-encryption key and GCM nonce per CMS message.
+        run_quietly([
+            args.openssl, "cms", "-encrypt", "-binary", "-aes-256-gcm", "-in", str(handoff),
+            "-outform", "DER", "-out", str(args.output), str(args.certificate),
+        ])
     write_outputs({"ciphertext_sha256": sha256_file(args.output)})
 
 
@@ -229,27 +282,62 @@ def decrypt_apk(args: argparse.Namespace) -> None:
     password = os.environ.get("SEREA_BETA_TRANSPORT_KEY_PASSWORD", "")
     if not password:
         raise ReleaseError("Transfer private-key password is missing from the isolated Distribution job.")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     try:
-        subprocess.run(
-            [
-                args.openssl, "cms", "-decrypt", "-binary", "-inform", "DER", "-in", str(args.ciphertext),
-                "-recip", str(args.certificate), "-inkey", str(args.private_key),
-                "-passin", "env:SEREA_BETA_TRANSPORT_KEY_PASSWORD", "-out", str(args.output),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
+        with tempfile.TemporaryDirectory(prefix="serea-decrypt-", dir=args.output.parent) as temporary:
+            payload = Path(temporary) / "handoff.zip"
+            subprocess.run(
+                [
+                    args.openssl, "cms", "-decrypt", "-binary", "-inform", "DER", "-in", str(args.ciphertext),
+                    "-recip", str(args.certificate), "-inkey", str(args.private_key),
+                    "-passin", "env:SEREA_BETA_TRANSPORT_KEY_PASSWORD", "-out", str(payload),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            with zipfile.ZipFile(payload, "r") as archive:
+                entries = archive.infolist()
+                if len(entries) != 2 or {entry.filename for entry in entries} != {"release.json", "signed.apk"}:
+                    raise ReleaseError("Authenticated release handoff has missing or unexpected entries.")
+                if any(entry.is_dir() or (entry.external_attr >> 16) & 0o170000 == 0o120000 for entry in entries):
+                    raise ReleaseError("Authenticated release handoff contains an unsafe entry.")
+                manifest_info = next(entry for entry in entries if entry.filename == "release.json")
+                apk_info = next(entry for entry in entries if entry.filename == "signed.apk")
+                if not 0 < manifest_info.file_size <= 16_384 or not 0 < apk_info.file_size <= 134_217_728:
+                    raise ReleaseError("Authenticated release handoff entry size is invalid.")
+                manifest = json.loads(archive.read(manifest_info).decode("utf-8"))
+                candidate = Path(temporary) / "signed.apk"
+                with archive.open(apk_info, "r") as source, candidate.open("xb") as destination:
+                    for block in iter(lambda: source.read(1024 * 1024), b""):
+                        destination.write(block)
+                candidate.chmod(0o600)
+                expected = _handoff_manifest(
+                    candidate,
+                    source_sha=args.source_sha,
+                    tree_sha=args.tree_sha,
+                    run_id=args.run_id,
+                    run_attempt=args.run_attempt,
+                    version_code=args.version_code,
+                    signing_certificate_sha256=args.expected_signing_certificate_sha256,
+                )
+                # The expected APK digest comes from the authenticated Signing job output.
+                expected["signed_apk_sha256"] = args.expected_sha256.lower()
+                if manifest != expected:
+                    raise ReleaseError("Authenticated release handoff is stale or bound to another run.")
+                candidate.replace(args.output)
+            digest = sha256_file(args.output)
+            if digest.lower() != args.expected_sha256.lower():
+                raise ReleaseError("Decrypted signed APK SHA-256 does not match the Signing job output.")
+    except (OSError, subprocess.CalledProcessError, zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError) as error:
         args.output.unlink(missing_ok=True)
-        raise ReleaseError("Encrypted release artifact could not be authenticated and decrypted.") from error
-    digest = sha256_file(args.output)
-    if digest.lower() != args.expected_sha256.lower():
+        raise ReleaseError("Encrypted release artifact could not be authenticated, decrypted, or parsed.") from error
+    except ReleaseError:
         args.output.unlink(missing_ok=True)
-        raise ReleaseError("Decrypted signed APK SHA-256 does not match the Signing job output.")
-    write_outputs({"apk_sha256": digest})
+        raise
+    write_outputs({"apk_sha256": sha256_file(args.output)})
 
 
 def copy_android_scan_tree(source: Path, destination: Path) -> None:
@@ -310,6 +398,12 @@ def build_parser() -> argparse.ArgumentParser:
     encrypt.add_argument("--apk", type=Path, required=True)
     encrypt.add_argument("--certificate", type=Path, required=True)
     encrypt.add_argument("--expected-cert", required=True)
+    encrypt.add_argument("--source-sha", required=True)
+    encrypt.add_argument("--tree-sha", required=True)
+    encrypt.add_argument("--run-id", required=True)
+    encrypt.add_argument("--run-attempt", required=True)
+    encrypt.add_argument("--version-code", type=int, required=True)
+    encrypt.add_argument("--signing-certificate-sha256", required=True)
     encrypt.add_argument("--output", type=Path, required=True)
     encrypt.add_argument("--openssl", default="openssl")
     decrypt = commands.add_parser("decrypt")
@@ -318,6 +412,12 @@ def build_parser() -> argparse.ArgumentParser:
     decrypt.add_argument("--private-key", type=Path, required=True)
     decrypt.add_argument("--expected-cert", required=True)
     decrypt.add_argument("--expected-sha256", required=True)
+    decrypt.add_argument("--expected-signing-certificate-sha256", required=True)
+    decrypt.add_argument("--source-sha", required=True)
+    decrypt.add_argument("--tree-sha", required=True)
+    decrypt.add_argument("--run-id", required=True)
+    decrypt.add_argument("--run-attempt", required=True)
+    decrypt.add_argument("--version-code", type=int, required=True)
     decrypt.add_argument("--output", type=Path, required=True)
     decrypt.add_argument("--openssl", default="openssl")
     scan_copy = commands.add_parser("copy-android-scan-tree")

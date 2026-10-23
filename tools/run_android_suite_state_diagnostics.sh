@@ -53,9 +53,10 @@ recover_disposable_launcher_anr() {
   local window_dump="$evidence_root/system-health-focused-before-1/dumpsys-window.txt"
   local recovery_dir="$evidence_root/system-health-launcher-recovery"
   [[ "$api_level" == 35 ]] || return 0
+  mkdir -p "$recovery_dir"
   if ! rg -q 'mCurrentFocus=.*Application Not Responding: com\.google\.android\.apps\.nexuslauncher' "$window_dump"; then
     echo 'Launcher ANR recovery not applied: focused-before-1 had no matching ANR window.' \
-      > "$evidence_root/system-health-launcher-recovery/status.txt"
+      > "$recovery_dir/status.txt"
     return 0
   fi
 
@@ -64,7 +65,6 @@ recover_disposable_launcher_anr() {
       > "$evidence_root/system-health-launcher-recovery/status.txt"
     return 1
   fi
-  mkdir -p "$recovery_dir"
   {
     printf 'action=force-stop-and-restart-default-home-only-after-observed-launcher-anr\n'
     printf 'observed_window_dump_sha256='; sha256sum "$window_dump" | awk '{print $1}'

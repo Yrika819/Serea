@@ -24,6 +24,9 @@ jobs:
           - api: 35
             arch: x86_64
             profile: pixel_7
+          - api: 26
+            arch: x86
+            profile: pixel
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

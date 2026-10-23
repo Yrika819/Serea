@@ -3,7 +3,6 @@ package app.serea.android
 import android.app.Activity
 import android.content.ContextWrapper
 import android.os.Bundle
-import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,7 +53,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
@@ -746,22 +744,17 @@ internal fun ChatScreen(
     var composerFocusAllowed by remember(focusClearRequest) {
         mutableStateOf(focusClearRequest == 0)
     }
-    var composerFocusedForDiagnostics by remember { mutableStateOf(false) }
     LaunchedEffect(focusClearRequest) {
         if (focusClearRequest > 0) {
             composerFocusAllowed = false
-            Log.i("SereaChatFocusRestore", "FOCUS_BLOCK_START|request=$focusClearRequest|focused=$composerFocusedForDiagnostics")
             keyboard?.hide()
             focusManager.clearFocus(force = true)
             withFrameNanos { }
-            Log.i("SereaChatFocusRestore", "FOCUS_BLOCK_FRAME_1|request=$focusClearRequest|focused=$composerFocusedForDiagnostics")
             keyboard?.hide()
             focusManager.clearFocus(force = true)
             withFrameNanos { }
-            Log.i("SereaChatFocusRestore", "FOCUS_BLOCK_FRAME_2|request=$focusClearRequest|focused=$composerFocusedForDiagnostics")
             composerFocusAllowed = true
             focusManager.clearFocus(force = true)
-            Log.i("SereaChatFocusRestore", "FOCUS_BLOCK_RELEASE|request=$focusClearRequest|focused=$composerFocusedForDiagnostics")
         }
     }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -1037,13 +1030,6 @@ internal fun ChatScreen(
             if (!settingsDestination) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val composerModifier = Modifier.weight(1f)
-                        .onFocusChanged { focusState ->
-                            composerFocusedForDiagnostics = focusState.isFocused
-                            Log.i(
-                                "SereaChatFocusRestore",
-                                "COMPOSER_FOCUS|request=$focusClearRequest|focused=${focusState.isFocused}|hasFocus=${focusState.hasFocus}",
-                            )
-                        }
                         .focusProperties { canFocus = composerFocusAllowed }
                         .testTag("chat-composer")
                     key(focusClearRequest) {

@@ -1178,7 +1178,8 @@ class SereaAppShellTest {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
         pressBack()
-        composer.assertIsDisplayed().assertHasSetTextAction()
+        composer.assertIsDisplayed()
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
         composer.assertTextContains("draft! survives navigation")
         composer.performTextInput("?")
         assertEquals("draft!? survives navigation", compose.activity.chatViewModel.state.value.input)

@@ -512,7 +512,7 @@ class SereaAppShellTest {
             "probe-edge",
         )
         if (edgeProgress) {
-            verifyCalendarSemanticsScrollBy(list)
+            verifyCalendarSemanticsScrollToIndex(list)
             return CalendarGesturePath.NODE_EDGE
         }
 
@@ -523,7 +523,7 @@ class SereaAppShellTest {
             "probe-node-interior",
         )
         if (interiorProgress) {
-            verifyCalendarSemanticsScrollBy(list)
+            verifyCalendarSemanticsScrollToIndex(list)
             return CalendarGesturePath.NODE_INTERIOR
         }
 
@@ -534,64 +534,62 @@ class SereaAppShellTest {
             "probe-root-interior",
         )
         if (rootProgress) {
-            verifyCalendarSemanticsScrollBy(list)
+            verifyCalendarSemanticsScrollToIndex(list)
             return CalendarGesturePath.ROOT_INTERIOR
         }
-        verifyCalendarSemanticsScrollBy(list)
+        verifyCalendarSemanticsScrollToIndex(list)
         throw AssertionError(
-            "Calendar list moved through Semantics ScrollBy but none of the three real Touch Gesture paths moved it; " +
+            "Calendar list moved through Semantics ScrollToIndex but none of the three real Touch Gesture paths moved it; " +
                 "boundsInRoot=${node.boundsInRoot}, boundsInWindow=${node.boundsInWindow}, " +
                 "root=${root.boundsInRoot}, visibleIntersection=[$visibleLeft,$visibleTop,$visibleRight,$visibleBottom], " +
                 "position=${node.position}, viewport=${node.viewport}, loadedEvents=${node.loadedEventCount}",
         )
     }
 
-    private fun verifyCalendarSemanticsScrollBy(list: androidx.compose.ui.test.SemanticsNodeInteraction) {
+    private fun verifyCalendarSemanticsScrollToIndex(list: androidx.compose.ui.test.SemanticsNodeInteraction) {
         val before = snapshotSemantics(list)
-        val beforeValue = checkNotNull(before.scrollValue)
-        val beforeMax = checkNotNull(before.scrollMax)
-        val delta = if (beforeValue + 1f < beforeMax) 80f else -80f
-        var handled = false
-        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
-            handled = scrollBy(0f, delta)
+        val viewportBefore = checkNotNull(before.viewport)
+        val visibleBefore = viewportBefore.visibleItemIndices
+        assertTrue("Calendar list must expose at least one visible item", visibleBefore.isNotEmpty())
+        val firstBefore = visibleBefore.minOrNull()!!
+        val lastBefore = visibleBefore.maxOrNull()!!
+        val targetIndex = if (viewportBefore.canScrollForward && lastBefore + 1 < viewportBefore.totalItems) {
+            lastBefore + 1
+        } else {
+            (firstBefore - 1).coerceAtLeast(0)
+        }
+        assertTrue("Calendar Semantics probe must select a different item", targetIndex !in visibleBefore)
+        list.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+            scrollToIndex(targetIndex)
         }
         compose.waitForIdle()
         val after = snapshotSemantics(list)
-        val afterValue = checkNotNull(after.scrollValue)
-        val afterMax = checkNotNull(after.scrollMax)
-        val movedInExpectedDirection = if (delta > 0f) {
-            afterValue > beforeValue + 0.5f
-        } else {
-            afterValue < beforeValue - 0.5f
-        }
+        val visibleAfter = checkNotNull(after.viewport?.visibleItemIndices)
         Log.i(
             CALENDAR_STAGE_TAG,
-            "SEMANTICS_SCROLL_BY|handled=$handled|delta=$delta|from=$beforeValue|" +
-                "to=$afterValue|max=$afterMax|" +
-                "firstVisible=${before.position}->${after.position}|" +
-                "visibleIndices=${before.viewport?.visibleItemIndices}->${after.viewport?.visibleItemIndices}|" +
+            "SEMANTICS_SCROLL_TO_INDEX|target=$targetIndex|" +
+                "firstVisible=$firstBefore->${visibleAfter.minOrNull()}|" +
+                "visibleIndices=$visibleBefore->$visibleAfter|" +
                 "viewport=${after.viewport}",
         )
-        assertTrue("Semantics ScrollBy action must be handled", handled)
         assertTrue(
-            "Semantics ScrollBy must move the Calendar list",
-            movedInExpectedDirection && kotlin.math.abs(afterMax - beforeMax) < 1f,
+            "Semantics ScrollToIndex must make the requested Calendar item visible",
+            targetIndex in visibleAfter && visibleAfter != visibleBefore,
         )
-        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
-            scrollBy(0f, -delta)
+        list.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+            scrollToIndex(firstBefore)
         }
         compose.waitForIdle()
         val restored = snapshotSemantics(list)
-        val restoredValue = checkNotNull(restored.scrollValue)
+        val restoredVisible = checkNotNull(restored.viewport?.visibleItemIndices)
         Log.i(
             CALENDAR_STAGE_TAG,
-            "SEMANTICS_SCROLL_RESTORE|from=$afterValue|to=$restoredValue|" +
-                "firstVisible=${before.position}->${restored.position}|" +
-                "visibleIndices=${before.viewport?.visibleItemIndices}->${restored.viewport?.visibleItemIndices}",
+            "SEMANTICS_SCROLL_TO_INDEX_RESTORE|target=$firstBefore|" +
+                "visibleIndices=$visibleBefore->$restoredVisible",
         )
         assertTrue(
-            "Semantics ScrollBy probe must restore its starting offset",
-            kotlin.math.abs(restoredValue - beforeValue) < 1f,
+            "Semantics ScrollToIndex probe must restore the starting item to visibility",
+            firstBefore in restoredVisible,
         )
     }
 

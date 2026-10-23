@@ -74,8 +74,8 @@ fun GmailScreen(
     BackHandler(enabled = !isRoot) { viewModel.back() }
     LaunchedEffect(route, state.isLoading) {
         if (route is GmailRoute.List && route.mode == GmailListMode.SEARCH && !state.isLoading) {
-            focusManager.clearFocus(force = true)
             keyboardController?.hide()
+            focusManager.clearFocus(force = true)
         }
     }
 
@@ -130,8 +130,8 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
     val compactLayout = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 360
     val submitSearch = {
         viewModel.submitSearch(state.searchInput)
-        focusManager.clearFocus(force = true)
         keyboardController?.hide()
+        focusManager.clearFocus(force = true)
     }
     Column(modifier.fillMaxSize()) {
         Row(

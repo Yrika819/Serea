@@ -51,9 +51,10 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -668,6 +669,7 @@ internal fun ChatScreen(
 ) {
     val state by chatViewModel.state.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val context = LocalContext.current
     val hostActivity = remember(context) {
         var current: android.content.Context? = context
@@ -811,6 +813,8 @@ internal fun ChatScreen(
                         modelPolicy.copy(maxEstimatedCost = amount, budgetCurrencyCode = currency.takeIf { amount != null })
                     }.onSuccess { updated ->
                         modelSettings.save(updated); modelPolicy = updated
+                        keyboard?.hide()
+                        focusManager.clearFocus(force = true)
                         settingsMessage = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
                     }.onFailure { settingsMessage = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。" }
                 }) { Text("ルーター設定を保存") }

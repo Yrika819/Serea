@@ -25,6 +25,7 @@ class ProfileVerifierCacheMarkerTest {
     @Test fun rejectsNoProfileAndEmbeddedProfileFailureResults() {
         assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 0), PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 5 shl 16), PACKAGE_UPDATE_TIME))
+        assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 4 shl 16), PACKAGE_UPDATE_TIME))
     }
 
     @Test fun rejectsUnknownSchemaOrResultAndStalePackageUpdateTime() {

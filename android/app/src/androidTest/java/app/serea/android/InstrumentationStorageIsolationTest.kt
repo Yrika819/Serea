@@ -49,7 +49,12 @@ class InstrumentationStorageIsolationTest {
                 ProfileVerifier.CompilationStatus.RESULT_CODE_ERROR_UNSUPPORTED_API_VERSION,
                 resultCode,
             )
-            assertTrue("unsupported API 26 must not persist a ProfileVerifier marker", target.filesDir.listFiles().isNullOrEmpty())
+            val profileVerifierMarker = File(target.filesDir, ProfileVerifierCacheMarker.FILE_NAME)
+            assertFalse(
+                "unsupported API 26 must not persist a ProfileVerifier marker; " +
+                    "filesDirEntries=${target.filesDir.listFiles()?.map { it.name }?.sorted()}",
+                profileVerifierMarker.exists(),
+            )
             Log.i(
                 PROFILE_VERIFIER_EVIDENCE_TAG,
                 "api=26 status=UNSUPPORTED resultCode=$resultCode embedded=false marker=absent",

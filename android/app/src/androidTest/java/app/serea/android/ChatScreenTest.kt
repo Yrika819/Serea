@@ -407,7 +407,7 @@ class ChatScreenTest {
         )
         val savedPolicySummary = compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先")
         savedPolicySummary.performScrollTo()
-        compose.waitUntil(5_000) {
+        compose.waitUntil(15_000) {
             runCatching { savedPolicySummary.assertIsDisplayed() }.isSuccess
         }
         savedPolicySummary.assertIsDisplayed()

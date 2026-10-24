@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ContextWrapper
 import android.os.Bundle
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -118,6 +119,18 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (savedInstanceState != null) chatViewModel.beginActivitySelectionRestore()
         setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        // Stop the old IME connection before it can report a stale end-of-text
+        // selection into the ViewModel while the replacement Activity starts.
+        chatViewModel.beginActivitySelectionRestore()
+        val decorView = window.decorView
+        decorView.windowToken?.let { windowToken ->
+            getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(windowToken, 0)
+        }
+        decorView.findFocus()?.clearFocus()
+        super.onSaveInstanceState(outState)
     }
 }
 

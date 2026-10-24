@@ -113,7 +113,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState != null) chatViewModel.beginActivitySelectionRestore()
+        if (savedInstanceState != null) {
+            chatViewModel.beginActivitySelectionRestore()
+            val softInputMode = window.attributes.softInputMode
+            window.setSoftInputMode(
+                (softInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_STATE.inv()) or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN,
+            )
+        }
         setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
     }
 }

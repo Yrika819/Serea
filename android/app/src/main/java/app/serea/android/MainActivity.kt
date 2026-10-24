@@ -65,8 +65,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -743,15 +741,6 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
-    var composerValue by rememberSaveable(state.conversation.id, stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(state.input))
-    }
-    LaunchedEffect(state.input) {
-        if (composerValue.text != state.input) {
-            val cursor = composerValue.selection.start.coerceIn(0, state.input.length)
-            composerValue = TextFieldValue(state.input, TextRange(cursor))
-        }
-    }
     var composerFocusAllowed by remember(focusClearRequest) {
         mutableStateOf(focusClearRequest == 0)
     }
@@ -1044,11 +1033,7 @@ internal fun ChatScreen(
                         .focusProperties { canFocus = composerFocusAllowed }
                         .testTag("chat-composer")
                     key(focusClearRequest) {
-                        OutlinedTextField(value = composerValue,
-                            onValueChange = { value ->
-                                composerValue = value
-                                chatViewModel.updateInput(value.text)
-                            },
+                        OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
                             modifier = composerModifier, label = { Text("メッセージ") },
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                             maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),

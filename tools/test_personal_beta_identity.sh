@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+current_phase='startup'
+trap 'status=$?; printf "FAIL: phase=%s line=%s status=%s command=%q\n" "$current_phase" "$LINENO" "$status" "$BASH_COMMAND" >&2' ERR
+mark_phase() {
+  current_phase="$1"
+  printf 'PHASE: %s\n' "$current_phase"
+}
+
+mark_phase 'emulator-connection-and-identity'
 
 if [[ "${SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR:-}" != "1" ]]; then
   echo 'Set SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR=1 only for a throwaway API 35 emulator.' >&2
@@ -45,6 +54,7 @@ wait_for_package_manager() {
   return 1
 }
 wait_for_package_manager
+mark_phase 'package-manager-and-beta-cleanliness'
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 android_dir="$repo_root/android"
@@ -79,6 +89,7 @@ apk_fingerprint() {
     | awk -F ': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' \
     | normalize_fingerprint
 }
+mark_phase 'demo-install-and-baseline-preservation'
 installed_apk_path() {
   adb shell pm path "$demo_package" | tr -d '\r' | sed -n 's/^package://p' | head -1
 }
@@ -183,6 +194,7 @@ if [[ "$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256" == "$demo_fingerprint" ]]; then
   echo 'Disposable Beta signing key unexpectedly matches the Demo signer.' >&2
   exit 1
 fi
+mark_phase 'temporary-key-generation-and-signature-verification'
 
 apk_v99="$test_root/personal-beta-v99.apk"
 apk_v100="$test_root/personal-beta-v100.apk"
@@ -192,6 +204,7 @@ build_beta 99 false "$apk_v99"
 adb install "$apk_v99"
 [[ -n "$(adb shell pm path "$demo_package" | tr -d '\r')" ]]
 [[ -n "$(adb shell pm path "$beta_package" | tr -d '\r')" ]]
+printf 'PASS: phase=demo-beta-parallel-install\n'
 
 build_beta 100 true "$apk_v100"
 adb install -r "$apk_v100"
@@ -201,6 +214,7 @@ installed_version=$(adb shell dumpsys package "$beta_package" \
 phase campaign-seed
 phase campaign-consume
 phase prepare
+printf 'PASS: phase=keystore-and-encrypted-data-creation\n'
 database_listing=$(adb shell "ls -l /data/user/0/$beta_package/databases" | tr -d '\r')
 printf '%s\n' "$database_listing"
 printf '%s\n' "$database_listing" | awk '$5 ~ /^[0-9]+$/ && $5 > 0 && ($NF == "serea-history.db" || $NF == "serea-tasks-process-death-harness.db") { found[$NF]=1 } END { exit !(found["serea-history.db"] && found["serea-tasks-process-death-harness.db"]) }'
@@ -219,15 +233,18 @@ reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
 phase verify
+printf 'PASS: phase=encrypted-data-after-first-reboot\n'
 build_beta 101 true "$apk_v101"
 adb install -r "$apk_v101"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
 [[ "$installed_version" == 101 ]]
+mark_phase 'same-signer-beta-update'
 reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
 phase verify
+printf 'PASS: phase=encrypted-data-after-same-signer-update-and-reboot\n'
 
 wrong_key="$test_root/wrong-signer.p12"
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$wrong_key"
@@ -247,7 +264,9 @@ installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
 [[ "$installed_version" == 101 ]]
 phase verify
+printf 'PASS: phase=wrong-signer-rejected-and-data-retained\n'
 
+mark_phase 'demo-package-and-encrypted-data-preservation'
 verify_demo_unchanged
 mkdir -p "$(dirname "$results")"
 {

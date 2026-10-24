@@ -6,10 +6,13 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.content.Context
+import android.util.Log
 import com.google.gson.JsonParser
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
@@ -44,6 +47,7 @@ class ChatHttpE2ETest {
     private val alias = "http-e2e-${UUID.randomUUID()}"
     private val history = ConversationRepository(db.historyDao(), KeystoreAesGcm(alias))
     private val usage = UsageRepository(db.usageDao())
+    private companion object { const val DIAG_TAG = "SereaChatInputRegression" }
 
     @After fun close() {
         db.close()
@@ -325,20 +329,34 @@ class ChatHttpE2ETest {
         val previousMessageCount = before.conversation.messages.size
         val previousMessageIds = before.conversation.messages.mapTo(mutableSetOf()) { it.id }
         val expectedRequestCount = server.requestCount + 1
+        logInputState("BEFORE_TYPE:$prompt")
         composer.performTextInput(prompt)
+        logInputState("AFTER_TYPE:$prompt")
         compose.onNodeWithText("送信").performClick()
-        compose.waitUntil(30_000) {
-            val current = stateSnapshot()
-            val turn = current.conversation.messages.drop(previousMessageCount)
-            val sendId = turn.firstOrNull()?.id
-            current.conversation.id == before.conversation.id &&
-                turn.size == 2 &&
-                !sendId.isNullOrBlank() && sendId !in previousMessageIds &&
-                turn[0].role == MessageRole.USER && turn[0].text == prompt && turn[0].status == "COMPLETED" &&
-                turn[1].role == MessageRole.ASSISTANT && turn[1].text == response && turn[1].status == "COMPLETED" &&
-                !current.isLoading && current.errorMessage == null && server.requestCount == expectedRequestCount
+        logInputState("AFTER_SEND_CLICK:$prompt")
+        try {
+            compose.waitUntil(30_000) {
+                val current = stateSnapshot()
+                val turn = current.conversation.messages.drop(previousMessageCount)
+                val sendId = turn.firstOrNull()?.id
+                current.conversation.id == before.conversation.id &&
+                    turn.size == 2 &&
+                    !sendId.isNullOrBlank() && sendId !in previousMessageIds &&
+                    turn[0].role == MessageRole.USER && turn[0].text == prompt && turn[0].status == "COMPLETED" &&
+                    turn[1].role == MessageRole.ASSISTANT && turn[1].text == response && turn[1].status == "COMPLETED" &&
+                    !current.isLoading && current.errorMessage == null && server.requestCount == expectedRequestCount
+            }
+        } catch (failure: Throwable) {
+            val pendingRequests = buildList {
+                repeat(server.requestCount) {
+                    server.takeRequest(100, TimeUnit.MILLISECONDS)?.let { add(it.method + " " + it.path + " " + it.body.readUtf8()) }
+                }
+            }
+            logInputState("WAIT_FAILURE:$prompt pendingRequests=$pendingRequests failure=$failure")
+            throw failure
         }
         val completed = stateSnapshot()
+        logInputState("COMPLETED:$prompt")
         val turn = completed.conversation.messages.drop(previousMessageCount)
         assertEquals("The new send did not produce exactly one user/assistant turn", 2, turn.size)
         assertEquals(prompt, turn[0].text)
@@ -354,6 +372,21 @@ class ChatHttpE2ETest {
     private fun stateSnapshot(): ChatUiState {
         // The test owns the VM and observes its StateFlow directly.
         return activeVm.state.value
+    }
+
+    private fun logInputState(stage: String) {
+        val state = stateSnapshot()
+        val composer = runCatching {
+            val nodes = compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
+            val text = nodes.singleOrNull()?.config?.getOrNull(SemanticsProperties.EditableText)?.text
+            "count=${nodes.size};composerValueText=$text;matchesStateInput=${text == state.input};" + nodes.joinToString(";") {
+                "id=${it.id},editable=${it.config.getOrNull(SemanticsProperties.EditableText)},bounds=${it.boundsInWindow}"
+            }
+        }.getOrElse { "unavailable:$it" }
+        val saved = runCatching { runBlocking { history.get(state.conversation.id)?.messages?.map { it.role to it.status } } }
+            .getOrElse { "failed:$it" }
+        val usageState = runCatching { runBlocking { usage.snapshot() } }.getOrElse { "failed:$it" }
+        Log.i(DIAG_TAG, "$stage|stateInput=${state.input}|composerEditable=$composer|loading=${state.isLoading}|error=${state.errorMessage}|messages=${state.conversation.messages.map { Triple(it.role, it.text, it.status) }}|httpRequestCount=${server.requestCount}|history=$saved|usage=$usageState")
     }
 
     private lateinit var activeVm: ChatViewModel

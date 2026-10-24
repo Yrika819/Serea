@@ -116,41 +116,39 @@ class SereaAppShellTest {
         val nodes = target.nodes.fetchSemanticsNodes()
         check(nodes.size == 1) { "Expected one Calendar semantics node, found ${nodes.size}." }
         val node = nodes.single()
-        var result: CalendarSemanticsSnapshot? = null
-        compose.runOnIdle {
-            // Evaluate config lambdas, child bounds, and Owner geometry together on the UI thread.
-            val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
-            val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
-            val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {
-                it.copy(visibleItemIndices = it.visibleItemIndices.toList())
-            }
-            val agendaItems = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }?.let {
-                it.copy(eventItemIndices = it.eventItemIndices.toMap())
-            }
-            val root = node.boundsInRoot
-            val window = node.boundsInWindow
-            val children = node.children.take(20).joinToString(separator = ";") { child ->
-                val text = child.config.getOrElseNullable(SemanticsProperties.Text) { null }
-                    ?.joinToString(" ") { it.text }
-                val description = child.config.getOrElseNullable(SemanticsProperties.ContentDescription) { null }
-                    ?.joinToString(" ")
-                val label = text?.takeIf { it.isNotBlank() } ?: description.orEmpty()
-                "$label@${child.boundsInRoot}"
-            }
-            result = CalendarSemanticsSnapshot(
-                scrollValue = axis?.value(),
-                scrollMax = axis?.maxValue(),
-                position = position,
-                viewport = viewport,
-                loadedEventCount = node.config.getOrElseNullable(CalendarAgendaLoadedEventCountKey) { null },
-                agendaItems = agendaItems,
-                boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
-                boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
-                hasClickAction = SemanticsActions.OnClick in node.config,
-                visibleSemantics = children,
-            )
+        // Keep semantics reads on the Compose test thread. Reading this node on the UI thread and
+        // then performing gestures on the instrumentation thread can bind SnapshotStateObserver
+        // to different threads after ActivityScenario recreation (notably on API 35).
+        val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
+        val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
+        val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {
+            it.copy(visibleItemIndices = it.visibleItemIndices.toList())
         }
-        return checkNotNull(result) { "Compose UI thread did not produce a Calendar semantics snapshot." }
+        val agendaItems = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }?.let {
+            it.copy(eventItemIndices = it.eventItemIndices.toMap())
+        }
+        val root = node.boundsInRoot
+        val window = node.boundsInWindow
+        val children = node.children.take(20).joinToString(separator = ";") { child ->
+            val text = child.config.getOrElseNullable(SemanticsProperties.Text) { null }
+                ?.joinToString(" ") { it.text }
+            val description = child.config.getOrElseNullable(SemanticsProperties.ContentDescription) { null }
+                ?.joinToString(" ")
+            val label = text?.takeIf { it.isNotBlank() } ?: description.orEmpty()
+            "$label@${child.boundsInRoot}"
+        }
+        return CalendarSemanticsSnapshot(
+            scrollValue = axis?.value(),
+            scrollMax = axis?.maxValue(),
+            position = position,
+            viewport = viewport,
+            loadedEventCount = node.config.getOrElseNullable(CalendarAgendaLoadedEventCountKey) { null },
+            agendaItems = agendaItems,
+            boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
+            boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
+            hasClickAction = SemanticsActions.OnClick in node.config,
+            visibleSemantics = children,
+        )
     }
 
     private fun calendarNodeWithTag(tag: String) = CalendarSemanticsTarget(

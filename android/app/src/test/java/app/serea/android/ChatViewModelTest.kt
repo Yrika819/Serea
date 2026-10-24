@@ -1,6 +1,7 @@
 package app.serea.android
 
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
@@ -121,6 +122,25 @@ class ChatViewModelTest {
         assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT), vm.state.value.conversation.messages.map { it.role })
         assertEquals("Demo: hello", vm.state.value.conversation.messages.last().text)
         assertFalse(vm.state.value.isLoading)
+    }
+
+    @Test fun staleEditorCallbackFromSentComposerCannotRestoreDraft() = runTest(dispatcher) {
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("Demo: ${request.message}")
+        })
+        val sentComposerGeneration = vm.state.value.editorInputGeneration
+        vm.updateInput("first question")
+        vm.sendMessage()
+        val nextComposerGeneration = vm.state.value.editorInputGeneration
+        assertTrue(nextComposerGeneration > sentComposerGeneration)
+        assertEquals("", vm.state.value.input)
+
+        advanceUntilIdle()
+        vm.updateEditorValue(TextFieldValue("first question"), sentComposerGeneration)
+        assertEquals("", vm.state.value.input)
+
+        vm.updateEditorValue(TextFieldValue("second question"), nextComposerGeneration)
+        assertEquals("second question", vm.state.value.input)
     }
 
     @Test fun mockConversationUsesPreviousTurnsInTheNextRequestContext() = runTest(dispatcher) {

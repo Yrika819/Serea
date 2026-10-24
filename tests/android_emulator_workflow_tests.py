@@ -14,6 +14,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AndroidEmulatorWorkflowTests(unittest.TestCase):
+    def test_personal_beta_identity_preflight_waits_for_stable_disposable_emulator(self) -> None:
+        script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")
+        self.assertIn('discovery_deadline=$((SECONDS + 60))', script)
+        self.assertIn('device_listing=$(timeout "${timeout_seconds}s" adb devices -l 2>&1 || true)', script)
+        self.assertIn('bounded_adb "$deadline" 8 -s "$serial" wait-for-device', script)
+        self.assertIn('local deadline=$((SECONDS + 120))', script)
+        self.assertIn('while (( SECONDS < deadline )); do', script)
+        self.assertIn('timeout "${cap}s" adb "$@"', script)
+        self.assertIn('timeout 10s adb -s "$serial" root', script)
+        self.assertIn('adb -s "$serial" get-state', script)
+        self.assertIn('"$state" == device && "$sdk" == 35 && "$qemu" == 1 && "$boot_completed" == 1', script)
+        self.assertIn('[[ "$stable_samples" -ge 3 ]]', script)
+        self.assertIn('print_emulator_diagnostics "Emulator did not remain online', script)
+        subprocess.run(["bash", "-n", str(ROOT / "tools/test_personal_beta_identity.sh")], check=True)
+
     def test_lifecycle_summary_links_failures_ui_state_and_process_death(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary) / "api35"
@@ -152,6 +167,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "run_android_process_death_harness.sh",
             "test_android_update_compatibility.sh",
             "test_android_update_compatibility_guard.sh",
+            "test_personal_beta_identity.sh",
             "run_android_api35_campaign.sh",
         ):
             subprocess.run(["bash", "-n", str(ROOT / "tools" / name)], check=True)
@@ -186,6 +202,10 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             workflow.index("Clear API 26 emulator state before API 35 campaign"),
             workflow.index("Run API 35 Pixel emulator and all instrumentation tests"),
         )
+        api35_step = workflow.split("Run API 35 Pixel emulator and all instrumentation tests", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        self.assertIn("if: always() && !cancelled()", api35_step)
         for step_name in (
             "Run API 35 Pixel emulator and all instrumentation tests",
             "Run API 26 Pixel emulator and all instrumentation tests",
@@ -534,7 +554,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             workflow.index("- name: Run API 35 Pixel emulator and all instrumentation tests"),
         )
         api35 = steps["Run API 35 Pixel emulator and all instrumentation tests"]
-        self.assertNotRegex(api35, r"(?m)^\s+if:")
+        self.assertIn(always, api35)
         combine = workflow.split("name: Combine API-specific required evidence", 1)[1].split(
             "\n      - name:", 1
         )[0]

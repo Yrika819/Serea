@@ -160,6 +160,7 @@ data class Conversation(
 data class ChatUiState(
     val conversation: Conversation = Conversation(id = UUID.randomUUID().toString()),
     val editorValue: TextFieldValue = TextFieldValue(),
+    val editorInputGeneration: Long = 0,
     val editorSelectionCorrectionGeneration: Long = 0,
     val isLoading: Boolean = false,
     val isFinalizing: Boolean = false,
@@ -248,8 +249,12 @@ internal class ChatViewModel(
 
     fun isActivitySelectionRestorePending(): Boolean = preserveEditorSelectionDuringRestore
 
-    fun updateEditorValue(value: TextFieldValue) {
+    fun updateEditorValue(
+        value: TextFieldValue,
+        sourceGeneration: Long = mutableState.value.editorInputGeneration,
+    ) {
         mutableState.update { current ->
+            if (sourceGeneration != current.editorInputGeneration) return@update current
             // Ignore stale InputConnection callbacks until the restored field
             // actually regains focus. They can carry either an end selection
             // or an old composing-text edit from the Activity being replaced.
@@ -318,7 +323,14 @@ internal class ChatViewModel(
             origin = DataOrigin.USER_AUTHORED, conversationId = conversationId)
         activeMessageId = userMessage.id
         mutableState.update {
-            it.copy(conversation = it.conversation.copy(messages = it.conversation.messages + userMessage), editorValue = TextFieldValue(), isLoading = true, isFinalizing = false, errorMessage = null)
+            it.copy(
+                conversation = it.conversation.copy(messages = it.conversation.messages + userMessage),
+                editorValue = TextFieldValue(),
+                editorInputGeneration = it.editorInputGeneration + 1,
+                isLoading = true,
+                isFinalizing = false,
+                errorMessage = null,
+            )
         }
         activeJob = viewModelScope.launch {
             var turnFinalized = false
@@ -397,7 +409,8 @@ internal class ChatViewModel(
         cancelCurrent()
         selectionGeneration += 1
         val id = UUID.randomUUID().toString()
-        mutableState.update { it.copy(conversation = Conversation(id), editorValue = TextFieldValue(), isLoading = false, isFinalizing = false, showingHistory = false,
+        mutableState.update { it.copy(conversation = Conversation(id), editorValue = TextFieldValue(),
+            editorInputGeneration = it.editorInputGeneration + 1, isLoading = false, isFinalizing = false, showingHistory = false,
             isRestoring = false, errorMessage = null, statusMessage = null) }
     }
 
@@ -1117,8 +1130,11 @@ internal fun ChatScreen(
                             }
                         }
                         .testTag("chat-composer")
-                    key(hostActivity, state.editorSelectionCorrectionGeneration) {
-                        OutlinedTextField(value = state.editorValue, onValueChange = chatViewModel::updateEditorValue,
+                    val composerInputGeneration = state.editorInputGeneration
+                    key(hostActivity, composerInputGeneration, state.editorSelectionCorrectionGeneration) {
+                        OutlinedTextField(value = state.editorValue, onValueChange = { value ->
+                            chatViewModel.updateEditorValue(value, composerInputGeneration)
+                        },
                             modifier = composerModifier, label = { Text("メッセージ") },
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                             maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),

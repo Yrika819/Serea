@@ -357,6 +357,7 @@ jobs:
           adb start-server
       - name: Run API 35 Pixel emulator and all instrumentation tests
         id: api35
+        if: always() && !cancelled()
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         env:
           SEREA_DISPOSABLE_CI_EMULATOR: '1'

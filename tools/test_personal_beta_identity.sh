@@ -9,28 +9,105 @@ command -v adb >/dev/null
 command -v keytool >/dev/null
 command -v openssl >/dev/null
 command -v strings >/dev/null
+command -v timeout >/dev/null
 
-device_rows=$(adb devices | awk 'NR > 1 && NF >= 2 { print $1 ":" $2 }')
-if [[ "$(printf '%s\n' "$device_rows" | sed '/^$/d' | wc -l | tr -d ' ')" != 1 ]]; then
-  echo 'Expected exactly one connected disposable emulator.' >&2
-  adb devices -l >&2
-  exit 2
-fi
-serial="${device_rows%%:*}"
-if [[ "${device_rows#*:}" != device || ! "$serial" =~ ^emulator-[0-9]+$ ]]; then
-  echo "Refusing non-emulator Android target '$serial'." >&2
+serial=''
+device_listing=''
+discovery_deadline=$((SECONDS + 60))
+for _ in $(seq 1 30); do
+  remaining=$((discovery_deadline - SECONDS))
+  (( remaining > 0 )) || break
+  timeout_seconds=5
+  (( timeout_seconds < remaining )) || timeout_seconds=$remaining
+  device_listing=$(timeout "${timeout_seconds}s" adb devices -l 2>&1 || true)
+  device_rows=$(awk 'NR > 1 && NF >= 2 { print $1 ":" $2 }' <<< "$device_listing")
+  row_count=$(awk 'NF { count++ } END { print count+0 }' <<< "$device_rows")
+  if [[ "$row_count" == 1 ]]; then
+    candidate="${device_rows%%:*}"
+    if [[ "$candidate" =~ ^emulator-[0-9]+$ ]]; then
+      serial="$candidate"
+      break
+    fi
+  elif [[ "$row_count" -gt 1 ]]; then
+    echo 'Expected exactly one disposable emulator and no other Android targets.' >&2
+    printf '%s\n' "$device_listing" >&2
+    exit 2
+  fi
+  remaining=$((discovery_deadline - SECONDS))
+  (( remaining > 0 )) || break
+  sleep_seconds=2
+  (( sleep_seconds < remaining )) || sleep_seconds=$remaining
+  sleep "$sleep_seconds"
+done
+if [[ -z "$serial" ]]; then
+  echo 'Could not discover exactly one disposable Android emulator within 60 seconds.' >&2
+  printf '%s\n' "$device_listing" >&2
+  timeout 5s adb devices -l >&2 || true
   exit 2
 fi
 export ANDROID_SERIAL="$serial"
-if [[ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" != 35 ||
-      "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != 1 ]]; then
-  echo 'Refusing emulator: the Personal Beta identity test requires an API 35 QEMU emulator.' >&2
+
+bounded_adb() {
+  local deadline="$1" cap="$2"
+  shift 2
+  local remaining=$((deadline - SECONDS))
+  (( remaining > 0 )) || return 124
+  (( cap < remaining )) || cap=$remaining
+  timeout "${cap}s" adb "$@"
+}
+
+print_emulator_diagnostics() {
+  local reason="$1"
+  echo "$reason" >&2
+  timeout 3s adb devices -l >&2 || true
+  if [[ -n "$serial" ]]; then
+    echo "ADB target: $serial" >&2
+    timeout 3s adb -s "$serial" get-state >&2 || true
+    timeout 3s adb -s "$serial" shell getprop ro.build.version.sdk >&2 || true
+    timeout 3s adb -s "$serial" shell getprop ro.kernel.qemu >&2 || true
+    timeout 3s adb -s "$serial" shell getprop sys.boot_completed >&2 || true
+  fi
+}
+
+wait_for_stable_emulator() {
+  local phase="$1"
+  local deadline=$((SECONDS + 120))
+  local stable_samples=0
+  local state sdk qemu boot_completed remaining sleep_seconds
+  while (( SECONDS < deadline )); do
+    if bounded_adb "$deadline" 8 -s "$serial" wait-for-device >/dev/null 2>&1; then
+      state=$(bounded_adb "$deadline" 5 -s "$serial" get-state 2>/dev/null || true)
+      sdk=$(bounded_adb "$deadline" 5 -s "$serial" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r' || true)
+      qemu=$(bounded_adb "$deadline" 5 -s "$serial" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r' || true)
+      boot_completed=$(bounded_adb "$deadline" 5 -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+      if [[ "$state" == device && "$sdk" == 35 && "$qemu" == 1 && "$boot_completed" == 1 ]]; then
+        stable_samples=$((stable_samples + 1))
+        if [[ "$stable_samples" -ge 3 ]]; then return 0; fi
+      else
+        stable_samples=0
+      fi
+    else
+      stable_samples=0
+    fi
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || break
+    sleep_seconds=2
+    (( sleep_seconds < remaining )) || sleep_seconds=$remaining
+    sleep "$sleep_seconds"
+  done
+  print_emulator_diagnostics "Emulator did not remain online with API 35, QEMU, and boot complete during $phase."
+  return 1
+}
+
+wait_for_stable_emulator 'initial startup'
+if ! timeout 10s adb -s "$serial" root >/dev/null; then
+  print_emulator_diagnostics 'Could not restart adb in root mode on the disposable emulator.'
   exit 2
 fi
-adb root >/dev/null
-adb wait-for-device
-if [[ "$(adb shell id -u | tr -d '\r')" != 0 ]]; then
-  echo 'The disposable emulator must allow adb root to preserve-check Demo app data.' >&2
+wait_for_stable_emulator 'adb root restart'
+root_uid=$(timeout 8s adb -s "$serial" shell id -u 2>/dev/null | tr -d '\r' || true)
+if [[ "$root_uid" != 0 ]]; then
+  print_emulator_diagnostics 'The disposable emulator must allow adb root to preserve-check Demo app data.'
   exit 2
 fi
 

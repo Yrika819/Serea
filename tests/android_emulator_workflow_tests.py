@@ -27,7 +27,61 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('"$state" == device && "$sdk" == 35 && "$qemu" == 1 && "$boot_completed" == 1', script)
         self.assertIn('[[ "$stable_samples" -ge 3 ]]', script)
         self.assertIn('print_emulator_diagnostics "Emulator did not remain online', script)
+        self.assertIn("set -Eeuo pipefail", script)
+        self.assertIn("trap 'on_error \"$LINENO\" \"$BASH_COMMAND\"' ERR", script)
+        self.assertIn('command=%q', script)
+        self.assertIn("set_phase 'restart adb as root and wait for stable transport'", script)
         subprocess.run(["bash", "-n", str(ROOT / "tools/test_personal_beta_identity.sh")], check=True)
+
+    def test_personal_beta_identity_err_trap_reports_failed_preflight_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            mock_adb = Path(temporary) / "adb"
+            mock_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  *'devices -l'*) printf 'List of devices attached\\nemulator-5554 device\\n' ;;\n"
+                "  *'wait-for-device'*) exit 0 ;;\n"
+                "  *'get-state'*) echo device ;;\n"
+                "  *'getprop ro.build.version.sdk'*) echo 35 ;;\n"
+                "  *'getprop ro.kernel.qemu'*) echo 1 ;;\n"
+                "  *'getprop sys.boot_completed'*) echo 1 ;;\n"
+                "  *' root'*) exit 0 ;;\n"
+                "  *'shell id -u'*) echo 0 ;;\n"
+                "  *'shell pm list packages -3'*) echo package:android ;;\n"
+                "  *'shell pm path app.serea.android.beta'*) exit 7 ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            mock_adb.chmod(0o755)
+            result_path = ROOT / "android/app/build/outputs/androidTest-results/personal-beta-identity.txt"
+            previous_result = result_path.read_bytes() if result_path.exists() else None
+            environment = os.environ.copy()
+            environment["PATH"] = f"{temporary}{os.pathsep}{environment['PATH']}"
+            environment["ANDROID_HOME"] = temporary
+            environment["ANDROID_SDK_ROOT"] = temporary
+            environment["SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR"] = "1"
+            try:
+                result = subprocess.run(
+                    ["bash", "tools/test_personal_beta_identity.sh"],
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertIn("phase=refuse", result.stderr)
+                self.assertIn("preinstalled", result.stderr)
+                self.assertIn("command=beta_existing_path", result.stderr)
+                self.assertIn("ADB state at the failing harness command:", result.stderr)
+                self.assertIn("List of devices attached", result.stderr)
+                self.assertEqual(result_path.read_text(encoding="utf-8"), "NOT_RUN\n")
+            finally:
+                if previous_result is None:
+                    result_path.unlink(missing_ok=True)
+                else:
+                    result_path.write_bytes(previous_result)
 
     def test_lifecycle_summary_links_failures_ui_state_and_process_death(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

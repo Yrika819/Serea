@@ -1,5 +1,29 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+SEREA_BETA_PHASE='script initialization'
+SEREA_BETA_DIAGNOSTICS_PRINTED=0
+
+on_error() {
+  local status=$?
+  local line="${1:-unknown}"
+  local failed_command="${2:-unknown}"
+  printf 'Personal Beta harness failed: phase=%q line=%s status=%s command=%q\n' \
+    "$SEREA_BETA_PHASE" "$line" "$status" "$failed_command" >&2
+  if [[ "$SEREA_BETA_DIAGNOSTICS_PRINTED" != 1 ]] && declare -F print_emulator_diagnostics >/dev/null; then
+    print_emulator_diagnostics 'ADB state at the failing harness command:'
+  fi
+  exit "$status"
+}
+trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
+
+set_phase() {
+  SEREA_BETA_PHASE="$1"
+  SEREA_BETA_DIAGNOSTICS_PRINTED=0
+  printf 'Personal Beta harness phase: %s\n' "$SEREA_BETA_PHASE"
+}
+
+set_phase 'validate disposable-emulator opt-in'
 
 if [[ "${SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR:-}" != "1" ]]; then
   echo 'Set SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR=1 only for a throwaway API 35 emulator.' >&2
@@ -13,6 +37,7 @@ command -v timeout >/dev/null
 
 serial=''
 device_listing=''
+set_phase 'discover one emulator serial'
 discovery_deadline=$((SECONDS + 60))
 for _ in $(seq 1 30); do
   remaining=$((discovery_deadline - SECONDS))
@@ -58,6 +83,7 @@ bounded_adb() {
 
 print_emulator_diagnostics() {
   local reason="$1"
+  SEREA_BETA_DIAGNOSTICS_PRINTED=1
   echo "$reason" >&2
   timeout 3s adb devices -l >&2 || true
   if [[ -n "$serial" ]]; then
@@ -99,7 +125,9 @@ wait_for_stable_emulator() {
   return 1
 }
 
+set_phase 'wait for stable API 35 emulator startup'
 wait_for_stable_emulator 'initial startup'
+set_phase 'restart adb as root and wait for stable transport'
 if ! timeout 10s adb -s "$serial" root >/dev/null; then
   print_emulator_diagnostics 'Could not restart adb in root mode on the disposable emulator.'
   exit 2
@@ -121,6 +149,7 @@ wait_for_package_manager() {
   echo 'Android Package Manager did not become available on the disposable emulator.' >&2
   return 1
 }
+set_phase 'wait for Android Package Manager'
 wait_for_package_manager
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -144,6 +173,7 @@ trap cleanup EXIT
 mkdir -p "$(dirname "$results")"
 printf 'NOT_RUN\n' > "$results"
 
+set_phase 'refuse preinstalled Beta package on the disposable emulator'
 beta_existing_path=$(adb shell pm path "$beta_package" | tr -d '\r')
 if [[ -n "$beta_existing_path" ]]; then
   echo 'Refusing an emulator that already contains app.serea.android.beta; use a fresh disposable AVD.' >&2
@@ -232,6 +262,7 @@ build_beta() {
 }
 
 cd "$android_dir"
+set_phase 'build and capture existing Demo identity/data'
 ./gradlew --no-daemon --no-build-cache --no-configuration-cache :app:assembleDebug
 demo_apk="$android_dir/app/build/outputs/apk/debug/app-debug.apk"
 demo_apk_id=$("$aapt" dump badging "$demo_apk" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p")
@@ -250,6 +281,7 @@ export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$test_root/personal-beta-test.
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
 export SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS='serea-personal-beta-test'
 export SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD="$SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD"
+set_phase 'generate temporary Beta signing identity'
 SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256=$(make_key \
   "$SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH" "$SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS" \
   SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD)
@@ -265,11 +297,13 @@ apk_v99="$test_root/personal-beta-v99.apk"
 apk_v100="$test_root/personal-beta-v100.apk"
 apk_v101="$test_root/personal-beta-v101.apk"
 apk_wrong="$test_root/personal-beta-wrong-signer-v102.apk"
+set_phase 'build and install Beta v99 with temporary signer'
 build_beta 99 false "$apk_v99"
 adb install "$apk_v99"
 [[ -n "$(adb shell pm path "$demo_package" | tr -d '\r')" ]]
 [[ -n "$(adb shell pm path "$beta_package" | tr -d '\r')" ]]
 
+set_phase 'build and install Beta v100 and seed encrypted state'
 build_beta 100 true "$apk_v100"
 adb install -r "$apk_v100"
 installed_version=$(adb shell dumpsys package "$beta_package" \
@@ -292,21 +326,25 @@ if strings "$test_root/beta-tasks.db" | grep -F -e 'Process recovery completed' 
   exit 1
 fi
 
+set_phase 'reboot and verify encrypted Beta state'
 reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
 phase verify
+set_phase 'build and install same-signer Beta v101 update'
 build_beta 101 true "$apk_v101"
 adb install -r "$apk_v101"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
 [[ "$installed_version" == 101 ]]
+set_phase 'reboot and reverify encrypted Beta state'
 reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
 phase verify
 
 wrong_key="$test_root/wrong-signer.p12"
+set_phase 'build and reject different-signer Beta v102 update'
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$wrong_key"
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
 export SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS='serea-personal-beta-wrong-test'
@@ -325,6 +363,7 @@ installed_version=$(adb shell dumpsys package "$beta_package" \
 [[ "$installed_version" == 101 ]]
 phase verify
 
+set_phase 'verify Demo identity/data isolation and write evidence'
 verify_demo_unchanged
 mkdir -p "$(dirname "$results")"
 {

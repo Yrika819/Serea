@@ -799,7 +799,7 @@ internal fun ChatScreen(
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
     var composerFocusAllowed by remember(focusClearRequest) {
-        mutableStateOf(focusClearRequest == 0 && !chatViewModel.isActivitySelectionRestorePending())
+        mutableStateOf(focusClearRequest == 0)
     }
     var composerRestoreFocusReady by remember(hostActivity, chatViewModel) {
         mutableStateOf(!chatViewModel.isActivitySelectionRestorePending())
@@ -821,12 +821,13 @@ internal fun ChatScreen(
         if (chatViewModel.isActivitySelectionRestorePending()) {
             // Do not reconnect the old IME selection before the ViewModel-backed value is restored.
             composerRestoreFocusReady = false
-            composerFocusAllowed = false
             keyboard?.hide()
             focusManager.clearFocus(force = true)
             withFrameNanos { }
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
             withFrameNanos { }
-            composerFocusAllowed = true
+            focusManager.clearFocus(force = true)
             composerRestoreFocusReady = true
         }
     }

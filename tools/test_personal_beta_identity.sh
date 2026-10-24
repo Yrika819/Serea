@@ -119,11 +119,14 @@ beta_package_path() {
     else
       status=$?
     fi
-    if ! grep -Eiq 'device offline|device .*not found|no devices/emulators found' "$error_file"; then
+    if grep -Eiq 'device offline|device .*not found|no devices/emulators found' "$error_file"; then
+      printf 'RETRY: transient adb transport error while checking Beta package absence (%s/15).\n' "$attempt" >&2
+    elif [[ -z "$output" && ! -s "$error_file" ]]; then
+      printf 'RETRY: adb pm path exited %s without a response while checking Beta package absence (%s/15).\n' "$status" "$attempt" >&2
+    else
       cat "$error_file" >&2
       return "$status"
     fi
-    printf 'RETRY: transient adb transport error while checking Beta package absence (%s/15).\n' "$attempt" >&2
     sleep 1
   done
   cat "$error_file" >&2

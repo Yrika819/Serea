@@ -1199,11 +1199,17 @@ class SereaAppShellTest {
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input.isEmpty() }
         composer.performTextInput("activity preserves cursor")
         composer.performTextInputSelection(TextRange(8, 8))
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
+        }
+        assertEquals(TextRange(8, 8), compose.activity.chatViewModel.state.value.editorValue.selection)
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) {
             compose.activity.chatViewModel.state.value.input == "activity preserves cursor" &&
+                compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8) &&
                 runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
         }
+        assertEquals(TextRange(8, 8), compose.activity.chatViewModel.state.value.editorValue.selection)
         compose.onNodeWithTag("chat-composer").performTextInput("!")
         assertEquals("activity! preserves cursor", compose.activity.chatViewModel.state.value.input)
     }

@@ -88,8 +88,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('stage_dir/gradle.log', campaign)
         stage_body = campaign.split("run_diagnostic_stage() {", 1)[1].split("\n}\n\ncleanup_failed()", 1)[0]
         self.assertIn('if [[ -d "$stage_dir/junit" ]]; then', stage_body)
-        self.assertIn('if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 ]]', stage_body)
-        self.assertIn('if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 ]]', stage_body)
+        self.assertIn(
+            'if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 && "$install_sha_status" -eq 0 ]]',
+            stage_body,
+        )
+        self.assertIn(
+            'if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 || "$install_sha_status" -ne 0 ]]',
+            stage_body,
+        )
 
     def test_pr82_dependency_seed_and_process_death_gates_remain_fail_closed(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")

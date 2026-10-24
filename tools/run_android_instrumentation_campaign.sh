@@ -369,7 +369,7 @@ if [[ "$sdk_ok" == true ]]; then
           app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
           900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
         if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage cursor-position-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
+          run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
         fi
         if [[ "$diagnostics_result" -eq 0 ]]; then
           run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 1200 16 '' || true
@@ -382,7 +382,7 @@ if [[ "$sdk_ok" == true ]]; then
           app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
           900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
         if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage cursor-position-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
+          run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
         fi
         if [[ "$diagnostics_result" -eq 0 ]]; then
           run_diagnostic_stage chat-http-e2e \

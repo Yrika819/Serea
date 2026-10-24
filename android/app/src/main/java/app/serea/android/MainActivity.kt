@@ -113,6 +113,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState != null) chatViewModel.beginActivitySelectionRestore()
         setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
     }
 }
@@ -207,6 +208,7 @@ internal class ChatViewModel(
     private var activeMessageId: String? = null
     private val finalizingMessageIds = mutableSetOf<String>()
     private var selectionGeneration = 0L
+    private var preserveEditorSelectionDuringRestore = false
     private val persistedConversationIds = mutableSetOf<String>().apply {
         if (historyRepository != null && initialConversation != null) add(initialConversation.id)
     }
@@ -215,8 +217,25 @@ internal class ChatViewModel(
 
     fun updateInput(value: String) = updateEditorValue(TextFieldValue(value))
 
-    fun updateEditorValue(value: TextFieldValue) = mutableState.update {
-        it.copy(editorValue = value, errorMessage = null)
+    fun beginActivitySelectionRestore() {
+        preserveEditorSelectionDuringRestore = true
+    }
+
+    fun finishActivitySelectionRestore() {
+        preserveEditorSelectionDuringRestore = false
+    }
+
+    fun isActivitySelectionRestorePending(): Boolean = preserveEditorSelectionDuringRestore
+
+    fun updateEditorValue(value: TextFieldValue) = mutableState.update { current ->
+        val editorValue = if (
+            preserveEditorSelectionDuringRestore && value.text == current.editorValue.text
+        ) {
+            value.copy(selection = current.editorValue.selection)
+        } else {
+            value
+        }
+        current.copy(editorValue = editorValue, errorMessage = null)
     }
 
     fun requestCurrentConversationDeletionConfirmation() {
@@ -762,6 +781,13 @@ internal fun ChatScreen(
             withFrameNanos { }
             composerFocusAllowed = true
             focusManager.clearFocus(force = true)
+        }
+    }
+    LaunchedEffect(hostActivity, chatViewModel) {
+        if (chatViewModel.isActivitySelectionRestorePending()) {
+            withFrameNanos { }
+            withFrameNanos { }
+            chatViewModel.finishActivitySelectionRestore()
         }
     }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {

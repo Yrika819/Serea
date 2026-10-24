@@ -59,7 +59,7 @@ internal fun SereaAppShell(
 ) {
     var destinationName by rememberSaveable { mutableStateOf(SereaDestination.CHAT.name) }
     var backStackNames by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    var focusClearRequest by remember { mutableIntStateOf(0) }
+    var focusClearRequest by rememberSaveable { mutableIntStateOf(0) }
     val destination = SereaNavigationState.restore(destinationName, backStackNames).current
     val canGoBack = backStackNames.isNotEmpty()
     var taskProposalActionPending by androidx.compose.runtime.remember { mutableStateOf(false) }
@@ -72,6 +72,7 @@ internal fun SereaAppShell(
     val navigationColumns = 3
 
     fun navigate(target: SereaDestination) {
+        chatViewModel.beginEditorSelectionPreservationForNavigation()
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
         focusClearRequest += 1
@@ -80,6 +81,7 @@ internal fun SereaAppShell(
         backStackNames = state.backStack.takeLast(SereaNavigationState.MAX_BACK_STACK).map { it.name }
     }
     fun goBack() {
+        chatViewModel.beginEditorSelectionPreservationForNavigation()
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
         focusClearRequest += 1

@@ -1,6 +1,8 @@
 package app.serea.android
 
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
@@ -121,6 +123,66 @@ class ChatViewModelTest {
         assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT), vm.state.value.conversation.messages.map { it.role })
         assertEquals("Demo: hello", vm.state.value.conversation.messages.last().text)
         assertFalse(vm.state.value.isLoading)
+    }
+
+    @Test fun staleEditorCallbackFromSentComposerCannotRestoreDraft() = runTest(dispatcher) {
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("Demo: ${request.message}")
+        })
+        val sentComposerGeneration = vm.state.value.editorInputGeneration
+        vm.updateInput("first question")
+        vm.sendMessage()
+        val nextComposerGeneration = vm.state.value.editorInputGeneration
+        assertTrue(nextComposerGeneration > sentComposerGeneration)
+        assertEquals("", vm.state.value.input)
+
+        advanceUntilIdle()
+        vm.updateEditorValue(TextFieldValue("first question"), sentComposerGeneration)
+        assertEquals("", vm.state.value.input)
+
+        vm.updateEditorValue(TextFieldValue("second question"), nextComposerGeneration)
+        assertEquals("second question", vm.state.value.input)
+    }
+
+    @Test fun newConversationPreservesBlankComposerGenerationButInvalidatesDiscardedDraft() = runTest(dispatcher) {
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("Demo: ${request.message}")
+        })
+        val blankGeneration = vm.state.value.editorInputGeneration
+        vm.newConversation()
+        assertEquals(blankGeneration, vm.state.value.editorInputGeneration)
+
+        vm.updateInput("unsent draft")
+        val draftGeneration = vm.state.value.editorInputGeneration
+        vm.newConversation()
+        val clearedGeneration = vm.state.value.editorInputGeneration
+        assertTrue(clearedGeneration > draftGeneration)
+        assertEquals("", vm.state.value.input)
+        vm.updateEditorValue(TextFieldValue("unsent draft"), draftGeneration)
+        assertEquals("", vm.state.value.input)
+    }
+
+    @Test fun navigationKeepsUnchangedDraftSelectionUntilComposerRegainsFocus() = runTest(dispatcher) {
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("Demo: ${request.message}")
+        })
+        val draft = "draft survives navigation"
+        vm.updateEditorValue(TextFieldValue(draft, selection = TextRange(5, 5)))
+        val correctionGeneration = vm.state.value.editorSelectionCorrectionGeneration
+
+        vm.beginEditorSelectionPreservationForNavigation()
+        vm.updateEditorValue(TextFieldValue(draft, selection = TextRange(draft.length, draft.length)))
+        assertEquals(draft, vm.state.value.input)
+        assertEquals(TextRange(5, 5), vm.state.value.editorValue.selection)
+        assertTrue(vm.state.value.editorSelectionCorrectionGeneration > correctionGeneration)
+
+        vm.updateEditorValue(TextFieldValue("draft! survives navigation", selection = TextRange(6, 6)))
+        assertEquals("draft! survives navigation", vm.state.value.input)
+        assertEquals(TextRange(6, 6), vm.state.value.editorValue.selection)
+
+        vm.finishEditorSelectionPreservation()
+        vm.updateEditorValue(TextFieldValue("draft! survives navigation", selection = TextRange(0, 0)))
+        assertEquals(TextRange(0, 0), vm.state.value.editorValue.selection)
     }
 
     @Test fun mockConversationUsesPreviousTurnsInTheNextRequestContext() = runTest(dispatcher) {

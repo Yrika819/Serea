@@ -1,6 +1,8 @@
 package app.serea.android
 
 import android.content.pm.ActivityInfo
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
@@ -9,6 +11,7 @@ import android.util.Log
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -29,6 +32,9 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.performTextInputSelection
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
@@ -110,41 +116,36 @@ class SereaAppShellTest {
         val nodes = target.nodes.fetchSemanticsNodes()
         check(nodes.size == 1) { "Expected one Calendar semantics node, found ${nodes.size}." }
         val node = nodes.single()
-        var result: CalendarSemanticsSnapshot? = null
-        compose.runOnIdle {
-            // Evaluate config lambdas, child bounds, and Owner geometry together on the UI thread.
-            val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
-            val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
-            val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {
-                it.copy(visibleItemIndices = it.visibleItemIndices.toList())
-            }
-            val agendaItems = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }?.let {
-                it.copy(eventItemIndices = it.eventItemIndices.toMap())
-            }
-            val root = node.boundsInRoot
-            val window = node.boundsInWindow
-            val children = node.children.take(20).joinToString(separator = ";") { child ->
-                val text = child.config.getOrElseNullable(SemanticsProperties.Text) { null }
-                    ?.joinToString(" ") { it.text }
-                val description = child.config.getOrElseNullable(SemanticsProperties.ContentDescription) { null }
-                    ?.joinToString(" ")
-                val label = text?.takeIf { it.isNotBlank() } ?: description.orEmpty()
-                "$label@${child.boundsInRoot}"
-            }
-            result = CalendarSemanticsSnapshot(
-                scrollValue = axis?.value(),
-                scrollMax = axis?.maxValue(),
-                position = position,
-                viewport = viewport,
-                loadedEventCount = node.config.getOrElseNullable(CalendarAgendaLoadedEventCountKey) { null },
-                agendaItems = agendaItems,
-                boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
-                boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
-                hasClickAction = SemanticsActions.OnClick in node.config,
-                visibleSemantics = children,
-            )
+        // Keep semantics reads on the Compose test thread. Reading this node on the UI thread and
+        // then performing gestures on the instrumentation thread can bind SnapshotStateObserver
+        // to different threads after ActivityScenario recreation (notably on API 35).
+        val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
+        val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
+        val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {
+            it.copy(visibleItemIndices = it.visibleItemIndices.toList())
         }
-        return checkNotNull(result) { "Compose UI thread did not produce a Calendar semantics snapshot." }
+        val agendaItems = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }?.let {
+            it.copy(eventItemIndices = it.eventItemIndices.toMap())
+        }
+        val root = node.boundsInRoot
+        val window = node.boundsInWindow
+        return CalendarSemanticsSnapshot(
+            scrollValue = axis?.value(),
+            scrollMax = axis?.maxValue(),
+            position = position,
+            viewport = viewport,
+            loadedEventCount = node.config.getOrElseNullable(CalendarAgendaLoadedEventCountKey) { null },
+            agendaItems = agendaItems,
+            boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
+            boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
+            hasClickAction = SemanticsActions.OnClick in node.config,
+            // Traversing SemanticsNode.children evaluates collapsed semantics through the
+            // SnapshotStateObserver. That observer is already bound to the Compose UI thread;
+            // recursively reading child nodes from the instrumentation thread causes an
+            // API-dependent cross-thread observer failure. Keep the snapshot to the explicit
+            // values above, which the gestures and assertions use.
+            visibleSemantics = "child traversal omitted to preserve SnapshotStateObserver thread affinity",
+        )
     }
 
     private fun calendarNodeWithTag(tag: String) = CalendarSemanticsTarget(
@@ -1135,9 +1136,24 @@ class SereaAppShellTest {
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
     }
 
+    @OptIn(ExperimentalTestApi::class)
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
-        compose.onNodeWithTag("chat-composer").performTextInput("draft survives navigation")
+        val composer = compose.onNodeWithTag("chat-composer")
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        composer.performClick()
+        compose.activityRule.scenario.onActivity { activity ->
+            val inputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+                "Composer did not expose its focused IME InputConnection."
+            }
+            assertTrue(inputConnection.setComposingText("draft", 1))
+            assertTrue(inputConnection.setComposingText("draft survives navigation", 1))
+            assertTrue(inputConnection.finishComposingText())
+        }
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
+        composer.performTextInputSelection(TextRange(5, 5))
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(5, 5)
+        }
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
         compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
@@ -1161,14 +1177,67 @@ class SereaAppShellTest {
         }.isSuccess
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
+        compose.waitForIdle()
+        assertEquals(
+            "Returning from Gmail must preserve the saved composer selection.",
+            TextRange(5, 5),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        composer.performTextInput("!")
+        assertEquals("draft! survives navigation", compose.activity.chatViewModel.state.value.input)
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(6, 6)
+        }
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
         pressBack()
-        compose.onNodeWithTag("chat-composer").assertIsDisplayed()
-        compose.onNodeWithTag("chat-composer").assertTextContains("draft survives navigation")
+        composer.assertIsDisplayed()
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        assertEquals(
+            "Returning from Calendar must preserve the saved composer selection.",
+            TextRange(6, 6),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
+        composer.assertTextContains("draft! survives navigation")
+        composer.performTextInput("?")
+        assertEquals("draft!? survives navigation", compose.activity.chatViewModel.state.value.input)
+
+        // Returning from Calendar intentionally leaves Chat unfocused. Model the
+        // user tapping the composer before moving the caret; stale navigation IME
+        // callbacks must not overwrite this new focused selection.
+        composer.performClick()
+        composer.assertIsFocused()
+        composer.performTextClearance()
+        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input.isEmpty() }
+        val recreatedText = "activity preserves cursor"
+        composer.performTextInput(recreatedText)
+        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == recreatedText }
+        composer.performTextInputSelection(TextRange(8, 8))
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
+        }
+        assertEquals(TextRange(8, 8), compose.activity.chatViewModel.state.value.editorValue.selection)
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(10_000) {
+            compose.activity.chatViewModel.state.value.input == "activity preserves cursor" &&
+                runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
+        }
+        compose.onNodeWithTag("chat-composer").assertIsNotFocused()
+        assertEquals(
+            "Activity recreation must preserve the composer selection.",
+            TextRange(8, 8),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
+        compose.onNodeWithTag("chat-composer")
+            .performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
+        compose.onNodeWithTag("chat-composer").assertIsFocused()
+        compose.onNodeWithTag("chat-composer").performTextInput("!")
+        assertEquals("activity! preserves cursor", compose.activity.chatViewModel.state.value.input)
+        Espresso.closeSoftKeyboard()
     }
 
     @Test fun navigationDestinationsRemainSemanticallyAvailable() {
@@ -1210,8 +1279,10 @@ class SereaAppShellTest {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
         compose.waitUntil(10_000) {
-            val size = compose.onRoot().fetchSemanticsNode().size
-            size.width > size.height
+            runCatching {
+                val size = compose.onRoot().fetchSemanticsNode().size
+                size.width > size.height
+            }.getOrDefault(false)
         }
         calendarStage("orientation-landscape", "FINISH")
 

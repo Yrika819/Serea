@@ -1151,7 +1151,9 @@ class SereaAppShellTest {
         }
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
         composer.performTextInputSelection(TextRange(5, 5))
-        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(5, 5)
+        }
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
         compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
@@ -1184,6 +1186,9 @@ class SereaAppShellTest {
         assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
         composer.performTextInput("!")
         assertEquals("draft! survives navigation", compose.activity.chatViewModel.state.value.input)
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(6, 6)
+        }
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {

@@ -50,10 +50,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -62,6 +65,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -665,9 +670,11 @@ internal fun ChatScreen(
     onOpenSettings: (() -> Unit)? = null,
     settingsDestination: Boolean = false,
     onSettingsClosed: (() -> Unit)? = null,
+    focusClearRequest: Int = 0,
 ) {
     val state by chatViewModel.state.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val context = LocalContext.current
     val hostActivity = remember(context) {
         var current: android.content.Context? = context
@@ -686,6 +693,7 @@ internal fun ChatScreen(
     var dailyTokensText by remember { mutableStateOf("10000") }
     var monthlyRequestsText by remember { mutableStateOf("100") }
     var monthlyTokensText by remember { mutableStateOf("50000") }
+
     var usageSnapshot by remember { mutableStateOf<UsageSnapshot?>(null) }
     val modelSettings = remember(context) { ModelSelectionSettings(context.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE)) }
     val modelRouter = remember { AdaptiveModelRouter(LocalModelCatalog()) }
@@ -735,6 +743,31 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
+    var composerValue by rememberSaveable(state.conversation.id, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(state.input))
+    }
+    LaunchedEffect(state.input) {
+        if (composerValue.text != state.input) {
+            val cursor = composerValue.selection.start.coerceIn(0, state.input.length)
+            composerValue = TextFieldValue(state.input, TextRange(cursor))
+        }
+    }
+    var composerFocusAllowed by remember(focusClearRequest) {
+        mutableStateOf(focusClearRequest == 0)
+    }
+    LaunchedEffect(focusClearRequest) {
+        if (focusClearRequest > 0) {
+            composerFocusAllowed = false
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
+            withFrameNanos { }
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
+            withFrameNanos { }
+            composerFocusAllowed = true
+            focusManager.clearFocus(force = true)
+        }
+    }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         val screenModifier = Modifier.fillMaxSize().imePadding()
             .then(if (settingsVisible) Modifier.verticalScroll(rememberScrollState()) else Modifier)
@@ -811,6 +844,8 @@ internal fun ChatScreen(
                         modelPolicy.copy(maxEstimatedCost = amount, budgetCurrencyCode = currency.takeIf { amount != null })
                     }.onSuccess { updated ->
                         modelSettings.save(updated); modelPolicy = updated
+                        keyboard?.hide()
+                        focusManager.clearFocus(force = true)
                         settingsMessage = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
                     }.onFailure { settingsMessage = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。" }
                 }) { Text("ルーター設定を保存") }
@@ -1005,12 +1040,21 @@ internal fun ChatScreen(
             }
             if (!settingsDestination) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
-                        modifier = Modifier.weight(1f).testTag("chat-composer"), label = { Text("メッセージ") },
-                        enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
-                        maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                        supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                    val composerModifier = Modifier.weight(1f)
+                        .focusProperties { canFocus = composerFocusAllowed }
+                        .testTag("chat-composer")
+                    key(focusClearRequest) {
+                        OutlinedTextField(value = composerValue,
+                            onValueChange = { value ->
+                                composerValue = value
+                                chatViewModel.updateInput(value.text)
+                            },
+                            modifier = composerModifier, label = { Text("メッセージ") },
+                            enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
+                            maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
+                            supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                    }
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                         enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,

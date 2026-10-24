@@ -13,13 +13,19 @@ import org.junit.rules.TemporaryFolder
 class ProfileVerifierCacheMarkerTest {
     @get:Rule val temporary = TemporaryFolder()
 
-    @Test fun acceptsOnlyCanonicalPersistedProfileVerifierResults() {
-        for (resultCode in listOf(0, 1, 2, 3, 5 shl 16)) {
+    @Test fun acceptsOnlyCanonicalInstalledProfileVerifierResults() {
+        for (resultCode in listOf(1, 2, 3)) {
             assertTrue(
                 "Expected ProfileVerifier result $resultCode to be a persisted schema 1 value",
                 ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = resultCode), PACKAGE_UPDATE_TIME),
             )
         }
+    }
+
+    @Test fun rejectsNoProfileAndEmbeddedProfileFailureResults() {
+        assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 0), PACKAGE_UPDATE_TIME))
+        assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 5 shl 16), PACKAGE_UPDATE_TIME))
+        assertFalse(ProfileVerifierCacheMarker.isValidBytes(cacheBytes(resultCode = 4 shl 16), PACKAGE_UPDATE_TIME))
     }
 
     @Test fun rejectsUnknownSchemaOrResultAndStalePackageUpdateTime() {
@@ -40,20 +46,24 @@ class ProfileVerifierCacheMarkerTest {
         assertFalse(ProfileVerifierCacheMarker.isValidBytes(canonical + byteArrayOf(0), PACKAGE_UPDATE_TIME))
     }
 
-    @Test fun acceptsOnlyOneRegularDirectChildWithTheExactPlatformName() {
+    @Test fun runtimeValidationAllowsUnrelatedFilesButFreshNamespaceRequiresOnlyThePlatformMarker() {
         val filesDirectory = temporary.newFolder("files")
+        assertFalse(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
 
         File(filesDirectory, ProfileVerifierCacheMarker.FILE_NAME).writeBytes(cacheBytes())
+        assertTrue(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertTrue(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
 
         File(filesDirectory, "extra").writeText("unexpected")
+        assertTrue(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
     }
 
     @Test fun rejectsWrongNameAndSymbolicLink() {
         val filesDirectory = temporary.newFolder("files")
         File(filesDirectory, "profileinstaller_profileWrittenFor_lastUpdateTime.dat").writeBytes(cacheBytes())
+        assertFalse(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
 
         val marker = File(filesDirectory, ProfileVerifierCacheMarker.FILE_NAME)
@@ -61,12 +71,13 @@ class ProfileVerifierCacheMarkerTest {
         val outside = temporary.newFile("outside")
         outside.writeBytes(cacheBytes())
         Files.createSymbolicLink(marker.toPath(), outside.toPath())
+        assertFalse(ProfileVerifierCacheMarker.isValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
         assertFalse(ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, PACKAGE_UPDATE_TIME))
     }
 
     private fun cacheBytes(
         schema: Int = 1,
-        resultCode: Int = 0,
+        resultCode: Int = 1,
         packageUpdateTime: Long = PACKAGE_UPDATE_TIME,
         installedProfileSize: Long = 128L,
     ): ByteArray = ByteBuffer.allocate(24)

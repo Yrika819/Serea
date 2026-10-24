@@ -15,7 +15,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -57,6 +59,7 @@ internal fun SereaAppShell(
 ) {
     var destinationName by rememberSaveable { mutableStateOf(SereaDestination.CHAT.name) }
     var backStackNames by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var focusClearRequest by remember { mutableIntStateOf(0) }
     val destination = SereaNavigationState.restore(destinationName, backStackNames).current
     val canGoBack = backStackNames.isNotEmpty()
     var taskProposalActionPending by androidx.compose.runtime.remember { mutableStateOf(false) }
@@ -71,6 +74,7 @@ internal fun SereaAppShell(
     fun navigate(target: SereaDestination) {
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
+        focusClearRequest += 1
         val state = SereaNavigationState.restore(destinationName, backStackNames).navigate(target)
         destinationName = state.current.name
         backStackNames = state.backStack.takeLast(SereaNavigationState.MAX_BACK_STACK).map { it.name }
@@ -78,6 +82,7 @@ internal fun SereaAppShell(
     fun goBack() {
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
+        focusClearRequest += 1
         val state = SereaNavigationState.restore(destinationName, backStackNames).back()
         destinationName = state.current.name
         backStackNames = state.backStack.map { it.name }
@@ -145,6 +150,7 @@ internal fun SereaAppShell(
                             usage = usage,
                             onOpenTasks = { navigate(SereaDestination.TASKS) },
                             onOpenSettings = { navigate(SereaDestination.SETTINGS) },
+                            focusClearRequest = focusClearRequest,
                         )
                         SereaDestination.TASKS -> TaskScreen(taskViewModel)
                         SereaDestination.GMAIL -> GmailDestination(onBack = ::goBack)
@@ -155,6 +161,7 @@ internal fun SereaAppShell(
                             usage = usage,
                             settingsDestination = true,
                             onSettingsClosed = ::goBack,
+                            focusClearRequest = focusClearRequest,
                         )
                         SereaDestination.TASK_PROPOSAL_DEMO -> taskProposalDemoContent(
                             Modifier.fillMaxSize().testTag("task_proposal_demo"),

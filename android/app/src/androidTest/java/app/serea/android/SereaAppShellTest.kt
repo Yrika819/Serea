@@ -1215,7 +1215,8 @@ class SereaAppShellTest {
             TextRange(8, 8),
             compose.activity.chatViewModel.state.value.editorValue.selection,
         )
-        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer")
+            .performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
         compose.onNodeWithTag("chat-composer").assertIsFocused()
         compose.onNodeWithTag("chat-composer").performTextInput("!")
         assertEquals("activity! preserves cursor", compose.activity.chatViewModel.state.value.input)

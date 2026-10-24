@@ -1143,7 +1143,7 @@ class SereaAppShellTest {
         val composer = compose.onNodeWithTag("chat-composer")
         assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
         composer.performTextInput("draft survives navigation")
-        composer.performTextInputSelection(TextRange(6, 6))
+        composer.performTextInputSelection(TextRange(5, 5))
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)

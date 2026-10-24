@@ -252,7 +252,9 @@ internal class ChatViewModel(
         preserveEditorSelectionDuringNavigation = true
     }
 
-    fun finishEditorSelectionPreservationAfterFocus() {
+    // Chat can return without focus, so release after its saved field has been recreated and
+    // focus clearing has flushed stale IME selection callbacks.
+    fun finishEditorSelectionPreservation() {
         preserveEditorSelectionDuringNavigation = false
     }
 
@@ -849,6 +851,7 @@ internal fun ChatScreen(
             withFrameNanos { }
             composerFocusAllowed = true
             focusManager.clearFocus(force = true)
+            chatViewModel.finishEditorSelectionPreservation()
         }
     }
     LaunchedEffect(hostActivity, chatViewModel) {
@@ -1145,7 +1148,7 @@ internal fun ChatScreen(
                         .focusProperties { canFocus = composerFocusAllowed }
                         .onFocusChanged { focusState ->
                             if (focusState.isFocused) {
-                                chatViewModel.finishEditorSelectionPreservationAfterFocus()
+                                chatViewModel.finishEditorSelectionPreservation()
                                 if (composerRestoreFocusReady) {
                                     chatViewModel.finishActivitySelectionRestore(hostActivity)
                                 }

@@ -180,7 +180,7 @@ class ChatViewModelTest {
         assertEquals("draft! survives navigation", vm.state.value.input)
         assertEquals(TextRange(6, 6), vm.state.value.editorValue.selection)
 
-        vm.finishEditorSelectionPreservationAfterFocus()
+        vm.finishEditorSelectionPreservation()
         vm.updateEditorValue(TextFieldValue("draft! survives navigation", selection = TextRange(0, 0)))
         assertEquals(TextRange(0, 0), vm.state.value.editorValue.selection)
     }

@@ -36,8 +36,39 @@ if [[ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" != 35 ||
   echo 'Refusing emulator: the Personal Beta identity test requires an API 35 QEMU emulator.' >&2
   exit 2
 fi
-adb root >/dev/null
-adb wait-for-device
+ensure_adb_root() {
+  local root_output='' root_status=0 root_uid=''
+  for attempt in $(seq 1 15); do
+    if root_output=$(adb root 2>&1); then
+      if timeout 15s adb wait-for-device >/dev/null 2>&1; then
+        if root_uid=$(adb shell id -u 2>&1); then
+          root_uid=$(printf '%s' "$root_uid" | tr -d '\r')
+          if [[ "$root_uid" == 0 ]]; then return 0; fi
+          echo 'The disposable emulator did not grant adb root.' >&2
+          return 1
+        else
+          root_output="$root_uid"
+        fi
+      else
+        root_output='adb wait-for-device timed out'
+      fi
+    else
+      root_status=$?
+    fi
+    if [[ "$root_output" != *'adb wait-for-device timed out'* ]] &&
+        ! grep -Eiq 'unable to connect for root: closed|device offline|device .*not found|no devices/emulators found|connection.*closed' <<< "$root_output"; then
+      printf '%s\n' "$root_output" >&2
+      return "${root_status:-1}"
+    fi
+    printf 'RETRY: transient adb transport error while enabling emulator root (%s/15).\n' "$attempt" >&2
+    timeout 15s adb wait-for-device >/dev/null 2>&1 || true
+  done
+  printf '%s\n' "$root_output" >&2
+  echo 'The disposable emulator did not remain connected while enabling adb root.' >&2
+  return 1
+}
+
+ensure_adb_root
 if [[ "$(adb shell id -u | tr -d '\r')" != 0 ]]; then
   echo 'The disposable emulator must allow adb root to preserve-check Demo app data.' >&2
   exit 2
@@ -163,8 +194,7 @@ reboot_emulator() {
     sleep 1
   done
   [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
-  adb root >/dev/null
-  adb wait-for-device
+  ensure_adb_root
   wait_for_package_manager
 }
 

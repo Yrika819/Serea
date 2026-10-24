@@ -135,7 +135,7 @@ run_diagnostic_stage() {
     printf 'FAIL\n' > "$stage_dir/status.txt"
     return 1
   fi
-  local target_paths test_paths target_actual test_actual target_expected test_expected
+  local target_paths target_actual target_expected test_expected
   target_paths="$(adb shell pm path app.serea.android.isolated 2>/dev/null | tr -d '\r' | sed -n 's/^package://p')"
   target_actual="$(adb shell sha256sum "$target_paths" 2>/dev/null | awk 'NR == 1 { print $1 }')"
   target_expected="$(sha256sum app/build/outputs/apk/isolated/app-isolated.apk | awk '{print $1}')"
@@ -144,32 +144,7 @@ run_diagnostic_stage() {
     printf 'FAIL\n' > "$stage_dir/status.txt"
     return 1
   fi
-  if ! adb install -t app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk; then
-    echo 'FAIL: could not install the isolated test APK for SHA-256 capture.' > "$stage_dir/result.txt"
-    printf 'FAIL\n' > "$stage_dir/status.txt"
-    return 1
-  fi
-  test_paths="$(adb shell pm path app.serea.android.isolated.test 2>/dev/null | tr -d '\r' | sed -n 's/^package://p')"
-  test_actual="$(adb shell sha256sum "$test_paths" 2>/dev/null | awk 'NR == 1 { print $1 }')"
   test_expected="$(sha256sum app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk | awk '{print $1}')"
-  if [[ -z "$test_paths" || "$test_paths" == *$'\n'* || "$test_actual" != "$test_expected" ]]; then
-    adb uninstall app.serea.android.isolated.test >/dev/null 2>&1
-    echo 'FAIL: could not verify the installed isolated test APK SHA-256.' > "$stage_dir/result.txt"
-    printf 'FAIL\n' > "$stage_dir/status.txt"
-    return 1
-  fi
-  if ! adb uninstall app.serea.android.isolated.test >/dev/null 2>&1; then
-    echo 'FAIL: could not remove the test APK after SHA-256 capture.' > "$stage_dir/result.txt"
-    printf 'FAIL\n' > "$stage_dir/status.txt"
-    return 1
-  fi
-  {
-    printf 'source_sha=%s\n' "$(git rev-parse HEAD)"
-    printf 'target_package=app.serea.android.isolated\ninstalled_target_apk_sha256=%s\n' "$target_actual"
-    printf 'test_package=app.serea.android.isolated.test\ninstalled_test_apk_sha256=%s\n' "$test_actual"
-    printf 'target_installed_path=%s\ntest_installed_path=%s\n' "$target_paths" "$test_paths"
-  } > "$stage_dir/installed-apk-sha256.txt"
-  local install_sha_status=0
   stage_token="serea-isolated-api${api_level}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${name}"
   EXPECTED_API_LEVEL="$api_level" bash "$tool_dir/prepare_isolated_instrumentation_target.sh" "$stage_token" \
     > "$stage_dir/seed.log" 2>&1 || {
@@ -184,7 +159,26 @@ run_diagnostic_stage() {
     -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
     -Pandroid.testInstrumentationRunnerArguments.class="$filter" connectedIsolatedAndroidTest \
     > "$stage_dir/gradle.log" 2>&1 &
-  local gradle_pid=$!
+  local gradle_pid=$! install_sha_status=1 test_paths test_actual
+  while kill -0 "$gradle_pid" 2>/dev/null; do
+    test_paths="$(adb shell pm path app.serea.android.isolated.test 2>/dev/null | tr -d '\r' | sed -n 's/^package://p')"
+    if [[ -n "$test_paths" && "$test_paths" != *$'\n'* ]]; then
+      test_actual="$(adb shell sha256sum "$test_paths" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+      if [[ -n "$test_actual" ]]; then
+        {
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)"
+          printf 'target_package=app.serea.android.isolated\ninstalled_target_apk_sha256=%s\n' "$target_actual"
+          printf 'target_expected_apk_sha256=%s\n' "$target_expected"
+          printf 'test_package=app.serea.android.isolated.test\ninstalled_test_apk_sha256=%s\n' "$test_actual"
+          printf 'test_expected_apk_sha256=%s\n' "$test_expected"
+          printf 'target_installed_path=%s\ntest_installed_path=%s\n' "$target_paths" "$test_paths"
+        } > "$stage_dir/installed-apk-sha256.txt"
+        if [[ "$test_actual" == "$test_expected" ]]; then install_sha_status=0; fi
+        break
+      fi
+    fi
+    sleep 0.25
+  done
   wait "$gradle_pid"
   gradle_status=$?
   printf '%s\n' "$gradle_status" > "$stage_dir/gradle-exit-code.txt"

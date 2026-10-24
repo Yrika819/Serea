@@ -1212,10 +1212,18 @@ class SereaAppShellTest {
         composer.performClick()
         composer.assertIsFocused()
         composer.performTextClearance()
-        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input.isEmpty() }
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text.isEmpty() && value.selection == TextRange.Zero
+            }
+        }
         val recreatedText = "activity preserves cursor"
         composer.performTextInput(recreatedText)
-        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == recreatedText }
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == recreatedText && value.selection == TextRange(recreatedText.length)
+            }
+        }
         composer.performTextInputSelection(TextRange(8, 8))
         compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)

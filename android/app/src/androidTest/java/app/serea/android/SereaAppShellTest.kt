@@ -1206,10 +1206,13 @@ class SereaAppShellTest {
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) {
             compose.activity.chatViewModel.state.value.input == "activity preserves cursor" &&
-                compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8) &&
                 runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
         }
-        assertEquals(TextRange(8, 8), compose.activity.chatViewModel.state.value.editorValue.selection)
+        assertEquals(
+            "Activity recreation must preserve the composer selection.",
+            TextRange(8, 8),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
         compose.onNodeWithTag("chat-composer").performTextInput("!")
         assertEquals("activity! preserves cursor", compose.activity.chatViewModel.state.value.input)
     }

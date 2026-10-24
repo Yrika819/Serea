@@ -42,6 +42,7 @@ if [[ "$(adb shell id -u | tr -d '\r')" != 0 ]]; then
   echo 'The disposable emulator must allow adb root to preserve-check Demo app data.' >&2
   exit 2
 fi
+printf 'PASS: phase=api35-emulator-connected-and-adb-root\n'
 
 wait_for_package_manager() {
   for _ in $(seq 1 60); do
@@ -54,6 +55,7 @@ wait_for_package_manager() {
   return 1
 }
 wait_for_package_manager
+printf 'PASS: phase=package-manager-ready\n'
 mark_phase 'package-manager-and-beta-cleanliness'
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -77,11 +79,33 @@ trap cleanup EXIT
 mkdir -p "$(dirname "$results")"
 printf 'NOT_RUN\n' > "$results"
 
-beta_existing_path=$(adb shell pm path "$beta_package" | tr -d '\r')
+beta_package_path() {
+  local output='' error_file="$test_root/pm-path.stderr" status=0
+  for attempt in $(seq 1 15); do
+    if output=$(adb shell pm path "$beta_package" 2>"$error_file"); then
+      printf '%s\n' "$output" | tr -d '\r'
+      return 0
+    else
+      status=$?
+    fi
+    if ! grep -Eiq 'device offline|device .*not found|no devices/emulators found' "$error_file"; then
+      cat "$error_file" >&2
+      return "$status"
+    fi
+    printf 'RETRY: transient adb transport error while checking Beta package absence (%s/15).\n' "$attempt" >&2
+    sleep 1
+  done
+  cat "$error_file" >&2
+  echo 'The disposable emulator did not remain connected while checking Beta package absence.' >&2
+  return 1
+}
+
+beta_existing_path=$(beta_package_path)
 if [[ -n "$beta_existing_path" ]]; then
   echo 'Refusing an emulator that already contains app.serea.android.beta; use a fresh disposable AVD.' >&2
   exit 2
 fi
+printf 'PASS: phase=package-manager-and-beta-cleanliness\n'
 
 normalize_fingerprint() { tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]'; }
 apk_fingerprint() {
@@ -179,6 +203,7 @@ adb pull "$demo_apk_path_before" "$test_root/demo-before.apk" >/dev/null
 demo_fingerprint_before=$(apk_fingerprint "$test_root/demo-before.apk")
 demo_version_before=$(demo_package_version)
 demo_data_before=$(demo_data_snapshot)
+printf 'PASS: phase=demo-package-and-data-baseline-captured\n'
 
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$test_root/personal-beta-test.p12"
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
@@ -194,6 +219,7 @@ if [[ "$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256" == "$demo_fingerprint" ]]; then
   echo 'Disposable Beta signing key unexpectedly matches the Demo signer.' >&2
   exit 1
 fi
+printf 'PASS: phase=temporary-beta-key-distinct-from-demo\n'
 mark_phase 'temporary-key-generation-and-signature-verification'
 
 apk_v99="$test_root/personal-beta-v99.apk"
@@ -207,6 +233,7 @@ adb install "$apk_v99"
 printf 'PASS: phase=demo-beta-parallel-install\n'
 
 build_beta 100 true "$apk_v100"
+printf 'PASS: phase=beta-apk-signature-and-package-verification\n'
 adb install -r "$apk_v100"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
@@ -268,6 +295,7 @@ printf 'PASS: phase=wrong-signer-rejected-and-data-retained\n'
 
 mark_phase 'demo-package-and-encrypted-data-preservation'
 verify_demo_unchanged
+printf 'PASS: phase=demo-package-data-and-signer-unchanged\n'
 mkdir -p "$(dirname "$results")"
 {
   echo 'application_id=app.serea.android.beta'

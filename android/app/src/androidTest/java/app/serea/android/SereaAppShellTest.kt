@@ -1267,8 +1267,10 @@ class SereaAppShellTest {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
         compose.waitUntil(10_000) {
-            val size = compose.onRoot().fetchSemanticsNode().size
-            size.width > size.height
+            runCatching {
+                val size = compose.onRoot().fetchSemanticsNode().size
+                size.width > size.height
+            }.getOrDefault(false)
         }
         calendarStage("orientation-landscape", "FINISH")
 

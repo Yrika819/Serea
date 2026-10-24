@@ -405,7 +405,12 @@ class ChatScreenTest {
             ),
             modelSettings.load(),
         )
-        compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
+        val savedPolicySummary = compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先")
+        savedPolicySummary.performScrollTo()
+        compose.waitUntil(5_000) {
+            runCatching { savedPolicySummary.assertIsDisplayed() }.isSuccess
+        }
+        savedPolicySummary.assertIsDisplayed()
         compose.onNodeWithTag("destination_back").performClick()
         compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()

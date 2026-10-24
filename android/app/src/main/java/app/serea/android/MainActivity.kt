@@ -8,8 +8,6 @@ import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
@@ -84,7 +83,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -245,10 +243,13 @@ internal class ChatViewModel(
     fun isActivitySelectionRestorePending(): Boolean = preserveEditorSelectionDuringRestore
 
     fun updateEditorValue(value: TextFieldValue) {
-        if (preserveEditorSelectionDuringRestore && value.text != mutableState.value.input) {
-            finishActivitySelectionRestore()
-        }
         mutableState.update { current ->
+            // Ignore stale InputConnection callbacks until the restored field
+            // actually regains focus. They can carry either an end selection
+            // or an old composing-text edit from the Activity being replaced.
+            if (preserveEditorSelectionDuringRestore && value.text != current.input) {
+                return@update current
+            }
             val restoringSelection = preserveEditorSelectionDuringRestore &&
                 value.text == current.editorValue.text && value.selection != current.editorValue.selection
             val editorValue = if (preserveEditorSelectionDuringRestore && value.text == current.editorValue.text) {
@@ -797,14 +798,8 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
-    val composerInteractionSource = remember { MutableInteractionSource() }
     var composerFocusAllowed by remember(focusClearRequest) {
         mutableStateOf(focusClearRequest == 0 && !chatViewModel.isActivitySelectionRestorePending())
-    }
-    LaunchedEffect(chatViewModel, composerInteractionSource) {
-        composerInteractionSource.interactions.collect { interaction ->
-            if (interaction is PressInteraction.Press) chatViewModel.finishActivitySelectionRestore()
-        }
     }
     LaunchedEffect(focusClearRequest) {
         if (focusClearRequest > 0) {
@@ -1104,11 +1099,13 @@ internal fun ChatScreen(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val composerModifier = Modifier.weight(1f)
                         .focusProperties { canFocus = composerFocusAllowed }
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) chatViewModel.finishActivitySelectionRestore()
+                        }
                         .testTag("chat-composer")
                     key(hostActivity, state.editorSelectionCorrectionGeneration) {
                         OutlinedTextField(value = state.editorValue, onValueChange = chatViewModel::updateEditorValue,
                             modifier = composerModifier, label = { Text("メッセージ") },
-                            interactionSource = composerInteractionSource,
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                             maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),

@@ -96,6 +96,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             'if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 || "$install_sha_status" -ne 0 ]]',
             stage_body,
         )
+        self.assertIn('while kill -0 "$gradle_pid" 2>/dev/null; do', stage_body)
+        self.assertIn('pm path app.serea.android.isolated.test', stage_body)
+        self.assertIn('test_expected_apk_sha256=%s', stage_body)
 
     def test_pr82_dependency_seed_and_process_death_gates_remain_fail_closed(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")

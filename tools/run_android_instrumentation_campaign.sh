@@ -378,12 +378,18 @@ if [[ "$sdk_ok" == true ]]; then
         if [[ "$diagnostics_result" -eq 0 ]]; then
           run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
         fi
+        if [[ "$diagnostics_result" -eq 0 ]]; then
+          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 900 16 '' || diagnostics_result=1
+        fi
       else
         run_diagnostic_stage cursor-position-focused \
           app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
           900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
         if [[ "$diagnostics_result" -eq 0 ]]; then
           run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
+        fi
+        if [[ "$diagnostics_result" -eq 0 ]]; then
+          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 900 16 '' || diagnostics_result=1
         fi
       fi
       if [[ "$diagnostics_result" -eq 0 ]]; then

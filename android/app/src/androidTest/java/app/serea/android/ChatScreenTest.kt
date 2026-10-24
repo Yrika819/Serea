@@ -49,6 +49,7 @@ class ChatScreenTest {
             val state = stateSnapshot()
             state.conversation.id != restoredId && !state.isRestoring
         }
+        compose.waitForIdle()
     }
 
     private fun composer() = compose.onNodeWithTag("chat-composer")

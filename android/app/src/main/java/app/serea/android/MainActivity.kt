@@ -847,6 +847,10 @@ internal fun ChatScreen(
             focusManager.clearFocus(force = true)
             withFrameNanos { }
             focusManager.clearFocus(force = true)
+            // Activity identity is checked by the ViewModel, so once this new
+            // Activity has flushed stale IME focus we can release its restore
+            // barrier even if the composer regained focus during the frames.
+            chatViewModel.finishActivitySelectionRestore(hostActivity)
             composerRestoreFocusReady = true
         }
     }

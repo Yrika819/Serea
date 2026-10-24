@@ -405,6 +405,7 @@ class ChatScreenTest {
             ),
             modelSettings.load(),
         )
+        Espresso.closeSoftKeyboard()
         val savedPolicySummary = compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先")
         savedPolicySummary.performScrollTo()
         compose.waitUntil(15_000) {

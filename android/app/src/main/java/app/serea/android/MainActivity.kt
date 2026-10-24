@@ -768,7 +768,7 @@ internal fun ChatScreen(
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
     var composerFocusAllowed by remember(focusClearRequest) {
-        mutableStateOf(focusClearRequest == 0)
+        mutableStateOf(focusClearRequest == 0 && !chatViewModel.isActivitySelectionRestorePending())
     }
     LaunchedEffect(focusClearRequest) {
         if (focusClearRequest > 0) {
@@ -785,9 +785,14 @@ internal fun ChatScreen(
     }
     LaunchedEffect(hostActivity, chatViewModel) {
         if (chatViewModel.isActivitySelectionRestorePending()) {
+            // Do not reconnect the old IME selection before the ViewModel-backed value is restored.
+            composerFocusAllowed = false
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
             withFrameNanos { }
             withFrameNanos { }
             chatViewModel.finishActivitySelectionRestore()
+            composerFocusAllowed = true
         }
     }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -1065,12 +1070,14 @@ internal fun ChatScreen(
                     val composerModifier = Modifier.weight(1f)
                         .focusProperties { canFocus = composerFocusAllowed }
                         .testTag("chat-composer")
-                    OutlinedTextField(value = state.editorValue, onValueChange = chatViewModel::updateEditorValue,
-                        modifier = composerModifier, label = { Text("メッセージ") },
-                        enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
-                        maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
-                        supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                    key(hostActivity) {
+                        OutlinedTextField(value = state.editorValue, onValueChange = chatViewModel::updateEditorValue,
+                            modifier = composerModifier, label = { Text("メッセージ") },
+                            enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
+                            maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),
+                            supportingText = if (compactChat) null else ({ Text("デモ専用。Cloudへは送信されません。") }))
+                    }
                     if (state.isLoading && !state.isFinalizing) Button(onClick = chatViewModel::cancelCurrent, modifier = Modifier.padding(top = 8.dp)) { Text("キャンセル") }
                     else if (!state.isLoading) Button(onClick = { chatViewModel.sendMessage(); keyboard?.hide() },
                         enabled = state.input.isNotBlank() && !state.isRestoring && !state.showingHistory,

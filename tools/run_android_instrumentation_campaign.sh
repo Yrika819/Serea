@@ -135,6 +135,15 @@ run_diagnostic_stage() {
     printf 'FAIL\n' > "$stage_dir/status.txt"
     return 1
   fi
+  local target_paths target_actual target_expected test_expected
+  target_paths="$(adb shell pm path app.serea.android.isolated 2>/dev/null | tr -d '\r' | sed -n 's/^package://p')"
+  target_actual="$(adb shell sha256sum "$target_paths" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+  target_expected="$(sha256sum app/build/outputs/apk/isolated/app-isolated.apk | awk '{print $1}')"
+  if [[ -z "$target_paths" || "$target_paths" == *$'\n'* || "$target_actual" != "$target_expected" ]]; then
+    echo 'FAIL: could not verify the installed isolated target APK SHA-256.' > "$stage_dir/result.txt"
+    printf 'FAIL\n' > "$stage_dir/status.txt"
+    return 1
+  fi
   stage_token="serea-isolated-api${api_level}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${name}"
   EXPECTED_API_LEVEL="$api_level" bash "$tool_dir/prepare_isolated_instrumentation_target.sh" "$stage_token" \
     > "$stage_dir/seed.log" 2>&1 || {
@@ -148,7 +157,29 @@ run_diagnostic_stage() {
     -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$stage_token" \
     -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
     -Pandroid.testInstrumentationRunnerArguments.class="$filter" connectedIsolatedAndroidTest \
-    > "$stage_dir/gradle.log" 2>&1
+    > "$stage_dir/gradle.log" 2>&1 &
+  local gradle_pid=$! install_sha_status=1 test_paths test_actual
+  while kill -0 "$gradle_pid" 2>/dev/null; do
+    test_paths="$(adb shell pm path app.serea.android.isolated.test 2>/dev/null | tr -d '\r' | sed -n 's/^package://p')"
+    if [[ -n "$test_paths" && "$test_paths" != *$'\n'* ]]; then
+      test_actual="$(adb shell sha256sum "$test_paths" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+      test_expected="$(sha256sum app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk 2>/dev/null | awk '{print $1}')"
+      if [[ -n "$test_actual" ]]; then
+        {
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)"
+          printf 'target_package=app.serea.android.isolated\ninstalled_target_apk_sha256=%s\n' "$target_actual"
+          printf 'target_expected_apk_sha256=%s\n' "$target_expected"
+          printf 'test_package=app.serea.android.isolated.test\ninstalled_test_apk_sha256=%s\n' "$test_actual"
+          printf 'test_expected_apk_sha256=%s\n' "$test_expected"
+          printf 'target_installed_path=%s\ntest_installed_path=%s\n' "$target_paths" "$test_paths"
+        } > "$stage_dir/installed-apk-sha256.txt"
+        if [[ "$test_actual" == "$test_expected" ]]; then install_sha_status=0; fi
+        break
+      fi
+    fi
+    sleep 0.25
+  done
+  wait "$gradle_pid"
   gradle_status=$?
   printf '%s\n' "$gradle_status" > "$stage_dir/gradle-exit-code.txt"
   if [[ "$gradle_status" -eq 0 ]]; then
@@ -188,18 +219,18 @@ run_diagnostic_stage() {
     printf 'NOT_RUN\n' > "$stage_dir/verification-status.txt"
     echo 'NOT_RUN: diagnostic Gradle stage produced no JUnit directory to verify.' > "$stage_dir/verification.log"
   fi
-  if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 ]]; then
+  if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 || "$install_sha_status" -ne 0 ]]; then
     capture_device_state "$stage_dir/device-state.txt" "$stage_dir/device-state-status.txt"
   fi
   cat "$stage_dir/verification.log"
-  if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 ]]; then
+  if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 && "$install_sha_status" -eq 0 ]]; then
     printf 'PASS\n' > "$stage_dir/status.txt"
     echo 'PASS: Gradle exit=0 and exact JUnit verification passed.' > "$stage_dir/result.txt"
     return 0
   fi
-  printf 'FAIL: gradle_status=%s gradle_exit_code=%s verification_status=%s verification_exit_code=%s\n' \
+  printf 'FAIL: gradle_status=%s gradle_exit_code=%s verification_status=%s verification_exit_code=%s install_sha_status=%s\n' \
     "$(cat "$stage_dir/gradle-status.txt")" "$gradle_status" \
-    "$(cat "$stage_dir/verification-status.txt")" "$(cat "$stage_dir/verification-exit-code.txt")" \
+    "$(cat "$stage_dir/verification-status.txt")" "$(cat "$stage_dir/verification-exit-code.txt")" "$install_sha_status" \
     > "$stage_dir/result.txt"
   if [[ "$gradle_status" -eq 124 || "$gradle_status" -eq 137 ]]; then
     printf 'NOT_RUN\n' > "$stage_dir/status.txt"
@@ -341,20 +372,16 @@ if [[ "$sdk_ok" == true ]]; then
       diagnostics_result=0
       if [[ "$api_level" == 35 ]]; then
         # Focused companion run preserves the full suite and captures complete window/IME diagnostics.
-        run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 1200 16 '' || true
-        run_diagnostic_stage runner-smoke \
-          app.serea.android.SereaAppShellTest#chatIsInitialDestinationAndAllRoutesAreAccessible \
-          600 1 app.serea.android.SereaAppShellTest#chatIsInitialDestinationAndAllRoutesAreAccessible || diagnostics_result=1
+        run_diagnostic_stage cursor-position-focused \
+          app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
+          900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
+        if [[ "$diagnostics_result" -eq 0 ]]; then
+          run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
+        fi
       else
-        run_diagnostic_stage chat-http-e2e \
-          app.serea.android.ChatHttpE2ETest#twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp \
-          900 1 app.serea.android.ChatHttpE2ETest#twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp || true
-        run_diagnostic_stage activity-recreation \
-          app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation \
-          900 1 app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation || true
-        run_diagnostic_stage calendar-target \
-          app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination \
-          600 1 app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination || diagnostics_result=1
+        run_diagnostic_stage cursor-position-focused \
+          app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
+          900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
         if [[ "$diagnostics_result" -eq 0 ]]; then
           run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
         fi

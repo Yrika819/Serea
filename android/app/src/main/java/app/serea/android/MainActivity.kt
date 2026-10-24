@@ -65,6 +65,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -141,7 +142,7 @@ data class Conversation(
 
 data class ChatUiState(
     val conversation: Conversation = Conversation(id = UUID.randomUUID().toString()),
-    val input: String = "",
+    val editorValue: TextFieldValue = TextFieldValue(),
     val isLoading: Boolean = false,
     val isFinalizing: Boolean = false,
     val isRestoring: Boolean = false,
@@ -153,7 +154,9 @@ data class ChatUiState(
     val deleteConfirmation: String = "",
     val deleteTargetId: String = "",
     val deleteTargetTitle: String = "",
-)
+) {
+    val input: String get() = editorValue.text
+}
 
 data class ModelChatRequest(
     val conversationId: String,
@@ -210,7 +213,11 @@ internal class ChatViewModel(
 
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
 
-    fun updateInput(value: String) = mutableState.update { it.copy(input = value, errorMessage = null) }
+    fun updateInput(value: String) = updateEditorValue(TextFieldValue(value))
+
+    fun updateEditorValue(value: TextFieldValue) = mutableState.update {
+        it.copy(editorValue = value, errorMessage = null)
+    }
 
     fun requestCurrentConversationDeletionConfirmation() {
         val conversation = mutableState.value.conversation
@@ -255,7 +262,7 @@ internal class ChatViewModel(
             origin = DataOrigin.USER_AUTHORED, conversationId = conversationId)
         activeMessageId = userMessage.id
         mutableState.update {
-            it.copy(conversation = it.conversation.copy(messages = it.conversation.messages + userMessage), input = "", isLoading = true, isFinalizing = false, errorMessage = null)
+            it.copy(conversation = it.conversation.copy(messages = it.conversation.messages + userMessage), editorValue = TextFieldValue(), isLoading = true, isFinalizing = false, errorMessage = null)
         }
         activeJob = viewModelScope.launch {
             var turnFinalized = false
@@ -334,7 +341,7 @@ internal class ChatViewModel(
         cancelCurrent()
         selectionGeneration += 1
         val id = UUID.randomUUID().toString()
-        mutableState.update { it.copy(conversation = Conversation(id), input = "", isLoading = false, isFinalizing = false, showingHistory = false,
+        mutableState.update { it.copy(conversation = Conversation(id), editorValue = TextFieldValue(), isLoading = false, isFinalizing = false, showingHistory = false,
             isRestoring = false, errorMessage = null, statusMessage = null) }
     }
 
@@ -1033,7 +1040,7 @@ internal fun ChatScreen(
                         .focusProperties { canFocus = composerFocusAllowed }
                         .testTag("chat-composer")
                     key(focusClearRequest) {
-                        OutlinedTextField(value = state.input, onValueChange = chatViewModel::updateInput,
+                        OutlinedTextField(value = state.editorValue, onValueChange = chatViewModel::updateEditorValue,
                             modifier = composerModifier, label = { Text("メッセージ") },
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                             maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),

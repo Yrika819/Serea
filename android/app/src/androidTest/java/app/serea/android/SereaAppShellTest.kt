@@ -1,6 +1,8 @@
 package app.serea.android
 
 import android.content.pm.ActivityInfo
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
@@ -29,6 +31,9 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.performTextInputSelection
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
@@ -1135,8 +1140,21 @@ class SereaAppShellTest {
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
     }
 
+    @OptIn(ExperimentalTestApi::class)
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
-        compose.onNodeWithTag("chat-composer").performTextInput("draft survives navigation")
+        val composer = compose.onNodeWithTag("chat-composer")
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        composer.performClick()
+        compose.activityRule.scenario.onActivity { activity ->
+            val inputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+                "Composer did not expose its focused IME InputConnection."
+            }
+            assertTrue(inputConnection.setComposingText("draft", 1))
+            assertTrue(inputConnection.setComposingText("draft survives navigation", 1))
+            assertTrue(inputConnection.finishComposingText())
+        }
+        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
+        composer.performTextInputSelection(TextRange(5, 5))
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
@@ -1161,14 +1179,39 @@ class SereaAppShellTest {
         }.isSuccess
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
+        compose.waitForIdle()
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        composer.performTextInput("!")
+        assertEquals("draft! survives navigation", compose.activity.chatViewModel.state.value.input)
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
         pressBack()
-        compose.onNodeWithTag("chat-composer").assertIsDisplayed()
-        compose.onNodeWithTag("chat-composer").assertTextContains("draft survives navigation")
+        composer.assertIsDisplayed()
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        composer.assertTextContains("draft! survives navigation")
+        composer.performTextInput("?")
+        assertEquals("draft!? survives navigation", compose.activity.chatViewModel.state.value.input)
+
+        composer.performTextClearance()
+        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input.isEmpty() }
+        composer.performTextInput("activity preserves cursor")
+        composer.performTextInputSelection(TextRange(8, 8))
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
+        }
+        assertEquals(TextRange(8, 8), compose.activity.chatViewModel.state.value.editorValue.selection)
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(10_000) {
+            compose.activity.chatViewModel.state.value.input == "activity preserves cursor" &&
+                compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8) &&
+                runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
+        }
+        assertEquals(TextRange(8, 8), compose.activity.chatViewModel.state.value.editorValue.selection)
+        compose.onNodeWithTag("chat-composer").performTextInput("!")
+        assertEquals("activity! preserves cursor", compose.activity.chatViewModel.state.value.input)
     }
 
     @Test fun navigationDestinationsRemainSemanticallyAvailable() {

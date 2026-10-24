@@ -59,7 +59,7 @@ internal fun SereaAppShell(
 ) {
     var destinationName by rememberSaveable { mutableStateOf(SereaDestination.CHAT.name) }
     var backStackNames by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    var focusClearRequest by remember { mutableIntStateOf(0) }
+    var focusClearRequest by rememberSaveable { mutableIntStateOf(0) }
     val destination = SereaNavigationState.restore(destinationName, backStackNames).current
     val canGoBack = backStackNames.isNotEmpty()
     var taskProposalActionPending by androidx.compose.runtime.remember { mutableStateOf(false) }

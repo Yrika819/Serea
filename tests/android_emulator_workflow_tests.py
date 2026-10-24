@@ -88,8 +88,17 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('stage_dir/gradle.log', campaign)
         stage_body = campaign.split("run_diagnostic_stage() {", 1)[1].split("\n}\n\ncleanup_failed()", 1)[0]
         self.assertIn('if [[ -d "$stage_dir/junit" ]]; then', stage_body)
-        self.assertIn('if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 ]]', stage_body)
-        self.assertIn('if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 ]]', stage_body)
+        self.assertIn(
+            'if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 && "$install_sha_status" -eq 0 ]]',
+            stage_body,
+        )
+        self.assertIn(
+            'if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 || "$install_sha_status" -ne 0 ]]',
+            stage_body,
+        )
+        self.assertIn('while kill -0 "$gradle_pid" 2>/dev/null; do', stage_body)
+        self.assertIn('pm path app.serea.android.isolated.test', stage_body)
+        self.assertIn('test_expected_apk_sha256=%s', stage_body)
 
     def test_pr82_dependency_seed_and_process_death_gates_remain_fail_closed(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
@@ -225,10 +234,18 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('profileVerifierMarkerBeforeUtp=ABSENT', target_helper)
         self.assertIn('if [[ "$mode" == process-death ]]', target_helper)
         self.assertIn('am broadcast -f 0x20 -n "$receiver"', target_helper)
-        self.assertIn('calendar-target', campaign)
         self.assertIn('calendar-class', campaign)
-        self.assertIn('app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination', campaign)
         self.assertIn('app.serea.android.SereaAppShellTest 900 19', campaign)
+        self.assertNotIn('chat-screen-class', campaign)
+        self.assertNotIn('runner-smoke', campaign)
+        self.assertNotIn('chat-http-e2e', campaign)
+        self.assertNotIn('activity-recreation', campaign)
+        self.assertNotIn('calendar-target', campaign)
+        focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused')
+        class_stage = campaign.index('run_diagnostic_stage calendar-class')
+        full_suite = campaign.index('timeout --signal=INT --kill-after=120s 40m ./gradlew')
+        self.assertLess(focused_stage, class_stage)
+        self.assertLess(class_stage, full_suite)
         self.assertIn('--require-test', campaign)
         self.assertIn('--exact-count', campaign)
         self.assertIn('SereaCalendarStage', campaign)

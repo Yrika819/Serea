@@ -14,6 +14,27 @@ tool_dir="$(cd "$(dirname "$0")" && pwd)"
 root='app/build/outputs/androidTest-results'
 evidence="$root/api$api_level"
 mkdir -p "$evidence" || exit 1
+{
+  echo "source_checkout_sha=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [[ -n "${GITHUB_EVENT_PATH:-}" && -f "$GITHUB_EVENT_PATH" ]]; then
+    python3 - "$GITHUB_EVENT_PATH" <<'PY'
+import json, sys
+try:
+    event = json.load(open(sys.argv[1], encoding="utf-8"))
+    print("candidate_source_sha=" + str(event.get("pull_request", {}).get("head", {}).get("sha", "unknown")))
+except Exception as error:
+    print("candidate_source_sha=unavailable:" + str(error))
+PY
+  else
+    echo "candidate_source_sha=${GITHUB_SHA:-unknown}"
+  fi
+  echo "campaign_run_id=${GITHUB_RUN_ID:-local}"
+  echo "campaign_attempt=${GITHUB_RUN_ATTEMPT:-1}"
+  echo "api_level=$api_level"
+  for apk in app/build/outputs/apk/isolated/app-isolated.apk app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk; do
+    if [[ -f "$apk" ]]; then sha256sum "$apk"; else echo "apk_missing=$apk"; fi
+  done
+} > "$evidence/build-provenance.txt"
 printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/process-death-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/device-api-level.txt" || exit 1
@@ -309,7 +330,7 @@ if [[ "$sdk_ok" == true ]]; then
         "$api_level" "$campaign_token" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$evidence/test-lifecycle-host.txt"
       adb -s "$ANDROID_SERIAL" logcat -v threadtime -s \
         SereaTestLifecycle:I SereaCalendarStage:I SereaIsolatedRunner:I SereaProfileVerifier:I \
-        SereaProcessDeath:I \
+        SereaProcessDeath:I SereaChatWindowFocus:E SereaChatInputRegression:I \
         chat-demo-label:I chat-current-delete-confirmation:I \
         chat-current-delete-status:I chat-delete-all-confirmation:I chat-delete-all-status:I \
         chat-restored-conversation:I chat-draft-gmail-search-timeout:I \
@@ -319,10 +340,18 @@ if [[ "$sdk_ok" == true ]]; then
       logcat_pid=$!
       diagnostics_result=0
       if [[ "$api_level" == 35 ]]; then
+        # Focused companion run preserves the full suite and captures complete window/IME diagnostics.
+        run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 1200 16 '' || true
         run_diagnostic_stage runner-smoke \
           app.serea.android.SereaAppShellTest#chatIsInitialDestinationAndAllRoutesAreAccessible \
           600 1 app.serea.android.SereaAppShellTest#chatIsInitialDestinationAndAllRoutesAreAccessible || diagnostics_result=1
       else
+        run_diagnostic_stage chat-http-e2e \
+          app.serea.android.ChatHttpE2ETest#twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp \
+          900 1 app.serea.android.ChatHttpE2ETest#twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp || true
+        run_diagnostic_stage activity-recreation \
+          app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation \
+          900 1 app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation || true
         run_diagnostic_stage calendar-target \
           app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination \
           600 1 app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination || diagnostics_result=1

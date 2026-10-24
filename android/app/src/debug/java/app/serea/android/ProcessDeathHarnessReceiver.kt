@@ -52,7 +52,9 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                 if (phase == "verify-sentinel") {
                     assertDebugSentinelAuthorization(context, token)
                 }
-                if (phase in DESTRUCTIVE_PHASES) {
+                val updateCompatibilityPhase = context.packageName == UPDATE_COMPAT_PACKAGE &&
+                    phase in UPDATE_COMPAT_PHASES
+                if (phase in DESTRUCTIVE_PHASES && !updateCompatibilityPhase) {
                     verifyProcessDeathAuthorization(context, token)
                 }
                 val database = SereaHistoryDatabase.open(context)
@@ -97,12 +99,14 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
      */
     private fun validateTargetPackage(context: Context, phase: String) {
         val betaValidationPhase = context.packageName == PERSONAL_BETA_PACKAGE && phase in PERSONAL_BETA_PHASES
+        val updateCompatibilityPhase = context.packageName == UPDATE_COMPAT_PACKAGE &&
+            phase in UPDATE_COMPAT_PHASES
         val expectedPackage = when (phase) {
             "seed-sentinel", "verify-sentinel" -> DEBUG_DEMO_PACKAGE
             "campaign-seed", "process-death-seed", "campaign-consume", "prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify" -> ISOLATED_PACKAGE
             else -> error("Unknown harness phase")
         }
-        check(betaValidationPhase || context.packageName == expectedPackage) {
+        check(betaValidationPhase || updateCompatibilityPhase || context.packageName == expectedPackage) {
             "Phase $phase is not allowed for package ${context.packageName}"
         }
     }
@@ -375,7 +379,9 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         private const val DEBUG_DEMO_PACKAGE = "app.serea.android.demo"
         private const val ISOLATED_PACKAGE = "app.serea.android.isolated"
         private const val PERSONAL_BETA_PACKAGE = "app.serea.android.beta"
+        private const val UPDATE_COMPAT_PACKAGE = "app.serea.android.updatecompat"
         private val PERSONAL_BETA_PHASES = setOf("campaign-seed", "campaign-consume", "prepare", "verify")
+        private val UPDATE_COMPAT_PHASES = setOf("prepare", "verify")
         private const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"
         private const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"
         private const val PROCESS_DEATH_AUTHORIZATION = "serea-process-death-authorization"

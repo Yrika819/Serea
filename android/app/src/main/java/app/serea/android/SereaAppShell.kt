@@ -72,6 +72,7 @@ internal fun SereaAppShell(
     val navigationColumns = 3
 
     fun navigate(target: SereaDestination) {
+        chatViewModel.beginEditorSelectionPreservationForNavigation()
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
         focusClearRequest += 1
@@ -80,6 +81,7 @@ internal fun SereaAppShell(
         backStackNames = state.backStack.takeLast(SereaNavigationState.MAX_BACK_STACK).map { it.name }
     }
     fun goBack() {
+        chatViewModel.beginEditorSelectionPreservationForNavigation()
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
         focusClearRequest += 1

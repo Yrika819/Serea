@@ -1179,6 +1179,11 @@ class SereaAppShellTest {
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
         compose.waitForIdle()
+        assertEquals(
+            "Returning from Gmail must preserve the saved composer selection.",
+            TextRange(5, 5),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
         assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
         composer.performTextInput("!")
         assertEquals("draft! survives navigation", compose.activity.chatViewModel.state.value.input)
@@ -1190,6 +1195,11 @@ class SereaAppShellTest {
         pressBack()
         composer.assertIsDisplayed()
         assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        assertEquals(
+            "Returning from Calendar must preserve the saved composer selection.",
+            TextRange(6, 6),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
         composer.assertTextContains("draft! survives navigation")
         composer.performTextInput("?")
         assertEquals("draft!? survives navigation", compose.activity.chatViewModel.state.value.input)

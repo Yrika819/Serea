@@ -227,6 +227,7 @@ internal class ChatViewModel(
     private val finalizingMessageIds = mutableSetOf<String>()
     private var selectionGeneration = 0L
     private var preserveEditorSelectionDuringRestore = false
+    private var preserveEditorSelectionDuringNavigation = false
     private var selectionRestoreOwner: Activity? = null
     private val persistedConversationIds = mutableSetOf<String>().apply {
         if (historyRepository != null && initialConversation != null) add(initialConversation.id)
@@ -247,6 +248,14 @@ internal class ChatViewModel(
         selectionRestoreOwner = null
     }
 
+    fun beginEditorSelectionPreservationForNavigation() {
+        preserveEditorSelectionDuringNavigation = true
+    }
+
+    fun finishEditorSelectionPreservationAfterFocus() {
+        preserveEditorSelectionDuringNavigation = false
+    }
+
     fun isActivitySelectionRestorePending(): Boolean = preserveEditorSelectionDuringRestore
 
     fun updateEditorValue(
@@ -261,9 +270,12 @@ internal class ChatViewModel(
             if (preserveEditorSelectionDuringRestore && value.text != current.input) {
                 return@update current
             }
-            val restoringSelection = preserveEditorSelectionDuringRestore &&
+            val navigationSelectionCanBePreserved = preserveEditorSelectionDuringNavigation &&
+                current.editorValue.composition == null && value.composition == null
+            val preservingSelection = preserveEditorSelectionDuringRestore || navigationSelectionCanBePreserved
+            val restoringSelection = preservingSelection &&
                 value.text == current.editorValue.text && value.selection != current.editorValue.selection
-            val editorValue = if (preserveEditorSelectionDuringRestore && value.text == current.editorValue.text) {
+            val editorValue = if (preservingSelection && value.text == current.editorValue.text) {
                 value.copy(selection = current.editorValue.selection)
             } else {
                 value
@@ -1132,13 +1144,16 @@ internal fun ChatScreen(
                     val composerModifier = Modifier.weight(1f)
                         .focusProperties { canFocus = composerFocusAllowed }
                         .onFocusChanged { focusState ->
-                            if (focusState.isFocused && composerRestoreFocusReady) {
-                                chatViewModel.finishActivitySelectionRestore(hostActivity)
+                            if (focusState.isFocused) {
+                                chatViewModel.finishEditorSelectionPreservationAfterFocus()
+                                if (composerRestoreFocusReady) {
+                                    chatViewModel.finishActivitySelectionRestore(hostActivity)
+                                }
                             }
                         }
                         .testTag("chat-composer")
                     val composerInputGeneration = state.editorInputGeneration
-                    key(hostActivity, composerInputGeneration, state.editorSelectionCorrectionGeneration) {
+                    key(hostActivity, focusClearRequest, composerInputGeneration, state.editorSelectionCorrectionGeneration) {
                         OutlinedTextField(value = state.editorValue, onValueChange = { value ->
                             chatViewModel.updateEditorValue(value, composerInputGeneration)
                         },

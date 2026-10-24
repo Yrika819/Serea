@@ -131,8 +131,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         scripts = re.findall(r"^[ \t]+script: (.+)$", workflow, flags=re.MULTILINE)
         self.assertEqual(
             [
-                "bash ../tools/run_android_api35_campaign.sh",
                 "bash ../tools/run_android_instrumentation_campaign.sh 26",
+                "bash ../tools/run_android_api35_campaign.sh",
                 "bash tools/test_personal_beta_identity.sh",
             ],
             scripts,
@@ -169,14 +169,22 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("test_android_update_compatibility.sh", api35_campaign)
         self.assertIn("Save API 35 failure semantics and safety logcat", workflow)
         self.assertIn("Save API 26 failure semantics and safety logcat", workflow)
+        self.assertLess(
+            workflow.index("Run API 26 Pixel emulator and all instrumentation tests"),
+            workflow.index("Run API 35 Pixel emulator and all instrumentation tests"),
+        )
         self.assertEqual(2, workflow.count("live='android/app/build/outputs/androidTest-results/api"))
         self.assertEqual(2, workflow.count("' \"$live\" >> \"$output\""))
         self.assertIn("Emulator detached after test step; captured instrumentation logcat is preserved above.", workflow)
         self.assertIn("font-scale-gmail-heading", workflow)
         self.assertIn("chat-draft-gmail-search-timeout", workflow)
         self.assertLess(
-            workflow.index("Save API 35 failure semantics and safety logcat"),
-            workflow.index("Clear API 35 emulator state before API 26 campaign"),
+            workflow.index("Save API 26 failure semantics and safety logcat"),
+            workflow.index("Clear API 26 emulator state before API 35 campaign"),
+        )
+        self.assertLess(
+            workflow.index("Clear API 26 emulator state before API 35 campaign"),
+            workflow.index("Run API 35 Pixel emulator and all instrumentation tests"),
         )
         for step_name in (
             "Run API 35 Pixel emulator and all instrumentation tests",
@@ -493,7 +501,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("phase='campaign-seed'", helper)
         self.assertIn('PASS:$token:$phase:$request_id', helper)
 
-    def test_api26_evidence_and_kvm_setup_run_after_api35_image_failure(self) -> None:
+    def test_api26_campaign_runs_first_and_survives_api35_image_failure(self) -> None:
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
         steps = {
             match.group(1): match.group(0)
@@ -516,6 +524,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertLess(
             workflow.index("- name: Apply official KVM udev permissions"),
             workflow.index("- name: Run API 26 Pixel emulator and all instrumentation tests"),
+        )
+        self.assertLess(
+            workflow.index("- name: Run API 26 Pixel emulator and all instrumentation tests"),
+            workflow.index("- name: Clear API 26 emulator state before API 35 campaign"),
+        )
+        self.assertLess(
+            workflow.index("- name: Clear API 26 emulator state before API 35 campaign"),
+            workflow.index("- name: Run API 35 Pixel emulator and all instrumentation tests"),
         )
         api35 = steps["Run API 35 Pixel emulator and all instrumentation tests"]
         self.assertNotRegex(api35, r"(?m)^\s+if:")

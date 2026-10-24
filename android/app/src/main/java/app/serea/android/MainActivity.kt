@@ -115,7 +115,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState != null) chatViewModel.beginActivitySelectionRestore()
+        if (savedInstanceState != null || chatViewModel.isActivitySelectionRestorePending()) {
+            chatViewModel.beginActivitySelectionRestore(this)
+        }
         setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
     }
 
@@ -224,6 +226,7 @@ internal class ChatViewModel(
     private val finalizingMessageIds = mutableSetOf<String>()
     private var selectionGeneration = 0L
     private var preserveEditorSelectionDuringRestore = false
+    private var selectionRestoreOwner: Activity? = null
     private val persistedConversationIds = mutableSetOf<String>().apply {
         if (historyRepository != null && initialConversation != null) add(initialConversation.id)
     }
@@ -232,12 +235,15 @@ internal class ChatViewModel(
 
     fun updateInput(value: String) = updateEditorValue(TextFieldValue(value))
 
-    fun beginActivitySelectionRestore() {
+    fun beginActivitySelectionRestore(owner: Activity? = null) {
         preserveEditorSelectionDuringRestore = true
+        selectionRestoreOwner = owner
     }
 
-    fun finishActivitySelectionRestore() {
+    fun finishActivitySelectionRestore(owner: Activity?) {
+        if (!preserveEditorSelectionDuringRestore || selectionRestoreOwner !== owner) return
         preserveEditorSelectionDuringRestore = false
+        selectionRestoreOwner = null
     }
 
     fun isActivitySelectionRestorePending(): Boolean = preserveEditorSelectionDuringRestore
@@ -1107,7 +1113,7 @@ internal fun ChatScreen(
                         .focusProperties { canFocus = composerFocusAllowed }
                         .onFocusChanged { focusState ->
                             if (focusState.isFocused && composerRestoreFocusReady) {
-                                chatViewModel.finishActivitySelectionRestore()
+                                chatViewModel.finishActivitySelectionRestore(hostActivity)
                             }
                         }
                         .testTag("chat-composer")

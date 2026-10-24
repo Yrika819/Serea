@@ -143,6 +143,24 @@ class ChatViewModelTest {
         assertEquals("second question", vm.state.value.input)
     }
 
+    @Test fun newConversationPreservesBlankComposerGenerationButInvalidatesDiscardedDraft() = runTest(dispatcher) {
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("Demo: ${request.message}")
+        })
+        val blankGeneration = vm.state.value.editorInputGeneration
+        vm.newConversation()
+        assertEquals(blankGeneration, vm.state.value.editorInputGeneration)
+
+        vm.updateInput("unsent draft")
+        val draftGeneration = vm.state.value.editorInputGeneration
+        vm.newConversation()
+        val clearedGeneration = vm.state.value.editorInputGeneration
+        assertTrue(clearedGeneration > draftGeneration)
+        assertEquals("", vm.state.value.input)
+        vm.updateEditorValue(TextFieldValue("unsent draft"), draftGeneration)
+        assertEquals("", vm.state.value.input)
+    }
+
     @Test fun mockConversationUsesPreviousTurnsInTheNextRequestContext() = runTest(dispatcher) {
         val requests = mutableListOf<ModelChatRequest>()
         val vm = ChatViewModel(object : ModelChatPort {

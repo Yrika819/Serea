@@ -235,7 +235,20 @@ class ChatScreenTest {
         awaitComposerInputConnection("after composer tap, before typing")
         composer().assertIsFocused()
         composer().performTextInput(text)
-        compose.waitUntil(30_000) { stateSnapshot().input == text }
+        val inputReachedViewModel = runCatching {
+            compose.waitUntil(30_000) { stateSnapshot().input == text }
+        }.isSuccess
+        if (!inputReachedViewModel) {
+            val state = stateSnapshot()
+            Log.e(
+                FOCUS_LOG_TAG,
+                "SEND_INPUT_TIMEOUT|expectedLength=${text.length}|stateLength=${state.input.length}|" +
+                    "editorGeneration=${state.editorInputGeneration}|selection=${state.editorValue.selection.start}:${state.editorValue.selection.end}|" +
+                    "restorePending=${compose.activity.chatViewModel.isActivitySelectionRestorePending()}|" +
+                    "composer=${composerSnapshot()}",
+            )
+        }
+        assertTrue("IME input must reach the ViewModel before send.", inputReachedViewModel)
         Log.i(FOCUS_LOG_TAG, "SEND_TYPED|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
         awaitComposerInputConnection("after typing, before keyboard dismissal")
         Espresso.closeSoftKeyboard()

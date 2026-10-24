@@ -410,7 +410,10 @@ internal class ChatViewModel(
         selectionGeneration += 1
         val id = UUID.randomUUID().toString()
         mutableState.update { it.copy(conversation = Conversation(id), editorValue = TextFieldValue(),
-            editorInputGeneration = it.editorInputGeneration + 1, isLoading = false, isFinalizing = false, showingHistory = false,
+            // A blank composer already has no draft callback to invalidate. Keeping
+            // its generation stable avoids replacing a focused field for a no-op clear.
+            editorInputGeneration = if (it.editorValue.text.isEmpty()) it.editorInputGeneration else it.editorInputGeneration + 1,
+            isLoading = false, isFinalizing = false, showingHistory = false,
             isRestoring = false, errorMessage = null, statusMessage = null) }
     }
 

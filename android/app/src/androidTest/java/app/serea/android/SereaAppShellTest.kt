@@ -1220,6 +1220,7 @@ class SereaAppShellTest {
         compose.onNodeWithTag("chat-composer").assertIsFocused()
         compose.onNodeWithTag("chat-composer").performTextInput("!")
         assertEquals("activity! preserves cursor", compose.activity.chatViewModel.state.value.input)
+        Espresso.closeSoftKeyboard()
     }
 
     @Test fun navigationDestinationsRemainSemanticallyAvailable() {

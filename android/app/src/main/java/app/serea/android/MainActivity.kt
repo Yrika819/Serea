@@ -3,10 +3,11 @@ package app.serea.android
 import android.app.Activity
 import android.content.ContextWrapper
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,6 +82,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -113,14 +115,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState != null) {
-            chatViewModel.beginActivitySelectionRestore()
-            val softInputMode = window.attributes.softInputMode
-            window.setSoftInputMode(
-                (softInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_STATE.inv()) or
-                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN,
-            )
-        }
+        if (savedInstanceState != null) chatViewModel.beginActivitySelectionRestore()
         setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
     }
 }
@@ -151,6 +146,7 @@ data class Conversation(
 data class ChatUiState(
     val conversation: Conversation = Conversation(id = UUID.randomUUID().toString()),
     val editorValue: TextFieldValue = TextFieldValue(),
+    val editorSelectionCorrectionGeneration: Long = 0,
     val isLoading: Boolean = false,
     val isFinalizing: Boolean = false,
     val isRestoring: Boolean = false,
@@ -234,15 +230,28 @@ internal class ChatViewModel(
 
     fun isActivitySelectionRestorePending(): Boolean = preserveEditorSelectionDuringRestore
 
-    fun updateEditorValue(value: TextFieldValue) = mutableState.update { current ->
-        val editorValue = if (
-            preserveEditorSelectionDuringRestore && value.text == current.editorValue.text
-        ) {
-            value.copy(selection = current.editorValue.selection)
-        } else {
-            value
+    fun updateEditorValue(value: TextFieldValue) {
+        if (preserveEditorSelectionDuringRestore && value.text != mutableState.value.input) {
+            finishActivitySelectionRestore()
         }
-        current.copy(editorValue = editorValue, errorMessage = null)
+        mutableState.update { current ->
+            val restoringSelection = preserveEditorSelectionDuringRestore &&
+                value.text == current.editorValue.text && value.selection != current.editorValue.selection
+            val editorValue = if (preserveEditorSelectionDuringRestore && value.text == current.editorValue.text) {
+                value.copy(selection = current.editorValue.selection)
+            } else {
+                value
+            }
+            current.copy(
+                editorValue = editorValue,
+                editorSelectionCorrectionGeneration = if (restoringSelection) {
+                    current.editorSelectionCorrectionGeneration + 1
+                } else {
+                    current.editorSelectionCorrectionGeneration
+                },
+                errorMessage = null,
+            )
+        }
     }
 
     fun requestCurrentConversationDeletionConfirmation() {
@@ -774,8 +783,14 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
+    val composerInteractionSource = remember { MutableInteractionSource() }
     var composerFocusAllowed by remember(focusClearRequest) {
         mutableStateOf(focusClearRequest == 0 && !chatViewModel.isActivitySelectionRestorePending())
+    }
+    LaunchedEffect(chatViewModel, composerInteractionSource) {
+        composerInteractionSource.interactions.collect { interaction ->
+            if (interaction is PressInteraction.Press) chatViewModel.finishActivitySelectionRestore()
+        }
     }
     LaunchedEffect(focusClearRequest) {
         if (focusClearRequest > 0) {
@@ -798,7 +813,6 @@ internal fun ChatScreen(
             focusManager.clearFocus(force = true)
             withFrameNanos { }
             withFrameNanos { }
-            chatViewModel.finishActivitySelectionRestore()
             composerFocusAllowed = true
         }
     }
@@ -1077,9 +1091,10 @@ internal fun ChatScreen(
                     val composerModifier = Modifier.weight(1f)
                         .focusProperties { canFocus = composerFocusAllowed }
                         .testTag("chat-composer")
-                    key(hostActivity) {
+                    key(hostActivity, state.editorSelectionCorrectionGeneration) {
                         OutlinedTextField(value = state.editorValue, onValueChange = chatViewModel::updateEditorValue,
                             modifier = composerModifier, label = { Text("メッセージ") },
+                            interactionSource = composerInteractionSource,
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                             maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { chatViewModel.sendMessage(); keyboard?.hide() }),

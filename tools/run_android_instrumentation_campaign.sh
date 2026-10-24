@@ -378,29 +378,12 @@ if [[ "$sdk_ok" == true ]]; then
         if [[ "$diagnostics_result" -eq 0 ]]; then
           run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
         fi
-        if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 1200 16 '' || true
-          run_diagnostic_stage runner-smoke \
-            app.serea.android.SereaAppShellTest#chatIsInitialDestinationAndAllRoutesAreAccessible \
-            600 1 app.serea.android.SereaAppShellTest#chatIsInitialDestinationAndAllRoutesAreAccessible || diagnostics_result=1
-        fi
       else
         run_diagnostic_stage cursor-position-focused \
           app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
           900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
         if [[ "$diagnostics_result" -eq 0 ]]; then
           run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
-        fi
-        if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage chat-http-e2e \
-            app.serea.android.ChatHttpE2ETest#twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp \
-            900 1 app.serea.android.ChatHttpE2ETest#twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp || true
-          run_diagnostic_stage activity-recreation \
-            app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation \
-            900 1 app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation || true
-          run_diagnostic_stage calendar-target \
-            app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination \
-            600 1 app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination || diagnostics_result=1
         fi
       fi
       if [[ "$diagnostics_result" -eq 0 ]]; then

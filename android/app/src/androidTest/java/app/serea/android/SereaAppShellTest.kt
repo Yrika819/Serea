@@ -1201,6 +1201,11 @@ class SereaAppShellTest {
         composer.performTextInput("?")
         assertEquals("draft!? survives navigation", compose.activity.chatViewModel.state.value.input)
 
+        // Returning from Calendar intentionally leaves Chat unfocused. Model the
+        // user tapping the composer before moving the caret; stale navigation IME
+        // callbacks must not overwrite this new focused selection.
+        composer.performClick()
+        composer.assertIsFocused()
         composer.performTextClearance()
         compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input.isEmpty() }
         composer.performTextInput("activity preserves cursor")

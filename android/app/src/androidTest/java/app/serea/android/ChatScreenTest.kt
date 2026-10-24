@@ -638,6 +638,9 @@ class ChatScreenTest {
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
         dailyRequests.performTextInput("21")
+        compose.waitUntil(5_000) {
+            runCatching { dailyRequests.assertTextContains("21") }.isSuccess
+        }
         compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsEnabled().performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("Soft Limit設定を保存しました", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("destination_back").performClick()

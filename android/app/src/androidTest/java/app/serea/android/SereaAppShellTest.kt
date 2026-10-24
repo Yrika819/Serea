@@ -129,14 +129,6 @@ class SereaAppShellTest {
         }
         val root = node.boundsInRoot
         val window = node.boundsInWindow
-        val children = node.children.take(20).joinToString(separator = ";") { child ->
-            val text = child.config.getOrElseNullable(SemanticsProperties.Text) { null }
-                ?.joinToString(" ") { it.text }
-            val description = child.config.getOrElseNullable(SemanticsProperties.ContentDescription) { null }
-                ?.joinToString(" ")
-            val label = text?.takeIf { it.isNotBlank() } ?: description.orEmpty()
-            "$label@${child.boundsInRoot}"
-        }
         return CalendarSemanticsSnapshot(
             scrollValue = axis?.value(),
             scrollMax = axis?.maxValue(),
@@ -147,7 +139,12 @@ class SereaAppShellTest {
             boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
             boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
             hasClickAction = SemanticsActions.OnClick in node.config,
-            visibleSemantics = children,
+            // Traversing SemanticsNode.children evaluates collapsed semantics through the
+            // SnapshotStateObserver. That observer is already bound to the Compose UI thread;
+            // recursively reading child nodes from the instrumentation thread causes an
+            // API-dependent cross-thread observer failure. Keep the snapshot to the explicit
+            // values above, which the gestures and assertions use.
+            visibleSemantics = "child traversal omitted to preserve SnapshotStateObserver thread affinity",
         )
     }
 

@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onFirst
@@ -37,6 +38,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ChatScreenTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    private var lastComposerTouch = "not attempted"
 
     @Before fun startWithAnExplicitNewConversation() {
         awaitComposerEnabled()
@@ -84,37 +86,72 @@ class ChatScreenTest {
                 compose.activityRule.scenario.onActivity { activity ->
                     val decor = activity.window.decorView
                     hasWindowFocus = decor.hasWindowFocus()
-                    snapshot = "stage=$stage lifecycle=${activity.lifecycle.currentState} " +
+                    snapshot = "stage=$stage activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                        "window=${System.identityHashCode(activity.window)} token=${decor.windowToken} " +
+                        "attached=${decor.isAttachedToWindow} display=${decor.display?.displayId} " +
+                        "lifecycle=${activity.lifecycle.currentState} " +
                         "windowFocus=$hasWindowFocus decorFocus=${decor.hasFocus()} " +
                         "decorFocused=${decor.isFocused} visible=${decor.isShown}"
                 }
                 hasWindowFocus
             }
         }.isSuccess
+        if (!focused) {
+            val systemFocus = runCatching {
+                shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+            }.getOrDefault("unavailable")
+            snapshot += " systemFocus=$systemFocus"
+        }
         Log.i(FOCUS_LOG_TAG, snapshot)
         assertTrue("MainActivity did not own window focus at $stage: $snapshot", focused)
+    }
+
+    private fun tapComposerThroughSystemInput() {
+        val bounds = composer().fetchSemanticsNode().boundsInWindow
+        val origin = IntArray(2)
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.window.decorView.getLocationOnScreen(origin)
+        }
+        val x = origin[0] + bounds.center.x.toInt()
+        val y = origin[1] + bounds.center.y.toInt()
+        val commandResult = shell("input tap $x $y")
+        lastComposerTouch = "boundsInWindow=$bounds screenOrigin=${origin.toList()} " +
+            "screenPoint=($x,$y) result=$commandResult"
+        Log.i(
+            FOCUS_LOG_TAG,
+            "SYSTEM_TOUCH|$lastComposerTouch",
+        )
     }
 
     private fun awaitComposerInputConnection(stage: String) {
         var snapshot = "MainActivity unavailable"
         val inputReady = runCatching {
             compose.waitUntil(10_000) {
-                var ready = false
+                var activityReady = false
                 compose.activityRule.scenario.onActivity { activity ->
                     val decor = activity.window.decorView
                     val hasWindowFocus = decor.hasWindowFocus()
                     val acceptingText = activity.getSystemService(InputMethodManager::class.java)
                         ?.isAcceptingText == true
-                    ready = hasWindowFocus && acceptingText
+                    activityReady = activity.lifecycle.currentState == androidx.lifecycle.Lifecycle.State.RESUMED &&
+                        acceptingText
                     snapshot = "stage=$stage lifecycle=${activity.lifecycle.currentState} " +
                         "windowFocus=$hasWindowFocus imeAcceptingText=$acceptingText " +
                         "decorFocus=${decor.hasFocus()} visible=${decor.isShown}"
                 }
-                ready
+                val composerFocused = runCatching { composer().assertIsFocused() }.isSuccess
+                snapshot += " composerFocused=$composerFocused"
+                activityReady && composerFocused
             }
         }.isSuccess
+        if (!inputReady) {
+            val systemFocus = runCatching {
+                shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+            }.getOrDefault("unavailable")
+            snapshot += " lastTouch={$lastComposerTouch} systemFocus={$systemFocus}"
+        }
         Log.i(FOCUS_LOG_TAG, snapshot)
-        assertTrue("Composer input connection was unavailable at $stage: $snapshot", inputReady)
+        assertTrue("Composer did not have a live focused input connection at $stage: $snapshot", inputReady)
     }
 
     private fun stateSnapshot(): ChatUiState {
@@ -141,10 +178,14 @@ class ChatScreenTest {
     }
 
     private fun send(text: String) {
-        awaitMainWindowFocus("before composer tap")
-        composer().performClick()
-        composer().assertIsFocused()
+        // Inject a screen-coordinate tap through Android's input dispatcher so it can activate
+        // a resumed window that Compose's root-targeted touch injection cannot focus.
+        tapComposerThroughSystemInput()
+        // The soft keyboard may own Android window focus while the composer is the active
+        // input target. Require the Activity to remain resumed and the real IME connection
+        // to accept text, then verify the Compose field itself owns focus.
         awaitComposerInputConnection("after composer tap, before typing")
+        composer().assertIsFocused()
         composer().performTextInput(text)
         compose.waitUntil(30_000) { stateSnapshot().input == text }
         awaitComposerInputConnection("after typing, before keyboard dismissal")
@@ -172,14 +213,20 @@ class ChatScreenTest {
         awaitComposerEnabled()
         compose.onNodeWithText("新しい会話").performClick()
         awaitComposerEnabled()
-        val compactChat = compose.activity.resources.configuration.fontScale >= 1.5f ||
-            compose.activity.resources.configuration.screenWidthDp < 340
-        assertDisplayedWithEvidence("chat-demo-label") {
-            compose.onNodeWithText(
-                if (compactChat) "DEMO · Cloud送信: 無効" else "DEMO · Mock会話 · クラウドAI未接続",
-                substring = false,
-            ).assertIsDisplayed()
-        }
+        val demoLabelSettled = runCatching {
+            compose.waitUntil(5_000) {
+                val compactChat = compose.activity.resources.configuration.fontScale >= 1.5f ||
+                    compose.activity.resources.configuration.screenWidthDp < 340
+                runCatching {
+                    compose.onNodeWithText(
+                        if (compactChat) "DEMO · Cloud送信: 無効" else "DEMO · Mock会話 · クラウドAI未接続",
+                        substring = false,
+                    ).assertIsDisplayed()
+                }.isSuccess
+            }
+        }.isSuccess
+        if (!demoLabelSettled) compose.onRoot(useUnmergedTree = true).printToLog("chat-demo-label")
+        assertTrue("The correct responsive demo label must become visible.", demoLabelSettled)
         send("hello")
         awaitResponse("Demo response: I received “hello”.")
         val sentIndex = stateSnapshot().conversation.messages.indexOfFirst {
@@ -269,11 +316,18 @@ class ChatScreenTest {
         compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("手動").performScrollTo().performClick()
         compose.onNodeWithText("費用優先").performScrollTo().performClick()
-        compose.onNodeWithTag("model-budget-amount").performScrollTo().performTextInput("0.05")
-        compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextInput("USD")
+        compose.onNodeWithTag("model-budget-amount").performScrollTo().performTextClearance()
+        compose.onNodeWithTag("model-budget-amount").performTextInput("0.05")
+        compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextClearance()
+        compose.onNodeWithTag("model-budget-currency").performTextInput("USD")
         compose.onNodeWithText("ルーター設定を保存").performScrollTo().performClick()
-        compose.onNodeWithText("費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。")
-            .performScrollTo().assertIsDisplayed()
+        val saveSucceeded = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
+        val saveFailed = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。"
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText(saveSucceeded).fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodesWithText(saveFailed).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText(saveSucceeded).performScrollTo().assertIsDisplayed()
         assertEquals(
             ModelRoutingPolicy(
                 mode = ModelSelectionMode.MANUAL,

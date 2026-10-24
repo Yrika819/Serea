@@ -14,11 +14,13 @@ internal object ProfileVerifierCacheMarker {
     private const val SCHEMA = 1
     private const val BYTE_COUNT = 24
 
-    // ProfileVerifier 1.4.0 may persist these results. Its other error results return before
-    // writing the cache (or are unsupported on API 35).
-    private val persistedResultCodes = setOf(0, 1, 2, 3, 5 shl 16)
+    // AndroidX defines 1 as compiled, 2 as installed and queued for background compilation,
+    // and 3 as compiled with a non-matching profile. Code 0 means no profile is installed;
+    // 5 << 16 means the APK has no embedded profile.
+    private val installedProfileResultCodes = setOf(1, 2, 3)
 
-    fun isOnlyValidMarker(filesDirectory: File, packageLastUpdateTime: Long): Boolean {
+    /** Validates the platform marker after ProfileVerifier has run; unrelated files can coexist. */
+    fun isValidMarker(filesDirectory: File, packageLastUpdateTime: Long): Boolean {
         return try {
             if (packageLastUpdateTime <= 0L) return false
             val directoryPath = filesDirectory.toPath()
@@ -26,10 +28,7 @@ internal object ProfileVerifierCacheMarker {
                 !Files.isDirectory(directoryPath, LinkOption.NOFOLLOW_LINKS)
             ) return false
 
-            val entries = filesDirectory.listFiles() ?: return false
-            if (entries.size != 1 || entries.single().name != FILE_NAME) return false
-
-            val marker = entries.single()
+            val marker = File(filesDirectory, FILE_NAME)
             val markerPath = marker.toPath()
             if (Files.isSymbolicLink(markerPath) ||
                 !Files.isRegularFile(markerPath, LinkOption.NOFOLLOW_LINKS) ||
@@ -45,6 +44,17 @@ internal object ProfileVerifierCacheMarker {
         }
     }
 
+    /** The instrumentation runner accepts only a fresh namespace plus the single platform marker. */
+    fun isOnlyValidMarker(filesDirectory: File, packageLastUpdateTime: Long): Boolean {
+        return try {
+            val entries = filesDirectory.listFiles() ?: return false
+            entries.size == 1 && entries.single().name == FILE_NAME &&
+                isValidMarker(filesDirectory, packageLastUpdateTime)
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
     fun rejectionDetails(filesDirectory: File, packageLastUpdateTime: Long): String {
         return try {
             if (packageLastUpdateTime <= 0L) return "packageUpdateTime=invalid"
@@ -52,9 +62,7 @@ internal object ProfileVerifierCacheMarker {
             if (Files.isSymbolicLink(directoryPath)) return "filesDir=symlink"
             if (!Files.isDirectory(directoryPath, LinkOption.NOFOLLOW_LINKS)) return "filesDir=not-directory"
             val entries = filesDirectory.listFiles() ?: return "filesDir=list-failed"
-            if (entries.size != 1) return "entryCount=${entries.size}"
-            val marker = entries.single()
-            if (marker.name != FILE_NAME) return "entryName=unexpected"
+            val marker = File(filesDirectory, FILE_NAME)
             val markerPath = marker.toPath()
             if (Files.isSymbolicLink(markerPath)) return "marker=symlink"
             if (!Files.isRegularFile(markerPath, LinkOption.NOFOLLOW_LINKS)) return "marker=not-regular"
@@ -66,7 +74,7 @@ internal object ProfileVerifierCacheMarker {
             val storedPackageUpdateTime = cache.long
             val installedCurrentProfileSize = cache.long
             "schema=$schema resultCode=$resultCode packageUpdateTimeMatches=${storedPackageUpdateTime == packageLastUpdateTime} " +
-                "profileSizeNonnegative=${installedCurrentProfileSize >= 0L}"
+                "profileSizeNonnegative=${installedCurrentProfileSize >= 0L} markerEntryCount=${entries.size}"
         } catch (_: IOException) {
             "inspection=io-failed"
         } catch (_: SecurityException) {
@@ -100,7 +108,7 @@ internal object ProfileVerifierCacheMarker {
             val installedCurrentProfileSize = cache.long
             !cache.hasRemaining() &&
                 schema == SCHEMA &&
-                resultCode in persistedResultCodes &&
+                resultCode in installedProfileResultCodes &&
                 storedPackageUpdateTime == packageLastUpdateTime &&
                 installedCurrentProfileSize >= 0L
         } catch (_: RuntimeException) {

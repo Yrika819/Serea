@@ -93,6 +93,20 @@ def collect_results(directory: Path) -> Results:
     return Results(*totals, files=used_files)
 
 
+def collect_failure_details(directory: Path) -> list[str]:
+    details: list[str] = []
+    for file in sorted(directory.rglob("*.xml")):
+        root = ET.parse(file).getroot()
+        for case in root.iter():
+            if case.tag.rsplit("}", 1)[-1] != "testcase":
+                continue
+            class_name, method_name = _case_identity(case, file)
+            for result in (*case.findall("./failure"), *case.findall("./error")):
+                detail = result.get("message") or " ".join("".join(result.itertext()).split()) or "no failure detail"
+                details.append(f"{class_name}#{method_name}: {detail[:320]}")
+    return details
+
+
 def collect_class_counts(directory: Path) -> dict[str, int]:
     counts: dict[str, int] = {}
     for file in sorted(directory.rglob("*.xml")):
@@ -108,22 +122,100 @@ def collect_class_counts(directory: Path) -> dict[str, int]:
     return counts
 
 
+def _mask_kotlin_comments_and_literals(source: str) -> str:
+    """Blank Kotlin comments and literals without crossing token boundaries."""
+    masked = list(source)
+    length = len(source)
+
+    def blank(start: int, end: int) -> None:
+        for position in range(start, end):
+            if source[position] not in "\r\n":
+                masked[position] = " "
+
+    index = 0
+    while index < length:
+        if source.startswith("//", index):
+            end = index + 2
+            while end < length and source[end] not in "\r\n":
+                end += 1
+            blank(index, end)
+            index = end
+            continue
+
+        if source.startswith("/*", index):
+            start = index
+            index += 2
+            depth = 1
+            while index < length and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            blank(start, index)
+            continue
+
+        if source.startswith('"""', index):
+            start = index
+            end = source.find('"""', index + 3)
+            index = length if end < 0 else end + 3
+            blank(start, index)
+            continue
+
+        if source[index] == '"':
+            start = index
+            index += 1
+            while index < length:
+                if source[index] == "\\":
+                    index = min(index + 2, length)
+                elif source[index] == '"':
+                    index += 1
+                    break
+                elif source[index] in "\r\n":
+                    # Kotlin regular strings cannot span physical lines. Keep malformed source
+                    # visible to the annotation scan instead of swallowing later declarations.
+                    break
+                else:
+                    index += 1
+            blank(start, index)
+            continue
+
+        if source[index] == "'":
+            # Character literals are one physical line. An unmatched apostrophe is left as code,
+            # so it cannot consume an annotation on a later line.
+            start = index
+            cursor = index + 1
+            while cursor < length and source[cursor] not in "\r\n":
+                if source[cursor] == "\\":
+                    cursor = min(cursor + 2, length)
+                elif source[cursor] == "'":
+                    cursor += 1
+                    blank(start, cursor)
+                    index = cursor
+                    break
+                else:
+                    cursor += 1
+            else:
+                index += 1
+                continue
+            continue
+
+        index += 1
+
+    return "".join(masked)
+
+
 def _source_test_count(source: str) -> int:
     # Ignore comments and literals so examples do not look like executable tests.
-    source = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
-    source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source)
-    source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source)
-    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    source = re.sub(r"//[^\n]*", "", source)
+    source = _mask_kotlin_comments_and_literals(source)
     return len(re.findall(r"@(?:org\.junit\.)?Test\b", source))
 
 
 def _source_test_methods(source: str) -> set[str]:
-    source = re.sub(r'""".*?"""', "", source, flags=re.DOTALL)
-    source = re.sub(r'"(?:\\.|[^"\\])*"', '""', source)
-    source = re.sub(r"'(?:\\.|[^'\\])*'", "''", source)
-    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    source = re.sub(r"//[^\n]*", "", source)
+    source = _mask_kotlin_comments_and_literals(source)
     pattern = re.compile(
         r"@(?:org\.junit\.)?Test\b(?:\s*\([^)]*\))?\s*"
         r"(?:(?:public|private|protected|internal|suspend|open|override|final)\s+)*"
@@ -216,32 +308,38 @@ def verify_profile_verifier_evidence(path: Path, api_level: int) -> tuple[bool, 
     except OSError as error:
         return False, f"could not read ProfileVerifier runtime evidence: {path}: {error}"
     pattern = re.compile(
-        r"SereaProfileVerifierEvidence.*?\bapi=(\d+)\s+status=([A-Z_]+)\s+"
-        r"resultCode=(\d+).*?\bmarker=([a-z]+)\b"
+        r"SereaProfileVerifier.*?\bapi=(\d+)\s+status=([A-Z_]+)\s+"
+        r"resultCode=(\d+).*?\bembedded=(true|false)\s+marker=([a-z]+)\b"
     )
     matches = [pattern.search(line) for line in lines]
     evidence = [match.groups() for match in matches if match and int(match.group(1)) == api_level]
     if not evidence:
-        return False, f"no SereaProfileVerifierEvidence runtime record found for API {api_level}"
-    api_text, status, result_code_text, marker = evidence[-1]
+        return False, f"no SereaProfileVerifier runtime record found for API {api_level}"
+    api_text, status, result_code_text, embedded_text, marker = evidence[-1]
     result_code = int(result_code_text)
     if api_level == 26:
         valid = status == "UNSUPPORTED" and result_code == (4 << 16) and marker == "absent"
         expected = "status=UNSUPPORTED resultCode=262144 marker=absent"
     elif api_level == 35:
-        persisted_codes = {0, 1, 2, 3, 5 << 16}
-        valid = status == "COMPLETED" and result_code in persisted_codes and marker == "valid"
-        expected = "status=COMPLETED, a persisted result code, and marker=valid"
+        # AndroidX code 2 means the profile is installed and queued for background compilation.
+        installed_profile_codes = {1, 2, 3}
+        valid = (
+            status == "COMPLETED"
+            and result_code in installed_profile_codes
+            and embedded_text == "true"
+            and marker == "valid"
+        )
+        expected = "status=COMPLETED, resultCode in {1, 2, 3}, embedded=true, and marker=valid"
     else:
         return False, f"ProfileVerifier evidence validation is not defined for API {api_level}"
     if not valid:
         return False, (
             f"API {api_text} ProfileVerifier evidence was status={status} "
-            f"resultCode={result_code} marker={marker}; expected {expected}"
+            f"resultCode={result_code} embedded={embedded_text} marker={marker}; expected {expected}"
         )
     return True, (
         f"ProfileVerifier runtime evidence: API {api_level} status={status} "
-        f"resultCode={result_code} marker={marker}"
+        f"resultCode={result_code} embedded={embedded_text} marker={marker}"
     )
 
 
@@ -298,7 +396,7 @@ def main() -> int:
     parser.add_argument("--api-level", type=int, choices=(26, 35), help="emulator API for ProfileVerifier evidence")
     parser.add_argument(
         "--profile-verifier-log", type=Path,
-        help="logcat file containing positive SereaProfileVerifierEvidence runtime output",
+        help="logcat file containing positive SereaProfileVerifier runtime output",
     )
     parser.add_argument(
         "--source-root", type=Path,
@@ -448,6 +546,8 @@ def main() -> int:
         )
         return 1
     if results.failures or results.errors or results.skipped:
+        for detail in collect_failure_details(args.results):
+            print(f"JUnit failure detail: {detail}", file=sys.stderr)
         print("FAIL: every instrumentation test must pass without failures, errors, or skips.", file=sys.stderr)
         return 1
     class_counts = collect_class_counts(args.results)

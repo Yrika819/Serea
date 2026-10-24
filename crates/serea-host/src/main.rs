@@ -39,6 +39,8 @@ fn main() -> ExitCode {
         "run" if std::env::args().any(|arg| arg == "--synthetic") => match run_synthetic_host() {
             Ok(()) => ExitCode::SUCCESS,
             Err(_error) => {
+                #[cfg(feature = "synthetic-test-hooks")]
+                test_readiness::report_host_error(&_error);
                 eprintln!("{{\"event\":\"host_error\",\"code\":\"runtime_failed\"}}");
                 ExitCode::FAILURE
             }

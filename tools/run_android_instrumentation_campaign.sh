@@ -308,7 +308,7 @@ if [[ "$sdk_ok" == true ]]; then
       printf 'api_level=%s\ncampaign_token=%s\ncampaign_started_at_utc=%s\n' \
         "$api_level" "$campaign_token" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$evidence/test-lifecycle-host.txt"
       adb -s "$ANDROID_SERIAL" logcat -v threadtime -s \
-        SereaTestLifecycle:I SereaCalendarStage:I SereaIsolatedRunner:I SereaProfileVerifierEvidence:I \
+        SereaTestLifecycle:I SereaCalendarStage:I SereaIsolatedRunner:I SereaProfileVerifier:I \
         SereaProcessDeath:I \
         chat-demo-label:I chat-current-delete-confirmation:I \
         chat-current-delete-status:I chat-delete-all-confirmation:I chat-delete-all-status:I \

@@ -76,12 +76,31 @@ fi
 printf 'PASS: phase=api35-emulator-connected-and-adb-root\n'
 
 wait_for_package_manager() {
-  for _ in $(seq 1 60); do
-    local package_listing
-    package_listing=$(adb shell pm list packages -3 2>&1 | tr -d '\r' || true)
-    if [[ "$package_listing" != *"Can't find service: package"* ]]; then return 0; fi
+  local package_listing='' status=0
+  for attempt in $(seq 1 60); do
+    if package_listing=$(adb shell pm list packages -3 2>&1 | tr -d '\r'); then
+      if [[ "$package_listing" != *"Can't find service: package"* &&
+            "$package_listing" != *'adb: device offline'* &&
+            "$package_listing" != *'device not found'* ]]; then
+        return 0
+      fi
+    else
+      status=$?
+      if [[ -n "$package_listing" ]] &&
+          ! grep -Eiq 'device offline|device .*not found|no devices/emulators found|connection.*closed|Can.t find service: package' <<< "$package_listing"; then
+        printf 'Android Package Manager probe failed: %s\n' "$package_listing" >&2
+        return "$status"
+      fi
+    fi
+    if grep -Eiq 'device offline|device .*not found|no devices/emulators found|connection.*closed' <<< "$package_listing" ||
+        { [[ "$status" -ne 0 && -z "$package_listing" ]]; }; then
+      printf 'RETRY: waiting for ADB/Package Manager readiness (%s/60).\n' "$attempt" >&2
+      adb reconnect offline >/dev/null 2>&1 || true
+    fi
+    status=0
     sleep 2
   done
+  printf 'Last Package Manager probe: %s\n' "$package_listing" >&2
   echo 'Android Package Manager did not become available on the disposable emulator.' >&2
   return 1
 }

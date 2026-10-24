@@ -155,7 +155,7 @@ class ChatScreenTest {
             compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
         }.getOrNull()
         val composerSummary = nodes?.map { node ->
-            "id=${node.id} editable=${node.config.getOrNull(SemanticsProperties.EditableText)} " +
+            "id=${node.id} editable=${node.config.getOrElseNullable(SemanticsProperties.EditableText) { null }} " +
                 "config=${node.config} boundsWindow=${node.boundsInWindow}"
         }
         val activitySummary = StringBuilder()
@@ -171,7 +171,7 @@ class ChatScreenTest {
                     "loading=${state.isLoading} restoring=${state.isRestoring} messages=${state.conversation.messages.size}"
             )
         }
-        val composerText = nodes?.singleOrNull()?.config?.getOrNull(SemanticsProperties.EditableText)?.text
+        val composerText = nodes?.singleOrNull()?.config?.getOrElseNullable(SemanticsProperties.EditableText) { null }?.text
         val detail = "lastTouch={$lastComposerTouch} activity={$activitySummary} " +
             "composerValueText=$composerText composerMatchesStateInput=${composerText == state.input} " +
             "composerNodeCount=${nodes?.size} composerNodes=$composerSummary"
@@ -200,9 +200,9 @@ class ChatScreenTest {
     private fun composerSnapshot(): String = runCatching {
         val nodes = compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
         val stateInput = stateSnapshot().input
-        val text = nodes.singleOrNull()?.config?.getOrNull(SemanticsProperties.EditableText)?.text
+        val text = nodes.singleOrNull()?.config?.getOrElseNullable(SemanticsProperties.EditableText) { null }?.text
         "count=${nodes.size};composerValueText=$text;matchesStateInput=${text == stateInput};" + nodes.joinToString(";") {
-            "id=${it.id},editable=${it.config.getOrNull(SemanticsProperties.EditableText)},bounds=${it.boundsInWindow}"
+            "id=${it.id},editable=${it.config.getOrElseNullable(SemanticsProperties.EditableText) { null }},bounds=${it.boundsInWindow}"
         }
     }.getOrElse { "unavailable:$it" }
 

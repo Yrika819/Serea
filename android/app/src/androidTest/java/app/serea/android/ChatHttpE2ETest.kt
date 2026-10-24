@@ -378,9 +378,9 @@ class ChatHttpE2ETest {
         val state = stateSnapshot()
         val composer = runCatching {
             val nodes = compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
-            val text = nodes.singleOrNull()?.config?.getOrNull(SemanticsProperties.EditableText)?.text
+            val text = nodes.singleOrNull()?.config?.getOrElseNullable(SemanticsProperties.EditableText) { null }?.text
             "count=${nodes.size};composerValueText=$text;matchesStateInput=${text == state.input};" + nodes.joinToString(";") {
-                "id=${it.id},editable=${it.config.getOrNull(SemanticsProperties.EditableText)},bounds=${it.boundsInWindow}"
+                "id=${it.id},editable=${it.config.getOrElseNullable(SemanticsProperties.EditableText) { null }},bounds=${it.boundsInWindow}"
             }
         }.getOrElse { "unavailable:$it" }
         val saved = runCatching { runBlocking { history.get(state.conversation.id)?.messages?.map { it.role to it.status } } }

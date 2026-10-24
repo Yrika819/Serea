@@ -801,6 +801,9 @@ internal fun ChatScreen(
     var composerFocusAllowed by remember(focusClearRequest) {
         mutableStateOf(focusClearRequest == 0 && !chatViewModel.isActivitySelectionRestorePending())
     }
+    var composerRestoreFocusReady by remember(hostActivity, chatViewModel) {
+        mutableStateOf(!chatViewModel.isActivitySelectionRestorePending())
+    }
     LaunchedEffect(focusClearRequest) {
         if (focusClearRequest > 0) {
             composerFocusAllowed = false
@@ -817,12 +820,14 @@ internal fun ChatScreen(
     LaunchedEffect(hostActivity, chatViewModel) {
         if (chatViewModel.isActivitySelectionRestorePending()) {
             // Do not reconnect the old IME selection before the ViewModel-backed value is restored.
+            composerRestoreFocusReady = false
             composerFocusAllowed = false
             keyboard?.hide()
             focusManager.clearFocus(force = true)
             withFrameNanos { }
             withFrameNanos { }
             composerFocusAllowed = true
+            composerRestoreFocusReady = true
         }
     }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -1100,7 +1105,9 @@ internal fun ChatScreen(
                     val composerModifier = Modifier.weight(1f)
                         .focusProperties { canFocus = composerFocusAllowed }
                         .onFocusChanged { focusState ->
-                            if (focusState.isFocused) chatViewModel.finishActivitySelectionRestore()
+                            if (focusState.isFocused && composerRestoreFocusReady) {
+                                chatViewModel.finishActivitySelectionRestore()
+                            }
                         }
                         .testTag("chat-composer")
                     key(hostActivity, state.editorSelectionCorrectionGeneration) {

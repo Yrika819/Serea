@@ -535,54 +535,96 @@ private fun EventDetailContent(
     calendar: CalendarDescriptor?,
     displayZone: ZoneId,
 ) {
+    val listState = rememberLazyListState()
+    val listPosition by remember(listState) {
+        derivedStateOf {
+            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        }
+    }
     LazyColumn(
-        modifier = Modifier.fillMaxSize().testTag("calendar_event_detail_list"),
+        state = listState,
+        modifier = Modifier.fillMaxSize()
+            .semantics {
+                this[CalendarLazyListPositionKey] = listPosition
+                this[CalendarLazyListViewportKey] = CalendarLazyListViewportSnapshot(
+                    totalItems = listState.layoutInfo.totalItemsCount,
+                    visibleItemIndices = listState.layoutInfo.visibleItemsInfo.map { it.index }.toList(),
+                    viewportStartOffset = listState.layoutInfo.viewportStartOffset,
+                    viewportEndOffset = listState.layoutInfo.viewportEndOffset,
+                    canScrollForward = listState.canScrollForward,
+                )
+            }
+            .testTag("calendar_event_detail_list"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text(
-                CalendarAgendaJapaneseText.title(event.title),
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.semantics { heading() },
-            )
-        }
-        item {
-            DetailField("開始・終了", CalendarAgendaJapaneseText.eventTime(event, displayZone))
-            val allDay = event.time as? EventTime.AllDay
-            if (allDay != null) {
+            Column(Modifier.fillMaxWidth().testTag("calendar_event_detail_item_0")) {
                 Text(
-                    "終了日は ${CalendarAgendaJapaneseText.date(allDay.endDateExclusive)}（含みません）",
-                    style = MaterialTheme.typography.bodyMedium,
+                    CalendarAgendaJapaneseText.title(event.title),
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.semantics { heading() },
                 )
             }
         }
         item {
-            DetailField("予定の状態", CalendarAgendaJapaneseText.status(event.status))
-            if (event.status == app.serea.android.calendar.EventStatus.CANCELLED) {
-                Text("取消済みの予定です。Agenda一覧には表示されません。", style = MaterialTheme.typography.bodyMedium)
+            Column(Modifier.fillMaxWidth().testTag("calendar_event_detail_item_1")) {
+                DetailField("開始・終了", CalendarAgendaJapaneseText.eventTime(event, displayZone))
+                val allDay = event.time as? EventTime.AllDay
+                if (allDay != null) {
+                    Text(
+                        "終了日は ${CalendarAgendaJapaneseText.date(allDay.endDateExclusive)}（含みません）",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             }
         }
         item {
-            DetailField("対象カレンダー", calendar?.displayName?.takeIf { it.isNotBlank() } ?: "名称なし")
+            Column(Modifier.fillMaxWidth().testTag("calendar_event_detail_item_2")) {
+                DetailField("予定の状態", CalendarAgendaJapaneseText.status(event.status))
+                if (event.status == app.serea.android.calendar.EventStatus.CANCELLED) {
+                    Text("取消済みの予定です。Agenda一覧には表示されません。", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
         }
         item {
-            DetailField("タイムゾーン", event.time?.let {
-                when (it) {
-                    is EventTime.AllDay -> it.timeZone.id
-                    is EventTime.Timed -> it.timeZone.id
-                }
-            } ?: calendar?.timeZone?.id ?: "不明")
-            DetailField("表示タイムゾーン", displayZone.id)
+            DetailField(
+                "対象カレンダー",
+                calendar?.displayName?.takeIf { it.isNotBlank() } ?: "名称なし",
+                modifier = Modifier.testTag("calendar_event_detail_item_3"),
+            )
         }
-        item { DetailField("場所", CalendarAgendaJapaneseText.location(event.location)) }
-        item { DetailField("説明", CalendarAgendaJapaneseText.description(event.description)) }
+        item {
+            Column(Modifier.fillMaxWidth().testTag("calendar_event_detail_item_4")) {
+                DetailField("タイムゾーン", event.time?.let {
+                    when (it) {
+                        is EventTime.AllDay -> it.timeZone.id
+                        is EventTime.Timed -> it.timeZone.id
+                    }
+                } ?: calendar?.timeZone?.id ?: "不明")
+                DetailField("表示タイムゾーン", displayZone.id)
+            }
+        }
+        item {
+            DetailField(
+                "場所",
+                CalendarAgendaJapaneseText.location(event.location),
+                modifier = Modifier.testTag("calendar_event_detail_item_5"),
+            )
+        }
+        item {
+            DetailField(
+                "説明",
+                CalendarAgendaJapaneseText.description(event.description),
+                modifier = Modifier.testTag("calendar_event_detail_item_6"),
+            )
+        }
     }
 }
 
 @Composable
-private fun DetailField(label: String, value: String) {
+private fun DetailField(label: String, value: String, modifier: Modifier = Modifier) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)

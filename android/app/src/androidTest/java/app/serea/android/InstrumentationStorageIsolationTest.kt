@@ -49,14 +49,38 @@ class InstrumentationStorageIsolationTest {
                 ProfileVerifier.CompilationStatus.RESULT_CODE_ERROR_UNSUPPORTED_API_VERSION,
                 resultCode,
             )
-            assertTrue("unsupported API 26 must not persist a ProfileVerifier marker", target.filesDir.listFiles().isNullOrEmpty())
-            Log.i(PROFILE_VERIFIER_EVIDENCE_TAG, "api=26 status=UNSUPPORTED resultCode=$resultCode marker=absent")
+            val profileVerifierMarker = File(target.filesDir, ProfileVerifierCacheMarker.FILE_NAME)
+            assertFalse(
+                "unsupported API 26 must not persist a ProfileVerifier marker; " +
+                    "filesDirEntries=${target.filesDir.listFiles()?.map { it.name }?.sorted()}",
+                profileVerifierMarker.exists(),
+            )
+            Log.i(
+                PROFILE_VERIFIER_EVIDENCE_TAG,
+                "api=26 status=UNSUPPORTED resultCode=$resultCode embedded=false marker=absent",
+            )
         } else {
             @Suppress("DEPRECATION")
             val packageUpdateTime = target.packageManager.getPackageInfo(target.packageName, 0).lastUpdateTime
+            val markerDetails = ProfileVerifierCacheMarker.rejectionDetails(target.filesDir, packageUpdateTime)
             assertTrue(
-                "API 35 ProfileVerifier must return a persisted result, resultCode=$resultCode",
-                ProfileVerifierCacheMarker.isOnlyValidMarker(target.filesDir, packageUpdateTime),
+                "API 35 ProfileVerifier must run and report an installed profile, resultCode=$resultCode " +
+                    "(1=compiled, 2=installed and queued for compilation, 3=compiled with a non-matching profile) " +
+                    "embedded=${compilationStatus.appApkHasEmbeddedProfile()} marker=$markerDetails",
+                resultCode in setOf(
+                    ProfileVerifier.CompilationStatus.RESULT_CODE_COMPILED_WITH_PROFILE,
+                    ProfileVerifier.CompilationStatus.RESULT_CODE_PROFILE_ENQUEUED_FOR_COMPILATION,
+                    ProfileVerifier.CompilationStatus.RESULT_CODE_COMPILED_WITH_PROFILE_NON_MATCHING,
+                ),
+            )
+            assertTrue(
+                "API 35 APK must embed the profile, resultCode=$resultCode",
+                compilationStatus.appApkHasEmbeddedProfile(),
+            )
+            assertTrue(
+                "API 35 ProfileVerifier cache must prove an installed profile, " +
+                    "resultCode=$resultCode marker=$markerDetails",
+                ProfileVerifierCacheMarker.isValidMarker(target.filesDir, packageUpdateTime),
             )
             Log.i(
                 PROFILE_VERIFIER_EVIDENCE_TAG,
@@ -69,6 +93,6 @@ class InstrumentationStorageIsolationTest {
     }
 
     private companion object {
-        const val PROFILE_VERIFIER_EVIDENCE_TAG = "SereaProfileVerifierEvidence"
+        const val PROFILE_VERIFIER_EVIDENCE_TAG = "SereaProfileVerifier"
     }
 }

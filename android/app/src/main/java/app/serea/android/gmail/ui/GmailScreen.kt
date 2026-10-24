@@ -1,6 +1,7 @@
 package app.serea.android.gmail.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,8 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -69,13 +72,15 @@ fun GmailScreen(
     val compactLayout = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 360
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val searchSubmitFocusRequester = remember { FocusRequester() }
     val route = state.route
     val isRoot = route is GmailRoute.List && route.mode == GmailListMode.INBOX && state.backStack.isEmpty()
     BackHandler(enabled = !isRoot) { viewModel.back() }
     LaunchedEffect(route, state.isLoading) {
         if (route is GmailRoute.List && route.mode == GmailListMode.SEARCH && !state.isLoading) {
-            focusManager.clearFocus(force = true)
             keyboardController?.hide()
+            focusManager.clearFocus(force = true)
+            searchSubmitFocusRequester.requestFocus()
         }
     }
 
@@ -108,7 +113,13 @@ fun GmailScreen(
         }
 
         when (val route = state.route) {
-            is GmailRoute.List -> GmailListContent(state, route, viewModel, Modifier.weight(1f))
+            is GmailRoute.List -> GmailListContent(
+                state,
+                route,
+                viewModel,
+                searchSubmitFocusRequester,
+                Modifier.weight(1f),
+            )
             is GmailRoute.Message -> GmailMessageContent(
                 state = state,
                 message = state.detail,
@@ -123,15 +134,21 @@ fun GmailScreen(
 }
 
 @Composable
-private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewModel: GmailViewModel, modifier: Modifier) {
+private fun GmailListContent(
+    state: GmailUiState,
+    route: GmailRoute.List,
+    viewModel: GmailViewModel,
+    searchSubmitFocusRequester: FocusRequester,
+    modifier: Modifier,
+) {
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val configuration = LocalConfiguration.current
     val compactLayout = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 360
     val submitSearch = {
         viewModel.submitSearch(state.searchInput)
-        focusManager.clearFocus(force = true)
         keyboardController?.hide()
+        focusManager.clearFocus(force = true)
     }
     Column(modifier.fillMaxSize()) {
         Row(
@@ -148,7 +165,11 @@ private fun GmailListContent(state: GmailUiState, route: GmailRoute.List, viewMo
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
             )
-            Button(onClick = { submitSearch() }, modifier = Modifier.testTag("gmail_search_submit")) { Text("検索") }
+            Button(
+                onClick = { submitSearch() },
+                modifier = Modifier.focusRequester(searchSubmitFocusRequester).focusable()
+                    .testTag("gmail_search_submit"),
+            ) { Text("検索") }
         }
         if (route.mode == GmailListMode.SEARCH) {
             Row(

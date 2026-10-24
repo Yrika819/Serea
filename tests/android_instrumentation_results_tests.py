@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 
 from tools.verify_android_instrumentation import (
+    _source_test_count,
+    _source_test_methods,
     collect_class_counts,
+    collect_failure_details,
     collect_results,
     collect_source_test_counts,
     verify_profile_verifier_evidence,
@@ -35,6 +38,22 @@ class InstrumentationResultTests(unittest.TestCase):
             result = collect_results(root)
             self.assertEqual(1, result.tests)
             self.assertEqual(1, result.failures)
+
+    def test_failure_details_identify_failing_instrumentation_case(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.write_xml(
+                root,
+                "failed.xml",
+                '<testsuite tests="1" failures="1" errors="0" skipped="0">'
+                '<testcase classname="a.CalendarTest" name="scrollsToTarget">'
+                '<failure message="visible text bounds were clipped">stack trace</failure>'
+                '</testcase></testsuite>',
+            )
+            self.assertEqual(
+                ["a.CalendarTest#scrollsToTarget: visible text bounds were clipped"],
+                collect_failure_details(root),
+            )
 
     def test_rejects_non_junit_xml(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -124,8 +143,8 @@ class InstrumentationResultTests(unittest.TestCase):
             source_root = root / "androidTest"
             profile_log = root / "profile-verifier-logcat.txt"
             profile_log.write_text(
-                "I/SereaProfileVerifierEvidence( 1234): api=35 status=COMPLETED "
-                "resultCode=327680 compiled=false enqueued=false embedded=false marker=valid\n",
+                "I/SereaProfileVerifier( 1234): api=35 status=COMPLETED "
+                "resultCode=2 compiled=false enqueued=true embedded=true marker=valid\n",
                 encoding="utf-8",
             )
             results.mkdir()
@@ -181,23 +200,35 @@ class InstrumentationResultTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "logcat.txt"
             log.write_text(
-                "I/SereaProfileVerifierEvidence( 10): api=35 status=COMPLETED "
+                "I/SereaProfileVerifier( 10): api=35 status=COMPLETED "
                 "resultCode=2 compiled=false enqueued=true embedded=true marker=valid\n",
                 encoding="utf-8",
             )
             self.assertTrue(verify_profile_verifier_evidence(log, 35)[0])
             self.assertFalse(verify_profile_verifier_evidence(log, 26)[0])
             log.write_text(
-                "I/SereaProfileVerifierEvidence( 10): api=35 status=COMPLETED "
+                "I/SereaProfileVerifier( 10): api=35 status=COMPLETED "
+                "resultCode=0 compiled=false enqueued=false embedded=false marker=valid\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(verify_profile_verifier_evidence(log, 35)[0])
+            log.write_text(
+                "I/SereaProfileVerifier( 10): api=35 status=COMPLETED "
                 "resultCode=262144 compiled=false enqueued=false embedded=false marker=absent\n",
                 encoding="utf-8",
             )
             valid, message = verify_profile_verifier_evidence(log, 35)
             self.assertFalse(valid)
-            self.assertIn("expected status=COMPLETED", message)
+            self.assertIn("resultCode in {1, 2, 3}", message)
             log.write_text(
-                "I/SereaProfileVerifierEvidence( 10): api=26 status=UNSUPPORTED "
-                "resultCode=262144 marker=absent\n",
+                f"I/SereaProfileVerifier( 10): api=35 status=COMPLETED "
+                f"resultCode={5 << 16} compiled=false enqueued=false embedded=false marker=absent\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(verify_profile_verifier_evidence(log, 35)[0])
+            log.write_text(
+                "I/SereaProfileVerifier( 10): api=26 status=UNSUPPORTED "
+                "resultCode=262144 embedded=false marker=absent\n",
                 encoding="utf-8",
             )
             self.assertTrue(verify_profile_verifier_evidence(log, 26)[0])
@@ -217,6 +248,35 @@ class InstrumentationResultTests(unittest.TestCase):
             (root / "a" / "Other.kt").write_text("package a\nclass Other { @Test fun added() {} }\n", encoding="utf-8")
             _, total, _ = collect_source_test_counts(root, {"a.Storage": 2})
             self.assertEqual(3, total)
+
+    def test_kotlin_source_scanner_keeps_multiline_comments_and_literals_separate(self) -> None:
+        source = r'''package a
+val raw = """@Test fun rawStringFake() {} // /* '"""
+val escaped = "escaped quote: \" and @Test fun escapedStringFake() {}"
+// Calendar owner's note has an unmatched apostrophe; it must not swallow later declarations.
+@Test fun swallowedByOldCrossLineQuoteRegex() {}
+val apostrophe = '\''
+/* A nested block comment with @Test fun blockFake() {} and a ' quote.
+   /* nested with \" and another ' quote */
+*/
+@Test fun firstRealTest() {}
+@org.junit.Test fun secondRealTest() {}
+'''
+        self.assertEqual(3, _source_test_count(source))
+        self.assertEqual(
+            {"swallowedByOldCrossLineQuoteRegex", "firstRealTest", "secondRealTest"},
+            _source_test_methods(source),
+        )
+
+    def test_real_serea_app_shell_source_has_all_nineteen_instrumentation_tests(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt"
+        ).read_text(encoding="utf-8")
+        methods = _source_test_methods(source)
+        self.assertEqual(19, _source_test_count(source))
+        self.assertEqual(19, len(methods))
+        self.assertIn("calendarDetailAndSelectedCalendarSurviveAnotherDestination", methods)
 
 
 if __name__ == "__main__":

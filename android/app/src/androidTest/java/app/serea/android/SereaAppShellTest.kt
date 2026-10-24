@@ -22,6 +22,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.printToLog
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
@@ -59,12 +60,15 @@ import kotlin.math.ceil
 class SereaAppShellTest {
     private companion object {
         const val CALENDAR_STAGE_TAG = "SereaCalendarStage"
+        const val FONT_SCALE_STAGE_TAG = "SereaFontScale"
+        const val TASKS_DESTINATION_STAGE_TAG = "SereaTasksDestination"
     }
 
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     private enum class CalendarGesturePath { NODE_EDGE, NODE_INTERIOR, ROOT_INTERIOR }
     private var calendarGestureProbeDone = false
+    private var calendarDetailSemanticsProbeDone = false
     private var calendarGesturePath = CalendarGesturePath.NODE_INTERIOR
 
     private data class CalendarBoundsSnapshot(
@@ -89,14 +93,26 @@ class SereaAppShellTest {
         val agendaItems: app.serea.android.calendar.ui.CalendarAgendaItemsSnapshot?,
         val boundsInRoot: CalendarBoundsSnapshot,
         val boundsInWindow: CalendarBoundsSnapshot,
+        val hasClickAction: Boolean,
         val visibleSemantics: String,
     )
 
-    /** Evaluate ScrollAxisRange lambdas on the Compose UI thread, then return immutable primitives. */
-    private fun snapshotSemantics(interaction: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarSemanticsSnapshot {
-        val node = interaction.fetchSemanticsNode()
+    private data class CalendarSemanticsTarget(
+        val interaction: androidx.compose.ui.test.SemanticsNodeInteraction,
+        val nodes: androidx.compose.ui.test.SemanticsNodeInteractionCollection,
+    )
+
+    /** Select a semantics node on the test thread; read snapshot-backed values on the UI thread. */
+    private fun snapshotSemantics(target: CalendarSemanticsTarget): CalendarSemanticsSnapshot {
+        compose.waitForIdle()
+        // The public collection API selects without serializing lazy, snapshot-backed properties
+        // into SemanticsNodeInteraction's last-seen failure message.
+        val nodes = target.nodes.fetchSemanticsNodes()
+        check(nodes.size == 1) { "Expected one Calendar semantics node, found ${nodes.size}." }
+        val node = nodes.single()
         var result: CalendarSemanticsSnapshot? = null
         compose.runOnIdle {
+            // Evaluate config lambdas, child bounds, and Owner geometry together on the UI thread.
             val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
             val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
             val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {
@@ -124,14 +140,32 @@ class SereaAppShellTest {
                 agendaItems = agendaItems,
                 boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
                 boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
+                hasClickAction = SemanticsActions.OnClick in node.config,
                 visibleSemantics = children,
             )
         }
         return checkNotNull(result) { "Compose UI thread did not produce a Calendar semantics snapshot." }
     }
 
+    private fun calendarNodeWithTag(tag: String) = CalendarSemanticsTarget(
+        interaction = compose.onNodeWithTag(tag),
+        nodes = compose.onAllNodesWithTag(tag),
+    )
+
+    private fun calendarNodeWithText(text: String, substring: Boolean = true, unmerged: Boolean = false) =
+        CalendarSemanticsTarget(
+            interaction = compose.onNodeWithText(text, substring = substring, useUnmergedTree = unmerged),
+            nodes = compose.onAllNodesWithText(text, substring = substring, useUnmergedTree = unmerged),
+        )
+
+    private fun calendarRootNode() = CalendarSemanticsTarget(
+        interaction = compose.onRoot(),
+        nodes = compose.onAllNodes(isRoot()),
+    )
+
     @Before fun waitUntilChatCanAcceptInput() {
         calendarGestureProbeDone = false
+        calendarDetailSemanticsProbeDone = false
         calendarGesturePath = CalendarGesturePath.NODE_INTERIOR
         compose.waitUntil(30_000) {
             runCatching { compose.onNodeWithTag("chat-composer").assertIsEnabled() }.isSuccess
@@ -156,9 +190,13 @@ class SereaAppShellTest {
         )
     }
 
+    private fun fontScaleStage(name: String) {
+        Log.i(FONT_SCALE_STAGE_TAG, "STAGE=$name")
+    }
+
     /** Scrolls a real LazyColumn and uses the loaded item map to bound the search and detect a skip. */
     private fun scrollAgendaUntilDisplayed(tag: String, text: String) {
-        val list = compose.onNodeWithTag(tag)
+        val list = calendarNodeWithTag(tag)
         val fixtureTarget = if (tag == "calendar_agenda_list") {
             FakeCalendarProvider.Fixtures.events.singleOrNull { it.title == text }
         } else {
@@ -182,6 +220,12 @@ class SereaAppShellTest {
             }
         }
         val initial = snapshotSemantics(list)
+        if (tag == "calendar_event_detail_list" && !calendarDetailSemanticsProbeDone &&
+            (initial.scrollMax ?: 0f) > 0f
+        ) {
+            calendarDetailSemanticsProbeDone = true
+            verifyCalendarSemanticsScrollToIndex(list)
+        }
         val targetIndex = fixtureTarget?.let { initial.agendaItems?.eventItemIndices?.get(it.key.eventId.value) }
         if (fixtureTarget != null && targetIndex == null) {
             throw AssertionError(
@@ -192,7 +236,7 @@ class SereaAppShellTest {
                     "visible=${initial.visibleSemantics}",
             )
         }
-        if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
+        if (isCalendarTargetTextFullyVisible(list, text)) {
             logVisibleCalendarItemBounds(tag, text)
             return
         }
@@ -214,7 +258,8 @@ class SereaAppShellTest {
             ?: ceil(initial.boundsInRoot.height / 64f).toInt().coerceAtLeast(1)
         val fallbackLoadedItems = initial.viewport?.totalItems ?:
             ceil((initial.scrollMax ?: 0f) / initial.boundsInRoot.height.coerceAtLeast(1f)).toInt() + 1
-        val initialTargetDistance = targetIndex?.let { it - (initial.position?.first ?: 0) }
+        val initialFirstVisible = initial.position?.first ?: initial.viewport?.visibleItemIndices?.minOrNull() ?: 0
+        val initialTargetDistance = targetIndex?.let { it - initialFirstVisible }
             ?: fallbackLoadedItems
         val maximumSwipes = (
             ceil(initialTargetDistance.coerceAtLeast(1).toDouble() / initiallyVisibleItems).toInt() * 2 + 2
@@ -224,7 +269,7 @@ class SereaAppShellTest {
         var stopReason = "finite search budget exhausted"
         var swipeIndex = 0
         while (swipeIndex < searchBudget && swipeIndex < 128) {
-            if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
+            if (isCalendarTargetTextFullyVisible(list, text)) {
                 logVisibleCalendarItemBounds(tag, text)
                 return
             }
@@ -252,18 +297,25 @@ class SereaAppShellTest {
             swipeIndex += 1
             val afterValue = after.scrollValue ?: 0f
             val afterMax = after.scrollMax ?: 0f
-            val positionAdvanced = after.position != before.position
+            val lazyListPositionAdvanced = when {
+                before.position != null && after.position != null -> before.position != after.position
+                before.viewport != null && after.viewport != null ->
+                    before.viewport.visibleItemIndices != after.viewport.visibleItemIndices
+                else -> false
+            }
             Log.i(
                 CALENDAR_STAGE_TAG,
                 "SWIPE|$tag|index=$swipeIndex|from=$beforeValue|to=$afterValue|max=$afterMax|" +
-                    "position=${before.position}->${after.position}|viewport=${after.viewport}|" +
+                    "position=${before.position}->${after.position}|" +
+                    "visibleIndices=${before.viewport?.visibleItemIndices}->${after.viewport?.visibleItemIndices}|" +
+                    "viewport=${after.viewport}|" +
                     "loadedEvents=${after.loadedEventCount}",
             )
             assertTrue(
                 "$tag Touch swipe $swipeIndex did not advance the real LazyList position " +
                     "(from=$beforeValue/${before.position}, to=$afterValue/${after.position}, " +
                     "max=$afterMax, viewport=${after.viewport})",
-                gestureAdvanced && positionAdvanced && afterValue > beforeValue + 0.5f,
+                gestureAdvanced && lazyListPositionAdvanced && afterValue > beforeValue + 0.5f,
             )
             last = after
             val activeTargetIndex = if (fixtureTarget != null) {
@@ -290,16 +342,11 @@ class SereaAppShellTest {
                 )
             }
             if (activeTargetIndex != null && after.viewport?.visibleItemIndices?.contains(activeTargetIndex) == true) {
-                throw AssertionError(
-                    "Calendar target item entered the visible LazyColumn range without its text semantics: " +
-                        "target=$text targetItemIndex=$activeTargetIndex position=${after.position} " +
-                        "viewport=${after.viewport} loadedEvents=${after.loadedEventCount} " +
-                        "bounds=${after.boundsInRoot} visible=${after.visibleSemantics}",
-                )
+                logCalendarTargetVisibilityAtItemRange(tag, text, activeTargetIndex, after)
             }
             val currentVisibleItems = after.viewport?.visibleItemIndices?.size?.coerceAtLeast(1)
                 ?: initiallyVisibleItems
-            val currentFirstVisible = after.position?.first ?: 0
+            val currentFirstVisible = after.position?.first ?: after.viewport?.visibleItemIndices?.minOrNull() ?: 0
             val currentItemCount = maxOf(after.viewport?.totalItems ?: 0, activeTargetIndex?.plus(1) ?: 0)
             val currentDistance = activeTargetIndex?.let { (it - currentFirstVisible).coerceAtLeast(1) }
                 ?: (currentItemCount - currentFirstVisible).coerceAtLeast(1)
@@ -310,9 +357,72 @@ class SereaAppShellTest {
                 break
             }
         }
-        if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) {
+        // The final Touch can expose the target at the same time it reaches canScrollForward=false.
+        // Re-read the Text Semantics and its clipped bounds after that layout before declaring the
+        // finite gesture search exhausted.
+        if (isCalendarTargetTextFullyVisible(list, text)) {
             logVisibleCalendarItemBounds(tag, text)
             return
+        }
+        if (targetIndex != null) {
+            list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+                scrollToIndex(targetIndex)
+            }
+            compose.waitForIdle()
+            last = snapshotSemantics(list)
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "SEMANTICS_SCROLL_TO_TARGET|tag=$tag|target=$text|targetItemIndex=$targetIndex|" +
+                    "position=${last.position}|viewport=${last.viewport}|bounds=${last.boundsInRoot}",
+            )
+            if (last.viewport?.visibleItemIndices?.contains(targetIndex) == true &&
+                isCalendarTargetTextFullyVisible(list, text)
+            ) {
+                logVisibleCalendarItemBounds(tag, text)
+                return
+            }
+            stopReason = "finite Touch search ended; ScrollToIndex did not fully expose target Text"
+        } else if (tag == "calendar_event_detail_list") {
+            // Detail labels are not backed by the agenda event-id map. Enumerate the finite
+            // LazyColumn semantics range until the real unmerged Text node is composed, then use
+            // its ancestor CollectionItemInfo rather than guessing from visible item indices.
+            val itemCount = checkNotNull(last.viewport) {
+                "Calendar detail list must expose its LazyColumn item count."
+            }.totalItems
+            var actualTargetIndex: Int? = null
+            for (requestedIndex in 0 until itemCount) {
+                scrollCalendarToSemanticsIndex(list, requestedIndex)
+                last = snapshotSemantics(list)
+                val discoveredIndex = calendarTextCollectionItemIndex(text, tag) ?: continue
+                actualTargetIndex = discoveredIndex
+                Log.i(
+                    CALENDAR_STAGE_TAG,
+                    "SEMANTICS_TEXT_INDEX_DISCOVERED|tag=$tag|target=$text|requestedIndex=$requestedIndex|" +
+                        "actualItemIndex=$discoveredIndex|viewport=" + last.viewport +
+                        "|scroll=" + last.scrollValue + "/" + last.scrollMax,
+                )
+                scrollCalendarToSemanticsIndex(list, discoveredIndex)
+                last = snapshotSemantics(list)
+                val confirmedIndex = calendarTextCollectionItemIndex(text, tag)
+                assertEquals(
+                    "Calendar detail Text CollectionItemInfo index must remain stable after ScrollToIndex",
+                    discoveredIndex,
+                    confirmedIndex,
+                )
+                if (last.viewport?.visibleItemIndices?.contains(discoveredIndex) == true &&
+                    isCalendarTargetTextFullyVisible(list, text)
+                ) {
+                    logVisibleCalendarItemBounds(tag, text)
+                    return
+                }
+                stopReason = "ScrollToIndex resolved item " + discoveredIndex +
+                    " but target Text bounds were not fully visible"
+                break
+            }
+            if (actualTargetIndex == null) {
+                stopReason = "finite ScrollToIndex scan found no exact Text CollectionItemInfo in 0 until " +
+                    itemCount + "; lastViewport=" + last.viewport
+            }
         }
         throw AssertionError(
             "Calendar target was not displayed after a finite search: target=$text " +
@@ -325,22 +435,263 @@ class SereaAppShellTest {
     }
 
     private fun logVisibleCalendarItemBounds(tag: String, text: String) {
-        val item = snapshotSemantics(compose.onNodeWithText(text))
-        val list = snapshotSemantics(compose.onNodeWithTag(tag))
-        val root = snapshotSemantics(compose.onRoot())
+        // EventCard merges its descendants. Read the unmerged Text node for actual glyph bounds,
+        // and the merged card separately for its user-operable click semantics.
+        val textSemantics = snapshotSemantics(calendarTargetTextTarget(text))
+        val semanticsItemIndex = calendarTextCollectionItemIndex(text, tag)
+        val item = if (tag == "calendar_agenda_list") {
+            snapshotSemantics(calendarNodeWithText(text))
+        } else if (semanticsItemIndex != null) {
+            snapshotSemantics(calendarNodeWithTag("calendar_event_detail_item_$semanticsItemIndex"))
+        } else {
+            textSemantics
+        }
+        val list = snapshotSemantics(calendarNodeWithTag(tag))
+        val root = snapshotSemantics(calendarRootNode())
+        val viewport = checkNotNull(list.viewport) { "$tag must expose its real LazyColumn viewport." }
+        val viewportTop = list.boundsInRoot.top + viewport.viewportStartOffset
+        val viewportBottom = list.boundsInRoot.top + viewport.viewportEndOffset
+        val visibleTop = maxOf(textSemantics.boundsInRoot.top, viewportTop, root.boundsInRoot.top)
+        val visibleBottom = minOf(textSemantics.boundsInRoot.bottom, viewportBottom, root.boundsInRoot.bottom)
+        val visibleHeight = (visibleBottom - visibleTop).coerceAtLeast(0f)
+        val visibleFraction = visibleHeight / textSemantics.boundsInRoot.height.coerceAtLeast(1f)
+        val viewportLeft = maxOf(list.boundsInRoot.left, root.boundsInRoot.left)
+        val viewportRight = minOf(list.boundsInRoot.right, root.boundsInRoot.right)
+        val textFullyVisible = textSemantics.boundsInRoot.left >= viewportLeft - 1f &&
+            textSemantics.boundsInRoot.right <= viewportRight + 1f &&
+            textSemantics.boundsInRoot.top >= viewportTop - 1f &&
+            textSemantics.boundsInRoot.bottom <= viewportBottom + 1f &&
+            textSemantics.boundsInRoot.top >= root.boundsInRoot.top - 1f &&
+            textSemantics.boundsInRoot.bottom <= root.boundsInRoot.bottom + 1f
+        if (tag == "calendar_agenda_list") {
+            assertTrue("Calendar agenda target must expose its tappable event semantics: $text", item.hasClickAction)
+        } else {
+            assertTrue(
+                "Calendar detail Text bounds must resolve to one indexed LazyColumn item semantics node: $text",
+                semanticsItemIndex != null,
+            )
+            assertTrue(
+                "Calendar detail Text item index must be in the actual visible LazyColumn range: " +
+                    "$text index=$semanticsItemIndex visible=${viewport.visibleItemIndices}",
+                semanticsItemIndex in viewport.visibleItemIndices,
+            )
+        }
+        assertTrue(
+            "Calendar target text semantics must intersect the clipped visible LazyColumn viewport: " +
+                "target=$text text=${textSemantics.boundsInRoot} item=${item.boundsInRoot} " +
+                "viewport=$viewport list=${list.boundsInRoot} " +
+                "root=${root.boundsInRoot}",
+            visibleHeight > 0f,
+        )
+        assertTrue(
+            "Calendar target Text must be fully inside the visible viewport before it is treated as readable: " +
+                "target=$text text=${textSemantics.boundsInRoot} item=${item.boundsInRoot} " +
+                "viewport=$viewport list=${list.boundsInRoot} root=${root.boundsInRoot} " +
+                "visibleFraction=$visibleFraction",
+            textFullyVisible,
+        )
         Log.i(
             CALENDAR_STAGE_TAG,
-            "VISIBLE_ITEM|tag=$tag|text=$text|itemRoot=${item.boundsInRoot}|itemWindow=${item.boundsInWindow}|" +
+            "TEXT_COLLECTION_ITEM_INDEX|tag=$tag|text=$text|index=$semanticsItemIndex|" +
+                "itemRoot=${item.boundsInRoot}|itemWindow=${item.boundsInWindow}",
+        )
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "VISIBLE_ITEM|tag=$tag|text=$text|textRoot=${textSemantics.boundsInRoot}|" +
+                "textWindow=${textSemantics.boundsInWindow}|itemRoot=${item.boundsInRoot}|itemWindow=${item.boundsInWindow}|" +
                 "listRoot=${list.boundsInRoot}|listWindow=${list.boundsInWindow}|root=${root.boundsInRoot}|" +
-                "position=${list.position}|viewport=${list.viewport}|loadedEvents=${list.loadedEventCount}",
+                "position=${list.position}|viewport=$viewport|visibleFraction=$visibleFraction|" +
+                "textFullyVisible=$textFullyVisible|tappable=${item.hasClickAction}|" +
+                "loadedEvents=${list.loadedEventCount}",
         )
     }
 
+    private fun isCalendarTargetTextFullyVisible(
+        listInteraction: CalendarSemanticsTarget,
+        text: String,
+    ): Boolean {
+        val textTarget = calendarTargetTextTarget(text)
+        val textMatches = textTarget.nodes.fetchSemanticsNodes()
+        if (textMatches.isEmpty()) {
+            if (text == "説明") {
+                val partialMatches = compose.onAllNodesWithText(
+                    text,
+                    substring = true,
+                    useUnmergedTree = true,
+                ).fetchSemanticsNodes()
+                var candidateDetails: List<String> = emptyList()
+                if (partialMatches.isNotEmpty()) {
+                    compose.runOnIdle {
+                        candidateDetails = partialMatches.map { node ->
+                            val labels = node.config.getOrElseNullable(SemanticsProperties.Text) { null }
+                                ?.joinToString(" ") { it.text }
+                                .orEmpty()
+                            "$labels@${node.boundsInRoot}"
+                        }
+                    }
+                }
+                Log.i(
+                    CALENDAR_STAGE_TAG,
+                    "EXACT_TEXT_SEMANTICS_MISSING|target=$text|partialMatches=${partialMatches.size}|" +
+                        "candidates=$candidateDetails",
+                )
+            }
+            return false
+        }
+        check(textMatches.size == 1) {
+            "Expected one exact unmerged Calendar Text semantics node for '$text', found ${textMatches.size}."
+        }
+        // Snapshot-backed Semantics failures must surface here with their cause; treating one as
+        // an invisible node hid the distinction between missing, ambiguous, and unreadable Text.
+        val textSnapshot = snapshotSemantics(textTarget)
+        val list = snapshotSemantics(listInteraction)
+        val root = snapshotSemantics(calendarRootNode())
+        val viewport = list.viewport ?: return false
+        val left = maxOf(list.boundsInRoot.left, root.boundsInRoot.left)
+        val right = minOf(list.boundsInRoot.right, root.boundsInRoot.right)
+        val top = maxOf(list.boundsInRoot.top + viewport.viewportStartOffset, root.boundsInRoot.top)
+        val bottom = minOf(list.boundsInRoot.top + viewport.viewportEndOffset, root.boundsInRoot.bottom)
+        val bounds = textSnapshot.boundsInRoot
+        val insideViewport = bounds.left >= left - 1f && bounds.right <= right + 1f &&
+            bounds.top >= top - 1f && bounds.bottom <= bottom + 1f
+        val assertionFailure = try {
+            calendarTargetTextNode(text).assertIsDisplayed()
+            null
+        } catch (failure: AssertionError) {
+            failure
+        }
+        val composeAssertDisplayed = assertionFailure == null
+        val displayed = insideViewport && composeAssertDisplayed
+        if (!displayed) {
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "TEXT_NOT_FULLY_DISPLAYED|text=$text|textRoot=${textSnapshot.boundsInRoot}|" +
+                    "textWindow=${textSnapshot.boundsInWindow}|listRoot=${list.boundsInRoot}|" +
+                    "listWindow=${list.boundsInWindow}|viewport=$viewport|root=${root.boundsInRoot}|" +
+                    "insideViewport=$insideViewport|composeAssertDisplayed=$composeAssertDisplayed|" +
+                    "assertionFailure=${assertionFailure?.message}",
+            )
+        }
+        return displayed
+    }
+
+    /** Resolves Text to its list item from merged/unmerged nodes or the explicit detail item node. */
+    private fun calendarTextCollectionItemIndex(text: String, tag: String): Int? {
+        if (tag == "calendar_event_detail_list") {
+            return calendarDetailTextItemIndex(text)
+        }
+        val targets = listOf(
+            "merged" to calendarNodeWithText(text, substring = false),
+            "unmerged" to calendarTargetTextTarget(text),
+        )
+        val matchingNodes = targets.mapNotNull { (tree, target) ->
+            val matches = target.nodes.fetchSemanticsNodes()
+            check(matches.size <= 1) {
+                "Expected at most one exact $tree Calendar Text semantics node for '$text', found ${matches.size}."
+            }
+            matches.singleOrNull()?.let { tree to it }
+        }
+        if (matchingNodes.isEmpty()) return null
+        var indices = emptyList<Pair<String, Int>>()
+        compose.runOnIdle {
+            indices = matchingNodes.mapNotNull { (tree, matchedNode) ->
+                var node: androidx.compose.ui.semantics.SemanticsNode? = matchedNode
+                while (node != null) {
+                    val item = node.config.getOrElseNullable(SemanticsProperties.CollectionItemInfo) { null }
+                    if (item != null) {
+                        return@mapNotNull tree to item.rowIndex
+                    }
+                    node = node.parent
+                }
+                null
+            }
+        }
+        val distinctIndices = indices.map { it.second }.distinct()
+        check(distinctIndices.size <= 1) {
+            "Merged and unmerged Calendar Text semantics resolved to different LazyColumn indices for '$text': $indices"
+        }
+        return distinctIndices.singleOrNull()
+    }
+
+    /**
+     * Compose 1.7.8 does not expose CollectionItemInfo on this detail Text's semantics parent
+     * chain. Resolve its actual item through an explicit item semantics tag and require the
+     * unmerged Text bounds to be contained by exactly one currently visible indexed item node.
+     */
+    private fun calendarDetailTextItemIndex(text: String): Int? {
+        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextTarget(text)) }.getOrNull()
+            ?: return null
+        val list = snapshotSemantics(calendarNodeWithTag("calendar_event_detail_list"))
+        val visibleIndices = checkNotNull(list.viewport).visibleItemIndices
+        val matchingIndices = visibleIndices.filter { index ->
+            val item = runCatching {
+                snapshotSemantics(calendarNodeWithTag("calendar_event_detail_item_$index"))
+            }.getOrNull() ?: return@filter false
+            val textBounds = textSnapshot.boundsInRoot
+            val itemBounds = item.boundsInRoot
+            textBounds.left >= itemBounds.left - 1f && textBounds.right <= itemBounds.right + 1f &&
+                textBounds.top >= itemBounds.top - 1f && textBounds.bottom <= itemBounds.bottom + 1f
+        }
+        check(matchingIndices.size <= 1) {
+            "Calendar detail Text must resolve to one indexed item by Semantics bounds: " +
+                "text=$text visible=$visibleIndices matching=$matchingIndices"
+        }
+        return matchingIndices.singleOrNull()
+    }
+
+    private fun scrollCalendarToSemanticsIndex(list: CalendarSemanticsTarget, index: Int) {
+        list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+            scrollToIndex(index)
+        }
+        compose.waitForIdle()
+    }
+
+    /** Records card visibility separately from its merged and unmerged Text semantics bounds. */
+    private fun logCalendarTargetVisibilityAtItemRange(
+        tag: String,
+        text: String,
+        targetItemIndex: Int,
+        list: CalendarSemanticsSnapshot,
+    ) {
+        val viewport = list.viewport ?: return
+        val textSnapshot = runCatching { snapshotSemantics(calendarTargetTextTarget(text)) }.getOrNull()
+        val cardSnapshot = runCatching { snapshotSemantics(calendarNodeWithText(text)) }.getOrNull()
+        if (textSnapshot == null) {
+            Log.i(
+                CALENDAR_STAGE_TAG,
+                "TARGET_ITEM_RANGE_REACHED|tag=$tag|target=$text|targetItemIndex=$targetItemIndex|" +
+                    "textNode=absent|cardBounds=${cardSnapshot?.boundsInRoot}|" +
+                    "position=${list.position}|viewport=$viewport|listBounds=${list.boundsInRoot}",
+            )
+            return
+        }
+        val viewportTop = list.boundsInRoot.top + viewport.viewportStartOffset
+        val viewportBottom = list.boundsInRoot.top + viewport.viewportEndOffset
+        val clippedTop = maxOf(textSnapshot.boundsInRoot.top, viewportTop)
+        val clippedBottom = minOf(textSnapshot.boundsInRoot.bottom, viewportBottom)
+        val visibleHeight = (clippedBottom - clippedTop).coerceAtLeast(0f)
+        val textHeight = textSnapshot.boundsInRoot.height.coerceAtLeast(1f)
+        Log.i(
+            CALENDAR_STAGE_TAG,
+            "TARGET_ITEM_RANGE_REACHED|tag=$tag|target=$text|targetItemIndex=$targetItemIndex|" +
+                "textRoot=${textSnapshot.boundsInRoot}|textWindow=${textSnapshot.boundsInWindow}|" +
+                "cardBounds=${cardSnapshot?.boundsInRoot}|listBounds=${list.boundsInRoot}|" +
+                "viewport=$viewport|visibleTextFraction=${visibleHeight / textHeight}|" +
+                "textIntersectsViewport=${visibleHeight > 0f}|position=${list.position}",
+        )
+    }
+
+    private fun calendarTargetTextNode(text: String) =
+        compose.onNodeWithText(text, substring = false, useUnmergedTree = true)
+
+    private fun calendarTargetTextTarget(text: String) =
+        calendarNodeWithText(text, substring = false, unmerged = true)
+
     /** Separates scroll semantics from touch hit testing before searching a long agenda. */
-    private fun diagnoseCalendarGesturePath(list: androidx.compose.ui.test.SemanticsNodeInteraction): CalendarGesturePath {
+    private fun diagnoseCalendarGesturePath(list: CalendarSemanticsTarget): CalendarGesturePath {
         val node = snapshotSemantics(list)
-        val root = snapshotSemantics(compose.onRoot())
-        val destination = snapshotSemantics(compose.onNodeWithTag("calendar_destination"))
+        val root = snapshotSemantics(calendarRootNode())
+        val destination = snapshotSemantics(calendarNodeWithTag("calendar_destination"))
         val bounds = node.boundsInRoot
         val rootBounds = root.boundsInRoot
         val destinationBounds = destination.boundsInRoot
@@ -386,7 +737,7 @@ class SereaAppShellTest {
             "probe-edge",
         )
         if (edgeProgress) {
-            verifyCalendarSemanticsScrollBy(list)
+            verifyCalendarSemanticsScrollToIndex(list)
             return CalendarGesturePath.NODE_EDGE
         }
 
@@ -397,7 +748,7 @@ class SereaAppShellTest {
             "probe-node-interior",
         )
         if (interiorProgress) {
-            verifyCalendarSemanticsScrollBy(list)
+            verifyCalendarSemanticsScrollToIndex(list)
             return CalendarGesturePath.NODE_INTERIOR
         }
 
@@ -408,69 +759,67 @@ class SereaAppShellTest {
             "probe-root-interior",
         )
         if (rootProgress) {
-            verifyCalendarSemanticsScrollBy(list)
+            verifyCalendarSemanticsScrollToIndex(list)
             return CalendarGesturePath.ROOT_INTERIOR
         }
-        verifyCalendarSemanticsScrollBy(list)
+        verifyCalendarSemanticsScrollToIndex(list)
         throw AssertionError(
-            "Calendar list moved through Semantics ScrollBy but none of the three real Touch Gesture paths moved it; " +
+            "Calendar list moved through Semantics ScrollToIndex but none of the three real Touch Gesture paths moved it; " +
                 "boundsInRoot=${node.boundsInRoot}, boundsInWindow=${node.boundsInWindow}, " +
                 "root=${root.boundsInRoot}, visibleIntersection=[$visibleLeft,$visibleTop,$visibleRight,$visibleBottom], " +
                 "position=${node.position}, viewport=${node.viewport}, loadedEvents=${node.loadedEventCount}",
         )
     }
 
-    private fun verifyCalendarSemanticsScrollBy(list: androidx.compose.ui.test.SemanticsNodeInteraction) {
+    private fun verifyCalendarSemanticsScrollToIndex(list: CalendarSemanticsTarget) {
         val before = snapshotSemantics(list)
-        val beforeValue = checkNotNull(before.scrollValue)
-        val beforeMax = checkNotNull(before.scrollMax)
-        val positionBefore = checkNotNull(before.position)
-        val delta = if (beforeValue + 1f < beforeMax) 80f else -80f
-        var handled = false
-        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
-            handled = scrollBy(0f, delta)
+        val viewportBefore = checkNotNull(before.viewport)
+        val visibleBefore = viewportBefore.visibleItemIndices
+        assertTrue("Calendar list must expose at least one visible item", visibleBefore.isNotEmpty())
+        val firstBefore = visibleBefore.minOrNull()!!
+        val lastBefore = visibleBefore.maxOrNull()!!
+        val targetIndex = if (viewportBefore.canScrollForward && lastBefore + 1 < viewportBefore.totalItems) {
+            lastBefore + 1
+        } else {
+            (firstBefore - 1).coerceAtLeast(0)
+        }
+        assertTrue("Calendar Semantics probe must select a different item", targetIndex !in visibleBefore)
+        list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+            scrollToIndex(targetIndex)
         }
         compose.waitForIdle()
         val after = snapshotSemantics(list)
-        val afterValue = checkNotNull(after.scrollValue)
-        val afterMax = checkNotNull(after.scrollMax)
-        val positionAfter = checkNotNull(after.position)
-        val movedInExpectedDirection = if (delta > 0f) {
-            afterValue > beforeValue + 0.5f
-        } else {
-            afterValue < beforeValue - 0.5f
-        }
+        val visibleAfter = checkNotNull(after.viewport?.visibleItemIndices)
         Log.i(
             CALENDAR_STAGE_TAG,
-            "SEMANTICS_SCROLL_BY|handled=$handled|delta=$delta|from=$beforeValue|" +
-                "to=$afterValue|max=$afterMax|" +
-                "firstVisible=$positionBefore->$positionAfter|viewport=${after.viewport}",
+            "SEMANTICS_SCROLL_TO_INDEX|target=$targetIndex|" +
+                "firstVisible=$firstBefore->${visibleAfter.minOrNull()}|" +
+                "visibleIndices=$visibleBefore->$visibleAfter|" +
+                "viewport=${after.viewport}",
         )
-        assertTrue("Semantics ScrollBy action must be handled", handled)
         assertTrue(
-            "Semantics ScrollBy must move the Calendar list",
-            movedInExpectedDirection && positionAfter != positionBefore,
+            "Semantics ScrollToIndex must make the requested Calendar item visible",
+            targetIndex in visibleAfter && visibleAfter != visibleBefore,
         )
-        list.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
-            scrollBy(0f, -delta)
+        list.interaction.performSemanticsAction(SemanticsActions.ScrollToIndex) { scrollToIndex ->
+            scrollToIndex(firstBefore)
         }
         compose.waitForIdle()
         val restored = snapshotSemantics(list)
-        val restoredValue = checkNotNull(restored.scrollValue)
-        val restoredPosition = checkNotNull(restored.position)
+        val restoredVisible = checkNotNull(restored.viewport?.visibleItemIndices)
         Log.i(
             CALENDAR_STAGE_TAG,
-            "SEMANTICS_SCROLL_RESTORE|from=$afterValue|to=$restoredValue|" +
-                "firstVisible=$restoredPosition",
+            "SEMANTICS_SCROLL_TO_INDEX_RESTORE|target=$firstBefore|" +
+                "visibleIndices=$visibleBefore->$restoredVisible",
         )
         assertTrue(
-            "Semantics ScrollBy probe must restore its starting offset",
-            kotlin.math.abs(restoredValue - beforeValue) < 1f && restoredPosition == positionBefore,
+            "Semantics ScrollToIndex probe must restore the starting item to visibility",
+            firstBefore in restoredVisible,
         )
     }
 
     private fun performCalendarGesture(
-        list: androidx.compose.ui.test.SemanticsNodeInteraction,
+        list: CalendarSemanticsTarget,
         path: CalendarGesturePath,
         height: Float,
         label: String,
@@ -478,14 +827,15 @@ class SereaAppShellTest {
         val before = snapshotSemantics(list)
         val beforeValue = checkNotNull(before.scrollValue)
         val beforeMax = checkNotNull(before.scrollMax)
-        val positionBefore = checkNotNull(before.position)
+        val positionBefore = before.position
+        val visibleIndicesBefore = before.viewport?.visibleItemIndices
         val startY = if (path == CalendarGesturePath.NODE_EDGE) height - 1f else height * 0.8f
         val endY = if (path == CalendarGesturePath.NODE_EDGE) 1f else height * 0.2f
         val startRootY = before.boundsInRoot.top + startY
         val endRootY = before.boundsInRoot.top + endY
         val startWindowY = before.boundsInWindow.top + startY
         val endWindowY = before.boundsInWindow.top + endY
-        val root = snapshotSemantics(compose.onRoot())
+        val root = snapshotSemantics(calendarRootNode())
         Log.i(
             CALENDAR_STAGE_TAG,
             "GESTURE_TARGET|$label|path=$path|local=${before.boundsInRoot.width / 2f},$startY->${before.boundsInRoot.width / 2f},$endY|" +
@@ -498,7 +848,7 @@ class SereaAppShellTest {
         )
         when (path) {
             CalendarGesturePath.NODE_EDGE,
-            CalendarGesturePath.NODE_INTERIOR -> list.performTouchInput {
+            CalendarGesturePath.NODE_INTERIOR -> list.interaction.performTouchInput {
                 swipeUp(
                     startY = startY,
                     endY = endY,
@@ -506,7 +856,7 @@ class SereaAppShellTest {
                 )
             }
             CalendarGesturePath.ROOT_INTERIOR -> {
-                val rootInteraction = compose.onRoot()
+                val rootInteraction = calendarRootNode().interaction
                 val rootBounds = root.boundsInRoot
                 rootInteraction.performTouchInput {
                     swipeUp(
@@ -521,13 +871,21 @@ class SereaAppShellTest {
         val after = snapshotSemantics(list)
         val afterValue = checkNotNull(after.scrollValue)
         val afterMax = checkNotNull(after.scrollMax)
-        val afterPosition = checkNotNull(after.position)
-        val advanced = afterValue > beforeValue + 0.5f && afterPosition != positionBefore
+        val afterPosition = after.position
+        val visibleIndicesAfter = after.viewport?.visibleItemIndices
+        val lazyListPositionAdvanced = when {
+            positionBefore != null && afterPosition != null -> afterPosition != positionBefore
+            visibleIndicesBefore != null && visibleIndicesAfter != null -> visibleIndicesAfter != visibleIndicesBefore
+            else -> false
+        }
+        val advanced = afterValue > beforeValue + 0.5f && lazyListPositionAdvanced
         Log.i(
             CALENDAR_STAGE_TAG,
             "GESTURE_RESULT|$label|path=$path|from=$beforeValue|to=$afterValue|" +
                 "max=$afterMax|advanced=$advanced|" +
-                "firstVisible=$afterPosition|viewport=${after.viewport}|loadedEvents=${after.loadedEventCount}",
+                "firstVisible=$positionBefore->$afterPosition|" +
+                "visibleIndices=$visibleIndicesBefore->$visibleIndicesAfter|" +
+                "viewport=${after.viewport}|loadedEvents=${after.loadedEventCount}",
         )
         return advanced
     }
@@ -550,6 +908,24 @@ class SereaAppShellTest {
         val viewModel = compose.activity.chatViewModel
         compose.onNodeWithTag("chat-composer").performTextInput("unsent task transition draft")
         compose.onNodeWithTag("open_tasks").performClick()
+        val taskScreenDisplayed = runCatching {
+            compose.waitUntil(10_000) {
+                !compose.activity.shellTaskViewModel.state.value.loading &&
+                    runCatching {
+                        compose.onNodeWithTag("tasks_heading").assertIsDisplayed()
+                        compose.onNodeWithTag("task_add").assertIsDisplayed()
+                    }.isSuccess
+            }
+        }.isSuccess
+        if (!taskScreenDisplayed) {
+            Log.i(
+                TASKS_DESTINATION_STAGE_TAG,
+                "TASKS_DESTINATION|state=${compose.activity.shellTaskViewModel.state.value} " +
+                    "route=${compose.activity.toString()}",
+            )
+            compose.onRoot(useUnmergedTree = true).printToLog("chat-tasks-destination")
+        }
+        assertTrue("Tasks destination heading and add action must both become displayed", taskScreenDisplayed)
         compose.onNodeWithTag("task_add").assertIsDisplayed()
         pressBack()
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
@@ -635,7 +1011,7 @@ class SereaAppShellTest {
         }
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Date-line test")
         compose.onNodeWithText("Date-line test").performClick()
-        compose.onNodeWithText("Date-line test").assertIsDisplayed()
+        calendarTargetTextNode("Date-line test").assertIsDisplayed()
         pressBack() // Event detail -> agenda.
         compose.onNodeWithText("表示するカレンダー").assertIsDisplayed()
         pressBack() // Calendar destination -> Chat.
@@ -778,7 +1154,13 @@ class SereaAppShellTest {
         compose.onNodeWithTag("gmail_list_heading").assertTextContains("受信箱").assertIsDisplayed()
         pressBack()
         assertEquals("draft survives navigation", compose.activity.chatViewModel.state.value.input)
-        compose.onNodeWithTag("chat-composer").assertIsNotFocused()
+        val chatFocusReleased = runCatching {
+            compose.waitUntil(5_000) {
+                runCatching { compose.onNodeWithTag("chat-composer").assertIsNotFocused() }.isSuccess
+            }
+        }.isSuccess
+        if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
+        assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
@@ -848,7 +1230,7 @@ class SereaAppShellTest {
                 compose.onNodeWithText("今後").assertIsEnabled()
             }.isSuccess
         }
-        val afterCalendarSelection = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val afterCalendarSelection = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val calendarSelectionPosition = checkNotNull(afterCalendarSelection.position)
         Log.i(
             CALENDAR_STAGE_TAG,
@@ -864,11 +1246,11 @@ class SereaAppShellTest {
         compose.onNodeWithText("今後").assertIsSelected()
         compose.waitUntil(10_000) {
             runCatching {
-                val snapshot = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+                val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
                 (snapshot.scrollMax ?: 0f) > 0f && (snapshot.scrollValue ?: Float.MAX_VALUE) <= 1f
             }.getOrDefault(false)
         }
-        val afterUpcomingSelection = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val afterUpcomingSelection = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val upcomingSelectionPosition = checkNotNull(afterUpcomingSelection.position)
         Log.i(
             CALENDAR_STAGE_TAG,
@@ -880,21 +1262,21 @@ class SereaAppShellTest {
         calendarStage("agenda-semantics", "FINISH")
         calendarStage("scroll-event-50", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 50")
-        compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
+        calendarTargetTextNode("Fictional paged event 50").assertIsDisplayed()
         calendarStage("scroll-event-50", "FINISH")
-        val agendaBeforeDetail = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaBeforeDetail = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val agendaOffsetBeforeDetailValue = checkNotNull(agendaBeforeDetail.scrollValue)
         val agendaPositionBeforeDetail = checkNotNull(agendaBeforeDetail.position)
         assertTrue("Calendar agenda must have several scroll positions", checkNotNull(agendaBeforeDetail.scrollMax) > 0f)
         assertTrue("The long agenda test must begin below its first event", agendaOffsetBeforeDetailValue > 0f)
         compose.onNodeWithText("Fictional paged event 50").performClick()
-        compose.onNodeWithText("Fictional paged event 50").assertIsDisplayed()
+        calendarTargetTextNode("Fictional paged event 50").assertIsDisplayed()
         calendarStage("event-detail-back", "START")
         pressBack()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaAfterDetail = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaAfterDetail = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertEquals(agendaOffsetBeforeDetailValue, checkNotNull(agendaAfterDetail.scrollValue), 1f)
         assertEquals(agendaPositionBeforeDetail, agendaAfterDetail.position)
         calendarStage("event-detail-back", "FINISH")
@@ -905,7 +1287,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaAfterDestination = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaAfterDestination = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertEquals(agendaOffsetBeforeDetailValue, checkNotNull(agendaAfterDestination.scrollValue), 1f)
         assertEquals(agendaPositionBeforeDetail, agendaAfterDestination.position)
         calendarStage("destination-back", "FINISH")
@@ -915,7 +1297,7 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val agendaAfterRecreation = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaAfterRecreation = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertEquals(agendaOffsetBeforeDetailValue, checkNotNull(agendaAfterRecreation.scrollValue), 1f)
         assertEquals(agendaPositionBeforeDetail, agendaAfterRecreation.position)
         calendarStage("activity-recreation", "FINISH")
@@ -941,11 +1323,11 @@ class SereaAppShellTest {
         }
         compose.waitUntil(10_000) {
             runCatching {
-                val snapshot = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+                val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
                 (snapshot.scrollMax ?: 0f) > 0f && snapshot.scrollValue == 0f
             }.getOrDefault(false)
         }
-        val agendaOffsetAfterQueryChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaOffsetAfterQueryChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val agendaPositionAfterQueryChange = checkNotNull(agendaOffsetAfterQueryChange.position)
         assertTrue("date query must retain a scrollable Work agenda", checkNotNull(agendaOffsetAfterQueryChange.scrollMax) > 0f)
         assertEquals(0f, checkNotNull(agendaOffsetAfterQueryChange.scrollValue), 1f)
@@ -954,8 +1336,8 @@ class SereaAppShellTest {
 
         calendarStage("date-change-scroll", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 40")
-        compose.onNodeWithText("Fictional paged event 40").assertIsDisplayed()
-        val workOffsetBeforeDateChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        calendarTargetTextNode("Fictional paged event 40").assertIsDisplayed()
+        val workOffsetBeforeDateChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertTrue("date-change test must start below the first Work event", checkNotNull(workOffsetBeforeDateChange.scrollValue) > 0f)
 
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
@@ -972,11 +1354,11 @@ class SereaAppShellTest {
         }
         compose.waitUntil(10_000) {
             runCatching {
-                val snapshot = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+                val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
                 (snapshot.scrollMax ?: 0f) > 0f && snapshot.scrollValue == 0f
             }.getOrDefault(false)
         }
-        val agendaOffsetAfterDateChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaOffsetAfterDateChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val agendaPositionAfterDateChange = checkNotNull(agendaOffsetAfterDateChange.position)
         assertTrue("changing the selected date must keep a scrollable Work agenda", checkNotNull(agendaOffsetAfterDateChange.scrollMax) > 0f)
         assertEquals(0f, checkNotNull(agendaOffsetAfterDateChange.scrollValue), 1f)
@@ -985,18 +1367,18 @@ class SereaAppShellTest {
 
         calendarStage("calendar-change-scroll", "START")
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Fictional paged event 64")
-        compose.onNodeWithText("Fictional paged event 64").assertIsDisplayed()
-        val workOffsetBeforeCalendarChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        calendarTargetTextNode("Fictional paged event 64").assertIsDisplayed()
+        val workOffsetBeforeCalendarChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         assertTrue("calendar switch test must start below the first Work event", checkNotNull(workOffsetBeforeCalendarChange.scrollValue) > 0f)
         compose.onNodeWithText("今後").performClick()
         compose.onNodeWithText("Demo Global").performClick()
         compose.waitUntil(10_000) {
             runCatching {
-                val snapshot = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+                val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
                 (snapshot.scrollMax ?: 0f) > 0f && snapshot.scrollValue == 0f
             }.getOrDefault(false)
         }
-        val agendaOffsetAfterCalendarChange = snapshotSemantics(compose.onNodeWithTag("calendar_agenda_list"))
+        val agendaOffsetAfterCalendarChange = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
         val agendaPositionAfterCalendarChange = checkNotNull(agendaOffsetAfterCalendarChange.position)
         assertTrue("Demo Global must also provide a long agenda for reset verification", checkNotNull(agendaOffsetAfterCalendarChange.scrollMax) > 0f)
         assertEquals(0f, checkNotNull(agendaOffsetAfterCalendarChange.scrollValue), 1f)
@@ -1010,8 +1392,8 @@ class SereaAppShellTest {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "説明")
-        compose.onNodeWithText("説明").assertIsDisplayed()
-        val detailBefore = snapshotSemantics(compose.onNodeWithTag("calendar_event_detail_list"))
+        calendarTargetTextNode("説明").assertIsDisplayed()
+        val detailBefore = snapshotSemantics(calendarNodeWithTag("calendar_event_detail_list"))
         val detailScrollBeforeValue = checkNotNull(detailBefore.scrollValue)
         assertTrue("calendar detail must be scrollable in this viewport", checkNotNull(detailBefore.scrollMax) > 0f)
         assertTrue("calendar detail must have a non-zero saved offset", detailScrollBeforeValue > 0f)
@@ -1025,14 +1407,15 @@ class SereaAppShellTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("calendar_event_detail_list").fetchSemanticsNodes().isNotEmpty()
         }
-        val detailAfter = snapshotSemantics(compose.onNodeWithTag("calendar_event_detail_list"))
+        val detailAfter = snapshotSemantics(calendarNodeWithTag("calendar_event_detail_list"))
         assertTrue(checkNotNull(detailAfter.scrollMax) > 0f)
         assertEquals(detailScrollBeforeValue, checkNotNull(detailAfter.scrollValue), 1f)
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "Date-line test")
-        compose.onNodeWithText("Date-line test").assertIsDisplayed()
-        compose.onNodeWithText("説明").assertIsDisplayed()
+        calendarTargetTextNode("Date-line test").assertIsDisplayed()
+        scrollAgendaUntilDisplayed("calendar_event_detail_list", "説明")
+        calendarTargetTextNode("説明").assertIsDisplayed()
         scrollAgendaUntilDisplayed("calendar_event_detail_list", "開始・終了")
-        compose.onNodeWithText("開始・終了").assertIsDisplayed()
+        calendarTargetTextNode("開始・終了").assertIsDisplayed()
         pressBack()
         compose.onNodeWithText("Demo Global").assertIsSelected()
         calendarStage("detail-destination-back", "FINISH")
@@ -1094,10 +1477,11 @@ class SereaAppShellTest {
         scrollAgendaUntilDisplayed("calendar_agenda_list", "Date-line test")
         compose.onNodeWithText("Date-line test").performClick()
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("Date-line test").assertIsDisplayed()
+        calendarTargetTextNode("Date-line test").assertIsDisplayed()
     }
 
     @Test fun fontScaleTwoKeepsTaskProposalReviewAndFooterReachable() {
+        fontScaleStage("start")
         val originalScale = compose.activity.resources.configuration.fontScale
         val originalWidthDp = compose.activity.resources.configuration.screenWidthDp
         val originalDensityDpi = compose.activity.resources.configuration.densityDpi
@@ -1126,6 +1510,7 @@ class SereaAppShellTest {
                 }
                 fontScale >= 1.99f && width == 320 && densityDpi == 160
             }
+            fontScaleStage("font-scale-applied")
             DestinationContract.all.forEach { contract ->
                 compose.onNodeWithTag("destination_${contract.destination.name.lowercase()}")
                     .assertIsDisplayed()
@@ -1134,11 +1519,13 @@ class SereaAppShellTest {
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
 
             select(SereaDestination.TASKS)
+            fontScaleStage("tasks-destination-selected")
             compose.waitUntil(10_000) { !compose.activity.shellTaskViewModel.state.value.loading }
             compose.onNodeWithTag("tasks_heading").assertIsDisplayed()
             compose.onNodeWithTag("task_add").assertIsDisplayed()
 
             select(SereaDestination.SETTINGS)
+            fontScaleStage("settings-destination-selected")
             compose.onNodeWithTag("destination_title").assertTextContains("設定").assertIsDisplayed()
             compose.onNodeWithText("Provider候補: Ollama Cloud").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("DEMO · Cloud送信: 無効", substring = false).performScrollTo().assertIsDisplayed()
@@ -1148,6 +1535,7 @@ class SereaAppShellTest {
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
 
             select(SereaDestination.GMAIL)
+            fontScaleStage("gmail-destination-selected")
             val gmailHeadingDisplayed = runCatching { compose.waitUntil(10_000) {
                 runCatching { compose.onNodeWithTag("gmail_list_heading").assertIsDisplayed() }.isSuccess
             } }.isSuccess
@@ -1159,19 +1547,25 @@ class SereaAppShellTest {
                 compose.onAllNodesWithText("7 件").fetchSemanticsNodes().isNotEmpty()
             }
             compose.onAllNodesWithTag("gmail_message_subject").onFirst().performScrollTo().assertIsDisplayed()
+            fontScaleStage("gmail-message-visible")
 
             select(SereaDestination.CALENDAR)
+            fontScaleStage("calendar-destination-selected")
             compose.onNodeWithText("DEMO / 架空の予定").assertIsDisplayed()
             compose.waitUntil(10_000) {
                 compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes().isNotEmpty()
             }
             scrollAgendaUntilDisplayed("calendar_agenda_list", "Design review")
-            compose.onNodeWithText("Design review").assertIsDisplayed()
+            fontScaleStage("calendar-design-review-unmerged-text-visible")
+            calendarTargetTextNode("Design review").assertIsDisplayed()
 
             select(SereaDestination.TASK_PROPOSAL_DEMO)
+            fontScaleStage("task-proposal-destination-selected")
             compose.onNodeWithText("DEMO / 架空のタスク").assertIsDisplayed()
             listOf("create", "update", "complete", "delete").forEach { operation ->
+                fontScaleStage("check-operation-$operation")
                 compose.onNodeWithTag("task_proposal_operation_$operation").performScrollTo().assertIsDisplayed()
+                fontScaleStage("operation-$operation-visible")
             }
             compose.waitUntil(10_000) {
                 compose.onAllNodesWithTag("task_proposal_approve").fetchSemanticsNodes().isNotEmpty()
@@ -1179,10 +1573,16 @@ class SereaAppShellTest {
             compose.waitUntil(10_000) {
                 runCatching { compose.onNodeWithTag("task_proposal_approve").performScrollTo().assertIsDisplayed() }.isSuccess
             }
+            fontScaleStage("check-review-close")
             compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed()
+            fontScaleStage("review-close-visible")
+            fontScaleStage("check-fake-repository-write-count")
             compose.onNodeWithText("Fake Repository 書き込み回数: 0").performScrollTo().assertIsDisplayed()
+            fontScaleStage("fake-repository-write-count-visible")
             compose.onNodeWithTag("task_proposal_approve").performScrollTo().assertIsDisplayed()
+            fontScaleStage("check-reset-button")
             compose.onNodeWithText("デモをリセット").performScrollTo().assertIsDisplayed().performClick()
+            fontScaleStage("reset-button-clicked")
             compose.waitUntil(10_000) {
                 runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess
             }
@@ -1209,7 +1609,14 @@ class SereaAppShellTest {
             val restoredDensityOverride = shell("wm density").lineSequence()
                 .firstOrNull { it.startsWith("Override density:") }
                 ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-            assertEquals(originalFontScaleSetting, shell("settings get system font_scale"))
+            val restoredFontScaleSetting = shell("settings get system font_scale")
+            val originalSettingIsPlatformDefault = originalFontScaleSetting == "null" &&
+                originalScale == 1f && restoredFontScaleSetting.toFloatOrNull() == 1f
+            assertTrue(
+                "System font scale setting was not restored: original=$originalFontScaleSetting " +
+                    "restored=$restoredFontScaleSetting effectiveOriginal=$originalScale",
+                originalFontScaleSetting == restoredFontScaleSetting || originalSettingIsPlatformDefault,
+            )
             assertEquals(originalSizeOverride, restoredSizeOverride)
             assertEquals(originalDensityOverride, restoredDensityOverride)
             compose.waitUntil(15_000) {

@@ -144,7 +144,6 @@ run_diagnostic_stage() {
     printf 'FAIL\n' > "$stage_dir/status.txt"
     return 1
   fi
-  test_expected="$(sha256sum app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk | awk '{print $1}')"
   stage_token="serea-isolated-api${api_level}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${name}"
   EXPECTED_API_LEVEL="$api_level" bash "$tool_dir/prepare_isolated_instrumentation_target.sh" "$stage_token" \
     > "$stage_dir/seed.log" 2>&1 || {
@@ -164,6 +163,7 @@ run_diagnostic_stage() {
     test_paths="$(adb shell pm path app.serea.android.isolated.test 2>/dev/null | tr -d '\r' | sed -n 's/^package://p')"
     if [[ -n "$test_paths" && "$test_paths" != *$'\n'* ]]; then
       test_actual="$(adb shell sha256sum "$test_paths" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+      test_expected="$(sha256sum app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk 2>/dev/null | awk '{print $1}')"
       if [[ -n "$test_actual" ]]; then
         {
           printf 'source_sha=%s\n' "$(git rev-parse HEAD)"

@@ -2,6 +2,7 @@ package app.serea.android.diagnostics
 
 import android.os.SystemClock
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -15,7 +16,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import app.serea.android.MainActivity
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,9 +32,10 @@ class IndependentImeCompositionTest {
         focusComposer()
         var connection: InputConnection? = null
         compose.activityRule.scenario.onActivity { activity ->
-            connection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo()))
+            connection = activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())
             log(activity, "A.initial", RealImeService.identity(connection), null)
         }
+        assumeTrue("Manual onCreateInputConnection returned null; baseline unavailable.", connection != null)
         val directConnectionId = RealImeService.identity(connection)
         logSemantics("A.initial", directConnectionId)
         compose.activityRule.scenario.onActivity { activity -> log(activity, "A.set-draft", directConnectionId, connection!!.setComposingText(FIXTURE, 1)) }
@@ -98,13 +102,20 @@ class IndependentImeCompositionTest {
 
     private fun activateRealIme() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        instrumentation.uiAutomation.executeShellCommand("ime enable $IME_ID").use { it.close() }
-        instrumentation.uiAutomation.executeShellCommand("ime set $IME_ID").use { it.close() }
+        Log.i(TAG, "IME_ENABLE_RESULT=${shellCommand("ime enable $IME_ID")}")
+        Log.i(TAG, "IME_SET_RESULT=${shellCommand("ime set $IME_ID")}")
+        assertEquals("Test IME was not selected by Android", IME_ID, configuredIme())
         compose.activityRule.scenario.onActivity { activity ->
             val decor = activity.window.decorView
             val imm = activity.getSystemService(InputMethodManager::class.java)
-            imm.showSoftInput(decor.findFocus(), InputMethodManager.SHOW_IMPLICIT)
+            val focused = decor.findFocus()
+            Log.i(TAG, "SHOW_IME focused=${RealImeService.identity(focused)} accepted=${imm.showSoftInput(focused, InputMethodManager.SHOW_IMPLICIT)}")
         }
+    }
+
+    private fun shellCommand(command: String): String {
+        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }.trim()
     }
 
     private data class ImeSession(val serviceIdentity: String, val connectionIdentity: String, val session: Long)

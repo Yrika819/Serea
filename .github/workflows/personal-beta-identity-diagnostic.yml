@@ -1,0 +1,189 @@
+name: Personal Beta Identity Diagnostic
+
+on:
+  push:
+    branches:
+      - codex/personal-beta-identity-diagnostic
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-beta-identity-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  identity-diagnostic:
+    name: Independent API 35 identity validation (non-required)
+    if: github.ref == 'refs/heads/codex/personal-beta-identity-diagnostic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact diagnostic source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Initialize diagnostic evidence and source metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/serea-personal-beta-identity-diagnostic"
+          install -d -m 700 "$evidence"
+          {
+            echo 'classification=independent_non_required_identity_diagnostic'
+            echo 'formal_personal_beta_status=NO_GO'
+            echo "source_sha=$(git rev-parse HEAD)"
+            echo "source_tree_sha=$(git rev-parse 'HEAD^{tree}')"
+            echo "workflow_run_id=$GITHUB_RUN_ID"
+            echo "workflow_run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "workflow_ref=$GITHUB_WORKFLOW_REF"
+            echo "diagnostic_branch=$GITHUB_REF_NAME"
+            echo 'identity_pr112_head=3d80b68881dae236f7f192ca1d6252aab464abf3'
+            echo 'pr100_reference=ad868af753672c546c52411ce151904360633acc'
+            echo 'candidate_d_pr111_head_at_validation_start=859b31f83423a942c6354e9547309c280e8a1627'
+            echo 'runner=GitHub-hosted ubuntu-24.04'
+            echo 'emulator=disposable QEMU API 35 google_apis x86_64'
+            echo 'diagnostic_result=NOT_RUN'
+            echo 'required_gate_result=NOT_RUN'
+          } > "$evidence/run-metadata.txt"
+          {
+            echo '### Independent Personal Beta Identity Diagnostic'
+            echo 'This is a non-required diagnostic run. It does not establish a passing Android Required Gate; formal Personal Beta remains NO-GO.'
+            echo
+            echo "Source SHA: $(git rev-parse HEAD)"
+            echo "Source Tree SHA: $(git rev-parse 'HEAD^{tree}')"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf 'NOT_RUN\n' > "$evidence/phase-results.txt"
+
+      - name: Set up Java 17 and Gradle runtime
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install API 35 platform, build tools, and QEMU image
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+
+      - name: Enable hosted-runner KVM access
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+
+      - name: Seed real pre-existing Demo data and run all Identity phases
+        id: identity
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
+        env:
+          SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR: '1'
+          SEREA_PERSONAL_BETA_EVIDENCE_DIR: ${{ runner.temp }}/serea-personal-beta-identity-diagnostic
+        timeout-minutes: 100
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          working-directory: .
+          script: bash tools/run_personal_beta_identity_diagnostic.sh
+
+      - name: Finalize phase results and diagnostic summary
+        if: always()
+        env:
+          IDENTITY_STEP_OUTCOME: ${{ steps.identity.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/serea-personal-beta-identity-diagnostic"
+          mkdir -p "$evidence"
+          python3 - "$evidence" "$IDENTITY_STEP_OUTCOME" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          evidence = Path(sys.argv[1])
+          step_outcome = sys.argv[2]
+          log = evidence / "identity-run.log"
+          seed_log = evidence / "demo-seed.log"
+          content = log.read_text(errors="replace") if log.exists() else ""
+          seed_content = seed_log.read_text(errors="replace") if seed_log.exists() else ""
+          phases = {
+              "api35_qemu_and_adb_root": ("api35-emulator-connected-and-adb-root", "emulator-connection-and-identity"),
+              "package_manager_readiness": ("package-manager-ready", "package-manager-readiness"),
+              "beta_package_absence": ("package-manager-and-beta-cleanliness", "package-manager-and-beta-cleanliness"),
+              "demo_existing_data_seeded": ("demo-existing-data-seeded", "demo-existing-data-seeded"),
+              "temporary_signer_generated_and_separated": ("temporary-beta-key-distinct-from-demo", "temporary-key-generation-and-signature-verification"),
+              "demo_beta_package_separation": ("demo-beta-parallel-install", "beta-package-split-and-apk-signature-verification"),
+              "beta_apk_signature_package_and_hash_provenance": ("beta-apk-signature-and-package-verification", "beta-package-split-and-apk-signature-verification"),
+              "keystore_and_encrypted_data_protection": ("keystore-and-encrypted-data-protection", "keystore-and-encrypted-data-protection"),
+              "reboot_process_death_data_recovery": ("encrypted-data-after-first-reboot", "encrypted-data-after-first-reboot"),
+              "same_signer_update_and_reboot_recovery": ("encrypted-data-after-same-signer-update-and-reboot", "same-signer-update-and-reboot-recovery"),
+              "wrong_signer_rejected_and_data_retained": ("wrong-signer-rejected-and-data-retained", "wrong-signer-update-rejection"),
+              "demo_existing_package_data_and_signer_preserved": ("demo-package-data-and-signer-unchanged", "demo-package-and-encrypted-data-preservation"),
+          }
+          statuses = {name: "NOT_RUN" for name in phases}
+          for name, (marker, _) in phases.items():
+              if f"PASS: phase={marker}" in content:
+                  statuses[name] = "PASS"
+          if f"PASS: phase={phases['demo_existing_data_seeded'][0]}" in seed_content or f"PASS: phase={phases['demo_existing_data_seeded'][0]}" in content:
+              statuses["demo_existing_data_seeded"] = "PASS"
+          failure_phase = None
+          if step_outcome != "success":
+              failures = re.findall(r"FAIL: phase=([^ ]+)", content)
+              started = re.findall(r"PHASE: ([^\r\n]+)", content)
+              failure_phase = failures[-1] if failures else (started[-1] if started else None)
+              if failure_phase:
+                  for name, (_, active_phase) in phases.items():
+                      if active_phase == failure_phase and statuses[name] != "PASS":
+                          statuses[name] = "FAIL"
+              if not content and seed_log.exists() and step_outcome == "failure":
+                  statuses["demo_existing_data_seeded"] = "FAIL"
+          provenance = evidence / "apk-provenance.txt"
+          if step_outcome == "success" and (not provenance.is_file() or not provenance.stat().st_size):
+              statuses["beta_apk_signature_package_and_hash_provenance"] = "FAIL"
+          lines = [
+              "classification=independent_non_required_identity_diagnostic",
+              f"identity_step_outcome={step_outcome}",
+              f"failure_phase={failure_phase or 'none'}",
+              "formal_required_gate=NOT_RUN_BY_THIS_WORKFLOW",
+              "formal_personal_beta_status=NO_GO",
+          ]
+          lines.extend(f"{name}={status}" for name, status in statuses.items())
+          (evidence / "phase-results.txt").write_text("\n".join(lines) + "\n")
+          metadata = evidence / "run-metadata.txt"
+          if metadata.exists():
+              with metadata.open("a") as stream:
+                  stream.write(f"diagnostic_result={'PASS' if step_outcome == 'success' and all(v == 'PASS' for v in statuses.values()) else 'FAIL_OR_INCOMPLETE'}\n")
+          summary = Path(__import__("os").environ["GITHUB_STEP_SUMMARY"])
+          with summary.open("a") as stream:
+              stream.write("\n| Identity phase | Result |\n|---|---|\n")
+              stream.writelines(f"| `{name}` | **{status}** |\n" for name, status in statuses.items())
+              stream.write("\nFormal Android Required Gate: **not run by this diagnostic**. Formal Personal Beta: **NO-GO**.\n")
+          if step_outcome == "success" and any(status != "PASS" for status in statuses.values()):
+              raise SystemExit("Identity script exited successfully without passing every required phase and provenance check.")
+          PY
+          cat "$evidence/phase-results.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload independent Identity evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-independent-personal-beta-identity-diagnostic
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/serea-personal-beta-identity-diagnostic/
+            android/app/build/outputs/androidTest-results/personal-beta-identity.txt

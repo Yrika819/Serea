@@ -346,10 +346,10 @@ adb install -r "$apk_v100"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
 [[ "$installed_version" == 100 ]]
-phase campaign-seed
+mark_phase 'keystore-and-encrypted-data-protection'
+phase process-death-seed
 phase campaign-consume
 phase prepare
-mark_phase 'keystore-and-encrypted-data-protection'
 database_listing=$(adb shell "ls -l /data/user/0/$beta_package/databases" | tr -d '\r')
 printf '%s\n' "$database_listing"
 printf '%s\n' "$database_listing" | awk '$5 ~ /^[0-9]+$/ && $5 > 0 && ($NF == "serea-history.db" || $NF == "serea-tasks-process-death-harness.db") { found[$NF]=1 } END { exit !(found["serea-history.db"] && found["serea-tasks-process-death-harness.db"]) }'

@@ -375,7 +375,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         private const val DEBUG_DEMO_PACKAGE = "app.serea.android.demo"
         private const val ISOLATED_PACKAGE = "app.serea.android.isolated"
         private const val PERSONAL_BETA_PACKAGE = "app.serea.android.beta"
-        private val PERSONAL_BETA_PHASES = setOf("campaign-seed", "campaign-consume", "prepare", "verify")
+        private val PERSONAL_BETA_PHASES = setOf("process-death-seed", "campaign-consume", "prepare", "verify")
         private const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"
         private const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"
         private const val PROCESS_DEATH_AUTHORIZATION = "serea-process-death-authorization"

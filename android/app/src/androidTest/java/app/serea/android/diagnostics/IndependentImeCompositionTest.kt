@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -137,7 +138,8 @@ class IndependentImeCompositionTest {
         }
         assertEquals("Gmail return lost the saved composer caret", TextRange(5, 5), compose.activity.chatViewModel.state.value.editorValue.selection)
         callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
-        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer")
+            .performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
         compose.onNodeWithTag("chat-composer").assertIsFocused()
         session = awaitImeSession(callbackCount)
         assertTrue("Real IME insertion after Gmail return was rejected", imeCommitText(session, "!"))
@@ -156,7 +158,8 @@ class IndependentImeCompositionTest {
         }
         assertEquals("Calendar return lost the saved composer caret", TextRange(6, 6), compose.activity.chatViewModel.state.value.editorValue.selection)
         callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
-        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer")
+            .performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
         compose.onNodeWithTag("chat-composer").assertIsFocused()
         session = awaitImeSession(callbackCount)
         assertTrue("Real IME insertion after Calendar return was rejected", imeCommitText(session, "?"))
@@ -166,7 +169,8 @@ class IndependentImeCompositionTest {
 
         compose.onNodeWithTag("chat-composer").performTextClearance()
         awaitValue("D.recreation-reset", session.connectionIdentity) { it.text.isEmpty() && it.selection == TextRange.Zero }
-        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer")
+            .performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
         compose.onNodeWithTag("chat-composer").assertIsFocused()
         callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
         session = awaitImeSession(callbackCount)
@@ -187,7 +191,8 @@ class IndependentImeCompositionTest {
                 compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
         }
         callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
-        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer")
+            .performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
         compose.onNodeWithTag("chat-composer").assertIsFocused()
         session = awaitImeSession(callbackCount)
         assertTrue("Real IME insertion after Activity recreation was rejected", imeCommitText(session, "!"))

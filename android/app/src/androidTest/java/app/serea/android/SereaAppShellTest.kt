@@ -1329,12 +1329,12 @@ class SereaAppShellTest {
         try {
             assertTrue("Test IME APK was not installed by the Required Gate harness.",
                 shell("pm path app.serea.android.r25testime").contains("package:"))
+            val startsBefore = imeSnapshot().getStringArrayList("events").orEmpty()
+                .count { it.contains(" onStartInput restarting=") }
             shell("ime enable $TEST_IME_ID")
             shell("ime set $TEST_IME_ID")
             assertEquals("Android did not select the isolated Test IME.", TEST_IME_ID,
                 shell("settings get secure default_input_method"))
-            val startsBefore = imeSnapshot().getStringArrayList("events").orEmpty()
-                .count { it.contains(" onStartInput restarting=") }
             tapComposerThroughSystemInput()
             awaitComposerWindowFocus("initial real IME session")
             composer.assertIsFocused()

@@ -15,15 +15,11 @@ import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-/** Intra-test-APK bridge for instrumentation in the target app's separate process. */
+/** Signature-permission-gated IPC bridge for the test APK to the active IME session. */
 public final class RealImeDiagnosticsProvider extends ContentProvider {
-    @Override
-    public boolean onCreate() {
-        return true;
-    }
+    @Override public boolean onCreate() { return true; }
 
-    @Override
-    public Bundle call(String method, String arg, Bundle extras) {
+    @Override public Bundle call(String method, String arg, Bundle extras) {
         RealImeService service = RealImeService.active;
         InputConnection connection = service == null ? null : service.getCurrentInputConnection();
         Bundle result = new Bundle();
@@ -31,64 +27,60 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
         result.putBoolean("connectionBound", connection != null);
         result.putString("serviceIdentity", RealImeService.identity(service));
         result.putString("connectionIdentity", RealImeService.identity(connection));
-        result.putLong("session", service == null ? 0L : service.getInputSessionId());
+        result.putLong("session", service == null ? 0 : service.getInputSessionId());
+        result.putString("editorPackage", service == null ? "none" : service.currentEditorPackage);
         result.putStringArrayList("events", new ArrayList<>(RealImeService.events));
-
         if ("setComposingText".equals(method)) {
             final String text = extras == null ? null : extras.getString("text");
-            if (text == null) throw new IllegalArgumentException("Missing composing text");
+            if (text == null) throw new IllegalArgumentException("Missing synthetic fixture text");
             final int cursor = extras.getInt("cursor", 1);
+            final long expectedSession = extras.getLong("expectedSession", -1);
+            final String expectedConnection = extras.getString("expectedConnection");
             boolean accepted = runOnImeThread(new ImeOperation() {
-                @Override
-                public boolean run() {
+                @Override public boolean run() {
                     RealImeService active = RealImeService.active;
                     InputConnection current = active == null ? null : active.getCurrentInputConnection();
-                    return current != null && current.setComposingText(text, cursor);
+                    return active != null && active.getInputSessionId() == expectedSession
+                            && RealImeService.identity(current).equals(expectedConnection)
+                            && current != null && current.setComposingText(text, cursor);
                 }
             });
-            record("setComposingText text=" + text + " cursor=" + cursor + " accepted=" + accepted
-                    + " session=" + (RealImeService.active == null ? 0 : RealImeService.active.getInputSessionId()));
+            record("setComposingText text=" + text + " cursor=" + cursor + " accepted=" + accepted);
             result.putBoolean("accepted", accepted);
         } else if ("finishComposingText".equals(method)) {
+            final long expectedSession = extras == null ? -1 : extras.getLong("expectedSession", -1);
+            final String expectedConnection = extras == null ? null : extras.getString("expectedConnection");
             boolean accepted = runOnImeThread(new ImeOperation() {
-                @Override
-                public boolean run() {
+                @Override public boolean run() {
                     RealImeService active = RealImeService.active;
                     InputConnection current = active == null ? null : active.getCurrentInputConnection();
-                    return current != null && current.finishComposingText();
+                    return active != null && active.getInputSessionId() == expectedSession
+                            && RealImeService.identity(current).equals(expectedConnection)
+                            && current != null && current.finishComposingText();
                 }
             });
-            record("finishComposingText accepted=" + accepted + " session="
-                    + (RealImeService.active == null ? 0 : RealImeService.active.getInputSessionId()));
+            record("finishComposingText accepted=" + accepted);
             result.putBoolean("accepted", accepted);
         }
         return result;
     }
 
-    private interface ImeOperation {
-        boolean run();
-    }
+    private interface ImeOperation { boolean run(); }
 
     private boolean runOnImeThread(final ImeOperation operation) {
         final boolean[] accepted = {false};
         final CountDownLatch completed = new CountDownLatch(1);
         new Handler(Looper.getMainLooper()).post(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    accepted[0] = operation.run();
-                } finally {
-                    completed.countDown();
-                }
+            @Override public void run() {
+                try { accepted[0] = operation.run(); }
+                finally { completed.countDown(); }
             }
         });
         try {
-            if (!completed.await(5, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Timed out waiting for the IME main thread.");
-            }
+            if (!completed.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("IME main thread timed out");
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for the IME main thread.", error);
+            throw new IllegalStateException("Interrupted waiting for IME main thread", error);
         }
         return accepted[0];
     }

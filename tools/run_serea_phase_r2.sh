@@ -65,10 +65,10 @@ for api in 26 35; do
     while :; do
         boot_ready="$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
         log_boot_ready="$("$ADB" -s "$serial" shell getprop sys.logbootcomplete 2>/dev/null | tr -d '\r')"
-        if [[ "$boot_ready" == "1" ]]; then break; fi
-        if [[ "$log_boot_ready" == "1" ]] && \
-            "$ADB" -s "$serial" shell service check package 2>/dev/null | grep -q 'found' && \
-            "$ADB" -s "$serial" shell service check settings 2>/dev/null | grep -q 'found'; then
+        if [[ "$boot_ready" == "1" || "$log_boot_ready" == "1" ]] && \
+            "$ADB" -s "$serial" shell service check package 2>&1 | grep -q 'found' && \
+            "$ADB" -s "$serial" shell service check settings 2>&1 | grep -q 'found' && \
+            "$ADB" -s "$serial" shell service check input_method 2>&1 | grep -q 'found'; then
             break
         fi
         if (( SECONDS >= boot_deadline )); then echo "Emulator API $api did not finish booting." >&2; exit 1; fi

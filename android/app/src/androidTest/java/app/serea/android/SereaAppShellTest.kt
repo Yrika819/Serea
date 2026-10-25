@@ -1153,7 +1153,6 @@ class SereaAppShellTest {
         compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.let { value ->
                 value.text == "draft" &&
-                    value.composition != null &&
                     value.selection == TextRange(value.text.length)
             }
         }

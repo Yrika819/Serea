@@ -63,7 +63,7 @@ jobs:
     timeout-minutes: 35
     outputs:
       kvm: ${{ steps.accel.outputs.kvm }}
-      methods: ${{ steps.smoke.outputs.methods }}
+      methods: ${{ steps.gate.outputs.methods }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
@@ -142,6 +142,16 @@ jobs:
           SEREA_R3_CASE: case0-no-ime-installed
           SEREA_R3_OUT: ${{ runner.temp }}/serea-r3-case0
           SEREA_R3_APKS: ${{ runner.temp }}/serea-r3-apks
+      - id: gate
+        name: Export startup smoke result for dependent jobs
+        if: always() && !cancelled()
+        run: |
+          methods=0
+          if [[ "${{ steps.accel.outputs.kvm }}" == "true" ]] && grep -Fq 'startup_smoke=PASS' "$RUNNER_TEMP/serea-r3-case0/case.txt"; then
+            methods=1
+          fi
+          echo "methods=$methods" >> "$GITHUB_OUTPUT"
+          echo "API 35 baseline startup smoke methods=$methods" >> "$GITHUB_STEP_SUMMARY"
       - name: Write blocked marker if KVM is unavailable
         if: steps.accel.outputs.kvm != 'true'
         run: mkdir -p evidence/api35-case0 && echo NOT_RUN_KVM_UNAVAILABLE > evidence/api35-case0/status.txt

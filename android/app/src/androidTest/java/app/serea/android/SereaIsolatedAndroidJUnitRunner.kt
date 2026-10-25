@@ -18,10 +18,22 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         // embedded in SereaAppShellTest. An explicit diagnostic class filter opts into them.
         val explicitClassFilter = arguments.getString("class").orEmpty()
         if (explicitClassFilter.isBlank() && arguments.getString("sereaIncludeDiagnostics") != "true") {
+            val diagnosticClasses = context.assets
+                .open("serea-non-required-test-identities.txt")
+                .bufferedReader()
+                .useLines { lines ->
+                    lines.map(String::trim)
+                        .filter { it.isNotEmpty() && !it.startsWith("#") }
+                        .map { identity -> identity.substringBefore('#') }
+                        .distinct()
+                        .toList()
+                }
+            check(diagnosticClasses.isNotEmpty()) {
+                "Non-required test identity manifest must explicitly list exploratory tests."
+            }
             arguments.putString(
                 "notClass",
-                "app.serea.android.diagnostics.IndependentImeCompositionTest," +
-                    "app.serea.android.diagnostics.PhaseR25StartupSmokeTest",
+                diagnosticClasses.joinToString(","),
             )
         }
         super.onCreate(arguments)

@@ -570,6 +570,7 @@ if [[ "$sdk_ok" == true ]]; then
       --source-root app/src/androidTest/java --minimum 105 --exact-count 105 \
       --required-test-manifest "$tool_dir/android-instrumentation-required-tests.txt" \
       --additional-test-manifest "$tool_dir/android-instrumentation-additional-tests.txt" \
+      --non-required-test-manifest app/src/androidTest/assets/serea-non-required-test-identities.txt \
       --required-count 103 --additional-count 2 \
       --api-level "$api_level" --profile-verifier-log "$evidence/logcat-live.txt" \
       --require-class app.serea.android.EncryptedHistoryTest=17 \

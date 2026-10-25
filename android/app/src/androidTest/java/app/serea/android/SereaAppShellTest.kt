@@ -44,6 +44,7 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
@@ -1606,11 +1607,8 @@ class SereaAppShellTest {
             compose.onNodeWithTag("calendar_date_input").fetchSemanticsNode()
                 .config[SemanticsProperties.EditableText].text,
         )
-        compose.activityRule.scenario.onActivity { activity ->
-            val manager = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as android.view.inputmethod.InputMethodManager
-            manager.hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
-        }
+        Espresso.closeSoftKeyboard()
+        compose.waitForIdle()
         compose.waitUntil(10_000) {
             runCatching {
                 val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
@@ -1637,11 +1635,8 @@ class SereaAppShellTest {
             compose.onNodeWithTag("calendar_date_input").fetchSemanticsNode()
                 .config[SemanticsProperties.EditableText].text,
         )
-        compose.activityRule.scenario.onActivity { activity ->
-            val manager = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as android.view.inputmethod.InputMethodManager
-            manager.hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
-        }
+        Espresso.closeSoftKeyboard()
+        compose.waitForIdle()
         compose.waitUntil(10_000) {
             runCatching {
                 val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))

@@ -1140,13 +1140,27 @@ class SereaAppShellTest {
         val composer = compose.onNodeWithTag("chat-composer")
         assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
         composer.performClick()
+        composer.assertIsFocused()
+        compose.waitForIdle()
+        var inputConnection: InputConnection? = null
         compose.activityRule.scenario.onActivity { activity ->
-            val inputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+            val activeInputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
                 "Composer did not expose its focused IME InputConnection."
             }
-            assertTrue(inputConnection.setComposingText("draft", 1))
-            assertTrue(inputConnection.setComposingText("draft survives navigation", 1))
-            assertTrue(inputConnection.finishComposingText())
+            inputConnection = activeInputConnection
+            assertTrue(activeInputConnection.setComposingText("draft", 1))
+        }
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == "draft" &&
+                    value.composition != null &&
+                    value.selection == TextRange(value.text.length)
+            }
+        }
+        compose.activityRule.scenario.onActivity {
+            val activeInputConnection = requireNotNull(inputConnection)
+            assertTrue(activeInputConnection.setComposingText("draft survives navigation", 1))
+            assertTrue(activeInputConnection.finishComposingText())
         }
         compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.let { value ->

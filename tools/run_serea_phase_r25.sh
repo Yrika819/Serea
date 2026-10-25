@@ -95,6 +95,9 @@ ORIGINAL_IME="$ime"
 "$ADB" -s "$SERIAL" install "$TEST_APK" >"$OUT/install-test.log"
 "$ADB" -s "$SERIAL" shell dumpsys package "$TEST_PACKAGE" | rg -A 4 'app.serea.android.r25testime.permission.DIAGNOSTICS' >"$OUT/diagnostics-permission.txt" || true
 "$ADB" -s "$SERIAL" shell pm list packages | rg "$TARGET_PACKAGE|$TEST_PACKAGE|$IME_PACKAGE" > "$OUT/installed-packages.txt"
+campaign_token="${RUN_ID}-$(date +%s%N)"
+"$ADB" -s "$SERIAL" shell run-as "$TARGET_PACKAGE" mkdir -p no_backup
+"$ADB" -s "$SERIAL" shell "run-as $TARGET_PACKAGE sh -c 'printf %s $campaign_token > no_backup/serea-instrumentation-token'"
 "$ADB" -s "$SERIAL" logcat -c >/dev/null 2>&1 || true
 
 if [[ -n "$TEST_METHOD" ]]; then
@@ -103,7 +106,7 @@ else
     test_selector="$TEST_CLASS"
 fi
 set +e
-"$ADB" -s "$SERIAL" shell am instrument -w -r -e class "$test_selector" \
+"$ADB" -s "$SERIAL" shell am instrument -w -r -e sereaCampaignToken "$campaign_token" -e class "$test_selector" \
     "$TEST_PACKAGE/app.serea.android.SereaIsolatedAndroidJUnitRunner" 2>&1 | tee "$OUT/instrumentation.txt"
 result=${PIPESTATUS[0]}
 set -e

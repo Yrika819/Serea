@@ -7,7 +7,9 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -67,6 +69,62 @@ class SereaAppShellTest {
         const val CALENDAR_STAGE_TAG = "SereaCalendarStage"
         const val FONT_SCALE_STAGE_TAG = "SereaFontScale"
         const val TASKS_DESTINATION_STAGE_TAG = "SereaTasksDestination"
+        const val COMPOSER_IME_DIAGNOSTICS_TAG = "SereaComposerIme"
+    }
+
+    private fun logComposerImeDiagnostics(stage: String, inputConnection: InputConnection?) {
+        val semanticSelection = runCatching {
+            compose.onNodeWithTag("chat-composer").fetchSemanticsNode()
+                .config[SemanticsProperties.TextSelectionRange]
+        }.getOrNull()
+        compose.activityRule.scenario.onActivity { activity ->
+            val editorValue = activity.chatViewModel.state.value.editorValue
+            val decor = activity.window.decorView
+            val focusedView = decor.findFocus()
+            val inputMethodManager = activity.getSystemService(InputMethodManager::class.java)
+            Log.i(
+                COMPOSER_IME_DIAGNOSTICS_TAG,
+                "uptimeMs=${SystemClock.uptimeMillis()} stage=$stage editorValue=$editorValue " +
+                    "inputGeneration=${activity.chatViewModel.state.value.editorInputGeneration} " +
+                    "selectionCorrectionGeneration=${activity.chatViewModel.state.value.editorSelectionCorrectionGeneration} " +
+                    "semanticSelection=$semanticSelection windowFocus=${decor.hasWindowFocus()} " +
+                    "focusedView=${focusedView?.javaClass?.name}@${focusedView?.let { System.identityHashCode(it) }} " +
+                    "acceptingText=${inputMethodManager.isAcceptingText} " +
+                    "inputConnection=${inputConnection?.let { System.identityHashCode(it) }}",
+            )
+        }
+    }
+
+    private fun logImmediateComposerImeDiagnostics(
+        activity: MainActivity,
+        stage: String,
+        inputConnection: InputConnection,
+        accepted: Boolean,
+    ) {
+        val editorValue = activity.chatViewModel.state.value.editorValue
+        val decor = activity.window.decorView
+        val focusedView = decor.findFocus()
+        val inputMethodManager = activity.getSystemService(InputMethodManager::class.java)
+        Log.i(
+            COMPOSER_IME_DIAGNOSTICS_TAG,
+            "uptimeMs=${SystemClock.uptimeMillis()} stage=$stage accepted=$accepted editorValue=$editorValue " +
+                "inputGeneration=${activity.chatViewModel.state.value.editorInputGeneration} " +
+                "selectionCorrectionGeneration=${activity.chatViewModel.state.value.editorSelectionCorrectionGeneration} " +
+                "windowFocus=${decor.hasWindowFocus()} " +
+                "focusedView=${focusedView?.javaClass?.name}@${focusedView?.let { System.identityHashCode(it) }} " +
+                "acceptingText=${inputMethodManager.isAcceptingText} " +
+                "inputConnection=${System.identityHashCode(inputConnection)}",
+        )
+    }
+
+    private fun awaitComposerImeState(
+        stage: String,
+        inputConnection: InputConnection?,
+        condition: () -> Boolean,
+    ) {
+        val settled = runCatching { compose.waitUntil(5_000, condition) }.isSuccess
+        logComposerImeDiagnostics(stage, inputConnection)
+        assertTrue("Composer IME state did not settle at $stage.", settled)
     }
 
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -1142,35 +1200,77 @@ class SereaAppShellTest {
         composer.performClick()
         composer.assertIsFocused()
         compose.waitForIdle()
+
+        // A: establish the historical single-UI-block composition behavior at this SHA/API.
+        var consecutiveInputConnection: InputConnection? = null
+        compose.activityRule.scenario.onActivity { activity ->
+            val inputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+                "Composer did not expose its focused IME InputConnection for the consecutive diagnostic."
+            }
+            consecutiveInputConnection = inputConnection
+            val firstAccepted = inputConnection.setComposingText("draft", 1)
+            logImmediateComposerImeDiagnostics(activity, "A-set-composing-draft", inputConnection, firstAccepted)
+            assertTrue(firstAccepted)
+            val replacementAccepted = inputConnection.setComposingText("draft survives navigation", 1)
+            logImmediateComposerImeDiagnostics(activity, "A-replace-composing-draft", inputConnection, replacementAccepted)
+            assertTrue(replacementAccepted)
+            val commitAccepted = inputConnection.finishComposingText()
+            logImmediateComposerImeDiagnostics(activity, "A-finish-composing", inputConnection, commitAccepted)
+            assertTrue(commitAccepted)
+        }
+        awaitComposerImeState("A-consecutive-composition-committed", consecutiveInputConnection) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == "draft survives navigation" &&
+                    value.composition == null &&
+                    value.selection == TextRange(value.text.length)
+            }
+        }
+        composer.performTextClearance()
+        awaitComposerImeState("A-reset-to-empty", consecutiveInputConnection) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text.isEmpty() &&
+                    value.composition == null &&
+                    value.selection == TextRange.Zero
+            }
+        }
+        composer.assertIsFocused()
+
+        // B: repeat the same edits with state synchronization between IME operations.
         var activeInputConnection: InputConnection? = null
         compose.activityRule.scenario.onActivity { activity ->
             val inputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
                 "Composer did not expose its focused IME InputConnection."
             }
             activeInputConnection = inputConnection
-            assertTrue(inputConnection.setComposingText("draft", 1))
+            val accepted = inputConnection.setComposingText("draft", 1)
+            logImmediateComposerImeDiagnostics(activity, "B-set-composing-draft", inputConnection, accepted)
+            assertTrue(accepted)
         }
-        compose.waitUntil(5_000) {
+        awaitComposerImeState("B-draft-settled", activeInputConnection) {
             compose.activity.chatViewModel.state.value.editorValue.let { value ->
                 value.text == "draft" &&
                     value.selection == TextRange(value.text.length)
             }
         }
-        compose.activityRule.scenario.onActivity {
+        compose.activityRule.scenario.onActivity { activity ->
             val inputConnection = requireNotNull(activeInputConnection)
-            assertTrue(inputConnection.setComposingText("draft survives navigation", 1))
+            val accepted = inputConnection.setComposingText("draft survives navigation", 1)
+            logImmediateComposerImeDiagnostics(activity, "B-set-composing-navigation-draft", inputConnection, accepted)
+            assertTrue(accepted)
         }
-        compose.waitUntil(5_000) {
+        awaitComposerImeState("B-navigation-draft-settled", activeInputConnection) {
             compose.activity.chatViewModel.state.value.editorValue.let { value ->
                 value.text == "draft survives navigation" &&
                     value.selection == TextRange(value.text.length)
             }
         }
-        compose.activityRule.scenario.onActivity {
+        compose.activityRule.scenario.onActivity { activity ->
             val inputConnection = requireNotNull(activeInputConnection)
-            assertTrue(inputConnection.finishComposingText())
+            val accepted = inputConnection.finishComposingText()
+            logImmediateComposerImeDiagnostics(activity, "B-finish-composing", inputConnection, accepted)
+            assertTrue(accepted)
         }
-        compose.waitUntil(5_000) {
+        awaitComposerImeState("B-composition-committed", activeInputConnection) {
             compose.activity.chatViewModel.state.value.editorValue.let { value ->
                 value.text == "draft survives navigation" &&
                     value.composition == null &&
@@ -1186,7 +1286,14 @@ class SereaAppShellTest {
             }.getOrDefault(false)
         }
         composer.performTextInputSelection(TextRange(5, 5))
-        compose.waitUntil(5_000) {
+        logComposerImeDiagnostics("selection-5-ui-applied", activeInputConnection)
+        awaitComposerImeState("selection-5-semantics-applied", activeInputConnection) {
+            runCatching {
+                composer.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange] ==
+                    TextRange(5, 5)
+            }.getOrDefault(false)
+        }
+        awaitComposerImeState("selection-5-viewmodel-applied", activeInputConnection) {
             compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(5, 5)
         }
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()

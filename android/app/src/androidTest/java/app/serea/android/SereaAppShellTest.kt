@@ -136,6 +136,39 @@ class SereaAppShellTest {
 
     private fun statefulImeEvents(): List<String> = imeSnapshot().getStringArrayList("events").orEmpty().toList()
 
+    private fun tapComposerThroughSystemInput() {
+        val bounds = compose.onNodeWithTag("chat-composer").fetchSemanticsNode().boundsInWindow
+        val origin = IntArray(2)
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.window.decorView.getLocationOnScreen(origin)
+        }
+        val x = origin[0] + bounds.center.x.toInt()
+        val y = origin[1] + bounds.center.y.toInt()
+        val result = shell("input tap $x $y")
+        Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+            "SYSTEM_TOUCH uptimeNanos=${SystemClock.elapsedRealtimeNanos()} bounds=$bounds " +
+                "screenOrigin=${origin.toList()} screenPoint=($x,$y) result=$result")
+    }
+
+    private fun awaitComposerWindowFocus(stage: String) {
+        var snapshot = "MainActivity unavailable"
+        val focused = runCatching {
+            compose.waitUntil(10_000) {
+                var hasWindowFocus = false
+                compose.activityRule.scenario.onActivity { activity ->
+                    val decor = activity.window.decorView
+                    hasWindowFocus = decor.hasWindowFocus()
+                    snapshot = "stage=$stage activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                        "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
+                        "decorFocus=${decor.hasFocus()} attached=${decor.isAttachedToWindow} visible=${decor.isShown}"
+                }
+                hasWindowFocus
+            }
+        }.isSuccess
+        Log.i(COMPOSER_IME_DIAGNOSTICS_TAG, "WINDOW_FOCUS uptimeNanos=${SystemClock.elapsedRealtimeNanos()} $snapshot")
+        assertTrue("Chat Composer Activity did not acquire Android window focus: $snapshot", focused)
+    }
+
     private fun imeOperation(
         method: String,
         session: TestImeSession,
@@ -1301,13 +1334,9 @@ class SereaAppShellTest {
                 shell("settings get secure default_input_method"))
             val startsBefore = imeSnapshot().getStringArrayList("events").orEmpty()
                 .count { it.contains(" onStartInput restarting=") }
-            composer.performClick()
+            tapComposerThroughSystemInput()
             composer.assertIsFocused()
-            var windowFocused = false
-            compose.waitUntil(5_000) {
-                compose.activityRule.scenario.onActivity { windowFocused = it.window.decorView.hasWindowFocus() }
-                windowFocused
-            }
+            awaitComposerWindowFocus("initial real IME session")
             var session = awaitTestImeSession(startsBefore)
             assertTrue("Android IME callback did not identify the active Composer editor.",
                 imeSnapshot().getStringArrayList("events").orEmpty().any {
@@ -1351,7 +1380,9 @@ class SereaAppShellTest {
             shell("ime set $restoreIme")
             shell("ime set $TEST_IME_ID")
             assertEquals(TEST_IME_ID, shell("settings get secure default_input_method"))
-            composer.performClick()
+            tapComposerThroughSystemInput()
+            composer.assertIsFocused()
+            awaitComposerWindowFocus("synchronized real IME session")
             session = awaitTestImeSession(startsAfterReset)
             imeOperation("setComposingText", session, COMPOSER_DRAFT)
             awaitComposerImeState("R4-C-draft-composing", null) {

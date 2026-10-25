@@ -2,6 +2,7 @@ package app.serea.android
 
 import android.content.pm.ActivityInfo
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
@@ -1141,11 +1142,13 @@ class SereaAppShellTest {
         composer.performClick()
         composer.assertIsFocused()
         compose.waitForIdle()
+        var activeInputConnection: InputConnection? = null
         compose.activityRule.scenario.onActivity { activity ->
-            val activeInputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+            val inputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
                 "Composer did not expose its focused IME InputConnection."
             }
-            assertTrue(activeInputConnection.setComposingText("draft", 1))
+            activeInputConnection = inputConnection
+            assertTrue(inputConnection.setComposingText("draft", 1))
         }
         compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.let { value ->
@@ -1153,11 +1156,9 @@ class SereaAppShellTest {
                     value.selection == TextRange(value.text.length)
             }
         }
-        compose.activityRule.scenario.onActivity { activity ->
-            val activeInputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
-                "Composer did not expose its refreshed IME InputConnection after the composing text update."
-            }
-            assertTrue(activeInputConnection.setComposingText("draft survives navigation", 1))
+        compose.activityRule.scenario.onActivity {
+            val inputConnection = requireNotNull(activeInputConnection)
+            assertTrue(inputConnection.setComposingText("draft survives navigation", 1))
         }
         compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.let { value ->
@@ -1165,11 +1166,9 @@ class SereaAppShellTest {
                     value.selection == TextRange(value.text.length)
             }
         }
-        compose.activityRule.scenario.onActivity { activity ->
-            val activeInputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
-                "Composer did not expose its refreshed IME InputConnection before composition commit."
-            }
-            assertTrue(activeInputConnection.finishComposingText())
+        compose.activityRule.scenario.onActivity {
+            val inputConnection = requireNotNull(activeInputConnection)
+            assertTrue(inputConnection.finishComposingText())
         }
         compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.let { value ->

@@ -144,10 +144,11 @@ class SereaAppShellTest {
         }
         val x = origin[0] + bounds.center.x.toInt()
         val y = origin[1] + bounds.center.y.toInt()
-        val result = shell("input tap $x $y")
+        val accepted = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).click(x, y)
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "SYSTEM_TOUCH uptimeNanos=${SystemClock.elapsedRealtimeNanos()} bounds=$bounds " +
-                "screenOrigin=${origin.toList()} screenPoint=($x,$y) result=$result")
+                "screenOrigin=${origin.toList()} screenPoint=($x,$y) accepted=$accepted")
+        assertTrue("UiAutomator did not dispatch a touchscreen tap to the Chat Composer.", accepted)
     }
 
     private fun awaitComposerWindowFocus(stage: String) {
@@ -1335,8 +1336,8 @@ class SereaAppShellTest {
             val startsBefore = imeSnapshot().getStringArrayList("events").orEmpty()
                 .count { it.contains(" onStartInput restarting=") }
             tapComposerThroughSystemInput()
-            composer.assertIsFocused()
             awaitComposerWindowFocus("initial real IME session")
+            composer.assertIsFocused()
             var session = awaitTestImeSession(startsBefore)
             assertTrue("Android IME callback did not identify the active Composer editor.",
                 imeSnapshot().getStringArrayList("events").orEmpty().any {
@@ -1381,8 +1382,8 @@ class SereaAppShellTest {
             shell("ime set $TEST_IME_ID")
             assertEquals(TEST_IME_ID, shell("settings get secure default_input_method"))
             tapComposerThroughSystemInput()
-            composer.assertIsFocused()
             awaitComposerWindowFocus("synchronized real IME session")
+            composer.assertIsFocused()
             session = awaitTestImeSession(startsAfterReset)
             imeOperation("setComposingText", session, COMPOSER_DRAFT)
             awaitComposerImeState("R4-C-draft-composing", null) {

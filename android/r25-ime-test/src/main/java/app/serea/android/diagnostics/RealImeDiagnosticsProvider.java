@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.text.InputType;
 import android.util.Log;
 import android.view.inputmethod.InputConnection;
 
@@ -29,7 +30,7 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
         result.putString("connectionIdentity", RealImeService.identity(connection));
         result.putLong("session", service == null ? 0 : service.getInputSessionId());
         result.putString("editorPackage", service == null ? "none" : service.currentEditorPackage);
-        result.putInt("inputType", service == null ? android.view.inputmethod.InputType.TYPE_NULL : service.currentInputType);
+        result.putInt("inputType", service == null ? InputType.TYPE_NULL : service.currentInputType);
         result.putInt("fieldId", service == null ? -1 : service.currentFieldId);
         result.putString("fieldName", service == null ? "null" : service.currentFieldName);
         result.putStringArrayList("events", new ArrayList<>(RealImeService.events));

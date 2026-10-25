@@ -193,7 +193,7 @@ class IndependentImeCompositionTest {
         assertEquals("IME EditorInfo.packageName does not identify the isolated Chat target", TARGET_PACKAGE, session.editorPackage)
         assertTrue("IME session generation must be positive", session.session > 0)
         assertTrue("IME session must expose an active connection", session.connectionIdentity != "null")
-        assertTrue("IME EditorInfo must identify a text editor, not a generic focused view: $session", session.inputType != android.view.inputmethod.InputType.TYPE_NULL)
+        assertTrue("IME EditorInfo must identify a text editor, not a generic focused view: $session", session.inputType != android.text.InputType.TYPE_NULL)
         Log.i(TAG, "REAL_IME_SESSION service=${session.serviceIdentity} generation=${session.session} " +
             "connection=${session.connectionIdentity} editorPackage=${session.editorPackage} inputType=${session.inputType} " +
             "fieldId=${session.fieldId} fieldName=${session.fieldName}")

@@ -47,7 +47,7 @@ class IndependentImeCompositionTest {
         focusComposer()
         val callbackCountBefore = imeEvents().count { it.contains("onStartInput") }
         activateRealIme()
-        val session = awaitImeSession()
+        val session = awaitImeSession(callbackCountBefore)
         val connection = session.connectionIdentity
         compose.activityRule.scenario.onActivity { activity ->
             log(activity, "B.initial", connection, null)
@@ -67,7 +67,7 @@ class IndependentImeCompositionTest {
         focusComposer()
         val callbackCountBefore = imeEvents().count { it.contains("onStartInput") }
         activateRealIme()
-        awaitImeSession()
+        awaitImeSession(callbackCountBefore)
         val connection = currentImeSession().connectionIdentity
         compose.activityRule.scenario.onActivity { activity ->
             log(activity, "C.initial", connection, null)
@@ -109,11 +109,11 @@ class IndependentImeCompositionTest {
 
     private data class ImeSession(val serviceIdentity: String, val connectionIdentity: String, val session: Long)
 
-    private fun awaitImeSession(): ImeSession {
+    private fun awaitImeSession(callbackCountBefore: Int): ImeSession {
         var result: ImeSession? = null
         compose.waitUntil(10_000) {
             result = currentImeSessionOrNull()
-            result != null
+            result != null && imeEvents().count { it.contains("onStartInput") } > callbackCountBefore
         }
         assertNotNull("System did not bind test IME; events=${imeEvents()}", result)
         return result!!

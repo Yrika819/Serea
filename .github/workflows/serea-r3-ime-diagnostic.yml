@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     outputs:
-      kvm: ${{ steps.host.outputs.kvm }}
+      kvm: ${{ steps.accel.outputs.kvm }}
       methods: ${{ steps.smoke.outputs.methods }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,14 +80,16 @@ jobs:
           name: serea-phase-r3-diagnostic-apks
           path: ${{ runner.temp }}/serea-r3-apks
       - id: host
-        name: Record runner resources and require accessible KVM
+        name: Record runner resources and initial KVM state
         run: |
           mkdir -p evidence/host
           {
             uname -a
+            id; id -nG
             echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
             echo "vcpus=$(nproc)"
             lscpu
+            grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
             echo 'cpu_cgroup:'; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
             echo 'memory_cgroup:'; cat /sys/fs/cgroup/memory.max 2>/dev/null || true
             free -h
@@ -98,15 +100,23 @@ jobs:
             "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true
             "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
           } | tee evidence/host/runner.txt
-          if test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+      - id: accel
+        name: Apply disposable-runner KVM permissions and verify acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+            stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
             echo 'kvm=true' >> "$GITHUB_OUTPUT"
           else
             echo 'kvm=false' >> "$GITHUB_OUTPUT"
-            echo 'KVM missing/unusable; API 35 experiment BLOCKED rather than treating TCG as normal.' | tee evidence/host/kvm-blocked.txt
+            echo 'KVM absent or unusable after the repository runner permission procedure; API 35 is BLOCKED, without TCG fallback.' | tee evidence/host/kvm-blocked.txt
+            ls -l /dev/kvm >> evidence/host/kvm-blocked.txt 2>&1 || true
           fi
       - id: smoke
         name: API 35 Test IME-absent instrumentation startup
-        if: steps.host.outputs.kvm == 'true'
+        if: steps.accel.outputs.kvm == 'true'
         continue-on-error: true
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
         with:
@@ -129,7 +139,7 @@ jobs:
           SEREA_R3_OUT: ${{ runner.temp }}/serea-r3-case0
           SEREA_R3_APKS: ${{ runner.temp }}/serea-r3-apks
       - name: Write blocked marker if KVM is unavailable
-        if: steps.host.outputs.kvm != 'true'
+        if: steps.accel.outputs.kvm != 'true'
         run: mkdir -p evidence/api35-case0 && echo NOT_RUN_KVM_UNAVAILABLE > evidence/api35-case0/status.txt
       - name: Preserve startup evidence
         if: always()
@@ -175,20 +185,33 @@ jobs:
           name: serea-phase-r3-diagnostic-apks
           path: ${{ runner.temp }}/serea-r3-apks
       - id: host
-        name: Record runner resources and require accessible KVM
+        name: Record runner resources and initial KVM state
         run: |
           mkdir -p evidence/host
           {
-            uname -a; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"; echo "vcpus=$(nproc)"; lscpu
+            uname -a; id; id -nG; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"; echo "vcpus=$(nproc)"; lscpu; grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
             echo 'cpu_cgroup:'; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
             echo 'memory_cgroup:'; cat /sys/fs/cgroup/memory.max 2>/dev/null || true
             free -h; cat /proc/pressure/cpu 2>/dev/null || true; cat /proc/pressure/memory 2>/dev/null || true
             ls -l /dev/kvm 2>&1 || true; stat -Lc 'kvm_owner=%U kvm_group=%G kvm_mode=%a' /dev/kvm 2>&1 || true
             "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true; "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
           } | tee evidence/host/runner.txt
-          if test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then echo 'kvm=true' >> "$GITHUB_OUTPUT"; else echo 'kvm=false' >> "$GITHUB_OUTPUT"; echo 'BLOCKED: KVM unavailable; no TCG classification as a normal emulator.' > evidence/host/kvm-blocked.txt; fi
+      - id: accel
+        name: Apply disposable-runner KVM permissions and verify acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+            stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
+            echo 'kvm=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'kvm=false' >> "$GITHUB_OUTPUT"
+            echo 'KVM absent or unusable after the repository runner permission procedure; API 35 is BLOCKED, without TCG fallback.' | tee evidence/host/kvm-blocked.txt
+            ls -l /dev/kvm >> evidence/host/kvm-blocked.txt 2>&1 || true
+          fi
       - name: Run API 35 startup case
-        if: steps.host.outputs.kvm == 'true'
+        if: steps.accel.outputs.kvm == 'true'
         continue-on-error: true
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
         with:
@@ -212,7 +235,7 @@ jobs:
           SEREA_R3_OUT: ${{ runner.temp }}/${{ matrix.case }}
           SEREA_R3_APKS: ${{ runner.temp }}/serea-r3-apks
       - name: Record KVM block
-        if: steps.host.outputs.kvm != 'true'
+        if: steps.accel.outputs.kvm != 'true'
         run: mkdir -p evidence/case && echo NOT_RUN_KVM_UNAVAILABLE > evidence/case/status.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
@@ -231,7 +254,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
-      kvm: ${{ steps.host.outputs.kvm }}
+      kvm: ${{ steps.accel.outputs.kvm }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
@@ -248,26 +271,32 @@ jobs:
           name: serea-phase-r3-diagnostic-apks
           path: ${{ runner.temp }}/serea-r3-apks
       - id: host
-        name: Require KVM acceleration and record runner metadata
-        continue-on-error: true
+        name: Record runner resources and initial KVM state
         run: |
           mkdir -p evidence/host
           {
-            uname -a; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH vcpus=$(nproc)"; lscpu
+            uname -a; id; id -nG; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH vcpus=$(nproc)"; lscpu; grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
             cat /sys/fs/cgroup/cpu.max 2>/dev/null || true; cat /sys/fs/cgroup/memory.max 2>/dev/null || true
             free -h; cat /proc/pressure/cpu 2>/dev/null || true; cat /proc/pressure/memory 2>/dev/null || true
             ls -l /dev/kvm 2>&1 || true; stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1 || true
             "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true
             "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
           } | tee evidence/host/runner.txt
-          if test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+      - id: accel
+        name: Apply disposable-runner KVM permissions and verify acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+            stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
             echo 'kvm=true' >> "$GITHUB_OUTPUT"
           else
             echo 'kvm=false' >> "$GITHUB_OUTPUT"
             echo BLOCKED_KVM_UNAVAILABLE > evidence/host/status.txt
           fi
       - name: Run real IME B/C on the same built APKs
-        if: steps.host.outputs.kvm == 'true'
+        if: steps.accel.outputs.kvm == 'true'
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
         with:
           api-level: 35
@@ -314,14 +343,25 @@ jobs:
           name: serea-phase-r3-diagnostic-apks
           path: ${{ runner.temp }}/serea-r3-apks
       - id: host
-        name: Require KVM acceleration and record runner metadata
-        continue-on-error: true
+        name: Record runner resources and initial KVM state
         run: |
           mkdir -p evidence/host
-          { uname -a; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH vcpus=$(nproc)"; lscpu; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true; cat /sys/fs/cgroup/memory.max 2>/dev/null || true; free -h; cat /proc/pressure/cpu 2>/dev/null || true; cat /proc/pressure/memory 2>/dev/null || true; ls -l /dev/kvm 2>&1 || true; stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1 || true; "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true; "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true; } | tee evidence/host/runner.txt
-          if test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then echo 'kvm=true' >> "$GITHUB_OUTPUT"; else echo 'kvm=false' >> "$GITHUB_OUTPUT"; echo BLOCKED_KVM_UNAVAILABLE > evidence/host/status.txt; fi
+          { uname -a; id; id -nG; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH vcpus=$(nproc)"; lscpu; grep -m1 -E '(^flags|^Features)' /proc/cpuinfo; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true; cat /sys/fs/cgroup/memory.max 2>/dev/null || true; free -h; cat /proc/pressure/cpu 2>/dev/null || true; cat /proc/pressure/memory 2>/dev/null || true; ls -l /dev/kvm 2>&1 || true; stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1 || true; "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true; "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true; } | tee evidence/host/runner.txt
+      - id: accel
+        name: Apply disposable-runner KVM permissions and verify acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+            stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
+            echo 'kvm=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'kvm=false' >> "$GITHUB_OUTPUT"
+            echo BLOCKED_KVM_UNAVAILABLE > evidence/host/status.txt
+          fi
       - name: Run API 26 real IME B/C with same APK hashes as API 35
-        if: steps.host.outputs.kvm == 'true'
+        if: steps.accel.outputs.kvm == 'true'
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
         with:
           api-level: 26

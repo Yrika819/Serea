@@ -100,6 +100,7 @@ jobs:
           disable-linux-hw-accel: false
           working-directory: .
           script: |
+            bash -Eeuo pipefail <<'BASH'
             set -euo pipefail
             evidence="$RUNNER_TEMP/serea-personal-beta-identity-diagnostic"
             export SEREA_PERSONAL_BETA_EVIDENCE_DIR="$evidence"
@@ -164,6 +165,7 @@ jobs:
             identity_status=${PIPESTATUS[0]}
             set -e
             exit "$identity_status"
+            BASH
 
       - name: Finalize phase results and diagnostic summary
         if: always()

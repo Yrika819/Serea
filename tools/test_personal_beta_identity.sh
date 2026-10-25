@@ -174,7 +174,36 @@ mkdir -p "$(dirname "$results")"
 printf 'NOT_RUN\n' > "$results"
 
 set_phase 'refuse preinstalled Beta package on the disposable emulator'
-beta_existing_path=$(adb shell pm path "$beta_package" | tr -d '\r')
+beta_path_status=0
+if beta_path_response=$(adb -s "$serial" shell pm path "$beta_package" 2>&1); then
+  beta_path_status=0
+else
+  beta_path_status=$?
+fi
+beta_path_response=$(printf '%s' "$beta_path_response" | tr -d '\r')
+beta_existing_path=''
+case "$beta_path_response" in
+  '')
+    if [[ "$beta_path_status" -ne 0 ]]; then
+      printf 'Beta package query failed (exit=%s) with an empty response.\n' "$beta_path_status" >&2
+      print_emulator_diagnostics 'ADB state after an empty, failed Beta package query:'
+      exit "$beta_path_status"
+    fi
+    ;;
+  'Error: package not found'|"Error: package not found: $beta_package")
+    # Package Manager reports an absent package with either an empty successful
+    # response or its exact not-found diagnostic. Other adb failures remain fatal.
+    ;;
+  package:*)
+    beta_existing_path="$beta_path_response"
+    ;;
+  *)
+    printf 'Beta package query failed (exit=%s): %s\n' "$beta_path_status" "$beta_path_response" >&2
+    print_emulator_diagnostics 'ADB state after an unexpected Beta package query response:'
+    if [[ "$beta_path_status" -ne 0 ]]; then exit "$beta_path_status"; fi
+    exit 1
+    ;;
+esac
 if [[ -n "$beta_existing_path" ]]; then
   echo 'Refusing an emulator that already contains app.serea.android.beta; use a fresh disposable AVD.' >&2
   exit 2

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ContextWrapper
 import android.os.Bundle
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -53,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
@@ -66,7 +68,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -114,7 +115,22 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState != null || chatViewModel.isActivitySelectionRestorePending()) {
+            chatViewModel.beginActivitySelectionRestore(this)
+        }
         setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        // Stop the old IME connection before it can report a stale end-of-text
+        // selection into the ViewModel while the replacement Activity starts.
+        chatViewModel.beginActivitySelectionRestore()
+        val decorView = window.decorView
+        decorView.windowToken?.let { windowToken ->
+            getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(windowToken, 0)
+        }
+        decorView.findFocus()?.clearFocus()
+        super.onSaveInstanceState(outState)
     }
 }
 
@@ -143,7 +159,9 @@ data class Conversation(
 
 data class ChatUiState(
     val conversation: Conversation = Conversation(id = UUID.randomUUID().toString()),
-    val input: String = "",
+    val editorValue: TextFieldValue = TextFieldValue(),
+    val editorInputGeneration: Long = 0,
+    val editorSelectionCorrectionGeneration: Long = 0,
     val isLoading: Boolean = false,
     val isFinalizing: Boolean = false,
     val isRestoring: Boolean = false,
@@ -155,7 +173,9 @@ data class ChatUiState(
     val deleteConfirmation: String = "",
     val deleteTargetId: String = "",
     val deleteTargetTitle: String = "",
-)
+) {
+    val input: String get() = editorValue.text
+}
 
 data class ModelChatRequest(
     val conversationId: String,
@@ -206,13 +226,73 @@ internal class ChatViewModel(
     private var activeMessageId: String? = null
     private val finalizingMessageIds = mutableSetOf<String>()
     private var selectionGeneration = 0L
+    private var preserveEditorSelectionDuringRestore = false
+    private var preserveEditorSelectionDuringNavigation = false
+    private var selectionRestoreOwner: Activity? = null
     private val persistedConversationIds = mutableSetOf<String>().apply {
         if (historyRepository != null && initialConversation != null) add(initialConversation.id)
     }
 
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
 
-    fun updateInput(value: String) = mutableState.update { it.copy(input = value, errorMessage = null) }
+    fun updateInput(value: String) = updateEditorValue(TextFieldValue(value))
+
+    fun beginActivitySelectionRestore(owner: Activity? = null) {
+        preserveEditorSelectionDuringRestore = true
+        selectionRestoreOwner = owner
+    }
+
+    fun finishActivitySelectionRestore(owner: Activity?) {
+        if (!preserveEditorSelectionDuringRestore || selectionRestoreOwner !== owner) return
+        preserveEditorSelectionDuringRestore = false
+        selectionRestoreOwner = null
+    }
+
+    fun beginEditorSelectionPreservationForNavigation() {
+        preserveEditorSelectionDuringNavigation = true
+    }
+
+    // Chat can return without focus, so release after its saved field has been recreated and
+    // focus clearing has flushed stale IME selection callbacks.
+    fun finishEditorSelectionPreservation() {
+        preserveEditorSelectionDuringNavigation = false
+    }
+
+    fun isActivitySelectionRestorePending(): Boolean = preserveEditorSelectionDuringRestore
+
+    fun updateEditorValue(
+        value: TextFieldValue,
+        sourceGeneration: Long = mutableState.value.editorInputGeneration,
+    ) {
+        mutableState.update { current ->
+            if (sourceGeneration != current.editorInputGeneration) return@update current
+            // Ignore stale InputConnection callbacks until the restored field
+            // actually regains focus. They can carry either an end selection
+            // or an old composing-text edit from the Activity being replaced.
+            if (preserveEditorSelectionDuringRestore && value.text != current.input) {
+                return@update current
+            }
+            val navigationSelectionCanBePreserved = preserveEditorSelectionDuringNavigation &&
+                current.editorValue.composition == null && value.composition == null
+            val preservingSelection = preserveEditorSelectionDuringRestore || navigationSelectionCanBePreserved
+            val restoringSelection = preservingSelection &&
+                value.text == current.editorValue.text && value.selection != current.editorValue.selection
+            val editorValue = if (preservingSelection && value.text == current.editorValue.text) {
+                value.copy(selection = current.editorValue.selection)
+            } else {
+                value
+            }
+            current.copy(
+                editorValue = editorValue,
+                editorSelectionCorrectionGeneration = if (restoringSelection) {
+                    current.editorSelectionCorrectionGeneration + 1
+                } else {
+                    current.editorSelectionCorrectionGeneration
+                },
+                errorMessage = null,
+            )
+        }
+    }
 
     fun requestCurrentConversationDeletionConfirmation() {
         val conversation = mutableState.value.conversation
@@ -257,7 +337,14 @@ internal class ChatViewModel(
             origin = DataOrigin.USER_AUTHORED, conversationId = conversationId)
         activeMessageId = userMessage.id
         mutableState.update {
-            it.copy(conversation = it.conversation.copy(messages = it.conversation.messages + userMessage), input = "", isLoading = true, isFinalizing = false, errorMessage = null)
+            it.copy(
+                conversation = it.conversation.copy(messages = it.conversation.messages + userMessage),
+                editorValue = TextFieldValue(),
+                editorInputGeneration = it.editorInputGeneration + 1,
+                isLoading = true,
+                isFinalizing = false,
+                errorMessage = null,
+            )
         }
         activeJob = viewModelScope.launch {
             var turnFinalized = false
@@ -336,7 +423,11 @@ internal class ChatViewModel(
         cancelCurrent()
         selectionGeneration += 1
         val id = UUID.randomUUID().toString()
-        mutableState.update { it.copy(conversation = Conversation(id), input = "", isLoading = false, isFinalizing = false, showingHistory = false,
+        mutableState.update { it.copy(conversation = Conversation(id), editorValue = TextFieldValue(),
+            // A blank composer already has no draft callback to invalidate. Keeping
+            // its generation stable avoids replacing a focused field for a no-op clear.
+            editorInputGeneration = if (it.editorValue.text.isEmpty()) it.editorInputGeneration else it.editorInputGeneration + 1,
+            isLoading = false, isFinalizing = false, showingHistory = false,
             isRestoring = false, errorMessage = null, statusMessage = null) }
     }
 
@@ -743,17 +834,11 @@ internal fun ChatScreen(
     }
     val configuration = LocalConfiguration.current
     val compactChat = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
-    var composerValue by rememberSaveable(state.conversation.id, stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(state.input))
-    }
-    LaunchedEffect(state.input) {
-        if (composerValue.text != state.input) {
-            val cursor = composerValue.selection.start.coerceIn(0, state.input.length)
-            composerValue = TextFieldValue(state.input, TextRange(cursor))
-        }
-    }
     var composerFocusAllowed by remember(focusClearRequest) {
         mutableStateOf(focusClearRequest == 0)
+    }
+    var composerRestoreFocusReady by remember(hostActivity, chatViewModel) {
+        mutableStateOf(!chatViewModel.isActivitySelectionRestorePending())
     }
     LaunchedEffect(focusClearRequest) {
         if (focusClearRequest > 0) {
@@ -766,6 +851,25 @@ internal fun ChatScreen(
             withFrameNanos { }
             composerFocusAllowed = true
             focusManager.clearFocus(force = true)
+            chatViewModel.finishEditorSelectionPreservation()
+        }
+    }
+    LaunchedEffect(hostActivity, chatViewModel) {
+        if (chatViewModel.isActivitySelectionRestorePending()) {
+            // Do not reconnect the old IME selection before the ViewModel-backed value is restored.
+            composerRestoreFocusReady = false
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
+            withFrameNanos { }
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
+            withFrameNanos { }
+            focusManager.clearFocus(force = true)
+            // Activity identity is checked by the ViewModel, so once this new
+            // Activity has flushed stale IME focus we can release its restore
+            // barrier even if the composer regained focus during the frames.
+            chatViewModel.finishActivitySelectionRestore(hostActivity)
+            composerRestoreFocusReady = true
         }
     }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -1042,13 +1146,20 @@ internal fun ChatScreen(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val composerModifier = Modifier.weight(1f)
                         .focusProperties { canFocus = composerFocusAllowed }
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) {
+                                chatViewModel.finishEditorSelectionPreservation()
+                                if (composerRestoreFocusReady) {
+                                    chatViewModel.finishActivitySelectionRestore(hostActivity)
+                                }
+                            }
+                        }
                         .testTag("chat-composer")
-                    key(focusClearRequest) {
-                        OutlinedTextField(value = composerValue,
-                            onValueChange = { value ->
-                                composerValue = value
-                                chatViewModel.updateInput(value.text)
-                            },
+                    val composerInputGeneration = state.editorInputGeneration
+                    key(hostActivity, focusClearRequest, composerInputGeneration, state.editorSelectionCorrectionGeneration) {
+                        OutlinedTextField(value = state.editorValue, onValueChange = { value ->
+                            chatViewModel.updateEditorValue(value, composerInputGeneration)
+                        },
                             modifier = composerModifier, label = { Text("メッセージ") },
                             enabled = !state.isLoading && !state.isRestoring && !state.showingHistory,
                             maxLines = if (compactChat) 1 else 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),

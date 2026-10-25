@@ -391,6 +391,10 @@ def main() -> int:
         "--additional-test-manifest", type=Path,
         help="exact additional regression-test identities, one CLASS#METHOD per line",
     )
+    parser.add_argument(
+        "--non-required-test-manifest", type=Path,
+        help="explicit non-required instrumentation identities kept outside the formal Required set",
+    )
     parser.add_argument("--required-count", type=int, help="require this exact Original Required Set size")
     parser.add_argument("--additional-count", type=int, help="require this exact Additional Tests size")
     parser.add_argument("--api-level", type=int, choices=(26, 35), help="emulator API for ProfileVerifier evidence")
@@ -411,12 +415,17 @@ def main() -> int:
     required_tests = parse_test_requirements(args.require_test, parser)
     if (args.required_test_manifest is None) != (args.additional_test_manifest is None):
         parser.error("--required-test-manifest and --additional-test-manifest must be used together")
+    if args.non_required_test_manifest is not None and args.required_test_manifest is None:
+        parser.error("--non-required-test-manifest requires both formal Required manifests")
     manifest_required: set[tuple[str, str]] = set()
     manifest_additional: set[tuple[str, str]] = set()
+    manifest_non_required: set[tuple[str, str]] = set()
     if args.required_test_manifest is not None and args.additional_test_manifest is not None:
         try:
             manifest_required = read_test_manifest(args.required_test_manifest)
             manifest_additional = read_test_manifest(args.additional_test_manifest)
+            if args.non_required_test_manifest is not None:
+                manifest_non_required = read_test_manifest(args.non_required_test_manifest)
         except ValueError as error:
             print(error, file=sys.stderr)
             return 2
@@ -428,6 +437,13 @@ def main() -> int:
         overlap = manifest_required & manifest_additional
         if overlap:
             print(f"Original Required Set and Additional Tests overlap: {sorted(overlap)}", file=sys.stderr)
+            return 2
+        non_required_overlap = manifest_non_required & (manifest_required | manifest_additional)
+        if non_required_overlap:
+            print(
+                "Explicit non-required instrumentation identities overlap a formal manifest: "
+                f"{sorted(non_required_overlap)}.", file=sys.stderr,
+            )
             return 2
         if args.required_count is not None and len(manifest_required) != args.required_count:
             print(
@@ -462,6 +478,7 @@ def main() -> int:
             return 1
     all_required_tests = manifest_required | manifest_additional | required_tests
     source_total: int | None = None
+    source_formal_total: int | None = None
     source_identities: set[tuple[str, str]] | None = None
     if args.source_root is not None:
         try:
@@ -484,10 +501,11 @@ def main() -> int:
                 return 1
         if args.required_test_manifest is not None:
             assert source_identities is not None
-            expected_source_identities = manifest_required | manifest_additional
+            expected_source_identities = manifest_required | manifest_additional | required_tests | manifest_non_required
             if source_identities != expected_source_identities:
                 print(
-                    "FAIL: source instrumentation identities do not match the two manifests; "
+                    "FAIL: source instrumentation identities do not match the formal and explicitly "
+                    "non-required manifests; "
                     f"missing={sorted(expected_source_identities - source_identities)}, "
                     f"unexpected={sorted(source_identities - expected_source_identities)}.",
                     file=sys.stderr,
@@ -499,9 +517,11 @@ def main() -> int:
                     f"{len(expected_source_identities)} identities.", file=sys.stderr,
                 )
                 return 1
+            source_formal_total = len(all_required_tests)
             print(
                 f"Instrumentation source: Original Required Set={len(manifest_required)} "
-                f"Additional Tests={len(manifest_additional)} total={source_total}"
+                f"Additional Tests={len(manifest_additional)} "
+                f"explicit non-required diagnostics={len(manifest_non_required)} source_total={source_total}"
             )
         else:
             expected_total = sum(required_classes.values())
@@ -513,6 +533,7 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 1
+            source_formal_total = source_total
     try:
         results = collect_results(args.results)
     except ValueError as error:
@@ -539,9 +560,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    if source_total is not None and results.tests != source_total:
+    if source_formal_total is not None and results.tests != source_formal_total:
         print(
-            f"FAIL: JUnit recorded {results.tests} tests but Kotlin source contains {source_total} @Test methods.",
+            f"FAIL: JUnit recorded {results.tests} tests but the formal source set expects "
+            f"{source_formal_total} executed @Test methods.",
             file=sys.stderr,
         )
         return 1

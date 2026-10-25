@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToLog
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
@@ -48,6 +49,7 @@ class ChatScreenTest {
             val state = stateSnapshot()
             state.conversation.id != restoredId && !state.isRestoring
         }
+        compose.waitForIdle()
     }
 
     private fun composer() = compose.onNodeWithTag("chat-composer")
@@ -97,10 +99,7 @@ class ChatScreenTest {
             }
         }.isSuccess
         if (!focused) {
-            val systemFocus = runCatching {
-                shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-            }.getOrDefault("unavailable")
-            snapshot += " systemFocus=$systemFocus"
+            snapshot += captureFocusDiagnostics(stage)
         }
         Log.i(FOCUS_LOG_TAG, snapshot)
         assertTrue("MainActivity did not own window focus at $stage: $snapshot", focused)
@@ -145,13 +144,52 @@ class ChatScreenTest {
             }
         }.isSuccess
         if (!inputReady) {
-            val systemFocus = runCatching {
-                shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-            }.getOrDefault("unavailable")
-            snapshot += " lastTouch={$lastComposerTouch} systemFocus={$systemFocus}"
+            snapshot += captureFocusDiagnostics(stage)
         }
         Log.i(FOCUS_LOG_TAG, snapshot)
         assertTrue("Composer did not have a live focused input connection at $stage: $snapshot", inputReady)
+    }
+
+    private fun captureFocusDiagnostics(stage: String): String {
+        val state = stateSnapshot()
+        val nodes = runCatching {
+            compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
+        }.getOrNull()
+        val composerSummary = nodes?.map { node ->
+            "id=${node.id} editable=${node.config.getOrElseNullable(SemanticsProperties.EditableText) { null }} " +
+                "config=${node.config} boundsWindow=${node.boundsInWindow}"
+        }
+        val activitySummary = StringBuilder()
+        compose.activityRule.scenario.onActivity { activity ->
+            val decor = activity.window.decorView
+            val imm = activity.getSystemService(InputMethodManager::class.java)
+            activitySummary.append(
+                "activity=${activity.javaClass.name}@${System.identityHashCode(activity)} " +
+                    "window=${System.identityHashCode(activity.window)} token=${decor.windowToken} " +
+                    "lifecycle=${activity.lifecycle.currentState} windowFocus=${decor.hasWindowFocus()} " +
+                    "decorFocus=${decor.hasFocus()} decorFocused=${decor.isFocused} visible=${decor.isShown} " +
+                    "imeAccepting=${imm?.isAcceptingText} input=${state.input} " +
+                    "loading=${state.isLoading} restoring=${state.isRestoring} messages=${state.conversation.messages.size}"
+            )
+        }
+        val composerText = nodes?.singleOrNull()?.config?.getOrElseNullable(SemanticsProperties.EditableText) { null }?.text
+        val detail = "lastTouch={$lastComposerTouch} activity={$activitySummary} " +
+            "composerValueText=$composerText composerMatchesStateInput=${composerText == state.input} " +
+            "composerNodeCount=${nodes?.size} composerNodes=$composerSummary"
+        Log.e(FOCUS_LOG_TAG, "DIAGNOSTIC|stage=$stage|$detail")
+        for ((name, command) in listOf("WINDOW" to "dumpsys window", "INPUT_METHOD" to "dumpsys input_method")) {
+            val output = runCatching { shell(command) }.getOrElse { "COMMAND_FAILED:$it" }
+            if (name == "WINDOW") {
+                val owners = output.lineSequence().filter {
+                    it.contains("mCurrentFocus") || it.contains("mFocusedWindow") || it.contains("mFocusedApp")
+                }.joinToString(" | ")
+                Log.e(FOCUS_LOG_TAG, "WINDOW_OWNER|stage=$stage|$owners")
+            }
+            output.chunked(3000).forEachIndexed { index, chunk ->
+                Log.e(FOCUS_LOG_TAG, "RAW_$name|stage=$stage|chunk=${index + 1}|$chunk")
+            }
+        }
+        return detail
     }
 
     private fun stateSnapshot(): ChatUiState {
@@ -159,6 +197,15 @@ class ChatScreenTest {
         compose.activityRule.scenario.onActivity { snapshot = it.chatViewModel.state.value }
         return requireNotNull(snapshot)
     }
+
+    private fun composerSnapshot(): String = runCatching {
+        val nodes = compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
+        val stateInput = stateSnapshot().input
+        val text = nodes.singleOrNull()?.config?.getOrElseNullable(SemanticsProperties.EditableText) { null }?.text
+        "count=${nodes.size};composerValueText=$text;matchesStateInput=${text == stateInput};" + nodes.joinToString(";") {
+            "id=${it.id},editable=${it.config.getOrElseNullable(SemanticsProperties.EditableText) { null }},bounds=${it.boundsInWindow}"
+        }
+    }.getOrElse { "unavailable:$it" }
 
     private fun awaitResponse(text: String) {
         compose.waitUntil(30_000) {
@@ -178,6 +225,7 @@ class ChatScreenTest {
     }
 
     private fun send(text: String) {
+        Log.i(FOCUS_LOG_TAG, "SEND_BEGIN|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
         // Inject a screen-coordinate tap through Android's input dispatcher so it can activate
         // a resumed window that Compose's root-targeted touch injection cannot focus.
         tapComposerThroughSystemInput()
@@ -187,7 +235,21 @@ class ChatScreenTest {
         awaitComposerInputConnection("after composer tap, before typing")
         composer().assertIsFocused()
         composer().performTextInput(text)
-        compose.waitUntil(30_000) { stateSnapshot().input == text }
+        val inputReachedViewModel = runCatching {
+            compose.waitUntil(30_000) { stateSnapshot().input == text }
+        }.isSuccess
+        if (!inputReachedViewModel) {
+            val state = stateSnapshot()
+            Log.e(
+                FOCUS_LOG_TAG,
+                "SEND_INPUT_TIMEOUT|expectedLength=${text.length}|stateLength=${state.input.length}|" +
+                    "editorGeneration=${state.editorInputGeneration}|selection=${state.editorValue.selection.start}:${state.editorValue.selection.end}|" +
+                    "restorePending=${compose.activity.chatViewModel.isActivitySelectionRestorePending()}|" +
+                    "composer=${composerSnapshot()}",
+            )
+        }
+        assertTrue("IME input must reach the ViewModel before send.", inputReachedViewModel)
+        Log.i(FOCUS_LOG_TAG, "SEND_TYPED|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
         awaitComposerInputConnection("after typing, before keyboard dismissal")
         Espresso.closeSoftKeyboard()
         awaitMainWindowFocus("after keyboard dismissal")
@@ -202,6 +264,7 @@ class ChatScreenTest {
             stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
         } }.isSuccess
         val state = stateSnapshot()
+        Log.i(FOCUS_LOG_TAG, "SEND_SUBMITTED|text=$text|stateInput=${state.input}|composer=${composerSnapshot()}|loading=${state.isLoading}|messages=${state.conversation.messages.map { it.role to it.text }}")
         assertTrue(
             "Send action did not append the message; input=${state.input}, loading=${state.isLoading}, " +
                 "error=${state.errorMessage}, statuses=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
@@ -246,20 +309,25 @@ class ChatScreenTest {
 
     @Test fun completedDemoConversationSurvivesActivityRecreation() {
         awaitComposerEnabled()
+        Log.i(FOCUS_LOG_TAG, "ROTATION_BEFORE_SEND|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
         send("rotation-check")
         awaitResponse("Demo response: I received “rotation-check”.")
+        Log.i(FOCUS_LOG_TAG, "ROTATION_BEFORE_RECREATE|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
         compose.activityRule.scenario.recreate()
         compose.waitUntil(30_000) {
             val state = stateSnapshot()
             !state.isRestoring && state.conversation.messages.any { it.text == "rotation-check" }
         }
         val restored = stateSnapshot()
+        Log.i(FOCUS_LOG_TAG, "ROTATION_AFTER_RECREATE|stateInput=${restored.input}|composer=${composerSnapshot()}|messages=${restored.conversation.messages.map { it.role to it.text }}")
         val restoredUserIndex = restored.conversation.messages.indexOfFirst { it.text == "rotation-check" }
         assertTrue("Restored user message is missing", restoredUserIndex >= 0)
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("conversation-list").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("conversation-list").performScrollToIndex(restoredUserIndex)
+        val duplicateNodes = compose.onAllNodesWithText("rotation-check", useUnmergedTree = true).fetchSemanticsNodes()
+        Log.i(FOCUS_LOG_TAG, "ROTATION_TEXT_NODES|count=${duplicateNodes.size}|nodes=${duplicateNodes.map { "id=${it.id},config=${it.config},bounds=${it.boundsInWindow}" }}")
         compose.onNodeWithText("rotation-check").assertIsDisplayed()
         compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
         assertDisplayedWithEvidence("chat-restored-conversation") {
@@ -320,6 +388,8 @@ class ChatScreenTest {
         compose.onNodeWithTag("model-budget-amount").performTextInput("0.05")
         compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextClearance()
         compose.onNodeWithTag("model-budget-currency").performTextInput("USD")
+        Espresso.closeSoftKeyboard()
+        compose.waitForIdle()
         compose.onNodeWithText("ルーター設定を保存").performScrollTo().performClick()
         val saveSucceeded = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
         val saveFailed = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。"
@@ -337,7 +407,13 @@ class ChatScreenTest {
             ),
             modelSettings.load(),
         )
-        compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
+        Espresso.closeSoftKeyboard()
+        val savedPolicySummary = compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先")
+        savedPolicySummary.performScrollTo()
+        compose.waitUntil(15_000) {
+            runCatching { savedPolicySummary.assertIsDisplayed() }.isSuccess
+        }
+        savedPolicySummary.assertIsDisplayed()
         compose.onNodeWithTag("destination_back").performClick()
         compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
@@ -565,6 +641,9 @@ class ChatScreenTest {
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
         dailyRequests.performTextInput("21")
+        compose.waitUntil(5_000) {
+            runCatching { dailyRequests.assertTextContains("21") }.isSuccess
+        }
         compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsEnabled().performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("Soft Limit設定を保存しました", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("destination_back").performClick()

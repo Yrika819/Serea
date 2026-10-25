@@ -4,4 +4,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "SereaAndroid"
-include(":app")
+include(":app", ":r25-ime-test")

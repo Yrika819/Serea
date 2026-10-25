@@ -111,7 +111,7 @@ class IndependentImeCompositionTest {
             }
             device.pressHome()
             val target = "$TARGET_PACKAGE/$TARGET_ACTIVITY"
-            val launch = device.executeShellCommand("am start -W -n $target")
+            val launch = device.executeShellCommand("am start -W -f 0x30000000 -n $target")
             Log.i(TAG, "FOREGROUND_START result=$launch")
             Log.i(TAG, "FOREGROUND_AFTER task=${device.executeShellCommand("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")} " +
                 "focus=${device.executeShellCommand("dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' | tail -2")}")

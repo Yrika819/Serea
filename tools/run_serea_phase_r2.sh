@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?Set ANDROID_HOME or ANDROID_SDK_ROOT}}"
+ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-${ANDROID_USER_HOME:-$HOME/.android}/avd}"
+export ANDROID_AVD_HOME
 ADB="$SDK_ROOT/platform-tools/adb"
 EMULATOR="$SDK_ROOT/emulator/emulator"
 AVDMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
@@ -58,8 +60,12 @@ for api in 26 35; do
     }
     trap cleanup EXIT INT TERM
 
-    "$ADB" -s "$serial" wait-for-device
-    until [[ "$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; do sleep 2; done
+    timeout 180 "$ADB" -s "$serial" wait-for-device
+    boot_deadline=$((SECONDS + 600))
+    until [[ "$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; do
+        if (( SECONDS >= boot_deadline )); then echo "Emulator API $api did not finish booting." >&2; exit 1; fi
+        sleep 2
+    done
     original_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method | tr -d '\r')"
     {
         printf 'fingerprint=%s\nfont_scale=%s\ndefault_ime_before=%s\n' \

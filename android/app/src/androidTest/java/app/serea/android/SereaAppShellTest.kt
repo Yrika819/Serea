@@ -1158,6 +1158,17 @@ class SereaAppShellTest {
                 "Composer did not expose its refreshed IME InputConnection after the composing text update."
             }
             assertTrue(activeInputConnection.setComposingText("draft survives navigation", 1))
+        }
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == "draft survives navigation" &&
+                    value.selection == TextRange(value.text.length)
+            }
+        }
+        compose.activityRule.scenario.onActivity { activity ->
+            val activeInputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+                "Composer did not expose its refreshed IME InputConnection before composition commit."
+            }
             assertTrue(activeInputConnection.finishComposingText())
         }
         compose.waitUntil(5_000) {

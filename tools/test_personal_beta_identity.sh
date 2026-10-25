@@ -390,7 +390,7 @@ adb install -r "$apk_v100"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
 [[ "$installed_version" == 100 ]]
-phase campaign-seed
+phase campaign-seed-and-claim
 phase campaign-consume
 phase prepare
 database_listing=$(adb shell "ls -l /data/user/0/$beta_package/databases" | tr -d '\r')

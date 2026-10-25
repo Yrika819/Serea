@@ -647,6 +647,23 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("phase='process-death-seed'", target_helper)
         self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
 
+    def test_personal_beta_campaign_seeds_and_claims_marker_before_single_use_consume(self) -> None:
+        script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")
+        receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(
+            encoding="utf-8"
+        )
+        phases = receiver.split('if (phase == "campaign-seed-and-claim") {', 1)[1].split("}", 1)[0]
+        personal_beta_allowlist = receiver.split("private val PERSONAL_BETA_PHASES = setOf(", 1)[1].split(")", 1)[0]
+        script_seed = script.index("phase campaign-seed-and-claim")
+        script_consume = script.index("phase campaign-consume", script_seed)
+        self.assertLess(phases.index("seedInstrumentationMarker(context, token)"),
+                        phases.index("claimInstrumentationMarker(context, token)"))
+        self.assertIn('"campaign-seed-and-claim"', personal_beta_allowlist)
+        self.assertIn('"campaign-consume"', personal_beta_allowlist)
+        self.assertLess(script_seed, script_consume)
+        self.assertIn('check(!claimedMarker.exists())', receiver)
+        self.assertIn('check(!authorization.exists())', receiver)
+
     def test_device_diagnostics_use_posix_grep_and_keep_gradle_result_separate(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
         self.assertNotIn("rg ", campaign)

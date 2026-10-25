@@ -35,6 +35,12 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
                     return@Thread
                 }
+                if (phase == "campaign-seed-and-claim") {
+                    seedInstrumentationMarker(context, token)
+                    claimInstrumentationMarker(context, token)
+                    Log.i(TAG, "PASS:$token:$phase:$requestId")
+                    return@Thread
+                }
                 if (phase == "process-death-seed") {
                     seedInstrumentationMarker(context, token)
                     claimInstrumentationMarker(context, token)
@@ -380,7 +386,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         private const val ISOLATED_PACKAGE = "app.serea.android.isolated"
         private const val PERSONAL_BETA_PACKAGE = "app.serea.android.beta"
         private const val UPDATE_COMPAT_PACKAGE = "app.serea.android.updatecompat"
-        private val PERSONAL_BETA_PHASES = setOf("campaign-seed", "campaign-consume", "prepare", "verify")
+        private val PERSONAL_BETA_PHASES = setOf("campaign-seed-and-claim", "campaign-consume", "prepare", "verify")
         private val UPDATE_COMPAT_PHASES = setOf("prepare", "verify")
         private const val INSTRUMENTATION_MARKER = "serea-instrumentation-token"
         private const val CLAIMED_INSTRUMENTATION_MARKER = "serea-instrumentation-claimed"

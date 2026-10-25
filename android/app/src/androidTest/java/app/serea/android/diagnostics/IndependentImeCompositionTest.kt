@@ -388,15 +388,22 @@ class IndependentImeCompositionTest {
 
     private fun awaitValue(stage: String, connection: String?, condition: (State) -> Boolean) {
         var reached = false
-        compose.waitUntil(5_000) {
-            reached = condition(snapshot())
-            reached
+        runCatching {
+            compose.waitUntil(5_000) {
+                reached = condition(snapshot())
+                reached
+            }
         }
+        val finalState = snapshot()
         val semanticSelection = runCatching {
             compose.onNodeWithTag("chat-composer").fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange]
         }.getOrNull()
         log(compose.activityRule.scenario, stage, connection, semanticSelection)
-        assertTrue("State did not settle at $stage; last=${snapshot()}", reached)
+        if (!reached) {
+            Log.e(TAG, "DIAGNOSTIC_STATE_TIMEOUT stage=$stage actual=$finalState " +
+                "semanticsSelection=$semanticSelection connection=$connection")
+        }
+        assertTrue("State did not settle at $stage; actual=$finalState semanticsSelection=$semanticSelection", reached)
     }
 
     private fun log(activity: MainActivity, stage: String, connection: String?, accepted: Boolean?) {

@@ -185,9 +185,61 @@ beta_existing_path=''
 case "$beta_path_response" in
   '')
     if [[ "$beta_path_status" -ne 0 ]]; then
-      printf 'Beta package query failed (exit=%s) with an empty response.\n' "$beta_path_status" >&2
-      print_emulator_diagnostics 'ADB state after an empty, failed Beta package query:'
-      exit "$beta_path_status"
+      beta_device_state_status=0
+      if beta_device_state=$(timeout 8s adb -s "$serial" get-state 2>&1); then
+        beta_device_state_status=0
+      else
+        beta_device_state_status=$?
+      fi
+      beta_device_state=$(printf '%s' "$beta_device_state" | tr -d '\r')
+      if [[ "$beta_device_state_status" -ne 0 || "$beta_device_state" != device ]]; then
+        printf 'ADB device-state probe failed (exit=%s, state=%s) after the empty Beta path response.\n' \
+          "$beta_device_state_status" "$beta_device_state" >&2
+        print_emulator_diagnostics 'ADB state after the empty, failed Beta package path query:'
+        if [[ "$beta_device_state_status" -ne 0 ]]; then exit "$beta_device_state_status"; fi
+        exit 1
+      fi
+
+      beta_package_list_status=0
+      if beta_package_list=$(timeout 10s adb -s "$serial" shell pm list packages "$beta_package" 2>&1); then
+        beta_package_list_status=0
+      else
+        beta_package_list_status=$?
+      fi
+      beta_package_list=$(printf '%s' "$beta_package_list" | tr -d '\r')
+      if [[ "$beta_package_list_status" -ne 0 ]]; then
+        printf 'Beta package-list verification failed (exit=%s): %s\n' \
+          "$beta_package_list_status" "$beta_package_list" >&2
+        print_emulator_diagnostics 'ADB state after the Beta package-list verification failed:'
+        exit "$beta_package_list_status"
+      fi
+
+      beta_exact_package_found=0
+      beta_unexpected_package_output=''
+      while IFS= read -r package_line; do
+        [[ -z "$package_line" ]] && continue
+        if [[ "$package_line" != package:* ]]; then
+          beta_unexpected_package_output="$package_line"
+          break
+        fi
+        listed_package="${package_line#package:}"
+        if [[ ! "$listed_package" =~ ^[A-Za-z0-9_.]+$ ]]; then
+          beta_unexpected_package_output="$package_line"
+          break
+        fi
+        if [[ "$listed_package" == "$beta_package" ]]; then
+          beta_exact_package_found=1
+        fi
+      done <<< "$beta_package_list"
+
+      if [[ -n "$beta_unexpected_package_output" ]]; then
+        printf 'Unexpected Beta package-list output: %s\n' "$beta_unexpected_package_output" >&2
+        print_emulator_diagnostics 'ADB state after unexpected Beta package-list output:'
+        exit 1
+      fi
+      if [[ "$beta_exact_package_found" -eq 1 ]]; then
+        beta_existing_path='present'
+      fi
     fi
     ;;
   'Error: package not found'|"Error: package not found: $beta_package")

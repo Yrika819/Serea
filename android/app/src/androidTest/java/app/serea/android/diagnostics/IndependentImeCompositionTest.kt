@@ -140,9 +140,18 @@ class IndependentImeCompositionTest {
 
     private fun imeFinishComposingText(): Boolean = imeCall("finishComposingText").getBoolean("accepted")
 
-    private fun imeCall(method: String, extras: Bundle? = null): Bundle = requireNotNull(
-        InstrumentationRegistry.getInstrumentation().context.contentResolver.call(IME_AUTHORITY, method, null, extras),
-    ) { "Test IME diagnostics provider returned no result for $method" }
+    private fun imeCall(method: String, extras: Bundle? = null): Bundle {
+        val resolver = InstrumentationRegistry.getInstrumentation().context.contentResolver
+        val client = requireNotNull(resolver.acquireContentProviderClient(IME_AUTHORITY)) {
+            "Could not connect to the test IME diagnostics provider."
+        }
+        return try {
+            requireNotNull(client.call(method, null, extras)) { "Test IME diagnostics provider returned no result for $method" }
+        } finally {
+            @Suppress("DEPRECATION")
+            client.release()
+        }
+    }
 
     private data class State(val text: String, val composition: TextRange?, val selection: TextRange)
 

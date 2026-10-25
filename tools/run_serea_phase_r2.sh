@@ -16,7 +16,9 @@ TEST_CLASS="app.serea.android.diagnostics.IndependentImeCompositionTest"
 COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 TREE="$(git -C "$ROOT" rev-parse HEAD^{tree})"
 
-for api in 26 35; do
+apis="${SEREA_R2_APIS:-26 35}"
+for api in $apis; do
+    if [[ "$api" != 26 && "$api" != 35 ]]; then echo "Unsupported API in SEREA_R2_APIS: $api" >&2; exit 2; fi
     run_id="R2-API-${api}-$(date -u +%Y%m%dT%H%M%SZ)"
     name="serea-r2-api-${api}"
     out="$ARTIFACT_ROOT/$run_id"

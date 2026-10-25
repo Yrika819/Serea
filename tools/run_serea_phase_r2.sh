@@ -67,7 +67,8 @@ for api in 26 35; do
         if [[ "$boot_ready" == "1" || "$log_boot_ready" == "1" ]]; then
             if ready_font_scale="$("$ADB" -s "$serial" shell settings get system font_scale 2>/dev/null | tr -d '\r')" && \
                 ready_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"; then
-                if [[ "$ready_font_scale" =~ ^[0-9]+([.][0-9]+)?$ && ( "$ready_ime" == "null" || "$ready_ime" == */* ) ]]; then
+                if [[ ( "$ready_font_scale" == "null" || "$ready_font_scale" =~ ^[0-9]+([.][0-9]+)?$ ) && \
+                      ( "$ready_ime" == "null" || "$ready_ime" == */* ) ]]; then
                     break
                 fi
             fi
@@ -76,10 +77,12 @@ for api in 26 35; do
         sleep 2
     done
     original_ime="$ready_ime"
+    effective_font_scale="$ready_font_scale"
+    [[ "$effective_font_scale" != "null" ]] || effective_font_scale="1.0"
     {
-        printf 'fingerprint=%s\nfont_scale=%s\nboot_complete=%s\nlog_boot_complete=%s\ndefault_ime_before=%s\n' \
+        printf 'fingerprint=%s\nfont_scale_setting=%s\nfont_scale_effective=%s\nboot_complete=%s\nlog_boot_complete=%s\ndefault_ime_before=%s\n' \
             "$("$ADB" -s "$serial" shell getprop ro.build.fingerprint | tr -d '\r')" \
-            "$ready_font_scale" \
+            "$ready_font_scale" "$effective_font_scale" \
             "$("$ADB" -s "$serial" shell getprop sys.boot_completed | tr -d '\r')" \
             "$("$ADB" -s "$serial" shell getprop sys.logbootcomplete | tr -d '\r')" "$original_ime"
     } >> "$out/metadata.txt"
@@ -87,8 +90,8 @@ for api in 26 35; do
     "$ADB" -s "$serial" install "$TARGET_APK" >"$out/install-target.log"
     "$ADB" -s "$serial" install "$TEST_APK" >"$out/install-test.log"
     token="${run_id}-$(date +%s%N)"
-    "$ADB" -s "$serial" shell run-as app.serea.android.isolated sh -c \
-        "mkdir -p no_backup && printf '%s' '$token' > no_backup/serea-instrumentation-token"
+    "$ADB" -s "$serial" shell run-as app.serea.android.isolated mkdir -p no_backup
+    "$ADB" -s "$serial" shell "run-as app.serea.android.isolated sh -c 'printf %s $token > no_backup/serea-instrumentation-token'"
     "$ADB" -s "$serial" logcat -c
     set +e
     "$ADB" -s "$serial" shell am instrument -w -r \

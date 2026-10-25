@@ -1,14 +1,19 @@
 package app.serea.android
 
 import android.content.pm.ActivityInfo
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -29,13 +34,15 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.performTextInputSelection
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
@@ -62,6 +69,62 @@ class SereaAppShellTest {
         const val CALENDAR_STAGE_TAG = "SereaCalendarStage"
         const val FONT_SCALE_STAGE_TAG = "SereaFontScale"
         const val TASKS_DESTINATION_STAGE_TAG = "SereaTasksDestination"
+        const val COMPOSER_IME_DIAGNOSTICS_TAG = "SereaComposerIme"
+    }
+
+    private fun logComposerImeDiagnostics(stage: String, inputConnection: InputConnection?) {
+        val semanticSelection = runCatching {
+            compose.onNodeWithTag("chat-composer").fetchSemanticsNode()
+                .config[SemanticsProperties.TextSelectionRange]
+        }.getOrNull()
+        compose.activityRule.scenario.onActivity { activity ->
+            val editorValue = activity.chatViewModel.state.value.editorValue
+            val decor = activity.window.decorView
+            val focusedView = decor.findFocus()
+            val inputMethodManager = activity.getSystemService(InputMethodManager::class.java)
+            Log.i(
+                COMPOSER_IME_DIAGNOSTICS_TAG,
+                "uptimeMs=${SystemClock.uptimeMillis()} stage=$stage editorValue=$editorValue " +
+                    "inputGeneration=${activity.chatViewModel.state.value.editorInputGeneration} " +
+                    "selectionCorrectionGeneration=${activity.chatViewModel.state.value.editorSelectionCorrectionGeneration} " +
+                    "semanticSelection=$semanticSelection windowFocus=${decor.hasWindowFocus()} " +
+                    "focusedView=${focusedView?.javaClass?.name}@${focusedView?.let { System.identityHashCode(it) }} " +
+                    "acceptingText=${inputMethodManager.isAcceptingText} " +
+                    "inputConnection=${inputConnection?.let { System.identityHashCode(it) }}",
+            )
+        }
+    }
+
+    private fun logImmediateComposerImeDiagnostics(
+        activity: MainActivity,
+        stage: String,
+        inputConnection: InputConnection,
+        accepted: Boolean,
+    ) {
+        val editorValue = activity.chatViewModel.state.value.editorValue
+        val decor = activity.window.decorView
+        val focusedView = decor.findFocus()
+        val inputMethodManager = activity.getSystemService(InputMethodManager::class.java)
+        Log.i(
+            COMPOSER_IME_DIAGNOSTICS_TAG,
+            "uptimeMs=${SystemClock.uptimeMillis()} stage=$stage accepted=$accepted editorValue=$editorValue " +
+                "inputGeneration=${activity.chatViewModel.state.value.editorInputGeneration} " +
+                "selectionCorrectionGeneration=${activity.chatViewModel.state.value.editorSelectionCorrectionGeneration} " +
+                "windowFocus=${decor.hasWindowFocus()} " +
+                "focusedView=${focusedView?.javaClass?.name}@${focusedView?.let { System.identityHashCode(it) }} " +
+                "acceptingText=${inputMethodManager.isAcceptingText} " +
+                "inputConnection=${System.identityHashCode(inputConnection)}",
+        )
+    }
+
+    private fun awaitComposerImeState(
+        stage: String,
+        inputConnection: InputConnection?,
+        condition: () -> Boolean,
+    ) {
+        val settled = runCatching { compose.waitUntil(5_000, condition) }.isSuccess
+        logComposerImeDiagnostics(stage, inputConnection)
+        assertTrue("Composer IME state did not settle at $stage.", settled)
     }
 
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -110,41 +173,36 @@ class SereaAppShellTest {
         val nodes = target.nodes.fetchSemanticsNodes()
         check(nodes.size == 1) { "Expected one Calendar semantics node, found ${nodes.size}." }
         val node = nodes.single()
-        var result: CalendarSemanticsSnapshot? = null
-        compose.runOnIdle {
-            // Evaluate config lambdas, child bounds, and Owner geometry together on the UI thread.
-            val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
-            val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
-            val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {
-                it.copy(visibleItemIndices = it.visibleItemIndices.toList())
-            }
-            val agendaItems = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }?.let {
-                it.copy(eventItemIndices = it.eventItemIndices.toMap())
-            }
-            val root = node.boundsInRoot
-            val window = node.boundsInWindow
-            val children = node.children.take(20).joinToString(separator = ";") { child ->
-                val text = child.config.getOrElseNullable(SemanticsProperties.Text) { null }
-                    ?.joinToString(" ") { it.text }
-                val description = child.config.getOrElseNullable(SemanticsProperties.ContentDescription) { null }
-                    ?.joinToString(" ")
-                val label = text?.takeIf { it.isNotBlank() } ?: description.orEmpty()
-                "$label@${child.boundsInRoot}"
-            }
-            result = CalendarSemanticsSnapshot(
-                scrollValue = axis?.value(),
-                scrollMax = axis?.maxValue(),
-                position = position,
-                viewport = viewport,
-                loadedEventCount = node.config.getOrElseNullable(CalendarAgendaLoadedEventCountKey) { null },
-                agendaItems = agendaItems,
-                boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
-                boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
-                hasClickAction = SemanticsActions.OnClick in node.config,
-                visibleSemantics = children,
-            )
+        // Keep semantics reads on the Compose test thread. Reading this node on the UI thread and
+        // then performing gestures on the instrumentation thread can bind SnapshotStateObserver
+        // to different threads after ActivityScenario recreation (notably on API 35).
+        val axis = node.config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }
+        val position = node.config.getOrElseNullable(CalendarLazyListPositionKey) { null }?.let { it.first to it.second }
+        val viewport = node.config.getOrElseNullable(CalendarLazyListViewportKey) { null }?.let {
+            it.copy(visibleItemIndices = it.visibleItemIndices.toList())
         }
-        return checkNotNull(result) { "Compose UI thread did not produce a Calendar semantics snapshot." }
+        val agendaItems = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }?.let {
+            it.copy(eventItemIndices = it.eventItemIndices.toMap())
+        }
+        val root = node.boundsInRoot
+        val window = node.boundsInWindow
+        return CalendarSemanticsSnapshot(
+            scrollValue = axis?.value(),
+            scrollMax = axis?.maxValue(),
+            position = position,
+            viewport = viewport,
+            loadedEventCount = node.config.getOrElseNullable(CalendarAgendaLoadedEventCountKey) { null },
+            agendaItems = agendaItems,
+            boundsInRoot = CalendarBoundsSnapshot(root.left, root.top, root.right, root.bottom),
+            boundsInWindow = CalendarBoundsSnapshot(window.left, window.top, window.right, window.bottom),
+            hasClickAction = SemanticsActions.OnClick in node.config,
+            // Traversing SemanticsNode.children evaluates collapsed semantics through the
+            // SnapshotStateObserver. That observer is already bound to the Compose UI thread;
+            // recursively reading child nodes from the instrumentation thread causes an
+            // API-dependent cross-thread observer failure. Keep the snapshot to the explicit
+            // values above, which the gestures and assertions use.
+            visibleSemantics = "child traversal omitted to preserve SnapshotStateObserver thread affinity",
+        )
     }
 
     private fun calendarNodeWithTag(tag: String) = CalendarSemanticsTarget(
@@ -1135,9 +1193,109 @@ class SereaAppShellTest {
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
     }
 
+    @OptIn(ExperimentalTestApi::class)
     @Test fun chatDraftSurvivesGmailAndCalendarDestinationChanges() {
-        compose.onNodeWithTag("chat-composer").performTextInput("draft survives navigation")
-        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
+        val composer = compose.onNodeWithTag("chat-composer")
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        composer.performClick()
+        composer.assertIsFocused()
+        compose.waitForIdle()
+
+        // A: establish the historical single-UI-block composition behavior at this SHA/API.
+        var consecutiveInputConnection: InputConnection? = null
+        compose.activityRule.scenario.onActivity { activity ->
+            val inputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+                "Composer did not expose its focused IME InputConnection for the consecutive diagnostic."
+            }
+            consecutiveInputConnection = inputConnection
+            val firstAccepted = inputConnection.setComposingText("draft", 1)
+            logImmediateComposerImeDiagnostics(activity, "A-set-composing-draft", inputConnection, firstAccepted)
+            assertTrue(firstAccepted)
+            val replacementAccepted = inputConnection.setComposingText("draft survives navigation", 1)
+            logImmediateComposerImeDiagnostics(activity, "A-replace-composing-draft", inputConnection, replacementAccepted)
+            assertTrue(replacementAccepted)
+            val commitAccepted = inputConnection.finishComposingText()
+            logImmediateComposerImeDiagnostics(activity, "A-finish-composing", inputConnection, commitAccepted)
+            assertTrue(commitAccepted)
+        }
+        awaitComposerImeState("A-consecutive-composition-committed", consecutiveInputConnection) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == "draft survives navigation" &&
+                    value.composition == null &&
+                    value.selection == TextRange(value.text.length)
+            }
+        }
+        composer.performTextClearance()
+        awaitComposerImeState("A-reset-to-empty", consecutiveInputConnection) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text.isEmpty() &&
+                    value.composition == null &&
+                    value.selection == TextRange.Zero
+            }
+        }
+        composer.assertIsFocused()
+
+        // B: repeat the same edits with state synchronization between IME operations.
+        var activeInputConnection: InputConnection? = null
+        compose.activityRule.scenario.onActivity { activity ->
+            val inputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+                "Composer did not expose its focused IME InputConnection."
+            }
+            activeInputConnection = inputConnection
+            val accepted = inputConnection.setComposingText("draft", 1)
+            logImmediateComposerImeDiagnostics(activity, "B-set-composing-draft", inputConnection, accepted)
+            assertTrue(accepted)
+        }
+        awaitComposerImeState("B-draft-settled", activeInputConnection) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == "draft" &&
+                    value.selection == TextRange(value.text.length)
+            }
+        }
+        compose.activityRule.scenario.onActivity { activity ->
+            val inputConnection = requireNotNull(activeInputConnection)
+            val accepted = inputConnection.setComposingText("draft survives navigation", 1)
+            logImmediateComposerImeDiagnostics(activity, "B-set-composing-navigation-draft", inputConnection, accepted)
+            assertTrue(accepted)
+        }
+        awaitComposerImeState("B-navigation-draft-settled", activeInputConnection) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == "draft survives navigation" &&
+                    value.selection == TextRange(value.text.length)
+            }
+        }
+        compose.activityRule.scenario.onActivity { activity ->
+            val inputConnection = requireNotNull(activeInputConnection)
+            val accepted = inputConnection.finishComposingText()
+            logImmediateComposerImeDiagnostics(activity, "B-finish-composing", inputConnection, accepted)
+            assertTrue(accepted)
+        }
+        awaitComposerImeState("B-composition-committed", activeInputConnection) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == "draft survives navigation" &&
+                    value.composition == null &&
+                    value.selection == TextRange(value.text.length)
+            }
+        }
+        compose.waitForIdle()
+        composer.assertIsFocused()
+        compose.waitUntil(5_000) {
+            runCatching {
+                composer.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange] ==
+                    TextRange("draft survives navigation".length)
+            }.getOrDefault(false)
+        }
+        composer.performTextInputSelection(TextRange(5, 5))
+        logComposerImeDiagnostics("selection-5-ui-applied", activeInputConnection)
+        awaitComposerImeState("selection-5-semantics-applied", activeInputConnection) {
+            runCatching {
+                composer.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange] ==
+                    TextRange(5, 5)
+            }.getOrDefault(false)
+        }
+        awaitComposerImeState("selection-5-viewmodel-applied", activeInputConnection) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(5, 5)
+        }
         compose.onNodeWithTag("serea_navigation_bar").assertIsDisplayed()
         select(SereaDestination.GMAIL)
         compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
@@ -1161,14 +1319,80 @@ class SereaAppShellTest {
         }.isSuccess
         if (!chatFocusReleased) compose.onRoot(useUnmergedTree = true).printToLog("chat-draft-focus-release-timeout")
         assertTrue("Returning to Chat must release restored composer focus.", chatFocusReleased)
+        compose.waitForIdle()
+        assertEquals(
+            "Returning from Gmail must preserve the saved composer selection.",
+            TextRange(5, 5),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        composer.performTextInput("!")
+        assertEquals("draft! survives navigation", compose.activity.chatViewModel.state.value.input)
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(6, 6)
+        }
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
         pressBack()
-        compose.onNodeWithTag("chat-composer").assertIsDisplayed()
-        compose.onNodeWithTag("chat-composer").assertTextContains("draft survives navigation")
+        composer.assertIsDisplayed()
+        assertTrue(SemanticsActions.SetText in composer.fetchSemanticsNode().config)
+        assertEquals(
+            "Returning from Calendar must preserve the saved composer selection.",
+            TextRange(6, 6),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
+        composer.assertTextContains("draft! survives navigation")
+        composer.performTextInput("?")
+        assertEquals("draft!? survives navigation", compose.activity.chatViewModel.state.value.input)
+
+        // Returning from Calendar intentionally leaves Chat unfocused. Model the
+        // user tapping the composer before moving the caret; stale navigation IME
+        // callbacks must not overwrite this new focused selection.
+        composer.performClick()
+        composer.assertIsFocused()
+        composer.performTextClearance()
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text.isEmpty() && value.selection == TextRange.Zero
+            }
+        }
+        val recreatedText = "activity preserves cursor"
+        composer.performTextInput(recreatedText)
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == recreatedText && value.selection == TextRange(recreatedText.length)
+            }
+        }
+        composer.performTextInputSelection(TextRange(8, 8))
+        compose.waitUntil(5_000) {
+            runCatching {
+                composer.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange] ==
+                    TextRange(8, 8)
+            }.getOrDefault(false)
+        }
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
+        }
+        assertEquals(TextRange(8, 8), compose.activity.chatViewModel.state.value.editorValue.selection)
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(10_000) {
+            compose.activity.chatViewModel.state.value.input == "activity preserves cursor" &&
+                runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
+        }
+        compose.onNodeWithTag("chat-composer").assertIsNotFocused()
+        assertEquals(
+            "Activity recreation must preserve the composer selection.",
+            TextRange(8, 8),
+            compose.activity.chatViewModel.state.value.editorValue.selection,
+        )
+        compose.onNodeWithTag("chat-composer")
+            .performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
+        compose.onNodeWithTag("chat-composer").assertIsFocused()
+        compose.onNodeWithTag("chat-composer").performTextInput("!")
+        assertEquals("activity! preserves cursor", compose.activity.chatViewModel.state.value.input)
     }
 
     @Test fun navigationDestinationsRemainSemanticallyAvailable() {
@@ -1210,8 +1434,10 @@ class SereaAppShellTest {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
         compose.waitUntil(10_000) {
-            val size = compose.onRoot().fetchSemanticsNode().size
-            size.width > size.height
+            runCatching {
+                val size = compose.onRoot().fetchSemanticsNode().size
+                size.width > size.height
+            }.getOrDefault(false)
         }
         calendarStage("orientation-landscape", "FINISH")
 

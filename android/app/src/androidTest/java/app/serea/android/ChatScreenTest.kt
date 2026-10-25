@@ -49,6 +49,7 @@ class ChatScreenTest {
             val state = stateSnapshot()
             state.conversation.id != restoredId && !state.isRestoring
         }
+        compose.waitForIdle()
     }
 
     private fun composer() = compose.onNodeWithTag("chat-composer")
@@ -234,7 +235,20 @@ class ChatScreenTest {
         awaitComposerInputConnection("after composer tap, before typing")
         composer().assertIsFocused()
         composer().performTextInput(text)
-        compose.waitUntil(30_000) { stateSnapshot().input == text }
+        val inputReachedViewModel = runCatching {
+            compose.waitUntil(30_000) { stateSnapshot().input == text }
+        }.isSuccess
+        if (!inputReachedViewModel) {
+            val state = stateSnapshot()
+            Log.e(
+                FOCUS_LOG_TAG,
+                "SEND_INPUT_TIMEOUT|expectedLength=${text.length}|stateLength=${state.input.length}|" +
+                    "editorGeneration=${state.editorInputGeneration}|selection=${state.editorValue.selection.start}:${state.editorValue.selection.end}|" +
+                    "restorePending=${compose.activity.chatViewModel.isActivitySelectionRestorePending()}|" +
+                    "composer=${composerSnapshot()}",
+            )
+        }
+        assertTrue("IME input must reach the ViewModel before send.", inputReachedViewModel)
         Log.i(FOCUS_LOG_TAG, "SEND_TYPED|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
         awaitComposerInputConnection("after typing, before keyboard dismissal")
         Espresso.closeSoftKeyboard()
@@ -374,6 +388,8 @@ class ChatScreenTest {
         compose.onNodeWithTag("model-budget-amount").performTextInput("0.05")
         compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextClearance()
         compose.onNodeWithTag("model-budget-currency").performTextInput("USD")
+        Espresso.closeSoftKeyboard()
+        compose.waitForIdle()
         compose.onNodeWithText("ルーター設定を保存").performScrollTo().performClick()
         val saveSucceeded = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
         val saveFailed = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。"
@@ -391,7 +407,13 @@ class ChatScreenTest {
             ),
             modelSettings.load(),
         )
-        compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
+        Espresso.closeSoftKeyboard()
+        val savedPolicySummary = compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先")
+        savedPolicySummary.performScrollTo()
+        compose.waitUntil(15_000) {
+            runCatching { savedPolicySummary.assertIsDisplayed() }.isSuccess
+        }
+        savedPolicySummary.assertIsDisplayed()
         compose.onNodeWithTag("destination_back").performClick()
         compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
@@ -619,6 +641,9 @@ class ChatScreenTest {
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
         dailyRequests.performTextInput("21")
+        compose.waitUntil(5_000) {
+            runCatching { dailyRequests.assertTextContains("21") }.isSuccess
+        }
         compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsEnabled().performClick()
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("Soft Limit設定を保存しました", substring = true)).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("destination_back").performClick()

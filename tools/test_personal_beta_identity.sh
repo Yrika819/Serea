@@ -1,5 +1,29 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+SEREA_BETA_PHASE='script initialization'
+SEREA_BETA_DIAGNOSTICS_PRINTED=0
+
+on_error() {
+  local status=$?
+  local line="${1:-unknown}"
+  local failed_command="${2:-unknown}"
+  printf 'Personal Beta harness failed: phase=%q line=%s status=%s command=%q\n' \
+    "$SEREA_BETA_PHASE" "$line" "$status" "$failed_command" >&2
+  if [[ "$SEREA_BETA_DIAGNOSTICS_PRINTED" != 1 ]] && declare -F print_emulator_diagnostics >/dev/null; then
+    print_emulator_diagnostics 'ADB state at the failing harness command:'
+  fi
+  exit "$status"
+}
+trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
+
+set_phase() {
+  SEREA_BETA_PHASE="$1"
+  SEREA_BETA_DIAGNOSTICS_PRINTED=0
+  printf 'Personal Beta harness phase: %s\n' "$SEREA_BETA_PHASE"
+}
+
+set_phase 'validate disposable-emulator opt-in'
 
 if [[ "${SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR:-}" != "1" ]]; then
   echo 'Set SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR=1 only for a throwaway API 35 emulator.' >&2
@@ -9,28 +33,109 @@ command -v adb >/dev/null
 command -v keytool >/dev/null
 command -v openssl >/dev/null
 command -v strings >/dev/null
+command -v timeout >/dev/null
 
-device_rows=$(adb devices | awk 'NR > 1 && NF >= 2 { print $1 ":" $2 }')
-if [[ "$(printf '%s\n' "$device_rows" | sed '/^$/d' | wc -l | tr -d ' ')" != 1 ]]; then
-  echo 'Expected exactly one connected disposable emulator.' >&2
-  adb devices -l >&2
-  exit 2
-fi
-serial="${device_rows%%:*}"
-if [[ "${device_rows#*:}" != device || ! "$serial" =~ ^emulator-[0-9]+$ ]]; then
-  echo "Refusing non-emulator Android target '$serial'." >&2
+serial=''
+device_listing=''
+set_phase 'discover one emulator serial'
+discovery_deadline=$((SECONDS + 60))
+for _ in $(seq 1 30); do
+  remaining=$((discovery_deadline - SECONDS))
+  (( remaining > 0 )) || break
+  timeout_seconds=5
+  (( timeout_seconds < remaining )) || timeout_seconds=$remaining
+  device_listing=$(timeout "${timeout_seconds}s" adb devices -l 2>&1 || true)
+  device_rows=$(awk 'NR > 1 && NF >= 2 { print $1 ":" $2 }' <<< "$device_listing")
+  row_count=$(awk 'NF { count++ } END { print count+0 }' <<< "$device_rows")
+  if [[ "$row_count" == 1 ]]; then
+    candidate="${device_rows%%:*}"
+    if [[ "$candidate" =~ ^emulator-[0-9]+$ ]]; then
+      serial="$candidate"
+      break
+    fi
+  elif [[ "$row_count" -gt 1 ]]; then
+    echo 'Expected exactly one disposable emulator and no other Android targets.' >&2
+    printf '%s\n' "$device_listing" >&2
+    exit 2
+  fi
+  remaining=$((discovery_deadline - SECONDS))
+  (( remaining > 0 )) || break
+  sleep_seconds=2
+  (( sleep_seconds < remaining )) || sleep_seconds=$remaining
+  sleep "$sleep_seconds"
+done
+if [[ -z "$serial" ]]; then
+  echo 'Could not discover exactly one disposable Android emulator within 60 seconds.' >&2
+  printf '%s\n' "$device_listing" >&2
+  timeout 5s adb devices -l >&2 || true
   exit 2
 fi
 export ANDROID_SERIAL="$serial"
-if [[ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" != 35 ||
-      "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" != 1 ]]; then
-  echo 'Refusing emulator: the Personal Beta identity test requires an API 35 QEMU emulator.' >&2
+
+bounded_adb() {
+  local deadline="$1" cap="$2"
+  shift 2
+  local remaining=$((deadline - SECONDS))
+  (( remaining > 0 )) || return 124
+  (( cap < remaining )) || cap=$remaining
+  timeout "${cap}s" adb "$@"
+}
+
+print_emulator_diagnostics() {
+  local reason="$1"
+  SEREA_BETA_DIAGNOSTICS_PRINTED=1
+  echo "$reason" >&2
+  timeout 3s adb devices -l >&2 || true
+  if [[ -n "$serial" ]]; then
+    echo "ADB target: $serial" >&2
+    timeout 3s adb -s "$serial" get-state >&2 || true
+    timeout 3s adb -s "$serial" shell getprop ro.build.version.sdk >&2 || true
+    timeout 3s adb -s "$serial" shell getprop ro.kernel.qemu >&2 || true
+    timeout 3s adb -s "$serial" shell getprop sys.boot_completed >&2 || true
+  fi
+}
+
+wait_for_stable_emulator() {
+  local phase="$1"
+  local deadline=$((SECONDS + 120))
+  local stable_samples=0
+  local state sdk qemu boot_completed remaining sleep_seconds
+  while (( SECONDS < deadline )); do
+    if bounded_adb "$deadline" 8 -s "$serial" wait-for-device >/dev/null 2>&1; then
+      state=$(bounded_adb "$deadline" 5 -s "$serial" get-state 2>/dev/null || true)
+      sdk=$(bounded_adb "$deadline" 5 -s "$serial" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r' || true)
+      qemu=$(bounded_adb "$deadline" 5 -s "$serial" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r' || true)
+      boot_completed=$(bounded_adb "$deadline" 5 -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+      if [[ "$state" == device && "$sdk" == 35 && "$qemu" == 1 && "$boot_completed" == 1 ]]; then
+        stable_samples=$((stable_samples + 1))
+        if [[ "$stable_samples" -ge 3 ]]; then return 0; fi
+      else
+        stable_samples=0
+      fi
+    else
+      stable_samples=0
+    fi
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || break
+    sleep_seconds=2
+    (( sleep_seconds < remaining )) || sleep_seconds=$remaining
+    sleep "$sleep_seconds"
+  done
+  print_emulator_diagnostics "Emulator did not remain online with API 35, QEMU, and boot complete during $phase."
+  return 1
+}
+
+set_phase 'wait for stable API 35 emulator startup'
+wait_for_stable_emulator 'initial startup'
+set_phase 'restart adb as root and wait for stable transport'
+if ! timeout 10s adb -s "$serial" root >/dev/null; then
+  print_emulator_diagnostics 'Could not restart adb in root mode on the disposable emulator.'
   exit 2
 fi
-adb root >/dev/null
-adb wait-for-device
-if [[ "$(adb shell id -u | tr -d '\r')" != 0 ]]; then
-  echo 'The disposable emulator must allow adb root to preserve-check Demo app data.' >&2
+wait_for_stable_emulator 'adb root restart'
+root_uid=$(timeout 8s adb -s "$serial" shell id -u 2>/dev/null | tr -d '\r' || true)
+if [[ "$root_uid" != 0 ]]; then
+  print_emulator_diagnostics 'The disposable emulator must allow adb root to preserve-check Demo app data.'
   exit 2
 fi
 
@@ -44,6 +149,7 @@ wait_for_package_manager() {
   echo 'Android Package Manager did not become available on the disposable emulator.' >&2
   return 1
 }
+set_phase 'wait for Android Package Manager'
 wait_for_package_manager
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -67,7 +173,89 @@ trap cleanup EXIT
 mkdir -p "$(dirname "$results")"
 printf 'NOT_RUN\n' > "$results"
 
-beta_existing_path=$(adb shell pm path "$beta_package" | tr -d '\r')
+set_phase 'refuse preinstalled Beta package on the disposable emulator'
+beta_path_status=0
+if beta_path_response=$(adb -s "$serial" shell pm path "$beta_package" 2>&1); then
+  beta_path_status=0
+else
+  beta_path_status=$?
+fi
+beta_path_response=$(printf '%s' "$beta_path_response" | tr -d '\r')
+beta_existing_path=''
+case "$beta_path_response" in
+  '')
+    if [[ "$beta_path_status" -ne 0 ]]; then
+      beta_device_state_status=0
+      if beta_device_state=$(timeout 8s adb -s "$serial" get-state 2>&1); then
+        beta_device_state_status=0
+      else
+        beta_device_state_status=$?
+      fi
+      beta_device_state=$(printf '%s' "$beta_device_state" | tr -d '\r')
+      if [[ "$beta_device_state_status" -ne 0 || "$beta_device_state" != device ]]; then
+        printf 'ADB device-state probe failed (exit=%s, state=%s) after the empty Beta path response.\n' \
+          "$beta_device_state_status" "$beta_device_state" >&2
+        print_emulator_diagnostics 'ADB state after the empty, failed Beta package path query:'
+        if [[ "$beta_device_state_status" -ne 0 ]]; then exit "$beta_device_state_status"; fi
+        exit 1
+      fi
+
+      beta_package_list_status=0
+      if beta_package_list=$(timeout 10s adb -s "$serial" shell pm list packages "$beta_package" 2>&1); then
+        beta_package_list_status=0
+      else
+        beta_package_list_status=$?
+      fi
+      beta_package_list=$(printf '%s' "$beta_package_list" | tr -d '\r')
+      if [[ "$beta_package_list_status" -ne 0 ]]; then
+        printf 'Beta package-list verification failed (exit=%s): %s\n' \
+          "$beta_package_list_status" "$beta_package_list" >&2
+        print_emulator_diagnostics 'ADB state after the Beta package-list verification failed:'
+        exit "$beta_package_list_status"
+      fi
+
+      beta_exact_package_found=0
+      beta_unexpected_package_output=''
+      while IFS= read -r package_line; do
+        [[ -z "$package_line" ]] && continue
+        if [[ "$package_line" != package:* ]]; then
+          beta_unexpected_package_output="$package_line"
+          break
+        fi
+        listed_package="${package_line#package:}"
+        if [[ ! "$listed_package" =~ ^[A-Za-z0-9_.]+$ ]]; then
+          beta_unexpected_package_output="$package_line"
+          break
+        fi
+        if [[ "$listed_package" == "$beta_package" ]]; then
+          beta_exact_package_found=1
+        fi
+      done <<< "$beta_package_list"
+
+      if [[ -n "$beta_unexpected_package_output" ]]; then
+        printf 'Unexpected Beta package-list output: %s\n' "$beta_unexpected_package_output" >&2
+        print_emulator_diagnostics 'ADB state after unexpected Beta package-list output:'
+        exit 1
+      fi
+      if [[ "$beta_exact_package_found" -eq 1 ]]; then
+        beta_existing_path='present'
+      fi
+    fi
+    ;;
+  'Error: package not found'|"Error: package not found: $beta_package")
+    # Package Manager reports an absent package with either an empty successful
+    # response or its exact not-found diagnostic. Other adb failures remain fatal.
+    ;;
+  package:*)
+    beta_existing_path="$beta_path_response"
+    ;;
+  *)
+    printf 'Beta package query failed (exit=%s): %s\n' "$beta_path_status" "$beta_path_response" >&2
+    print_emulator_diagnostics 'ADB state after an unexpected Beta package query response:'
+    if [[ "$beta_path_status" -ne 0 ]]; then exit "$beta_path_status"; fi
+    exit 1
+    ;;
+esac
 if [[ -n "$beta_existing_path" ]]; then
   echo 'Refusing an emulator that already contains app.serea.android.beta; use a fresh disposable AVD.' >&2
   exit 2
@@ -155,6 +343,7 @@ build_beta() {
 }
 
 cd "$android_dir"
+set_phase 'build and capture existing Demo identity/data'
 ./gradlew --no-daemon --no-build-cache --no-configuration-cache :app:assembleDebug
 demo_apk="$android_dir/app/build/outputs/apk/debug/app-debug.apk"
 demo_apk_id=$("$aapt" dump badging "$demo_apk" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p")
@@ -173,6 +362,7 @@ export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$test_root/personal-beta-test.
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
 export SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS='serea-personal-beta-test'
 export SEREA_ANDROID_PERSONAL_BETA_KEY_PASSWORD="$SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD"
+set_phase 'generate temporary Beta signing identity'
 SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256=$(make_key \
   "$SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH" "$SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS" \
   SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD)
@@ -188,17 +378,19 @@ apk_v99="$test_root/personal-beta-v99.apk"
 apk_v100="$test_root/personal-beta-v100.apk"
 apk_v101="$test_root/personal-beta-v101.apk"
 apk_wrong="$test_root/personal-beta-wrong-signer-v102.apk"
+set_phase 'build and install Beta v99 with temporary signer'
 build_beta 99 false "$apk_v99"
 adb install "$apk_v99"
 [[ -n "$(adb shell pm path "$demo_package" | tr -d '\r')" ]]
 [[ -n "$(adb shell pm path "$beta_package" | tr -d '\r')" ]]
 
+set_phase 'build and install Beta v100 and seed encrypted state'
 build_beta 100 true "$apk_v100"
 adb install -r "$apk_v100"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
 [[ "$installed_version" == 100 ]]
-phase campaign-seed
+phase campaign-seed-and-claim
 phase campaign-consume
 phase prepare
 database_listing=$(adb shell "ls -l /data/user/0/$beta_package/databases" | tr -d '\r')
@@ -215,21 +407,25 @@ if strings "$test_root/beta-tasks.db" | grep -F -e 'Process recovery completed' 
   exit 1
 fi
 
+set_phase 'reboot and verify encrypted Beta state'
 reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
 phase verify
+set_phase 'build and install same-signer Beta v101 update'
 build_beta 101 true "$apk_v101"
 adb install -r "$apk_v101"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
 [[ "$installed_version" == 101 ]]
+set_phase 'reboot and reverify encrypted Beta state'
 reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
 phase verify
 
 wrong_key="$test_root/wrong-signer.p12"
+set_phase 'build and reject different-signer Beta v102 update'
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$wrong_key"
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
 export SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS='serea-personal-beta-wrong-test'
@@ -248,6 +444,7 @@ installed_version=$(adb shell dumpsys package "$beta_package" \
 [[ "$installed_version" == 101 ]]
 phase verify
 
+set_phase 'verify Demo identity/data isolation and write evidence'
 verify_demo_unchanged
 mkdir -p "$(dirname "$results")"
 {

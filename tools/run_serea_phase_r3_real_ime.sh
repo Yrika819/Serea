@@ -79,11 +79,15 @@ finish() {
 trap finish EXIT
 
 run_case() {
-  local method="$1" result
+  local method="$1" result token
   local output="$OUT/$method-instrumentation.txt"
+  token="serea-r3-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-api${API}-${method}-$(date +%s)-${RANDOM}"
   printf 'method=%s start_utc=%s\n' "$method" "$(date -u +%FT%TZ)" | tee -a "$OUT/method-times.txt"
+  # Each B/C case gets a fresh target namespace and a one-use runner marker.
+  adb shell pm clear "$TARGET" > "$OUT/$method-pm-clear.txt" 2>&1 || return 1
+  EXPECTED_API_LEVEL="$API" bash "$ROOT/tools/prepare_isolated_instrumentation_target.sh" "$token" > "$OUT/$method-isolated-target-seed.txt" 2>&1 || return 1
   set +e
-  timeout --signal=TERM 240s adb shell am instrument -w -r -e class "$CLASS#$method" "$RUNNER" > "$output" 2>&1
+  timeout --signal=TERM 240s adb shell am instrument -w -r -e class "$CLASS#$method" -e sereaCampaignToken "$token" "$RUNNER" > "$output" 2>&1
   result=$?
   set -e
   printf 'method=%s am_instrument_exit=%s end_utc=%s\n' "$method" "$result" "$(date -u +%FT%TZ)" | tee -a "$OUT/method-times.txt"

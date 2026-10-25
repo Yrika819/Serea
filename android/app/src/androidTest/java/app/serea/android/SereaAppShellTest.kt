@@ -1609,6 +1609,8 @@ class SereaAppShellTest {
         )
         Espresso.closeSoftKeyboard()
         compose.waitForIdle()
+        // Drain platform input-method window and accessibility events before the following physical swipe.
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).waitForIdle()
         compose.waitUntil(10_000) {
             runCatching {
                 val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))
@@ -1637,6 +1639,8 @@ class SereaAppShellTest {
         )
         Espresso.closeSoftKeyboard()
         compose.waitForIdle()
+        // Drain platform input-method window and accessibility events before the following physical swipe.
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).waitForIdle()
         compose.waitUntil(10_000) {
             runCatching {
                 val snapshot = snapshotSemantics(calendarNodeWithTag("calendar_agenda_list"))

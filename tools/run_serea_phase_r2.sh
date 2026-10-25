@@ -41,13 +41,12 @@ for api in 26 35; do
         if "$ADB" -s "$serial" get-state >/dev/null 2>&1; then
             if [[ -n "$original_ime" && "$original_ime" != "null" ]]; then
                 "$ADB" -s "$serial" shell ime set "$original_ime" >>"$out/ime-restore.log" 2>&1
-                restored_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method | tr -d '\r')"
-                printf 'original=%s\nrestored=%s\n' "$original_ime" "$restored_ime" >>"$out/ime-restore.log"
-                if [[ "$restored_ime" != "$original_ime" ]]; then
-                    "$ADB" -s "$serial" shell settings put secure default_input_method "$original_ime"
-                    restore_failed=1
-                fi
+            elif [[ "$original_ime" == "null" ]]; then
+                "$ADB" -s "$serial" shell settings delete secure default_input_method >>"$out/ime-restore.log" 2>&1
             fi
+            restored_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method | tr -d '\r')"
+            printf 'original=%s\nrestored=%s\n' "$original_ime" "$restored_ime" >>"$out/ime-restore.log"
+            if [[ "$restored_ime" != "$original_ime" ]]; then restore_failed=1; fi
             "$ADB" -s "$serial" shell ime disable "$IME_ID" >>"$out/ime-restore.log" 2>&1
             "$ADB" -s "$serial" shell ime list -s >"$out/ime-list-restored.txt"
             if grep -Fq "$IME_ID" "$out/ime-list-restored.txt"; then restore_failed=1; fi
@@ -65,12 +64,10 @@ for api in 26 35; do
     while :; do
         boot_ready="$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
         log_boot_ready="$("$ADB" -s "$serial" shell getprop sys.logbootcomplete 2>/dev/null | tr -d '\r')"
-        if [[ "$boot_ready" == "1" || "$log_boot_ready" == "1" ]] && \
-            "$ADB" -s "$serial" shell service check package >/dev/null 2>&1 && \
-            "$ADB" -s "$serial" shell service check input_method >/dev/null 2>&1; then
+        if [[ "$boot_ready" == "1" || "$log_boot_ready" == "1" ]]; then
             if ready_font_scale="$("$ADB" -s "$serial" shell settings get system font_scale 2>/dev/null | tr -d '\r')" && \
                 ready_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"; then
-                if [[ "$ready_font_scale" =~ ^[0-9]+([.][0-9]+)?$ && -n "$ready_ime" && "$ready_ime" != "null" ]]; then
+                if [[ "$ready_font_scale" =~ ^[0-9]+([.][0-9]+)?$ && ( "$ready_ime" == "null" || "$ready_ime" == */* ) ]]; then
                     break
                 fi
             fi

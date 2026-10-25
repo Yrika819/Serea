@@ -32,6 +32,14 @@
 - Replace Calendar `performTouchInput` swipes with UiAutomator touchscreen gestures using copied window bounds; continue asserting LazyList progress and intended event visibility.
 - Update the Android workflow mock ADB fixture for the new read-only default-IME query.
 
+## R6 Provenance Audit (Read Only)
+
+- Current R3/R4/R5 history descends from Candidate D PR #111 and includes the complete PR #114 real-IME diagnostic implementation; both source ancestry checks pass. No PR #111/#112/#113/#114 branch was modified.
+- PR #100 is based on `codex/pr98-overnight-gate-recovery` at `8140bd759e7a01041364ebc443ba452f546d325a`, head `ad868af753672c546c52411ce151904360633acc`; its broad diff spans Android product code, tests, workflow and Rust host/storage. Its older Composer selection/save-state changes replace the Candidate D ViewModel contract. Do not merge or cherry-pick it wholesale.
+- PR #112 is based on the same `8140bd...` ancestry and has one distinct commit `3d80b68881dae236f7f192ca1d6252aab464abf3` touching only `tools/test_personal_beta_identity.sh` (109 additions, 10 deletions). Evaluate this isolated hardening patch for the R6 integration branch after R4/R5 closure.
+- PR #113 is based on PR #112 and adds a non-required API 35 diagnostic workflow/script. Its independent validation passed in Run `40167074114`; the formal identity job was skipped and the Android Required Gate failed in Run `40167818895` because the emulator gate did not pass. This is diagnostic evidence only.
+- PR #114 is open as a separate Draft, but its head `4d4a6bbb1b9350edfe523a4a00920b8c3c5dd828` is an ancestor of R3; no extra cherry-pick is needed.
+
 ## Local Verification
 
 - `:app:compileIsolatedAndroidTestKotlin :r25-ime-test:assembleDebug`: PASS.

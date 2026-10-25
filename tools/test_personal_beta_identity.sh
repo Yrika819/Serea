@@ -157,32 +157,57 @@ trap cleanup EXIT
 mkdir -p "$(dirname "$results")"
 printf 'NOT_RUN\n' > "$results"
 
-beta_package_path() {
-  local output='' error_file="$test_root/pm-path.stderr" status=0
+beta_package_listing() {
+  local output='' error_file="$test_root/pm-list-beta.stderr" status=0
+  local listing_line=''
   for attempt in $(seq 1 15); do
-    if output=$(adb shell pm path "$beta_package" 2>"$error_file"); then
-      printf '%s\n' "$output" | tr -d '\r'
-      return 0
+    if output=$(adb shell pm list packages --user 0 "$beta_package" 2>"$error_file"); then
+      output=$(printf '%s' "$output" | tr -d '\r')
+      if grep -Eiq 'device offline|device .*not found|no devices/emulators found|connection.*closed' <<< "$output" ||
+          grep -Eiq 'device offline|device .*not found|no devices/emulators found|connection.*closed' "$error_file"; then
+        printf 'RETRY: transient adb transport error while confirming Beta package absence (%s/15).\n' "$attempt" >&2
+        adb reconnect offline >/dev/null 2>&1 || true
+      elif [[ -s "$error_file" ]]; then
+        cat "$error_file" >&2
+        return 1
+      elif grep -Fq "Can't find service: package" <<< "$output"; then
+        printf 'Package Manager became unavailable while checking Beta package absence: %s\n' "$output" >&2
+        return 1
+      elif [[ -z "$output" ]]; then
+        return 0
+      elif ! awk '/^package:[A-Za-z0-9._]+$/ { next } { exit 1 }' <<< "$output"; then
+        printf 'Package Manager returned an invalid Beta package listing: %s\n' "$output" >&2
+        return 1
+      else
+        listing_line=$(printf '%s\n' "$output" | awk -v expected="package:$beta_package" '$0 == expected { print; exit }')
+        printf '%s\n' "$listing_line"
+        return 0
+      fi
     else
       status=$?
-    fi
-    if grep -Eiq 'device offline|device .*not found|no devices/emulators found' "$error_file"; then
-      printf 'RETRY: transient adb transport error while checking Beta package absence (%s/15).\n' "$attempt" >&2
-    elif [[ -z "$output" && ! -s "$error_file" ]]; then
-      printf 'RETRY: adb pm path exited %s without a response while checking Beta package absence (%s/15).\n' "$status" "$attempt" >&2
-    else
-      cat "$error_file" >&2
-      return "$status"
+      output=$(printf '%s' "$output" | tr -d '\r')
+      if grep -Eiq 'device offline|device .*not found|no devices/emulators found|connection.*closed' <<< "$output" ||
+          grep -Eiq 'device offline|device .*not found|no devices/emulators found|connection.*closed' "$error_file"; then
+        printf 'RETRY: transient adb transport error while querying Beta package absence (%s/15).\n' "$attempt" >&2
+        adb reconnect offline >/dev/null 2>&1 || true
+      elif [[ -z "$output" && ! -s "$error_file" ]]; then
+        printf 'RETRY: adb pm list packages exited %s without a response (%s/15).\n' "$status" "$attempt" >&2
+      else
+        printf 'Android Package Manager Beta query failed: %s\n' "$output" >&2
+        cat "$error_file" >&2
+        return "$status"
+      fi
     fi
     sleep 1
   done
+  printf 'Last Beta package listing response: %s\n' "$output" >&2
   cat "$error_file" >&2
-  echo 'The disposable emulator did not remain connected while checking Beta package absence.' >&2
+  echo 'The disposable emulator did not return a valid Package Manager response while checking Beta package absence.' >&2
   return 1
 }
 
-beta_existing_path=$(beta_package_path)
-if [[ -n "$beta_existing_path" ]]; then
+beta_existing_listing=$(beta_package_listing)
+if [[ -n "$beta_existing_listing" ]]; then
   echo 'Refusing an emulator that already contains app.serea.android.beta; use a fresh disposable AVD.' >&2
   exit 2
 fi

@@ -79,9 +79,10 @@ finish() {
 trap finish EXIT
 
 run_case() {
-  local method="$1" result token
+  local method="$1" result token safe_method
   local output="$OUT/$method-instrumentation.txt"
-  token="serea-r3-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-api${API}-${method}-$(date +%s)-${RANDOM}"
+  safe_method="${method//[^A-Za-z0-9-]/-}"
+  token="serea-r3-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-api${API}-${safe_method}-$(date +%s)-${RANDOM}"
   printf 'method=%s start_utc=%s\n' "$method" "$(date -u +%FT%TZ)" | tee -a "$OUT/method-times.txt"
   # Each B/C case gets a fresh target namespace and a one-use runner marker.
   adb shell pm clear "$TARGET" > "$OUT/$method-pm-clear.txt" 2>&1 || return 1

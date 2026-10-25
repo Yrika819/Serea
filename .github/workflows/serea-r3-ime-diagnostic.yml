@@ -267,7 +267,10 @@ jobs:
 
   api35-real-ime-bc:
     name: API 35 real IME B/C
-    needs: [build-diagnostic-apks, api35-startup-baseline]
+    # Do not launch the composition probe while the fresh-AVD startup matrix
+    # is exercising other emulators; this avoids concurrent emulator load on
+    # the hosted runner fleet and keeps foreground recovery diagnostic clean.
+    needs: [build-diagnostic-apks, api35-startup-baseline, api35-ime-state-matrix]
     if: needs.api35-startup-baseline.outputs.kvm == 'true' && needs.api35-startup-baseline.outputs.methods == '1'
     runs-on: ubuntu-24.04
     timeout-minutes: 45

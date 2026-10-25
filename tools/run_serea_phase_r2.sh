@@ -66,10 +66,13 @@ for api in 26 35; do
         boot_ready="$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
         log_boot_ready="$("$ADB" -s "$serial" shell getprop sys.logbootcomplete 2>/dev/null | tr -d '\r')"
         if [[ "$boot_ready" == "1" || "$log_boot_ready" == "1" ]] && \
-            "$ADB" -s "$serial" shell service check package 2>&1 | grep -q 'found' && \
-            "$ADB" -s "$serial" shell service check settings 2>&1 | grep -q 'found' && \
-            "$ADB" -s "$serial" shell service check input_method 2>&1 | grep -q 'found'; then
-            break
+            "$ADB" -s "$serial" shell service check package >/dev/null 2>&1 && \
+            "$ADB" -s "$serial" shell service check input_method >/dev/null 2>&1; then
+            ready_font_scale="$("$ADB" -s "$serial" shell settings get system font_scale 2>/dev/null | tr -d '\r')"
+            ready_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"
+            if [[ "$ready_font_scale" =~ ^[0-9]+([.][0-9]+)?$ && -n "$ready_ime" && "$ready_ime" != "null" ]]; then
+                break
+            fi
         fi
         if (( SECONDS >= boot_deadline )); then echo "Emulator API $api did not finish booting." >&2; exit 1; fi
         sleep 2

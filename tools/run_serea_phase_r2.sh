@@ -104,9 +104,10 @@ for api in $apis; do
         2>&1 | tee "$out/instrumentation.txt"
     result=${PIPESTATUS[0]}
     set -e
-    "$ADB" -s "$serial" logcat -d -v threadtime -s SereaImeR2:I SereaRealIme:I > "$out/ime-logcat.txt"
+    "$ADB" -s "$serial" logcat -d -v threadtime -s SereaImeR2:I SereaRealIme:I AndroidRuntime:E ActivityManager:E > "$out/ime-logcat.txt"
     "$ADB" -s "$serial" shell ime list -s > "$out/ime-list-after.txt"
-    if [[ $result -ne 0 ]]; then
+    if [[ $result -ne 0 ]] || grep -Eq "FAILURES!!!|shortMsg=Process crashed\." "$out/instrumentation.txt"; then
+        result=1
         echo "Instrumentation failed for API $api; evidence: $out" >&2
         exit "$result"
     fi

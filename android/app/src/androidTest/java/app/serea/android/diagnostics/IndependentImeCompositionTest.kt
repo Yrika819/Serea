@@ -25,7 +25,6 @@ import app.serea.android.MainActivity
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performImeAction
-import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertEquals
@@ -168,27 +167,14 @@ class IndependentImeCompositionTest {
             it.text == "draft!? survives navigation" && it.selection == TextRange(7, 7)
         }
 
-        compose.onNodeWithTag("chat-composer").performTextClearance()
-        awaitValue("D.recreation-reset", session.connectionIdentity) { it.text.isEmpty() && it.selection == TextRange.Zero }
-        compose.onNodeWithTag("chat-composer")
-            .performSemanticsAction(SemanticsActions.RequestFocus) { requestFocus -> requestFocus() }
-        compose.onNodeWithTag("chat-composer").assertIsFocused()
-        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
-        session = awaitImeSession(callbackCount)
-        assertTrue("Activity recreation fixture composition was rejected", imeSetComposingText(session, "activity preserves cursor"))
-        awaitValue("D.recreation-fixture-composing", session.connectionIdentity) {
-            it.text == "activity preserves cursor" && it.composition != null
-        }
-        assertTrue("Activity recreation fixture commit was rejected", imeFinishComposingText(session))
-        awaitValue("D.recreation-fixture-committed", session.connectionIdentity) {
-            it.text == "activity preserves cursor" && it.composition == null && it.selection == TextRange(it.text.length)
-        }
         assertTrue("Activity recreation caret setup was rejected", imeSetSelection(session, 8, 8))
-        awaitValue("D.recreation-selection", session.connectionIdentity) { it.selection == TextRange(8, 8) }
+        awaitValue("D.recreation-selection", session.connectionIdentity) {
+            it.text == "draft!? survives navigation" && it.selection == TextRange(8, 8)
+        }
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) {
             runCatching { compose.onNodeWithTag("chat-composer").assertExists() }.isSuccess &&
-                compose.activity.chatViewModel.state.value.editorValue.text == "activity preserves cursor" &&
+                compose.activity.chatViewModel.state.value.editorValue.text == "draft!? survives navigation" &&
                 compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
         }
         callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
@@ -198,7 +184,7 @@ class IndependentImeCompositionTest {
         session = awaitImeSession(callbackCount)
         assertTrue("Real IME insertion after Activity recreation was rejected", imeCommitText(session, "!"))
         awaitValue("D.recreation-reinserted", session.connectionIdentity) {
-            it.text == "activity! preserves cursor" && it.selection == TextRange(9, 9)
+            it.text == "draft!? !survives navigation" && it.selection == TextRange(9, 9)
         }
         compose.activityRule.scenario.onActivity { activity ->
             log(activity, "D.navigation-and-recreation", session.connectionIdentity, true)

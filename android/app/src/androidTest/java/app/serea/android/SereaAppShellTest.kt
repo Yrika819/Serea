@@ -2,7 +2,6 @@ package app.serea.android
 
 import android.content.pm.ActivityInfo
 import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputConnection
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.os.ParcelFileDescriptor
@@ -1142,12 +1141,10 @@ class SereaAppShellTest {
         composer.performClick()
         composer.assertIsFocused()
         compose.waitForIdle()
-        var inputConnection: InputConnection? = null
         compose.activityRule.scenario.onActivity { activity ->
             val activeInputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
                 "Composer did not expose its focused IME InputConnection."
             }
-            inputConnection = activeInputConnection
             assertTrue(activeInputConnection.setComposingText("draft", 1))
         }
         compose.waitUntil(5_000) {
@@ -1156,8 +1153,10 @@ class SereaAppShellTest {
                     value.selection == TextRange(value.text.length)
             }
         }
-        compose.activityRule.scenario.onActivity {
-            val activeInputConnection = requireNotNull(inputConnection)
+        compose.activityRule.scenario.onActivity { activity ->
+            val activeInputConnection = requireNotNull(activity.window.decorView.findFocus()?.onCreateInputConnection(EditorInfo())) {
+                "Composer did not expose its refreshed IME InputConnection after the composing text update."
+            }
             assertTrue(activeInputConnection.setComposingText("draft survives navigation", 1))
             assertTrue(activeInputConnection.finishComposingText())
         }

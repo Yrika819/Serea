@@ -43,7 +43,10 @@ ensure_adb_root() {
       if timeout 15s adb wait-for-device >/dev/null 2>&1; then
         if root_uid=$(adb shell id -u 2>&1); then
           root_uid=$(printf '%s' "$root_uid" | tr -d '\r')
-          if [[ "$root_uid" == 0 ]]; then return 0; fi
+          if [[ "$root_uid" == 0 ]]; then
+            printf 'ADB_ROOT: uid=0 response=%s\n' "$root_output"
+            return 0
+          fi
           echo 'The disposable emulator did not grant adb root.' >&2
           return 1
         else
@@ -104,6 +107,7 @@ wait_for_package_manager() {
   echo 'Android Package Manager did not become available on the disposable emulator.' >&2
   return 1
 }
+mark_phase 'package-manager-readiness'
 wait_for_package_manager
 printf 'PASS: phase=package-manager-ready\n'
 mark_phase 'package-manager-and-beta-cleanliness'
@@ -112,6 +116,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 android_dir="$repo_root/android"
 test_root=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/serea-personal-beta.XXXXXX")
 results="$android_dir/app/build/outputs/androidTest-results/personal-beta-identity.txt"
+identity_evidence_dir="${SEREA_PERSONAL_BETA_EVIDENCE_DIR:-}"
 demo_package='app.serea.android.demo'
 beta_package='app.serea.android.beta'
 beta_activity="$beta_package/app.serea.android.MainActivity"
@@ -122,6 +127,29 @@ build_tools_version="${BUILD_TOOLS_VERSION:-35.0.0}"
 build_tools="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?ANDROID_HOME or ANDROID_SDK_ROOT is required}}/build-tools/$build_tools_version"
 aapt="$build_tools/aapt"
 apksigner="$build_tools/apksigner"
+
+record_apk_provenance() {
+  [[ -n "$identity_evidence_dir" ]] || return 0
+  local apk_path="$1" label="$2" artifact_name
+  artifact_name="${label//[^a-zA-Z0-9._-]/-}.apk"
+  mkdir -p "$identity_evidence_dir/apks"
+  cp "$apk_path" "$identity_evidence_dir/apks/$artifact_name"
+  local source_sha artifact_sha
+  source_sha=$(sha256sum "$apk_path" | awk '{print $1}')
+  artifact_sha=$(sha256sum "$identity_evidence_dir/apks/$artifact_name" | awk '{print $1}')
+  [[ "$source_sha" == "$artifact_sha" ]]
+  {
+    printf 'artifact=%s\n' "$artifact_name"
+    printf 'apk_sha256=%s\n' "$source_sha"
+    printf 'artifact_copy_sha256=%s\n' "$artifact_sha"
+    printf 'artifact_copy_sha256_match=PASS\n'
+    printf 'aapt_badging:\n'
+    "$aapt" dump badging "$apk_path"
+    printf 'apksigner_verification:\n'
+    "$apksigner" verify --verbose --print-certs "$apk_path"
+    printf '\n'
+  } >> "$identity_evidence_dir/apk-provenance.txt"
+}
 
 cleanup() { rm -rf "$test_root"; }
 trap cleanup EXIT
@@ -239,11 +267,13 @@ build_beta() {
   cp "$android_dir/app/build/outputs/apk/beta/app-beta.apk" "$output"
   bash "$repo_root/tools/verify_personal_beta_apk.sh" "$output" "$version" \
     "$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256"
+  record_apk_provenance "$output" "beta-v$version"
 }
 
 cd "$android_dir"
 ./gradlew --no-daemon --no-build-cache --no-configuration-cache :app:assembleDebug
 demo_apk="$android_dir/app/build/outputs/apk/debug/app-debug.apk"
+record_apk_provenance "$demo_apk" 'demo-debug'
 demo_apk_id=$("$aapt" dump badging "$demo_apk" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p")
 [[ "$demo_apk_id" == "$demo_package" ]]
 if [[ -z "$(adb shell pm path "$demo_package" | tr -d '\r')" ]]; then
@@ -257,6 +287,7 @@ demo_version_before=$(demo_package_version)
 demo_data_before=$(demo_data_snapshot)
 printf 'PASS: phase=demo-package-and-data-baseline-captured\n'
 
+mark_phase 'temporary-key-generation-and-signature-verification'
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$test_root/personal-beta-test.p12"
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
 export SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS='serea-personal-beta-test'
@@ -272,8 +303,8 @@ if [[ "$SEREA_ANDROID_PERSONAL_BETA_CERT_SHA256" == "$demo_fingerprint" ]]; then
   exit 1
 fi
 printf 'PASS: phase=temporary-beta-key-distinct-from-demo\n'
-mark_phase 'temporary-key-generation-and-signature-verification'
 
+mark_phase 'beta-package-split-and-apk-signature-verification'
 apk_v99="$test_root/personal-beta-v99.apk"
 apk_v100="$test_root/personal-beta-v100.apk"
 apk_v101="$test_root/personal-beta-v101.apk"
@@ -293,7 +324,7 @@ installed_version=$(adb shell dumpsys package "$beta_package" \
 phase campaign-seed
 phase campaign-consume
 phase prepare
-printf 'PASS: phase=keystore-and-encrypted-data-creation\n'
+mark_phase 'keystore-and-encrypted-data-protection'
 database_listing=$(adb shell "ls -l /data/user/0/$beta_package/databases" | tr -d '\r')
 printf '%s\n' "$database_listing"
 printf '%s\n' "$database_listing" | awk '$5 ~ /^[0-9]+$/ && $5 > 0 && ($NF == "serea-history.db" || $NF == "serea-tasks-process-death-harness.db") { found[$NF]=1 } END { exit !(found["serea-history.db"] && found["serea-tasks-process-death-harness.db"]) }'
@@ -307,18 +338,20 @@ if strings "$test_root/beta-tasks.db" | grep -F -e 'Process recovery completed' 
   echo 'Sensitive Beta task fixture was present as plaintext in the Room database.' >&2
   exit 1
 fi
+printf 'PASS: phase=keystore-and-encrypted-data-protection\n'
 
+mark_phase 'encrypted-data-after-first-reboot'
 reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
 phase verify
 printf 'PASS: phase=encrypted-data-after-first-reboot\n'
+mark_phase 'same-signer-update-and-reboot-recovery'
 build_beta 101 true "$apk_v101"
 adb install -r "$apk_v101"
 installed_version=$(adb shell dumpsys package "$beta_package" \
   | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1 | tr -d '\r')
 [[ "$installed_version" == 101 ]]
-mark_phase 'same-signer-beta-update'
 reboot_emulator
 adb shell am start -W -n "$beta_activity" >/dev/null
 sleep 2
@@ -326,6 +359,7 @@ phase verify
 printf 'PASS: phase=encrypted-data-after-same-signer-update-and-reboot\n'
 
 wrong_key="$test_root/wrong-signer.p12"
+mark_phase 'wrong-signer-update-rejection'
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PATH="$wrong_key"
 export SEREA_ANDROID_PERSONAL_BETA_KEYSTORE_PASSWORD="$(openssl rand -hex 32)"
 export SEREA_ANDROID_PERSONAL_BETA_KEY_ALIAS='serea-personal-beta-wrong-test'

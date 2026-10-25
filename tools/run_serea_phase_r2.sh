@@ -68,20 +68,21 @@ for api in 26 35; do
         if [[ "$boot_ready" == "1" || "$log_boot_ready" == "1" ]] && \
             "$ADB" -s "$serial" shell service check package >/dev/null 2>&1 && \
             "$ADB" -s "$serial" shell service check input_method >/dev/null 2>&1; then
-            ready_font_scale="$("$ADB" -s "$serial" shell settings get system font_scale 2>/dev/null | tr -d '\r')"
-            ready_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"
-            if [[ "$ready_font_scale" =~ ^[0-9]+([.][0-9]+)?$ && -n "$ready_ime" && "$ready_ime" != "null" ]]; then
-                break
+            if ready_font_scale="$("$ADB" -s "$serial" shell settings get system font_scale 2>/dev/null | tr -d '\r')" && \
+                ready_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"; then
+                if [[ "$ready_font_scale" =~ ^[0-9]+([.][0-9]+)?$ && -n "$ready_ime" && "$ready_ime" != "null" ]]; then
+                    break
+                fi
             fi
         fi
         if (( SECONDS >= boot_deadline )); then echo "Emulator API $api did not finish booting." >&2; exit 1; fi
         sleep 2
     done
-    original_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method | tr -d '\r')"
+    original_ime="$ready_ime"
     {
         printf 'fingerprint=%s\nfont_scale=%s\nboot_complete=%s\nlog_boot_complete=%s\ndefault_ime_before=%s\n' \
             "$("$ADB" -s "$serial" shell getprop ro.build.fingerprint | tr -d '\r')" \
-            "$("$ADB" -s "$serial" shell settings get system font_scale | tr -d '\r')" \
+            "$ready_font_scale" \
             "$("$ADB" -s "$serial" shell getprop sys.boot_completed | tr -d '\r')" \
             "$("$ADB" -s "$serial" shell getprop sys.logbootcomplete | tr -d '\r')" "$original_ime"
     } >> "$out/metadata.txt"

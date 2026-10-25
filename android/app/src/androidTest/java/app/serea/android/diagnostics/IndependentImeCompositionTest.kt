@@ -97,12 +97,19 @@ class IndependentImeCompositionTest {
     private fun focusComposer() {
         compose.waitUntil(30_000) { runCatching { compose.onNodeWithTag("chat-composer").assertExists() }.isSuccess }
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        device.pressHome()
-        val target = "$TARGET_PACKAGE/$TARGET_ACTIVITY"
-        val launch = device.executeShellCommand("am start -W -f 0x30000000 -n $target")
-        Log.i(TAG, "FOREGROUND_START result=$launch")
-        assertTrue("UiAutomator could not find the foreground Chat task", device.wait(Until.hasObject(By.pkg(TARGET_PACKAGE)), 15_000))
         var hasWindowFocus = false
+        compose.activityRule.scenario.onActivity { activity ->
+            hasWindowFocus = activity.window.decorView.hasWindowFocus()
+            Log.i(TAG, "FOREGROUND_INITIAL activity=${objectIdentity(activity)} state=${activity.lifecycle.currentState} " +
+                "windowFocus=$hasWindowFocus task=${device.executeShellCommand("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")}")
+        }
+        if (!hasWindowFocus) {
+            device.pressHome()
+            val target = "$TARGET_PACKAGE/$TARGET_ACTIVITY"
+            val launch = device.executeShellCommand("am start -W -n $target")
+            Log.i(TAG, "FOREGROUND_START result=$launch")
+            assertTrue("UiAutomator could not find the foreground Chat task", device.wait(Until.hasObject(By.pkg(TARGET_PACKAGE)), 15_000))
+        }
         compose.waitUntil(20_000) {
             compose.activityRule.scenario.onActivity { activity ->
                 hasWindowFocus = activity.window.decorView.hasWindowFocus()

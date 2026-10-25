@@ -62,15 +62,18 @@ for api in 26 35; do
 
     timeout 180 "$ADB" -s "$serial" wait-for-device
     boot_deadline=$((SECONDS + 600))
-    until [[ "$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; do
+    until [[ "$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" || \
+            "$("$ADB" -s "$serial" shell getprop sys.logbootcomplete 2>/dev/null | tr -d '\r')" == "1" ]]; do
         if (( SECONDS >= boot_deadline )); then echo "Emulator API $api did not finish booting." >&2; exit 1; fi
         sleep 2
     done
     original_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method | tr -d '\r')"
     {
-        printf 'fingerprint=%s\nfont_scale=%s\ndefault_ime_before=%s\n' \
+        printf 'fingerprint=%s\nfont_scale=%s\nboot_complete=%s\nlog_boot_complete=%s\ndefault_ime_before=%s\n' \
             "$("$ADB" -s "$serial" shell getprop ro.build.fingerprint | tr -d '\r')" \
-            "$("$ADB" -s "$serial" shell settings get system font_scale | tr -d '\r')" "$original_ime"
+            "$("$ADB" -s "$serial" shell settings get system font_scale | tr -d '\r')" \
+            "$("$ADB" -s "$serial" shell getprop sys.boot_completed | tr -d '\r')" \
+            "$("$ADB" -s "$serial" shell getprop sys.logbootcomplete | tr -d '\r')" "$original_ime"
     } >> "$out/metadata.txt"
 
     "$ADB" -s "$serial" install "$TARGET_APK" >"$out/install-target.log"

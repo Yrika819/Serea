@@ -65,6 +65,40 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
             });
             record("finishComposingText accepted=" + accepted);
             result.putBoolean("accepted", accepted);
+        } else if ("setSelection".equals(method)) {
+            final int start = extras == null ? -1 : extras.getInt("start", -1);
+            final int end = extras == null ? -1 : extras.getInt("end", -1);
+            final long expectedSession = extras == null ? -1 : extras.getLong("expectedSession", -1);
+            final String expectedConnection = extras == null ? null : extras.getString("expectedConnection");
+            boolean accepted = runOnImeThread(new ImeOperation() {
+                @Override public boolean run() {
+                    RealImeService active = RealImeService.active;
+                    InputConnection current = active == null ? null : active.getCurrentInputConnection();
+                    return active != null && active.getInputSessionId() == expectedSession
+                            && RealImeService.identity(current).equals(expectedConnection)
+                            && current != null && start >= 0 && end >= 0
+                            && current.setSelection(start, end);
+                }
+            });
+            record("setSelection start=" + start + " end=" + end + " accepted=" + accepted);
+            result.putBoolean("accepted", accepted);
+        } else if ("commitText".equals(method)) {
+            final String text = extras == null ? null : extras.getString("text");
+            if (text == null) throw new IllegalArgumentException("Missing synthetic fixture text");
+            final int cursor = extras.getInt("cursor", 1);
+            final long expectedSession = extras.getLong("expectedSession", -1);
+            final String expectedConnection = extras.getString("expectedConnection");
+            boolean accepted = runOnImeThread(new ImeOperation() {
+                @Override public boolean run() {
+                    RealImeService active = RealImeService.active;
+                    InputConnection current = active == null ? null : active.getCurrentInputConnection();
+                    return active != null && active.getInputSessionId() == expectedSession
+                            && RealImeService.identity(current).equals(expectedConnection)
+                            && current != null && current.commitText(text, cursor);
+                }
+            });
+            record("commitText text=" + text + " cursor=" + cursor + " accepted=" + accepted);
+            result.putBoolean("accepted", accepted);
         }
         return result;
     }

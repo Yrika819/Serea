@@ -70,7 +70,7 @@ finish() {
   else
     echo 'verified=false' >> "$OUT/ime-restoration-verification.txt"
   fi
-  for method in B_realImeCompositionWithoutSynchronizationBoundaries C_realImeCompositionWithSynchronizationBoundaries; do
+  for method in B_realImeCompositionWithoutSynchronizationBoundaries C_realImeCompositionWithSynchronizationBoundaries D_realImeNavigationAndActivityRecreation; do
     python3 "$ROOT/tools/instrumentation_to_junit.py" "$OUT/$method-instrumentation.txt" "$OUT/$method-junit.xml" "$method" || true
   done
   printf 'driver_exit=%s\n' "$status" >> "$OUT/metadata.txt"
@@ -101,3 +101,9 @@ run_case() {
 if ! run_case B_realImeCompositionWithoutSynchronizationBoundaries; then exit 20; fi
 if ! run_case C_realImeCompositionWithSynchronizationBoundaries; then exit 21; fi
 echo 'real_ime_BC=PASS' >> "$OUT/metadata.txt"
+if [[ "${SEREA_R3_RUN_NAV:-false}" == true ]]; then
+  if ! run_case D_realImeNavigationAndActivityRecreation; then exit 22; fi
+  echo 'real_ime_D=PASS' >> "$OUT/metadata.txt"
+else
+  echo 'real_ime_D=NOT_RUN_GATE_NOT_MET' >> "$OUT/metadata.txt"
+fi

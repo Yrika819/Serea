@@ -11,6 +11,7 @@ import android.view.View
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -20,6 +21,9 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import app.serea.android.MainActivity
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -94,6 +98,99 @@ class IndependentImeCompositionTest {
         assertTrue("Android did not start a new input session: ${imeEvents()}", imeEvents().count { it.contains(" onStartInput restarting=") } > callbackCountBefore)
     }
 
+    @Test fun D_realImeNavigationAndActivityRecreation() {
+        var callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
+        activateRealIme()
+        focusComposer()
+        var session = awaitImeSession(callbackCount)
+        assertTrue("D initial IME composition was rejected", imeSetComposingText(session, REPLACEMENT))
+        awaitValue("D.initial-composing", session.connectionIdentity) {
+            it.text == REPLACEMENT && it.composition != null && it.selection == TextRange(REPLACEMENT.length)
+        }
+        assertTrue("D initial composition commit was rejected", imeFinishComposingText(session))
+        awaitValue("D.initial-committed", session.connectionIdentity) {
+            it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(REPLACEMENT.length)
+        }
+        assertTrue("D initial selection was rejected", imeSetSelection(session, 5, 5))
+        awaitValue("D.selection-5", session.connectionIdentity) {
+            it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(5, 5)
+        }
+
+        compose.onNodeWithTag("destination_gmail").performClick()
+        compose.onNodeWithTag("gmail_search_input").performTextInput("back clears focus")
+        compose.onNodeWithTag("gmail_search_input").performImeAction()
+        compose.waitUntil(10_000) {
+            runCatching {
+                compose.onNodeWithTag("gmail_result_count").assertExists()
+                compose.onNodeWithTag("gmail_search_input").assertIsNotFocused()
+            }.isSuccess
+        }
+        pressBack()
+        pressBack()
+        compose.waitUntil(10_000) {
+            compose.activity.chatViewModel.state.value.editorValue.text == REPLACEMENT
+        }
+        assertEquals("Gmail return lost the saved composer caret", TextRange(5, 5), compose.activity.chatViewModel.state.value.editorValue.selection)
+        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer").assertIsFocused()
+        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
+        session = awaitImeSession(callbackCount)
+        assertTrue("Real IME insertion after Gmail return was rejected", imeCommitText(session, "!"))
+        awaitValue("D.gmail-reinserted", session.connectionIdentity) {
+            it.text == "draft! survives navigation" && it.selection == TextRange(6, 6)
+        }
+
+        compose.onNodeWithTag("destination_calendar").performClick()
+        compose.onNodeWithTag("calendar_destination").assertExists()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
+        }
+        pressBack()
+        compose.onNodeWithTag("chat-composer").assertExists()
+        assertEquals("Calendar return lost the saved composer caret", TextRange(6, 6), compose.activity.chatViewModel.state.value.editorValue.selection)
+        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer").assertIsFocused()
+        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
+        session = awaitImeSession(callbackCount)
+        assertTrue("Real IME insertion after Calendar return was rejected", imeCommitText(session, "?"))
+        awaitValue("D.calendar-reinserted", session.connectionIdentity) {
+            it.text == "draft!? survives navigation" && it.selection == TextRange(7, 7)
+        }
+
+        compose.onNodeWithTag("chat-composer").performTextClearance()
+        awaitValue("D.recreation-reset", session.connectionIdentity) { it.text.isEmpty() && it.selection == TextRange.Zero }
+        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer").assertIsFocused()
+        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
+        session = awaitImeSession(callbackCount)
+        assertTrue("Activity recreation fixture composition was rejected", imeSetComposingText(session, "activity preserves cursor"))
+        awaitValue("D.recreation-fixture-composing", session.connectionIdentity) {
+            it.text == "activity preserves cursor" && it.composition != null
+        }
+        assertTrue("Activity recreation fixture commit was rejected", imeFinishComposingText(session))
+        awaitValue("D.recreation-fixture-committed", session.connectionIdentity) {
+            it.text == "activity preserves cursor" && it.composition == null && it.selection == TextRange(it.text.length)
+        }
+        assertTrue("Activity recreation caret setup was rejected", imeSetSelection(session, 8, 8))
+        awaitValue("D.recreation-selection", session.connectionIdentity) { it.selection == TextRange(8, 8) }
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(10_000) {
+            compose.activity.chatViewModel.state.value.editorValue.text == "activity preserves cursor" &&
+                compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
+        }
+        compose.onNodeWithTag("chat-composer").performClick()
+        compose.onNodeWithTag("chat-composer").assertIsFocused()
+        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
+        session = awaitImeSession(callbackCount)
+        assertTrue("Real IME insertion after Activity recreation was rejected", imeCommitText(session, "!"))
+        awaitValue("D.recreation-reinserted", session.connectionIdentity) {
+            it.text == "activity! preserves cursor" && it.selection == TextRange(9, 9)
+        }
+        compose.activityRule.scenario.onActivity { activity ->
+            log(activity, "D.navigation-and-recreation", session.connectionIdentity, true)
+        }
+    }
+
     private fun focusComposer() {
         compose.waitUntil(30_000) { runCatching { compose.onNodeWithTag("chat-composer").assertExists() }.isSuccess }
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
@@ -142,6 +239,10 @@ class IndependentImeCompositionTest {
                 "text=${activity.chatViewModel.state.value.editorValue} imeConfigured=${configuredIme()}")
             assertTrue("Each independent case must start from an empty composer.", activity.chatViewModel.state.value.editorValue.text.isEmpty())
         }
+    }
+
+    private fun pressBack() {
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
     }
 
     private fun activateRealIme() {
@@ -215,6 +316,26 @@ class IndependentImeCompositionTest {
     private fun imeFinishComposingText(session: ImeSession): Boolean = imeCall(
         "finishComposingText",
         Bundle().apply {
+            putLong("expectedSession", session.session)
+            putString("expectedConnection", session.connectionIdentity)
+        },
+    ).getBoolean("accepted")
+
+    private fun imeSetSelection(session: ImeSession, start: Int, end: Int): Boolean = imeCall(
+        "setSelection",
+        Bundle().apply {
+            putInt("start", start)
+            putInt("end", end)
+            putLong("expectedSession", session.session)
+            putString("expectedConnection", session.connectionIdentity)
+        },
+    ).getBoolean("accepted")
+
+    private fun imeCommitText(session: ImeSession, text: String): Boolean = imeCall(
+        "commitText",
+        Bundle().apply {
+            putString("text", text)
+            putInt("cursor", 1)
             putLong("expectedSession", session.session)
             putString("expectedConnection", session.connectionIdentity)
         },

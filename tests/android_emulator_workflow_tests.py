@@ -981,6 +981,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "  printf '%s\\n' \"$ANDROID_TEST_API\"\n"
                 "elif [[ \"$1\" == shell && \"$2\" == getprop && \"$3\" == ro.kernel.qemu ]]; then\n"
                 "  printf '1\\n'\n"
+                "elif [[ \"$1 $2 $3 $4 $5\" == 'shell settings get secure default_input_method' ]]; then\n"
+                "  printf 'com.google.android.inputmethod.latin/.LatinIME\\n'\n"
                 "elif [[ \"$1 $2 $3 $4\" == 'shell pm list packages' && \"$5\" == -u ]]; then\n"
                 "  printf '%s' \"$ADB_PACKAGE_INVENTORY\"\n"
                 "  exit \"${ADB_PACKAGE_EXIT_STATUS:-0}\"\n"

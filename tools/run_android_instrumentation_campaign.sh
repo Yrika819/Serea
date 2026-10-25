@@ -55,6 +55,9 @@ printf 'NOT_READY\n' > "$evidence/process-death-readiness-status.txt" || exit 1
 printf 'NOT_READY\n' > "$evidence/process-death-readiness.log" || exit 1
 
 logcat_pid=''
+initial_default_ime=''
+test_ime_installed=false
+test_ime_cleanup_result=NOT_RUN
 stop_live_capture() {
   if [[ -n "$logcat_pid" ]]; then
     kill "$logcat_pid" 2>/dev/null || true
@@ -66,7 +69,32 @@ stop_live_capture() {
       "$evidence/logcat-live.txt" "$evidence/test-lifecycle-summary.txt" "$evidence" || true
   fi
 }
-trap stop_live_capture EXIT
+cleanup_test_ime() {
+  if [[ "$test_ime_installed" == true ]]; then
+    local cleanup_log="$evidence/test-ime-cleanup.txt"
+    {
+      printf 'started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+      printf 'initial_default_ime=%s\n' "$initial_default_ime"
+      adb shell ime set "$initial_default_ime"
+      adb shell ime disable app.serea.android.r25testime/app.serea.android.diagnostics.RealImeService
+      adb uninstall app.serea.android.r25testime
+      printf 'restored_default_ime=%s\n' "$(adb shell settings get secure default_input_method | tr -d '\r')"
+      printf 'test_ime_package_path=%s\n' "$(adb shell pm path app.serea.android.r25testime 2>/dev/null | tr -d '\r')"
+      printf 'finished_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+    } > "$cleanup_log" 2>&1
+    if [[ "$(sed -n 's/^restored_default_ime=//p' "$cleanup_log")" != "$initial_default_ime" || \
+          -n "$(sed -n 's/^test_ime_package_path=//p' "$cleanup_log")" ]]; then
+      echo 'Test IME settings or package cleanup verification failed.' >> "$cleanup_log"
+      printf 'FAIL\n' > "$evidence/test-ime-cleanup-status.txt"
+      test_ime_cleanup_result=FAIL
+    else
+      printf 'PASS\n' > "$evidence/test-ime-cleanup-status.txt"
+      test_ime_cleanup_result=PASS
+      test_ime_installed=false
+    fi
+  fi
+}
+trap 'stop_live_capture; cleanup_test_ime' EXIT
 trap 'stop_live_capture; exit 130' INT
 trap 'stop_live_capture; exit 143' TERM
 
@@ -292,6 +320,13 @@ if [[ "$sdk" == "$api_level" ]]; then
 else
   echo "Expected API $api_level, observed '$sdk'." > "$evidence/device-api-error.txt"
 fi
+if [[ "$sdk_ok" == true ]]; then
+  initial_default_ime="$(adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"
+  if [[ -z "$initial_default_ime" || "$initial_default_ime" == "null" ]]; then
+    echo 'Could not capture the disposable emulator default IME before testing.' > "$evidence/device-api-error.txt"
+    sdk_ok=false
+  fi
+fi
 
 gradle_result=1
 junit_result=NOT_RUN
@@ -304,6 +339,7 @@ if [[ "$sdk_ok" == true ]]; then
   demo_package='app.serea.android.demo'
   isolated_package='app.serea.android.isolated'
   test_package='app.serea.android.isolated.test'
+  ime_package='app.serea.android.r25testime'
   debug_apk='app/build/outputs/apk/debug/app-debug.apk'
   isolated_apk='app/build/outputs/apk/isolated/app-isolated.apk'
   if [[ "$api_level" == 26 ]]; then
@@ -329,24 +365,36 @@ if [[ "$sdk_ok" == true ]]; then
   elif { printf '%s\n' "$retained_packages" | grep -Fxq "package:$demo_package" || \
        printf '%s\n' "$retained_packages" | grep -Fxq "package:$isolated_package" || \
        printf '%s\n' "$retained_packages" | grep -Fxq "package:$test_package" || \
+       printf '%s\n' "$retained_packages" | grep -Fxq "package:$ime_package" || \
        [[ -n "$(adb shell pm path "$demo_package" 2>/dev/null | tr -d '\r')" || \
           -n "$(adb shell pm path "$isolated_package" 2>/dev/null | tr -d '\r')" || \
-          -n "$(adb shell pm path "$test_package" 2>/dev/null | tr -d '\r')" ]]; }; then
+          -n "$(adb shell pm path "$test_package" 2>/dev/null | tr -d '\r')" || \
+          -n "$(adb shell pm path "$ime_package" 2>/dev/null | tr -d '\r')" ]]; }; then
     echo "Refusing emulator with an installed package or retained Serea app data; no app data will be cleared." > "$evidence/data-isolation-error.txt"
     data_isolation_result=FAIL
     printf 'FAIL\n' > "$evidence/data-isolation-status.txt"
   else
     token="serea-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}"
     data_sentinel_token="$token"
-    ./gradlew --no-daemon :app:assembleDebug :app:assembleIsolated
+    ./gradlew --no-daemon :app:assembleDebug :app:assembleIsolated :r25-ime-test:assembleDebug
     build_debug_result=$?
+    ime_apk='r25-ime-test/build/outputs/apk/debug/r25-test-ime-debug.apk'
+    if [[ ! -s "$ime_apk" ]]; then ime_apk='r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk'; fi
+    if [[ "$build_debug_result" -eq 0 && -s "$ime_apk" ]] && adb install "$ime_apk"; then
+      test_ime_installed=true
+      sha256sum "$ime_apk" > "$evidence/test-ime-apk-sha256.txt"
+      printf 'NOT_RUN\n' > "$evidence/test-ime-cleanup-status.txt"
+      test_ime_install_result=0
+    else
+      test_ime_install_result=1
+    fi
     if [[ "$build_debug_result" -eq 0 && -s "$debug_apk" && -s "$isolated_apk" ]]; then
       adb install "$debug_apk"
       install_demo_result=$?
     else
       install_demo_result=1
     fi
-    if [[ "$install_demo_result" -eq 0 ]]; then
+    if [[ "$install_demo_result" -eq 0 && "$test_ime_install_result" -eq 0 ]]; then
       EXPECTED_API_LEVEL="$api_level" bash "$tool_dir/run_android_data_sentinel.sh" "$token" seed \
         > "$evidence/data-isolation.log" 2>&1
       sentinel_seed_result=$?
@@ -361,6 +409,7 @@ if [[ "$sdk_ok" == true ]]; then
         "$api_level" "$campaign_token" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$evidence/test-lifecycle-host.txt"
       adb -s "$ANDROID_SERIAL" logcat -v threadtime -s \
         SereaTestLifecycle:I SereaCalendarStage:I SereaIsolatedRunner:I SereaProfileVerifier:I \
+        SereaComposerIme:I SereaRealIme:I \
         SereaProcessDeath:I SereaChatWindowFocus:E SereaChatInputRegression:I \
         chat-demo-label:I chat-current-delete-confirmation:I \
         chat-current-delete-status:I chat-delete-all-confirmation:I chat-delete-all-status:I \
@@ -521,6 +570,7 @@ if [[ "$sdk_ok" == true ]]; then
       --source-root app/src/androidTest/java --minimum 105 --exact-count 105 \
       --required-test-manifest "$tool_dir/android-instrumentation-required-tests.txt" \
       --additional-test-manifest "$tool_dir/android-instrumentation-additional-tests.txt" \
+      --non-required-test-manifest app/src/androidTest/assets/serea-non-required-test-identities.txt \
       --required-count 103 --additional-count 2 \
       --api-level "$api_level" --profile-verifier-log "$evidence/logcat-live.txt" \
       --require-class app.serea.android.EncryptedHistoryTest=17 \
@@ -596,7 +646,9 @@ elif [[ "$sdk_ok" == true ]]; then
 fi
 printf '%s\n' "$death_result" > "$evidence/process-death-status.txt"
 
-if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS ]]; then
+if [[ "$test_ime_installed" == true ]]; then cleanup_test_ime; fi
+
+if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS ]]; then
   result=PASS
 else
   result=FAIL

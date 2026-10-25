@@ -1,6 +1,7 @@
 package app.serea.android
 
 import android.os.Build
+import android.os.Bundle
 import android.util.Log
 import androidx.test.runner.AndroidJUnitRunner
 import androidx.test.platform.app.InstrumentationRegistry
@@ -11,6 +12,33 @@ import java.io.File
  * supported disposable emulator app namespace. This makes IDE/direct Gradle entry points safe too.
  */
 class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
+    override fun onCreate(arguments: Bundle) {
+        // R3's exploratory IME tests are invoked by their dedicated focused campaign. Keep them
+        // outside the formal 105-test Required set, while retaining the R4 required IME assertion
+        // embedded in SereaAppShellTest. An explicit diagnostic class filter opts into them.
+        val explicitClassFilter = arguments.getString("class").orEmpty()
+        if (explicitClassFilter.isBlank() && arguments.getString("sereaIncludeDiagnostics") != "true") {
+            val diagnosticClasses = context.assets
+                .open("serea-non-required-test-identities.txt")
+                .bufferedReader()
+                .useLines { lines ->
+                    lines.map(String::trim)
+                        .filter { it.isNotEmpty() && !it.startsWith("#") }
+                        .map { identity -> identity.substringBefore('#') }
+                        .distinct()
+                        .toList()
+                }
+            check(diagnosticClasses.isNotEmpty()) {
+                "Non-required test identity manifest must explicitly list exploratory tests."
+            }
+            arguments.putString(
+                "notClass",
+                diagnosticClasses.joinToString(","),
+            )
+        }
+        super.onCreate(arguments)
+    }
+
     override fun onStart() {
         val target = targetContext
         val dataDir = File(target.applicationInfo.dataDir)

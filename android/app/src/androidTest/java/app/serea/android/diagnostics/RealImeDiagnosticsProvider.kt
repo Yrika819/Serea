@@ -5,8 +5,13 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Intra-test-APK bridge for instrumentation running in the target app's separate process. */
 class RealImeDiagnosticsProvider : ContentProvider() {
@@ -30,13 +35,18 @@ class RealImeDiagnosticsProvider : ContentProvider() {
             "setComposingText" -> {
                 val text = requireNotNull(extras?.getString("text"))
                 val cursor = extras.getInt("cursor", 1)
-                val accepted = connection?.setComposingText(text, cursor) ?: false
-                record("setComposingText text=$text cursor=$cursor accepted=$accepted session=${service?.inputSessionId}")
+                val accepted = runOnImeThread {
+                    val active = RealImeService.active
+                    active?.currentInputConnection?.setComposingText(text, cursor) ?: false
+                }
+                record("setComposingText text=$text cursor=$cursor accepted=$accepted session=${RealImeService.active?.inputSessionId}")
                 result.putBoolean("accepted", accepted)
             }
             "finishComposingText" -> {
-                val accepted = connection?.finishComposingText() ?: false
-                record("finishComposingText accepted=$accepted session=${service?.inputSessionId}")
+                val accepted = runOnImeThread {
+                    RealImeService.active?.currentInputConnection?.finishComposingText() ?: false
+                }
+                record("finishComposingText accepted=$accepted session=${RealImeService.active?.inputSessionId}")
                 result.putBoolean("accepted", accepted)
             }
         }
@@ -45,6 +55,20 @@ class RealImeDiagnosticsProvider : ContentProvider() {
 
     private fun record(event: String) {
         Log.i(RealImeService.TAG, "uptimeNanos=${SystemClock.elapsedRealtimeNanos()} $event")
+    }
+
+    private fun runOnImeThread(operation: () -> Boolean): Boolean {
+        val accepted = AtomicBoolean(false)
+        val completed = CountDownLatch(1)
+        Handler(Looper.getMainLooper()).post {
+            try {
+                accepted.set(operation())
+            } finally {
+                completed.countDown()
+            }
+        }
+        check(completed.await(5, TimeUnit.SECONDS)) { "Timed out waiting for the IME main thread." }
+        return accepted.get()
     }
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null

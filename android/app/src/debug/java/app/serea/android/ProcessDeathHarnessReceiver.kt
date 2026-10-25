@@ -23,6 +23,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
             val token = intent.getStringExtra("token") ?: "missing-token"
             val phase = intent.getStringExtra("phase") ?: "missing-phase"
             val requestId = intent.getStringExtra("requestId") ?: "none"
+            var operation = "validate request"
             try {
                 check(token != "missing-token")
                 check(phase != "missing-phase")
@@ -31,23 +32,29 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                 validateTargetPackage(context, phase)
                 validateDisposableDevice()
                 if (phase == "campaign-seed") {
+                    operation = "seed campaign marker"
                     seedInstrumentationMarker(context, token)
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
                     return@Thread
                 }
                 if (phase == "campaign-seed-and-claim") {
+                    operation = "seed campaign marker"
                     seedInstrumentationMarker(context, token)
+                    operation = "claim campaign marker"
                     claimInstrumentationMarker(context, token)
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
                     return@Thread
                 }
                 if (phase == "process-death-seed") {
+                    operation = "seed Process Death marker"
                     seedInstrumentationMarker(context, token)
+                    operation = "claim Process Death marker"
                     claimInstrumentationMarker(context, token)
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
                     return@Thread
                 }
                 if (phase == "campaign-consume") {
+                    operation = "promote campaign marker"
                     promoteInstrumentationMarker(context, token)
                     Log.i(TAG, "PASS:$token:$phase:$requestId")
                     return@Thread
@@ -89,7 +96,8 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
                 if (phase == "verify-empty") consumeProcessDeathAuthorization(context, token)
                 Log.i(TAG, "PASS:$token:$phase:$requestId")
             } catch (error: Throwable) {
-                Log.e(TAG, "FAIL:$token:$phase:$requestId:${error.javaClass.simpleName}")
+                // Keep logs useful without printing fixture values or exception messages.
+                Log.e(TAG, "FAIL:$token:$phase:$requestId:${error.javaClass.simpleName}:$operation")
             } finally {
                 pending.finish()
             }

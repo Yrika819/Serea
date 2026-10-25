@@ -14,6 +14,235 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AndroidEmulatorWorkflowTests(unittest.TestCase):
+    def test_personal_beta_identity_preflight_waits_for_stable_disposable_emulator(self) -> None:
+        script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")
+        self.assertIn('discovery_deadline=$((SECONDS + 60))', script)
+        self.assertIn('device_listing=$(timeout "${timeout_seconds}s" adb devices -l 2>&1 || true)', script)
+        self.assertIn('bounded_adb "$deadline" 8 -s "$serial" wait-for-device', script)
+        self.assertIn('local deadline=$((SECONDS + 120))', script)
+        self.assertIn('while (( SECONDS < deadline )); do', script)
+        self.assertIn('timeout "${cap}s" adb "$@"', script)
+        self.assertIn('timeout 10s adb -s "$serial" root', script)
+        self.assertIn('adb -s "$serial" get-state', script)
+        self.assertIn('"$state" == device && "$sdk" == 35 && "$qemu" == 1 && "$boot_completed" == 1', script)
+        self.assertIn('[[ "$stable_samples" -ge 3 ]]', script)
+        self.assertIn('print_emulator_diagnostics "Emulator did not remain online', script)
+        self.assertIn("set -Eeuo pipefail", script)
+        self.assertIn("trap 'on_error \"$LINENO\" \"$BASH_COMMAND\"' ERR", script)
+        self.assertIn('command=%q', script)
+        self.assertIn("set_phase 'restart adb as root and wait for stable transport'", script)
+        self.assertIn('if [[ "$beta_path_status" -ne 0 ]]; then', script)
+        self.assertIn('adb -s "$serial" shell pm list packages "$beta_package"', script)
+        self.assertIn('"$beta_device_state" != device', script)
+        self.assertIn("'Error: package not found'|\"Error: package not found: $beta_package\")", script)
+        self.assertIn('Beta package query failed (exit=%s): %s', script)
+        subprocess.run(["bash", "-n", str(ROOT / "tools/test_personal_beta_identity.sh")], check=True)
+
+    def test_personal_beta_identity_does_not_mask_package_probe_transport_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            mock_adb = Path(temporary) / "adb"
+            mock_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  *'devices -l'*) printf 'List of devices attached\\nemulator-5554 device\\n' ;;\n"
+                "  *'wait-for-device'*) exit 0 ;;\n"
+                "  *'get-state'*) echo device ;;\n"
+                "  *'getprop ro.build.version.sdk'*) echo 35 ;;\n"
+                "  *'getprop ro.kernel.qemu'*) echo 1 ;;\n"
+                "  *'getprop sys.boot_completed'*) echo 1 ;;\n"
+                "  *' root'*) exit 0 ;;\n"
+                "  *'shell id -u'*) echo 0 ;;\n"
+                "  *'shell pm list packages -3'*) echo package:android ;;\n"
+                "  *'shell pm path app.serea.android.beta'*) echo 'adb: device offline'; exit 7 ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            mock_adb.chmod(0o755)
+            result_path = ROOT / "android/app/build/outputs/androidTest-results/personal-beta-identity.txt"
+            previous_result = result_path.read_bytes() if result_path.exists() else None
+            environment = os.environ.copy()
+            environment["PATH"] = f"{temporary}{os.pathsep}{environment['PATH']}"
+            environment["ANDROID_HOME"] = temporary
+            environment["ANDROID_SDK_ROOT"] = temporary
+            environment["SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR"] = "1"
+            try:
+                result = subprocess.run(
+                    ["bash", "tools/test_personal_beta_identity.sh"],
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertIn(
+                    "Personal Beta harness phase: refuse preinstalled Beta package on the disposable emulator",
+                    result.stdout,
+                )
+                self.assertIn("Beta package query failed (exit=7): adb: device offline", result.stderr)
+                self.assertIn("ADB state after an unexpected Beta package query response:", result.stderr)
+                self.assertIn("List of devices attached", result.stderr)
+                self.assertEqual(result_path.read_text(encoding="utf-8"), "NOT_RUN\n")
+            finally:
+                if previous_result is None:
+                    result_path.unlink(missing_ok=True)
+                else:
+                    result_path.write_bytes(previous_result)
+
+    def test_personal_beta_identity_accepts_only_package_manager_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            mock_adb = Path(temporary) / "adb"
+            mock_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  *'devices -l'*) printf 'List of devices attached\\nemulator-5554 device\\n' ;;\n"
+                "  *'wait-for-device'*) exit 0 ;;\n"
+                "  *'get-state'*) echo device ;;\n"
+                "  *'getprop ro.build.version.sdk'*) echo 35 ;;\n"
+                "  *'getprop ro.kernel.qemu'*) echo 1 ;;\n"
+                "  *'getprop sys.boot_completed'*) echo 1 ;;\n"
+                "  *' root'*) exit 0 ;;\n"
+                "  *'shell id -u'*) echo 0 ;;\n"
+                "  *'shell pm list packages -3'*) echo package:android ;;\n"
+                "  *'shell pm path app.serea.android.beta'*) exit 1 ;;\n"
+                "  *'shell pm list packages app.serea.android.beta'*) echo package:app.serea.android.demo ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            mock_adb.chmod(0o755)
+            fake_java = Path(temporary) / "bin/java"
+            fake_java.parent.mkdir()
+            fake_java.write_text("#!/usr/bin/env bash\nexit 19\n", encoding="utf-8")
+            fake_java.chmod(0o755)
+            result_path = ROOT / "android/app/build/outputs/androidTest-results/personal-beta-identity.txt"
+            previous_result = result_path.read_bytes() if result_path.exists() else None
+            environment = os.environ.copy()
+            environment["PATH"] = f"{temporary}{os.pathsep}{environment['PATH']}"
+            environment["JAVA_HOME"] = temporary
+            environment["ANDROID_HOME"] = temporary
+            environment["ANDROID_SDK_ROOT"] = temporary
+            environment["SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR"] = "1"
+            try:
+                result = subprocess.run(
+                    ["bash", "tools/test_personal_beta_identity.sh"],
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "Personal Beta harness phase: build and capture existing Demo identity/data",
+                    result.stdout,
+                )
+                self.assertNotIn("Beta package query failed", result.stderr)
+                self.assertIn("phase=build\\ and\\ capture", result.stderr)
+                self.assertEqual(result_path.read_text(encoding="utf-8"), "NOT_RUN\n")
+            finally:
+                if previous_result is None:
+                    result_path.unlink(missing_ok=True)
+                else:
+                    result_path.write_bytes(previous_result)
+
+    def test_personal_beta_identity_fails_on_package_list_transport_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            mock_adb = Path(temporary) / "adb"
+            mock_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  *'devices -l'*) printf 'List of devices attached\\nemulator-5554 device\\n' ;;\n"
+                "  *'wait-for-device'*) exit 0 ;;\n"
+                "  *'get-state'*) echo device ;;\n"
+                "  *'getprop ro.build.version.sdk'*) echo 35 ;;\n"
+                "  *'getprop ro.kernel.qemu'*) echo 1 ;;\n"
+                "  *'getprop sys.boot_completed'*) echo 1 ;;\n"
+                "  *' root'*) exit 0 ;;\n"
+                "  *'shell id -u'*) echo 0 ;;\n"
+                "  *'shell pm list packages -3'*) echo package:android ;;\n"
+                "  *'shell pm path app.serea.android.beta'*) exit 1 ;;\n"
+                "  *'shell pm list packages app.serea.android.beta'*) echo 'adb: device offline'; exit 7 ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            mock_adb.chmod(0o755)
+            result_path = ROOT / "android/app/build/outputs/androidTest-results/personal-beta-identity.txt"
+            previous_result = result_path.read_bytes() if result_path.exists() else None
+            environment = os.environ.copy()
+            environment["PATH"] = f"{temporary}{os.pathsep}{environment['PATH']}"
+            environment["ANDROID_HOME"] = temporary
+            environment["ANDROID_SDK_ROOT"] = temporary
+            environment["SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR"] = "1"
+            try:
+                result = subprocess.run(
+                    ["bash", "tools/test_personal_beta_identity.sh"],
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertIn("Beta package-list verification failed (exit=7): adb: device offline", result.stderr)
+                self.assertIn("ADB state after the Beta package-list verification failed:", result.stderr)
+                self.assertEqual(result_path.read_text(encoding="utf-8"), "NOT_RUN\n")
+            finally:
+                if previous_result is None:
+                    result_path.unlink(missing_ok=True)
+                else:
+                    result_path.write_bytes(previous_result)
+
+    def test_personal_beta_identity_refuses_exact_package_list_match(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            mock_adb = Path(temporary) / "adb"
+            mock_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$*\" in\n"
+                "  *'devices -l'*) printf 'List of devices attached\\nemulator-5554 device\\n' ;;\n"
+                "  *'wait-for-device'*) exit 0 ;;\n"
+                "  *'get-state'*) echo device ;;\n"
+                "  *'getprop ro.build.version.sdk'*) echo 35 ;;\n"
+                "  *'getprop ro.kernel.qemu'*) echo 1 ;;\n"
+                "  *'getprop sys.boot_completed'*) echo 1 ;;\n"
+                "  *' root'*) exit 0 ;;\n"
+                "  *'shell id -u'*) echo 0 ;;\n"
+                "  *'shell pm list packages -3'*) echo package:android ;;\n"
+                "  *'shell pm path app.serea.android.beta'*) exit 1 ;;\n"
+                "  *'shell pm list packages app.serea.android.beta'*) echo package:app.serea.android.beta ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            mock_adb.chmod(0o755)
+            result_path = ROOT / "android/app/build/outputs/androidTest-results/personal-beta-identity.txt"
+            previous_result = result_path.read_bytes() if result_path.exists() else None
+            environment = os.environ.copy()
+            environment["PATH"] = f"{temporary}{os.pathsep}{environment['PATH']}"
+            environment["ANDROID_HOME"] = temporary
+            environment["ANDROID_SDK_ROOT"] = temporary
+            environment["SEREA_PERSONAL_BETA_DISPOSABLE_EMULATOR"] = "1"
+            try:
+                result = subprocess.run(
+                    ["bash", "tools/test_personal_beta_identity.sh"],
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("Refusing an emulator that already contains app.serea.android.beta", result.stderr)
+                self.assertNotIn("Beta package query failed", result.stderr)
+                self.assertEqual(result_path.read_text(encoding="utf-8"), "NOT_RUN\n")
+            finally:
+                if previous_result is None:
+                    result_path.unlink(missing_ok=True)
+                else:
+                    result_path.write_bytes(previous_result)
+
     def test_lifecycle_summary_links_failures_ui_state_and_process_death(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             evidence = Path(temporary) / "api35"
@@ -88,8 +317,17 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('stage_dir/gradle.log', campaign)
         stage_body = campaign.split("run_diagnostic_stage() {", 1)[1].split("\n}\n\ncleanup_failed()", 1)[0]
         self.assertIn('if [[ -d "$stage_dir/junit" ]]; then', stage_body)
-        self.assertIn('if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 ]]', stage_body)
-        self.assertIn('if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 ]]', stage_body)
+        self.assertIn(
+            'if [[ "$gradle_status" -eq 0 && "$verify_exit_code" -eq 0 && "$install_sha_status" -eq 0 ]]',
+            stage_body,
+        )
+        self.assertIn(
+            'if [[ "$gradle_status" -ne 0 || "$verify_status" -ne 0 || "$install_sha_status" -ne 0 ]]',
+            stage_body,
+        )
+        self.assertIn('while kill -0 "$gradle_pid" 2>/dev/null; do', stage_body)
+        self.assertIn('pm path app.serea.android.isolated.test', stage_body)
+        self.assertIn('test_expected_apk_sha256=%s', stage_body)
 
     def test_pr82_dependency_seed_and_process_death_gates_remain_fail_closed(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
@@ -122,8 +360,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         scripts = re.findall(r"^[ \t]+script: (.+)$", workflow, flags=re.MULTILINE)
         self.assertEqual(
             [
-                "bash ../tools/run_android_api35_campaign.sh",
                 "bash ../tools/run_android_instrumentation_campaign.sh 26",
+                "bash ../tools/run_android_api35_campaign.sh",
                 "bash tools/test_personal_beta_identity.sh",
             ],
             scripts,
@@ -143,6 +381,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "run_android_process_death_harness.sh",
             "test_android_update_compatibility.sh",
             "test_android_update_compatibility_guard.sh",
+            "test_personal_beta_identity.sh",
             "run_android_api35_campaign.sh",
         ):
             subprocess.run(["bash", "-n", str(ROOT / "tools" / name)], check=True)
@@ -160,15 +399,27 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("test_android_update_compatibility.sh", api35_campaign)
         self.assertIn("Save API 35 failure semantics and safety logcat", workflow)
         self.assertIn("Save API 26 failure semantics and safety logcat", workflow)
+        self.assertLess(
+            workflow.index("Run API 26 Pixel emulator and all instrumentation tests"),
+            workflow.index("Run API 35 Pixel emulator and all instrumentation tests"),
+        )
         self.assertEqual(2, workflow.count("live='android/app/build/outputs/androidTest-results/api"))
         self.assertEqual(2, workflow.count("' \"$live\" >> \"$output\""))
         self.assertIn("Emulator detached after test step; captured instrumentation logcat is preserved above.", workflow)
         self.assertIn("font-scale-gmail-heading", workflow)
         self.assertIn("chat-draft-gmail-search-timeout", workflow)
         self.assertLess(
-            workflow.index("Save API 35 failure semantics and safety logcat"),
-            workflow.index("Clear API 35 emulator state before API 26 campaign"),
+            workflow.index("Save API 26 failure semantics and safety logcat"),
+            workflow.index("Clear API 26 emulator state before API 35 campaign"),
         )
+        self.assertLess(
+            workflow.index("Clear API 26 emulator state before API 35 campaign"),
+            workflow.index("Run API 35 Pixel emulator and all instrumentation tests"),
+        )
+        api35_step = workflow.split("Run API 35 Pixel emulator and all instrumentation tests", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        self.assertIn("if: always() && !cancelled()", api35_step)
         for step_name in (
             "Run API 35 Pixel emulator and all instrumentation tests",
             "Run API 26 Pixel emulator and all instrumentation tests",
@@ -225,10 +476,21 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('profileVerifierMarkerBeforeUtp=ABSENT', target_helper)
         self.assertIn('if [[ "$mode" == process-death ]]', target_helper)
         self.assertIn('am broadcast -f 0x20 -n "$receiver"', target_helper)
-        self.assertIn('calendar-target', campaign)
         self.assertIn('calendar-class', campaign)
-        self.assertIn('app.serea.android.SereaAppShellTest#calendarDetailAndSelectedCalendarSurviveAnotherDestination', campaign)
         self.assertIn('app.serea.android.SereaAppShellTest 900 19', campaign)
+        self.assertIn('chat-screen-class', campaign)
+        self.assertIn('app.serea.android.ChatScreenTest 900 16', campaign)
+        self.assertNotIn('runner-smoke', campaign)
+        self.assertNotIn('chat-http-e2e', campaign)
+        self.assertNotIn('activity-recreation', campaign)
+        self.assertNotIn('calendar-target', campaign)
+        focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused')
+        class_stage = campaign.index('run_diagnostic_stage calendar-class')
+        chat_class_stage = campaign.index('run_diagnostic_stage chat-screen-class')
+        full_suite = campaign.index('timeout --signal=INT --kill-after=120s 40m ./gradlew')
+        self.assertLess(focused_stage, class_stage)
+        self.assertLess(class_stage, chat_class_stage)
+        self.assertLess(chat_class_stage, full_suite)
         self.assertIn('--require-test', campaign)
         self.assertIn('--exact-count', campaign)
         self.assertIn('SereaCalendarStage', campaign)
@@ -385,6 +647,23 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("phase='process-death-seed'", target_helper)
         self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
 
+    def test_personal_beta_campaign_seeds_and_claims_marker_before_single_use_consume(self) -> None:
+        script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")
+        receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(
+            encoding="utf-8"
+        )
+        phases = receiver.split('if (phase == "campaign-seed-and-claim") {', 1)[1].split("}", 1)[0]
+        personal_beta_allowlist = receiver.split("private val PERSONAL_BETA_PHASES = setOf(", 1)[1].split(")", 1)[0]
+        script_seed = script.index("phase campaign-seed-and-claim")
+        script_consume = script.index("phase campaign-consume", script_seed)
+        self.assertLess(phases.index("seedInstrumentationMarker(context, token)"),
+                        phases.index("claimInstrumentationMarker(context, token)"))
+        self.assertIn('"campaign-seed-and-claim"', personal_beta_allowlist)
+        self.assertIn('"campaign-consume"', personal_beta_allowlist)
+        self.assertLess(script_seed, script_consume)
+        self.assertIn('check(!claimedMarker.exists())', receiver)
+        self.assertIn('check(!authorization.exists())', receiver)
+
     def test_device_diagnostics_use_posix_grep_and_keep_gradle_result_separate(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
         self.assertNotIn("rg ", campaign)
@@ -476,7 +755,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("phase='campaign-seed'", helper)
         self.assertIn('PASS:$token:$phase:$request_id', helper)
 
-    def test_api26_evidence_and_kvm_setup_run_after_api35_image_failure(self) -> None:
+    def test_api26_campaign_runs_first_and_survives_api35_image_failure(self) -> None:
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
         steps = {
             match.group(1): match.group(0)
@@ -500,8 +779,16 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             workflow.index("- name: Apply official KVM udev permissions"),
             workflow.index("- name: Run API 26 Pixel emulator and all instrumentation tests"),
         )
+        self.assertLess(
+            workflow.index("- name: Run API 26 Pixel emulator and all instrumentation tests"),
+            workflow.index("- name: Clear API 26 emulator state before API 35 campaign"),
+        )
+        self.assertLess(
+            workflow.index("- name: Clear API 26 emulator state before API 35 campaign"),
+            workflow.index("- name: Run API 35 Pixel emulator and all instrumentation tests"),
+        )
         api35 = steps["Run API 35 Pixel emulator and all instrumentation tests"]
-        self.assertNotRegex(api35, r"(?m)^\s+if:")
+        self.assertIn(always, api35)
         combine = workflow.split("name: Combine API-specific required evidence", 1)[1].split(
             "\n      - name:", 1
         )[0]
@@ -694,6 +981,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "  printf '%s\\n' \"$ANDROID_TEST_API\"\n"
                 "elif [[ \"$1\" == shell && \"$2\" == getprop && \"$3\" == ro.kernel.qemu ]]; then\n"
                 "  printf '1\\n'\n"
+                "elif [[ \"$1 $2 $3 $4 $5\" == 'shell settings get secure default_input_method' ]]; then\n"
+                "  printf 'com.google.android.inputmethod.latin/.LatinIME\\n'\n"
                 "elif [[ \"$1 $2 $3 $4\" == 'shell pm list packages' && \"$5\" == -u ]]; then\n"
                 "  printf '%s' \"$ADB_PACKAGE_INVENTORY\"\n"
                 "  exit \"${ADB_PACKAGE_EXIT_STATUS:-0}\"\n"

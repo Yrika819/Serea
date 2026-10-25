@@ -81,7 +81,7 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build debug, release, and instrumentation APKs
         working-directory: android
-        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleIsolated assembleIsolatedAndroidTest :app:compileBetaKotlin
+        run: ./gradlew --no-daemon assembleDebug assembleRelease assembleIsolated assembleIsolatedAndroidTest :r25-ime-test:assembleDebug :app:compileBetaKotlin
       - name: Android lint
         working-directory: android
         run: ./gradlew --no-daemon lintDebug lintIsolated
@@ -284,76 +284,9 @@ jobs:
             printf 'NOT_RUN\n' > "$root/api$api/process-death-status.txt"
             printf 'NOT_RUN\n' > "$root/api$api/device-api-level.txt"
           done
-      - name: Run API 35 Pixel emulator and all instrumentation tests
-        id: api35
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
-        env:
-          SEREA_DISPOSABLE_CI_EMULATOR: '1'
-        timeout-minutes: 80
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_7
-          emulator-boot-timeout: 900
-          disable-linux-hw-accel: false
-          working-directory: android
-          script: bash ../tools/run_android_api35_campaign.sh
-      - name: Save API 35 failure semantics and safety logcat
-        if: always() && !cancelled()
-        run: |
-          set -euo pipefail
-          output='android/app/build/outputs/androidTest-results/api35/logcat-selected.txt'
-          mkdir -p "$(dirname "$output")"
-          live='android/app/build/outputs/androidTest-results/api35/logcat-live.txt'
-          : > "$output"
-          if [ -f "$live" ]; then
-            grep -E 'SereaFontScale|SereaProfileVerifier|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$live" >> "$output" || true
-          fi
-          serial="$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
-          if [ -n "$serial" ]; then
-            adb -s "$serial" logcat -d -v threadtime -s \
-              font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
-              SereaFontScale SereaCalendarStage \
-              chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
-              chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
-              SereaProcessDeath SereaProfileVerifier AndroidRuntime >> "$output"
-          else
-            printf 'Emulator detached after test step; captured instrumentation logcat is preserved above.\n' >> "$output"
-          fi
-          echo 'Selected API 35 font-scale, Calendar bounds/scroll, and ProfileVerifier runtime evidence:'
-          grep -E 'SereaFontScale|SereaProfileVerifier|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
-      - name: Upload API 35 instrumentation evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: serea-android-instrumentation-api35
-          if-no-files-found: error
-          path: android/app/build/outputs/androidTest-results/api35/
       - name: Install API 26 emulator image
         if: always() && !cancelled()
         run: sdkmanager 'platforms;android-26' 'system-images;android-26;google_apis;x86'
-      - name: Clear API 35 emulator state before API 26 campaign
-        if: always() && !cancelled()
-        run: |
-          set -euo pipefail
-          adb devices -l
-          while IFS= read -r serial; do
-            [ -n "$serial" ] || continue
-            adb -s "$serial" emu kill || true
-          done < <(adb devices | awk '$1 ~ /^emulator-/ { print $1 }')
-          for attempt in $(seq 1 30); do
-            if ! adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
-              break
-            fi
-            sleep 1
-          done
-          if adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
-            echo 'An emulator from the API 35 campaign is still attached.' >&2
-            exit 1
-          fi
-          adb kill-server
-          adb start-server
       - name: Run API 26 Pixel emulator and all instrumentation tests
         id: api26
         if: always() && !cancelled()
@@ -379,13 +312,13 @@ jobs:
           live='android/app/build/outputs/androidTest-results/api26/logcat-live.txt'
           : > "$output"
           if [ -f "$live" ]; then
-            grep -E 'SereaFontScale|SereaProfileVerifier|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$live" >> "$output" || true
+            grep -E 'SereaFontScale|SereaProfileVerifier|SereaComposerIme|SereaRealIme|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$live" >> "$output" || true
           fi
           serial="$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
           if [ -n "$serial" ]; then
             adb -s "$serial" logcat -d -v threadtime -s \
               font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
-              SereaFontScale SereaCalendarStage \
+              SereaFontScale SereaCalendarStage SereaComposerIme SereaRealIme \
               chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
               chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
               SereaProcessDeath SereaProfileVerifier AndroidRuntime >> "$output"
@@ -393,7 +326,7 @@ jobs:
             printf 'Emulator detached after test step; captured instrumentation logcat is preserved above.\n' >> "$output"
           fi
           echo 'Selected API 26 font-scale, Calendar bounds/scroll, and ProfileVerifier runtime evidence:'
-          grep -E 'SereaFontScale|SereaProfileVerifier|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
+          grep -E 'SereaFontScale|SereaProfileVerifier|SereaComposerIme|SereaRealIme|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
       - name: Upload API 26 instrumentation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -401,6 +334,74 @@ jobs:
           name: serea-android-instrumentation-api26
           if-no-files-found: error
           path: android/app/build/outputs/androidTest-results/api26/
+      - name: Clear API 26 emulator state before API 35 campaign
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          adb devices -l
+          while IFS= read -r serial; do
+            [ -n "$serial" ] || continue
+            adb -s "$serial" emu kill || true
+          done < <(adb devices | awk '$1 ~ /^emulator-/ { print $1 }')
+          for attempt in $(seq 1 30); do
+            if ! adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
+              break
+            fi
+            sleep 1
+          done
+          if adb devices | awk '$1 ~ /^emulator-/ { found=1 } END { exit found ? 0 : 1 }'; then
+            echo 'An emulator from the API 26 campaign is still attached.' >&2
+            exit 1
+          fi
+          adb kill-server
+          adb start-server
+      - name: Run API 35 Pixel emulator and all instrumentation tests
+        id: api35
+        if: always() && !cancelled()
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+        timeout-minutes: 80
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          working-directory: android
+          script: bash ../tools/run_android_api35_campaign.sh
+      - name: Save API 35 failure semantics and safety logcat
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          output='android/app/build/outputs/androidTest-results/api35/logcat-selected.txt'
+          mkdir -p "$(dirname "$output")"
+          live='android/app/build/outputs/androidTest-results/api35/logcat-live.txt'
+          : > "$output"
+          if [ -f "$live" ]; then
+            grep -E 'SereaFontScale|SereaProfileVerifier|SereaComposerIme|SereaRealIme|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$live" >> "$output" || true
+          fi
+          serial="$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" { print $1; exit }')"
+          if [ -n "$serial" ]; then
+            adb -s "$serial" logcat -d -v threadtime -s \
+              font-scale-gmail-heading gmail-search-result-timeout gmail-repeat-search-result-timeout \
+              SereaFontScale SereaCalendarStage SereaComposerIme SereaRealIme \
+              chat-draft-gmail-search-timeout chat-demo-label chat-current-delete-confirmation \
+              chat-current-delete-status chat-delete-all-confirmation chat-delete-all-status \
+              SereaProcessDeath SereaProfileVerifier AndroidRuntime >> "$output"
+          else
+            printf 'Emulator detached after test step; captured instrumentation logcat is preserved above.\n' >> "$output"
+          fi
+          echo 'Selected API 35 font-scale, Calendar bounds/scroll, and ProfileVerifier runtime evidence:'
+          grep -E 'SereaFontScale|SereaProfileVerifier|SereaComposerIme|SereaRealIme|SereaCalendarStage.*(TEXT_NOT_FULLY_DISPLAYED|VISIBLE_ITEM|GESTURE_TARGET|GESTURE_RESULT|SWIPE\||SEMANTICS_SCROLL_TO_INDEX)' "$output" || true
+      - name: Upload API 35 instrumentation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-instrumentation-api35
+          if-no-files-found: error
+          path: android/app/build/outputs/androidTest-results/api35/
       - id: instrumentation
         name: Combine API-specific required evidence
         if: always()

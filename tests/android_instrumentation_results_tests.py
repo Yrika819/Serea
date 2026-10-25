@@ -121,6 +121,7 @@ class InstrumentationResultTests(unittest.TestCase):
         repo = Path(__file__).resolve().parents[1]
         required_manifest = repo / "tools/android-instrumentation-required-tests.txt"
         additional_manifest = repo / "tools/android-instrumentation-additional-tests.txt"
+        non_required_manifest = repo / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt"
         required_tests = {
             tuple(line.split("#", 1))
             for line in required_manifest.read_text(encoding="utf-8").splitlines()
@@ -131,9 +132,16 @@ class InstrumentationResultTests(unittest.TestCase):
             for line in additional_manifest.read_text(encoding="utf-8").splitlines()
             if line.strip()
         }
+        non_required_tests = {
+            tuple(line.split("#", 1))
+            for line in non_required_manifest.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        }
         self.assertEqual(103, len(required_tests))
         self.assertEqual(2, len(additional_tests))
         self.assertFalse(required_tests & additional_tests)
+        self.assertEqual(5, len(non_required_tests))
+        self.assertFalse(non_required_tests & (required_tests | additional_tests))
         required: dict[str, int] = {}
         for class_name, _ in required_tests:
             required[class_name] = required.get(class_name, 0) + 1
@@ -164,6 +172,19 @@ class InstrumentationResultTests(unittest.TestCase):
                 )
                 cases.extend(f'<testcase classname="{class_name}" name="{method}"/>' for method in sorted(methods))
 
+            for class_name, methods in {
+                class_name: {method for candidate, method in non_required_tests if candidate == class_name}
+                for class_name, _ in non_required_tests
+            }.items():
+                source = source_root.joinpath(*class_name.split(".")).with_suffix(".kt")
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(
+                    "package " + class_name.rpartition(".")[0] + "\nclass " + class_name.rpartition(".")[2] + " {\n"
+                    + "\n".join(f"@Test fun {method}() {{}}" for method in sorted(methods))
+                    + "\n}\n",
+                    encoding="utf-8",
+                )
+
             suite = results / "TEST-campaign.xml"
             suite.write_text(
                 f'<testsuite tests="105" failures="0" errors="0" skipped="0">'
@@ -175,7 +196,8 @@ class InstrumentationResultTests(unittest.TestCase):
             args = [
                 "python3", str(verifier), str(results), "--minimum", "105", "--exact-count", "105",
                 "--source-root", str(source_root), "--required-test-manifest", str(required_manifest),
-                "--additional-test-manifest", str(additional_manifest), "--required-count", "103",
+                "--additional-test-manifest", str(additional_manifest),
+                "--non-required-test-manifest", str(non_required_manifest), "--required-count", "103",
                 "--additional-count", "2", "--api-level", "35", "--profile-verifier-log", str(profile_log),
             ]
             for class_name, count in required.items():
@@ -185,6 +207,14 @@ class InstrumentationResultTests(unittest.TestCase):
             self.assertIn("Original Required Set: 103/103 PASS", complete.stdout)
             self.assertIn("Additional Tests: 2/2 PASS; total=105", complete.stdout)
             self.assertIn("ProfileVerifier runtime evidence: API 35", complete.stdout)
+
+            unexpected_source = source_root / "a" / "UnlistedDiagnostic.kt"
+            unexpected_source.parent.mkdir(parents=True, exist_ok=True)
+            unexpected_source.write_text("package a\nclass UnlistedDiagnostic { @Test fun unlisted() {} }\n", encoding="utf-8")
+            unlisted = subprocess.run(args, capture_output=True, text=True)
+            self.assertNotEqual(0, unlisted.returncode)
+            self.assertIn("unexpected=", unlisted.stderr)
+            unexpected_source.unlink()
 
             suite.write_text(
                 f'<testsuite tests="104" failures="0" errors="0" skipped="0">'

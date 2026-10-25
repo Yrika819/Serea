@@ -33,7 +33,7 @@ for apk in "$TARGET_APK" "$TEST_APK" "$IME_APK"; do
     test -s "$apk" || { echo "Missing APK: $apk; build :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug first." >&2; exit 2; }
 done
 
-printf 'run_id=%s\napi=%s\ncommit=%s\ntree=%s\ntarget_apk_sha256=%s\ntest_apk_sha256=%s\ntime_apk_sha256=%s\n' \
+printf 'run_id=%s\napi=%s\ncommit=%s\ntree=%s\ntarget_apk_sha256=%s\ntest_apk_sha256=%s\nime_apk_sha256=%s\n' \
     "$RUN_ID" "$API" "$COMMIT" "$TREE" \
     "$(sha256sum "$TARGET_APK" | cut -d' ' -f1)" \
     "$(sha256sum "$TEST_APK" | cut -d' ' -f1)" \
@@ -51,7 +51,7 @@ cleanup() {
     status=$?
     trap - EXIT INT TERM
     set +e
-    if "$ADB" -s "$SERIAL" get-state >/dev/null 2>&1; then
+    if "$ADB" -s "$SERIAL" get-state >/dev/null 2>&1 && [[ -n "$ORIGINAL_IME" ]]; then
         if [[ -n "$ORIGINAL_IME" && "$ORIGINAL_IME" != null ]]; then
             "$ADB" -s "$SERIAL" shell ime set "$ORIGINAL_IME" >>"$OUT/ime-restore.log" 2>&1
         elif [[ "$ORIGINAL_IME" == null ]]; then
@@ -78,8 +78,8 @@ deadline=$((SECONDS + 900))
 while :; do
     boot="$($ADB -s "$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')"
     logboot="$($ADB -s "$SERIAL" shell getprop sys.logbootcomplete 2>/dev/null | tr -d '\r')"
-    font="$($ADB -s "$SERIAL" shell settings get system font_scale 2>/dev/null | tr -d '\r')"
-    ime="$($ADB -s "$SERIAL" shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"
+    font="$($ADB -s "$SERIAL" shell settings get system font_scale 2>/dev/null | tr -d '\r' || true)"
+    ime="$($ADB -s "$SERIAL" shell settings get secure default_input_method 2>/dev/null | tr -d '\r' || true)"
     if [[ ( "$boot" == 1 || "$logboot" == 1 ) && ( "$font" == null || "$font" =~ ^[0-9]+([.][0-9]+)?$ ) && ( "$ime" == null || "$ime" == */* ) ]]; then break; fi
     if (( SECONDS >= deadline )); then echo "API $API emulator boot timed out." >&2; exit 1; fi
     sleep 2

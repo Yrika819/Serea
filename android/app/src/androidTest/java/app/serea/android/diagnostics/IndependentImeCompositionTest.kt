@@ -104,10 +104,18 @@ class IndependentImeCompositionTest {
                 "windowFocus=$hasWindowFocus task=${device.executeShellCommand("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")}")
         }
         if (!hasWindowFocus) {
+            val waitButton = device.findObject(By.text("Wait"))
+            if (waitButton.exists()) {
+                Log.w(TAG, "FOREGROUND_SYSTEM_ANR_DIALOG found=Wait; requesting system UI recovery")
+                waitButton.click()
+                device.waitForIdle(10_000)
+            }
             device.pressHome()
             val target = "$TARGET_PACKAGE/$TARGET_ACTIVITY"
             val launch = device.executeShellCommand("am start -W -n $target")
             Log.i(TAG, "FOREGROUND_START result=$launch")
+            Log.i(TAG, "FOREGROUND_AFTER task=${device.executeShellCommand("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")} " +
+                "focus=${device.executeShellCommand("dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' | tail -2")}")
             assertTrue("UiAutomator could not find the foreground Chat task", device.wait(Until.hasObject(By.pkg(TARGET_PACKAGE)), 15_000))
         }
         compose.waitUntil(20_000) {

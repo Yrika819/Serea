@@ -85,6 +85,8 @@ while :; do
     sleep 2
 done
 ORIGINAL_IME="$ime"
+"$ADB" -s emulator-5554 root >"$OUT/adb-root.log" 2>&1 || true
+timeout 60 "$ADB" -s emulator-5554 wait-for-device || true
 {
     printf 'fingerprint=%s\nfont_scale_setting=%s\nfont_scale_effective=%s\nboot_complete=%s\nlog_boot_complete=%s\ndefault_ime_before=%s\n' \
         "$($ADB -s "$SERIAL" shell getprop ro.build.fingerprint | tr -d '\r')" "$font" "${font/null/1.0}" "$boot" "$logboot" "$ime"
@@ -111,7 +113,8 @@ set +e
 result=${PIPESTATUS[0]}
 set -e
 
-"$ADB" -s "$SERIAL" logcat -d -v threadtime -s SereaImeR25:I SereaRealIme:I AndroidRuntime:E ActivityManager:E InputMethodManagerService:I >"$OUT/logcat.txt"
+"$ADB" -s "$SERIAL" logcat -d -v threadtime >"$OUT/full-logcat.txt"
+rg 'SereaImeR25|SereaRealIme|AndroidRuntime|ActivityManager.*ANR|InputMethodManagerService' "$OUT/full-logcat.txt" >"$OUT/logcat.txt" || true
 "$ADB" -s "$SERIAL" shell dumpsys activity activities >"$OUT/activity-activities.txt" 2>&1 || true
 "$ADB" -s "$SERIAL" shell dumpsys input_method >"$OUT/input-method.txt" 2>&1 || true
 "$ADB" -s "$SERIAL" shell ps -A >"$OUT/processes.txt" 2>&1 || true
@@ -119,4 +122,6 @@ set -e
 "$ADB" -s "$SERIAL" shell cat /proc/pressure/memory >"$OUT/memory-pressure.txt" 2>&1 || true
 "$ADB" -s "$SERIAL" shell ime list -s >"$OUT/ime-list-after.txt"
 "$ADB" -s "$SERIAL" shell ls -l /data/anr >"$OUT/anr-files.txt" 2>&1 || true
+mkdir -p "$OUT/anr"
+"$ADB" -s "$SERIAL" pull /data/anr "$OUT/anr" >"$OUT/anr-pull.txt" 2>&1 || true
 if [[ $result -ne 0 ]] || grep -Eq 'FAILURES!!!|shortMsg=Process crashed\.' "$OUT/instrumentation.txt"; then exit 1; fi

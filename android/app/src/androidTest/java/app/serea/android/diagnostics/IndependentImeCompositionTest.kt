@@ -127,14 +127,18 @@ class IndependentImeCompositionTest {
             }.isSuccess
         }
         pressBack()
+        compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithTag("gmail_list_heading").assertExists() }.isSuccess
+        }
         pressBack()
         compose.waitUntil(10_000) {
-            compose.activity.chatViewModel.state.value.editorValue.text == REPLACEMENT
+            runCatching { compose.onNodeWithTag("chat-composer").assertExists() }.isSuccess &&
+                compose.activity.chatViewModel.state.value.editorValue.text == REPLACEMENT
         }
         assertEquals("Gmail return lost the saved composer caret", TextRange(5, 5), compose.activity.chatViewModel.state.value.editorValue.selection)
+        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
         compose.onNodeWithTag("chat-composer").performClick()
         compose.onNodeWithTag("chat-composer").assertIsFocused()
-        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
         session = awaitImeSession(callbackCount)
         assertTrue("Real IME insertion after Gmail return was rejected", imeCommitText(session, "!"))
         awaitValue("D.gmail-reinserted", session.connectionIdentity) {
@@ -147,11 +151,13 @@ class IndependentImeCompositionTest {
             compose.onAllNodesWithText("DEMO / 架空の予定").fetchSemanticsNodes().isNotEmpty()
         }
         pressBack()
-        compose.onNodeWithTag("chat-composer").assertExists()
+        compose.waitUntil(10_000) {
+            runCatching { compose.onNodeWithTag("chat-composer").assertExists() }.isSuccess
+        }
         assertEquals("Calendar return lost the saved composer caret", TextRange(6, 6), compose.activity.chatViewModel.state.value.editorValue.selection)
+        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
         compose.onNodeWithTag("chat-composer").performClick()
         compose.onNodeWithTag("chat-composer").assertIsFocused()
-        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
         session = awaitImeSession(callbackCount)
         assertTrue("Real IME insertion after Calendar return was rejected", imeCommitText(session, "?"))
         awaitValue("D.calendar-reinserted", session.connectionIdentity) {
@@ -176,12 +182,13 @@ class IndependentImeCompositionTest {
         awaitValue("D.recreation-selection", session.connectionIdentity) { it.selection == TextRange(8, 8) }
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) {
-            compose.activity.chatViewModel.state.value.editorValue.text == "activity preserves cursor" &&
+            runCatching { compose.onNodeWithTag("chat-composer").assertExists() }.isSuccess &&
+                compose.activity.chatViewModel.state.value.editorValue.text == "activity preserves cursor" &&
                 compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
         }
+        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
         compose.onNodeWithTag("chat-composer").performClick()
         compose.onNodeWithTag("chat-composer").assertIsFocused()
-        callbackCount = imeEvents().count { it.contains(" onStartInput restarting=") }
         session = awaitImeSession(callbackCount)
         assertTrue("Real IME insertion after Activity recreation was rejected", imeCommitText(session, "!"))
         awaitValue("D.recreation-reinserted", session.connectionIdentity) {

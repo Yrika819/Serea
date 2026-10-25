@@ -41,7 +41,6 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
@@ -1149,7 +1148,13 @@ class SereaAppShellTest {
             assertTrue(inputConnection.setComposingText("draft survives navigation", 1))
             assertTrue(inputConnection.finishComposingText())
         }
-        compose.waitUntil(5_000) { compose.activity.chatViewModel.state.value.input == "draft survives navigation" }
+        compose.waitUntil(5_000) {
+            compose.activity.chatViewModel.state.value.editorValue.let { value ->
+                value.text == "draft survives navigation" &&
+                    value.composition == null &&
+                    value.selection == TextRange(value.text.length)
+            }
+        }
         composer.performTextInputSelection(TextRange(5, 5))
         compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(5, 5)
@@ -1245,7 +1250,6 @@ class SereaAppShellTest {
         compose.onNodeWithTag("chat-composer").assertIsFocused()
         compose.onNodeWithTag("chat-composer").performTextInput("!")
         assertEquals("activity! preserves cursor", compose.activity.chatViewModel.state.value.input)
-        Espresso.closeSoftKeyboard()
     }
 
     @Test fun navigationDestinationsRemainSemanticallyAvailable() {

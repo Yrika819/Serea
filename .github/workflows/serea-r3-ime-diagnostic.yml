@@ -103,9 +103,13 @@ jobs:
       - id: accel
         name: Apply disposable-runner KVM permissions and verify acceleration
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+          sudo usermod -a -G kvm "$(id -un)"
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          getent group kvm | tee evidence/host/kvm-group-after.txt
           if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
             stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
             echo 'kvm=true' >> "$GITHUB_OUTPUT"
@@ -199,9 +203,13 @@ jobs:
       - id: accel
         name: Apply disposable-runner KVM permissions and verify acceleration
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+          sudo usermod -a -G kvm "$(id -un)"
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          getent group kvm | tee evidence/host/kvm-group-after.txt
           if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
             stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
             echo 'kvm=true' >> "$GITHUB_OUTPUT"
@@ -285,9 +293,13 @@ jobs:
       - id: accel
         name: Apply disposable-runner KVM permissions and verify acceleration
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+          sudo usermod -a -G kvm "$(id -un)"
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          getent group kvm | tee evidence/host/kvm-group-after.txt
           if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
             stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
             echo 'kvm=true' >> "$GITHUB_OUTPUT"
@@ -350,9 +362,13 @@ jobs:
       - id: accel
         name: Apply disposable-runner KVM permissions and verify acceleration
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+          sudo usermod -a -G kvm "$(id -un)"
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          getent group kvm | tee evidence/host/kvm-group-after.txt
           if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
             stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
             echo 'kvm=true' >> "$GITHUB_OUTPUT"

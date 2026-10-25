@@ -1155,6 +1155,14 @@ class SereaAppShellTest {
                     value.selection == TextRange(value.text.length)
             }
         }
+        compose.waitForIdle()
+        composer.assertIsFocused()
+        compose.waitUntil(5_000) {
+            runCatching {
+                composer.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange] ==
+                    TextRange("draft survives navigation".length)
+            }.getOrDefault(false)
+        }
         composer.performTextInputSelection(TextRange(5, 5))
         compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(5, 5)

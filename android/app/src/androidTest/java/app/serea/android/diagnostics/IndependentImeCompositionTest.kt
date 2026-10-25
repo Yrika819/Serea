@@ -45,7 +45,7 @@ class IndependentImeCompositionTest {
 
     @Test fun B_realImeCompositionWithoutSynchronizationBoundaries() {
         focusComposer()
-        val callbackCountBefore = imeEvents().count { it.contains("onStartInput") }
+        val callbackCountBefore = imeEvents().count { it.contains(" onStartInput restarting=") }
         activateRealIme()
         val session = awaitImeSession(callbackCountBefore)
         val connection = session.connectionIdentity
@@ -60,12 +60,12 @@ class IndependentImeCompositionTest {
         compose.activityRule.scenario.onActivity { activity -> log(activity, "B.finish", connection, imeFinishComposingText()) }
         logSemantics("B.finish", connection)
         awaitValue("B.settled", connection) { it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(REPLACEMENT.length) }
-        assertTrue("Android did not start a new input session: ${imeEvents()}", imeEvents().count { it.contains("onStartInput") } > callbackCountBefore)
+        assertTrue("Android did not start a new input session: ${imeEvents()}", imeEvents().count { it.contains(" onStartInput restarting=") } > callbackCountBefore)
     }
 
     @Test fun C_realImeCompositionWithSynchronizationBoundaries() {
         focusComposer()
-        val callbackCountBefore = imeEvents().count { it.contains("onStartInput") }
+        val callbackCountBefore = imeEvents().count { it.contains(" onStartInput restarting=") }
         activateRealIme()
         awaitImeSession(callbackCountBefore)
         val connection = currentImeSession().connectionIdentity
@@ -82,7 +82,7 @@ class IndependentImeCompositionTest {
             log(activity, "C.finish", connection, imeFinishComposingText())
         }
         awaitValue("C.committed", connection) { it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(REPLACEMENT.length) }
-        assertTrue("Android did not start a new input session: ${imeEvents()}", imeEvents().count { it.contains("onStartInput") } > callbackCountBefore)
+        assertTrue("Android did not start a new input session: ${imeEvents()}", imeEvents().count { it.contains(" onStartInput restarting=") } > callbackCountBefore)
     }
 
     private fun focusComposer() {
@@ -113,7 +113,7 @@ class IndependentImeCompositionTest {
         var result: ImeSession? = null
         compose.waitUntil(10_000) {
             result = currentImeSessionOrNull()
-            result != null && imeEvents().count { it.contains("onStartInput") } > callbackCountBefore
+            result != null && imeEvents().count { it.contains(" onStartInput restarting=") } > callbackCountBefore
         }
         assertNotNull("System did not bind test IME; events=${imeEvents()}", result)
         return result!!

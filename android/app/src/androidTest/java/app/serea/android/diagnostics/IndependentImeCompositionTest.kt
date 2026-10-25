@@ -104,10 +104,9 @@ class IndependentImeCompositionTest {
                 "windowFocus=$hasWindowFocus task=${device.executeShellCommand("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")}")
         }
         if (!hasWindowFocus) {
-            val waitButton = device.findObject(By.text("Wait"))
-            if (waitButton.exists()) {
+            if (device.wait(Until.hasObject(By.text("Wait")), 1_000)) {
                 Log.w(TAG, "FOREGROUND_SYSTEM_ANR_DIALOG found=Wait; requesting system UI recovery")
-                waitButton.click()
+                device.findObject(By.text("Wait")).click()
                 device.waitForIdle(10_000)
             }
             device.pressHome()

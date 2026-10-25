@@ -85,7 +85,8 @@ run_case() {
   printf 'method=%s start_utc=%s\n' "$method" "$(date -u +%FT%TZ)" | tee -a "$OUT/method-times.txt"
   # Each B/C case gets a fresh target namespace and a one-use runner marker.
   adb shell pm clear "$TARGET" > "$OUT/$method-pm-clear.txt" 2>&1 || return 1
-  EXPECTED_API_LEVEL="$API" bash "$ROOT/tools/prepare_isolated_instrumentation_target.sh" "$token" > "$OUT/$method-isolated-target-seed.txt" 2>&1 || return 1
+  SEREA_DISPOSABLE_CI_EMULATOR=1 SEREA_EXPECTED_ANDROID_API="$API" EXPECTED_API_LEVEL="$API" \
+    bash "$ROOT/tools/prepare_isolated_instrumentation_target.sh" "$token" > "$OUT/$method-isolated-target-seed.txt" 2>&1 || return 1
   set +e
   timeout --signal=TERM 240s adb shell am instrument -w -r -e class "$CLASS#$method" -e sereaCampaignToken "$token" "$RUNNER" > "$output" 2>&1
   result=$?

@@ -111,7 +111,8 @@ printf 'start_utc=%s\n' "$(date -u +%FT%TZ)" >> "$OUT/case.txt"
 printf 'instrumentation_selector=%s\n' "$SMOKE" >> "$OUT/case.txt"
 CAMPAIGN_TOKEN="serea-r3-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${CASE}-$(date +%s)-${RANDOM}"
 printf 'campaign_token=%s\n' "$CAMPAIGN_TOKEN" >> "$OUT/case.txt"
-EXPECTED_API_LEVEL=35 bash "$ROOT/tools/prepare_isolated_instrumentation_target.sh" "$CAMPAIGN_TOKEN" > "$OUT/isolated-target-seed.txt" 2>&1 || {
+SEREA_DISPOSABLE_CI_EMULATOR=1 SEREA_EXPECTED_ANDROID_API=35 EXPECTED_API_LEVEL=35 \
+  bash "$ROOT/tools/prepare_isolated_instrumentation_target.sh" "$CAMPAIGN_TOKEN" > "$OUT/isolated-target-seed.txt" 2>&1 || {
   echo 'isolated_target_seed=FAIL' >> "$OUT/case.txt"
   exit 13
 }

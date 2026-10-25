@@ -46,7 +46,8 @@ for api in 26 35; do
             fi
             restored_ime="$("$ADB" -s "$serial" shell settings get secure default_input_method | tr -d '\r')"
             printf 'original=%s\nrestored=%s\n' "$original_ime" "$restored_ime" >>"$out/ime-restore.log"
-            if [[ "$restored_ime" != "$original_ime" ]]; then restore_failed=1; fi
+            if [[ "$original_ime" != "null" && "$restored_ime" != "$original_ime" ]]; then restore_failed=1; fi
+            if [[ "$original_ime" == "null" && "$restored_ime" == "$IME_ID" ]]; then restore_failed=1; fi
             "$ADB" -s "$serial" shell ime disable "$IME_ID" >>"$out/ime-restore.log" 2>&1
             "$ADB" -s "$serial" shell ime list -s >"$out/ime-list-restored.txt"
             if grep -Fq "$IME_ID" "$out/ime-list-restored.txt"; then restore_failed=1; fi
@@ -92,7 +93,7 @@ for api in 26 35; do
     token="${run_id}-$(date +%s%N)"
     "$ADB" -s "$serial" shell run-as app.serea.android.isolated mkdir -p no_backup
     "$ADB" -s "$serial" shell "run-as app.serea.android.isolated sh -c 'printf %s $token > no_backup/serea-instrumentation-token'"
-    "$ADB" -s "$serial" logcat -c
+    "$ADB" -s "$serial" logcat -c >/dev/null 2>&1 || true
     set +e
     "$ADB" -s "$serial" shell am instrument -w -r \
         -e sereaCampaignToken "$token" \

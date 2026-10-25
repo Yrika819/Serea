@@ -116,6 +116,7 @@ class ProcessDeathHarnessReceiver : BroadcastReceiver() {
         val updateCompatibilityPhase = context.packageName == UPDATE_COMPAT_PACKAGE &&
             phase in UPDATE_COMPAT_PHASES
         val expectedPackage = when (phase) {
+            "campaign-seed-and-claim" -> PERSONAL_BETA_PACKAGE
             "seed-sentinel", "verify-sentinel" -> DEBUG_DEMO_PACKAGE
             "campaign-seed", "process-death-seed", "campaign-consume", "prepare", "verify", "delete-all", "verify-empty", "task-prepare", "task-verify" -> ISOLATED_PACKAGE
             else -> error("Unknown harness phase")

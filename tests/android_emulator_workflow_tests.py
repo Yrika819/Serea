@@ -660,6 +660,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                         phases.index("claimInstrumentationMarker(context, token)"))
         self.assertIn('"campaign-seed-and-claim"', personal_beta_allowlist)
         self.assertIn('"campaign-consume"', personal_beta_allowlist)
+        target_package_mapping = receiver.split("val expectedPackage = when (phase) {", 1)[1].split("}", 1)[0]
+        self.assertIn('"campaign-seed-and-claim" -> PERSONAL_BETA_PACKAGE', target_package_mapping)
         self.assertLess(script_seed, script_consume)
         self.assertIn('check(!claimedMarker.exists())', receiver)
         self.assertIn('check(!authorization.exists())', receiver)

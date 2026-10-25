@@ -1252,6 +1252,12 @@ class SereaAppShellTest {
         }
         composer.performTextInputSelection(TextRange(8, 8))
         compose.waitUntil(5_000) {
+            runCatching {
+                composer.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange] ==
+                    TextRange(8, 8)
+            }.getOrDefault(false)
+        }
+        compose.waitUntil(5_000) {
             compose.activity.chatViewModel.state.value.editorValue.selection == TextRange(8, 8)
         }
         assertEquals(TextRange(8, 8), compose.activity.chatViewModel.state.value.editorValue.selection)

@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class RealImeDiagnosticsProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 
+    override fun call(method: String, arg: String?, extras: Bundle?): Bundle? = callInternal(method, extras)
+
     @Suppress("DEPRECATION")
     override fun call(method: String, arg: String, authority: String?, extras: Bundle?): Bundle? = callInternal(method, extras)
 

@@ -1,0 +1,9 @@
+# Candidate D Phase R3 real IME diagnostic
+
+This is a focused, non-Required diagnostic workflow. It builds the isolated target, instrumentation APK, and separately packaged test IME once, then uploads the APKs with SHA-256 provenance. The target and test-only service use synthetic composer fixtures only.
+
+The workflow runs on pushes to `codex/serea-phase-r3-api35-ime` or by manual dispatch. The startup matrix uses fresh hosted API 35 emulators for: no test IME, test IME installed but disabled, enabled but not selected, and selected. Each emulator runner records host CPU/memory/quota, `/dev/kvm` access, emulator acceleration/version, guest pressure, boot properties, logcat, process state, `dumpsys`, and available ANR traces. Lack of readable/writable KVM or a successful emulator acceleration check marks the run blocked; software emulation is not treated as a normal API 35 result.
+
+API 35 real-IME B/C only starts after a no-IME startup smoke method completes. It uses the same uploaded APK artifacts for both cases, records IME/EditorInfo/session and Compose lifecycle output, restores the previous IME selection, and disables the test IME before the disposable emulator exits. API 26 B/C then uses those exact artifacts when the API 35 smoke reached a test method. Focused Instrumentation output and a JUnit XML summary are uploaded for each case, including runner crash/ANR outcomes.
+
+The workflow does not run or modify the formal Required Gate, its test set, skip policy, thresholds, or failure criteria. It does not signify Personal Beta approval. Navigation/activity recreation remains a separate follow-up after both API levels pass real-IME B/C.

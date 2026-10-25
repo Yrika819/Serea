@@ -29,6 +29,9 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
         result.putString("connectionIdentity", RealImeService.identity(connection));
         result.putLong("session", service == null ? 0 : service.getInputSessionId());
         result.putString("editorPackage", service == null ? "none" : service.currentEditorPackage);
+        result.putInt("inputType", service == null ? android.view.inputmethod.InputType.TYPE_NULL : service.currentInputType);
+        result.putInt("fieldId", service == null ? -1 : service.currentFieldId);
+        result.putString("fieldName", service == null ? "null" : service.currentFieldName);
         result.putStringArrayList("events", new ArrayList<>(RealImeService.events));
         if ("setComposingText".equals(method)) {
             final String text = extras == null ? null : extras.getString("text");

@@ -124,17 +124,14 @@ class IndependentImeCompositionTest {
             hasWindowFocus
         }
         val node = compose.onNodeWithTag("chat-composer").fetchSemanticsNode()
-        var rootLocation = IntArray(2)
         compose.activityRule.scenario.onActivity { activity ->
-            val view: View = activity.window.decorView.findFocus() ?: activity.window.decorView
-            view.getLocationOnScreen(rootLocation)
-            val rect = node.boundsInRoot
-            val x = (rootLocation[0] + rect.center.x).toInt()
-            val y = (rootLocation[1] + rect.center.y).toInt()
-            Log.i(TAG, "FOREGROUND_TAP activity=${objectIdentity(activity)} task=${device.executeShellCommand("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")}" +
-                " bounds=${rect.left},${rect.top},${rect.right},${rect.bottom} screen=${rootLocation[0]},${rootLocation[1]} target=$x,$y windowFocus=${activity.window.decorView.hasWindowFocus()}")
+            val editors = device.findObjects(By.clazz("android.widget.EditText"))
+            Log.i(TAG, "FOREGROUND_ACCESSIBILITY_EDITORS count=${editors.size} bounds=${editors.map { it.visibleBounds }} " +
+                "composerBounds=${node.boundsInRoot} display=${device.displayWidth}x${device.displayHeight} " +
+                "activity=${objectIdentity(activity)} windowFocus=${activity.window.decorView.hasWindowFocus()}")
             assertTrue("Chat Activity must own Android Window Focus before composer tap", activity.window.decorView.hasWindowFocus())
-            assertTrue("Composer tap missed the display", device.click(x, y))
+            assertNotNull("UiAutomator did not expose the Composer EditText", editors.firstOrNull())
+            editors.first().click()
         }
         compose.onNodeWithTag("chat-composer").assertIsFocused()
         compose.waitForIdle()
@@ -159,7 +156,15 @@ class IndependentImeCompositionTest {
         return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }.trim()
     }
 
-    private data class ImeSession(val serviceIdentity: String, val connectionIdentity: String, val session: Long, val editorPackage: String)
+    private data class ImeSession(
+        val serviceIdentity: String,
+        val connectionIdentity: String,
+        val session: Long,
+        val editorPackage: String,
+        val inputType: Int,
+        val fieldId: Int,
+        val fieldName: String,
+    )
 
     private fun awaitImeSession(callbackCountBefore: Int): ImeSession {
         var result: ImeSession? = null
@@ -181,12 +186,17 @@ class IndependentImeCompositionTest {
             requireNotNull(bundle.getString("connectionIdentity")),
             bundle.getLong("session"),
             requireNotNull(bundle.getString("editorPackage")),
+            bundle.getInt("inputType"),
+            bundle.getInt("fieldId"),
+            requireNotNull(bundle.getString("fieldName")),
         )
         assertEquals("IME EditorInfo.packageName does not identify the isolated Chat target", TARGET_PACKAGE, session.editorPackage)
         assertTrue("IME session generation must be positive", session.session > 0)
         assertTrue("IME session must expose an active connection", session.connectionIdentity != "null")
+        assertTrue("IME EditorInfo must identify a text editor, not a generic focused view: $session", session.inputType != android.view.inputmethod.InputType.TYPE_NULL)
         Log.i(TAG, "REAL_IME_SESSION service=${session.serviceIdentity} generation=${session.session} " +
-            "connection=${session.connectionIdentity} editorPackage=${session.editorPackage}")
+            "connection=${session.connectionIdentity} editorPackage=${session.editorPackage} inputType=${session.inputType} " +
+            "fieldId=${session.fieldId} fieldName=${session.fieldName}")
         return session
     }
 

@@ -5,6 +5,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputType;
 import android.widget.TextView;
 
 import java.util.List;
@@ -16,6 +17,9 @@ public final class RealImeService extends InputMethodService {
     public static final List<String> events = new CopyOnWriteArrayList<>();
     public static volatile RealImeService active;
     public volatile String currentEditorPackage = "none";
+    public volatile int currentInputType = InputType.TYPE_NULL;
+    public volatile int currentFieldId = -1;
+    public volatile String currentFieldName = "null";
     private long session;
 
     public long getInputSessionId() {
@@ -53,6 +57,9 @@ public final class RealImeService extends InputMethodService {
         super.onStartInput(attribute, restarting);
         session++;
         currentEditorPackage = attribute == null ? "null" : String.valueOf(attribute.packageName);
+        currentInputType = attribute == null ? InputType.TYPE_NULL : attribute.inputType;
+        currentFieldId = attribute == null ? -1 : attribute.fieldId;
+        currentFieldName = attribute == null ? "null" : String.valueOf(attribute.fieldName);
         record("onStartInput restarting=" + restarting + " session=" + session
                 + " package=" + (attribute == null ? "null" : attribute.packageName)
                 + " fieldId=" + (attribute == null ? -1 : attribute.fieldId)
@@ -65,6 +72,9 @@ public final class RealImeService extends InputMethodService {
     @Override public void onFinishInput() {
         record("onFinishInput session=" + session);
         currentEditorPackage = "none";
+        currentInputType = InputType.TYPE_NULL;
+        currentFieldId = -1;
+        currentFieldName = "null";
         super.onFinishInput();
     }
 

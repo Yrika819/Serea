@@ -49,7 +49,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
 import app.serea.android.assistant.taskproposal.TaskProposalDemoScreenForTest
+import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.calendar.FakeCalendarProvider
+import app.serea.android.gmail.GmailProviderKind
 import app.serea.android.calendar.ui.CalendarAgendaItemsKey
 import app.serea.android.calendar.ui.CalendarLazyListPositionKey
 import app.serea.android.calendar.ui.CalendarLazyListViewportKey
@@ -1122,6 +1124,7 @@ class SereaAppShellTest {
     }
 
     @Test fun chatGmailBackShowsOnlyFictionalMailboxData() {
+        assertEquals(GmailProviderKind.FAKE, compose.activity.shellProviders.gmail.kind)
         select(SereaDestination.GMAIL)
         compose.onNodeWithText("DEMO / 架空のメール — 実アカウントには接続していません").assertIsDisplayed()
         compose.waitUntil(10_000) {
@@ -1183,6 +1186,7 @@ class SereaAppShellTest {
     }
 
     @Test fun chatCalendarBackShowsFictionalAgendaAndDetail() {
+        assertEquals(CalendarProviderKind.FAKE, compose.activity.shellProviders.calendar.kind)
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.onNodeWithText("DEMO / 架空の予定").assertIsDisplayed()

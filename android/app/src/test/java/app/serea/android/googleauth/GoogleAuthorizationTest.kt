@@ -42,6 +42,7 @@ class GoogleAuthorizationTest {
         val leases = mutableListOf<AccessTokenLease>()
         val gateway = object : GoogleAuthorizationGateway {
             override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "calendar-fixture-session"
             override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
                 GoogleServiceState.AVAILABLE,
                 scopes.associateWith { ScopePermission.GRANTED },
@@ -49,7 +50,8 @@ class GoogleAuthorizationTest {
             override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
                 assertEquals(GoogleFeature.CALENDAR, feature)
                 requestedScopes += scopes
-                val lease = AccessTokenLease("fixture-calendar-token", scopes, null)
+                val lease = AccessTokenLease("fixture-calendar-token", scopes, null,
+                    authorizationSessionId = authorizationSessionId)
                 leases += lease
                 return TokenSupplyResult.Available(lease)
             }
@@ -72,6 +74,7 @@ class GoogleAuthorizationTest {
         var tokenRequests = 0
         val gateway = object : GoogleAuthorizationGateway {
             override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "calendar-disable-fixture-session"
             override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
                 GoogleServiceState.AVAILABLE,
                 scopes.associateWith { ScopePermission.GRANTED },
@@ -80,7 +83,8 @@ class GoogleAuthorizationTest {
             override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
                 tokenRequests++
                 if (!isEnabledInApp(feature)) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
-                return TokenSupplyResult.Available(AccessTokenLease("fixture-calendar-token", scopes, null))
+                return TokenSupplyResult.Available(AccessTokenLease("fixture-calendar-token", scopes, null,
+                    authorizationSessionId = authorizationSessionId))
             }
         }
         val adapter = GoogleCalendarAuthorizationAdapter(gateway)
@@ -144,7 +148,12 @@ class GoogleAuthorizationTest {
 
     @Test fun accountSwitchClearsTheOldAccountGrant() = runBlocking {
         val fake = FakeGoogleAuthorizationGateway(both)
+        val authorized = fake.authorize(both) as AuthorizationOutcome.Authorized
+        val firstSession = fake.authorizationSessionId
         fake.switchAccount()
+        assertTrue(firstSession != fake.authorizationSessionId)
+        assertTrue(runCatching { authorized.lease.useToken { it } }.isFailure)
+        assertEquals(AuthorizationFailure.ACCOUNT_CHANGED, fake.status(both).failure)
         assertEquals(AuthorizationOutcome.Rejected(AuthorizationFailure.ACCOUNT_CHANGED), fake.authorize(both))
         assertEquals(AuthorizationOutcome.ConsentRequired(both), fake.authorize(both))
     }

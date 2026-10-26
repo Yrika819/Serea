@@ -1,0 +1,199 @@
+name: Android Functional Focused (Non-Required)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/serea-personal-beta-functional-integration]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-functional-focused-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider-unit:
+    name: Provider sessions and source binding (focused unit tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Run provider session and UI source-boundary tests
+        working-directory: android
+        run: >-
+          ./gradlew --no-daemon :app:testDebugUnitTest
+          --tests '*CalendarProviderSessionsTest'
+          --tests '*GoogleCalendarHttpReadPortTest'
+          --tests '*GmailProviderSessionsTest'
+          --tests '*GmailHttpReadPortTest'
+          --tests '*GoogleAuthorizationTest'
+          --tests '*CalendarAgendaUiControllerTest'
+          --tests '*GmailViewModelTest'
+      - name: Verify focused unit JUnit results
+        run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
+      - name: Upload focused unit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-functional-provider-unit
+          if-no-files-found: warn
+          retention-days: 14
+          path: android/app/build/test-results/testDebugUnitTest/
+
+  api26-focused:
+    name: API 26 app-shell Fake Gmail and Calendar E2E
+    needs: provider-unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      API_LEVEL: '26'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Boot API 26 disposable Emulator and run focused app-shell tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 26
+          target: google_apis
+          arch: x86
+          profile: pixel_2
+          disable-animations: true
+          working-directory: android
+          script: |
+            set -u
+            evidence="app/build/outputs/androidTest-results/functional-api${API_LEVEL}"
+            mkdir -p "$evidence"
+            filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail'
+            {
+              echo "source_sha=$(git rev-parse HEAD)"
+              echo "api_level=$API_LEVEL"
+              echo "device_sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+              echo "device_fingerprint=$(adb shell getprop ro.build.fingerprint | tr -d '\r')"
+              echo "boot_completed=$(adb shell getprop sys.boot_completed | tr -d '\r')"
+              echo "default_ime=$(adb shell settings get secure default_input_method | tr -d '\r')"
+              echo "test_filter=$filter"
+            } > "$evidence/environment.txt"
+            capture() {
+              adb logcat -d -b all > "$evidence/logcat.txt" 2>&1 || true
+              adb shell dumpsys input_method > "$evidence/input-method.txt" 2>&1 || true
+              adb shell settings get secure default_input_method > "$evidence/default-ime-after.txt" 2>&1 || true
+            }
+            trap capture EXIT
+            set +e
+            ./gradlew --no-daemon \
+              -Pandroid.testInstrumentationRunnerArguments.class="$filter" \
+              connectedIsolatedAndroidTest > "$evidence/gradle.log" 2>&1
+            gradle_status=$?
+            set -e
+            echo "$gradle_status" > "$evidence/gradle-exit-code.txt"
+            if [ -d app/build/outputs/androidTest-results/connected ]; then
+              cp -R app/build/outputs/androidTest-results/connected "$evidence/junit"
+            fi
+            if [ -d "$evidence/junit" ]; then
+              python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
+                --minimum 3 --exact-count 3 \
+                --require-test app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData \
+                --require-test app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures \
+                --require-test app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail \
+                > "$evidence/verification.log" 2>&1
+              verify_status=$?
+            else
+              verify_status=1
+              echo 'Instrumentation JUnit output directory was not created.' > "$evidence/verification.log"
+            fi
+            echo "$verify_status" > "$evidence/verification-exit-code.txt"
+            test "$gradle_status" -eq 0 && test "$verify_status" -eq 0
+      - name: Upload API 26 focused evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-functional-api26-focused
+          if-no-files-found: warn
+          retention-days: 14
+          path: android/app/build/outputs/androidTest-results/functional-api26/
+
+  api35-focused:
+    name: API 35 app-shell Fake Gmail and Calendar E2E
+    needs: api26-focused
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      API_LEVEL: '35'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Boot API 35 disposable Emulator and run focused app-shell tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          working-directory: android
+          script: |
+            set -u
+            evidence="app/build/outputs/androidTest-results/functional-api${API_LEVEL}"
+            mkdir -p "$evidence"
+            filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail'
+            {
+              echo "source_sha=$(git rev-parse HEAD)"
+              echo "api_level=$API_LEVEL"
+              echo "device_sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+              echo "device_fingerprint=$(adb shell getprop ro.build.fingerprint | tr -d '\r')"
+              echo "boot_completed=$(adb shell getprop sys.boot_completed | tr -d '\r')"
+              echo "default_ime=$(adb shell settings get secure default_input_method | tr -d '\r')"
+              echo "test_filter=$filter"
+            } > "$evidence/environment.txt"
+            capture() {
+              adb logcat -d -b all > "$evidence/logcat.txt" 2>&1 || true
+              adb shell dumpsys input_method > "$evidence/input-method.txt" 2>&1 || true
+              adb shell settings get secure default_input_method > "$evidence/default-ime-after.txt" 2>&1 || true
+            }
+            trap capture EXIT
+            set +e
+            ./gradlew --no-daemon \
+              -Pandroid.testInstrumentationRunnerArguments.class="$filter" \
+              connectedIsolatedAndroidTest > "$evidence/gradle.log" 2>&1
+            gradle_status=$?
+            set -e
+            echo "$gradle_status" > "$evidence/gradle-exit-code.txt"
+            if [ -d app/build/outputs/androidTest-results/connected ]; then
+              cp -R app/build/outputs/androidTest-results/connected "$evidence/junit"
+            fi
+            if [ -d "$evidence/junit" ]; then
+              python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
+                --minimum 3 --exact-count 3 \
+                --require-test app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData \
+                --require-test app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures \
+                --require-test app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail \
+                > "$evidence/verification.log" 2>&1
+              verify_status=$?
+            else
+              verify_status=1
+              echo 'Instrumentation JUnit output directory was not created.' > "$evidence/verification.log"
+            fi
+            echo "$verify_status" > "$evidence/verification-exit-code.txt"
+            test "$gradle_status" -eq 0 && test "$verify_status" -eq 0
+      - name: Upload API 35 focused evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-functional-api35-focused
+          if-no-files-found: warn
+          retention-days: 14
+          path: android/app/build/outputs/androidTest-results/functional-api35/

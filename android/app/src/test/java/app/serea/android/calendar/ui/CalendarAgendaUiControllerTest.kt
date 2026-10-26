@@ -301,7 +301,7 @@ class CalendarAgendaUiControllerTest {
         ).forEach { it.close() }
     }
 
-    @Test fun realAuthorizationOrRealSourcedRecordsAreRejectedByTheMockScreen() = runTest {
+    @Test fun authorizedSessionAcceptsOnlyGoogleCalendarSourcedRecords() = runTest {
         val sourceEvent = timedEvent("demo", "source-check", "2026-10-20T13:00:00Z", "2026-10-20T14:00:00Z")
         val provider = fakeProvider(listOf(calendar("demo")), listOf(sourceEvent))
         val authorized = CalendarAgendaUiFake(
@@ -310,21 +310,33 @@ class CalendarAgendaUiControllerTest {
         )
         val authorizedController = CalendarAgendaUiController(authorized, authorized, UI_TEST_CLOCK, ZoneId.of("UTC"), this)
         advanceUntilIdle()
-        assertFailure(authorizedController, CalendarAgendaFailure.MOCK_ONLY_REQUIRED)
+        assertFailure(authorizedController, CalendarAgendaFailure.INVALID_RESPONSE)
 
         val realSourcedEvent = sourceEvent.copy(source = app.serea.android.calendar.CalendarEventSource.GOOGLE_CALENDAR_API)
         val realSourceProvider = fakeProvider(listOf(calendar("demo")), listOf(realSourcedEvent))
-        val mockAuthorization = CalendarAgendaUiFake(realSourceProvider)
-        val realSourceController = CalendarAgendaUiController(
-            mockAuthorization, mockAuthorization, UI_TEST_CLOCK, ZoneId.of("UTC"), this,
+        val authorizedReal = CalendarAgendaUiFake(
+            realSourceProvider,
+            CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED),
         )
+        val realSourceController = CalendarAgendaUiController(authorizedReal, authorizedReal, UI_TEST_CLOCK, ZoneId.of("UTC"), this)
         advanceUntilIdle()
-        assertFailure(realSourceController, CalendarAgendaFailure.MOCK_ONLY_REQUIRED)
+        assertEquals(listOf("source-check"), agenda(realSourceController).events.map { it.key.eventId.value })
+        assertFalse(agenda(realSourceController).mockOnly)
         realSourceController.openEvent(realSourcedEvent.key)
         advanceUntilIdle()
-        assertFailure(realSourceController, CalendarAgendaFailure.MOCK_ONLY_REQUIRED)
+        val detail = realSourceController.state.value as CalendarAgendaUiState.EventDetail
+        assertEquals("source-check", detail.event.key.eventId.value)
+        assertFalse(detail.mockOnly)
+
+        val mismatchedAuthorization = CalendarAgendaUiFake(realSourceProvider)
+        val mismatchedController = CalendarAgendaUiController(
+            mismatchedAuthorization, mismatchedAuthorization, UI_TEST_CLOCK, ZoneId.of("UTC"), this,
+        )
+        advanceUntilIdle()
+        assertFailure(mismatchedController, CalendarAgendaFailure.INVALID_RESPONSE)
         authorizedController.close()
         realSourceController.close()
+        mismatchedController.close()
     }
 
     @Test fun timeoutPartialFailureRateLimitAndUnknownTimezoneMapToSafeStates() = runTest {

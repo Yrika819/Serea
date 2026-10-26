@@ -55,6 +55,8 @@ import androidx.compose.ui.unit.dp
 import app.serea.android.calendar.CalendarDescriptor
 import app.serea.android.calendar.CalendarEvent
 import app.serea.android.calendar.CalendarEventKey
+import app.serea.android.calendar.CalendarAuthorizationPort
+import app.serea.android.calendar.CalendarReadPort
 import app.serea.android.calendar.CalendarId
 import app.serea.android.calendar.EventTime
 import app.serea.android.calendar.FakeCalendarProvider
@@ -91,15 +93,16 @@ internal val CalendarAgendaItemsKey =
     SemanticsPropertyKey<CalendarAgendaItemsSnapshot>("CalendarAgendaItems")
 
 /**
- * Independent navigation entry point for the read-only Calendar demo.
- * The provider type is deliberately FakeCalendarProvider: this UI cannot start OAuth or select
- * the Google HTTP adapter. Navigation can call this from any host destination.
+ * Independent navigation entry point for read-only Calendar. The composition root supplies
+ * session-bound ports; this screen never creates authorization or network adapters.
  */
 @Composable
 fun CalendarAgendaScreen(
     onBack: () -> Unit,
-    provider: FakeCalendarProvider = remember { FakeCalendarProvider() },
-    clock: Clock = provider.clock,
+    provider: CalendarReadPort = remember { FakeCalendarProvider() },
+    authorizationPort: CalendarAuthorizationPort = provider as? CalendarAuthorizationPort
+        ?: error("Calendar provider must expose its authorization port."),
+    clock: Clock = (provider as? FakeCalendarProvider)?.clock ?: Clock.systemUTC(),
     displayZone: ZoneId = ZoneId.systemDefault(),
     modifier: Modifier = Modifier,
 ) {
@@ -134,7 +137,7 @@ fun CalendarAgendaScreen(
     val controller = remember(provider, clock, displayZone) {
         CalendarAgendaUiController(
             readPort = provider,
-            authorizationPort = provider,
+            authorizationPort = authorizationPort,
             clock = clock,
             displayZone = displayZone,
             scope = scope,
@@ -147,6 +150,12 @@ fun CalendarAgendaScreen(
         onDispose { controller.close() }
     }
     val state by controller.state.collectAsState()
+    val isDemoProvider = when (state) {
+        is CalendarAgendaUiState.Agenda -> (state as CalendarAgendaUiState.Agenda).mockOnly
+        is CalendarAgendaUiState.EventDetail -> (state as CalendarAgendaUiState.EventDetail).mockOnly
+        is CalendarAgendaUiState.Failure -> (state as CalendarAgendaUiState.Failure).mockOnly
+        is CalendarAgendaUiState.Loading -> true
+    }
     var previousAgendaScope by remember { mutableStateOf(state.query to state.selectedCalendarId) }
     LaunchedEffect(state.query, state.selectedCalendarId) {
         val currentScope = state.query to state.selectedCalendarId
@@ -204,9 +213,13 @@ fun CalendarAgendaScreen(
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
-                    "DEMO / 架空の予定",
+                    if (isDemoProvider) "DEMO / 架空の予定" else "Google Calendar · 読み取り専用",
                     modifier = Modifier.semantics {
-                        contentDescription = "DEMO / 架空の予定。Google Calendarには接続していません。"
+                        contentDescription = if (isDemoProvider) {
+                            "DEMO / 架空の予定。Google Calendarには接続していません。"
+                        } else {
+                            "Google Calendarから取得した読み取り専用の予定です。"
+                        }
                         heading()
                     },
                     style = MaterialTheme.typography.labelLarge,
@@ -214,7 +227,10 @@ fun CalendarAgendaScreen(
                     fontWeight = FontWeight.Bold,
                 )
             }
-            Text("デモのみ · Google Calendar未接続", style = MaterialTheme.typography.labelMedium)
+            Text(
+                if (isDemoProvider) "デモのみ · Google Calendar未接続" else "Google Calendarから取得 · 変更はできません",
+                style = MaterialTheme.typography.labelMedium,
+            )
 
             if (!inDetail) {
                 val onMode: (CalendarAgendaMode) -> Unit = { mode ->

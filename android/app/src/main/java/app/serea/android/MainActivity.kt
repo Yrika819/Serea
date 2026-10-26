@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity() {
     }
     internal val shellCredentials: CredentialRepository get() = credentials
     internal val shellUsage: UsageRepository get() = usage
+    internal val shellProviders: AppProviderComposition by lazy { AppProviderComposition.fakeDefault() }
     internal val chatViewModel: ChatViewModel by viewModels {
         ChatViewModel.factory(MockModelChatPort(), history, usage)
     }
@@ -118,7 +119,17 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState != null || chatViewModel.isActivitySelectionRestorePending()) {
             chatViewModel.beginActivitySelectionRestore(this)
         }
-        setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
+        setContent {
+            SereaTheme {
+                SereaAppShell(
+                    chatViewModel,
+                    credentials,
+                    usage,
+                    shellTaskViewModel,
+                    providers = shellProviders,
+                )
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -131,6 +142,11 @@ class MainActivity : ComponentActivity() {
         }
         decorView.findFocus()?.clearFocus()
         super.onSaveInstanceState(outState)
+    }
+
+    override fun onDestroy() {
+        shellProviders.close()
+        super.onDestroy()
     }
 }
 

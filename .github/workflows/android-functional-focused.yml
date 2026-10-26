@@ -42,6 +42,8 @@ jobs:
           --tests '*SecurityPortsTest'
           --tests '*ChatViewModelTest'
           --tests '*UsageLedgerCostTest'
+          --tests '*GoogleOriginEgressAdversarialTest'
+          --tests '*LocalFakeRoutingAdversarialTest'
       - name: Verify focused unit JUnit results
         run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
       - name: Upload focused unit evidence

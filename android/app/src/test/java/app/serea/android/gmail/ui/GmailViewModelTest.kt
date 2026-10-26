@@ -76,6 +76,7 @@ class GmailViewModelTest {
         advanceUntilIdle()
         assertEquals(GmailUiErrorCode.INVALID_DATA, rejectedViewModel.state.value.listError)
         assertTrue(rejectedViewModel.state.value.messages.isEmpty())
+        assertEquals("An authorized source mismatch is read then rejected, not treated as a denied grant.", listOf(null), mismatched.inboxTokens)
     }
 
     @Test fun emptyInboxIsAStableEmptyState() = runTest(mainDispatcher.dispatcher) {
@@ -457,13 +458,12 @@ class GmailViewModelTest {
         assertNull(viewModel.state.value.thread)
     }
 
-    @Test fun authorizationBoundariesCoverDeniedMissingScopeExpiredRevokedAndSourceMismatch() = runTest(mainDispatcher.dispatcher) {
+    @Test fun authorizationBoundariesCoverDeniedMissingScopeExpiredAndRevokedWithoutReadingMailbox() = runTest(mainDispatcher.dispatcher) {
         val expected = listOf(
             GmailAuthorizationStatus(GmailAuthorizationState.DENIED) to GmailUiErrorCode.AUTHORIZATION_DENIED,
             GmailAuthorizationStatus(GmailAuthorizationState.REVOKED) to GmailUiErrorCode.AUTHORIZATION_REVOKED,
             GmailAuthorizationStatus(GmailAuthorizationState.EXPIRED) to GmailUiErrorCode.AUTHORIZATION_EXPIRED,
             GmailAuthorizationStatus(GmailAuthorizationState.MOCK_ONLY, setOf("gmail.readonly")) to GmailUiErrorCode.MISSING_SCOPE,
-            GmailAuthorizationStatus(GmailAuthorizationState.AUTHORIZED) to GmailUiErrorCode.INVALID_DATA,
         )
         for ((status, error) in expected) {
             val fake = GmailUiTestFake(authorization = status)

@@ -1020,7 +1020,8 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
             .expect("execute explicit fake Router call correlated to Task");
         assert!(
             result.status.success(),
-            "Task model call {index} failed: stdout={} stderr={}",
+            "Task model call {index} failed: status={:?} stdout={} stderr={}",
+            result.status,
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         );

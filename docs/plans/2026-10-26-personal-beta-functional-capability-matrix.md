@@ -204,24 +204,55 @@ No product code, assertions, exact 26-test selection, JUnit thresholds, APK hash
 
 ### Authoritative continuation checkpoint
 
-- `ACTIVE_PHASE`: F5-R3 — focused closure after SDK setup repair.
-- `GOAL_STATUS`: `PARTIAL`; R7-aligned retry failed before API 26 emulator startup because the emulator executable had not been installed before KVM checks.
-- `AUTHORITY_SHA`: pushed Lane A implementation source `9fe677afd067c38b4d2c5c8f64b341ed449aede7`, tree `cd9b9624ca34260c49d2966640148c8975ff17b2`. GitHub's branch was verified at `4807004109bf28743628acf0839f43bd1c1ae372` immediately before its fast-forward push; there was no remote divergence. The SDK-order correction is in progress locally.
+- `ACTIVE_PHASE`: F5-R3 — Focused closure on the SDK/KVM ordering repair.
+- `GOAL_STATUS`: `PARTIAL`; code and SDK setup repair pushed, serial Focused CI is running.
+- `AUTHORITY_SHA`: Lane A `c2dca572c63d01f78def7b2e8a03d7ba390937ab`, tree `3c287677e6efae6e0dae6dad51e52ef4d0d43138`. This is a fast-forward from the prior GitHub head `9fe677afd067c38b4d2c5c8f64b341ed449aede7`.
 - `LAST_GOOD_SHA`: frozen PR #117 Required baseline `151ea9d66d32de01b195f4262beb67516823c281`; on functional source `613b338`, JVM 199/199 and API 26 26/26 passed, while API 35 was 23/26.
 - `WORKTREE`: `/workspace/Serea-functional`.
 - `BRANCH`: `codex/serea-personal-beta-functional-integration`.
 - `DRAFT_PR`: none yet; create only after API 26/35 Focused, JVM and Release/Security Focused evidence is green on the final implementation source.
-- `CI_RUN_IDS`: `40292160073` (API 35 23/26); `40302869638` (API 26 KVM preflight failed before tests; API 35 skipped); Release/SBOM `40292159906` pass on `613b338`; Release/Security Focused `40302986216` pass on `9fe677a`.
-- `ARTIFACT_IDS`: API 35 functional failure `12638184404`; prior API 26 pass `12636937651`; prior JVM pass `12636815276`; Release/SBOM `12635419779`; Release/Security Focused `12641396630`. Run `40302869638` preserved only provider unit artifact `12641596404`; no API 26 artifact was created because the runner step failed before creating the evidence directory.
-- `API26_RESULT`: last completed API Focused result is PASS 26/26, 0 failures/errors/skips on `613b338`; latest `9fe677a` attempt is NOT_RUN (KVM preflight failed before Emulator startup, JUnit=0).
-- `API35_RESULT`: last completed API Focused result is FAIL 23/26, 3 failures, 0 errors/skips on `613b338`; latest `9fe677a` job is NOT_RUN because API 26 failed its prerequisite. The three prior test failures are not a confirmed product root cause.
+- `CI_RUN_IDS`: `40292160073` (API 35 23/26); `40302869638` (API 26 KVM preflight failed before tests; API 35 skipped); corrected Focused `40303664875` is running; Release/SBOM `40292159906` pass on `613b338`; Release/Security Focused `40302986216` pass on `9fe677a` and `40303701277` pass on `c2dca57`.
+- `ARTIFACT_IDS`: API 35 functional failure `12638184404`; prior API 26 pass `12636937651`; prior JVM pass `12636815276`; Release/SBOM `12635419779`; Release/Security `12641396630` on `9fe677a`, `12641602376` on `c2dca57`. Run `40302869638` preserved only provider unit artifact `12641596404`; no API 26 artifact was created because the runner step failed before creating the evidence directory.
+- `API26_RESULT`: last completed API Focused result is PASS 26/26, 0 failures/errors/skips on `613b338`; `9fe677a` attempt is NOT_RUN (SDK/KVM preflight failed before Emulator startup, JUnit=0); corrected `c2dca57` run is in progress.
+- `API35_RESULT`: last completed API Focused result is FAIL 23/26, 3 failures, 0 errors/skips on `613b338`; `9fe677a` job is NOT_RUN because API 26 failed its prerequisite; corrected `c2dca57` job is pending. The three prior test failures are not a confirmed product root cause.
 - `FORMAL_REQUIRED_RESULT`: NOT_RUN on Lane A functional HEAD; PR #117's PASS applies only to its frozen base.
 - `REAL_SERVICE_STATUS`: Real OAuth, Google accounts, and external AI are NOT_RUN.
-- `CURRENT_BLOCKER`: Run `40302869638` failed because KVM preflight referenced `$ANDROID_HOME/emulator/emulator` before SDK setup installed the emulator package; JUnit tests were NOT_RUN (0), and API 35 was skipped by job dependency. Artifact `12641596404` is the provider unit artifact only; the job log preserves host diagnostics.
-- `NEXT_ACTION`: install pinned Android SDK platform-tools/emulator before KVM checks; persist preflight logs as a sibling artifact even when setup fails; push this evidence-driven correction and rerun JVM/API 26/API 35 serially. Then dispatch Release/Security Focused on the final source, open a Lane A Draft PR only after all Focused checks pass, and run Formal Required on that PR head.
+- `CURRENT_BLOCKER`: Focused Run `40303664875` is at the provider unit stage; after that it will verify Android SDK package installation, KVM acceleration and API 26/35 instrumentation.
+- `NEXT_ACTION`: collect the corrected JVM/API 26/API 35 artifacts; if green on `c2dca57`, open a Lane A Draft PR, then run Formal Required on that PR head.
 - `OWNER_APPROVAL_REQUIRED`: live OAuth/account, real AI provider/eligibility/credentials/cost, production signing/distribution, Pixel 7a, main merge, and final GO. None blocks the Fake/offline work.
 
 The protected Android Personal Beta workflow also created Run `40302867676` after the feature-branch push but reported zero jobs. This is the expected main-only protection; it is `NOT_RUN`, not a signing/release failure, and no environment restrictions were changed.
+
+## F5-R3 follow-up: Emulator runtime dependency failure (2026-10-26)
+
+The latest Focused retry, Run `40303664875`, completed on source `c2dca572c63d01f78def7b2e8a03d7ba390937ab`:
+
+- Provider / Chat JVM job: `SUCCESS`; focused evidence artifact `12641183567` (SHA-256 `cabaf71ee54449a271bbd393c794bd56f08d270e7a92bfe75b4a7c9bbf4604cd`).
+- API 26: `NOT_RUN`, JUnit count 0. The runner installed the Android Emulator package, `/dev/kvm` was present and made readable/writable by the disposable runner setup, but `emulator -accel-check` could not load `libpulse.so.0`. The Emulator job stopped before boot or Gradle/instrumentation. API 26 artifact `12641258452` (SHA-256 `45f704d9d9eadcdfeb7e7a8a8691b49fd2922b82100c7505a318d5db89663ef7`) preserves the host diagnostics.
+- API 35: `NOT_RUN`, skipped because this workflow intentionally serializes API 35 behind API 26.
+- Release/Security Focused: `SUCCESS` on the same source; Run `40303701277`, artifact `12641602376` (SHA-256 `5789c85529889f7ff38789493a547f8903f86004ff0b00fa02bce5382d5a5c9e`).
+
+The API failure is classified as `ENVIRONMENT` / runtime dependency, with the observed missing library as the immediate cause of the preflight stop. It provides no new evidence about app behavior because no emulator or tests started. The change in this revision installs Ubuntu's `libpulse0` on each ephemeral Focused runner before the KVM probe, captures the Emulator/QEMU dependency report in the host artifact, and fails explicitly if QEMU still has unresolved shared libraries. The same host dependency is added before KVM checks in the formal Android workflow so the Required runner is not left with the known missing runtime prerequisite. No test selection, assertion, guard, skip condition, or Required threshold is changed.
+
+### Current continuation checkpoint (supersedes earlier F5-R checkpoint above)
+
+- `ACTIVE_PHASE`: F5-R3 — re-run focused JVM/API 26/API 35/Release Security after Emulator runtime dependency repair.
+- `GOAL_STATUS`: `PARTIAL`; API failure point identified and minimal host dependency repair is prepared for validation.
+- `AUTHORITY_SHA`: current remote Lane A head before this change `c2dca572c63d01f78def7b2e8a03d7ba390937ab`, tree `3c287677e6efae6e0dae6dad51e52ef4d0d43138`; confirm the pushed head at every restart.
+- `LAST_GOOD_SHA`: frozen PR #117 Required baseline `151ea9d66d32de01b195f4262beb67516823c281`; Lane A provider/JVM and API 26 focused pass is on source `613b338ad113cc08ee2ecd656f72a074708264b5` only.
+- `WORKTREE`: `/workspace/Serea-functional`.
+- `BRANCH`: `codex/serea-personal-beta-functional-integration`.
+- `DRAFT_PR`: none; wait for the complete Focused matrix on the final functional source.
+- `CI_RUN_IDS`: API35 artifact-analysis source run `40292160073`; runtime preflight attempts `40302869638` and `40303664875`; Release/Security pass `40303701277`.
+- `ARTIFACT_IDS`: API35 original JUnit failure `12638184404`; API26 runtime preflight `12641258452`; provider JVM `12641183567`; Release/Security `12641602376`.
+- `API26_RESULT`: latest run `40303664875` `NOT_RUN`, JUnit 0; failed before Emulator boot due missing `libpulse.so.0`. Prior `613b338` pass 26/26 is not evidence for the new source.
+- `API35_RESULT`: latest run `40303664875` `NOT_RUN`, serially skipped after API26 preflight failure. Original `613b338` run had 23/26 with the 3 UI-input failures detailed above.
+- `FORMAL_REQUIRED_RESULT`: `NOT_RUN` on Lane A functional HEAD; R7 PASS remains scoped to PR #117's frozen SHA.
+- `REAL_SERVICE_STATUS`: real Google OAuth/accounts and external AI `NOT_RUN`.
+- `CURRENT_BLOCKER`: verify the hosted Emulator QEMU runtime dependency after installing `libpulse0`; if another dependency or acceleration issue remains, preserve the new host artifact and change the experiment rather than repeating an identical run.
+- `NEXT_ACTION`: run YAML/shell/workflow static checks, commit and push the minimal dependency repair plus this checkpoint, then inspect the next Focused artifacts. Require JVM and API26/API35 exact focused cases to pass before opening the Lane A Draft PR. Release/Security must also be green on that exact source.
+- `OWNER_APPROVAL_REQUIRED`: live Google OAuth/account, eligible real AI provider/credentials/cost, production signing/distribution, Pixel 7a, main merge and final Personal Beta GO.
+- `LANE_COORDINATION`: PR #120 remains open Draft; PR #121 remains open Draft. Lane A retains product UI/composition ownership; no edits are made to B/C-owned branches or scripts.
 
 ## Focused campaign evidence update (2026-10-26)
 

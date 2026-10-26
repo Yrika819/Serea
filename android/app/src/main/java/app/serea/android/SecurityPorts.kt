@@ -13,6 +13,8 @@ interface CredentialPort {
 enum class EgressDecision { ALLOW, DENY_UNCLASSIFIED, DENY_SENSITIVE, DENY_UNPREPARED }
 
 enum class PayloadPreparation { RAW, TRUSTED_MINIMIZED, UNKNOWN }
+/** Separates local-only processing from an external provider destination. */
+enum class EgressTarget { CLOUD, LOCAL_DEMO }
 
 /** Exact provider payload preview and its lineage. A user-authored string is not PUBLIC by default. */
 data class EgressContract(
@@ -28,6 +30,8 @@ data class EgressContract(
     val expiresAtMillis: Long?,
     /** Set only when the sender's approved intent names the routed catalog model. */
     val selectedModelId: String? = null,
+    /** Defaults to the existing external-cloud contract; local demo must be explicit. */
+    val target: EgressTarget = EgressTarget.CLOUD,
 )
 
 enum class EgressContractDecision { APPROVED, MISSING_INTENT, EXPIRED_INTENT, DESTINATION_DENIED, ORIGIN_DENIED, CLASSIFICATION_DENIED, PREPARATION_DENIED, CONTENT_MISMATCH, LIMIT_EXCEEDED }
@@ -38,6 +42,9 @@ data class EgressEvaluation(val decision: EgressContractDecision, val preview: S
 class PreparedPersonalData internal constructor(val content: String)
 
 object ChatEgressGate {
+    const val LOCAL_DEMO_DESTINATION = "serea://local-demo"
+    const val LOCAL_DEMO_MODEL_ID = "serea-demo/local-chat"
+
     fun decide(classification: DataClassification, preparedPersonal: PreparedPersonalData? = null): EgressDecision =
         when (classification) {
             DataClassification.PUBLIC -> EgressDecision.ALLOW
@@ -48,6 +55,41 @@ object ChatEgressGate {
 
     fun evaluate(contract: EgressContract, nowMillis: Long): EgressEvaluation {
         fun denied(reason: EgressContractDecision) = EgressEvaluation(reason, contract.plannedBody, null)
+        if (contract.target == EgressTarget.LOCAL_DEMO) {
+            if (contract.destination != LOCAL_DEMO_DESTINATION || contract.selectedModelId != LOCAL_DEMO_MODEL_ID) {
+                return denied(EgressContractDecision.DESTINATION_DENIED)
+            }
+            if (contract.explicitSendIntentAtMillis != null || contract.expiresAtMillis != null) {
+                return denied(EgressContractDecision.CONTENT_MISMATCH)
+            }
+            if (contract.origin != DataOrigin.USER_AUTHORED) return denied(EgressContractDecision.ORIGIN_DENIED)
+            if (contract.preparation != PayloadPreparation.RAW) return denied(EgressContractDecision.PREPARATION_DENIED)
+            val locallyAllowed = setOf(DataClassification.PUBLIC, DataClassification.PERSONAL, DataClassification.UNKNOWN)
+            if (contract.classification !in locallyAllowed) return denied(EgressContractDecision.CLASSIFICATION_DENIED)
+            if (contract.context.any { it.origin !in setOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT) }) {
+                return denied(EgressContractDecision.ORIGIN_DENIED)
+            }
+            if (contract.context.any { it.classification !in locallyAllowed }) {
+                return denied(EgressContractDecision.CLASSIFICATION_DENIED)
+            }
+            if (contract.plannedBody.isBlank() || contract.context.any {
+                    it.status != "COMPLETED" || it.sourceMessageId.isBlank() || it.conversationId != contract.conversationId
+                }) {
+                return denied(EgressContractDecision.CONTENT_MISMATCH)
+            }
+            val requestBytes = contract.plannedBody.toByteArray(Charsets.UTF_8).size.toLong() +
+                contract.context.sumOf { it.text.toByteArray(Charsets.UTF_8).size.toLong() + it.role.name.length + 64L } + 64L
+            if (contract.plannedBody.length > ChatContextBuilder.MAX_INPUT_CHARS ||
+                contract.context.sumOf { it.text.length } > ChatContextBuilder.MAX_CONTEXT_CHARS || requestBytes > 16 * 1024L) {
+                return denied(EgressContractDecision.LIMIT_EXCEEDED)
+            }
+            val messages = contract.context.map { it.role.name.lowercase() to it.text } + ("user" to contract.plannedBody)
+            return EgressEvaluation(
+                EgressContractDecision.APPROVED,
+                contract.plannedBody,
+                EgressApprovedPayload.fromApprovedContract(contract, messages),
+            )
+        }
         if (contract.destination != "https://ollama.com/api/chat") return denied(EgressContractDecision.DESTINATION_DENIED)
         val intent = contract.explicitSendIntentAtMillis ?: return denied(EgressContractDecision.MISSING_INTENT)
         val expiry = contract.expiresAtMillis ?: return denied(EgressContractDecision.MISSING_INTENT)
@@ -77,31 +119,44 @@ object ChatEgressGate {
 }
 
 /** Mandatory wrapper for any future cloud adapter. Rejected requests never reach its delegate. */
-internal class EgressCheckedModelChatPort(private val delegate: ModelChatPort, private val clock: () -> Long = System::currentTimeMillis) : ModelChatPort {
+internal class EgressCheckedModelChatPort(
+    private val delegate: ModelChatPort,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val expectedTarget: EgressTarget? = null,
+) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         if (request.message.length > ChatContextBuilder.MAX_INPUT_CHARS ||
             request.context.sumOf { it.text.length.toLong() } > ChatContextBuilder.MAX_CONTEXT_CHARS ||
             request.timeoutMillis !in 1..60_000) {
             throw ModelChatFailure("Request exceeds the approved local bounds.")
         }
-        val contract = request.egressContract ?: throw ModelChatFailure("Cloud send intent has not been approved.")
+        val contract = request.egressContract ?: throw ModelChatFailure("A typed Egress contract is required.")
         if (contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
             contract.plannedBody != request.message || contract.context != request.context ||
+            contract.classification != request.classification || contract.origin != DataOrigin.USER_AUTHORED ||
             (contract.selectedModelId != null && contract.selectedModelId != request.selectedModelId)) {
             throw ModelChatFailure("The approved content no longer matches the request.")
         }
         val boundContract = contract.copy(selectedModelId = request.selectedModelId)
+        if (expectedTarget != null && boundContract.target != expectedTarget) {
+            throw ModelChatFailure("The request target does not match this provider composition.")
+        }
+        if (boundContract.target == EgressTarget.LOCAL_DEMO && request.preparedPersonal != null) {
+            throw ModelChatFailure("The local demo accepts only the original typed message and context.")
+        }
         val result = ChatEgressGate.evaluate(boundContract, clock())
         if (result.decision != EgressContractDecision.APPROVED) {
-            throw ModelChatFailure("Cloud egress was denied: ${result.decision.name.lowercase()}.")
+            throw ModelChatFailure("Egress was denied: ${result.decision.name.lowercase()}.")
         }
-        val decisions = sequenceOf(request.classification) + request.context.asSequence().map { it.classification }
-        for (classification in decisions) {
-            when (ChatEgressGate.decide(classification, request.preparedPersonal)) {
-                EgressDecision.ALLOW -> Unit
-                EgressDecision.DENY_UNCLASSIFIED -> throw ModelChatFailure("Unclassified data cannot be sent.")
-                EgressDecision.DENY_UNPREPARED -> throw ModelChatFailure("Personal data is not prepared for egress.")
-                EgressDecision.DENY_SENSITIVE -> throw ModelChatFailure("Sensitive data cannot be sent.")
+        if (boundContract.target == EgressTarget.CLOUD) {
+            val decisions = sequenceOf(request.classification) + request.context.asSequence().map { it.classification }
+            for (classification in decisions) {
+                when (ChatEgressGate.decide(classification, request.preparedPersonal)) {
+                    EgressDecision.ALLOW -> Unit
+                    EgressDecision.DENY_UNCLASSIFIED -> throw ModelChatFailure("Unclassified data cannot be sent.")
+                    EgressDecision.DENY_UNPREPARED -> throw ModelChatFailure("Personal data is not prepared for egress.")
+                    EgressDecision.DENY_SENSITIVE -> throw ModelChatFailure("Sensitive data cannot be sent.")
+                }
             }
         }
         return delegate.send(request)

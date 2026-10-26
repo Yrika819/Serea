@@ -71,15 +71,59 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
+      - name: Verify runner KVM and prepare accelerated disposable emulator
+        run: |
+          set -euo pipefail
+          {
+            echo 'runner_os:'
+            cat /etc/os-release
+            echo 'runner_arch:'
+            uname -m
+            echo 'runner_cpu:'
+            lscpu
+            echo 'runner_cpu_quota:'
+            for quota in /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu/cpu.cfs_quota_us /sys/fs/cgroup/cpu/cpu.cfs_period_us; do
+              if [ -r "$quota" ]; then echo "$quota=$(cat "$quota")"; fi
+            done
+            echo 'runner_memory:'
+            free -h
+            echo 'runner_cpu_pressure_before_emulator:'
+            cat /proc/pressure/cpu
+            echo 'kvm_before_permissions:'
+            if [ -e /dev/kvm ]; then
+              stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
+              id
+              if "$ANDROID_HOME/emulator/emulator" -accel-check; then :; else echo 'pre_permission_accel_check=unavailable'; fi
+            else
+              echo '/dev/kvm: absent'
+              exit 1
+            fi
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+            stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
+            test -r /dev/kvm && test -w /dev/kvm
+            "$ANDROID_HOME/emulator/emulator" -version
+            "$ANDROID_HOME/emulator/emulator" -accel-check
+            echo 'runner_cpu_pressure_after_kvm_setup:'
+            cat /proc/pressure/cpu
+          } | tee "$RUNNER_TEMP/serea-functional-api26-host.txt"
       - name: Boot API 26 disposable Emulator and run focused app-shell tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         env:
           SEREA_DISPOSABLE_CI_EMULATOR: '1'
+          SEREA_SYSTEM_IMAGE_TARGET: google_apis
+          SEREA_EMULATOR_PROFILE: pixel
+          SEREA_EMULATOR_ARCH: x86
+          SEREA_EMULATOR_GPU_BACKEND: swiftshader_indirect
         with:
           api-level: 26
-          target: default
+          target: google_apis
           arch: x86
-          profile: pixel_2
+          profile: pixel
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           working-directory: android
           script: bash ../tools/run_android_functional_focused.sh 26
@@ -104,15 +148,59 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
+      - name: Verify runner KVM and prepare accelerated disposable emulator
+        run: |
+          set -euo pipefail
+          {
+            echo 'runner_os:'
+            cat /etc/os-release
+            echo 'runner_arch:'
+            uname -m
+            echo 'runner_cpu:'
+            lscpu
+            echo 'runner_cpu_quota:'
+            for quota in /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu/cpu.cfs_quota_us /sys/fs/cgroup/cpu/cpu.cfs_period_us; do
+              if [ -r "$quota" ]; then echo "$quota=$(cat "$quota")"; fi
+            done
+            echo 'runner_memory:'
+            free -h
+            echo 'runner_cpu_pressure_before_emulator:'
+            cat /proc/pressure/cpu
+            echo 'kvm_before_permissions:'
+            if [ -e /dev/kvm ]; then
+              stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
+              id
+              if "$ANDROID_HOME/emulator/emulator" -accel-check; then :; else echo 'pre_permission_accel_check=unavailable'; fi
+            else
+              echo '/dev/kvm: absent'
+              exit 1
+            fi
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+            stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
+            test -r /dev/kvm && test -w /dev/kvm
+            "$ANDROID_HOME/emulator/emulator" -version
+            "$ANDROID_HOME/emulator/emulator" -accel-check
+            echo 'runner_cpu_pressure_after_kvm_setup:'
+            cat /proc/pressure/cpu
+          } | tee "$RUNNER_TEMP/serea-functional-api35-host.txt"
       - name: Boot API 35 disposable Emulator and run focused app-shell tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         env:
           SEREA_DISPOSABLE_CI_EMULATOR: '1'
+          SEREA_SYSTEM_IMAGE_TARGET: google_apis
+          SEREA_EMULATOR_PROFILE: pixel_7
+          SEREA_EMULATOR_ARCH: x86_64
+          SEREA_EMULATOR_GPU_BACKEND: swiftshader_indirect
         with:
           api-level: 35
-          target: default
+          target: google_apis
           arch: x86_64
-          profile: pixel_2
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
           working-directory: android
           script: bash ../tools/run_android_functional_focused.sh 35

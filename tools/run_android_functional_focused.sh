@@ -7,6 +7,15 @@ case "$api_level" in
   *) echo "Usage: $0 {26|35}" >&2; exit 2 ;;
 esac
 
+system_image_target="${SEREA_SYSTEM_IMAGE_TARGET:-}"
+emulator_profile="${SEREA_EMULATOR_PROFILE:-unknown}"
+emulator_arch="${SEREA_EMULATOR_ARCH:-unknown}"
+emulator_gpu_backend="${SEREA_EMULATOR_GPU_BACKEND:-unknown}"
+if [[ "$system_image_target" != "google_apis" ]]; then
+  echo 'Focused Android UI verification requires the declared Google APIs system image.' >&2
+  exit 2
+fi
+
 evidence="app/build/outputs/androidTest-results/functional-api${api_level}"
 filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest'
 
@@ -22,7 +31,20 @@ verify_status=1
 {
   echo "source_sha=$(git rev-parse HEAD)"
   echo "api_level=$api_level"
-  echo "system_image_target=default"
+  echo "system_image_target=$system_image_target"
+  echo "emulator_profile=$emulator_profile"
+  echo "emulator_arch=$emulator_arch"
+  echo "emulator_gpu_backend=$emulator_gpu_backend"
+  if [[ -n "${ANDROID_HOME:-}" && -x "$ANDROID_HOME/emulator/emulator" ]]; then
+    echo "emulator_version=$("$ANDROID_HOME/emulator/emulator" -version 2>&1 | head -n 1)"
+    echo "emulator_accel_check=$("$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tr '\n' ';')"
+  else
+    echo 'emulator_version=MISSING'
+    echo 'emulator_accel_check=MISSING'
+  fi
+  echo "host_arch=$(uname -m)"
+  echo "host_cpu_count=$(nproc)"
+  echo "guest_uptime=$(adb shell cat /proc/uptime | tr -d '\r')"
   echo "device_sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
   echo "device_abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
   echo "device_fingerprint=$(adb shell getprop ro.build.fingerprint | tr -d '\r')"
@@ -31,15 +53,38 @@ verify_status=1
   echo "boot_completed=$(adb shell getprop sys.boot_completed | tr -d '\r')"
   adb shell cat /proc/meminfo | tr -d '\r' | sed -n '1,5{s/^/guest_/;p;}'
   echo "default_ime=$(adb shell settings get secure default_input_method | tr -d '\r')"
+  echo "display_size=$(adb shell wm size | tr -d '\r')"
+  echo "display_density=$(adb shell wm density | tr -d '\r')"
   echo "run_id=${GITHUB_RUN_ID:-local}"
   echo "run_attempt=${GITHUB_RUN_ATTEMPT:-1}"
   echo "test_filter=$filter"
 } > "$evidence/environment.txt"
 
+host_diagnostics="${RUNNER_TEMP:-}/serea-functional-api${api_level}-host.txt"
+if [[ -n "${RUNNER_TEMP:-}" && -s "$host_diagnostics" ]]; then
+  cp "$host_diagnostics" "$evidence/host-diagnostics.txt"
+else
+  printf 'MISSING: runner host/KVM preflight diagnostics were not available.\n' > "$evidence/host-diagnostics.txt"
+fi
+{
+  echo "instrumentation_environment_observed_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo 'runner_cpu_pressure_at_emulator_ready:'
+  cat /proc/pressure/cpu
+  echo 'runner_memory_at_emulator_ready:'
+  free -h
+} >> "$evidence/host-diagnostics.txt"
+
 capture() {
   adb logcat -d -b all > "$evidence/logcat.txt" 2>&1 || true
   adb shell dumpsys input_method > "$evidence/input-method.txt" 2>&1 || true
   adb shell settings get secure default_input_method > "$evidence/default-ime-after.txt" 2>&1 || true
+  {
+    echo "instrumentation_finished_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo 'runner_cpu_pressure_after_instrumentation:'
+    cat /proc/pressure/cpu
+    echo 'runner_memory_after_instrumentation:'
+    free -h
+  } >> "$evidence/host-diagnostics.txt"
 }
 trap capture EXIT
 

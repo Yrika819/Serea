@@ -1842,7 +1842,7 @@ class SereaAppShellTest {
                     .assertTextContains(contract.title)
             }
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
-            compose.onNodeWithContentDescription("その他の操作").performClick()
+            compose.onNodeWithText("その他の操作").performClick()
             compose.onNodeWithText("新しい会話").assertIsDisplayed()
             compose.onNodeWithText("履歴").assertIsDisplayed()
             pressBack()

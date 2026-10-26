@@ -3,7 +3,9 @@ name: Android Release Security Focused (Non-Required)
 on:
   workflow_dispatch:
   push:
-    branches: [codex/serea-functional-security-release]
+    branches:
+      - codex/serea-functional-security-release
+      - codex/serea-functional-security-release-verified
 
 permissions:
   contents: read

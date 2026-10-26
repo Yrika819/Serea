@@ -6,6 +6,7 @@ on:
     branches:
       - codex/serea-functional-security-release
       - codex/serea-functional-security-release-verified
+      - codex/serea-personal-beta-functional-integration
 
 permissions:
   contents: read

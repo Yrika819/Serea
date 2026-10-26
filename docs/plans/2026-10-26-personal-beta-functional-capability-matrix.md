@@ -100,6 +100,10 @@ Run `40282409277` used source SHA `324a5cb` with the API 26 emulator booting suc
 
 Run `40283472432` used source SHA `1d3e085`; AndroidTest compilation succeeded, but the API 26 Google APIs emulator did not install `app-isolated.apk`. UTP wrote a JUnit XML with `tests=0` and `ShellCommandUnresponsiveException` from `SplitApkInstallerBase.installCommit`; the verifier correctly returned failure and API 35 was skipped. The captured logcat records `am_anr` for `com.google.android.gms` at `07:16:00` executing `GassService`; ActivityManager reports 47% CPU for GMS, 42% for system_server and 16% for persistent GMS during the preceding sample. This establishes that no app test executed and strongly supports an `ENVIRONMENT` failure during package installation; it does not establish a product defect. Artifact `12632584456` (SHA-256 `19984cc8ad39d0e481b86c32f6f9393ef1fb6c4309155fbcabb2f123b47c40a8`) preserves JUnit, UTP, Gradle, logcat, IME and boot metadata. Since this focused set uses only Fake providers and local Demo Chat, commit `4c118ab` changes its disposable emulator target to AOSP `default` and records guest ABI/memory alongside system fingerprint. New serial API 26/35 run `40285177135` tests this environment hypothesis; the official Required emulator conditions remain unchanged.
 
+### Required instrumentation identity preservation (2026-10-26)
+
+On the functional source tree, the formal manifests remain 103 Original Required identities plus 2 Additional identities; the explicit non-required manifest has 5 identities. The source verifier reported 110 Android instrumentation identities with an exact set match and no missing or unexpected methods. This is a static identity check only; it does not substitute for final-head Required execution.
+
 ## Checkpoint
 
 - ACTIVE_PHASE: F2/F3/F4 API 26/35 focused verification; F5 release-security integration.

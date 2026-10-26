@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   provider-unit:
-    name: Provider sessions and source binding (focused unit tests)
+    name: Provider sessions, Chat Egress and source binding (focused unit tests)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -24,7 +24,7 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: Run provider session and UI source-boundary tests
+      - name: Run provider session, Chat Egress and UI source-boundary tests
         working-directory: android
         run: >-
           ./gradlew --no-daemon :app:testDebugUnitTest
@@ -35,6 +35,9 @@ jobs:
           --tests '*GoogleAuthorizationTest'
           --tests '*CalendarAgendaUiControllerTest'
           --tests '*GmailViewModelTest'
+          --tests '*SecurityPortsTest'
+          --tests '*ChatViewModelTest'
+          --tests '*UsageLedgerCostTest'
       - name: Verify focused unit JUnit results
         run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
       - name: Upload focused unit evidence

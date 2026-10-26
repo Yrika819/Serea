@@ -236,8 +236,7 @@ class SereaAppShellTest {
         selectionEnd: Int? = null,
     ): Boolean {
         val args = Bundle().apply {
-            putLong("expectedSession", session.generation)
-            putString("expectedConnection", session.connection)
+            putString("expectedEditorPackage", session.editorPackage)
             if (text != null) {
                 putString("text", text)
                 putInt("cursor", 1)
@@ -258,10 +257,23 @@ class SereaAppShellTest {
             client.release()
         }
         val accepted = result.getBoolean("accepted")
+        val operationSession = result.getLong("operationSession")
+        val operationConnection = requireNotNull(result.getString("operationConnection"))
+        val operationEditorPackage = requireNotNull(result.getString("operationEditorPackage"))
+        val operationInputType = result.getInt("operationInputType")
+        assertTrue("IME operation must use a live system InputConnection.", operationConnection != "null")
+        assertEquals("IME operation must target the isolated Chat editor.", session.editorPackage, operationEditorPackage)
+        assertTrue("IME operation must use an active text editor session.",
+            operationSession > 0 && operationInputType != android.text.InputType.TYPE_NULL)
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "REAL_IME_OPERATION uptimeNanos=${SystemClock.elapsedRealtimeNanos()} method=$method " +
-                "accepted=$accepted session=${session.generation} connection=${session.connection} fixture=$text")
-        assertTrue("Android-managed Test IME rejected $method for session ${session.generation}.", accepted)
+                "accepted=$accepted baselineService=${session.service} baselineSession=${session.generation} " +
+                "baselineConnection=${session.connection} " +
+                "service=${result.getString("operationService")} session=$operationSession " +
+                "connection=$operationConnection editorPackage=$operationEditorPackage " +
+                "inputType=$operationInputType fixture=$text")
+        assertTrue("Android-managed Test IME rejected $method for active session $operationSession " +
+            "after snapshot $session.", accepted)
         return accepted
     }
 

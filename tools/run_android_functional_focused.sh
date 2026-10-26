@@ -17,7 +17,7 @@ if [[ "$system_image_target" != "google_apis" ]]; then
 fi
 
 evidence="app/build/outputs/androidTest-results/functional-api${api_level}"
-filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest,app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection,app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization,app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant'
+filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable,app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.ChatScreenTest#smallScreenKeepsDeletionActionsReachableAndTappable,app.serea.android.ChatScreenTest#fontScaleTwoKeepsDeletionActionsReachableAndTappable,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest,app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection,app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization,app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant'
 
 if [[ -e "$evidence" || -e app/build/outputs/androidTest-results/connected ]]; then
   echo 'Refusing to reuse stale Focused evidence or connected instrumentation results.' >&2
@@ -25,6 +25,7 @@ if [[ -e "$evidence" || -e app/build/outputs/androidTest-results/connected ]]; t
 fi
 mkdir -p "$evidence"
 initial_default_ime=''
+test_ime_installed=false
 gradle_status=1
 verify_status=1
 
@@ -75,6 +76,34 @@ fi
 } >> "$evidence/host-diagnostics.txt"
 
 capture() {
+  local original_status=$?
+  local cleanup_status=0
+  if [[ "$test_ime_installed" == true ]]; then
+    local ime_component='app.serea.android.r25testime/app.serea.android.diagnostics.RealImeService'
+    local current_default_ime
+    current_default_ime="$(adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')" || cleanup_status=1
+    if [[ -n "$initial_default_ime" && "$current_default_ime" != "$initial_default_ime" ]]; then
+      adb shell ime set "$initial_default_ime" > "$evidence/test-ime-restore.txt" 2>&1 || cleanup_status=1
+    else
+      printf 'default_ime_already_restored=%s\n' "$current_default_ime" > "$evidence/test-ime-restore.txt"
+    fi
+    adb shell ime disable "$ime_component" >> "$evidence/test-ime-restore.txt" 2>&1 || true
+    adb uninstall app.serea.android.r25testime > "$evidence/test-ime-uninstall.txt" 2>&1 || cleanup_status=1
+    if [[ -n "$(adb shell pm path app.serea.android.r25testime 2>/dev/null | tr -d '\r')" ]]; then cleanup_status=1; fi
+    current_default_ime="$(adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')" || cleanup_status=1
+    if [[ "$current_default_ime" != "$initial_default_ime" ]]; then cleanup_status=1; fi
+    if [[ "$cleanup_status" -eq 0 ]]; then
+      printf 'cleanup=PASS\ninitial_default_ime=%s\nfinal_default_ime=%s\npackage_absent=true\n' \
+        "$initial_default_ime" "$current_default_ime" > "$evidence/test-ime-cleanup-status.txt"
+    else
+      printf 'cleanup=FAIL\ninitial_default_ime=%s\nfinal_default_ime=%s\npackage_path=%s\n' \
+        "$initial_default_ime" "$current_default_ime" \
+        "$(adb shell pm path app.serea.android.r25testime 2>/dev/null | tr -d '\r')" \
+        > "$evidence/test-ime-cleanup-status.txt"
+    fi
+  else
+    printf 'cleanup=NOT_REQUIRED\n' > "$evidence/test-ime-cleanup-status.txt"
+  fi
   adb logcat -d -b all > "$evidence/logcat.txt" 2>&1 || true
   adb shell dumpsys input_method > "$evidence/input-method.txt" 2>&1 || true
   adb shell ime list -s > "$evidence/available-ime-services.txt" 2>&1 || true
@@ -86,6 +115,8 @@ capture() {
     echo 'runner_memory_after_instrumentation:'
     free -h
   } >> "$evidence/host-diagnostics.txt"
+  if [[ "$cleanup_status" -ne 0 && "$original_status" -eq 0 ]]; then exit 1; fi
+  return "$original_status"
 }
 trap capture EXIT
 
@@ -108,12 +139,13 @@ else
 fi
 
 if [[ -n "$(adb shell pm path app.serea.android.isolated 2>/dev/null | tr -d '\r')" || \
-      -n "$(adb shell pm path app.serea.android.isolated.test 2>/dev/null | tr -d '\r')" ]]; then
+      -n "$(adb shell pm path app.serea.android.isolated.test 2>/dev/null | tr -d '\r')" || \
+      -n "$(adb shell pm path app.serea.android.r25testime 2>/dev/null | tr -d '\r')" ]]; then
   echo 'Refusing an emulator with a preinstalled isolated target or test package.' >&2
   exit 1
 fi
 
-if ! ./gradlew --no-daemon :app:assembleIsolated > "$evidence/prepare-gradle.log" 2>&1; then
+if ! ./gradlew --no-daemon :app:assembleIsolated :r25-ime-test:assembleDebug > "$evidence/prepare-gradle.log" 2>&1; then
   cat "$evidence/prepare-gradle.log"
   exit 1
 fi
@@ -136,6 +168,23 @@ if [[ -z "$target_path" || "$target_path" == *$'\n'* || "$target_installed_sha" 
 fi
 printf 'installed_path=%s\ninstalled_sha256=%s\nexpected_sha256=%s\n' \
   "$target_path" "$target_installed_sha" "$target_expected_sha" > "$evidence/installed-target-apk.txt"
+
+test_ime_apk='r25-ime-test/build/outputs/apk/debug/r25-test-ime-debug.apk'
+if [[ ! -s "$test_ime_apk" ]]; then test_ime_apk='r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk'; fi
+if [[ ! -s "$test_ime_apk" ]]; then
+  echo 'The isolated Test IME APK was not produced.' >&2
+  exit 1
+fi
+if ! adb install "$test_ime_apk" > "$evidence/test-ime-install.txt" 2>&1; then
+  cat "$evidence/test-ime-install.txt"
+  exit 1
+fi
+test_ime_installed=true
+sha256sum "$test_ime_apk" > "$evidence/test-ime-apk-sha256.txt"
+if [[ -z "$(adb shell pm path app.serea.android.r25testime 2>/dev/null | tr -d '\r')" ]]; then
+  echo 'The Test IME installation could not be verified.' >&2
+  exit 1
+fi
 
 campaign_token="serea-functional-api${api_level}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 if ! EXPECTED_API_LEVEL="$api_level" bash ../tools/prepare_isolated_instrumentation_target.sh "$campaign_token" \
@@ -167,14 +216,17 @@ done
 
 if [ -d "$evidence/junit" ]; then
   if python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
-    --minimum 29 --exact-count 29 \
+    --minimum 32 --exact-count 32 \
     --require-test app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData \
     --require-test app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures \
     --require-test app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail \
     --require-test app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation \
     --require-test app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable \
+    --require-test app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
     --require-test app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible \
     --require-test app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation \
+    --require-test app.serea.android.ChatScreenTest#smallScreenKeepsDeletionActionsReachableAndTappable \
+    --require-test app.serea.android.ChatScreenTest#fontScaleTwoKeepsDeletionActionsReachableAndTappable \
     --require-test app.serea.android.tasks.TaskScreenTest#emptyCreateEditCompleteAndReopenAreReachable \
     --require-test app.serea.android.tasks.TaskScreenTest#invalidTitleAndDateAreShownWithoutRepositoryWrite \
     --require-test app.serea.android.tasks.TaskScreenTest#deleteCancelPreservesTaskAndConfirmRemovesIt \

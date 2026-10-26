@@ -13,9 +13,10 @@ import java.io.File
  */
 class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
     override fun onCreate(arguments: Bundle) {
-        // R3's exploratory IME tests are invoked by their dedicated focused campaign. Keep them
-        // outside the formal 105-test Required set, while retaining the R4 required IME assertion
-        // embedded in SereaAppShellTest. An explicit diagnostic class filter opts into them.
+        // Exploratory IME and Fake authorization UI tests run through focused campaigns. Keep the
+        // manifest-listed identities outside the formal 105-test Required set, while retaining
+        // the R4 required IME assertion embedded in SereaAppShellTest. An explicit class filter
+        // opts into those focused cases.
         val explicitClassFilter = arguments.getString("class").orEmpty()
         if (explicitClassFilter.isBlank() && arguments.getString("sereaIncludeDiagnostics") != "true") {
             val diagnosticClasses = context.assets

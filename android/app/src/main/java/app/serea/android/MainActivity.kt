@@ -109,8 +109,10 @@ class MainActivity : ComponentActivity() {
     }
     internal val shellCredentials: CredentialRepository get() = credentials
     internal val shellUsage: UsageRepository get() = usage
+    private val providerComposition by viewModels<AppProviderCompositionViewModel>()
+    internal val shellProviders: AppProviderComposition get() = providerComposition.providers
     internal val chatViewModel: ChatViewModel by viewModels {
-        ChatViewModel.factory(MockModelChatPort(), history, usage)
+        ChatViewModel.factory(DemoChatComposition.create(usage), history, usage)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -118,7 +120,17 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState != null || chatViewModel.isActivitySelectionRestorePending()) {
             chatViewModel.beginActivitySelectionRestore(this)
         }
-        setContent { SereaTheme { SereaAppShell(chatViewModel, credentials, usage, shellTaskViewModel) } }
+        setContent {
+            SereaTheme {
+                SereaAppShell(
+                    chatViewModel,
+                    credentials,
+                    usage,
+                    shellTaskViewModel,
+                    providers = shellProviders,
+                )
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -132,6 +144,7 @@ class MainActivity : ComponentActivity() {
         decorView.findFocus()?.clearFocus()
         super.onSaveInstanceState(outState)
     }
+
 }
 
 data class ChatMessage(
@@ -898,7 +911,7 @@ internal fun ChatScreen(
             }
             if (settingsVisible) {
                 Text("モデル選択", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-                Text("選択設定は端末内に保存されます。現在は検証済みCatalogが空のため、外部モデルは選択できません。デモ会話とCloud無効状態は維持されます。",
+                Text("通常Chatは端末内のSerea Local DemoをRouter・Egress・Usage経路に通します。外部モデルCatalogは未確認のため選択できず、Cloud送信は無効です。選択設定は端末内に保存されます。",
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
@@ -953,8 +966,8 @@ internal fun ChatScreen(
                         settingsMessage = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
                     }.onFailure { settingsMessage = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。" }
                 }) { Text("ルーター設定を保存") }
-                Text(if (modelCatalog.isEmpty()) "利用可能なモデル: 0 · Catalog未取得または未確認" else "利用可能なモデル: ${modelCatalog.size}")
-                if (modelCatalog.isEmpty()) Text("手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。",
+                Text(if (modelCatalog.isEmpty()) "外部Providerモデル: 0 · Catalog未取得または未確認" else "外部Providerモデル: ${modelCatalog.size}")
+                if (modelCatalog.isEmpty()) Text("外部Providerの手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。",
                     style = MaterialTheme.typography.bodySmall)
                 Text("判定: ${routePreview.task} · ${routePreview.reason}", style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
@@ -971,7 +984,7 @@ internal fun ChatScreen(
                 }
                 Text("トークン数は入力長からの概算予約とProvider実測を区別します。Timeout/Cancel/使用量欠落では予約を戻しません。端末時計に基づくソフト上限で、Provider請求上限やクレジット制御ではありません。",
                     style = MaterialTheme.typography.bodySmall)
-                Text("このカウンターはProvider要求のみ対象です。ローカルDemoとMock HTTPテストは含みません。日次/月次はUTC境界です。",
+                Text("UsageControlled経路の要求数と予約を記録します。ローカルDemoも予約・完了記録に含みますが、Provider実測や請求は発生しません。日次/月次はUTC境界です。",
                     style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = dailyRequestsText, onValueChange = { dailyRequestsText = it; settingsMessage = "" },

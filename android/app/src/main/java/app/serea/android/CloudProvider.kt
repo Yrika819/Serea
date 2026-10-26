@@ -57,15 +57,16 @@ class EgressApprovedPayload private constructor(
     internal val destination: String,
     internal val origin: DataOrigin,
     internal val classification: DataClassification,
+    internal val target: EgressTarget,
 ) {
     internal val text: String get() = messages.lastOrNull()?.second.orEmpty()
     companion object {
         internal fun fixedPublicContractProbe(): EgressApprovedPayload =
             EgressApprovedPayload(listOf("user" to "Reply with exactly: Serea cloud contract probe passed."), null, null,
-                null, "https://ollama.com/api/chat", DataOrigin.USER_AUTHORED, DataClassification.PUBLIC)
+                null, "https://ollama.com/api/chat", DataOrigin.USER_AUTHORED, DataClassification.PUBLIC, EgressTarget.CLOUD)
         internal fun fromApprovedContract(contract: EgressContract, messages: List<Pair<String, String>>) =
             EgressApprovedPayload(messages.toList(), contract.conversationId, contract.currentMessageId,
-                contract.selectedModelId, contract.destination, contract.origin, contract.classification)
+                contract.selectedModelId, contract.destination, contract.origin, contract.classification, contract.target)
     }
 }
 
@@ -108,6 +109,7 @@ class OllamaCloudAdapter private constructor(
     )
 
     suspend fun send(payload: EgressApprovedPayload, onDelta: (String) -> Unit = {}, selectedModelId: String? = null): CloudReply {
+        if (payload.target != EgressTarget.CLOUD) throw ProviderPreDispatchFailure(ProviderFailureKind.FORBIDDEN)
         if (!settings.enabled) throw ProviderPreDispatchFailure(ProviderFailureKind.DISABLED)
         val fixedProbe = payload.conversationId == null && payload.sendId == null && payload.selectedModelId == null
         val modelId = if (fixedProbe) selectedModelId ?: settings.modelId else selectedModelId
@@ -260,7 +262,7 @@ internal class OllamaModelChatPort(
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         val contract = request.egressContract ?: throw PreDispatchModelChatFailure("Cloud send intent has not been approved.")
-        if (contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
+        if (contract.target != EgressTarget.CLOUD || contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
             contract.plannedBody != request.message || contract.context != request.context ||
             (contract.selectedModelId != null && contract.selectedModelId != request.selectedModelId) || request.selectedModelId.isNullOrBlank() ||
             contract.classification != request.classification || contract.origin != DataOrigin.USER_AUTHORED) {
@@ -308,7 +310,8 @@ internal object DirectProviderChatComposition {
                 OllamaModelChatPort(adapter), usage,
                 attributionResolver = usageAttributionResolver ?: CatalogUsageAttributionResolver(catalog),
             ),
+            expectedTarget = EgressTarget.CLOUD,
         )
-        return RoutedModelChatPort(gated, AdaptiveModelRouter(catalog), routingPolicy)
+        return RoutedModelChatPort(gated, AdaptiveModelRouter(catalog), policy = routingPolicy)
     }
 }

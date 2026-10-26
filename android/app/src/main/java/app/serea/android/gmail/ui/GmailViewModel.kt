@@ -39,7 +39,6 @@ sealed interface GmailRoute {
 
 enum class GmailUiErrorCode {
     EMPTY_SEARCH,
-    MOCK_PROVIDER_REQUIRED,
     AUTHORIZATION_REQUIRED,
     AUTHORIZATION_DENIED,
     AUTHORIZATION_REVOKED,
@@ -68,13 +67,14 @@ data class GmailUiState(
     val detailError: GmailUiErrorCode? = null,
     val thread: GmailThread? = null,
     val threadError: GmailUiErrorCode? = null,
+    val isDemoProvider: Boolean = true,
     /** Raw search text stays in the Activity ViewModel and is never written to saved state. */
     val searchInput: String = "",
 )
 
 /**
- * State holder for the mock-only, read-only Gmail UI. Every operation checks the
- * mock authorization boundary again and rejects real-provider messages.
+ * Read-only Gmail state holder. Every operation checks the active authorization and requires
+ * provider response provenance to match that authorization mode.
  */
 class GmailViewModel(
     private val readPort: GmailReadPort,
@@ -83,8 +83,9 @@ class GmailViewModel(
     private val pageSize: Int = DEFAULT_PAGE_SIZE,
     private val maximumPages: Int = DEFAULT_MAXIMUM_PAGES,
     private val maximumMessages: Int = DEFAULT_MAXIMUM_MESSAGES,
+    private val defaultDemoProvider: Boolean = true,
 ) : ViewModel() {
-    private val mutableState = MutableStateFlow(restoreState())
+    private val mutableState = MutableStateFlow(restoreState().copy(isDemoProvider = defaultDemoProvider))
     val state: StateFlow<GmailUiState> = mutableState.asStateFlow()
 
     private var operationGeneration = 0L
@@ -394,7 +395,7 @@ class GmailViewModel(
         }
         activeJob = viewModelScope.launch {
             try {
-                requireMockAuthorization()
+                val expectedSource = requireReadAuthorization()
                 if (!isFirstPage && token != null && (token.isBlank() || token.length > MAX_PAGE_TOKEN_LENGTH || token in consumedTokens)) {
                     throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)
                 }
@@ -406,7 +407,7 @@ class GmailViewModel(
                     GmailListMode.SEARCH -> readPort.search(route.query, token, pageSize)
                 }
                 ensureCurrent(generation)
-                validatePage(page)
+                validatePage(page, expectedSource)
                 val merged = mergePage(if (isFirstPage) emptyList() else mutableState.value.messages, page.messages)
                 if (merged.size > maximumMessages) throw GmailReadFailure(GmailReadFailureCode.TOO_MANY_MESSAGES)
                 val nextToken = page.nextPageToken
@@ -425,6 +426,7 @@ class GmailViewModel(
                     isLoading = false,
                     isLoadingMore = false,
                     listError = if (exceededPageLimit || exceededMessageLimit) GmailUiErrorCode.TOO_MANY_RESULTS else null,
+                    isDemoProvider = expectedSource == GmailMessageSource.MOCK,
                 )
                 failedAction = null
                 if (restoreAfter != null) {
@@ -456,11 +458,14 @@ class GmailViewModel(
         mutableState.value = mutableState.value.copy(isLoading = true, detail = null, detailError = null)
         activeJob = viewModelScope.launch {
             try {
-                requireMockAuthorization()
+                val expectedSource = requireReadAuthorization()
                 val message = readPort.getMessage(id)
                 ensureCurrent(generation)
-                validateMessage(message, expectedId = id)
-                mutableState.value = mutableState.value.copy(isLoading = false, detail = message, detailError = null)
+                validateMessage(message, expectedSource, expectedId = id)
+                mutableState.value = mutableState.value.copy(
+                    isLoading = false, detail = message, detailError = null,
+                    isDemoProvider = expectedSource == GmailMessageSource.MOCK,
+                )
             } catch (failure: CancellationException) {
                 if (failure is kotlinx.coroutines.TimeoutCancellationException) {
                     applyDetailFailure(generation, GmailUiErrorCode.TIMEOUT, FailedAction.Message(id))
@@ -483,11 +488,14 @@ class GmailViewModel(
         mutableState.value = mutableState.value.copy(isLoading = true, thread = null, threadError = null)
         activeJob = viewModelScope.launch {
             try {
-                requireMockAuthorization()
+                val expectedSource = requireReadAuthorization()
                 val thread = readPort.getThread(route.id)
                 ensureCurrent(generation)
-                val normalizedThread = validateThread(thread, route.id)
-                mutableState.value = mutableState.value.copy(isLoading = false, thread = normalizedThread, threadError = null)
+                val normalizedThread = validateThread(thread, route.id, expectedSource)
+                mutableState.value = mutableState.value.copy(
+                    isLoading = false, thread = normalizedThread, threadError = null,
+                    isDemoProvider = expectedSource == GmailMessageSource.MOCK,
+                )
             } catch (failure: CancellationException) {
                 if (failure is kotlinx.coroutines.TimeoutCancellationException) {
                     applyThreadFailure(generation, GmailUiErrorCode.TIMEOUT, FailedAction.Thread(route))
@@ -504,39 +512,48 @@ class GmailViewModel(
         }
     }
 
-    private suspend fun requireMockAuthorization() {
+    private suspend fun requireReadAuthorization(): GmailMessageSource {
         val status = authorizationPort.status()
         if (status.missingScopes.isNotEmpty()) throw GmailReadFailure(GmailReadFailureCode.MISSING_SCOPE)
         when (status.state) {
-            GmailAuthorizationState.MOCK_ONLY -> Unit
+            GmailAuthorizationState.MOCK_ONLY -> return GmailMessageSource.MOCK
             GmailAuthorizationState.DENIED -> throw GmailUiBoundaryFailure(GmailUiErrorCode.AUTHORIZATION_DENIED)
             GmailAuthorizationState.REVOKED -> throw GmailUiBoundaryFailure(GmailUiErrorCode.AUTHORIZATION_REVOKED)
             GmailAuthorizationState.EXPIRED -> throw GmailUiBoundaryFailure(GmailUiErrorCode.AUTHORIZATION_EXPIRED)
             GmailAuthorizationState.NOT_CONFIGURED,
             GmailAuthorizationState.NOT_CONNECTED,
             GmailAuthorizationState.AUTHORIZATION_REQUIRED -> throw GmailUiBoundaryFailure(GmailUiErrorCode.AUTHORIZATION_REQUIRED)
-            GmailAuthorizationState.AUTHORIZED -> throw GmailUiBoundaryFailure(GmailUiErrorCode.MOCK_PROVIDER_REQUIRED)
+            GmailAuthorizationState.AUTHORIZED -> return GmailMessageSource.GMAIL_API
             GmailAuthorizationState.ERROR -> throw GmailUiBoundaryFailure(GmailUiErrorCode.UNAVAILABLE)
         }
     }
 
-    private fun validatePage(page: GmailMessagePage) {
-        page.messages.forEach { validateMessage(it) }
+    private fun validatePage(page: GmailMessagePage, expectedSource: GmailMessageSource) {
+        page.messages.forEach { validateMessage(it, expectedSource) }
     }
 
-    private fun validateMessage(message: GmailMessage, expectedId: GmailMessageId? = null, expectedThreadId: GmailThreadId? = null) {
-        if (message.source != GmailMessageSource.MOCK || message.dataOrigin != DataOrigin.GMAIL ||
+    private fun validateMessage(
+        message: GmailMessage,
+        expectedSource: GmailMessageSource,
+        expectedId: GmailMessageId? = null,
+        expectedThreadId: GmailThreadId? = null,
+    ) {
+        if (message.source != expectedSource || message.dataOrigin != DataOrigin.GMAIL ||
             message.classification == DataClassification.PUBLIC ||
             (expectedId != null && message.id != expectedId) ||
             (expectedThreadId != null && message.threadId != expectedThreadId)
         ) throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)
     }
 
-    private fun validateThread(thread: GmailThread, expectedId: GmailThreadId): GmailThread {
+    private fun validateThread(
+        thread: GmailThread,
+        expectedId: GmailThreadId,
+        expectedSource: GmailMessageSource,
+    ): GmailThread {
         if (thread.id != expectedId || thread.messages.isEmpty()) throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)
         val byId = linkedMapOf<GmailMessageId, GmailMessage>()
         thread.messages.forEach { message ->
-            validateMessage(message, expectedThreadId = expectedId)
+            validateMessage(message, expectedSource, expectedThreadId = expectedId)
             val previous = byId.putIfAbsent(message.id, message)
             if (previous != null && previous != message) throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE)
         }
@@ -727,10 +744,19 @@ class GmailViewModel(
         private const val KEY_LIST_MODE = "gmail_list_mode"
         private const val KEY_QUERY = "gmail_search_query"
 
-        fun factory(readPort: GmailReadPort, authorizationPort: GmailAuthorizationPort): ViewModelProvider.Factory =
+        fun factory(
+            readPort: GmailReadPort,
+            authorizationPort: GmailAuthorizationPort,
+            demoProvider: Boolean = true,
+        ): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
-                    GmailViewModel(readPort, authorizationPort, createSavedStateHandle())
+                    GmailViewModel(
+                        readPort,
+                        authorizationPort,
+                        createSavedStateHandle(),
+                        defaultDemoProvider = demoProvider,
+                    )
                 }
             }
     }

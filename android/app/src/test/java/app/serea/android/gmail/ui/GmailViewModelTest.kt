@@ -55,6 +55,30 @@ class GmailViewModelTest {
         }
     }
 
+    @Test fun authorizedSessionAcceptsOnlyGoogleApiSourcedMessages() = runTest(mainDispatcher.dispatcher) {
+        val apiMessages = FakeGmailProvider.fixtures.messages.map { it.copy(source = GmailMessageSource.GMAIL_API) }
+        val authorized = GmailUiTestFake(
+            allMessages = apiMessages,
+            authorization = GmailAuthorizationStatus(GmailAuthorizationState.AUTHORIZED),
+        )
+        val realViewModel = GmailViewModel(authorized, authorized, defaultDemoProvider = false)
+        advanceUntilIdle()
+
+        assertFalse(realViewModel.state.value.isLoading)
+        assertFalse(realViewModel.state.value.isDemoProvider)
+        assertEquals(7, realViewModel.state.value.messages.size)
+        assertTrue(realViewModel.state.value.messages.all { it.source == GmailMessageSource.GMAIL_API })
+
+        val mismatched = GmailUiTestFake(
+            authorization = GmailAuthorizationStatus(GmailAuthorizationState.AUTHORIZED),
+        )
+        val rejectedViewModel = GmailViewModel(mismatched, mismatched, defaultDemoProvider = false)
+        advanceUntilIdle()
+        assertEquals(GmailUiErrorCode.INVALID_DATA, rejectedViewModel.state.value.listError)
+        assertTrue(rejectedViewModel.state.value.messages.isEmpty())
+        assertEquals("An authorized source mismatch is read then rejected, not treated as a denied grant.", listOf(null), mismatched.inboxTokens)
+    }
+
     @Test fun emptyInboxIsAStableEmptyState() = runTest(mainDispatcher.dispatcher) {
         val fake = GmailUiTestFake(inboxIds = emptySet())
         val viewModel = viewModel(fake)
@@ -434,13 +458,12 @@ class GmailViewModelTest {
         assertNull(viewModel.state.value.thread)
     }
 
-    @Test fun authorizationBoundariesCoverDeniedMissingScopeExpiredRevokedAndRealStatus() = runTest(mainDispatcher.dispatcher) {
+    @Test fun authorizationBoundariesCoverDeniedMissingScopeExpiredAndRevokedWithoutReadingMailbox() = runTest(mainDispatcher.dispatcher) {
         val expected = listOf(
             GmailAuthorizationStatus(GmailAuthorizationState.DENIED) to GmailUiErrorCode.AUTHORIZATION_DENIED,
             GmailAuthorizationStatus(GmailAuthorizationState.REVOKED) to GmailUiErrorCode.AUTHORIZATION_REVOKED,
             GmailAuthorizationStatus(GmailAuthorizationState.EXPIRED) to GmailUiErrorCode.AUTHORIZATION_EXPIRED,
             GmailAuthorizationStatus(GmailAuthorizationState.MOCK_ONLY, setOf("gmail.readonly")) to GmailUiErrorCode.MISSING_SCOPE,
-            GmailAuthorizationStatus(GmailAuthorizationState.AUTHORIZED) to GmailUiErrorCode.MOCK_PROVIDER_REQUIRED,
         )
         for ((status, error) in expected) {
             val fake = GmailUiTestFake(authorization = status)

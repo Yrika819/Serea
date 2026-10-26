@@ -13,7 +13,15 @@ import app.serea.android.calendar.CalendarEventKey
 import app.serea.android.calendar.EventId
 import app.serea.android.calendar.CalendarPermissionPolicy
 import app.serea.android.googleauth.AccessTokenLease
+import app.serea.android.googleauth.AuthorizationStatus
+import app.serea.android.googleauth.GoogleAuthorizationGateway
+import app.serea.android.googleauth.GoogleAuthorizationMode
+import app.serea.android.googleauth.GoogleCalendarAuthorizationAdapter
+import app.serea.android.googleauth.GoogleFeature
 import app.serea.android.googleauth.GoogleScope
+import app.serea.android.googleauth.GoogleServiceState
+import app.serea.android.googleauth.ScopePermission
+import app.serea.android.googleauth.TokenSupplyResult
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
@@ -111,6 +119,39 @@ class GoogleCalendarHttpReadPortTest {
         status = CalendarAuthorizationStatus(CalendarAuthorizationState.MOCK_ONLY)
         try { port().listEventsPage(calendarId, range()); fail("MOCK_ONLY must not authorize production transport") }
         catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, e.code) }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun accountSwitchDuringTokenLeaseAcquisitionRejectsBeforeHttpDispatch() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"id":"fixture+calendar@example.test","timeZone":"UTC","accessRole":"reader"}"""))
+        var selectedSession = "calendar-session-before-switch"
+        val gateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId: String get() = selectedSession
+            override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                GoogleServiceState.AVAILABLE,
+                scopes.associateWith { ScopePermission.GRANTED },
+            )
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+                val lease = AccessTokenLease(
+                    "fixture-calendar-token-before-switch",
+                    scopes,
+                    null,
+                    authorizationSessionId = selectedSession,
+                )
+                selectedSession = "calendar-session-after-switch"
+                return TokenSupplyResult.Available(lease)
+            }
+        }
+        val bridge = GoogleCalendarAuthorizationAdapter(gateway)
+        val realHttp = GoogleCalendarHttpReadPort(bridge, bridge, OkHttpClient(), server.url("/calendar/v3/"))
+
+        try {
+            realHttp.getCalendar(calendarId)
+            fail("an account switch during lease acquisition must deny the read")
+        } catch (failure: CalendarReadFailure) {
+            assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, failure.code)
+        }
         assertEquals(0, server.requestCount)
     }
 

@@ -1,0 +1,81 @@
+name: Android Release Security Focused (Non-Required)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/serea-functional-security-release
+      - codex/serea-functional-security-release-verified
+      - codex/serea-personal-beta-functional-integration
+    paths:
+      - '.github/workflows/android-release-security-focused.yml'
+      - '.github/workflows/android-personal-beta.yml'
+      - 'android/**'
+      - 'docs/security/android-personal-beta-release-posture-2026-10-26.md'
+      - 'tests/android_firebase_distribution_tests.py'
+      - 'tests/android_lockfile_sbom_tests.py'
+      - 'tools/assert_disposable_android_emulator.sh'
+      - 'tools/android_firebase_distribution.py'
+      - 'tools/generate_android_lockfile_sbom.py'
+      - 'tools/test_android_update_compatibility.sh'
+      - 'tools/test_android_update_compatibility_guard.sh'
+      - 'tools/test_personal_beta_identity.sh'
+      - 'tools/verify_personal_beta_apk.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-security-focused-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-security:
+    name: Mock Release Contract and Lockfile SBOM (Non-Required)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run deterministic lockfile SBOM tests
+        run: python3 -m unittest discover -s tests -p android_lockfile_sbom_tests.py
+      - name: Run mock signing and distribution contract tests
+        run: python3 -m unittest discover -s tests -p android_firebase_distribution_tests.py
+      - name: Check release and emulator guard shell syntax
+        run: |
+          for script in \
+            tools/assert_disposable_android_emulator.sh \
+            tools/test_android_update_compatibility.sh \
+            tools/test_android_update_compatibility_guard.sh \
+            tools/test_personal_beta_identity.sh \
+            tools/verify_personal_beta_apk.sh; do
+            bash -n "$script"
+          done
+      - name: Generate source-bound lockfile SBOM inventory
+        run: |
+          set -euo pipefail
+          output=android/app/build/outputs/security/android-lockfile-inventory.cdx.json
+          python3 tools/generate_android_lockfile_sbom.py \
+            --source-sha "$GITHUB_SHA" \
+            --output "$output"
+          sha256sum "$output" > "$output.sha256"
+          python3 - "$output" "$GITHUB_SHA" <<'PY'
+          import json, pathlib, sys
+          bom = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          properties = {item["name"]: item["value"] for item in bom["metadata"]["properties"]}
+          assert len(bom["components"]) == 325
+          assert properties["serea:source:commit"] == sys.argv[2].lower()
+          assert properties["serea:sbom:publisher-authenticity"] == "not-established-by-this-inventory"
+          print(f"CycloneDX {bom['specVersion']}; lockfile components={len(bom['components'])}; source={sys.argv[2]}")
+          PY
+      - name: Upload non-secret release security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-release-security-focused
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            android/app/build/outputs/security/android-lockfile-inventory.cdx.json
+            android/app/build/outputs/security/android-lockfile-inventory.cdx.json.sha256

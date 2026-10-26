@@ -276,6 +276,8 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
 internal class RoutedModelChatPort(
     private val delegate: ModelChatPort,
     private val router: AdaptiveModelRouter,
+    /** Optional provider-specific contract builder; omitted for ordinary externally gated routes. */
+    private val contractFactory: ((ModelChatRequest, ModelDescriptor) -> EgressContract)? = null,
     private val policy: () -> ModelRoutingPolicy,
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
@@ -283,7 +285,11 @@ internal class RoutedModelChatPort(
         val current = policy()
         val selected = router.select(RoutingRequest(request.message, request.context.sumOf { it.text.length }), current)
         val model = selected.model ?: throw ModelChatFailure(selected.reason)
-        return delegate.send(request.copy(selectedModelId = model.id))
+        val routedRequest = request.copy(selectedModelId = model.id)
+        val preparedRequest = if (request.egressContract == null && contractFactory != null) {
+            routedRequest.copy(egressContract = contractFactory.invoke(request, model))
+        } else routedRequest
+        return delegate.send(preparedRequest)
     }
 }
 

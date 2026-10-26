@@ -14,6 +14,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -30,11 +31,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.serea.android.assistant.taskproposal.TaskProposalDemoScreen
-import app.serea.android.calendar.FakeCalendarProvider
 import app.serea.android.calendar.ui.CalendarAgendaScreen
-import app.serea.android.gmail.FakeGmailProvider
 import app.serea.android.gmail.ui.GmailScreen
 import app.serea.android.gmail.ui.GmailViewModel
+import app.serea.android.gmail.GmailProviderKind
 import app.serea.android.tasks.TaskScreen
 import app.serea.android.tasks.TaskViewModel
 import java.time.ZoneId
@@ -56,7 +56,12 @@ internal fun SereaAppShell(
             onActionPendingChanged = onPendingChanged,
         )
     },
+    providers: AppProviderComposition? = null,
 ) {
+    val activeProviders = providers ?: remember { AppProviderComposition.fakeDefault() }
+    DisposableEffect(activeProviders) {
+        onDispose { if (providers == null) activeProviders.close() }
+    }
     var destinationName by rememberSaveable { mutableStateOf(SereaDestination.CHAT.name) }
     var backStackNames by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var focusClearRequest by rememberSaveable { mutableIntStateOf(0) }
@@ -155,8 +160,8 @@ internal fun SereaAppShell(
                             focusClearRequest = focusClearRequest,
                         )
                         SereaDestination.TASKS -> TaskScreen(taskViewModel)
-                        SereaDestination.GMAIL -> GmailDestination(onBack = ::goBack)
-                        SereaDestination.CALENDAR -> CalendarDestination(onBack = ::goBack)
+                        SereaDestination.GMAIL -> GmailDestination(activeProviders, onBack = ::goBack)
+                        SereaDestination.CALENDAR -> CalendarDestination(activeProviders, onBack = ::goBack)
                         SereaDestination.SETTINGS -> ChatScreen(
                             chatViewModel = chatViewModel,
                             credentials = credentials,
@@ -178,23 +183,25 @@ internal fun SereaAppShell(
 }
 
 @Composable
-private fun GmailDestination(onBack: () -> Unit) {
-    val provider = androidx.compose.runtime.remember { FakeGmailProvider() }
-    val vm: GmailViewModel = viewModel(factory = GmailViewModel.factory(provider, provider))
+private fun GmailDestination(providers: AppProviderComposition, onBack: () -> Unit) {
+    val vm: GmailViewModel = viewModel(
+        factory = GmailViewModel.factory(
+            providers.gmail,
+            providers.gmail,
+            demoProvider = providers.gmail.kind == GmailProviderKind.FAKE,
+        ),
+    )
     GmailScreen(viewModel = vm, onBack = onBack, modifier = Modifier.fillMaxSize().testTag("gmail_destination"))
 }
 
 @Composable
-private fun CalendarDestination(onBack: () -> Unit) {
-    val provider = androidx.compose.runtime.remember {
-        FakeCalendarProvider(events = FakeCalendarProvider.Fixtures.appShellEvents, pageSize = 50)
-    }
-    val clock = provider.clock
+private fun CalendarDestination(providers: AppProviderComposition, onBack: () -> Unit) {
     val displayZone = androidx.compose.runtime.remember { ZoneId.systemDefault() }
     CalendarAgendaScreen(
         onBack = onBack,
-        provider = provider,
-        clock = clock,
+        provider = providers.calendar,
+        authorizationPort = providers.calendar,
+        clock = providers.calendarClock,
         displayZone = displayZone,
         modifier = Modifier.fillMaxSize().testTag("calendar_destination"),
     )

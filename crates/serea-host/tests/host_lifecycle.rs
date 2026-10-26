@@ -56,7 +56,10 @@ fn wait_for_marker(child: &mut Child, marker: &Path) {
         if let Some(status) = child.try_wait().expect("poll paused synthetic host") {
             panic!("Host exited before pause marker was written: {status}");
         }
-        assert!(monotonic_now() < deadline, "Host did not reach the pause marker");
+        assert!(
+            monotonic_now() < deadline,
+            "Host did not reach the pause marker"
+        );
         thread::park_timeout(Duration::from_millis(10));
     }
 }

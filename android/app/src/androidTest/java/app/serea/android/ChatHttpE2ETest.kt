@@ -272,7 +272,11 @@ class ChatHttpE2ETest {
             usage = usage,
             attributionResolver = CatalogUsageAttributionResolver(catalog),
         )
-        val outer = EgressCheckedModelChatPort(usagePort) { 1000L }
+        val outer = EgressCheckedModelChatPort(
+            usagePort,
+            clock = { 1000L },
+            expectedTarget = EgressTarget.CLOUD,
+        )
         val router = AdaptiveModelRouter(catalog)
         val routed = RoutedModelChatPort(outer, router) {
             ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelId, allowedProviderIds = setOf("ollama"))

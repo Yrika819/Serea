@@ -72,6 +72,8 @@ jobs:
           cache: gradle
       - name: Boot API 26 disposable Emulator and run focused app-shell tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
         with:
           api-level: 26
           target: default
@@ -103,6 +105,8 @@ jobs:
           cache: gradle
       - name: Boot API 35 disposable Emulator and run focused app-shell tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
         with:
           api-level: 35
           target: default

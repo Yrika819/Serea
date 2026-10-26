@@ -1477,10 +1477,12 @@ class SereaAppShellTest {
             shell("ime set $restoreIme")
             shell("ime set $TEST_IME_ID")
             assertEquals(TEST_IME_ID, shell("settings get secure default_input_method"))
-            // Selecting the Test IME while the already-focused composer is active must create a
-            // fresh Android-managed input session. Verify that callback and its live connection
-            // directly; a second external tap adds no IME-session evidence and was rejected in
-            // the Formal run despite the fresh callback already being present.
+            // Committing B and clearing the editor can leave the Activity resumed and the
+            // Composer semantically focused while Android has removed Window focus. Selecting
+            // the IME alone does not restore that window state, so recover the target task and
+            // dispatch a real screen tap before requiring C's fresh system-bound session.
+            ensureChatWindowFocus("synchronized real IME session")
+            tapComposerThroughSystemInput()
             awaitComposerWindowFocus("synchronized real IME session")
             composer.assertIsFocused()
             // Window focus can cause Android to replace the IME InputConnection after an

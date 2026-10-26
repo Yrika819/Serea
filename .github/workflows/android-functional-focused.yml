@@ -3,7 +3,10 @@ name: Android Functional Focused (Non-Required)
 on:
   workflow_dispatch:
   push:
-    branches: [codex/serea-personal-beta-functional-integration]
+    branches:
+      - codex/serea-personal-beta-functional-integration
+      - codex/serea-personal-beta-functional-integration-identity
+      - codex/serea-f5r-focused-candidate
     paths:
       - '.github/workflows/android-functional-focused.yml'
       - 'android/**'

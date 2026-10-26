@@ -6,7 +6,6 @@
 use std::error::Error;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::Duration;
 
 pub(super) fn report_host_error(error: &dyn std::fmt::Debug) {
     if std::env::var_os("SEREA_TEST_READY_MARKER").is_some() {

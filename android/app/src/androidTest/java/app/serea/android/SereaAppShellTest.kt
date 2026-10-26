@@ -1820,6 +1820,7 @@ class SereaAppShellTest {
         val originalDensityOverride = shell("wm density").lineSequence()
             .firstOrNull { it.startsWith("Override density:") }
             ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+        var lastActivityConfiguration = "not-observed"
         fun activityConfigurationMatches(expectedScale: Float, expectedWidth: Int, expectedDensityDpi: Int): Boolean {
             return try {
                 var fontScale = 0f
@@ -1830,18 +1831,21 @@ class SereaAppShellTest {
                     width = it.resources.configuration.screenWidthDp
                     densityDpi = it.resources.configuration.densityDpi
                 }
+                lastActivityConfiguration = "fontScale=$fontScale,width=$width,densityDpi=$densityDpi"
                 kotlin.math.abs(fontScale - expectedScale) < 0.02f &&
                     width == expectedWidth && densityDpi == expectedDensityDpi
             } catch (failure: NullPointerException) {
                 // Android destroys and recreates the Activity for a system font/size change.
                 // ActivityScenario can observe the short DESTROYED interval between those callbacks.
                 if (failure.message == "Cannot run onActivity since Activity has been destroyed already") {
+                    lastActivityConfiguration = "activity-destroyed-during-recreation"
                     false
                 } else {
                     throw failure
                 }
             }
         }
+        var primaryFailure: Throwable? = null
         try {
             shell("wm size 320x640")
             shell("wm density 160")
@@ -1860,7 +1864,9 @@ class SereaAppShellTest {
             compose.onNodeWithText("その他の操作").performClick()
             fontScaleStage("compact-overflow-open")
             compose.onNodeWithText("新しい会話").assertIsDisplayed()
+            fontScaleStage("compact-new-conversation-visible")
             compose.onNodeWithText("履歴").assertIsDisplayed()
+            fontScaleStage("compact-history-visible")
             pressBack()
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
             fontScaleStage("compact-overflow-dismissed")
@@ -1934,45 +1940,53 @@ class SereaAppShellTest {
                 runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess
             }
         } catch (failure: Throwable) {
-            compose.onRoot(useUnmergedTree = true).printToLog("task-proposal-font-scale")
-            throw failure
+            primaryFailure = failure
+            runCatching { compose.onRoot(useUnmergedTree = true).printToLog("task-proposal-font-scale") }
         } finally {
-            runCatching {
-                if (originalFontScaleSetting == "null") {
-                    shell("settings delete system font_scale")
-                } else {
-                    shell("settings put system font_scale $originalFontScaleSetting")
+            try {
+                runCatching {
+                    if (originalFontScaleSetting == "null") {
+                        shell("settings delete system font_scale")
+                    } else {
+                        shell("settings put system font_scale $originalFontScaleSetting")
+                    }
                 }
-            }
-            runCatching {
-                if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
-            }
-            runCatching {
-                if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
-            }
-            val restoredSizeOverride = shell("wm size").lineSequence()
-                .firstOrNull { it.startsWith("Override size:") }
-                ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-            val restoredDensityOverride = shell("wm density").lineSequence()
-                .firstOrNull { it.startsWith("Override density:") }
-                ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-            val restoredFontScaleSetting = shell("settings get system font_scale")
-            val originalSettingIsPlatformDefault = originalFontScaleSetting == "null" &&
-                originalScale == 1f && restoredFontScaleSetting.toFloatOrNull() == 1f
-            assertTrue(
-                "System font scale setting was not restored: original=$originalFontScaleSetting " +
-                    "restored=$restoredFontScaleSetting effectiveOriginal=$originalScale",
-                originalFontScaleSetting == restoredFontScaleSetting || originalSettingIsPlatformDefault,
-            )
-            assertEquals(originalSizeOverride, restoredSizeOverride)
-            assertEquals(originalDensityOverride, restoredDensityOverride)
-            compose.waitUntil(15_000) {
-                activityConfigurationMatches(
-                    expectedScale = originalScale,
-                    expectedWidth = originalWidthDp,
-                    expectedDensityDpi = originalDensityDpi,
+                runCatching {
+                    if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
+                }
+                runCatching {
+                    if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
+                }
+                val restoredSizeOverride = shell("wm size").lineSequence()
+                    .firstOrNull { it.startsWith("Override size:") }
+                    ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+                val restoredDensityOverride = shell("wm density").lineSequence()
+                    .firstOrNull { it.startsWith("Override density:") }
+                    ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+                val restoredFontScaleSetting = shell("settings get system font_scale")
+                val originalSettingIsPlatformDefault = originalFontScaleSetting == "null" &&
+                    originalScale == 1f && restoredFontScaleSetting.toFloatOrNull() == 1f
+                assertTrue(
+                    "System font scale setting was not restored: original=$originalFontScaleSetting " +
+                        "restored=$restoredFontScaleSetting effectiveOriginal=$originalScale",
+                    originalFontScaleSetting == restoredFontScaleSetting || originalSettingIsPlatformDefault,
                 )
+                assertEquals(originalSizeOverride, restoredSizeOverride)
+                assertEquals(originalDensityOverride, restoredDensityOverride)
+                compose.waitUntil(15_000) {
+                    activityConfigurationMatches(
+                        expectedScale = originalScale,
+                        expectedWidth = originalWidthDp,
+                        expectedDensityDpi = originalDensityDpi,
+                    )
+                }
+            } catch (cleanupFailure: Throwable) {
+                fontScaleStage("cleanup-failed:${cleanupFailure::class.java.simpleName}:$lastActivityConfiguration")
+                val earlierFailure = primaryFailure
+                if (earlierFailure == null) primaryFailure = cleanupFailure
+                else earlierFailure.addSuppressed(cleanupFailure)
             }
         }
+        primaryFailure?.let { throw it }
     }
 }

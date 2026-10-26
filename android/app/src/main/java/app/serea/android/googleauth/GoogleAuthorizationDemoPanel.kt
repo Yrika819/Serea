@@ -80,7 +80,7 @@ internal fun GoogleAuthorizationDemoPanel(
             enabled = state.gmail == GoogleDemoFeatureState.AUTHORIZED ||
                 state.calendar == GoogleDemoFeatureState.AUTHORIZED,
             modifier = Modifier.testTag("google_auth_demo_expire"),
-        ) { Text("架空Token Leaseを期限切れにする") }
+        ) { Text("架空の認可状態を期限切れにする") }
     }
 
     if (pending != null) {

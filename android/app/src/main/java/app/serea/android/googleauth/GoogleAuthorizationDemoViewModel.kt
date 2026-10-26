@@ -88,7 +88,7 @@ internal class GoogleAuthorizationDemoViewModel(
             calendar = GoogleDemoFeatureState.EXPIRED,
             pendingFeature = null,
             pendingScopes = emptySet(),
-            message = "架空のToken Leaseを期限切れにしました。読み取りは行われません。",
+            message = "架空の認可状態を期限切れにしました。読み取りは行われません。",
         )
     }
 

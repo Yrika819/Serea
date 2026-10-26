@@ -276,9 +276,9 @@ class AdaptiveModelRouter(private val catalog: ModelCatalog) {
 internal class RoutedModelChatPort(
     private val delegate: ModelChatPort,
     private val router: AdaptiveModelRouter,
-    private val policy: () -> ModelRoutingPolicy,
     /** Optional provider-specific contract builder; omitted for ordinary externally gated routes. */
     private val contractFactory: ((ModelChatRequest, ModelDescriptor) -> EgressContract)? = null,
+    private val policy: () -> ModelRoutingPolicy,
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         if (request.selectedModelId != null) throw ModelChatFailure("Model ID is assigned only by the router.")

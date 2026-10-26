@@ -327,7 +327,7 @@ class UsageLedgerDatabaseTest {
         val routed = RoutedModelChatPort(
             controlled,
             AdaptiveModelRouter(catalog),
-            { ModelRoutingPolicy(
+            policy = { ModelRoutingPolicy(
                 mode = ModelSelectionMode.MANUAL,
                 manualModelId = "fixture/model",
                 allowedProviderIds = setOf("fake-provider"),

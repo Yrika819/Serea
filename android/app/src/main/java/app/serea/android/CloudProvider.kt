@@ -312,6 +312,6 @@ internal object DirectProviderChatComposition {
             ),
             expectedTarget = EgressTarget.CLOUD,
         )
-        return RoutedModelChatPort(gated, AdaptiveModelRouter(catalog), routingPolicy)
+        return RoutedModelChatPort(gated, AdaptiveModelRouter(catalog), policy = routingPolicy)
     }
 }

@@ -74,6 +74,10 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools emulator
+      - name: Install Emulator host runtime dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
       - name: Verify runner KVM and prepare accelerated disposable emulator
         run: |
           set -euo pipefail
@@ -99,11 +103,19 @@ jobs:
             free -h
             echo 'runner_cpu_pressure_before_emulator:'
             cat /proc/pressure/cpu
+            echo 'emulator_host_runtime:'
+            dpkg-query -W -f='${Package} ${Version}\n' libpulse0
+            qemu_ldd="$(ldd "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64" 2>&1)"
+            printf '%s\n' "$qemu_ldd"
+            if grep -q 'not found' <<< "$qemu_ldd"; then
+              echo 'emulator_qemu_runtime_dependencies=missing'
+              exit 1
+            fi
             echo 'kvm_before_permissions:'
             if [ -e /dev/kvm ]; then
               stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
               id
-              if "$ANDROID_HOME/emulator/emulator" -accel-check; then :; else echo 'pre_permission_accel_check=unavailable'; fi
+              if "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1; then :; else echo 'pre_permission_accel_check=unavailable'; fi
             else
               echo '/dev/kvm: absent'
               exit 1
@@ -113,8 +125,8 @@ jobs:
             sudo udevadm trigger --name-match=kvm
             stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
             test -r /dev/kvm && test -w /dev/kvm
-            "$ANDROID_HOME/emulator/emulator" -version
-            "$ANDROID_HOME/emulator/emulator" -accel-check
+            "$ANDROID_HOME/emulator/emulator" -version 2>&1
+            "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1
             echo 'runner_cpu_pressure_after_kvm_setup:'
             cat /proc/pressure/cpu
           } | tee "$host_file"
@@ -163,6 +175,10 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           packages: platform-tools emulator
+      - name: Install Emulator host runtime dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
       - name: Verify runner KVM and prepare accelerated disposable emulator
         run: |
           set -euo pipefail
@@ -188,11 +204,19 @@ jobs:
             free -h
             echo 'runner_cpu_pressure_before_emulator:'
             cat /proc/pressure/cpu
+            echo 'emulator_host_runtime:'
+            dpkg-query -W -f='${Package} ${Version}\n' libpulse0
+            qemu_ldd="$(ldd "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64" 2>&1)"
+            printf '%s\n' "$qemu_ldd"
+            if grep -q 'not found' <<< "$qemu_ldd"; then
+              echo 'emulator_qemu_runtime_dependencies=missing'
+              exit 1
+            fi
             echo 'kvm_before_permissions:'
             if [ -e /dev/kvm ]; then
               stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
               id
-              if "$ANDROID_HOME/emulator/emulator" -accel-check; then :; else echo 'pre_permission_accel_check=unavailable'; fi
+              if "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1; then :; else echo 'pre_permission_accel_check=unavailable'; fi
             else
               echo '/dev/kvm: absent'
               exit 1
@@ -202,8 +226,8 @@ jobs:
             sudo udevadm trigger --name-match=kvm
             stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
             test -r /dev/kvm && test -w /dev/kvm
-            "$ANDROID_HOME/emulator/emulator" -version
-            "$ANDROID_HOME/emulator/emulator" -accel-check
+            "$ANDROID_HOME/emulator/emulator" -version 2>&1
+            "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1
             echo 'runner_cpu_pressure_after_kvm_setup:'
             cat /proc/pressure/cpu
           } | tee "$host_file"

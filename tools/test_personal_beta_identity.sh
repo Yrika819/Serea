@@ -329,15 +329,18 @@ phase() {
 }
 
 reboot_emulator() {
-  adb reboot
-  adb wait-for-device
-  for _ in $(seq 1 120); do
-    [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == 1 ]] && break
-    sleep 1
-  done
-  [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
-  adb root >/dev/null
-  adb wait-for-device
+  timeout 10s adb -s "$serial" reboot
+  wait_for_stable_emulator 'Android system reboot before root restart'
+  if ! timeout 10s adb -s "$serial" root >/dev/null; then
+    print_emulator_diagnostics 'Could not restart adb in root mode after the Android system reboot.'
+    return 1
+  fi
+  wait_for_stable_emulator 'adb root restart after Android system reboot'
+  root_uid=$(timeout 8s adb -s "$serial" shell id -u 2>/dev/null | tr -d '\r' || true)
+  if [[ "$root_uid" != 0 ]]; then
+    print_emulator_diagnostics 'The disposable emulator did not return to root mode after reboot.'
+    return 1
+  fi
   wait_for_package_manager
 }
 

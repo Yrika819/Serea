@@ -16,7 +16,7 @@ This ledger collects approvals that must come from the Owner. Until approved, af
 
 ## Current technical boundaries
 
-- Functional validation currently uses synthetic Gmail, Calendar, Task and Chat fixtures. Hosted API 26 Focused passed on source `bfddbc284b3198708b7399d93df4ae81cc40f988`; API 35 run `40288581135` is still in progress.
+- Functional validation currently uses synthetic Gmail, Calendar, Task and Chat fixtures. Hosted API 26 Focused passed 26/26 on source `bfddbc284b3198708b7399d93df4ae81cc40f988`. API 35 on that source had zero tests because its emulator fingerprint was absent from the test-runner allowlist; the test-only correction is commit `613b338ad113cc08ee2ecd656f72a074708264b5`, under serialized API 26/35 validation in run `40292160073`.
 - Lane B PR #120's focused release/SBOM run passed, but its lockfile inventory is explicitly partial and does not attest a Beta APK.
 - Lane C PR #121's adversarial test changes remain independently reviewable; selected JVM tests are present on Lane A. Neither lane PR has been merged.
 - PR #117 Required evidence applies only to its frozen SHA. The functional integration candidate still needs its own formal Required and cross-platform runs after the Draft PR is opened.

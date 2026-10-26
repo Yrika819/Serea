@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: [codex/serea-personal-beta-functional-integration]
+    paths:
+      - '.github/workflows/android-functional-focused.yml'
+      - 'android/**'
+      - 'tools/verify_android_instrumentation.py'
 
 permissions:
   contents: read
@@ -50,7 +54,7 @@ jobs:
           path: android/app/build/test-results/testDebugUnitTest/
 
   api26-focused:
-    name: API 26 app-shell Fake Gmail and Calendar E2E
+    name: API 26 focused Fake providers, local Chat and Tasks E2E
     needs: provider-unit
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -76,7 +80,7 @@ jobs:
             set -u
             evidence="app/build/outputs/androidTest-results/functional-api${API_LEVEL}"
             mkdir -p "$evidence"
-            filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail'
+            filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest'
             {
               echo "source_sha=$(git rev-parse HEAD)"
               echo "api_level=$API_LEVEL"
@@ -104,10 +108,32 @@ jobs:
             fi
             if [ -d "$evidence/junit" ]; then
               python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
-                --minimum 3 --exact-count 3 \
+                --minimum 25 --exact-count 25 \
                 --require-test app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData \
                 --require-test app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures \
                 --require-test app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail \
+                --require-test app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation \
+                --require-test app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible \
+                --require-test app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation \
+                --require-test app.serea.android.tasks.TaskScreenTest#emptyCreateEditCompleteAndReopenAreReachable \
+                --require-test app.serea.android.tasks.TaskScreenTest#invalidTitleAndDateAreShownWithoutRepositoryWrite \
+                --require-test app.serea.android.tasks.TaskScreenTest#deleteCancelPreservesTaskAndConfirmRemovesIt \
+                --require-test app.serea.android.tasks.TaskScreenTest#deletingFrozenTaskIdCannotDeleteAnotherTask \
+                --require-test app.serea.android.tasks.TaskScreenTest#rowActionsAnnounceTheirTargetTask \
+                --require-test app.serea.android.tasks.TaskScreenTest#lateSaveFromClosedEditorPreservesTheNewEditorsUnsavedDraft \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#datePickerConfirmSavesDateOnlyTaskAndEditorCanScroll \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#timePickerConfirmSavesTwentyFourHourTimeWithIanaZone \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#editingExistingTaskUpdatesExactDraftAndExpectedRevision \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#invalidIanaZoneIsReportedAndDoesNotCallRepository \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#daylightSavingGapAndOverlapAreReportedWithoutRepositoryCalls \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#timeWithoutDateShowsJapaneseDateErrorAndDoesNotSave \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#roomCreatesDatabaseAndEncryptedTaskSurvivesCloseReopen \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#ciphertextTamperingAndCiphertextSwapAreRejected \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#databaseAndKeyAliasesAreSeparateAndKeyLossPreservesCiphertext \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#concurrentUpdatesUseRevisionCasAndDeleteDoesNotResurrect \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#proposalReceiptIsUniqueAndDuplicateConcurrentCreateRollsBack \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#approvedProposalMutationsAndSingleUseReceiptsSurviveDatabaseReopen \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#completedStateAndDeletePersistAcrossDatabaseReopen \
                 > "$evidence/verification.log" 2>&1
               verify_status=$?
             else
@@ -126,7 +152,7 @@ jobs:
           path: android/app/build/outputs/androidTest-results/functional-api26/
 
   api35-focused:
-    name: API 35 app-shell Fake Gmail and Calendar E2E
+    name: API 35 focused Fake providers, local Chat and Tasks E2E
     needs: api26-focused
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -152,7 +178,7 @@ jobs:
             set -u
             evidence="app/build/outputs/androidTest-results/functional-api${API_LEVEL}"
             mkdir -p "$evidence"
-            filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail'
+            filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest'
             {
               echo "source_sha=$(git rev-parse HEAD)"
               echo "api_level=$API_LEVEL"
@@ -180,10 +206,32 @@ jobs:
             fi
             if [ -d "$evidence/junit" ]; then
               python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
-                --minimum 3 --exact-count 3 \
+                --minimum 25 --exact-count 25 \
                 --require-test app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData \
                 --require-test app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures \
                 --require-test app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail \
+                --require-test app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation \
+                --require-test app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible \
+                --require-test app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation \
+                --require-test app.serea.android.tasks.TaskScreenTest#emptyCreateEditCompleteAndReopenAreReachable \
+                --require-test app.serea.android.tasks.TaskScreenTest#invalidTitleAndDateAreShownWithoutRepositoryWrite \
+                --require-test app.serea.android.tasks.TaskScreenTest#deleteCancelPreservesTaskAndConfirmRemovesIt \
+                --require-test app.serea.android.tasks.TaskScreenTest#deletingFrozenTaskIdCannotDeleteAnotherTask \
+                --require-test app.serea.android.tasks.TaskScreenTest#rowActionsAnnounceTheirTargetTask \
+                --require-test app.serea.android.tasks.TaskScreenTest#lateSaveFromClosedEditorPreservesTheNewEditorsUnsavedDraft \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#datePickerConfirmSavesDateOnlyTaskAndEditorCanScroll \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#timePickerConfirmSavesTwentyFourHourTimeWithIanaZone \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#editingExistingTaskUpdatesExactDraftAndExpectedRevision \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#invalidIanaZoneIsReportedAndDoesNotCallRepository \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#daylightSavingGapAndOverlapAreReportedWithoutRepositoryCalls \
+                --require-test app.serea.android.tasks.TaskDateTimePickerTest#timeWithoutDateShowsJapaneseDateErrorAndDoesNotSave \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#roomCreatesDatabaseAndEncryptedTaskSurvivesCloseReopen \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#ciphertextTamperingAndCiphertextSwapAreRejected \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#databaseAndKeyAliasesAreSeparateAndKeyLossPreservesCiphertext \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#concurrentUpdatesUseRevisionCasAndDeleteDoesNotResurrect \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#proposalReceiptIsUniqueAndDuplicateConcurrentCreateRollsBack \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#approvedProposalMutationsAndSingleUseReceiptsSurviveDatabaseReopen \
+                --require-test app.serea.android.tasks.TasksDatabaseTest#completedStateAndDeletePersistAcrossDatabaseReopen \
                 > "$evidence/verification.log" 2>&1
               verify_status=$?
             else

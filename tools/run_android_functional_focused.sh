@@ -14,9 +14,12 @@ filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailb
 {
   echo "source_sha=$(git rev-parse HEAD)"
   echo "api_level=$api_level"
+  echo "system_image_target=default"
   echo "device_sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+  echo "device_abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
   echo "device_fingerprint=$(adb shell getprop ro.build.fingerprint | tr -d '\r')"
   echo "boot_completed=$(adb shell getprop sys.boot_completed | tr -d '\r')"
+  adb shell cat /proc/meminfo | tr -d '\r' | sed -n '1,5{s/^/guest_/;p;}'
   echo "default_ime=$(adb shell settings get secure default_input_method | tr -d '\r')"
   echo "test_filter=$filter"
 } > "$evidence/environment.txt"

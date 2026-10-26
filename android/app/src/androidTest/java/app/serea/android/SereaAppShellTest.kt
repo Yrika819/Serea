@@ -1820,12 +1820,9 @@ class SereaAppShellTest {
         val originalDensityOverride = shell("wm density").lineSequence()
             .firstOrNull { it.startsWith("Override density:") }
             ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-        try {
-            shell("wm size 320x640")
-            shell("wm density 160")
-            shell("settings put system font_scale 2.0")
-            compose.waitUntil(15_000) {
-                var fontScale = 1f
+        fun activityConfigurationMatches(expectedScale: Float, expectedWidth: Int, expectedDensityDpi: Int): Boolean {
+            return try {
+                var fontScale = 0f
                 var width = 0
                 var densityDpi = 0
                 compose.activityRule.scenario.onActivity {
@@ -1833,7 +1830,24 @@ class SereaAppShellTest {
                     width = it.resources.configuration.screenWidthDp
                     densityDpi = it.resources.configuration.densityDpi
                 }
-                fontScale >= 1.99f && width == 320 && densityDpi == 160
+                kotlin.math.abs(fontScale - expectedScale) < 0.02f &&
+                    width == expectedWidth && densityDpi == expectedDensityDpi
+            } catch (failure: NullPointerException) {
+                // Android destroys and recreates the Activity for a system font/size change.
+                // ActivityScenario can observe the short DESTROYED interval between those callbacks.
+                if (failure.message == "Cannot run onActivity since Activity has been destroyed already") {
+                    false
+                } else {
+                    throw failure
+                }
+            }
+        }
+        try {
+            shell("wm size 320x640")
+            shell("wm density 160")
+            shell("settings put system font_scale 2.0")
+            compose.waitUntil(15_000) {
+                activityConfigurationMatches(expectedScale = 2f, expectedWidth = 320, expectedDensityDpi = 160)
             }
             fontScaleStage("font-scale-applied")
             DestinationContract.all.forEach { contract ->
@@ -1842,11 +1856,14 @@ class SereaAppShellTest {
                     .assertTextContains(contract.title)
             }
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+            fontScaleStage("compact-composer-visible")
             compose.onNodeWithText("その他の操作").performClick()
+            fontScaleStage("compact-overflow-open")
             compose.onNodeWithText("新しい会話").assertIsDisplayed()
             compose.onNodeWithText("履歴").assertIsDisplayed()
             pressBack()
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+            fontScaleStage("compact-overflow-dismissed")
 
             select(SereaDestination.TASKS)
             fontScaleStage("tasks-destination-selected")
@@ -1950,16 +1967,11 @@ class SereaAppShellTest {
             assertEquals(originalSizeOverride, restoredSizeOverride)
             assertEquals(originalDensityOverride, restoredDensityOverride)
             compose.waitUntil(15_000) {
-                var width = 0
-                var densityDpi = 0
-                var fontScale = 0f
-                compose.activityRule.scenario.onActivity {
-                    width = it.resources.configuration.screenWidthDp
-                    densityDpi = it.resources.configuration.densityDpi
-                    fontScale = it.resources.configuration.fontScale
-                }
-                width == originalWidthDp && densityDpi == originalDensityDpi &&
-                    kotlin.math.abs(fontScale - originalScale) < 0.02f
+                activityConfigurationMatches(
+                    expectedScale = originalScale,
+                    expectedWidth = originalWidthDp,
+                    expectedDensityDpi = originalDensityDpi,
+                )
             }
         }
     }

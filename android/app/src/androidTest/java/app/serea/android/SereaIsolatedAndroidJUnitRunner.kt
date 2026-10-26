@@ -44,8 +44,14 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
         val dataDir = File(target.applicationInfo.dataDir)
         val hardware = Build.HARDWARE.lowercase()
         val fingerprint = Build.FINGERPRINT.lowercase()
-        val emulator = hardware in setOf("ranchu", "goldfish") &&
-            (fingerprint.contains("generic") || fingerprint.contains("sdk_gphone"))
+        // API 35's AOSP `default` x86_64 image uses `sdk_phone64_x86_64/emu64x`, while the
+        // API 26 image and Google APIs images use the older generic/sdk_gphone fingerprints.
+        // Keep the hardware check and exact modern image marker so the disposable-emulator guard
+        // does not reject the supported API 35 runner or accept arbitrary physical devices.
+        val emulatorFingerprint = fingerprint.contains("generic") ||
+            fingerprint.contains("sdk_gphone") ||
+            fingerprint.contains("/sdk_phone64_x86_64/emu64x:")
+        val emulator = hardware in setOf("ranchu", "goldfish") && emulatorFingerprint
         val apiSupported = Build.VERSION.SDK_INT == 26 || Build.VERSION.SDK_INT == 35
         val preferences = File(dataDir, "shared_prefs")
         val preferencesEmpty = isAbsentOrEmptyDirectory(preferences)
@@ -87,7 +93,10 @@ class SereaIsolatedAndroidJUnitRunner : AndroidJUnitRunner() {
             "Refusing instrumentation against ${target.packageName}; use the isolated test application."
         }
         check(apiSupported) { "Refusing instrumentation on unsupported API ${Build.VERSION.SDK_INT}." }
-        check(emulator) { "Refusing instrumentation on an unverified or physical Android device." }
+        check(emulator) {
+            "Refusing instrumentation on an unverified or physical Android device " +
+                "(hardware=$hardware, fingerprint=$fingerprint)."
+        }
         check(preferencesEmpty && filesSafe && databasesEmpty && campaignMarkerMatches && !claimedMarker.exists()) {
             "Refusing instrumentation without a fresh isolated namespace and matching CI campaign marker " +
                 "(preferencesEmpty=$preferencesEmpty, filesEmpty=$filesEmpty, filesDirEntries=${filesDirectoryEntries?.sorted()}, " +

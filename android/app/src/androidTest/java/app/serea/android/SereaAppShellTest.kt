@@ -46,7 +46,9 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
 import app.serea.android.assistant.taskproposal.TaskProposalDemoScreenForTest
 import app.serea.android.calendar.CalendarProviderKind
@@ -177,6 +179,53 @@ class SereaAppShellTest {
         }.isSuccess
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG, "WINDOW_FOCUS uptimeNanos=${SystemClock.elapsedRealtimeNanos()} $snapshot")
         assertTrue("Chat Composer Activity did not acquire Android window focus: $snapshot", focused)
+    }
+
+    /** Bring a resumed but unfocused target task to the foreground before sending a real touch. */
+    private fun ensureChatWindowFocus(stage: String) {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        var hasWindowFocus = false
+        var activitySnapshot = "MainActivity unavailable"
+        compose.activityRule.scenario.onActivity { activity ->
+            hasWindowFocus = activity.window.decorView.hasWindowFocus()
+            activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
+                "attached=${activity.window.decorView.isAttachedToWindow} visible=${activity.window.decorView.isShown}"
+        }
+        Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+            "FOREGROUND_INITIAL uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage $activitySnapshot " +
+                "task=${shell("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")}")
+        if (!hasWindowFocus) {
+            if (device.wait(Until.hasObject(By.text("Wait")), 1_000)) {
+                Log.w(COMPOSER_IME_DIAGNOSTICS_TAG, "FOREGROUND_SYSTEM_ANR_DIALOG stage=$stage found=Wait")
+                device.findObject(By.text("Wait")).click()
+                device.waitForIdle(10_000)
+            }
+            device.pressHome()
+            val target = "$ISOLATED_PACKAGE/app.serea.android.MainActivity"
+            val launch = device.executeShellCommand("am start -W -f 0x30000000 -n $target")
+            Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+                "FOREGROUND_START uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage result=$launch")
+            assertTrue("Android did not confirm foreground Chat Activity launch: $launch", launch.contains("Status: ok"))
+            assertTrue("UiAutomator could not find the foreground Chat task",
+                device.wait(Until.hasObject(By.pkg(ISOLATED_PACKAGE)), 15_000))
+        }
+        val focused = runCatching {
+            compose.waitUntil(20_000) {
+                compose.activityRule.scenario.onActivity { activity ->
+                    hasWindowFocus = activity.window.decorView.hasWindowFocus()
+                    activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                        "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
+                        "attached=${activity.window.decorView.isAttachedToWindow} visible=${activity.window.decorView.isShown}"
+                }
+                hasWindowFocus
+            }
+        }.isSuccess
+        Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+            "FOREGROUND_AFTER uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage $activitySnapshot " +
+                "task=${shell("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")} " +
+                "windows=${shell("dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' | tail -2")}")
+        assertTrue("Chat Activity did not acquire Android window focus after foreground recovery: $activitySnapshot", focused)
     }
 
     private fun imeOperation(
@@ -1346,6 +1395,7 @@ class SereaAppShellTest {
             shell("ime set $TEST_IME_ID")
             assertEquals("Android did not select the isolated Test IME.", TEST_IME_ID,
                 shell("settings get secure default_input_method"))
+            ensureChatWindowFocus("initial real IME session")
             tapComposerThroughSystemInput()
             awaitComposerWindowFocus("initial real IME session")
             composer.assertIsFocused()
@@ -1396,9 +1446,12 @@ class SereaAppShellTest {
             // fresh Android-managed input session. Verify that callback and its live connection
             // directly; a second external tap adds no IME-session evidence and was rejected in
             // the Formal run despite the fresh callback already being present.
-            session = awaitTestImeSession(startsAfterReset)
             awaitComposerWindowFocus("synchronized real IME session")
             composer.assertIsFocused()
+            // Window focus can cause Android to replace the IME InputConnection after an
+            // onStartInput callback. Capture the session only after this focus boundary so the
+            // operation cannot accidentally target the just-finished connection.
+            session = awaitTestImeSession(startsAfterReset)
             imeOperation("setComposingText", session, COMPOSER_DRAFT)
             awaitComposerImeState("R4-C-draft-composing", null) {
                 compose.activity.chatViewModel.state.value.editorValue.let {

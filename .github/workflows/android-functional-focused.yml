@@ -34,6 +34,7 @@ jobs:
         run: >-
           ./gradlew --no-daemon :app:testDebugUnitTest
           --tests '*CalendarProviderSessionsTest'
+          --tests '*AppProviderCompositionTest'
           --tests '*GoogleCalendarHttpReadPortTest'
           --tests '*GmailProviderSessionsTest'
           --tests '*GmailHttpReadPortTest'

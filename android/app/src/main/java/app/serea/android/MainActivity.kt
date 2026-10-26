@@ -109,7 +109,8 @@ class MainActivity : ComponentActivity() {
     }
     internal val shellCredentials: CredentialRepository get() = credentials
     internal val shellUsage: UsageRepository get() = usage
-    internal val shellProviders: AppProviderComposition by lazy { AppProviderComposition.fakeDefault() }
+    private val providerComposition by viewModels<AppProviderCompositionViewModel>()
+    internal val shellProviders: AppProviderComposition get() = providerComposition.providers
     internal val chatViewModel: ChatViewModel by viewModels {
         ChatViewModel.factory(DemoChatComposition.create(usage), history, usage)
     }
@@ -144,10 +145,6 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
-    override fun onDestroy() {
-        shellProviders.close()
-        super.onDestroy()
-    }
 }
 
 data class ChatMessage(

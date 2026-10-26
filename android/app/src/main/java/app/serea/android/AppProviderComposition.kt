@@ -6,10 +6,11 @@ import app.serea.android.calendar.FakeCalendarProvider
 import app.serea.android.gmail.FakeGmailProvider
 import app.serea.android.gmail.GmailProviderSession
 import app.serea.android.gmail.GmailProviderSessions
+import androidx.lifecycle.ViewModel
 import java.time.Clock
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Activity-scoped composition root. The application factory currently selects only synthetic providers. */
+/** Activity configuration-retained composition root. The application factory selects only synthetic providers. */
 internal class AppProviderComposition private constructor(
     val gmail: GmailProviderSession,
     val calendar: CalendarProviderSession,
@@ -37,5 +38,19 @@ internal class AppProviderComposition private constructor(
                 calendarClock = calendarFake.clock,
             )
         }
+    }
+}
+
+/**
+ * Owns provider sessions for the Activity ViewModelStore lifetime. Activity instances are recreated
+ * during configuration changes while their ViewModels survive; keeping the sessions at that same
+ * lifetime prevents retained Gmail/Calendar ViewModels from calling a session closed by the old Activity.
+ */
+internal class AppProviderCompositionViewModel : ViewModel() {
+    val providers: AppProviderComposition = AppProviderComposition.fakeDefault()
+
+    override fun onCleared() {
+        providers.close()
+        super.onCleared()
     }
 }

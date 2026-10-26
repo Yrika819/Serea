@@ -139,13 +139,15 @@ class GmailHttpReadPortTest {
         val acquisitions = mutableListOf<Pair<GoogleFeature, Set<GoogleScope>>>()
         val gateway = object : GoogleAuthorizationGateway {
             override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "gmail-fixture-session"
             override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
                 GoogleServiceState.AVAILABLE,
                 scopes.associateWith { ScopePermission.GRANTED },
             )
             override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
                 acquisitions += feature to scopes
-                return TokenSupplyResult.Available(AccessTokenLease("fixture-gmail-token", scopes, null))
+                return TokenSupplyResult.Available(AccessTokenLease("fixture-gmail-token", scopes, null,
+                    authorizationSessionId = authorizationSessionId))
             }
         }
         val disabled = GoogleGmailAuthorizationAdapter(gateway)
@@ -166,15 +168,48 @@ class GmailHttpReadPortTest {
 
         val insufficient = GoogleGmailAuthorizationAdapter(object : GoogleAuthorizationGateway {
             override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId = "gmail-insufficient-session"
             override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
                 GoogleServiceState.AVAILABLE,
                 scopes.associateWith { ScopePermission.GRANTED },
             )
             override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>) =
-                TokenSupplyResult.Available(AccessTokenLease("fixture-wrong-scope-token", emptySet(), null))
+                TokenSupplyResult.Available(AccessTokenLease("fixture-wrong-scope-token", emptySet(), null,
+                    authorizationSessionId = authorizationSessionId))
         }, googleHttpEnabledByOwner = true)
         assertEquals(null, insufficient.accessToken(GMAIL_SCOPE))
         assertEquals(1, server.requestCount)
+    }
+
+    @Test fun accountSwitchDuringTokenLeaseAcquisitionRejectsBeforeHttpDispatch() = runBlocking {
+        server.enqueue(MockResponse().setBody(messageJson("message_1", "thread_1")))
+        var selectedSession = "gmail-session-before-switch"
+        val gateway = object : GoogleAuthorizationGateway {
+            override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+            override val authorizationSessionId: String get() = selectedSession
+            override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                GoogleServiceState.AVAILABLE,
+                scopes.associateWith { ScopePermission.GRANTED },
+            )
+            override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
+                val lease = AccessTokenLease(
+                    "fixture-token-before-switch",
+                    scopes,
+                    null,
+                    authorizationSessionId = selectedSession,
+                )
+                selectedSession = "gmail-session-after-switch"
+                return TokenSupplyResult.Available(lease)
+            }
+        }
+        val bridge = GoogleGmailAuthorizationAdapter(gateway, googleHttpEnabledByOwner = true)
+        val realHttp = GmailHttpReadPort(bridge, bridge, OkHttpClient(), server.url("/gmail/v1/"))
+
+        assertEquals(
+            GmailReadFailureCode.PERMISSION_DENIED,
+            failure { realHttp.getMessage(GmailMessageId("message_1")) }.code,
+        )
+        assertEquals(0, server.requestCount)
     }
 
     @Test fun invalidatedTokenLeaseDoesNotReachTheServer() = runBlocking {

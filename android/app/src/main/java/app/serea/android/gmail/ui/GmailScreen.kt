@@ -57,9 +57,8 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * Entry point for a host navigation destination. The caller supplies a mock-only
- * [GmailViewModel] and its own Back callback; this composable has no Activity or
- * provider construction dependency.
+ * Entry point for a host navigation destination. The caller supplies a session-bound
+ * [GmailViewModel] and its own Back callback; this composable has no provider construction.
  */
 @Composable
 fun GmailScreen(
@@ -103,8 +102,12 @@ fun GmailScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
         ) {
             Text(
-                if (compactLayout) "DEMO / 架空のメール · 実アカウント未接続"
-                else "DEMO / 架空のメール — 実アカウントには接続していません",
+                if (state.isDemoProvider) {
+                    if (compactLayout) "DEMO / 架空のメール · 実アカウント未接続"
+                    else "DEMO / 架空のメール — 実アカウントには接続していません"
+                } else {
+                    "Google Gmail · 読み取り専用"
+                },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                     .semantics { liveRegion = LiveRegionMode.Polite },
                 style = if (compactLayout) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
@@ -400,7 +403,6 @@ private fun InlineError(code: GmailUiErrorCode, onRetry: () -> Unit) {
 
 internal fun errorMessage(code: GmailUiErrorCode): String = when (code) {
     GmailUiErrorCode.EMPTY_SEARCH -> "検索語を入力してください"
-    GmailUiErrorCode.MOCK_PROVIDER_REQUIRED -> "この画面はデモ用の架空メール専用です"
     GmailUiErrorCode.AUTHORIZATION_REQUIRED -> "デモ用メールを読み込めません。状態を確認してください"
     GmailUiErrorCode.AUTHORIZATION_DENIED,
     GmailUiErrorCode.PERMISSION_DENIED -> "メールの閲覧が許可されていません"

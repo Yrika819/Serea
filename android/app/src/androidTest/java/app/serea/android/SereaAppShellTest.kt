@@ -1842,6 +1842,11 @@ class SereaAppShellTest {
                     .assertTextContains(contract.title)
             }
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+            compose.onNodeWithContentDescription("その他の操作").performClick()
+            compose.onNodeWithText("新しい会話").assertIsDisplayed()
+            compose.onNodeWithText("履歴").assertIsDisplayed()
+            pressBack()
+            compose.onNodeWithTag("chat-composer").assertIsDisplayed()
 
             select(SereaDestination.TASKS)
             fontScaleStage("tasks-destination-selected")

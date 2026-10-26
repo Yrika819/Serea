@@ -1025,9 +1025,13 @@ internal fun ChatScreen(
                     }
             }
             if (!settingsDestination) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = chatViewModel::newConversation, enabled = !state.isRestoring, modifier = Modifier.weight(1f)) { Text("新しい会話") }
-                    Button(onClick = chatViewModel::showHistory, enabled = !state.isRestoring, modifier = Modifier.weight(1f)) { Text("履歴") }
+                if (!compactChat) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = chatViewModel::newConversation, enabled = !state.isRestoring,
+                            modifier = Modifier.weight(1f)) { Text("新しい会話") }
+                        Button(onClick = chatViewModel::showHistory, enabled = !state.isRestoring,
+                            modifier = Modifier.weight(1f)) { Text("履歴") }
+                    }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
@@ -1038,6 +1042,12 @@ internal fun ChatScreen(
                         TextButton(onClick = { overflowExpanded = true }, enabled = !state.isRestoring,
                             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "その他の操作" }) { Text("その他の操作") }
                         DropdownMenu(expanded = overflowExpanded, onDismissRequest = { overflowExpanded = false }) {
+                            if (compactChat) {
+                                DropdownMenuItem(text = { Text("新しい会話") }, enabled = !state.isRestoring,
+                                    onClick = { overflowExpanded = false; chatViewModel.newConversation() })
+                                DropdownMenuItem(text = { Text("履歴") }, enabled = !state.isRestoring,
+                                    onClick = { overflowExpanded = false; chatViewModel.showHistory() })
+                            }
                             HorizontalDivider()
                             DropdownMenuItem(text = { Text("この会話を削除", color = MaterialTheme.colorScheme.error) }, enabled = !state.isRestoring,
                                 onClick = { overflowExpanded = false; chatViewModel.requestCurrentConversationDeletionConfirmation() })

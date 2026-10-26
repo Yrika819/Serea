@@ -1867,7 +1867,13 @@ class SereaAppShellTest {
             fontScaleStage("compact-new-conversation-visible")
             compose.onNodeWithText("履歴").assertIsDisplayed()
             fontScaleStage("compact-history-visible")
-            pressBack()
+            assertTrue(
+                "System Back should dismiss the compact overflow popup without finishing MainActivity.",
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack(),
+            )
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithText("新しい会話").fetchSemanticsNodes().isEmpty()
+            }
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
             fontScaleStage("compact-overflow-dismissed")
 

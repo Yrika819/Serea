@@ -1102,6 +1102,8 @@ internal fun ChatScreen(
                 if (settingsMessage.isNotEmpty()) Text(settingsMessage, style = MaterialTheme.typography.bodySmall)
                 Text("Freeプランの利用枠とモデル数には上限があります。通常会話のCloud送信はOwnerポリシー承認まで無効です。",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider()
+                app.serea.android.googleauth.GoogleAuthorizationDemoPanel()
                 if (onSettingsClosed == null) {
                     Button(onClick = {
                         secretText = ""

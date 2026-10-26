@@ -17,7 +17,7 @@ if [[ "$system_image_target" != "google_apis" ]]; then
 fi
 
 evidence="app/build/outputs/androidTest-results/functional-api${api_level}"
-filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest'
+filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest,app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection,app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization,app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant'
 
 if [[ -e "$evidence" || -e app/build/outputs/androidTest-results/connected ]]; then
   echo 'Refusing to reuse stale Focused evidence or connected instrumentation results.' >&2
@@ -167,7 +167,7 @@ done
 
 if [ -d "$evidence/junit" ]; then
   if python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
-    --minimum 26 --exact-count 26 \
+    --minimum 29 --exact-count 29 \
     --require-test app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData \
     --require-test app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures \
     --require-test app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail \
@@ -194,6 +194,9 @@ if [ -d "$evidence/junit" ]; then
     --require-test app.serea.android.tasks.TasksDatabaseTest#proposalReceiptIsUniqueAndDuplicateConcurrentCreateRollsBack \
     --require-test app.serea.android.tasks.TasksDatabaseTest#approvedProposalMutationsAndSingleUseReceiptsSurviveDatabaseReopen \
     --require-test app.serea.android.tasks.TasksDatabaseTest#completedStateAndDeletePersistAcrossDatabaseReopen \
+    --require-test app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection \
+    --require-test app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization \
+    --require-test app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant \
     > "$evidence/verification.log" 2>&1; then
     verify_status=0
   else

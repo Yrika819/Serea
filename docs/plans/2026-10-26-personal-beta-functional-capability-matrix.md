@@ -254,6 +254,32 @@ The API failure is classified as `ENVIRONMENT` / runtime dependency, with the ob
 - `OWNER_APPROVAL_REQUIRED`: live Google OAuth/account, eligible real AI provider/credentials/cost, production signing/distribution, Pixel 7a, main merge and final Personal Beta GO.
 - `LANE_COORDINATION`: PR #120 remains open Draft; PR #121 remains open Draft. Lane A retains product UI/composition ownership; no edits are made to B/C-owned branches or scripts.
 
+## F5-R3 follow-up: Emulator runtime check correction (2026-10-26)
+
+Run `40304591775` on Lane A source `0ede4c41159406e9ea7acd2df6e574b96d72f0bc` passed Provider/Chat JVM Focused (job `121510464238`) but API 26 stopped at the host preflight before emulator boot. API 35 was skipped behind the required serial API 26 job. The API 26 artifact is `12641194609` (SHA-256 `367dd4d14e5f6cdeee60125aa5539adb7cc8b9afe6aea24e8db4b932f9e48252`); it records `libpulse0 1:16.1+dfsg1-2ubuntu10.1` installed. JUnit count is 0 and no app tests ran. The host preflight had added a raw `ldd` check against the nested QEMU binary. That check did not use the Android SDK's configured library path and reported SDK-bundled libraries as `not found`; it was a diagnostic-harness false positive, not evidence that those libraries were absent from the Emulator installation. The post-permission `emulator -version` and `emulator -accel-check` commands were never reached, so actual acceleration remains `UNKNOWN`.
+
+The correction removes only the invalid standalone `ldd` gate. It retains the observed `libpulse0` installation, captured stderr from the Emulator wrapper, strict KVM presence/read/write checks, and the required post-permission `emulator -accel-check`. API26/API35 and release focused results must be rerun on the resulting source. Release/Security Focused on `0ede4c4` passed in Run `40304669988`, artifact `12641548908` (SHA-256 `b6340d0d9555bca36e6070755c1e9c3f13316edd3cd519c0a13d0af878e2d506`).
+
+### Current continuation checkpoint (supersedes prior F5-R checkpoints)
+
+- `ACTIVE_PHASE`: F5-R3 — validate runtime dependency fix without the invalid raw-QEMU `ldd` gate.
+- `GOAL_STATUS`: `PARTIAL`; Provider/JVM and Release/Security pass on `0ede4c4`; API26 preflight was blocked by our false-positive runtime check; API35 NOT_RUN.
+- `AUTHORITY_SHA`: Lane A remote `0ede4c41159406e9ea7acd2df6e574b96d72f0bc`, tree `75907359e60f502fe00daf5364f97fc617a44a8d`; the pending correction is uncommitted and must be rechecked before commit.
+- `LAST_GOOD_SHA`: frozen PR #117 Required baseline `151ea9d66d32de01b195f4262beb67516823c281`; API26 26/26 on the older implementation source `613b338` only.
+- `WORKTREE`: `/workspace/Serea-functional`.
+- `BRANCH`: `codex/serea-personal-beta-functional-integration`.
+- `DRAFT_PR`: none; create only after full JVM/API26/API35/Release focused green on the implementation candidate.
+- `CI_RUN_IDS`: original API35 23/26 `40292160073`; host dependency preflights `40302869638`, `40303664875`, `40304591775`; Release/Security `40304669988`.
+- `ARTIFACT_IDS`: original API35 JUnit failure `12638184404`; API26 host diagnostics after `libpulse0` install `12641194609`; JVM `12640914108`; Release/Security `12641548908`.
+- `API26_RESULT`: `NOT_RUN`, JUnit 0 on `0ede4c4`; host check was stopped by our raw `ldd` false positive before KVM acceleration verification.
+- `API35_RESULT`: `NOT_RUN`, skipped serially on `0ede4c4`; earlier source `613b338` had 23/26 with 3 UI input failures.
+- `FORMAL_REQUIRED_RESULT`: `NOT_RUN` on Lane A; PR #117's formal PASS remains scoped to its frozen base SHA.
+- `REAL_SERVICE_STATUS`: OAuth/accounts/external AI are `NOT_RUN`; Pixel 7a unavailable and not required for this emulator work.
+- `CURRENT_BLOCKER`: obtain a valid KVM/Emulator acceleration result from wrapper commands after installing `libpulse0`.
+- `NEXT_ACTION`: validate the two remaining workflow files, commit/push the invalid-gate removal and checkpoint, inspect next API26 host artifact, then proceed to API35 only if API26 preflight passes. If instrumentation starts, require exact 26/26 each API; run Release/Security on the final same source and only then open Lane A Draft PR and formal Required.
+- `OWNER_APPROVAL_REQUIRED`: live Google OAuth/account, eligible real AI provider/credentials/cost, production signing/distribution, Pixel 7a, main merge and final GO.
+- `LANE_COORDINATION`: PR #120 and #121 remain open Draft and unmerged. B/C-owned branches/files remain untouched.
+
 ## Focused campaign evidence update (2026-10-26)
 
 - Run `40288581135` API 35 was an instrumentation guard false-negative: environment reported API 35 AOSP `default`, x86_64, `boot_completed=1`, `ro.kernel.qemu=1`, and LatinIME unchanged. Instrumentation exited before the first test; JUnit `0/0/0/0`, artifact `12635419490`, SHA-256 `3e290437e8fc690a96f667fc6606d9c3313ef92d7f87c7fce8310d02babc16bb`. No API 35 functional tests are counted as run.

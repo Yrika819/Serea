@@ -105,12 +105,6 @@ jobs:
             cat /proc/pressure/cpu
             echo 'emulator_host_runtime:'
             dpkg-query -W -f='${Package} ${Version}\n' libpulse0
-            qemu_ldd="$(ldd "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64" 2>&1)"
-            printf '%s\n' "$qemu_ldd"
-            if grep -q 'not found' <<< "$qemu_ldd"; then
-              echo 'emulator_qemu_runtime_dependencies=missing'
-              exit 1
-            fi
             echo 'kvm_before_permissions:'
             if [ -e /dev/kvm ]; then
               stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
@@ -206,12 +200,6 @@ jobs:
             cat /proc/pressure/cpu
             echo 'emulator_host_runtime:'
             dpkg-query -W -f='${Package} ${Version}\n' libpulse0
-            qemu_ldd="$(ldd "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64" 2>&1)"
-            printf '%s\n' "$qemu_ldd"
-            if grep -q 'not found' <<< "$qemu_ldd"; then
-              echo 'emulator_qemu_runtime_dependencies=missing'
-              exit 1
-            fi
             echo 'kvm_before_permissions:'
             if [ -e /dev/kvm ]; then
               stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm

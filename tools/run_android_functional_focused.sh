@@ -17,7 +17,7 @@ if [[ "$system_image_target" != "google_apis" ]]; then
 fi
 
 evidence="app/build/outputs/androidTest-results/functional-api${api_level}"
-filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable,app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.ChatScreenTest#smallScreenKeepsDeletionActionsReachableAndTappable,app.serea.android.ChatScreenTest#fontScaleTwoKeepsDeletionActionsReachableAndTappable,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest,app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection,app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization,app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant'
+filter='app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData,app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures,app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail,app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation,app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable,app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges,app.serea.android.SereaAppShellTest#chatTasksBackReturnsToTheSameChatViewModel,app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible,app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation,app.serea.android.ChatScreenTest#smallScreenKeepsDeletionActionsReachableAndTappable,app.serea.android.ChatScreenTest#fontScaleTwoKeepsDeletionActionsReachableAndTappable,app.serea.android.tasks.TaskScreenTest,app.serea.android.tasks.TaskDateTimePickerTest,app.serea.android.tasks.TasksDatabaseTest,app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection,app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization,app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant'
 
 if [[ -e "$evidence" || -e app/build/outputs/androidTest-results/connected ]]; then
   echo 'Refusing to reuse stale Focused evidence or connected instrumentation results.' >&2
@@ -216,13 +216,14 @@ done
 
 if [ -d "$evidence/junit" ]; then
   if python3 ../tools/verify_android_instrumentation.py "$evidence/junit" \
-    --minimum 32 --exact-count 32 \
+    --minimum 33 --exact-count 33 \
     --require-test app.serea.android.SereaAppShellTest#chatGmailBackShowsOnlyFictionalMailboxData \
     --require-test app.serea.android.SereaAppShellTest#gmailSearchAndMessageDetailUseTheFakeProviderFixtures \
     --require-test app.serea.android.SereaAppShellTest#chatCalendarBackShowsFictionalAgendaAndDetail \
     --require-test app.serea.android.SereaAppShellTest#taskEditorDraftSurvivesActivityRecreation \
     --require-test app.serea.android.SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable \
     --require-test app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
+    --require-test app.serea.android.SereaAppShellTest#chatTasksBackReturnsToTheSameChatViewModel \
     --require-test app.serea.android.ChatScreenTest#demoLabelAndConversationTitleAreVisible \
     --require-test app.serea.android.ChatScreenTest#completedDemoConversationSurvivesActivityRecreation \
     --require-test app.serea.android.ChatScreenTest#smallScreenKeepsDeletionActionsReachableAndTappable \

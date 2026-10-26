@@ -1182,6 +1182,29 @@ class SereaAppShellTest {
         assertTrue("Tasks destination heading and add action must both become displayed", taskScreenDisplayed)
         compose.onNodeWithTag("task_add").assertIsDisplayed()
         pressBack()
+        val chatScreenRestored = runCatching {
+            compose.waitUntil(5_000) {
+                runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
+            }
+        }.isSuccess
+        if (!chatScreenRestored) {
+            val chatSelected = runCatching {
+                compose.onNodeWithTag("destination_chat").assertIsSelected()
+                true
+            }.getOrDefault(false)
+            val tasksSelected = runCatching {
+                compose.onNodeWithTag("destination_tasks").assertIsSelected()
+                true
+            }.getOrDefault(false)
+            Log.i(
+                TASKS_DESTINATION_STAGE_TAG,
+                "CHAT_BACK_TIMEOUT|chatSelected=$chatSelected tasksSelected=$tasksSelected " +
+                    "chatInputLength=${compose.activity.chatViewModel.state.value.input.length} " +
+                    "taskLoading=${compose.activity.shellTaskViewModel.state.value.loading}",
+            )
+            compose.onRoot(useUnmergedTree = true).printToLog("chat-tasks-back")
+        }
+        assertTrue("Chat composer must become displayed after returning from Tasks", chatScreenRestored)
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
         assertEquals("unsent task transition draft", compose.activity.chatViewModel.state.value.input)
         assertTrue(viewModel === compose.activity.chatViewModel)

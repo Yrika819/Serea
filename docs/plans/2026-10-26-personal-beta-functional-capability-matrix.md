@@ -162,6 +162,63 @@ Commit `613b338ad113cc08ee2ecd656f72a074708264b5` adds only the exact `sdk_phone
 - CURRENT_COORDINATION_STATUS: B's #120 is an open Draft; focused release/SBOM runs `40288581005` and `40292159906` passed (the latter artifact `12635419779` is on shared code source `613b338`). C's #121 is an open Draft; two reviewed JVM test files are present on Lane A and passed in the 199/199 unit suite artifact `12636815276`. Lane A corrected API 26 passed 26/26 on `613b338`; API 35 is queued/running in the same serial run `40292160073`. PR #117, main, and both lane branches remain unchanged by Lane A.
 - OWNER_APPROVAL_REQUIRED: physical Pixel 7a, live Google OAuth/accounts, real AI credentials/contract/cost, production signing/distribution, main merge, and final Personal Beta GO. These do not block ongoing Fake/offline integration.
 
+## F5-R API 35 failure analysis and emulator correction (2026-10-26)
+
+### Artifact finding
+
+Run `40292160073`, source `613b338ad113cc08ee2ecd656f72a074708264b5`, API 35 artifact `12638184404` (ZIP SHA-256 `b10b3b9203a5383f1c996d9099a1ac63100e706bda5e9045cbcb746b19ddfbe2`) contains every requested file: `environment.txt`, `prepare-gradle.log`, `target-install.log`, `installed-target-apk.txt`, `campaign-seed.log`, `gradle.log`, `gradle-exit-code.txt`, `verification.log`, `verification-exit-code.txt`, JUnit XML, `logcat.txt`, `input-method.txt`, `default-ime-verified.txt`, `target-apk-sha256.txt`, and `apk-sha256.txt`. None of those requested files is missing.
+
+The failure occurred at instrumentation test execution (classification 7), followed by the expected JUnit verifier failure (classification 8). Gradle compiled and assembled successfully; install returned `Success`; the installed target APK hash matched the freshly built hash (`56ef83d5ebd1186205a09c8b824ac616424a2327a1636ec25e48107aebd5a0d8`); isolated campaign seed passed; and LatinIME remained selected. JUnit reports exactly 26 tests, 3 failures, 0 errors, 0 skips. All 26 ran; 23 passed.
+
+The three failures were:
+
+- `SereaAppShellTest#fontScaleTwoKeepsTaskProposalReviewAndFooterReachable`: UiAutomator returned `false` for a requested Calendar swipe at `performCalendarGesture` (`SereaAppShellTest.kt:1055`).
+- `ChatScreenTest#demoLabelAndConversationTitleAreVisible` and `#completedDemoConversationSurvivesActivityRecreation`: after the synthetic composer tap, the Activity was RESUMED but `windowFocus=false`, `InputMethodManager.isAcceptingText=false`, and the composer Semantics node was not focused.
+
+This evidence supports a CI emulator / UI input environment problem; it does not prove an application defect or isolate the contribution of each environment difference. The result is recorded as `ENVIRONMENT` / `PARTIALLY CONFIRMED`, with product root cause still `UNKNOWN`.
+
+### Emulator comparison
+
+| Attribute | Failed Focused API 35 (`40292160073`) | Successful R7 API 35 (`40224223408`) |
+|---|---|---|
+| System image | AOSP `default` | `google_apis` |
+| Architecture / profile | x86_64 / `pixel_2` | x86_64 / `pixel_7` |
+| Emulator hardware | `ranchu`, QEMU=1 | `ranchu`, QEMU=1 |
+| KVM | Runner lacked `/dev/kvm` permission; action chose `disable-linux-hw-accel=true` and launched with `-accel off` | After ephemeral runner udev permission setup, `emulator -accel-check` reported KVM v12 usable |
+| Boot | Emulator launch 08:40:25.470, booted 08:46:10.584 (about 345 seconds) | Emulator launch 20:27:14.607, booted 20:27:48.932 (about 34 seconds) |
+| Guest memory | `MemTotal=2,532,896 kB` | `MemTotal=2,532,420 kB` |
+| Graphics | `swiftshader_indirect`; logcat had four `Failed to find ColorBuffer` errors | `swiftshader_indirect` |
+| Fingerprint | `Android/sdk_phone64_x86_64/emu64x:15/AE3A.240806.019/12368160:userdebug/test-keys` | Not captured in the archived textual metadata |
+| Host CPU quota / memory / CPU pressure | Host quota and memory were not saved by this run; CPU pressure was not captured | Host quota and memory were not saved by the run; CPU pressure was not captured |
+| IME | LatinIME before and after | Required campaign preserved the default IME |
+
+The failed run's host image was Ubuntu 24.04.5 / `ubuntu-24.04`. Its job log explicitly reported that the runner user could not access `/dev/kvm`. The elapsed boot difference and KVM state are strong environment signals, but the AOSP-vs-Google-APIs image and device profile also differ, so the artifact alone cannot attribute the UI failures to one variable. ColorBuffer errors are observed diagnostics, not a proven cause.
+
+### Minimal correction and invariants
+
+The non-Required Functional Focused workflow and its host evidence collector now match the R7 API 26/35 disposable emulator configuration: `google_apis`, API-specific Pixel profiles, 900-second boot guard, KVM permission/acceleration check, and explicit SwiftShader/no-snapshot settings. If `/dev/kvm` is unavailable or acceleration cannot be verified, the job fails before instrumentation instead of silently accepting software emulation. Host OS, CPU quota, memory, CPU pressure, KVM, emulator version, guest fingerprint/memory/display, and declared AVD configuration are written into the artifact. The script records the selected image target and refuses an undeclared/non-Google-APIs Focused image.
+
+No product code, assertions, exact 26-test selection, JUnit thresholds, APK hash checks, fresh-data guards, package checks, campaign marker requirements, or default IME checks were changed. API 26/35 revalidation is pending on the corrected source.
+
+### Authoritative continuation checkpoint
+
+- `ACTIVE_PHASE`: F5-R3 — corrected Focused closure.
+- `GOAL_STATUS`: `PARTIAL`; API 35 previous Focused run failed 3/26; correction awaits CI.
+- `AUTHORITY_SHA`: local Lane A `4807004109bf28743628acf0839f43bd1c1ae372`; this is 34 commits ahead of remote branch `7d1ddfdc18425901af1889f3d4730e8e5624a664`, with no divergence. Push the Lane A work as a fast-forward after committing this correction.
+- `LAST_GOOD_SHA`: frozen PR #117 Required baseline `151ea9d66d32de01b195f4262beb67516823c281`; on functional source `613b338`, JVM 199/199 and API 26 26/26 passed, while API 35 was 23/26.
+- `WORKTREE`: `/workspace/Serea-functional`.
+- `BRANCH`: `codex/serea-personal-beta-functional-integration`.
+- `DRAFT_PR`: none yet; create only after API 26/35 Focused, JVM and Release/Security Focused evidence is green on the final implementation source.
+- `CI_RUN_IDS`: prior Focused `40292160073` (API 35 failure); Release/SBOM `40292159906` passed on `613b338`.
+- `ARTIFACT_IDS`: API 35 failure `12638184404`; API 26 pass `12636937651`; JVM pass `12636815276`; Release/SBOM `12635419779`.
+- `API26_RESULT`: PASS 26/26, 0 failures/errors/skips on `613b338`.
+- `API35_RESULT`: FAIL 23/26, 3 failures, 0 errors/skips on `613b338`; not a product root cause finding.
+- `FORMAL_REQUIRED_RESULT`: NOT_RUN on Lane A functional HEAD; PR #117's PASS applies only to its frozen base.
+- `REAL_SERVICE_STATUS`: Real OAuth, Google accounts, and external AI are NOT_RUN.
+- `CURRENT_BLOCKER`: corrected Google APIs + KVM-verified API 26/35 focused run pending.
+- `NEXT_ACTION`: push the minimal non-Required workflow/harness environment correction, collect the new API 26/35 and JVM artifacts, then open a Lane A Draft PR and run Formal Required on that exact head.
+- `OWNER_APPROVAL_REQUIRED`: live OAuth/account, real AI provider/eligibility/credentials/cost, production signing/distribution, Pixel 7a, main merge, and final GO. None blocks the Fake/offline work.
+
 ## Focused campaign evidence update (2026-10-26)
 
 - Run `40288581135` API 35 was an instrumentation guard false-negative: environment reported API 35 AOSP `default`, x86_64, `boot_completed=1`, `ro.kernel.qemu=1`, and LatinIME unchanged. Instrumentation exited before the first test; JUnit `0/0/0/0`, artifact `12635419490`, SHA-256 `3e290437e8fc690a96f667fc6606d9c3313ef92d7f87c7fce8310d02babc16bb`. No API 35 functional tests are counted as run.

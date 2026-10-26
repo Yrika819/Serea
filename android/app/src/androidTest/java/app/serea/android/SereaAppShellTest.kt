@@ -1392,10 +1392,13 @@ class SereaAppShellTest {
             shell("ime set $restoreIme")
             shell("ime set $TEST_IME_ID")
             assertEquals(TEST_IME_ID, shell("settings get secure default_input_method"))
-            tapComposerThroughSystemInput()
+            // Selecting the Test IME while the already-focused composer is active must create a
+            // fresh Android-managed input session. Verify that callback and its live connection
+            // directly; a second external tap adds no IME-session evidence and was rejected in
+            // the Formal run despite the fresh callback already being present.
+            session = awaitTestImeSession(startsAfterReset)
             awaitComposerWindowFocus("synchronized real IME session")
             composer.assertIsFocused()
-            session = awaitTestImeSession(startsAfterReset)
             imeOperation("setComposingText", session, COMPOSER_DRAFT)
             awaitComposerImeState("R4-C-draft-composing", null) {
                 compose.activity.chatViewModel.state.value.editorValue.let {

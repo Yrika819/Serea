@@ -77,6 +77,7 @@ fi
 capture() {
   adb logcat -d -b all > "$evidence/logcat.txt" 2>&1 || true
   adb shell dumpsys input_method > "$evidence/input-method.txt" 2>&1 || true
+  adb shell ime list -s > "$evidence/available-ime-services.txt" 2>&1 || true
   adb shell settings get secure default_input_method > "$evidence/default-ime-after.txt" 2>&1 || true
   {
     echo "instrumentation_finished_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -91,9 +92,18 @@ trap capture EXIT
 export EXPECTED_API_LEVEL="$api_level"
 export SEREA_EXPECTED_ANDROID_API="$api_level"
 source ../tools/assert_disposable_android_emulator.sh
-initial_default_ime="$(adb shell settings get secure default_input_method | tr -d '\r')"
-if [[ -z "$initial_default_ime" || "$initial_default_ime" == null ]]; then
-  echo 'Could not capture the disposable emulator default IME.' >&2
+source ../tools/wait_for_android_default_ime.sh
+if wait_for_android_default_ime; then
+  initial_default_ime="$SEREA_ANDROID_DEFAULT_IME"
+  printf 'default_ime=%s\nreadiness_attempts=%s\n' \
+    "$initial_default_ime" "$SEREA_ANDROID_DEFAULT_IME_ATTEMPTS" >> "$evidence/environment.txt"
+else
+  initial_default_ime="$SEREA_ANDROID_DEFAULT_IME"
+  printf 'default_ime_status=NOT_READY\nobserved_default_ime=%s\nreadiness_attempts=%s\n' \
+    "$initial_default_ime" "$SEREA_ANDROID_DEFAULT_IME_ATTEMPTS" > "$evidence/default-ime-readiness.txt"
+  adb shell ime list -s >> "$evidence/default-ime-readiness.txt" 2>&1 || true
+  adb shell dumpsys input_method >> "$evidence/default-ime-readiness.txt" 2>&1 || true
+  echo 'Could not capture the disposable emulator default IME after 30 readiness checks.' >&2
   exit 1
 fi
 

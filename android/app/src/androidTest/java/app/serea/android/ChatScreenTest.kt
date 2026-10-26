@@ -418,7 +418,7 @@ class ChatScreenTest {
         compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("選択モデルID: なし").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。")
+        compose.onNodeWithText("外部Providerの手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。")
             .performScrollTo().assertIsDisplayed()
         assertSettingsFieldContains("model-budget-amount", "0.05")
         assertSettingsFieldContains("model-budget-currency", "USD")

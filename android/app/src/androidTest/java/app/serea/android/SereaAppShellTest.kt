@@ -146,10 +146,18 @@ class SereaAppShellTest {
         }
         val x = origin[0] + bounds.center.x.toInt()
         val y = origin[1] + bounds.center.y.toInt()
-        val commandResult = shell("input tap $x $y")
+        val uiAutomatorAccepted = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).click(x, y)
+        val shellResult = if (uiAutomatorAccepted) {
+            "NOT_USED"
+        } else {
+            shell("input tap $x $y && echo SEREA_TOUCH_DISPATCHED")
+        }
+        val accepted = uiAutomatorAccepted || shellResult.endsWith("SEREA_TOUCH_DISPATCHED")
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "SYSTEM_TOUCH uptimeNanos=${SystemClock.elapsedRealtimeNanos()} bounds=$bounds " +
-                "screenOrigin=${origin.toList()} screenPoint=($x,$y) commandResult=$commandResult")
+                "screenOrigin=${origin.toList()} screenPoint=($x,$y) " +
+                "uiAutomatorAccepted=$uiAutomatorAccepted shellResult=$shellResult accepted=$accepted")
+        assertTrue("Neither UiAutomator nor Android shell dispatched a touchscreen tap to the Chat Composer.", accepted)
     }
 
     private fun awaitComposerWindowFocus(stage: String) {

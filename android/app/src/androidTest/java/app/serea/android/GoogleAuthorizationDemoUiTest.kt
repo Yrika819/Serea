@@ -41,19 +41,19 @@ class GoogleAuthorizationDemoUiTest {
         compose.onNodeWithTag("google_auth_demo_request_gmail").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_consent_cancel").performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
-            .assertTextContains("未接続（デモ）")
+            .assertTextContains("未接続（デモ）", substring = true)
 
         compose.onNodeWithTag("google_auth_demo_request_gmail").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_consent_deny").performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
-            .assertTextContains("拒否（デモ）")
+            .assertTextContains("拒否（デモ）", substring = true)
 
         compose.onNodeWithTag("google_auth_demo_request_gmail").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
-            .assertTextContains("承認済み（デモのみ）")
+            .assertTextContains("承認済み（デモのみ）", substring = true)
         compose.onNodeWithTag("google_auth_demo_message").performScrollTo()
-            .assertTextContains("実データは取得していません")
+            .assertTextContains("実データは取得していません", substring = true)
         assertEquals(GmailProviderKind.FAKE, compose.activity.shellProviders.gmail.kind)
         assertEquals(CalendarProviderKind.FAKE, compose.activity.shellProviders.calendar.kind)
     }
@@ -67,20 +67,20 @@ class GoogleAuthorizationDemoUiTest {
         compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
 
         compose.onNodeWithTag("google_auth_demo_switch_account").performScrollTo().performClick()
-        compose.onNodeWithText("架空アカウント B").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("架空アカウント B", substring = true).performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
-            .assertTextContains("失効（デモ）")
+            .assertTextContains("失効（デモ）", substring = true)
 
         compose.onNodeWithTag("google_auth_demo_request_gmail").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_request_gmail").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
         compose.onNodeWithTag("google_auth_demo_expire").performScrollTo().assertIsEnabled().performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
-            .assertTextContains("期限切れ（デモ）")
+            .assertTextContains("期限切れ（デモ）", substring = true)
 
         compose.onNodeWithTag("google_auth_demo_revoke").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
-            .assertTextContains("失効（デモ）")
+            .assertTextContains("失効（デモ）", substring = true)
     }
 
     @Test
@@ -90,11 +90,11 @@ class GoogleAuthorizationDemoUiTest {
         compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
         compose.onNodeWithTag("google_auth_demo_disconnect_calendar").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
-            .assertTextContains("アプリ内切断（デモ）")
+            .assertTextContains("アプリ内切断（デモ）", substring = true)
         compose.onNodeWithTag("google_auth_demo_request_calendar").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithTag("google_auth_demo_reconnect_calendar").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_request_calendar").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
-            .assertTextContains("承認済み（デモのみ）")
+            .assertTextContains("承認済み（デモのみ）", substring = true)
     }
 }

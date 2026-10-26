@@ -7,6 +7,20 @@ on:
       - codex/serea-functional-security-release
       - codex/serea-functional-security-release-verified
       - codex/serea-personal-beta-functional-integration
+    paths:
+      - '.github/workflows/android-release-security-focused.yml'
+      - '.github/workflows/android-personal-beta.yml'
+      - 'android/**'
+      - 'docs/security/android-personal-beta-release-posture-2026-10-26.md'
+      - 'tests/android_firebase_distribution_tests.py'
+      - 'tests/android_lockfile_sbom_tests.py'
+      - 'tools/assert_disposable_android_emulator.sh'
+      - 'tools/android_firebase_distribution.py'
+      - 'tools/generate_android_lockfile_sbom.py'
+      - 'tools/test_android_update_compatibility.sh'
+      - 'tools/test_android_update_compatibility_guard.sh'
+      - 'tools/test_personal_beta_identity.sh'
+      - 'tools/verify_personal_beta_apk.sh'
 
 permissions:
   contents: read

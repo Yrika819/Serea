@@ -9,7 +9,9 @@ This top section is the current G3-owned PR #127 status and supersedes older can
 **OVERALL_STATUS:** PARTIAL — source and report changes are implemented; API marker host regression, G3 source contract, fake-ADB cleanup tests, shell syntax, workflow YAML, diff whitespace, and host JVM 3/3 pass. Independent review is pending. AndroidTest source compile and the new in-compute callback test are not verified.<br>
 **BASE_SHA:** `8d4c5cf77b4a0207ee15d36dad8ae9027722845d`<br>
 **BASE_TREE_SHA:** `3f0baf105f7cace0156aebce8046eaec73661f36`<br>
-**CURRENT_HEAD:** pending commit; uncommitted repair is based on exact PR #127 head `8d4c5cf77b4a0207ee15d36dad8ae9027722845d`<br>
+**LAST_GOOD_SHA:** implementation commit `3b853246208a3be6899acbefd5093b9de8e8437d`<br>
+**LAST_GOOD_TREE:** `50a8d3ab8441ba3375fe34d1740a3fe9ddab6672`<br>
+**CURRENT_HEAD:** the branch ref is authoritative; this checkpoint-only documentation commit follows the implementation commit above. Re-read the GitHub branch HEAD when resuming.<br>
 **WORKTREE:** `/workspace/Serea-g3-diagnostic-recovery`<br>
 **BRANCH:** `codex/serea-g3-diagnostic-recovery`<br>
 **DRAFT_PR:** [#127](https://github.com/Yrika819/Serea/pull/127) — Open/Draft; isolated on-device PoC only, not product integration or formal Required validation<br>

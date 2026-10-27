@@ -62,16 +62,22 @@ class IndependentImeCompositionTest {
         val callbackCountBefore = imeEvents().count { it.contains(" onStartInput restarting=") }
         activateRealIme()
         focusComposer()
-        val session = awaitImeSession(callbackCountBefore)
-        val connection = session.connectionIdentity
+        var session = awaitImeSession(callbackCountBefore)
+        var connection = session.connectionIdentity
         compose.activityRule.scenario.onActivity { activity ->
             log(activity, "B.initial", connection, null)
         }
         logSemantics("B.initial", connection)
         compose.activityRule.scenario.onActivity { activity -> log(activity, "B.set-draft", connection, imeSetComposingText(session, FIXTURE)) }
         logSemantics("B.set-draft", connection)
+        // Refresh only the Android-owned session token; Test B deliberately does not wait for
+        // TextFieldValue or ViewModel state between the IME operations.
+        session = currentImeSession()
+        connection = session.connectionIdentity
         compose.activityRule.scenario.onActivity { activity -> log(activity, "B.replace", connection, imeSetComposingText(session, REPLACEMENT)) }
         logSemantics("B.replace", connection)
+        session = currentImeSession()
+        connection = session.connectionIdentity
         compose.activityRule.scenario.onActivity { activity -> log(activity, "B.finish", connection, imeFinishComposingText(session)) }
         logSemantics("B.finish", connection)
         awaitValue("B.settled", connection) { it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(REPLACEMENT.length) }
@@ -82,19 +88,24 @@ class IndependentImeCompositionTest {
         val callbackCountBefore = imeEvents().count { it.contains(" onStartInput restarting=") }
         activateRealIme()
         focusComposer()
-        awaitImeSession(callbackCountBefore)
-        val connection = currentImeSession().connectionIdentity
+        var session = awaitImeSession(callbackCountBefore)
+        var connection = session.connectionIdentity
+        assertMissingExpectedPackageIsRejected(session)
         compose.activityRule.scenario.onActivity { activity ->
             log(activity, "C.initial", connection, null)
-            log(activity, "C.set-draft", connection, imeSetComposingText(currentImeSession(), FIXTURE))
+            log(activity, "C.set-draft", connection, imeSetComposingText(session, FIXTURE))
         }
         awaitValue("C.draft-composing", connection) { it.text == FIXTURE && it.composition != null && it.selection == TextRange(FIXTURE.length) }
+        session = currentImeSession()
+        connection = session.connectionIdentity
         compose.activityRule.scenario.onActivity { activity ->
-            log(activity, "C.replace", connection, imeSetComposingText(currentImeSession(), REPLACEMENT))
+            log(activity, "C.replace", connection, imeSetComposingText(session, REPLACEMENT))
         }
         awaitValue("C.replacement-composing", connection) { it.text == REPLACEMENT && it.composition != null && it.selection == TextRange(REPLACEMENT.length) }
+        session = currentImeSession()
+        connection = session.connectionIdentity
         compose.activityRule.scenario.onActivity { activity ->
-            log(activity, "C.finish", connection, imeFinishComposingText(currentImeSession()))
+            log(activity, "C.finish", connection, imeFinishComposingText(session))
         }
         awaitValue("C.committed", connection) { it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(REPLACEMENT.length) }
         assertTrue("Android did not start a new input session: ${imeEvents()}", imeEvents().count { it.contains(" onStartInput restarting=") } > callbackCountBefore)
@@ -109,10 +120,12 @@ class IndependentImeCompositionTest {
         awaitValue("D.initial-composing", session.connectionIdentity) {
             it.text == REPLACEMENT && it.composition != null && it.selection == TextRange(REPLACEMENT.length)
         }
+        session = currentImeSession()
         assertTrue("D initial composition commit was rejected", imeFinishComposingText(session))
         awaitValue("D.initial-committed", session.connectionIdentity) {
             it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(REPLACEMENT.length)
         }
+        session = currentImeSession()
         assertTrue("D initial selection was rejected", imeSetSelection(session, 5, 5))
         awaitValue("D.selection-5", session.connectionIdentity) {
             it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(5, 5)
@@ -167,6 +180,7 @@ class IndependentImeCompositionTest {
             it.text == "draft!? survives navigation" && it.selection == TextRange(7, 7)
         }
 
+        session = currentImeSession()
         assertTrue("Activity recreation caret setup was rejected", imeSetSelection(session, 8, 8))
         awaitValue("D.recreation-selection", session.connectionIdentity) {
             it.text == "draft!? survives navigation" && it.selection == TextRange(8, 8)
@@ -267,6 +281,22 @@ class IndependentImeCompositionTest {
         val fieldName: String,
     )
 
+    private data class ImeOperationObservation(
+        val operationInvoked: Boolean,
+        val accepted: Boolean,
+        val reason: String,
+        val expectedPackage: String,
+        val expectedService: String,
+        val expectedSession: Long,
+        val expectedConnection: String,
+        val expectedInputType: Int,
+        val service: String,
+        val session: Long,
+        val connection: String,
+        val editorPackage: String,
+        val inputType: Int,
+    )
+
     private fun awaitImeSession(callbackCountBefore: Int): ImeSession {
         var result: ImeSession? = null
         compose.waitUntil(10_000) {
@@ -303,43 +333,116 @@ class IndependentImeCompositionTest {
 
     private fun imeEvents(): List<String> = imeCall("snapshot").getStringArrayList("events")?.toList().orEmpty()
 
-    private fun imeSetComposingText(session: ImeSession, text: String): Boolean = imeCall(
+    private fun imeSetComposingText(session: ImeSession, text: String): Boolean = runImeOperation(
         "setComposingText",
-        Bundle().apply {
-            putString("text", text)
-            putInt("cursor", 1)
-            putLong("expectedSession", session.session)
-            putString("expectedConnection", session.connectionIdentity)
-        },
-    ).getBoolean("accepted")
+        session,
+    ) {
+        putString("text", text)
+        putInt("cursor", 1)
+    }
 
-    private fun imeFinishComposingText(session: ImeSession): Boolean = imeCall(
+    private fun imeFinishComposingText(session: ImeSession): Boolean = runImeOperation(
         "finishComposingText",
-        Bundle().apply {
-            putLong("expectedSession", session.session)
-            putString("expectedConnection", session.connectionIdentity)
-        },
-    ).getBoolean("accepted")
+        session,
+    ) { }
 
-    private fun imeSetSelection(session: ImeSession, start: Int, end: Int): Boolean = imeCall(
+    private fun imeSetSelection(session: ImeSession, start: Int, end: Int): Boolean = runImeOperation(
         "setSelection",
-        Bundle().apply {
-            putInt("start", start)
-            putInt("end", end)
+        session,
+    ) {
+        putInt("start", start)
+        putInt("end", end)
+    }
+
+    private fun imeCommitText(session: ImeSession, text: String): Boolean = runImeOperation(
+        "commitText",
+        session,
+    ) {
+        putString("text", text)
+        putInt("cursor", 1)
+    }
+
+    private fun operationObservation(result: Bundle, expectedInputType: Int) = ImeOperationObservation(
+        operationInvoked = result.getBoolean("operationInvoked"),
+        accepted = result.getBoolean("accepted"),
+        reason = result.getString("operationReason") ?: "MISSING",
+        expectedPackage = result.getString("operationExpectedPackage") ?: "null",
+        expectedService = result.getString("operationExpectedService") ?: "null",
+        expectedSession = result.getLong("operationExpectedSession"),
+        expectedConnection = result.getString("operationExpectedConnection") ?: "null",
+        expectedInputType = expectedInputType,
+        service = result.getString("operationService") ?: "null",
+        session = result.getLong("operationSession"),
+        connection = result.getString("operationConnection") ?: "null",
+        editorPackage = result.getString("operationEditorPackage") ?: "null",
+        inputType = result.getInt("operationInputType", android.text.InputType.TYPE_NULL),
+    )
+
+    private fun runImeOperation(
+        method: String,
+        session: ImeSession,
+        request: Bundle.() -> Unit,
+    ): Boolean {
+        val arguments = Bundle().apply {
+            putString("expectedEditorPackage", TARGET_PACKAGE)
+            putString("expectedService", session.serviceIdentity)
             putLong("expectedSession", session.session)
             putString("expectedConnection", session.connectionIdentity)
-        },
-    ).getBoolean("accepted")
+            request.invoke(this)
+        }
+        val result = imeCall(method, arguments)
+        val observation = operationObservation(result, session.inputType)
+        logImeOperation(method, observation)
+        assertTrue("$method was not invoked: $observation", observation.operationInvoked)
+        assertTrue("$method InputConnection result was rejected: $observation", observation.accepted)
+        assertEquals("$method request package mismatch: $observation", TARGET_PACKAGE, observation.expectedPackage)
+        assertEquals("$method request service changed: $observation", session.serviceIdentity, observation.expectedService)
+        assertEquals("$method request session changed: $observation", session.session, observation.expectedSession)
+        assertEquals("$method request connection changed: $observation", session.connectionIdentity, observation.expectedConnection)
+        assertEquals("$method operation used another service: $observation", session.serviceIdentity, observation.service)
+        assertEquals("$method operation used another session: $observation", session.session, observation.session)
+        assertEquals("$method operation used another connection: $observation", session.connectionIdentity, observation.connection)
+        assertEquals("$method operation used another editor package: $observation", TARGET_PACKAGE, observation.editorPackage)
+        assertEquals("$method operation input type changed: $observation", session.inputType, observation.inputType)
+        assertEquals("$method invocation reason mismatch: $observation", "INVOKED_ACCEPTED", observation.reason)
+        return observation.accepted
+    }
 
-    private fun imeCommitText(session: ImeSession, text: String): Boolean = imeCall(
-        "commitText",
-        Bundle().apply {
-            putString("text", text)
+    private fun assertMissingExpectedPackageIsRejected(session: ImeSession) {
+        val request = Bundle().apply {
+            putString("text", "diagnostic guard probe")
             putInt("cursor", 1)
             putLong("expectedSession", session.session)
+            putString("expectedService", session.serviceIdentity)
             putString("expectedConnection", session.connectionIdentity)
-        },
-    ).getBoolean("accepted")
+            // Deliberately omit expectedEditorPackage to prove the guard refuses to invoke.
+        }
+        val result = imeCall("setComposingText", request)
+        val observation = operationObservation(result, session.inputType)
+        logImeOperation("setComposingText-missing-package-probe", observation)
+        assertEquals("Missing package must have a bounded rejection reason: $observation", "MISSING_EXPECTED_PACKAGE", observation.reason)
+        assertEquals("Guard rejection must not invoke InputConnection: $observation", false, observation.operationInvoked)
+        assertEquals("Guard rejection must not report an InputConnection result: $observation", false, observation.accepted)
+        assertEquals("Guard probe must omit expected package: $observation", "null", observation.expectedPackage)
+        assertEquals("Guard probe expected service changed: $observation", session.serviceIdentity, observation.expectedService)
+        assertEquals("Guard probe expected session changed: $observation", session.session, observation.expectedSession)
+        assertEquals("Guard probe expected connection changed: $observation", session.connectionIdentity, observation.expectedConnection)
+        assertEquals("Guard probe actual service changed: $observation", session.serviceIdentity, observation.service)
+        assertEquals("Guard probe must inspect the current Android session", session.session, observation.session)
+        assertEquals("Guard probe must inspect the current Android connection", session.connectionIdentity, observation.connection)
+        assertEquals("Guard probe must inspect the current editor package", TARGET_PACKAGE, observation.editorPackage)
+        assertEquals("Guard probe input type changed: $observation", session.inputType, observation.inputType)
+    }
+
+    private fun logImeOperation(method: String, operation: ImeOperationObservation) {
+        Log.i(TAG, "REAL_IME_OPERATION method=$method operationInvoked=${operation.operationInvoked} " +
+            "accepted=${operation.accepted} reason=${operation.reason} " +
+            "expectedPackage=${operation.expectedPackage} actualPackage=${operation.editorPackage} " +
+            "expectedService=${operation.expectedService} actualService=${operation.service} " +
+            "expectedSession=${operation.expectedSession} actualSession=${operation.session} " +
+            "expectedConnection=${operation.expectedConnection} actualConnection=${operation.connection} " +
+            "expectedInputType=${operation.expectedInputType} actualInputType=${operation.inputType}")
+    }
 
     private fun imeCall(method: String, extras: Bundle? = null): Bundle {
         val resolver = InstrumentationRegistry.getInstrumentation().context.contentResolver

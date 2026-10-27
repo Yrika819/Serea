@@ -175,6 +175,8 @@ data class Conversation(
 data class ChatUiState(
     val conversation: Conversation = Conversation(id = UUID.randomUUID().toString()),
     val editorValue: TextFieldValue = TextFieldValue(),
+    /** Inherited source taint for the current draft; an empty draft has no source lineage. */
+    val editorSourceLineage: Set<DataOrigin> = emptySet(),
     val editorInputGeneration: Long = 0,
     val editorSelectionCorrectionGeneration: Long = 0,
     val isLoading: Boolean = false,
@@ -202,6 +204,8 @@ data class ModelChatRequest(
     val context: List<ContextMessage> = emptyList(),
     val egressContract: EgressContract? = null,
     val selectedModelId: String? = null,
+    /** Provenance of the current message body, separate from prior-turn context. */
+    val bodySourceLineage: Set<DataOrigin> = setOf(DataOrigin.UNKNOWN),
 )
 data class ModelChatResponse(val text: String, val usage: ProviderUsage? = null)
 
@@ -252,6 +256,21 @@ internal class ChatViewModel(
 
     fun updateInput(value: String) = updateEditorValue(TextFieldValue(value))
 
+    /** Provider-prefill entry point. Imported content stays tainted through later user edits. */
+    internal fun prefillEditorFromProvider(value: String, origin: DataOrigin) {
+        require(origin in setOf(DataOrigin.GMAIL, DataOrigin.CALENDAR))
+        require(value.isNotBlank()) { "Provider prefill must contain text; use a new conversation to clear the editor." }
+        mutableState.update { current ->
+            current.copy(
+                editorValue = TextFieldValue(value),
+                editorSourceLineage = if (value.isBlank()) emptySet() else setOf(origin),
+                editorInputGeneration = if (value == current.editorValue.text) current.editorInputGeneration
+                    else current.editorInputGeneration + 1,
+                errorMessage = null,
+            )
+        }
+    }
+
     fun beginActivitySelectionRestore(owner: Activity? = null) {
         preserveEditorSelectionDuringRestore = true
         selectionRestoreOwner = owner
@@ -297,8 +316,16 @@ internal class ChatViewModel(
             } else {
                 value
             }
+            val editorSourceLineage = when {
+                value.text == current.editorValue.text -> current.editorSourceLineage
+                // Ordinary editor callbacks cannot erase imported ancestry. A user can
+                // intentionally start clean through the explicit new-conversation boundary.
+                value.text.isBlank() -> current.editorSourceLineage
+                else -> current.editorSourceLineage + DataOrigin.USER_AUTHORED
+            }
             current.copy(
                 editorValue = editorValue,
+                editorSourceLineage = editorSourceLineage,
                 editorSelectionCorrectionGeneration = if (restoringSelection) {
                     current.editorSelectionCorrectionGeneration + 1
                 } else {
@@ -349,12 +376,14 @@ internal class ChatViewModel(
         }
         val conversationId = snapshot.conversation.id
         val userMessage = ChatMessage(UUID.randomUUID().toString(), MessageRole.USER, messageText, nextMessageTime(snapshot.conversation), status = "PENDING",
-            origin = DataOrigin.USER_AUTHORED, conversationId = conversationId)
+            origin = DataOrigin.USER_AUTHORED, conversationId = conversationId,
+            sourceLineage = snapshot.editorSourceLineage.ifEmpty { setOf(DataOrigin.UNKNOWN) })
         activeMessageId = userMessage.id
         mutableState.update {
             it.copy(
                 conversation = it.conversation.copy(messages = it.conversation.messages + userMessage),
                 editorValue = TextFieldValue(),
+                editorSourceLineage = emptySet(),
                 editorInputGeneration = it.editorInputGeneration + 1,
                 isLoading = true,
                 isFinalizing = false,
@@ -375,7 +404,10 @@ internal class ChatViewModel(
                     }
                 }
                 val context = ChatContextBuilder.build(snapshot.conversation.messages, messageText, conversationId)
-                val request = ModelChatRequest(conversationId, messageText, sendId = userMessage.id, context = context)
+                val request = ModelChatRequest(
+                    conversationId, messageText, sendId = userMessage.id, context = context,
+                    bodySourceLineage = userMessage.sourceLineage,
+                )
                 val reply = withTimeout(request.timeoutMillis) { modelChat.send(request) }
                 currentCoroutineContext().ensureActive()
                 if (activeMessageId != userMessage.id || mutableState.value.conversation.id != conversationId) {
@@ -444,10 +476,14 @@ internal class ChatViewModel(
         cancelCurrent()
         selectionGeneration += 1
         val id = UUID.randomUUID().toString()
-        mutableState.update { it.copy(conversation = Conversation(id), editorValue = TextFieldValue(),
-            // A blank composer already has no draft callback to invalidate. Keeping
-            // its generation stable avoids replacing a focused field for a no-op clear.
-            editorInputGeneration = if (it.editorValue.text.isEmpty()) it.editorInputGeneration else it.editorInputGeneration + 1,
+        mutableState.update { it.copy(conversation = Conversation(id), editorValue = TextFieldValue(), editorSourceLineage = emptySet(),
+            // A blank composer with inherited lineage still has stale IME callbacks to
+            // invalidate before that lineage is cleared at this explicit fresh boundary.
+            editorInputGeneration = if (it.editorValue.text.isEmpty() && it.editorSourceLineage.isEmpty()) {
+                it.editorInputGeneration
+            } else {
+                it.editorInputGeneration + 1
+            },
             isLoading = false, isFinalizing = false, showingHistory = false,
             isRestoring = false, errorMessage = null, statusMessage = null) }
     }

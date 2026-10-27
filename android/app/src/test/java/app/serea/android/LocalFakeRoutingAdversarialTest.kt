@@ -9,6 +9,96 @@ import java.time.Instant
 
 /** Contract coverage for the offline model path; the fake below never opens a network connection. */
 class LocalFakeRoutingAdversarialTest {
+    @Test fun importedGoogleCurrentBodyIsDeniedBeforeUsageAndProvider() = runBlocking {
+        val now = 50_000L
+        val dao = MemoryUsageDao()
+        val provider = LocalFakeModelChatPort()
+        val egress = EgressCheckedModelChatPort(
+            UsageControlledModelChatPort(provider, UsageRepository(dao) { now }),
+            clock = { now },
+        )
+        val body = "synthetic imported message text"
+        val allowedContract = EgressContract(
+            conversationId = "body-lineage",
+            currentMessageId = "allowed-user-body",
+            origin = DataOrigin.USER_AUTHORED,
+            classification = DataClassification.PUBLIC,
+            destination = "https://ollama.com/api/chat",
+            plannedBody = "synthetic typed prompt",
+            context = emptyList(),
+            preparation = PayloadPreparation.RAW,
+            explicitSendIntentAtMillis = now,
+            expiresAtMillis = now + 30_000,
+            plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+        assertEquals(EgressContractDecision.APPROVED, ChatEgressGate.evaluate(allowedContract, now).decision)
+
+        val contaminatedLineages = listOf(
+            setOf(DataOrigin.USER_AUTHORED, DataOrigin.GMAIL),
+            setOf(DataOrigin.USER_AUTHORED, DataOrigin.CALENDAR),
+            setOf(DataOrigin.USER_AUTHORED, DataOrigin.UNKNOWN),
+            setOf(DataOrigin.UNKNOWN),
+            emptySet(),
+        )
+        contaminatedLineages.forEachIndexed { index, lineage ->
+            val sendId = "imported-body-denied-$index"
+            val contract = EgressContract(
+                conversationId = "body-lineage",
+                currentMessageId = sendId,
+                origin = DataOrigin.USER_AUTHORED,
+                classification = DataClassification.PUBLIC,
+                destination = "https://ollama.com/api/chat",
+                plannedBody = body,
+                context = emptyList(),
+                preparation = PayloadPreparation.RAW,
+                explicitSendIntentAtMillis = now,
+                expiresAtMillis = now + 30_000,
+                plannedBodySourceLineage = lineage,
+            )
+            val request = ModelChatRequest(
+                conversationId = contract.conversationId,
+                message = contract.plannedBody,
+                sendId = sendId,
+                classification = DataClassification.PUBLIC,
+                egressContract = contract,
+                bodySourceLineage = lineage,
+            )
+            assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED, ChatEgressGate.evaluate(contract, now).decision)
+            assertThrows(ModelChatFailure::class.java) { runBlocking { egress.send(request) } }
+            assertNull("No Usage reservation for lineage $lineage", dao.reservation(sendId))
+            assertEquals("No provider call for lineage $lineage", 0, provider.calls)
+        }
+
+        val mismatchedId = "body-lineage-mismatch"
+        val mismatchedContract = EgressContract(
+            conversationId = "body-lineage",
+            currentMessageId = mismatchedId,
+            origin = DataOrigin.USER_AUTHORED,
+            classification = DataClassification.PUBLIC,
+            destination = "https://ollama.com/api/chat",
+            plannedBody = body,
+            context = emptyList(),
+            preparation = PayloadPreparation.RAW,
+            explicitSendIntentAtMillis = now,
+            expiresAtMillis = now + 30_000,
+            plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED, DataOrigin.GMAIL),
+        )
+        assertThrows(ModelChatFailure::class.java) {
+            runBlocking {
+                egress.send(ModelChatRequest(
+                    conversationId = mismatchedContract.conversationId,
+                    message = mismatchedContract.plannedBody,
+                    sendId = mismatchedId,
+                    classification = DataClassification.PUBLIC,
+                    egressContract = mismatchedContract,
+                    bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+                ))
+            }
+        }
+        assertNull("A lineage mismatch is denied before Usage reservation", dao.reservation(mismatchedId))
+        assertEquals(0, provider.calls)
+    }
+
     @Test fun publicModelOutputDerivedFromGmailOrCalendarIsDeniedBeforeUsageAndProvider() = runBlocking {
         val now = 50_000L
         for (source in listOf(DataOrigin.GMAIL, DataOrigin.CALENDAR)) {
@@ -38,6 +128,7 @@ class LocalFakeRoutingAdversarialTest {
                 preparation = PayloadPreparation.RAW,
                 explicitSendIntentAtMillis = now,
                 expiresAtMillis = now + 30_000,
+                plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             )
             val request = ModelChatRequest(
                 conversationId = conversationId,
@@ -46,6 +137,7 @@ class LocalFakeRoutingAdversarialTest {
                 classification = DataClassification.PUBLIC,
                 context = context,
                 egressContract = contract,
+                bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             )
 
             assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED, ChatEgressGate.evaluate(contract, now).decision)
@@ -74,6 +166,7 @@ class LocalFakeRoutingAdversarialTest {
                 message = body,
                 sendId = sendId,
                 classification = DataClassification.PUBLIC,
+                bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             ),
         )
         assertEquals("local fixture response", approved.text)
@@ -81,6 +174,8 @@ class LocalFakeRoutingAdversarialTest {
         assertEquals(EgressTarget.LOCAL_DEMO, fake.lastRequest?.egressContract?.target)
         assertEquals("serea://local-demo", fake.lastRequest?.egressContract?.destination)
         assertEquals("serea-demo/local-chat", fake.lastRequest?.egressContract?.selectedModelId)
+        assertEquals(setOf(DataOrigin.USER_AUTHORED), fake.lastRequest?.bodySourceLineage)
+        assertEquals(fake.lastRequest?.bodySourceLineage, fake.lastRequest?.egressContract?.plannedBodySourceLineage)
         assertEquals(1, fake.calls)
         assertEquals(UsageLedgerState.SETTLED.name, dao.reservation(sendId)?.state)
         assertEquals(DemoChatComposition.DEMO_MODEL_ID, dao.ledger(sendId)?.modelId)
@@ -97,6 +192,7 @@ class LocalFakeRoutingAdversarialTest {
                         message = "synthetic mail excerpt",
                         sendId = googleOriginSendId,
                         classification = DataClassification.PUBLIC,
+                        bodySourceLineage = setOf(DataOrigin.GMAIL),
                         egressContract = contract(
                             "fixture-conversation", googleOriginSendId, "synthetic mail excerpt",
                             DataOrigin.GMAIL, DataClassification.PUBLIC,
@@ -116,6 +212,7 @@ class LocalFakeRoutingAdversarialTest {
                         message = "synthetic secret fixture",
                         sendId = sensitiveSendId,
                         classification = DataClassification.SECRET,
+                        bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
                         egressContract = contract(
                             "fixture-conversation", sensitiveSendId, "synthetic secret fixture",
                             DataOrigin.USER_AUTHORED, DataClassification.SECRET,
@@ -135,6 +232,7 @@ class LocalFakeRoutingAdversarialTest {
                         message = "synthetic public fixture",
                         sendId = cloudTargetSendId,
                         classification = DataClassification.PUBLIC,
+                        bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
                         egressContract = contract(
                             "fixture-conversation", cloudTargetSendId, "synthetic public fixture",
                             DataOrigin.USER_AUTHORED, DataClassification.PUBLIC,
@@ -169,6 +267,7 @@ class LocalFakeRoutingAdversarialTest {
         expiresAtMillis = cloudIntentAtMillis?.plus(30_000),
         selectedModelId = DemoChatComposition.DEMO_MODEL_ID,
         target = target,
+        plannedBodySourceLineage = setOf(origin),
     )
 
     private class LocalFakeModelChatPort : ModelChatPort {

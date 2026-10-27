@@ -58,15 +58,18 @@ class EgressApprovedPayload private constructor(
     internal val origin: DataOrigin,
     internal val classification: DataClassification,
     internal val target: EgressTarget,
+    internal val bodySourceLineage: Set<DataOrigin>,
 ) {
     internal val text: String get() = messages.lastOrNull()?.second.orEmpty()
     companion object {
         internal fun fixedPublicContractProbe(): EgressApprovedPayload =
             EgressApprovedPayload(listOf("user" to "Reply with exactly: Serea cloud contract probe passed."), null, null,
-                null, "https://ollama.com/api/chat", DataOrigin.USER_AUTHORED, DataClassification.PUBLIC, EgressTarget.CLOUD)
+                null, "https://ollama.com/api/chat", DataOrigin.USER_AUTHORED, DataClassification.PUBLIC, EgressTarget.CLOUD,
+                setOf(DataOrigin.USER_AUTHORED))
         internal fun fromApprovedContract(contract: EgressContract, messages: List<Pair<String, String>>) =
             EgressApprovedPayload(messages.toList(), contract.conversationId, contract.currentMessageId,
-                contract.selectedModelId, contract.destination, contract.origin, contract.classification, contract.target)
+                contract.selectedModelId, contract.destination, contract.origin, contract.classification, contract.target,
+                contract.plannedBodySourceLineage.toSet())
     }
 }
 
@@ -262,20 +265,27 @@ internal class OllamaModelChatPort(
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         val contract = request.egressContract ?: throw PreDispatchModelChatFailure("Cloud send intent has not been approved.")
+        val requestBodyLineage = request.bodySourceLineage.toSet()
+        val contractBodyLineage = contract.plannedBodySourceLineage.toSet()
         if (contract.target != EgressTarget.CLOUD || contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
             contract.plannedBody != request.message || contract.context != request.context ||
+            contractBodyLineage != requestBodyLineage ||
             (contract.selectedModelId != null && contract.selectedModelId != request.selectedModelId) || request.selectedModelId.isNullOrBlank() ||
             contract.classification != request.classification || contract.origin != DataOrigin.USER_AUTHORED) {
             throw PreDispatchModelChatFailure("The approved content no longer matches the request.")
         }
-        val boundContract = contract.copy(selectedModelId = request.selectedModelId)
+        val boundContract = contract.copy(
+            selectedModelId = request.selectedModelId,
+            plannedBodySourceLineage = contractBodyLineage,
+        )
         val evaluation = ChatEgressGate.evaluate(boundContract, clock())
         if (evaluation.decision != EgressContractDecision.APPROVED) {
             throw PreDispatchModelChatFailure("Cloud egress was denied: ${evaluation.decision.name.lowercase()}.")
         }
         val payload = evaluation.payload ?: throw PreDispatchModelChatFailure("Cloud egress approval is unavailable.")
         if (payload.conversationId != request.conversationId || payload.sendId != request.sendId ||
-            payload.selectedModelId != request.selectedModelId || payload.destination != boundContract.destination) {
+            payload.selectedModelId != request.selectedModelId || payload.destination != boundContract.destination ||
+            payload.bodySourceLineage.toSet() != requestBodyLineage) {
             throw PreDispatchModelChatFailure("The approved provider payload no longer matches the routed send.")
         }
         return try {

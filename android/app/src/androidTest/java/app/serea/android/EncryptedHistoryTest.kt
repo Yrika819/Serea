@@ -129,6 +129,7 @@ class EncryptedHistoryTest {
             preparation = PayloadPreparation.RAW,
             explicitSendIntentAtMillis = now,
             expiresAtMillis = now + 30_000,
+            plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
         )
         assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED,
             ChatEgressGate.evaluate(futureContract, now).decision)

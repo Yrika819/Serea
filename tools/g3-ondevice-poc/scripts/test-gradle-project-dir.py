@@ -48,4 +48,27 @@ for variable in ("pssAfterLoadKb", "pssAfterGenerationKb", "pssAfterCloseKb"):
     if not re.search(rf"var {variable} = 0L\b", android_test):
         raise SystemExit(f"{variable} must use Long for Debug.getPss()")
 
-print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test")
+if "var racingLoad: kotlinx.coroutines.Deferred<Boolean>? = null" not in android_test:
+    raise SystemExit("load-close race must return an expected result instead of failing its async child")
+racing_load_start = android_test.find("racingLoad = async(Dispatchers.IO) {")
+racing_close_start = android_test.find("racingClose = async(Dispatchers.IO)", racing_load_start)
+if racing_load_start < 0 or racing_close_start < 0:
+    raise SystemExit("load-close race async request boundaries are missing")
+racing_load_body = android_test[racing_load_start:racing_close_start]
+cancel_catch = racing_load_body.find("catch (cancelled: CancellationException)")
+expected_catch = racing_load_body.find("catch (failure: IllegalStateException)")
+if not all(
+    marker in racing_load_body
+    for marker in (
+        "racingEngine.load(model.absolutePath)",
+        "false",
+        'failure.message == "Engine closed before model load"',
+        "throw cancelled",
+        "else throw failure",
+    )
+) or cancel_catch < 0 or expected_catch < 0 or cancel_catch > expected_catch:
+    raise SystemExit("race test must contain only the expected close rejection, preserve cancellation, and propagate unexpected failures")
+if "val loadRejectedByClose = withTimeout(15_000) { checkNotNull(racingLoad).await() }" not in android_test:
+    raise SystemExit("load-close race must await the successful Boolean result")
+
+print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test load_close_async_failure_isolated=true cancellation_preserved=true unexpected_failure_preserved=true")

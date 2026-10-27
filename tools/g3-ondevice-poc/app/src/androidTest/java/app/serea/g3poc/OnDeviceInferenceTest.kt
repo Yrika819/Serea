@@ -254,14 +254,26 @@ class OnDeviceInferenceTest {
         val racingEngine = NativeLlamaEngine()
         racingEngine.armLoadCloseRaceTest()
         racingEngine.blockExecutorForTest()
-        var racingLoad: kotlinx.coroutines.Deferred<Unit>? = null
+        var racingLoad: kotlinx.coroutines.Deferred<Boolean>? = null
         var racingClose: kotlinx.coroutines.Deferred<Unit>? = null
         try {
             assertTrue(
                 "race test executor blocker must be active before queuing model load",
                 racingEngine.awaitExecutorBlockedForTest(15, TimeUnit.SECONDS),
             )
-            racingLoad = async(Dispatchers.IO) { racingEngine.load(model.absolutePath) }
+            // An expected exception escaping an async child cancels runBlocking's parent
+            // before the later await/catch can observe it. Convert only this expected close
+            // rejection into a value in the child; cancellation still propagates normally.
+            racingLoad = async(Dispatchers.IO) {
+                try {
+                    racingEngine.load(model.absolutePath)
+                    false
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: IllegalStateException) {
+                    if (failure.message == "Engine closed before model load") true else throw failure
+                }
+            }
             assertTrue("load request must be queued behind the executor blocker", racingEngine.awaitLoadQueuedForTest(15, TimeUnit.SECONDS))
             racingClose = async(Dispatchers.IO) { racingEngine.close() }
             assertTrue("close must mark the engine closed before queue release", racingEngine.awaitCloseStartedForTest(15, TimeUnit.SECONDS))
@@ -269,12 +281,7 @@ class OnDeviceInferenceTest {
             racingEngine.releaseExecutorBlockForTest()
             if (racingClose == null) racingClose = async(Dispatchers.IO) { racingEngine.close() }
         }
-        var loadRejectedByClose = false
-        try {
-            withTimeout(15_000) { checkNotNull(racingLoad).await() }
-        } catch (_: IllegalStateException) {
-            loadRejectedByClose = true
-        }
+        val loadRejectedByClose = withTimeout(15_000) { checkNotNull(racingLoad).await() }
         withTimeout(15_000) { checkNotNull(racingClose).await() }
         assertTrue("queued load must be skipped after close wins admission", racingEngine.awaitLoadSkippedForTest(5, TimeUnit.SECONDS))
         assertTrue("load-vs-close race must reject or cancel load", loadRejectedByClose)

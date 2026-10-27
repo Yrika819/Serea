@@ -18,6 +18,10 @@ DEVICE_MODEL_RELATIVE="files/g3-smollm.gguf"
 APP_APK="$APP_DIR/build/outputs/apk/debug/app-debug.apk"
 TEST_APK_DIR="$APP_DIR/build/outputs/apk/androidTest/debug"
 DOWNLOAD_TEST_DIRECTORY=''
+G3_MODEL_HOST_PATH=''
+G3_MODEL_PRIVATE_PATH_MAY_EXIST=0
+G3_APP_INSTALLED=0
+G3_RESULTS_DIR=''
 
 mkdir -p "$EVIDENCE_DIR"
 
@@ -25,6 +29,113 @@ run_poc_gradle() (
     cd "$POC_DIR"
     exec ./gradlew "$@"
 )
+
+capture_optional_emulator_cpu_pressure() {
+    local output_path="$1"
+    local raw_output
+    local raw_error
+    raw_output="$(mktemp "${RUNNER_TEMP}/g3-cpu-pressure-output.XXXXXX")"
+    raw_error="$(mktemp "${RUNNER_TEMP}/g3-cpu-pressure-error.XXXXXX")"
+    local command_status=0
+    if adb shell cat /proc/pressure/cpu > "$raw_output" 2> "$raw_error"; then
+        cp "$raw_output" "$output_path"
+        printf 'available=true\n' > "${output_path}.status"
+    else
+        command_status=$?
+        {
+            echo 'available=false'
+            echo "exit_status=$command_status"
+            cat "$raw_output"
+            cat "$raw_error"
+        } > "$output_path"
+        printf 'available=false\nexit_status=%s\n' "$command_status" > "${output_path}.status"
+    fi
+    rm -f "$raw_output" "$raw_error" || true
+    return 0
+}
+
+cleanup_emulator() {
+    local primary_status="$1"
+    local final_status="$primary_status"
+    local cleanup_status=0
+    trap - EXIT INT TERM
+    set +e
+    if adb get-state >/dev/null 2>&1; then
+        if [[ -n "$G3_RESULTS_DIR" && -d "$G3_RESULTS_DIR" ]]; then
+            mkdir -p "$EVIDENCE_DIR/androidTest-results"
+            cp -a "$G3_RESULTS_DIR"/. "$EVIDENCE_DIR/androidTest-results/" || cleanup_status=1
+        fi
+        adb logcat -d -v threadtime > "$EVIDENCE_DIR/logcat.txt" 2>&1 || cleanup_status=1
+        capture_optional_emulator_cpu_pressure "$EVIDENCE_DIR/emulator-cpu-pressure-after.txt"
+        adb shell cat /proc/meminfo > "$EVIDENCE_DIR/emulator-meminfo-after.txt" 2>&1 || cleanup_status=1
+        adb shell dumpsys meminfo "$APP_ID" > "$EVIDENCE_DIR/app-meminfo-after.txt" 2>&1 || cleanup_status=1
+        if [[ "$G3_MODEL_PRIVATE_PATH_MAY_EXIST" -eq 1 ]]; then
+            adb shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" || cleanup_status=1
+        fi
+        adb shell rm -f "$DEVICE_MODEL_TEMP" || cleanup_status=1
+        if [[ "$G3_MODEL_PRIVATE_PATH_MAY_EXIST" -eq 1 ]]; then
+            if adb shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE"; then
+                echo 'app_private_model_removed=true' > "$EVIDENCE_DIR/model-cleanup.txt"
+            else
+                echo 'app_private_model_removed=false' > "$EVIDENCE_DIR/model-cleanup.txt"
+                cleanup_status=1
+            fi
+        else
+            echo 'app_private_model_staged=false' > "$EVIDENCE_DIR/model-cleanup.txt"
+        fi
+        if adb shell test '!' -e "$DEVICE_MODEL_TEMP"; then
+            echo 'emulator_temp_model_removed=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
+        else
+            echo 'emulator_temp_model_removed=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
+            cleanup_status=1
+        fi
+        if [[ "$G3_APP_INSTALLED" -eq 1 ]]; then
+            adb uninstall "$TEST_ID" >> "$EVIDENCE_DIR/model-cleanup.txt" 2>&1 || cleanup_status=1
+            adb uninstall "$APP_ID" >> "$EVIDENCE_DIR/model-cleanup.txt" 2>&1 || cleanup_status=1
+        fi
+    else
+        echo 'emulator_unreachable_during_cleanup=true' > "$EVIDENCE_DIR/model-cleanup.txt"
+        if [[ "$primary_status" -eq 0 ]]; then final_status=1; fi
+    fi
+    if [[ -n "$G3_MODEL_HOST_PATH" && -f "$G3_MODEL_HOST_PATH" ]]; then
+        python3 - "$G3_MODEL_HOST_PATH" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).unlink(missing_ok=True)
+PY
+        if [[ -e "$G3_MODEL_HOST_PATH" ]]; then cleanup_status=1; fi
+    fi
+    if [[ "$cleanup_status" -ne 0 && "$primary_status" -eq 0 ]]; then final_status=1; fi
+    {
+        echo "primary_exit_status=$primary_status"
+        echo "final_exit_status=$final_status"
+    } >> "$EVIDENCE_DIR/model-cleanup.txt"
+    G3_MODEL_HOST_PATH=''
+    G3_MODEL_PRIVATE_PATH_MAY_EXIST=0
+    G3_APP_INSTALLED=0
+    G3_RESULTS_DIR=''
+    if [[ -z "$G3_MODEL_HOST_PATH" && "$G3_MODEL_PRIVATE_PATH_MAY_EXIST" -eq 0 && "$G3_APP_INSTALLED" -eq 0 && -z "$G3_RESULTS_DIR" ]]; then
+        echo 'cleanup_state_reset=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
+    else
+        echo 'cleanup_state_reset=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
+        if [[ "$primary_status" -eq 0 ]]; then final_status=1; fi
+    fi
+    exit "$final_status"
+}
+
+test_optional_emulator_cpu_pressure() {
+    capture_optional_emulator_cpu_pressure "$EVIDENCE_DIR/emulator-cpu-pressure-test.txt"
+}
+
+test_cleanup_after_early_failure() {
+    G3_MODEL_HOST_PATH="$RUNNER_TEMP/g3-host-model-fixture.bin"
+    G3_MODEL_PRIVATE_PATH_MAY_EXIST=1
+    G3_APP_INSTALLED=1
+    G3_RESULTS_DIR="$RUNNER_TEMP/no-android-test-results"
+    printf 'synthetic cleanup fixture only\n' > "$G3_MODEL_HOST_PATH"
+    trap 'cleanup_emulator "$?"' EXIT
+    exit 23
+}
 
 fetch_bounded() {
     local url="$1"
@@ -163,66 +274,12 @@ prepare_build() {
 }
 
 run_model_test() {
-    local model_host_path="$RUNNER_TEMP/g3-smollm.gguf"
-    local model_private_path_may_exist=0
-    local app_installed=0
-    local runner_status=0
+    G3_MODEL_HOST_PATH="$RUNNER_TEMP/g3-smollm.gguf"
+    G3_MODEL_PRIVATE_PATH_MAY_EXIST=0
+    G3_APP_INSTALLED=0
     local device_data_dir=''
-    local results_dir="$APP_DIR/build/outputs/androidTest-results/connected"
-
-    cleanup_emulator() {
-        runner_status=$?
-        trap - EXIT INT TERM
-        set +e
-        if adb get-state >/dev/null 2>&1; then
-            if [[ -d "$results_dir" ]]; then
-                mkdir -p "$EVIDENCE_DIR/androidTest-results"
-                cp -a "$results_dir"/. "$EVIDENCE_DIR/androidTest-results/" || true
-            fi
-            adb logcat -d -v threadtime > "$EVIDENCE_DIR/logcat.txt" 2>&1
-            adb shell cat /proc/pressure/cpu > "$EVIDENCE_DIR/emulator-cpu-pressure-after.txt" 2>&1
-            adb shell cat /proc/meminfo > "$EVIDENCE_DIR/emulator-meminfo-after.txt" 2>&1
-            adb shell dumpsys meminfo "$APP_ID" > "$EVIDENCE_DIR/app-meminfo-after.txt" 2>&1
-            local cleanup_status=0
-            if [[ "$model_private_path_may_exist" -eq 1 ]]; then
-                adb shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" || cleanup_status=1
-            fi
-            adb shell rm -f "$DEVICE_MODEL_TEMP" || cleanup_status=1
-            if [[ "$model_private_path_may_exist" -eq 1 ]]; then
-                if adb shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE"; then
-                    echo 'app_private_model_removed=true' > "$EVIDENCE_DIR/model-cleanup.txt"
-                else
-                    echo 'app_private_model_removed=false' > "$EVIDENCE_DIR/model-cleanup.txt"
-                    cleanup_status=1
-                fi
-            else
-                echo 'app_private_model_staged=false' > "$EVIDENCE_DIR/model-cleanup.txt"
-            fi
-            if adb shell test '!' -e "$DEVICE_MODEL_TEMP"; then
-                echo 'emulator_temp_model_removed=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
-            else
-                echo 'emulator_temp_model_removed=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
-                cleanup_status=1
-            fi
-            if [[ "$app_installed" -eq 1 ]]; then
-                adb uninstall "$TEST_ID" >> "$EVIDENCE_DIR/model-cleanup.txt" 2>&1 || cleanup_status=1
-                adb uninstall "$APP_ID" >> "$EVIDENCE_DIR/model-cleanup.txt" 2>&1 || cleanup_status=1
-            fi
-            if [[ "$cleanup_status" -ne 0 && "$runner_status" -eq 0 ]]; then runner_status=1; fi
-        else
-            echo 'emulator_unreachable_during_cleanup=true' > "$EVIDENCE_DIR/model-cleanup.txt"
-            if [[ "$runner_status" -eq 0 ]]; then runner_status=1; fi
-        fi
-        if [[ -f "$model_host_path" ]]; then
-            python3 - "$model_host_path" <<'PY'
-from pathlib import Path
-import sys
-Path(sys.argv[1]).unlink(missing_ok=True)
-PY
-        fi
-        exit "$runner_status"
-    }
-    trap cleanup_emulator EXIT
+    G3_RESULTS_DIR="$APP_DIR/build/outputs/androidTest-results/connected"
+    trap 'cleanup_emulator "$?"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
@@ -240,11 +297,11 @@ PY
         echo "emulator_fingerprint: $(adb shell getprop ro.build.fingerprint | tr -d '\r')"
         echo "boot_completed: $(adb shell getprop sys.boot_completed | tr -d '\r')"
     } > "$EVIDENCE_DIR/emulator-metadata.txt"
-    adb shell cat /proc/pressure/cpu > "$EVIDENCE_DIR/emulator-cpu-pressure-before.txt"
+    capture_optional_emulator_cpu_pressure "$EVIDENCE_DIR/emulator-cpu-pressure-before.txt"
     adb shell cat /proc/meminfo > "$EVIDENCE_DIR/emulator-meminfo-before.txt"
 
     adb install -r "$APP_APK" > "$EVIDENCE_DIR/adb-install-target.log" 2>&1
-    app_installed=1
+    G3_APP_INSTALLED=1
     mapfile -t test_apks < <(find "$TEST_APK_DIR" -maxdepth 1 -type f -name '*-androidTest.apk' -print)
     [[ "${#test_apks[@]}" -eq 1 ]]
     local test_apk="${test_apks[0]}"
@@ -268,11 +325,11 @@ PY
         "$expected_test_hash" "$installed_test_hash" > "$EVIDENCE_DIR/installed-androidtest-apk-verification.txt"
 
     echo 'download_attempted=true' > "$EVIDENCE_DIR/model-status.txt"
-    fetch_bounded "$MODEL_URL" "$model_host_path" "$MODEL_SIZE_BYTES"
+    fetch_bounded "$MODEL_URL" "$G3_MODEL_HOST_PATH" "$MODEL_SIZE_BYTES"
     local model_size
-    model_size="$(stat -c '%s' "$model_host_path")"
+    model_size="$(stat -c '%s' "$G3_MODEL_HOST_PATH")"
     local model_hash
-    model_hash="$(sha256sum "$model_host_path" | awk '{print $1}')"
+    model_hash="$(sha256sum "$G3_MODEL_HOST_PATH" | awk '{print $1}')"
     {
         echo 'downloaded_validated=false'
         echo "repository_revision=$MODEL_REPOSITORY_REVISION"
@@ -289,8 +346,8 @@ PY
     } > "$EVIDENCE_DIR/model-status.txt"
 
     adb shell run-as "$APP_ID" mkdir -p files
-    adb push "$model_host_path" "$DEVICE_MODEL_TEMP" > "$EVIDENCE_DIR/adb-model-stage.log" 2>&1
-    model_private_path_may_exist=1
+    adb push "$G3_MODEL_HOST_PATH" "$DEVICE_MODEL_TEMP" > "$EVIDENCE_DIR/adb-model-stage.log" 2>&1
+    G3_MODEL_PRIVATE_PATH_MAY_EXIST=1
     adb shell run-as "$APP_ID" cp "$DEVICE_MODEL_TEMP" "$DEVICE_MODEL_RELATIVE"
     adb shell run-as "$APP_ID" chmod 0400 "$DEVICE_MODEL_RELATIVE"
     device_data_dir="$(adb shell run-as "$APP_ID" pwd | tr -d '\r')"
@@ -316,8 +373,8 @@ PY
         return 1
     fi
 
-    [[ -d "$results_dir" ]]
-    python3 - "$results_dir" <<'PY'
+    [[ -d "$G3_RESULTS_DIR" ]]
+    python3 - "$G3_RESULTS_DIR" <<'PY'
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -356,6 +413,12 @@ case "${1:-}" in
     test-download-bound)
         test_download_bound
         ;;
+    test-cpu-pressure-optional)
+        test_optional_emulator_cpu_pressure
+        ;;
+    test-cleanup-after-early-failure)
+        test_cleanup_after_early_failure
+        ;;
     host-after)
         {
             echo 'recorded_at_utc:'
@@ -367,7 +430,7 @@ case "${1:-}" in
         } > "$EVIDENCE_DIR/host-after-emulator.txt"
         ;;
     *)
-        echo "Usage: $0 {host-metadata|prepare|execute|host-after|test-download-bound}" >&2
+        echo "Usage: $0 {host-metadata|prepare|execute|host-after|test-download-bound|test-cpu-pressure-optional|test-cleanup-after-early-failure}" >&2
         exit 2
         ;;
 esac

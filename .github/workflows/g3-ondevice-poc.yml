@@ -78,6 +78,9 @@ jobs:
       - name: Verify Gradle root and AndroidTest source contracts
         run: python3 tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py
 
+      - name: Exercise optional CPU pressure and early-exit cleanup with fake adb
+        run: python3 tools/g3-ondevice-poc/scripts/test-runner-failure-paths.py
+
       - name: Build app and instrumentation APKs before any model download
         run: |
           set -euo pipefail

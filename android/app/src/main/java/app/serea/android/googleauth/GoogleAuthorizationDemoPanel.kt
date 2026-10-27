@@ -29,6 +29,7 @@ internal fun GoogleAuthorizationDemoPanel(
 ) {
     val state by viewModel.state.collectAsState()
     val pending = state.pendingFeature
+    val authorizationBusy = state.inFlightFeature != null || pending != null
 
     Column(
         modifier = Modifier.fillMaxWidth().testTag("google_auth_demo_section"),
@@ -55,6 +56,7 @@ internal fun GoogleAuthorizationDemoPanel(
             feature = GoogleFeature.GMAIL,
             status = state.gmail,
             isEnabledInApp = GoogleFeature.GMAIL !in state.disabledInAppFeatures,
+            isAuthorizationBusy = authorizationBusy,
             onRequest = viewModel::requestConsent,
             onDisconnect = viewModel::disconnectInApp,
             onReconnect = viewModel::reconnectInApp,
@@ -64,6 +66,7 @@ internal fun GoogleAuthorizationDemoPanel(
             feature = GoogleFeature.CALENDAR,
             status = state.calendar,
             isEnabledInApp = GoogleFeature.CALENDAR !in state.disabledInAppFeatures,
+            isAuthorizationBusy = authorizationBusy,
             onRequest = viewModel::requestConsent,
             onDisconnect = viewModel::disconnectInApp,
             onReconnect = viewModel::reconnectInApp,
@@ -77,6 +80,12 @@ internal fun GoogleAuthorizationDemoPanel(
                 onClick = viewModel::revokeDemoGrant,
                 modifier = Modifier.weight(1f).testTag("google_auth_demo_revoke"),
             ) { Text("共有デモ権限を取消") }
+        }
+        if (state.inFlightFeature != null) {
+            OutlinedButton(
+                onClick = viewModel::cancelPendingConsent,
+                modifier = Modifier.testTag("google_auth_demo_cancel_authorization"),
+            ) { Text("認可操作を取り消す") }
         }
         OutlinedButton(
             onClick = viewModel::simulateTokenExpiry,
@@ -127,6 +136,7 @@ private fun FeatureActions(
     feature: GoogleFeature,
     status: GoogleDemoFeatureState,
     isEnabledInApp: Boolean,
+    isAuthorizationBusy: Boolean,
     onRequest: (GoogleFeature) -> Unit,
     onDisconnect: (GoogleFeature) -> Unit,
     onReconnect: (GoogleFeature) -> Unit,
@@ -137,7 +147,7 @@ private fun FeatureActions(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { onRequest(feature) },
-                enabled = isEnabledInApp && status != GoogleDemoFeatureState.AUTHORIZING,
+                enabled = isEnabledInApp && !isAuthorizationBusy,
                 modifier = Modifier.weight(1f).testTag("google_auth_demo_request_${feature.name.lowercase()}"),
             ) { Text("デモ承認を要求") }
             if (!isEnabledInApp) {

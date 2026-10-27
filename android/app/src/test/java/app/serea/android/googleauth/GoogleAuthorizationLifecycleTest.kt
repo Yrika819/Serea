@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.Description
@@ -125,4 +126,85 @@ class GoogleAuthorizationLifecycleTest {
             assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.gmail)
             assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.calendar)
         }
+
+    @Test
+    fun rapidFeatureRequestsKeepTheFirstAuthorizationAndCancellationReleasesTheGuard() =
+        runTest(mainDispatcher.dispatcher) {
+            val viewModel = GoogleAuthorizationDemoViewModel(FakeGoogleAuthorizationGateway())
+            viewModel.requestConsent(GoogleFeature.GMAIL)
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+
+            assertEquals(GoogleFeature.GMAIL, viewModel.state.value.inFlightFeature)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZING, viewModel.state.value.gmail)
+            assertEquals(GoogleDemoFeatureState.DISCONNECTED, viewModel.state.value.calendar)
+
+            runCurrent()
+            assertEquals(null, viewModel.state.value.inFlightFeature)
+            assertEquals(GoogleFeature.GMAIL, viewModel.state.value.pendingFeature)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.gmail)
+            assertEquals(GoogleDemoFeatureState.DISCONNECTED, viewModel.state.value.calendar)
+
+            viewModel.cancelPendingConsent()
+            assertEquals(null, viewModel.state.value.pendingFeature)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.gmail)
+
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+            assertEquals(GoogleFeature.CALENDAR, viewModel.state.value.inFlightFeature)
+            viewModel.cancelPendingConsent()
+            assertEquals(null, viewModel.state.value.inFlightFeature)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.calendar)
+
+            viewModel.requestConsent(GoogleFeature.GMAIL)
+            assertEquals(GoogleFeature.GMAIL, viewModel.state.value.inFlightFeature)
+            runCurrent()
+            assertEquals(null, viewModel.state.value.inFlightFeature)
+            assertEquals(GoogleFeature.GMAIL, viewModel.state.value.pendingFeature)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.gmail)
+        }
+
+    @Test
+    fun queuedGrantCannotRestoreFakeScopesAfterSharedRevocation() = runTest(mainDispatcher.dispatcher) {
+        val gateway = FakeGoogleAuthorizationGateway()
+        val viewModel = GoogleAuthorizationDemoViewModel(gateway)
+        viewModel.requestConsent(GoogleFeature.GMAIL)
+        runCurrent()
+        assertEquals(GoogleFeature.GMAIL, viewModel.state.value.pendingFeature)
+
+        viewModel.grantPendingConsent()
+        assertEquals(GoogleFeature.GMAIL, viewModel.state.value.inFlightFeature)
+        viewModel.revokeDemoGrant()
+        assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.gmail)
+        assertEquals(null, viewModel.state.value.inFlightFeature)
+
+        runCurrent()
+        assertEquals(1, gateway.revokeCount)
+        assertEquals(
+            ScopePermission.NEEDS_CONSENT,
+            gateway.status(setOf(GoogleScope.GMAIL_READ_ONLY)).permissions[GoogleScope.GMAIL_READ_ONLY],
+        )
+        assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.gmail)
+    }
+
+    @Test
+    fun queuedGrantCannotRestoreFakeScopesAfterInAppDisconnect() = runTest(mainDispatcher.dispatcher) {
+        val gateway = FakeGoogleAuthorizationGateway()
+        val viewModel = GoogleAuthorizationDemoViewModel(gateway)
+        viewModel.requestConsent(GoogleFeature.CALENDAR)
+        runCurrent()
+        assertEquals(GoogleFeature.CALENDAR, viewModel.state.value.pendingFeature)
+
+        viewModel.grantPendingConsent()
+        assertEquals(GoogleFeature.CALENDAR, viewModel.state.value.inFlightFeature)
+        viewModel.disconnectInApp(GoogleFeature.CALENDAR)
+        assertEquals(GoogleDemoFeatureState.DISCONNECTED, viewModel.state.value.calendar)
+        assertEquals(null, viewModel.state.value.inFlightFeature)
+
+        runCurrent()
+        assertFalse(gateway.isEnabledInApp(GoogleFeature.CALENDAR))
+        assertEquals(
+            ScopePermission.NEEDS_CONSENT,
+            gateway.status(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)).permissions[GoogleScope.CALENDAR_EVENTS_READ_ONLY],
+        )
+        assertEquals(GoogleDemoFeatureState.DISCONNECTED, viewModel.state.value.calendar)
+    }
 }

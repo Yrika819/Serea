@@ -23,6 +23,7 @@ internal data class GoogleAuthorizationDemoState(
     val gmail: GoogleDemoFeatureState = GoogleDemoFeatureState.DISCONNECTED,
     val calendar: GoogleDemoFeatureState = GoogleDemoFeatureState.DISCONNECTED,
     val disabledInAppFeatures: Set<GoogleFeature> = emptySet(),
+    val inFlightFeature: GoogleFeature? = null,
     val pendingFeature: GoogleFeature? = null,
     val pendingScopes: Set<GoogleScope> = emptySet(),
     val message: String = "この画面は架空の認可フローを表示します。実アカウントと通信しません。",
@@ -41,47 +42,36 @@ internal class GoogleAuthorizationDemoViewModel(
     private var requestGeneration = 0L
 
     fun requestConsent(feature: GoogleFeature) {
-        val current = mutableState.value
-        if (current.pendingFeature != null) {
-            mutableState.value = current.copy(message = "先に表示中のデモ承認を完了または取り消してください。")
-            return
-        }
-        val generation = ++requestGeneration
-        setFeatureState(feature, GoogleDemoFeatureState.AUTHORIZING)
-        viewModelScope.launch {
-            applyOutcome(feature, runCatching { gateway.authorize(feature.scopes) }.getOrElse(::failure), generation)
-        }
+        runAuthorization(feature, allowPendingConsent = false) { gateway.authorize(feature.scopes) }
     }
 
     fun grantPendingConsent() {
         val feature = mutableState.value.pendingFeature ?: return
-        val generation = ++requestGeneration
-        setFeatureState(feature, GoogleDemoFeatureState.AUTHORIZING)
-        viewModelScope.launch {
+        runAuthorization(feature, allowPendingConsent = true) {
             gateway.setExpired(false)
             gateway.grant(*feature.scopes.toTypedArray())
-            applyOutcome(feature, runCatching { gateway.authorize(feature.scopes) }.getOrElse(::failure), generation)
+            gateway.authorize(feature.scopes)
         }
     }
 
     fun denyPendingConsent() {
         val feature = mutableState.value.pendingFeature ?: return
-        val generation = ++requestGeneration
-        setFeatureState(feature, GoogleDemoFeatureState.AUTHORIZING)
-        gateway.denyNext(AuthorizationFailure.DENIED)
-        viewModelScope.launch {
-            applyOutcome(feature, runCatching { gateway.authorize(feature.scopes) }.getOrElse(::failure), generation)
+        runAuthorization(feature, allowPendingConsent = true) {
+            gateway.denyNext(AuthorizationFailure.DENIED)
+            gateway.authorize(feature.scopes)
         }
     }
 
     fun cancelPendingConsent() {
-        requestGeneration++
         val current = mutableState.value
-        current.pendingFeature?.let { setFeatureState(it, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) }
-        mutableState.value = mutableState.value.copy(
+        val feature = current.pendingFeature ?: current.inFlightFeature
+        requestGeneration++
+        val updated = feature?.let { current.withFeatureState(it, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) } ?: current
+        mutableState.value = updated.copy(
+            inFlightFeature = null,
             pendingFeature = null,
             pendingScopes = emptySet(),
-            message = "デモ承認を取り消しました。許可範囲は追加されていません。",
+            message = "デモ認可操作を取り消しました。許可範囲は追加されていません。",
         )
     }
 
@@ -91,6 +81,7 @@ internal class GoogleAuthorizationDemoViewModel(
         mutableState.value = mutableState.value.copy(
             gmail = GoogleDemoFeatureState.EXPIRED,
             calendar = GoogleDemoFeatureState.EXPIRED,
+            inFlightFeature = null,
             pendingFeature = null,
             pendingScopes = emptySet(),
             message = "架空の認可状態を期限切れにしました。読み取りは行われません。",
@@ -104,6 +95,7 @@ internal class GoogleAuthorizationDemoViewModel(
         mutableState.value = current.copy(
             gmail = if (current.gmail == GoogleDemoFeatureState.DISCONNECTED) current.gmail else GoogleDemoFeatureState.REVOKED,
             calendar = if (current.calendar == GoogleDemoFeatureState.DISCONNECTED) current.calendar else GoogleDemoFeatureState.REVOKED,
+            inFlightFeature = null,
             pendingFeature = null,
             pendingScopes = emptySet(),
             accountGeneration = current.accountGeneration + 1,
@@ -113,11 +105,13 @@ internal class GoogleAuthorizationDemoViewModel(
 
     /** Disables this feature in the demo while leaving the synthetic shared grant untouched. */
     fun disconnectInApp(feature: GoogleFeature) {
-        requestGeneration++
+        val current = mutableState.value
+        if (current.inFlightFeature == feature || current.pendingFeature == feature) requestGeneration++
         gateway.disableInApp(feature)
         updateFeature(feature, GoogleDemoFeatureState.DISCONNECTED) { state ->
             state.copy(
                 disabledInAppFeatures = state.disabledInAppFeatures + feature,
+                inFlightFeature = state.inFlightFeature.takeUnless { it == feature },
                 pendingFeature = state.pendingFeature.takeUnless { it == feature },
                 pendingScopes = if (state.pendingFeature == feature) emptySet() else state.pendingScopes,
                 message = "${feature.label()}のアプリ内デモ接続を切りました。共有Grantの再利用はしていません。",
@@ -126,11 +120,15 @@ internal class GoogleAuthorizationDemoViewModel(
     }
 
     fun reconnectInApp(feature: GoogleFeature) {
-        requestGeneration++
+        val current = mutableState.value
+        if (current.inFlightFeature == feature || current.pendingFeature == feature) requestGeneration++
         gateway.enableInApp(feature)
         updateFeature(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) { state ->
             state.copy(
                 disabledInAppFeatures = state.disabledInAppFeatures - feature,
+                inFlightFeature = state.inFlightFeature.takeUnless { it == feature },
+                pendingFeature = state.pendingFeature.takeUnless { it == feature },
+                pendingScopes = if (state.pendingFeature == feature) emptySet() else state.pendingScopes,
                 message = "${feature.label()}を再接続するにはデモ承認を要求してください。",
             )
         }
@@ -142,6 +140,7 @@ internal class GoogleAuthorizationDemoViewModel(
         mutableState.value = mutableState.value.copy(
             gmail = GoogleDemoFeatureState.REVOKED,
             calendar = GoogleDemoFeatureState.REVOKED,
+            inFlightFeature = null,
             pendingFeature = null,
             pendingScopes = emptySet(),
             message = "架空の共有Grantを取り消しました。実Google権限には影響しません。",
@@ -155,18 +154,19 @@ internal class GoogleAuthorizationDemoViewModel(
         }
         when (outcome) {
             is AuthorizationOutcome.ConsentRequired -> {
-                setFeatureState(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED)
-                mutableState.value = mutableState.value.copy(
+                updateFeature(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) { state -> state.copy(
+                    inFlightFeature = null,
                     pendingFeature = feature,
                     pendingScopes = outcome.missingScopes,
                     message = "要求された範囲を確認してからデモ承認を選んでください。",
-                )
+                ) }
             }
             is AuthorizationOutcome.Authorized -> {
                 // The UI needs only a status. Do not retain even the synthetic token lease.
                 outcome.lease.close()
                 updateFeature(feature, GoogleDemoFeatureState.AUTHORIZED) { state ->
                     state.copy(
+                        inFlightFeature = null,
                         pendingFeature = null,
                         pendingScopes = emptySet(),
                         message = "${feature.label()}の架空の読み取り専用デモ承認が有効です。実データは取得していません。",
@@ -177,6 +177,7 @@ internal class GoogleAuthorizationDemoViewModel(
                 val status = outcome.toDemoFeatureState()
                 updateFeature(feature, status) { state ->
                     state.copy(
+                        inFlightFeature = null,
                         pendingFeature = null,
                         pendingScopes = emptySet(),
                         message = "デモ認可の状態: ${outcome.failure.name}。実Googleには接続していません。",
@@ -199,14 +200,71 @@ internal class GoogleAuthorizationDemoViewModel(
         mutableState.value = transform(updated)
     }
 
-    private fun setFeatureState(feature: GoogleFeature, state: GoogleDemoFeatureState) {
-        updateFeature(feature, state) { it }
+    private fun runAuthorization(
+        feature: GoogleFeature,
+        allowPendingConsent: Boolean,
+        operation: suspend () -> AuthorizationOutcome,
+    ) {
+        val generation = beginAuthorization(feature, allowPendingConsent) ?: return
+        viewModelScope.launch {
+            try {
+                // A queued fake operation may be invalidated before this coroutine starts.
+                // Check before it can mutate the synthetic gateway (for example grant scopes).
+                if (!isCurrentAuthorization(feature, generation)) return@launch
+                val outcome = runCatching { operation() }.getOrElse(::failure)
+                applyOutcome(feature, outcome, generation)
+            } finally {
+                finishAbandonedAuthorization(feature, generation)
+            }
+        }
+    }
+
+    private fun beginAuthorization(feature: GoogleFeature, allowPendingConsent: Boolean): Long? {
+        val current = mutableState.value
+        val canStart = current.inFlightFeature == null && if (allowPendingConsent) {
+            current.pendingFeature == feature
+        } else {
+            current.pendingFeature == null
+        }
+        if (!canStart) {
+            mutableState.value = current.copy(message = "先に表示中のデモ認可操作を完了または取り消してください。")
+            return null
+        }
+        val generation = ++requestGeneration
+        mutableState.value = current.withFeatureState(feature, GoogleDemoFeatureState.AUTHORIZING).copy(
+            inFlightFeature = feature,
+            pendingFeature = if (allowPendingConsent) null else current.pendingFeature,
+            pendingScopes = if (allowPendingConsent) emptySet() else current.pendingScopes,
+        )
+        return generation
+    }
+
+    private fun isCurrentAuthorization(feature: GoogleFeature, generation: Long): Boolean =
+        generation == requestGeneration && mutableState.value.inFlightFeature == feature
+
+    private fun finishAbandonedAuthorization(feature: GoogleFeature, generation: Long) {
+        if (!isCurrentAuthorization(feature, generation)) return
+        val current = mutableState.value
+        mutableState.value = current.withFeatureState(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED).copy(
+            inFlightFeature = null,
+            pendingFeature = null,
+            pendingScopes = emptySet(),
+            message = "デモ認可操作は完了しませんでした。再試行するには承認を要求してください。",
+        )
     }
 
     private fun failure(error: Throwable): AuthorizationOutcome {
         if (error is CancellationException) throw error
         return AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
     }
+}
+
+private fun GoogleAuthorizationDemoState.withFeatureState(
+    feature: GoogleFeature,
+    featureState: GoogleDemoFeatureState,
+): GoogleAuthorizationDemoState = when (feature) {
+    GoogleFeature.GMAIL -> copy(gmail = featureState)
+    GoogleFeature.CALENDAR -> copy(calendar = featureState)
 }
 
 internal fun AuthorizationOutcome.toDemoFeatureState(): GoogleDemoFeatureState = when (this) {

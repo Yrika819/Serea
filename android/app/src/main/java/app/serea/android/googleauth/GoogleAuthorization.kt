@@ -484,11 +484,12 @@ class PlayServicesGoogleAuthorizationGateway(
         val mayRevoke = synchronized(consentLock) {
             if (consentRequests.peek() != null || !grantState.tryBeginAuthorizationOperation()) false
             else {
+                // This is the provider result-delivery linearization point. Advance the shared
+                // epoch before lease/cache invalidation, while acquire/status remain excluded by
+                // consentLock and before observer dispatch can race a buffered return.
+                googleGrantGeneration.incrementAndGet()
                 // Fail closed immediately, before the Play Services task can suspend.
                 invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
-                // Provider delivery reads this same gateway-scoped generation. Advance it in
-                // the revoke-start critical section, before observer dispatch can race a return.
-                googleGrantGeneration.incrementAndGet()
                 true
             }
         }

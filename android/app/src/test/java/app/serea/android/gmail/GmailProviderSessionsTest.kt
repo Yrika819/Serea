@@ -95,13 +95,15 @@ class GmailProviderSessionsTest {
         var capturedGmailVersion: Long = -1
         var gmailVersionAtRevoke: Long = -1
         val validityTrace = CopyOnWriteArrayList<Pair<Long, Boolean>>()
+        @Volatile var afterGrantGenerationIncrementBeforeLeaseInvalidation: (() -> Unit)? = null
         @Volatile var afterGrantGenerationIncrementBeforeObservers: (() -> Unit)? = null
 
         private fun beginRevoke() {
             synchronized(stateLock) {
                 check(grantState.tryBeginAuthorizationOperation())
-                invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
                 googleGrantGeneration.incrementAndGet()
+                afterGrantGenerationIncrementBeforeLeaseInvalidation?.invoke()
+                invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
                 gmailVersionAtRevoke = grantState.version(GoogleFeature.GMAIL)
             }
             afterGrantGenerationIncrementBeforeObservers?.invoke()
@@ -569,6 +571,8 @@ class GmailProviderSessionsTest {
         val releasePostDelegateCheck = CountDownLatch(1)
         val observerNotified = CountDownLatch(1)
         val generationAdvanced = CountDownLatch(1)
+        val releaseLeaseInvalidation = CountDownLatch(1)
+        val leaseInvalidationCompleted = CountDownLatch(1)
         val releaseObserverNotification = CountDownLatch(1)
         val session = GmailProviderSession(
             id = 10,
@@ -589,8 +593,12 @@ class GmailProviderSessionsTest {
             observerNotified.countDown()
             session.cancelInFlightReadsForGrantInvalidation()
         })
-        gateway.afterGrantGenerationIncrementBeforeObservers = {
+        gateway.afterGrantGenerationIncrementBeforeLeaseInvalidation = {
             generationAdvanced.countDown()
+            check(releaseLeaseInvalidation.await(5, TimeUnit.SECONDS))
+        }
+        gateway.afterGrantGenerationIncrementBeforeObservers = {
+            leaseInvalidationCompleted.countDown()
             check(releaseObserverNotification.await(5, TimeUnit.SECONDS))
         }
         val read = async(Dispatchers.Default) { runCatching { session.listInbox() } }
@@ -608,18 +616,26 @@ class GmailProviderSessionsTest {
                 }
             }
             assertTrue(withContext(Dispatchers.IO) { generationAdvanced.await(5, TimeUnit.SECONDS) })
-            assertTrue("the gateway generation advances before observer dispatch", gateway.googleGrantInvalidationGeneration > 0L)
-            assertEquals("observer dispatch is still held", 1L, observerNotified.count)
+            assertTrue("the gateway generation is the revoke-start linearization point", gateway.googleGrantInvalidationGeneration > 0L)
+            assertEquals("lease invalidation and observer dispatch are still held", 1L, observerNotified.count)
             assertFalse("remote revoke has not started", remoteRevokeStarted.isCompleted)
             releasePostDelegateCheck.countDown()
 
             val outcome = read.await()
-            assertFalse("the buffered result must not cross the gateway generation", outcome.isSuccess)
+            assertFalse("the buffered result must not cross the generation before lease invalidation", outcome.isSuccess)
             assertEquals(GmailReadFailureCode.PERMISSION_DENIED, (outcome.exceptionOrNull() as GmailReadFailure).code)
-            assertEquals("the revoke observer has not run yet", 1L, observerNotified.count)
+            assertEquals("neither lease invalidation nor observer notification has completed", 1L, leaseInvalidationCompleted.count)
+            assertEquals(1L, observerNotified.count)
             assertFalse("remote revoke remains pending", revoke.isCompleted)
+
+            releaseLeaseInvalidation.countDown()
+            assertTrue(withContext(Dispatchers.IO) { leaseInvalidationCompleted.await(5, TimeUnit.SECONDS) })
+            assertEquals("observer dispatch remains held after lease invalidation", 1L, observerNotified.count)
+            releaseObserverNotification.countDown()
+            remoteRevokeStarted.await()
         } finally {
             releasePostDelegateCheck.countDown()
+            releaseLeaseInvalidation.countDown()
             releaseObserverNotification.countDown()
             remoteRevokeGate.complete(Unit)
             revoke?.join()

@@ -25,6 +25,28 @@ One rerun request was made for the existing cancelled G3 diagnostic run `4053352
 
 **Next recovery condition:** after the G4 dependency/security repair is stable at its final head and no Required Emulator job is active, the Orchestrator will coordinate one exact-SHA G3 recovery attempt. First resolve the pending/unmaterialized request; if GitHub materializes it, use that exact recovery attempt. If it remains stuck, document the queue limitation and use only an Orchestrator-approved way to execute the existing diagnostic at the same `f96e77a…` source SHA. Do not substitute a newer G3 head or run alongside G4 Emulator work.
 
+## Independent evidence recheck after Orchestrator resume (2026-10-27 17:56 UTC)
+
+I re-read the live GitHub run and downloaded the original API 35 artifact through the GitHub artifact connector, independently checking its bytes and JUnit instead of relying only on this report's earlier transcription.
+
+- Run `40515091197` is **FAILURE** on source `8ca55a32096bc4449717c2fd3332b0602381d7d5`; its only job is `Pinned llama.cpp model lifecycle on disposable API 35 Emulator` and it failed at that job's one instrumentation test. The artifact endpoint reports artifact `12740455266`, ZIP digest `sha256:d0a22bc992cd609d50ea1e65a2d5ef6b226c813528fd24a8aca2197a6c88b33e`. Downloaded artifact ZIP produced the same SHA-256.
+- The XML JUnit has exactly `tests=1`, `failures=1`, `errors=0`, `skipped=0`; the sole method is `pinnedModelLoadsGeneratesCancelsReleasesAndRejectsCorruptFile`. Gradle build and APK verification succeeded; model file download, hash validation, and app-private staging succeeded. The failure is the assertion that the test must enter its first native generation gate, at `OnDeviceInferenceTest.kt:97` in that source. No generated answer is present.
+- The Emulator metadata confirms API 35, `x86_64`, `ranchu`, `google_apis` fingerprint `google/sdk_gphone64_x86_64/emu64xa:15/AE3A.240806.043/12960925:userdebug/dev-keys`, `boot_completed=1`, and KVM available. Artifact app/test APK hashes match the installed package hashes. This makes an Emulator boot/installation failure an unsupported explanation for this particular test failure.
+- The exact failing source used `async { port.send(...) }` inside `runBlocking`, then synchronously waited on a `CountDownLatch` from that same coroutine event-loop thread. The child was scheduled on the blocked event loop and could not submit its native request during the wait. The recovery source at `f96e77a798575c971313599ded8b267a353d5b46` changes that call to `async(Dispatchers.IO)`, consistent with the observed gate timeout being a **TEST_HARNESS scheduling defect**. The change's runtime effect is not yet verified.
+- `model-cleanup.txt` confirms the temporary Emulator copy was removed, but `app_private_model_removed=false` and records `DELETE_FAILED_INTERNAL_ERROR`; post-test `app-meminfo-after.txt` says no process was found. Because the runner/AVD is disposable, the device is terminated after the run, but explicit in-container deletion of the app-private model was not proven. Do not claim cleanup PASS for the app-private copy.
+- The current recovery request `40533524841` remains `queued`, `run_attempt=1`, source `f96e77a798575c971313599ded8b267a353d5b46`; GitHub reports zero jobs and zero artifacts. This is **NOT_RUN**, not an inference test result. Artifact `12748226296`, previously mentioned as a cancelled-run artifact, currently returns HTTP 404 from GitHub and cannot be independently retrieved; do not use it as current evidence.
+
+### Current official eligibility and device-support check
+
+Official Google pages were checked on 2026-10-27. Gemini API Additional Terms effective 2026-03-23 require the developer to be at least 18, prohibit serving an app directed to or likely accessed by under-18 users, and describe Gemini API/AI Studio for professional or business development rather than consumer use. That makes Gemini API unsuitable for this Serea Personal Beta use case as documented; no workaround is appropriate. ML Kit GenAI terms likewise require an 18+ developer and disallow API clients directed to or likely accessed by under-18 users; preview/experimental services cannot be used in production. Current ML Kit device-support docs list Pixel 9/10 generations and selected other devices, not Pixel 7a. These terms/device facts are not a substitute for Owner-specific age, audience, region, eligibility, or device confirmation.
+
+- [Gemini API Additional Terms](https://ai.google.dev/gemini-api/terms)
+- [ML Kit GenAI Additional Terms](https://developers.google.com/ml-kit/genai-terms)
+- [ML Kit GenAI device support](https://developers.google.com/ml-kit/genai)
+- The Hugging Face repository metadata independently reports Apache-2.0 for both the pinned GGUF repository and its SmolLM2 base model; llama.cpp at pinned revision `276378515ceebee5d14bcc8536603dd5c87491a2` is MIT. This is repository metadata, not an independent audit of training-data provenance or every redistribution obligation.
+
+**Disposition remains unchanged:** an offline local model is the only currently plausible P0 route, but its generation/runtime lifecycle has no passing Emulator evidence. Cloud eligibility is not established and Gemini API is inappropriate for consumer Personal Beta. Do not wire this PoC into ordinary Chat or label any synthetic provider response as real AI.
+
 ## Findings and disposition
 
 ### Product Chat / cloud egress

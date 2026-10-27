@@ -145,6 +145,51 @@ Commands/evidence used:
 
 Review the dependency sequence and the six evolved shared files, then retain #123 as the selected functional candidate if no additional source-level issue is found. The G4 orchestrator should record this provenance and carry forward the exact-head run/artifact IDs. Owner action is required only for protected-main merge and eventual real-service/signing/device steps; those are not part of this G1 completion.
 
+## Independent security review of G4 Fake authorization integration
+
+**Review date:** 2026-10-27 UTC
+**Review result:** `CHANGES_REQUESTED` for live Google OAuth readiness; the reviewed G4 Fake-only lifecycle changes are accepted as isolated demo/test code.
+**Inspected G4 source:** `ebe7048452fea3a8642266c989436927033020ff` (tree `4af5c88ec6976c9e5ed24d25910ca06ae5277b37`), based on PR #123 head `3924b36080ffa43331f065a15db80c604c243355`.
+**G4 PR:** #125, Draft, base PR #123's head branch, seven changed paths.
+**Review mode:** read-only; no G4/G1 source was changed for this review.
+
+### Scope and reviewed behavior
+
+The G4 diff from #123 is limited to the Google authorization demo UI/ViewModel and Fake gateway, the demo instrumentation/unit tests, and G2/G4 reports. The five changed source/test files are byte-identical to G2's reviewed source branch. G4 adds no real OAuth, network, or provider activation path:
+
+- `GoogleAuthorizationDemoViewModel` takes a concrete `FakeGoogleAuthorizationGateway`; the demo text says it uses no real Google account, OAuth UI, network, mail, or calendar data.
+- `AppProviderComposition.fakeDefault()` remains the runtime composition. `PlayServicesGoogleAuthorizationGateway.realOAuthEnabled` still defaults to `false`; Gmail and Calendar provider sessions also retain their Owner gate and Fake default.
+- Manifest, permissions, backup rules, scopes, real provider adapters/transports, Composition Root, Cloud/Egress code, and workflows are unchanged from #123. The existing manifest has only the Internet permission, `allowBackup="false"`, and `usesCleartextTraffic="false"`.
+- Existing Google allowlists remain read-only (`gmail.readonly`, `calendar.events.readonly`, optional `calendar.calendarlist.readonly`). No logging statements or credential data were added. Access token leases keep their redacted `toString()` behavior.
+- Existing Cloud egress remains disabled by default. The cloud gate accepts only `USER_AUTHORED`/`MODEL_OUTPUT` origin and PUBLIC classification; Google-origin Gmail/Calendar content is rejected. No new Google-to-Cloud route was added.
+
+The changed Fake lifecycle code synchronously reserves one consent operation, rejects a competing request, invalidates queued Fake grant operations on revoke/disconnect, closes stale leases, and blocks direct consent while the app-local feature is disabled. `sharedRevocationPreservesAppDisconnectUntilExplicitReconnect` covers disconnect → Fake shared revoke → blocked request → explicit reconnect → fresh consent-required state. This does not establish real OAuth behavior.
+
+### Findings — real provider path, unchanged by G4
+
+**G1-SEC-GOOGLE-REVOKE-01 — MEDIUM: app-local disconnect can be erased by a concurrent real grant revoke.**
+
+- **Evidence:** `GoogleAuthorization.kt:301–307` adds/removes `disabledFeatures`. `revokeGoogleGrant()` marks authorization in flight, suspends while awaiting Play Services at `:337–357`, then unconditionally clears `disabledFeatures` at `:358–361`. The G4/G2 Fake now deliberately preserves the independent app-local disable (`FakeGoogleAuthorizationGateway.kt:113–119`), so its behavior differs from the real adapter.
+- **Reproduction:** with an enabled real gateway, start `revokeGoogleGrant()` and hold its Play Services completion. Call `disableInApp(GMAIL)` while the revoke is suspended, then complete revoke successfully. The success block clears the just-added disable flag; `isEnabledInApp(GMAIL)` becomes true without explicit reconnect.
+- **Required correction:** before live OAuth, preserve or explicitly merge the app-local feature state when completing a shared grant revoke. Add a controlled concurrent-revoke test asserting that a feature disabled during revocation stays disabled until explicit re-enable, and that fresh consent is still required after the shared grant is revoked. The G2 checkpoint records this parity gap and says not to wire real OAuth until it is reconciled.
+- **Current impact:** latent. G4's demo owns only the Fake gateway; the ordinary app UI does not compose the real gateway.
+
+**G1-SEC-GOOGLE-REVOKE-02 — MEDIUM: an in-flight Gmail/Calendar result can be delivered after real feature disable or grant revocation.**
+
+- **Evidence:** `disableInApp()` and successful `revokeGoogleGrant()` change feature versions, invalidating a lease's callback, but they do not close/invalidate provider sessions or cancel their active read jobs (`GoogleAuthorization.kt:301–307, 356–364`). `GoogleGmailAuthorizationAdapter.accessToken()` and `GoogleCalendarAuthorizationAdapter.accessToken()` check the session/feature before returning a lease; HTTP transports use `lease.useToken()` to construct the Authorization header but return parsed response data without a post-response lease/generation check (`GmailHttpReadPort.kt:162–188`, `GoogleCalendarHttpReadPort.kt:132–160`). Provider-session delivery checks whether the provider session is closed/current (`GmailProviderSessions.kt:115–143`, `CalendarProviderSessions.kt:118–144`); gateway disable/revoke does not close that session. Existing tests cover token invalidation before dispatch and account/session replacement before delivery, not revoke/disable after dispatch.
+- **Reproduction:** use a delayed MockWebServer response. Start a Gmail or Calendar read and wait until the request has been received. Then call `disableInApp(feature)` or complete `revokeGoogleGrant()`, while leaving the provider session open. Release the response. The current session remains current/open and the transport can return the buffered data to its caller after the authorization action.
+- **Required correction:** bind read delivery to a feature/shared authorization generation that changes on disable/revoke, recheck it before publishing response data, and cancel active OkHttp calls where possible. Add delayed-response tests for Gmail and Calendar: hold a response after dispatch, disable the feature or revoke the shared grant, release the response, and assert the result is rejected and no parsed data is delivered. Also assert Gmail-only disable does not cancel an unrelated Calendar read, while shared revoke invalidates both.
+- **Current impact:** latent and blocks real Google provider activation. G4 does not create a new path to this issue: real providers are not selected by the app composition and real OAuth remains disabled/not wired.
+
+### Verification and provenance limits
+
+- G2's exact Fake source commit `b87b39d9c86d94bc6121c0605aaccd9497e9694c` (tree `63b0593992ddfdfd3aca5b3da3ffab3bc3b83c80`) has six local JUnit XML files totaling **75 tests, 0 failures, 0 errors, 0 skips**; the files were independently parsed. The G2 report records `:app:compileIsolatedAndroidTestKotlin` passing at that source commit. G4's cherry-picked source files match those G2 source files.
+- No real OAuth, real Google account, or live Google endpoint was used. No emulator result is inferred from the local JVM suite.
+- Functional Focused run `40491693974` and Release Security Focused run `40492139978` completed successfully at older SHA `68569d093cd9f5f631ca22e0343a78cd366c535b`; they are not current-HEAD evidence. The current G4 head `ebe7048…` has no corresponding hosted API 26/35 or formal Required PASS at review time.
+- GitHub PR #125 now points to `ebe7048452fea3a8642266c989436927033020ff` with seven paths and base `3924b360…`. The G4 ledger content still names `2b12dfd…` as CURRENT_HEAD; this is one documentation-only commit behind the PR tip and should be refreshed in its next checkpoint.
+
+**Integration decision:** accept the current G4 changes only as Fake-only lifecycle/demo integration. Do not treat them as evidence of real Google readiness. Resolve both real-provider findings, add the proposed race tests, and rerun provider/security verification on the resulting exact source HEAD before enabling real OAuth.
+
 ## G1 Draft PR automation
 
 Creating Draft PR #124 automatically queued broad PR workflows on this documentation-only branch. To limit unnecessary work, G1 submitted cancellation requests for all runs it created. GitHub reports these outcomes at `4b01fc5822b724c0205b90f615c300b40ca95716`:

@@ -15,14 +15,14 @@ Status updated: 2026-10-27 UTC. This file is owned only by the Orchestrator.
 
 ## G4 Worktree / Branch
 
-- ACTIVE_PHASE: G1/G2/G3 report review complete; G2 Fake authorization changes integrated; G4-A focused revalidation and G4-C preparation.
+- ACTIVE_PHASE: G1/G2/G3 initial reviews complete; G2 Fake authorization changes integrated; G4-A focused validation, independent review, and G4-C preparation.
 - GOAL_STATUS: PARTIAL.
 - BASE_SHA / LAST_GOOD_HEAD: PR #123 functional candidate `3924b36080ffa43331f065a15db80c604c243355`.
-- CURRENT_HEAD: `4c5f7c5d8a47f9325c3aca93fb0ad232acf84b6e` (G2 source/report commits integrated; focused validation pending).
+- CURRENT_HEAD: checkpoint commit to be resolved from the owned branch tip; tested source parent `68569d093cd9f5f631ca22e0343a78cd366c535b`.
 - OWNED_BRANCH: `codex/serea-g4-personal-beta-readiness`.
 - WORKTREE: `/workspace/Serea-g4-personal-beta-readiness`.
 - Checkpoint branch first pushed and GitHub-verified at `06d182db41f957fdbb9f29b48ae50cd318e465f9`; subsequent checkpoint heads are recorded in the Git branch history. The integrated G4 source head has no inherited Required status.
-- DRAFT_PR: not yet created. After focused validation, base G4 Draft PR on PR #123's head branch `codex/serea-personal-beta-functional-integration` to show only G4 changes.
+- DRAFT_PR: [#125](https://github.com/Yrika819/Serea/pull/125), Open / Draft; base corrected to PR #123's actual head branch `codex/serea-personal-beta-functional-integration-identity` at `3924b36080ffa43331f065a15db80c604c243355`. The initial mistaken base was PR #122; it was corrected before integration review approval. GitHub now reports CLEAN and exactly six changed paths.
 - main, PR #117, #120, #121, #122 and #123 are protected from modification/merge.
 
 ## Existing exact-head evidence
@@ -40,10 +40,10 @@ All evidence below applies only to candidate SHA `3924b36080ffa43331f065a15db80c
 
 | Agent | Goal | Status | PR | Head | Review status |
 |---|---|---|---|---|---|
-| G1 | Main integration and release architecture | SUCCESS for scoped provenance/rehearsal audit; independent review of G2 repair completed | [#124](https://github.com/Yrika819/Serea/pull/124) Draft | `e9dc99f5b204af38437e5dc3cb1b5595c21fb2dc` | REVIEWED — provenance, rehearsal and G2 race repair accepted; baseline artifact XML access limitation recorded |
+| G1 | Main integration and release architecture | SUCCESS for scoped provenance/rehearsal audit; re-review of G4 #125 underway | [#124](https://github.com/Yrika819/Serea/pull/124) Draft | `e9dc99f5b204af38437e5dc3cb1b5595c21fb2dc` | Earlier G2 repair accepted; independent G4 diff/security review pending |
 | G2 | Google OAuth/Gmail/Calendar readiness | PARTIAL — fake lifecycle state repair integrated; real Google path remains NOT WIRED | None | source `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; final report `5931c7b5c4effeecd16b2fb5da011c9289ed207a` | REVIEWED/ACCEPTED by G1; 74 JVM PASS; isolated test-source compile PASS; no emulator |
 | G3 | Real AI / on-device inference feasibility | PARTIAL; report complete, PoC NOT_RUN | None | `6d6f362da2380b56ea0fb7bc9372dbcceae67e90` | REVIEWED — documentation-only; no correction requested; no runtime integration approved |
-| G4 | Orchestration, integration, independent security review and Required validation | Active | TBD | `4c5f7c5d8a47f9325c3aca93fb0ad232acf84b6e` | G2 source integrated; exact-head JVM/compile and UI instrumentation pending |
+| G4 | Orchestration, integration, independent security review and Required validation | Active | [#125](https://github.com/Yrika819/Serea/pull/125) Draft | branch tip; tested source parent `68569d093cd9f5f631ca22e0343a78cd366c535b` | G2 source integrated; local JVM/compile PASS; hosted API26/35 and independent G1 review pending |
 
 Each agent owns a separate worktree, branch, and checkpoint. No agent may modify another lane's files or branch. Only this Orchestrator edits this ledger.
 
@@ -63,15 +63,19 @@ Each agent owns a separate worktree, branch, and checkpoint. No agent may modify
 - Main merge, production signing, Firebase distribution, real accounts/provider credentials, Pixel 7a operation, and final GO require Owner decision.
 - G2's initial implementation exposed two Fake-only authorization races. G1 requested changes; G2 repaired them in `efa24f660d28ec92cc3095cc868f27b1d0e576b9`. The repair reserves the active feature synchronously, enforces single-flight consent, invalidates queued grants on revoke/disconnect, and adds three regression cases. G1 accepted the repair. Orchestrator parsed six exact-source JUnit XML files: 74 tests, 0 failures/errors/skips; isolated Android test-source compile passed. G4 integrated the agent commit chain; exact G4-head rerun is pending. No emulator, real account or live OAuth was used.
 - G2 cancellation invalidates authorization generations and closes stale leases but does not cancel coroutine Jobs. The current gateway is Fake-only and performs no live I/O; add Job cancellation before reusing the ViewModel with a real asynchronous gateway. Ordinary Gmail/Calendar UI remains NOT WIRED; OAuth/API and emulator E2E remain NOT_RUN.
+- G4 PR #125 was initially opened with the PR #122 head branch as its base. G1 identified the mismatch before approval. The base is now PR #123's actual head branch at `3924b36080ffa43331f065a15db80c604c243355`; the six-file diff is the G2 source/tests/report plus this G4 ledger. No protected or agent-owned branch was changed.
+- G4 local verification on source parent `4c5f7c5d8a47f9325c3aca93fb0ad232acf84b6e`: six Google authorization/provider JVM classes, **74/74**, 0 failures/errors/skips; `:app:compileIsolatedAndroidTestKotlin` PASS. JUnit XML was parsed locally. The subsequent `68569d0…` checkpoint commit changed only this Markdown ledger.
+- Functional Focused run `40491693974` is running on `68569d093cd9f5f631ca22e0343a78cd366c535b`: provider-unit job PASS; API 26 Emulator job in progress; API 35 is sequenced after API 26 by the workflow. Release Security Focused run `40492139978` is queued at the same SHA. The main-only Personal Beta workflow push run `40491679816` had zero jobs and is not validation evidence.
+- G4 Draft PR `#125` initially targeted PR #122's head branch and showed a broad diff. It was corrected through the GitHub PR base API to PR #123's actual head branch; current GitHub metadata shows CLEAN and six changed files. A read-only independent G1 review is in progress.
 - G3 report branch `codex/serea-g3-real-ai-feasibility` is pushed and verified at `6d6f362da2380b56ea0fb7bc9372dbcceae67e90`, tree `f4fe1cf534b855b58ea19683621bf3dc7f7a3cd6`; only `docs/agent-reports/g3-ai.md` changed. Orchestrator reviewed the exact diff, clean worktree, scope, explicit NOT_RUN inventory, model provenance/licensing caveats, and policy/runtime claims against current official Gemini, ML Kit GenAI, Ollama and llama.cpp sources. No correction requested. This report is feasibility evidence only; no model, cloud provider, or runtime is integrated or approved.
 - PR #124 is an audit-only Draft based on main. Its Fast CI run `40488015151` failed before tests because main's existing `tools/check_commit_identity.py` scans `git log --all` in a full-depth checkout and finds unrelated commits from fetched refs. The newer #123 stack uses event-bounded commit-range validation. This is a stale-main-base integration issue, not grounds to relax the guard. G1-canceled broad runs `40488015109`, `40488015078`, `40488015079`, `40488015071` are not validation evidence.
 
 ## NEXT_ACTIONS
 
-1. Rerun the 74-test JVM suite and isolated Android test-source compile on G4's integrated HEAD using the validated temporary JDK; inspect the resulting JUnit XML.
-2. Run the bounded Fake Google UI instrumentation test through the disposable API 26/35 focused emulator workflow if the test identity is included; verify it executes and does not become a skip.
-3. Update the G4 ledger with exact-head results, push the owned branch, and open a Draft PR against #123's head branch with the G1/G2/G3 evidence and Owner decisions.
-4. Once the integrated source head is stable, run formal Required and relevant cross-workflow CI on that exact HEAD; do not inherit #123 PASS results.
+1. Complete Functional Focused run `40491693974`; independently inspect JUnit, KVM/emulator diagnostics, IME cleanup, and required identity counts for both APIs.
+2. Complete Release Security Focused run `40492139978` and record its artifact and SBOM SHA.
+3. Receive G1's read-only review of PR #125; request a bounded correction if any issue is found.
+4. Push this checkpoint to the owned branch, dispatch final-head Functional Focused as needed, and execute formal Required plus relevant cross-workflow CI on the stabilized G4 HEAD. Do not inherit #123 PASS results.
 5. Prepare release/OAuth/AI/Pixel checklists without using production credentials, services, or devices.
 
 ## OWNER_APPROVAL_REQUIRED

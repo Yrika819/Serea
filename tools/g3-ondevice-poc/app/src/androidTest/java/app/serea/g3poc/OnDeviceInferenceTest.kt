@@ -41,7 +41,7 @@ class OnDeviceInferenceTest {
         assertTrue("pinned model must be staged into app-private storage", model.isFile)
         assertTrue("model byte size must match the fixed fixture", model.length() == PINNED_MODEL_SIZE_BYTES)
         assertTrue("model artifact hash must match fixed fixture", sha256(model) == expectedHash)
-        val targetContext = InstrumentationRegistry.getTargetContext()
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
         val modelPathCanonical = model.canonicalFile.toPath()
         val privateRoots = listOf(targetContext.filesDir, targetContext.cacheDir)
             .map { it.canonicalFile.toPath() }
@@ -66,9 +66,9 @@ class OnDeviceInferenceTest {
         var secondElapsedMs = 0L
         var cancellationElapsedMs = 0L
         var recoveryElapsedMs = 0L
-        var pssAfterLoadKb = 0
-        var pssAfterGenerationKb = 0
-        var pssAfterCloseKb = 0
+        var pssAfterLoadKb = 0L
+        var pssAfterGenerationKb = 0L
+        var pssAfterCloseKb = 0L
         try {
             port.load()
             loadElapsedMs = SystemClock.elapsedRealtime() - loadStarted

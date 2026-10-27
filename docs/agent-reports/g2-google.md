@@ -8,18 +8,18 @@ Official documentation retrieved: 2026-10-27
 ```text
 AGENT_ID: G2
 ACTIVE_PHASE: G2 — isolated authorization lifecycle and Google policy readiness
-OVERALL_STATUS: PARTIAL — fake authorization races repaired and focused coverage passes; real Google readiness remains Owner-gated
+OVERALL_STATUS: PARTIAL — Fake authorization state now keeps app-local disconnect separate from shared grant revocation; focused coverage passes; real Google readiness remains Owner-gated
 BASE_SHA: 3924b36080ffa43331f065a15db80c604c243355
-CURRENT_HEAD: efa24f660d28ec92cc3095cc868f27b1d0e576b9 (authorization race repair; this report update is a subsequent documentation-only checkpoint)
-TREE_SHA: 730a944b66bb46ec46a1e944db57619aca9bc944 (race-repair implementation tree)
+CURRENT_HEAD: b87b39d9c86d94bc6121c0605aaccd9497e9694c (disconnect/revoke semantic repair; this report update is a subsequent documentation-only checkpoint)
+TREE_SHA: 63b0593992ddfdfd3aca5b3da3ffab3bc3b83c80 (semantic-repair implementation tree)
 WORKTREE: /workspace/Serea-g2-google-auth-readiness
 BRANCH: codex/serea-g2-google-auth-readiness
 DRAFT_PR: none
-CI_RUN_IDS: 40489486365 — `.github/workflows/android-personal-beta.yml`, feature branch push, zero jobs (main-only workflow; not a G2 test result); 40489675684 — same main-only workflow/zero jobs
+CI_RUN_IDS: 40489486365, 40489675684, 40490686989 — `.github/workflows/android-personal-beta.yml`, feature branch pushes, each with zero jobs (main-only workflow; not G2 test results)
 ARTIFACT_IDS: none
 ```
 
-The initial implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` (tree `420a818a2a4c97ac06c7df0e3ec11db0d3a3c314`) remains immutable. The report checkpoint was committed separately at `43c258b78bfc228a98c78609fa531210131588ea` (tree `41757fd3a497e4c9f4bb23e1961bab18ebf1886c`). G1 reviewed `d5ef` and requested repair of two Fake-only lifecycle races. The repair is a new commit `efa24f660d28ec92cc3095cc868f27b1d0e576b9` (tree `730a944b66bb46ec46a1e944db57619aca9bc944`); neither prior commit was amended or rewritten. This report update is a documentation-only descendant checkpoint. The branch remote ref will be checked after pushing both new commits.
+The initial implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` (tree `420a818a2a4c97ac06c7df0e3ec11db0d3a3c314`) remains immutable. The report checkpoint was committed separately at `43c258b78bfc228a98c78609fa531210131588ea` (tree `41757fd3a497e4c9f4bb23e1961bab18ebf1886c`). G1's first review requested repair of two Fake-only lifecycle races; implementation commit `efa24f660d28ec92cc3095cc868f27b1d0e576b9` (tree `730a944b66bb46ec46a1e944db57619aca9bc944`) addressed them. A further G1 review of G4 found a disconnect/revoke state mismatch; implementation commit `b87b39d9c86d94bc6121c0605aaccd9497e9694c` (tree `63b0593992ddfdfd3aca5b3da3ffab3bc3b83c80`) addresses that separately. No prior commit was amended or rewritten. This report update is a documentation-only descendant checkpoint; the current branch ref is verified after push.
 
 ## Existing implementation and reuse decision
 
@@ -92,20 +92,23 @@ Added deterministic test IDs:
 - `GoogleAuthorizationLifecycleTest#rapidFeatureRequestsKeepTheFirstAuthorizationAndCancellationReleasesTheGuard`
 - `GoogleAuthorizationLifecycleTest#queuedGrantCannotRestoreFakeScopesAfterSharedRevocation`
 - `GoogleAuthorizationLifecycleTest#queuedGrantCannotRestoreFakeScopesAfterInAppDisconnect`
+- `GoogleAuthorizationLifecycleTest#sharedRevocationPreservesAppDisconnectUntilExplicitReconnect`
 
 The first test requests Gmail and then Calendar before `runCurrent()` and verifies that Gmail remains coherent, the competing request is rejected, and cancellation releases the guard for a subsequent request. The other two queue a grant, invalidate it through revoke or app-local disconnect before `runCurrent()`, and verify that the Fake gateway remains without the stale grant.
+
+G1's later G4 review found that a shared-grant revoke cleared the Fake gateway's feature-disabled flag but left the ViewModel flag set. The intended invariant is that shared authorization revocation clears scopes and invalidates leases, while an independent app-local feature disconnect persists until the user explicitly reconnects that feature. The Fake gateway now preserves the app-local disabled set on shared revoke; the ViewModel blocks even a direct consent request while disabled; and the visible feature label says “アプリ内切断（デモ）” while the shared status message reports the revoke. The deterministic regression verifies the feature stays disabled, the scope remains `NEEDS_CONSENT`, consent is not queued while disconnected, explicit reconnect re-enables the request action, and a fresh consent request still remains pending rather than silently granting a scope.
 
 Final JUnit class counts:
 
 | Test class | Executed |
 |---|---:|
-| `GoogleAuthorizationLifecycleTest` | 6 |
+| `GoogleAuthorizationLifecycleTest` | 7 |
 | `GoogleAuthorizationTest` | 22 |
 | `GmailProviderSessionsTest` | 8 |
 | `GmailHttpReadPortTest` | 11 |
 | `CalendarProviderSessionsTest` | 7 |
 | `GoogleCalendarHttpReadPortTest` | 20 |
-| **Total** | **74** |
+| **Total** | **75** |
 
 Focused command:
 
@@ -113,7 +116,16 @@ Focused command:
 JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
 ```
 
-The initial pre-review run on `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` passed 71 tests (3 lifecycle tests plus the five existing provider/HTTP classes), 0 failures/errors/skips. After the G1-requested repair, the exact-source rerun on `efa24f660d28ec92cc3095cc868f27b1d0e576b9` passed **74 tests**, 0 failures/errors/skips, exit code 0, Gradle `BUILD SUCCESSFUL`. JUnit XML is in `android/app/build/test-results/testDebugUnitTest/TEST-*.xml` in the local worktree. No emulator, real Google account, OAuth credential, or Google network endpoint was used.
+The initial pre-review run on `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` passed 71 tests (3 lifecycle tests plus the five existing provider/HTTP classes), 0 failures/errors/skips. After the request-race repair, `efa24f6` passed 74 tests. After G1's disconnect/revoke review, final source commit `b87b39d9c86d94bc6121c0605aaccd9497e9694c` passed **75 tests**, 0 failures/errors/skips, exit code 0, Gradle `BUILD SUCCESSFUL`. Exact XML files in the worktree are:
+
+- `android/app/build/test-results/testDebugUnitTest/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml` (7 tests)
+- `android/app/build/test-results/testDebugUnitTest/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml` (22 tests)
+- `android/app/build/test-results/testDebugUnitTest/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml` (8 tests)
+- `android/app/build/test-results/testDebugUnitTest/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml` (11 tests)
+- `android/app/build/test-results/testDebugUnitTest/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml` (7 tests)
+- `android/app/build/test-results/testDebugUnitTest/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml` (20 tests)
+
+All six report 0 failures/errors/skips. No emulator, real Google account, OAuth credential, or Google network endpoint was used.
 
 ## Official Google policy and setup review
 
@@ -148,12 +160,14 @@ This is an implementation-readiness summary, not legal advice. Requirements belo
 
 ```text
 Pre-review focused JVM: PASS — 71 tests, 0 failures, 0 errors, 0 skips, immutable implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`, `--rerun-tasks`
-Repaired-source focused JVM: PASS — 74 tests, 0 failures, 0 errors, 0 skips, implementation commit `efa24f660d28ec92cc3095cc868f27b1d0e576b9`, `--rerun-tasks`
+Request-race repair JVM: PASS — 74 tests, 0 failures, 0 errors, 0 skips, implementation commit `efa24f660d28ec92cc3095cc868f27b1d0e576b9`, `--rerun-tasks`
+Disconnect/revoke repair JVM: PASS — 75 tests, 0 failures, 0 errors, 0 skips, source commit `b87b39d9c86d94bc6121c0605aaccd9497e9694c`, Gradle session `16750`, `--rerun-tasks`
+One earlier draft run failed test compilation because the new lifecycle assertion omitted the `assertTrue` import; the import was added before the final 75-test run.
 Focused command: shown above
 Gradle result: BUILD SUCCESSFUL, exit code 0
 Artifact: none (local JUnit XML only)
 CI Run `40489486365`: `.github/workflows/android-personal-beta.yml`, feature-branch push, completed with zero jobs; this main-only workflow did not execute a test job and is not treated as a G2 verification result
-Android instrumentation source compile after repair: PASS — `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin`, exit code 0 on `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; no emulator was launched
+Android instrumentation source compile after repair: PASS — `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin`, exit code 0 on final source commit `b87b39d9c86d94bc6121c0605aaccd9497e9694c`, Gradle session `6229`; no emulator was launched
 Initial attempted compile command: `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileDebugAndroidTestKotlin` — failed because that task does not exist for this project's variants; task discovery identified `isolatedAndroidTest` and that source compile then passed
 Initial JVM attempt: exit 127 because installed OpenJDK runtime did not include `javac`
 Initial JVM command (session 60245): `./gradlew --no-daemon :app:testDebugUnitTest --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'` — exit 127; Gradle reported `/usr/lib/jvm/java-21-openjdk-amd64` lacked `[JAVA_COMPILER]`
@@ -162,11 +176,11 @@ JDK archive SHA-256: d7f5d5cf865a2902b70ff549b97586a7d3f234e016f041ab447ea740c7d
 Repository dependencies/configuration changed for JDK: no
 ```
 
-`git diff --check` passed for the repair before its source commit and will be rerun for this report update. The focused Android instrumentation source compile passed, but instrumentation/E2E tests were **NOT_RUN** because this lane did not start an emulator. Full Formal Required was not run from this lane; parent integration owns those gates. G1 must re-review the repaired immutable implementation HEAD `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; prior review approval does not carry over automatically.
+`git diff --check` passed before source commit `b87b39d`. The focused Android instrumentation source compile passed, but instrumentation/E2E tests were **NOT_RUN** because this lane did not start an emulator. Full Formal Required was not run from this lane; parent integration owns those gates. G1 must re-review `b87b39d9c86d94bc6121c0605aaccd9497e9694c`; earlier review approval does not carry over automatically.
 
 ## Handoff contract
 
-- `REVIEW_REQUEST`: Re-review `efa24f660d28ec92cc3095cc868f27b1d0e576b9` for G1 issue G2-DEMO-AUTH-REQUEST-RACE, including both queued-grant invalidation tests and the exact-source 74-test / isolated Android test-source compile evidence.
+- `REVIEW_REQUEST`: Review `b87b39d9c86d94bc6121c0605aaccd9497e9694c` for the disconnect→shared revoke mismatch, including preserved disabled-state semantics, disabled consent guard, explicit reconnect behavior, exact-source 75-test JUnit XML, and isolated Android test-source compilation.
 - `KNOWN_ISSUES`: Real account selection, OAuth disclosure, Activity Result consent wiring, connection/revocation UX, and normal UI provider selection are not wired. Production package/certificate and scope verification status remain unknown.
 - `INTEGRATION_DEPENDENCIES`: Integration owner must provide explicit dependency injection for a `PlayServicesGoogleAuthorizationGateway` plus account-bound Gmail/Calendar sessions only after Owner configuration/authorization; keep Fake defaults and fail closed.
 - `NEXT_ACTION`: G1 independently verifies the repair and report at the pushed branch HEAD; integrate only after explicit review approval. Implement any application UI connection flow only in the integration-owned Composition Root.

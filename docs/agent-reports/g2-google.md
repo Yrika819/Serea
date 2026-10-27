@@ -208,6 +208,40 @@ JDK stored/extracted temporarily outside the repository. Repository dependencies
 - `NEXT_ACTION`: G4 carries the accepted G2 source/evidence commit in PR #129 and owns the exact-head integrated Required run. Keep live OAuth disabled pending separately approved real authorization and service acceptance.
 - `OWNER_APPROVAL_REQUIRED`: Real OAuth/project configuration, Google account access, scope verification, owner-controlled signing identity/SHA-1, production Cloud project setup, and any live-service acceptance.
 
+### Orchestrator G4 review refresh (2026-10-27)
+
+This is a review-only checkpoint; no application source or test was changed in this refresh.
+
+| Item | Finding |
+|---|---|
+| G2 branch | `codex/serea-g2-google-auth-readiness`, HEAD `fa52d2ca411c8ba1df6c78eb1b1d4cca5f36f690`, tree `07639a1cd60a2afd34958280572f0a40230eb337`, clean. |
+| G4 integration candidate | reviewed HEAD `113a81ea5ab8739740edf0d7c17deb2354adad78`; it contains regression IDs for serialized authorize/revoke task cancellation and post-response invalidation. Its provider-session path additionally has gateway/session invalidation generations and observer cancellation. This is semantically evolved code, so the G2 branch is not a cherry-pick candidate. |
+| Composition Root | `AppProviderComposition.fakeDefault()` is still the app default. It constructs `FakeGmailProvider` and `FakeCalendarProvider`; it does not create `PlayServicesGoogleAuthorizationGateway` or open a live Google session. The Settings authorization walkthrough owns `FakeGoogleAuthorizationGateway` directly and states that it does not contact a real account or service. This keeps live access disabled, but ordinary Gmail/Calendar UI is not yet connected to real OAuth. |
+| G2 source evidence | The six-class 84/84 JUnit packet is preserved under `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/`. Its `gradle-summary.txt` records source commit `c9482ef6be15783cdf7908d20e081c308f0acadb`, not the later cancellation commit `69c9bcb` or this branch HEAD. Treat 84/84 as evidence for the recorded c9482 source only; it does not prove the later source by itself. G4's current test IDs show those cancellation contracts were carried into its source, but its exact-head CI remains the integration owner's responsibility. |
+| Local rerun | Attempted the six-class focused Gradle suite from `android/` on this worktree. It stopped during Gradle toolchain discovery before tests: `/usr/lib/jvm/java-21-openjdk-amd64` lacks `JAVA_COMPILER` (`javac`). Result is **NOT_RUN**, not a code/test failure. No repository JDK setting or dependency was changed. |
+| Branch CI | Pushes on this branch selected `.github/workflows/android-personal-beta.yml`, whose protected-main condition creates no branch jobs; these runs are not G2 test evidence. No new run was started during this review. |
+| Live Google validation | NOT_RUN. No real OAuth, account, token, Gmail/Calendar API, or Owner secret was used. |
+
+#### Official-source recheck
+
+Fetched official Google documentation on 2026-10-27 (HTTP 200); response `Last-Modified` values were recorded by the review: OAuth 2.0 Policies (2026-08-05), Gmail API scopes (2026-09-10), Calendar API scopes (2026-09-03), Restricted scope verification (2026-08-19), Android client credentials (2026-10-12), and API Services User Data Policy (2025-08-06). These documents support the existing checkpoint with the following distinctions:
+
+- **Policy requirements/applicability:** `gmail.readonly` is classified Restricted. Verification exceptions are conditional, including the personal-use case (only the developer, or a small group personally known to the developer); Serea's actual beta audience has not been established, so do not presume the exception. The API Services User Data Policy and applicable Limited Use terms still apply. Production classification also affects project separation and verification duties.
+- **Scope contract:** Gmail uses `gmail.readonly`; Calendar event reads use `calendar.events.readonly`; Calendar list discovery is the separately declared `calendar.calendarlist.readonly`. The implementation exposes no write scope.
+- **Android OAuth client setup:** Google requires the Android package name and signing-certificate SHA-1 when creating an Android OAuth client. The intended beta package is pinned in the repository, but the Owner-controlled beta signing certificate and corresponding SHA-1/client registration remain unresolved.
+- **Recommendations vs requirements:** Incremental/contextual scope prompts and separate development/production project hygiene are documented as recommendations in Google's guidance; final project-tier applicability must be checked against Serea's audience and deployment classification. This review does not turn recommendations into universal requirements.
+
+Official sources:
+
+- https://developers.google.com/identity/protocols/oauth2/policies
+- https://developers.google.com/workspace/gmail/api/auth/scopes
+- https://developers.google.com/workspace/calendar/api/auth
+- https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification
+- https://developers.google.com/workspace/guides/create-credentials
+- https://developers.google.com/terms/api-services-user-data-policy
+
+**Disposition:** G2 implementation readiness is **PARTIAL**. Keep Fake providers as the only ordinary app composition, keep real OAuth disabled, and hand any future real-provider wiring to the integration owner after the Owner resolves beta signing/package identity, Cloud project/audience, privacy disclosures, scope review, and Google verification/security-assessment applicability. No G2 change from this refresh is approved for direct integration.
+
 ### G1 follow-up G4-OAUTH-01: revoke initiation invalidation (MEDIUM)
 
 G1 found that, during a real Play Services revoke request, existing Gmail and Calendar leases stayed valid until the remote revoke task completed. A delayed read could therefore return data after the user initiated revocation. The real gateway now invalidates cached permission state and increments every feature lease generation synchronously in the same `consentLock` section that claims the revoke operation, before checking Play Services or awaiting `Identity.revokeAccess()`. App-local feature-disable state is preserved. Remote failure or caller cancellation never restores old permissions or leases; `finally` only clears the in-flight flag.

@@ -75,6 +75,9 @@ jobs:
           bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh test-download-bound \
             2>&1 | tee "$G3_EVIDENCE_DIR/bounded-download-test.txt"
 
+      - name: Verify both Gradle commands use the standalone PoC project
+        run: python3 tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py
+
       - name: Build app and instrumentation APKs before any model download
         run: |
           set -euo pipefail

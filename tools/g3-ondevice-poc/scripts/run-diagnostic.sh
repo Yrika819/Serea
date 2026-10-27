@@ -21,6 +21,11 @@ DOWNLOAD_TEST_DIRECTORY=''
 
 mkdir -p "$EVIDENCE_DIR"
 
+run_poc_gradle() (
+    cd "$POC_DIR"
+    exec ./gradlew "$@"
+)
+
 fetch_bounded() {
     local url="$1"
     local output_path="$2"
@@ -132,7 +137,7 @@ prepare_build() {
     git -C "$ROOT_DIR" rev-parse HEAD > "$EVIDENCE_DIR/serea-source-head.txt"
 
     local build_log="$EVIDENCE_DIR/gradle-build.log"
-    if ! "$POC_DIR/gradlew" --no-daemon --console=plain \
+    if ! run_poc_gradle --no-daemon --console=plain \
         -Pg3LlamaCppSource="$LLAMA_SOURCE" \
         :app:assembleDebug :app:assembleDebugAndroidTest > "$build_log" 2>&1; then
         tail -n 160 "$build_log"
@@ -301,7 +306,7 @@ PY
     echo "app_private_sha256=$staged_hash" >> "$EVIDENCE_DIR/model-stage-metadata.txt"
 
     local gradle_test_log="$EVIDENCE_DIR/gradle-instrumentation.log"
-    if ! "$POC_DIR/gradlew" --no-daemon --console=plain \
+    if ! run_poc_gradle --no-daemon --console=plain \
         -Pg3LlamaCppSource="$LLAMA_SOURCE" \
         "-Pandroid.testInstrumentationRunnerArguments.modelPath=$private_model_path" \
         "-Pandroid.testInstrumentationRunnerArguments.modelSha256=$MODEL_SHA256" \

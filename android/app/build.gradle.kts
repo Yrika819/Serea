@@ -287,6 +287,10 @@ dependencyLocking { lockAllConfigurations() }
 // a runtime dependency.
 configurations.configureEach {
     resolutionStrategy.eachDependency {
+        if (requested.group == "com.google.guava" && requested.name == "guava") {
+            useVersion("33.7.2-jre")
+            because("CVE-2026-102554 affects Guava through 33.7.1; app lock consumers use the JVM variant")
+        }
         if (requested.group == "com.google.protobuf" && requested.name in setOf(
                 "protobuf-java", "protobuf-javalite", "protobuf-java-util", "protobuf-kotlin",
             )) {

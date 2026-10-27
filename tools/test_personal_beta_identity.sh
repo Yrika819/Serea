@@ -34,6 +34,7 @@ command -v keytool >/dev/null
 command -v openssl >/dev/null
 command -v strings >/dev/null
 command -v timeout >/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/android_emulator_lifecycle.sh"
 
 serial=''
 device_listing=''
@@ -128,7 +129,7 @@ wait_for_stable_emulator() {
 set_phase 'wait for stable API 35 emulator startup'
 wait_for_stable_emulator 'initial startup'
 set_phase 'restart adb as root and wait for stable transport'
-if ! timeout 10s adb -s "$serial" root >/dev/null; then
+if ! serea_retry_adb_root "$serial"; then
   print_emulator_diagnostics 'Could not restart adb in root mode on the disposable emulator.'
   exit 2
 fi
@@ -331,7 +332,7 @@ phase() {
 reboot_emulator() {
   timeout 10s adb -s "$serial" reboot
   wait_for_stable_emulator 'Android system reboot before root restart'
-  if ! timeout 10s adb -s "$serial" root >/dev/null; then
+  if ! serea_retry_adb_root "$serial"; then
     print_emulator_diagnostics 'Could not restart adb in root mode after the Android system reboot.'
     return 1
   fi

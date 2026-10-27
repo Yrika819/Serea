@@ -1,0 +1,9 @@
+Command: `./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationTest.cancelledRevokeCallerKeepsAuthorizationBlockedUntilRemoteTaskIsTerminal' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest.cancelledAuthorizationWaitsForIdentityTaskBeforeReleasingSharedGate' --tests 'app.serea.android.gmail.GmailProviderSessionsTest.delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest.delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome'`
+Runtime: temporary Temurin JDK 21.0.13+9 outside the repository.
+Result: exit 0; 4 tests completed, 0 failures, 0 errors, 0 skipped.
+Exact test IDs:
+- GoogleAuthorizationTest#cancelledRevokeCallerKeepsAuthorizationBlockedUntilRemoteTaskIsTerminal
+- GoogleAuthorizationTest#cancelledAuthorizationWaitsForIdentityTaskBeforeReleasingSharedGate
+- GmailProviderSessionsTest#delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome
+- CalendarProviderSessionsTest#delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome
+JUnit XML is retained in this directory. All task responses are synthetic and use deferred test gates; HTTP is local MockWebServer only.

@@ -7,11 +7,16 @@ import app.serea.android.googleauth.FakeGoogleAuthorizationGateway
 import app.serea.android.googleauth.GoogleAuthorizationGateway
 import app.serea.android.googleauth.GoogleAuthorizationMode
 import app.serea.android.googleauth.GoogleFeature
+import app.serea.android.googleauth.GoogleGrantInvalidationObservers
+import app.serea.android.googleauth.GoogleGrantLeaseState
 import app.serea.android.googleauth.GoogleScope
 import app.serea.android.googleauth.GoogleServiceState
 import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
+import app.serea.android.googleauth.awaitGoogleIdentityTaskToTerminal
+import app.serea.android.googleauth.invalidateGoogleGrantAtRevokeStart
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -22,38 +27,130 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.EventListener
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 class GmailProviderSessionsTest {
     private val server = MockWebServer().apply { start() }
 
+    private enum class RevokeOutcome { SUCCESS, FAILURE, CANCELLATION }
+
+    private class GatedResponseDispatcher(private val body: String) : Dispatcher() {
+        val requestArrived = CountDownLatch(1)
+        val releaseResponse = CountDownLatch(1)
+        @Volatile var recordedRequest: RecordedRequest? = null
+
+        override fun dispatch(request: RecordedRequest): MockResponse {
+            recordedRequest = request
+            requestArrived.countDown()
+            return if (releaseResponse.await(30, TimeUnit.SECONDS)) {
+                MockResponse().setBody(body)
+            } else {
+                MockResponse().setResponseCode(500).setBody("{}")
+            }
+        }
+    }
+
+    private class CancellationProbe : EventListener() {
+        val callCancelled = CountDownLatch(1)
+        override fun canceled(call: Call) { callCancelled.countDown() }
+    }
+
     @After fun close() = server.shutdown()
 
     private class PlayServicesFixture(
-        private val permission: ScopePermission = ScopePermission.GRANTED,
+        permission: ScopePermission = ScopePermission.GRANTED,
         override var authorizationSessionId: String? = "gmail-session-first",
+        private val notifyInvalidationObservers: Boolean = true,
     ) : GoogleAuthorizationGateway {
         override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+        private val invalidationObservers = GoogleGrantInvalidationObservers()
+        private val googleGrantGeneration = AtomicLong(0)
+        override val googleGrantInvalidationGeneration: Long get() = googleGrantGeneration.get()
         var tokenRequests = 0
         var rotateAfterNextToken = false
         var onLeaseUse: (() -> Unit)? = null
+        private val stateLock = Any()
+        private val grantState = GoogleGrantLeaseState()
+        private val knownPermissions = mutableMapOf(GoogleScope.GMAIL_READ_ONLY to permission)
         private var failure: AuthorizationFailure? = null
+        lateinit var lastLease: AccessTokenLease
+        var lastLeaseIdentity: Int = -1
+        var capturedGmailVersion: Long = -1
+        var gmailVersionAtRevoke: Long = -1
+        val validityTrace = CopyOnWriteArrayList<Pair<Long, Boolean>>()
+        @Volatile var afterGrantGenerationIncrementBeforeLeaseInvalidation: (() -> Unit)? = null
+        @Volatile var afterGrantGenerationIncrementBeforeObservers: (() -> Unit)? = null
+
+        private fun beginRevoke() {
+            synchronized(stateLock) {
+                check(grantState.tryBeginAuthorizationOperation())
+                googleGrantGeneration.incrementAndGet()
+                afterGrantGenerationIncrementBeforeLeaseInvalidation?.invoke()
+                invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
+                gmailVersionAtRevoke = grantState.version(GoogleFeature.GMAIL)
+            }
+            afterGrantGenerationIncrementBeforeObservers?.invoke()
+            if (notifyInvalidationObservers) invalidationObservers.notifyInvalidationStarted()
+        }
+
+        override fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable =
+            invalidationObservers.observe(listener)
+
+        fun disableGmail() {
+            synchronized(stateLock) { grantState.disableInApp(GoogleFeature.GMAIL) }
+        }
+
+        suspend fun revokeWithRemote(remoteRevoke: suspend () -> Unit) {
+            beginRevoke()
+            try {
+                awaitGoogleIdentityTaskToTerminal(remoteRevoke)
+            } finally {
+                synchronized(stateLock) { grantState.finishAuthorizationOperation() }
+            }
+        }
+
+        fun authorizationOperationInFlight(): Boolean = synchronized(stateLock) {
+            grantState.isAuthorizationOperationInFlight()
+        }
+        fun tryBeginAuthorizationOperation(): Boolean = synchronized(stateLock) {
+            grantState.tryBeginAuthorizationOperation()
+        }
+        fun finishAuthorizationOperation() = synchronized(stateLock) { grantState.finishAuthorizationOperation() }
 
         override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
             if (feature != GoogleFeature.GMAIL || scopes != setOf(GoogleScope.GMAIL_READ_ONLY)) {
                 return TokenSupplyResult.UserActionRequired(scopes)
             }
-            if (permission != ScopePermission.GRANTED || authorizationSessionId == null) {
-                return TokenSupplyResult.Unavailable(failure ?: AuthorizationFailure.ACCOUNT_REQUIRED)
+            if (!grantState.isEnabledInApp(GoogleFeature.GMAIL)) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
+            if (authorizationSessionId == null) return TokenSupplyResult.Unavailable(AuthorizationFailure.ACCOUNT_REQUIRED)
+            val permission = synchronized(stateLock) {
+                if (grantState.isAuthorizationOperationInFlight()) {
+                    return TokenSupplyResult.Unavailable(AuthorizationFailure.REQUEST_IN_PROGRESS)
+                }
+                knownPermissions[GoogleScope.GMAIL_READ_ONLY]
             }
+            if (permission != ScopePermission.GRANTED) return TokenSupplyResult.UserActionRequired(setOf(GoogleScope.GMAIL_READ_ONLY))
             tokenRequests++
             val boundSession = authorizationSessionId
+            val boundVersions = synchronized(stateLock) { grantState.leaseVersions(setOf(GoogleFeature.GMAIL)) }
+            capturedGmailVersion = boundVersions.getValue(GoogleFeature.GMAIL)
             val lease = AccessTokenLease(
                 "fixture-token-$boundSession",
                 setOf(GoogleScope.GMAIL_READ_ONLY),
@@ -61,9 +158,13 @@ class GmailProviderSessionsTest {
                 authorizationSessionId = boundSession,
                 validityCheck = {
                     onLeaseUse?.invoke()
-                    true
+                    val current = synchronized(stateLock) { grantState.isLeaseCurrent(boundVersions) }
+                    validityTrace += grantState.version(GoogleFeature.GMAIL) to current
+                    current
                 },
             )
+            lastLease = lease
+            lastLeaseIdentity = System.identityHashCode(lease)
             if (rotateAfterNextToken) {
                 rotateAfterNextToken = false
                 authorizationSessionId = "gmail-session-second"
@@ -74,7 +175,7 @@ class GmailProviderSessionsTest {
 
         override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
             GoogleServiceState.AVAILABLE,
-            scopes.associateWith { if (permission == ScopePermission.GRANTED) permission else ScopePermission.NOT_REQUESTED },
+            scopes.associateWith { scope -> synchronized(stateLock) { knownPermissions[scope] } ?: ScopePermission.NOT_REQUESTED },
             failure,
         )
 
@@ -144,6 +245,178 @@ class GmailProviderSessionsTest {
         assertEquals(GmailAuthorizationState.REVOKED, session.status().state)
         assertEquals(1, gateway.tokenRequests)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome() = runBlocking {
+        suspend fun assertInvalidatedRead(outcome: RevokeOutcome) {
+            val gateway = PlayServicesFixture(notifyInvalidationObservers = false)
+            val previousRequestCount = server.requestCount
+            val response = GatedResponseDispatcher(messageJson)
+            server.dispatcher = response
+            val session = GmailProviderSessions(googleHttpEnabledByOwner = true)
+                .openGoogleReadOnly(gateway, baseUrl = server.url("/gmail/v1/"))
+            val read = async { runCatching { session.getMessage(GmailMessageId("message_1")) } }
+
+            assertTrue(withContext(Dispatchers.IO) { response.requestArrived.await(5, TimeUnit.SECONDS) })
+            val request = requireNotNull(response.recordedRequest)
+            assertEquals("GET", request.method)
+            assertEquals("Bearer fixture-token-gmail-session-first", request.getHeader("Authorization"))
+            assertFalse("the delayed response body is still pending at request receipt", read.isCompleted)
+            assertEquals(1, gateway.tokenRequests)
+            assertTrue(gateway.lastLeaseIdentity != -1)
+
+            try {
+                val remoteRevokeStarted = CompletableDeferred<Unit>()
+                val remoteRevokeGate = CompletableDeferred<Unit>()
+                val revoke = async {
+                    try {
+                        gateway.revokeWithRemote {
+                            remoteRevokeStarted.complete(Unit)
+                            remoteRevokeGate.await()
+                        }
+                        null
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (exception: Exception) {
+                        exception
+                    }
+                }
+                remoteRevokeStarted.await()
+
+                assertFalse("the lease is invalid before remote revoke completes", runCatching {
+                    gateway.lastLease.useToken { it }
+                }.isSuccess)
+                assertEquals(ScopePermission.NOT_REQUESTED,
+                    gateway.status(setOf(GoogleScope.GMAIL_READ_ONLY)).permissions[GoogleScope.GMAIL_READ_ONLY])
+                assertEquals(gateway.capturedGmailVersion + 1, gateway.gmailVersionAtRevoke)
+                assertFalse("the dispatcher has not released the HTTP response", read.isCompleted)
+                val checksBeforeResponseBodyCompletion = gateway.validityTrace.size
+
+                // Release the real local HTTP response while the synthetic remote revoke remains gated.
+                response.releaseResponse.countDown()
+                val readOutcome = read.await()
+                assertTrue(
+                    "response must be denied by the active lease callback; identity=${gateway.lastLeaseIdentity}, " +
+                        "capturedVersion=${gateway.capturedGmailVersion}, revokedVersion=${gateway.gmailVersionAtRevoke}, " +
+                        "checks=${gateway.validityTrace.toList()}, tokenRequests=${gateway.tokenRequests}, outcome=${readOutcome.exceptionOrNull()}",
+                    readOutcome.exceptionOrNull() is GmailReadFailure,
+                )
+                assertEquals(GmailReadFailureCode.PERMISSION_DENIED, (readOutcome.exceptionOrNull() as GmailReadFailure).code)
+                assertTrue("response-body validation must observe the invalidated production lease state",
+                    gateway.validityTrace.drop(checksBeforeResponseBodyCompletion)
+                        .any { (version, valid) -> version == gateway.gmailVersionAtRevoke && !valid })
+                assertFalse("remote revoke must still be gated while the read is rejected", revoke.isCompleted)
+
+                when (outcome) {
+                    RevokeOutcome.SUCCESS -> {
+                        remoteRevokeGate.complete(Unit)
+                        assertEquals(null, revoke.await())
+                    }
+                    RevokeOutcome.FAILURE -> {
+                        remoteRevokeGate.completeExceptionally(IllegalStateException("synthetic revoke failure"))
+                        assertTrue(revoke.await() is IllegalStateException)
+                    }
+                    RevokeOutcome.CANCELLATION -> {
+                        revoke.cancel()
+                        yield()
+                        assertFalse("caller cancellation must not complete before the remote revoke task", revoke.isCompleted)
+                        assertTrue(gateway.authorizationOperationInFlight())
+                        assertFalse("new authorization is blocked until remote revoke is terminal",
+                            gateway.tryBeginAuthorizationOperation())
+                        assertEquals(
+                            TokenSupplyResult.Unavailable(AuthorizationFailure.REQUEST_IN_PROGRESS),
+                            gateway.acquire(GoogleFeature.GMAIL, setOf(GoogleScope.GMAIL_READ_ONLY)),
+                        )
+                        remoteRevokeGate.complete(Unit)
+                        revoke.join()
+                        assertFalse(gateway.authorizationOperationInFlight())
+                        assertTrue("new authorization may start after the remote task is terminal",
+                            gateway.tryBeginAuthorizationOperation())
+                        gateway.finishAuthorizationOperation()
+                        assertTrue(gateway.acquire(GoogleFeature.GMAIL, setOf(GoogleScope.GMAIL_READ_ONLY))
+                            is TokenSupplyResult.UserActionRequired)
+                    }
+                }
+
+                assertFalse("no remote outcome restores the invalidated lease", runCatching {
+                    gateway.lastLease.useToken { it }
+                }.isSuccess)
+                assertEquals(ScopePermission.NOT_REQUESTED,
+                    gateway.status(setOf(GoogleScope.GMAIL_READ_ONLY)).permissions[GoogleScope.GMAIL_READ_ONLY])
+                assertEquals(1, gateway.tokenRequests)
+                assertEquals(previousRequestCount + 1, server.requestCount)
+            } finally {
+                response.releaseResponse.countDown()
+            }
+        }
+
+        RevokeOutcome.entries.forEach { assertInvalidatedRead(it) }
+    }
+
+    @Test fun grantRevocationCancelsPendingGmailHttpCallBeforeResponseBodyDelivery() = runBlocking {
+        val response = GatedResponseDispatcher(messageJson)
+        server.dispatcher = response
+        val cancellationProbe = CancellationProbe()
+        val gateway = PlayServicesFixture()
+        val session = GmailProviderSessions(googleHttpEnabledByOwner = true).openGoogleReadOnly(
+            gateway,
+            OkHttpClient.Builder().eventListenerFactory { cancellationProbe }.build(),
+            server.url("/gmail/v1/"),
+        )
+        val read = async { runCatching { session.getMessage(GmailMessageId("message_1")) } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { response.requestArrived.await(5, TimeUnit.SECONDS) })
+            assertEquals("GET", requireNotNull(response.recordedRequest).method)
+            assertFalse("the response body has not been released", read.isCompleted)
+
+            revoke = async {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            remoteRevokeStarted.await()
+            assertTrue(withContext(Dispatchers.IO) { cancellationProbe.callCancelled.await(5, TimeUnit.SECONDS) })
+            val outcome = read.await()
+            assertFalse("revoked data must not escape", outcome.isSuccess)
+            assertTrue("the provider read is cancelled", outcome.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+            assertEquals("the server is still holding the response before body delivery", 1L, response.releaseResponse.count)
+            assertFalse("revocation remains pending while the request has already been cancelled", revoke.isCompleted)
+        } finally {
+            remoteRevokeGate.complete(Unit)
+            response.releaseResponse.countDown()
+            revoke?.join()
+        }
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun delayedGmailResponseIsDeniedAfterAppLocalDisable() = runBlocking {
+        val gateway = PlayServicesFixture()
+        val response = GatedResponseDispatcher(messageJson)
+        server.dispatcher = response
+        val session = GmailProviderSessions(googleHttpEnabledByOwner = true)
+            .openGoogleReadOnly(gateway, baseUrl = server.url("/gmail/v1/"))
+        val read = async { failure { session.getMessage(GmailMessageId("message_1")) } }
+        assertTrue(withContext(Dispatchers.IO) { response.requestArrived.await(5, TimeUnit.SECONDS) })
+        assertFalse("the dispatcher is holding the response before app-local disable", read.isCompleted)
+
+        try {
+            gateway.disableGmail()
+            assertFalse("the existing lease is invalid before the response is released",
+                runCatching { gateway.lastLease.useToken { it } }.isSuccess)
+            response.releaseResponse.countDown()
+
+            assertEquals(GmailReadFailureCode.PERMISSION_DENIED, read.await().code)
+            assertTrue("post-body validity check observes the disabled feature",
+                gateway.validityTrace.any { (_, current) -> !current })
+            assertFalse(runCatching { gateway.lastLease.useToken { it } }.isSuccess)
+        } finally {
+            response.releaseResponse.countDown()
+        }
     }
 
     @Test fun replacingSessionImmediatelyAfterLeaseAcquisitionPreventsHttpDispatch() = runBlocking {
@@ -222,6 +495,153 @@ class GmailProviderSessionsTest {
         assertTrue("caller cancellation must not close the provider session", currentCoroutineContext().isActive)
         assertEquals(GmailAuthorizationState.MOCK_ONLY, session.status().state)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun grantRevocationBetweenDelegateCompletionAndDeliveryRejectsGmailResult() = runBlocking {
+        val gateway = PlayServicesFixture()
+        val delegate = FakeGmailProvider()
+        val isCurrentCalls = AtomicInteger()
+        val postDelegateCheckEntered = CountDownLatch(1)
+        val releasePostDelegateCheck = CountDownLatch(1)
+        val session = GmailProviderSession(
+            id = 8,
+            kind = GmailProviderKind.GOOGLE_READ_ONLY,
+            delegate = delegate,
+            authorizationDelegate = FakeGmailProvider(),
+            isCurrent = {
+                if (isCurrentCalls.incrementAndGet() == 2) {
+                    postDelegateCheckEntered.countDown()
+                    check(releasePostDelegateCheck.await(5, TimeUnit.SECONDS))
+                }
+                true
+            },
+            onClose = {},
+        )
+        session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
+            session.cancelInFlightReadsForGrantInvalidation()
+        })
+        val read = async(Dispatchers.Default) { runCatching { session.listInbox() } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { postDelegateCheckEntered.await(5, TimeUnit.SECONDS) })
+            revoke = async {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            remoteRevokeStarted.await()
+            releasePostDelegateCheck.countDown()
+
+            val outcome = read.await()
+            assertFalse("a result buffered before revoke must not escape", outcome.isSuccess)
+            assertEquals(GmailReadFailureCode.PERMISSION_DENIED, (outcome.exceptionOrNull() as GmailReadFailure).code)
+            assertFalse("remote revoke remains pending while the delivery gate rejects the result", revoke.isCompleted)
+        } finally {
+            releasePostDelegateCheck.countDown()
+            remoteRevokeGate.complete(Unit)
+            revoke?.join()
+            session.close()
+        }
+    }
+
+    @Test fun sharedGrantGenerationRejectsGmailResultBeforeObserverNotification() = runBlocking {
+        val gateway = PlayServicesFixture()
+        val backing = FakeGmailProvider()
+        val delegate = object : GmailReadPort {
+            override suspend fun listInbox(pageToken: String?, pageSize: Int): GmailMessagePage {
+                val lease = (gateway.acquire(
+                    GoogleFeature.GMAIL,
+                    setOf(GoogleScope.GMAIL_READ_ONLY),
+                ) as TokenSupplyResult.Available).lease
+                val page = backing.listInbox(pageToken, pageSize)
+                lease.useToken { }
+                return page
+            }
+            override suspend fun search(query: String, pageToken: String?, pageSize: Int) =
+                backing.search(query, pageToken, pageSize)
+            override suspend fun getMessage(id: GmailMessageId) = backing.getMessage(id)
+            override suspend fun getThread(id: GmailThreadId) = backing.getThread(id)
+        }
+        val isCurrentCalls = AtomicInteger()
+        val postDelegateCheckEntered = CountDownLatch(1)
+        val releasePostDelegateCheck = CountDownLatch(1)
+        val observerNotified = CountDownLatch(1)
+        val generationAdvanced = CountDownLatch(1)
+        val releaseLeaseInvalidation = CountDownLatch(1)
+        val leaseInvalidationCompleted = CountDownLatch(1)
+        val releaseObserverNotification = CountDownLatch(1)
+        val session = GmailProviderSession(
+            id = 10,
+            kind = GmailProviderKind.GOOGLE_READ_ONLY,
+            delegate = delegate,
+            authorizationDelegate = FakeGmailProvider(),
+            currentGrantInvalidationGeneration = { gateway.googleGrantInvalidationGeneration },
+            isCurrent = {
+                if (isCurrentCalls.incrementAndGet() == 2) {
+                    postDelegateCheckEntered.countDown()
+                    check(releasePostDelegateCheck.await(5, TimeUnit.SECONDS))
+                }
+                true
+            },
+            onClose = {},
+        )
+        session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
+            observerNotified.countDown()
+            session.cancelInFlightReadsForGrantInvalidation()
+        })
+        gateway.afterGrantGenerationIncrementBeforeLeaseInvalidation = {
+            generationAdvanced.countDown()
+            check(releaseLeaseInvalidation.await(5, TimeUnit.SECONDS))
+        }
+        gateway.afterGrantGenerationIncrementBeforeObservers = {
+            leaseInvalidationCompleted.countDown()
+            check(releaseObserverNotification.await(5, TimeUnit.SECONDS))
+        }
+        val read = async(Dispatchers.Default) { runCatching { session.listInbox() } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { postDelegateCheckEntered.await(5, TimeUnit.SECONDS) })
+            assertTrue("delegate validated its lease before returning", gateway.validityTrace.last().second)
+            revoke = async(Dispatchers.Default) {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            assertTrue(withContext(Dispatchers.IO) { generationAdvanced.await(5, TimeUnit.SECONDS) })
+            assertTrue("the gateway generation is the revoke-start linearization point", gateway.googleGrantInvalidationGeneration > 0L)
+            assertEquals("lease invalidation and observer dispatch are still held", 1L, observerNotified.count)
+            assertFalse("remote revoke has not started", remoteRevokeStarted.isCompleted)
+            releasePostDelegateCheck.countDown()
+
+            val outcome = read.await()
+            assertFalse("the buffered result must not cross the generation before lease invalidation", outcome.isSuccess)
+            assertEquals(GmailReadFailureCode.PERMISSION_DENIED, (outcome.exceptionOrNull() as GmailReadFailure).code)
+            assertEquals("neither lease invalidation nor observer notification has completed", 1L, leaseInvalidationCompleted.count)
+            assertEquals(1L, observerNotified.count)
+            assertFalse("remote revoke remains pending", revoke.isCompleted)
+
+            releaseLeaseInvalidation.countDown()
+            assertTrue(withContext(Dispatchers.IO) { leaseInvalidationCompleted.await(5, TimeUnit.SECONDS) })
+            assertEquals("observer dispatch remains held after lease invalidation", 1L, observerNotified.count)
+            releaseObserverNotification.countDown()
+            remoteRevokeStarted.await()
+        } finally {
+            releasePostDelegateCheck.countDown()
+            releaseLeaseInvalidation.countDown()
+            releaseObserverNotification.countDown()
+            remoteRevokeGate.complete(Unit)
+            revoke?.join()
+            session.close()
+        }
+        assertEquals(0L, observerNotified.count)
     }
 
     private fun testSession(delegate: GmailReadPort) = GmailProviderSession(

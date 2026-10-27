@@ -9,6 +9,52 @@ import java.time.Instant
 
 /** Contract coverage for the offline model path; the fake below never opens a network connection. */
 class LocalFakeRoutingAdversarialTest {
+    @Test fun publicModelOutputDerivedFromGmailOrCalendarIsDeniedBeforeUsageAndProvider() = runBlocking {
+        val now = 50_000L
+        for (source in listOf(DataOrigin.GMAIL, DataOrigin.CALENDAR)) {
+            val dao = MemoryUsageDao()
+            val provider = LocalFakeModelChatPort()
+            val usage = UsageControlledModelChatPort(provider, UsageRepository(dao) { now })
+            val egress = EgressCheckedModelChatPort(usage, clock = { now })
+            val conversationId = "lineage-${source.name.lowercase()}"
+            val sendId = "send-${source.name.lowercase()}"
+            val context = listOf(ContextMessage(
+                role = MessageRole.ASSISTANT,
+                text = "synthetic summarized source",
+                classification = DataClassification.PUBLIC,
+                sourceMessageId = "summary-${source.name.lowercase()}",
+                origin = DataOrigin.MODEL_OUTPUT,
+                conversationId = conversationId,
+                sourceLineage = setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED, source),
+            ))
+            val contract = EgressContract(
+                conversationId = conversationId,
+                currentMessageId = sendId,
+                origin = DataOrigin.USER_AUTHORED,
+                classification = DataClassification.PUBLIC,
+                destination = "https://ollama.com/api/chat",
+                plannedBody = "synthetic public follow-up",
+                context = context,
+                preparation = PayloadPreparation.RAW,
+                explicitSendIntentAtMillis = now,
+                expiresAtMillis = now + 30_000,
+            )
+            val request = ModelChatRequest(
+                conversationId = conversationId,
+                message = contract.plannedBody,
+                sendId = sendId,
+                classification = DataClassification.PUBLIC,
+                context = context,
+                egressContract = contract,
+            )
+
+            assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED, ChatEgressGate.evaluate(contract, now).decision)
+            assertThrows(ModelChatFailure::class.java) { runBlocking { egress.send(request) } }
+            assertNull("$source lineage is rejected before Usage reservation", dao.reservation(sendId))
+            assertEquals("$source lineage is rejected before provider dispatch", 0, provider.calls)
+        }
+    }
+
     @Test fun routedFakePassesEgressAndUsageAndDeniedRequestsStopBeforeReservation() = runBlocking {
         val now = 50_000L
         val nowInstant = Instant.ofEpochMilli(now)

@@ -489,6 +489,7 @@ class UsageLedgerDatabaseTest {
             raw.execSQL("INSERT INTO conversations VALUES ('conversation', 'encrypted-title-fixture', 1, 2, 'legacy-model', NULL)")
             if (version >= 3) raw.execSQL("INSERT INTO messages VALUES ('message', 'conversation', 'USER', 'ciphertext-fixture', 'PRIVATE', 2, 'COMPLETED', NULL, NULL, 'USER_AUTHORED')")
             else raw.execSQL("INSERT INTO messages VALUES ('message', 'conversation', 'USER', 'ciphertext-fixture', 'PRIVATE', 2, 'COMPLETED', NULL, NULL)")
+            if (version >= 3) raw.execSQL("INSERT INTO messages VALUES ('assistant-message', 'conversation', 'ASSISTANT', 'ciphertext-assistant-fixture', 'PUBLIC', 3, 'COMPLETED', NULL, NULL, 'MODEL_OUTPUT')")
             if (version >= 2) {
                 raw.execSQL("CREATE TABLE usage_windows (windowKey TEXT NOT NULL PRIMARY KEY, requests INTEGER NOT NULL, inputTokens INTEGER NOT NULL, outputTokens INTEGER NOT NULL)")
                 raw.execSQL("CREATE TABLE usage_reservations (requestId TEXT NOT NULL PRIMARY KEY, dayKey TEXT NOT NULL, monthKey TEXT NOT NULL, inputTokens INTEGER NOT NULL, outputTokens INTEGER NOT NULL, state TEXT NOT NULL)")
@@ -501,14 +502,69 @@ class UsageLedgerDatabaseTest {
             raw.close()
 
             val migrated = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name)
-                .addMigrations(SereaHistoryDatabase.MIGRATION_1_2, SereaHistoryDatabase.MIGRATION_2_3, SereaHistoryDatabase.MIGRATION_3_4)
+                .addMigrations(SereaHistoryDatabase.MIGRATION_1_2, SereaHistoryDatabase.MIGRATION_2_3,
+                    SereaHistoryDatabase.MIGRATION_3_4, SereaHistoryDatabase.MIGRATION_4_5)
                 .allowMainThreadQueries().build()
-            assertEquals(4, migrated.openHelper.writableDatabase.version)
+            assertEquals(5, migrated.openHelper.writableDatabase.version)
             assertNotNull(migrated.historyDao().conversation("conversation"))
             val savedBody = migrated.openHelper.readableDatabase.query("SELECT encryptedBody FROM messages WHERE id = 'message'")
             assertTrue(savedBody.moveToFirst())
             assertEquals("ciphertext-fixture", savedBody.getString(0))
             savedBody.close()
+            val legacyLineage = migrated.openHelper.readableDatabase.query("SELECT encryptedSourceLineage FROM messages WHERE id = 'message'")
+            assertTrue(legacyLineage.moveToFirst())
+            assertEquals("UNKNOWN", legacyLineage.getString(0))
+            legacyLineage.close()
+            if (version >= 3) {
+                val legacyAssistantLineage = migrated.openHelper.readableDatabase.query(
+                    "SELECT encryptedSourceLineage FROM messages WHERE id = 'assistant-message'",
+                )
+                assertTrue(legacyAssistantLineage.moveToFirst())
+                assertEquals("UNKNOWN", legacyAssistantLineage.getString(0))
+                legacyAssistantLineage.close()
+
+                val cipher = KeystoreAesGcm("usage-lineage-migration-${UUID.randomUUID()}")
+                val migratedDb = migrated.openHelper.writableDatabase
+                migratedDb.execSQL(
+                    "UPDATE conversations SET encryptedTitle = ? WHERE id = ?",
+                    arrayOf(cipher.encrypt("synthetic conversation".toByteArray(), "conversation:conversation:title".toByteArray()), "conversation"),
+                )
+                migratedDb.execSQL(
+                    "UPDATE messages SET encryptedBody = ? WHERE id = ?",
+                    arrayOf(cipher.encrypt("synthetic user".toByteArray(), "message:message:body".toByteArray()), "message"),
+                )
+                migratedDb.execSQL(
+                    "UPDATE messages SET encryptedBody = ? WHERE id = ?",
+                    arrayOf(cipher.encrypt("synthetic assistant summary".toByteArray(), "message:assistant-message:body".toByteArray()), "assistant-message"),
+                )
+                val restoredAssistant = ConversationRepository(migrated.historyDao(), cipher)
+                    .get("conversation")!!.messages.single { it.id == "assistant-message" }
+                assertEquals(setOf(DataOrigin.UNKNOWN), restoredAssistant.sourceLineage)
+                val legacyContext = ContextMessage(
+                    role = restoredAssistant.role,
+                    text = restoredAssistant.text,
+                    classification = restoredAssistant.classification,
+                    sourceMessageId = restoredAssistant.id,
+                    origin = restoredAssistant.origin,
+                    conversationId = restoredAssistant.conversationId,
+                    sourceLineage = restoredAssistant.sourceLineage,
+                )
+                val now = 50_000L
+                val legacyContract = EgressContract(
+                    conversationId = restoredAssistant.conversationId,
+                    currentMessageId = "migration-follow-up",
+                    origin = DataOrigin.USER_AUTHORED,
+                    classification = DataClassification.PUBLIC,
+                    destination = "https://ollama.com/api/chat",
+                    plannedBody = "synthetic follow-up",
+                    context = listOf(legacyContext),
+                    preparation = PayloadPreparation.RAW,
+                    explicitSendIntentAtMillis = now,
+                    expiresAtMillis = now + 30_000,
+                )
+                assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED,
+                    ChatEgressGate.evaluate(legacyContract, now).decision)
+            }
             if (version >= 2) {
                 assertEquals(12L, migrated.usageDao().settings()?.dailyRequests)
                 assertEquals("OUTCOME_UNKNOWN", migrated.usageDao().reservation("legacy-send")?.state)
@@ -539,7 +595,8 @@ class UsageLedgerDatabaseTest {
         raw.close()
 
         val failedDatabase = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name)
-            .addMigrations(SereaHistoryDatabase.MIGRATION_1_2, SereaHistoryDatabase.MIGRATION_2_3, SereaHistoryDatabase.MIGRATION_3_4)
+            .addMigrations(SereaHistoryDatabase.MIGRATION_1_2, SereaHistoryDatabase.MIGRATION_2_3,
+                SereaHistoryDatabase.MIGRATION_3_4, SereaHistoryDatabase.MIGRATION_4_5)
             .allowMainThreadQueries().build()
         try {
             assertThrows(Exception::class.java) { failedDatabase.openHelper.writableDatabase }

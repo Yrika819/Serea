@@ -19,7 +19,7 @@ The debug app uses `.demo`; the instrumentation target uses `.isolated`; the bet
 ## Dependency inventory and verification
 
 - `android/gradle/wrapper/gradle-wrapper.properties` pins Gradle 8.14.6 and its distribution SHA-256.
-- `android/app/gradle.lockfile` contains 325 locked Maven coordinates and Gradle configuration coverage. The lockfile is committed and `lockAllConfigurations()` is enabled for app configurations.
+- `android/app/gradle.lockfile` contains 317 locked Maven coordinates and Gradle configuration coverage after the Guava security update. The lockfile is committed and `lockAllConfigurations()` is enabled for app configurations.
 - The Required Android dependency audit resolves Gradle dependencies, creates the license report, and runs the pinned OSV Scanner Action recursively over `android/`.
 - Active Gradle dependency verification remains **not ready**. The published SEC-A2 review found that parts of the available checksum candidate lack independently verified publisher provenance and that plugin/task-specific coordinates require separate coverage. No `android/gradle/verification-metadata.xml` is active. This assessment does not promote repository-generated hashes into trust roots.
 - `tools/generate_android_lockfile_sbom.py` produces a deterministic CycloneDX 1.5 component inventory from the checked-in app lockfile. Its `bom-ref` values are Maven PURLs and its metadata records the lockfile hash and optional source SHA. It does not claim artifact hashes, publisher authenticity, dependency edges, Gradle plugin/buildscript dependencies, Gradle distribution, Android SDK, or complete build provenance. A generated lockfile inventory is a useful release input, not a complete artifact SBOM.

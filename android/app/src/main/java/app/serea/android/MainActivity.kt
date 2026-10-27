@@ -156,6 +156,8 @@ data class ChatMessage(
     val status: String = "COMPLETED",
     val origin: DataOrigin = DataOrigin.UNKNOWN,
     val conversationId: String? = null,
+    /** Immediate and inherited sources used by the Cloud Egress boundary. */
+    val sourceLineage: Set<DataOrigin> = defaultSourceLineage(origin),
 )
 
 enum class MessageRole { USER, ASSISTANT }
@@ -382,7 +384,13 @@ internal class ChatViewModel(
                 }
                 val assistant = ChatMessage(UUID.randomUUID().toString(), MessageRole.ASSISTANT, reply.text,
                     nextMessageTime(snapshot.conversation.copy(messages = snapshot.conversation.messages + userMessage)),
-                    origin = DataOrigin.MODEL_OUTPUT, conversationId = conversationId)
+                    origin = DataOrigin.MODEL_OUTPUT,
+                    conversationId = conversationId,
+                    sourceLineage = buildSet {
+                        add(DataOrigin.MODEL_OUTPUT)
+                        add(DataOrigin.USER_AUTHORED)
+                        context.forEach { addAll(it.sourceLineage) }
+                    })
                 mutableState.update { current ->
                     if (current.conversation.id != conversationId || activeMessageId != userMessage.id) current
                     else current.copy(isFinalizing = true)
@@ -730,7 +738,7 @@ internal fun validateUsageLimits(dailyRequests: String, dailyTokens: String, mon
 }
 
 private fun ChatMessage.toStoredMessage(conversationId: String) = StoredMessage(
-    id, conversationId, role, text, classification, createdAt.toEpochMilli(), status, origin,
+    id, conversationId, role, text, classification, createdAt.toEpochMilli(), status, origin, sourceLineage.toSet(),
 )
 
 internal fun conversationTitle(firstMessage: String): String {
@@ -763,7 +771,7 @@ private fun <T> Knowledge<T>.displayValue(): String = when (this) {
 }
 
 private fun StoredMessage.toChatMessage() = ChatMessage(id, role, text, Instant.ofEpochMilli(createdAt), classification,
-    status, origin, conversationId)
+    status, origin, conversationId, sourceLineage.toSet())
 
 @Composable
 internal fun ChatScreen(

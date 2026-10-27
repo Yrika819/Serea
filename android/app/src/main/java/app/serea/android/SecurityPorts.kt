@@ -34,7 +34,7 @@ data class EgressContract(
     val target: EgressTarget = EgressTarget.CLOUD,
 )
 
-enum class EgressContractDecision { APPROVED, MISSING_INTENT, EXPIRED_INTENT, DESTINATION_DENIED, ORIGIN_DENIED, CLASSIFICATION_DENIED, PREPARATION_DENIED, CONTENT_MISMATCH, LIMIT_EXCEEDED }
+enum class EgressContractDecision { APPROVED, MISSING_INTENT, EXPIRED_INTENT, DESTINATION_DENIED, ORIGIN_DENIED, SOURCE_LINEAGE_DENIED, CLASSIFICATION_DENIED, PREPARATION_DENIED, CONTENT_MISMATCH, LIMIT_EXCEEDED }
 
 data class EgressEvaluation(val decision: EgressContractDecision, val preview: String, internal val payload: EgressApprovedPayload?)
 
@@ -96,6 +96,15 @@ object ChatEgressGate {
         if (intent > nowMillis || nowMillis > expiry || expiry < intent || expiry - intent > 60_000) return denied(EgressContractDecision.EXPIRED_INTENT)
         if (contract.origin !in setOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT)) return denied(EgressContractDecision.ORIGIN_DENIED)
         if (contract.preparation != PayloadPreparation.RAW) return denied(EgressContractDecision.PREPARATION_DENIED)
+        val cloudLineageSources = setOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT)
+        if (contract.context.any { item ->
+                item.sourceLineage.isEmpty() ||
+                    item.origin !in item.sourceLineage ||
+                    DataOrigin.USER_AUTHORED !in item.sourceLineage ||
+                    item.sourceLineage.any { it !in cloudLineageSources }
+            }) {
+            return denied(EgressContractDecision.SOURCE_LINEAGE_DENIED)
+        }
         if (decide(contract.classification) != EgressDecision.ALLOW ||
             contract.context.any { decide(it.classification) != EgressDecision.ALLOW || it.origin !in setOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT) }) {
             return denied(EgressContractDecision.CLASSIFICATION_DENIED)

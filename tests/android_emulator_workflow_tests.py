@@ -529,7 +529,11 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('build_checkout_commit=$GITHUB_SHA', workflow)
         self.assertIn('base_commit=$BASE_SHA', workflow)
         self.assertIn('github_run_attempt=$GITHUB_RUN_ATTEMPT', workflow)
-        self.assertIn('based on `codex/pr71-beta-acceptance-final-20261021-v2`', workflow)
+        self.assertIn(
+            'Source review: locate the matching change from `provenance.txt`; this packet does not authorize merge.',
+            workflow,
+        )
+        self.assertIn('Physical Pixel 7a reacceptance: NOT_RUN by CI.', workflow)
         script = ROOT / "tools/run_android_instrumentation_campaign.sh"
         self.assertTrue(script.is_file())
         subprocess.run(["bash", "-n", str(script)], check=True)

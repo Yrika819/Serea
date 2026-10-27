@@ -519,10 +519,10 @@ jobs:
           cat > "$bundle/pixel7a-reacceptance.md" <<'EOF'
           # Serea Pixel 7a reacceptance packet
 
-          - Repair Draft PR: based on `codex/pr71-beta-acceptance-final-20261021-v2`.
+          - Source review: locate the matching change from `provenance.txt`; this packet does not authorize merge.
           - Candidate APK: `serea-debug.apk`; source SHA and APK SHA-256 are in `provenance.txt`.
           - This candidate APK was built by the GitHub Actions run recorded in `provenance.txt`.
-          - Physical Pixel 7a reacceptance is pending the Mac Local MCP v3 agent; emulator results are in `tests/` and `android-ci-results.txt`.
+          - Physical Pixel 7a reacceptance: NOT_RUN by CI. Owner approval and a supplied device are prerequisites; emulator results are in `tests/` and `android-ci-results.txt`.
 
           ## Signature and data preservation
 

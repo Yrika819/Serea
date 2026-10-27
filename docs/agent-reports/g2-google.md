@@ -7,13 +7,15 @@ Official documentation retrieved: 2026-10-27
 
 ```text
 AGENT_ID: G2
-ACTIVE_PHASE: G2 — isolated authorization lifecycle and Google policy readiness
-OVERALL_STATUS: PARTIAL — Gmail/Calendar responses are rejected after authorization invalidation; shared revoke preserves app-local disconnect; live Google readiness remains Owner-gated
+ACTIVE_PHASE: G2 — isolated Google authorization lifecycle, revocation and cancellation safety
+OVERALL_STATUS: PARTIAL — Gmail/Calendar in-flight reads and Identity authorization/revoke tasks fail closed across invalidation and caller cancellation; live Google readiness remains Owner-gated
 BASE_SHA: 3924b36080ffa43331f065a15db80c604c243355
-CURRENT_HEAD: 7c3af22605b202ec55eb61cc59e029948dd1217b (provider in-flight invalidation repair; this report update is a subsequent documentation-only checkpoint)
-TREE_SHA: 13cd093386321a6bb496dcd894a379538a08e7dd (provider invalidation repair tree)
-WORKTREE: /workspace/Serea-g2-google-auth-readiness
+CURRENT_HEAD: c9482ef6be15783cdf7908d20e081c308f0acadb (current branch commit; G2-OAUTH-02 source/evidence changes are uncommitted)
+HEAD_TREE_SHA: bdb363f7a3c2e497f0c091d23b29b7ac4a800820
+TREE_SHA: uncommitted candidate tree SHA is provided in the Orchestrator handoff; this report cannot contain its own enclosing tree hash
+WORKTREE: `Serea-g2-google-auth-readiness` (isolated worktree; host path omitted)
 BRANCH: codex/serea-g2-google-auth-readiness
+REMOTE_REF: origin/codex/serea-g2-google-auth-readiness = c9482ef6be15783cdf7908d20e081c308f0acadb; candidate changes are unpushed
 DRAFT_PR: none
 CI_RUN_IDS: 40489486365, 40489675684, 40490686989, 40494126664, 40494480729 — `.github/workflows/android-personal-beta.yml`, feature branch pushes, each with zero jobs (main-only workflow; not G2 test results)
 ARTIFACT_IDS: none
@@ -131,7 +133,7 @@ Final JUnit class counts:
 Focused command:
 
 ```text
-JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
 ```
 
 The affected-source run on `7c3af22605b202ec55eb61cc59e029948dd1217b` passed **72 tests**, 0 failures/errors/skips, exit code 0, Gradle `BUILD SUCCESSFUL`. Exact XML files in the worktree are:
@@ -177,18 +179,18 @@ This is an implementation-readiness summary, not legal advice. Requirements belo
 
 ```text
 Provider invalidation focused JVM: PASS — 72 tests, 0 failures, 0 errors, 0 skips, source commit `7c3af22605b202ec55eb61cc59e029948dd1217b`, Gradle session `24660`, `--rerun-tasks`
-Android instrumentation source compile: PASS — `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin`, exit code 0 on source commit `7c3af22605b202ec55eb61cc59e029948dd1217b`, Gradle session `69811`; no emulator was launched
+Android instrumentation source compile: PASS — `./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin`, exit code 0 on source commit `7c3af22605b202ec55eb61cc59e029948dd1217b`, Gradle session `69811`; run with a temporary Temurin JDK 21.0.13+9 outside the repository; no emulator was launched
 Early delayed-test attempts: first run starved the child read by blocking `runBlocking` in `MockWebServer.takeRequest`; moved that wait to `Dispatchers.IO`. Second run passed the expected permission-denied checks but compared the shared server request counter to 1 for both loop iterations; changed assertion to compare against the pre-scenario counter. The final run passed.
 Focused command: shown above
 Gradle result: BUILD SUCCESSFUL, exit code 0
 Artifact: none (local JUnit XML only)
 CI Run `40489486365`: `.github/workflows/android-personal-beta.yml`, feature-branch push, completed with zero jobs; this main-only workflow did not execute a test job and is not treated as a G2 verification result
-Initial attempted compile command: `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileDebugAndroidTestKotlin` — failed because that task does not exist for this project's variants; task discovery identified `isolatedAndroidTest` and that source compile then passed
+Initial attempted compile command: `./gradlew --no-daemon :app:compileDebugAndroidTestKotlin` — failed because that task does not exist for this project's variants; task discovery identified `isolatedAndroidTest` and that source compile then passed
 Initial JVM attempt: exit 127 because installed OpenJDK runtime did not include `javac`
-Initial JVM command (session 60245): `./gradlew --no-daemon :app:testDebugUnitTest --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'` — exit 127; Gradle reported `/usr/lib/jvm/java-21-openjdk-amd64` lacked `[JAVA_COMPILER]`
-JDK used for passing commands: Eclipse Temurin OpenJDK 21.0.13+9, downloaded from https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse (resolved asset: https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.13_9.tar.gz), stored/extracted only under `/tmp`
+Initial JVM command (session 60245): `./gradlew --no-daemon :app:testDebugUnitTest --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'` — exit 127; Gradle reported the installed OpenJDK runtime lacked `[JAVA_COMPILER]`
+JDK used for passing commands: Eclipse Temurin OpenJDK 21.0.13+9, downloaded from https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse (resolved asset: https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.13_9.tar.gz), stored/extracted temporarily outside the repository
 JDK archive SHA-256: d7f5d5cf865a2902b70ff549b97586a7d3f234e016f041ab447ea740c7d66d1c
-Repository dependencies/configuration changed for JDK: no
+JDK stored/extracted temporarily outside the repository. Repository dependencies/configuration changed for JDK: no
 ```
 
 `git diff --check` passed before source commit `7c3af22`. The focused Android instrumentation source compile passed, but instrumentation/E2E tests were **NOT_RUN** because this lane did not start an emulator. Full Formal Required was not run from this lane; parent integration owns those gates. The in-flight response patch awaits independent review.
@@ -200,3 +202,97 @@ Repository dependencies/configuration changed for JDK: no
 - `INTEGRATION_DEPENDENCIES`: Integration owner must provide explicit dependency injection for a `PlayServicesGoogleAuthorizationGateway` plus account-bound Gmail/Calendar sessions only after Owner configuration/authorization; keep Fake defaults and fail closed.
 - `NEXT_ACTION`: G1 independently reviews and may cherry-pick the provider invalidation fix and report checkpoint. Keep live OAuth disabled pending separately approved real authorization and service acceptance.
 - `OWNER_APPROVAL_REQUIRED`: Real OAuth/project configuration, Google account access, scope verification, production package/signing identity, and any live-service acceptance.
+
+### G1 follow-up G4-OAUTH-01: revoke initiation invalidation (MEDIUM)
+
+G1 found that, during a real Play Services revoke request, existing Gmail and Calendar leases stayed valid until the remote revoke task completed. A delayed read could therefore return data after the user initiated revocation. The real gateway now invalidates cached permission state and increments every feature lease generation synchronously in the same `consentLock` section that claims the revoke operation, before checking Play Services or awaiting `Identity.revokeAccess()`. App-local feature-disable state is preserved. Remote failure or caller cancellation never restores old permissions or leases; `finally` only clears the in-flight flag.
+
+The former mutable disabled-feature and version maps were extracted into `GoogleGrantLeaseState`, which is the state component owned by `PlayServicesGoogleAuthorizationGateway`. Production lease callbacks and the provider fixtures call the same `leaseVersions`, `isLeaseCurrent`, `invalidateGrant`, and `invalidateGoogleGrantAtRevokeStart` implementation. The local provider tests instantiate that same component/callback contract; they do not instantiate the Android-bound `PlayServicesGoogleAuthorizationGateway` or invoke Play Services. This avoids introducing a broad SDK abstraction solely for a test seam. Accordingly, the tests demonstrate the real shared lease-state and HTTP post-body contract, but do not claim live Play Services revoke execution.
+
+The initial focused run on the new source completed 81 tests with 2 failures: the Gmail and Calendar delayed-read cases returned successfully. Preserved evidence is in `docs/agent-reports/evidence/g2-revoke-race-first-failure/`. A subsequent trace showed that the old lease was invalid and its captured version had incremented, but a 2-second MockWebServer body delay could expire during test setup. The test now uses a deterministic `MockWebServer.Dispatcher` barrier: the dispatcher signals request arrival and blocks before returning a response; the test starts revoke, verifies the lease is unusable and the request remains pending, then releases the response while the synthetic remote revoke gate is still pending. Lease identity, captured/revoked generation and post-body validity callback results are recorded and asserted. The second diagnostic run that established the body-delay timing issue is retained at `docs/agent-reports/evidence/g2-revoke-race-body-delay-diagnostic/`.
+
+Exact delayed test IDs:
+
+- `GmailProviderSessionsTest#delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome`
+- `CalendarProviderSessionsTest#delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome`
+
+Each test releases the mock remote revoke as success, failure and cancellation. For every outcome, while the revoke gate is unresolved, the released Gmail/Calendar HTTP response is rejected as permission-denied; the post-body callback observes the bumped generation and no data object escapes. After each outcome, old leases remain unusable and cached permissions remain cleared. App-local disable-after-request tests remain in the suite, and the authorization unit test verifies that revoke invalidation preserves an independent app-local disable while invalidating both Gmail and Calendar generations.
+
+### Previous focused verification (superseded by the final G2-OAUTH-02 verification below)
+
+Forced six-class JVM command:
+
+```text
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+```
+
+Result: **81/81 PASS, 0 failures, 0 errors, 0 skips**, exit code 0. Per-class XML counts:
+
+| Test class | Executed |
+|---|---:|
+| `GoogleAuthorizationLifecycleTest` | 7 |
+| `GoogleAuthorizationTest` | 24 |
+| `GmailProviderSessionsTest` | 10 |
+| `GmailHttpReadPortTest` | 11 |
+| `CalendarProviderSessionsTest` | 9 |
+| `GoogleCalendarHttpReadPortTest` | 20 |
+| **Total** | **81** |
+
+The six exact JUnit XML files and command summary are retained at `docs/agent-reports/evidence/g2-revoke-race-six-class-pass/`. The forced two-test run is at `docs/agent-reports/evidence/g2-revoke-race-final-targeted/` (2/2 PASS, 0 failures/errors/skips).
+
+Android isolated instrumentation source compilation also passed:
+
+```text
+./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin
+```
+
+Exit code 0. No emulator was started; instrumentation/E2E and Play Services revoke remain **NOT_RUN**. The JDK was Eclipse Temurin 21.0.13+9, used temporarily outside the repository; repository Gradle/JDK configuration and dependencies were not changed. No live OAuth, real account, credential, Google endpoint, UI wiring, manifest, scopes, or Composition Root were changed.
+
+This documentation supersedes the previous 72-test count and the prior description that real revoke invalidation occurred only after remote success. The corrected implementation is fail-closed at revoke initiation; G1 review is still required before integration. No CI run was initiated for this G2 repair.
+
+
+### G1 follow-up G2-OAUTH-02: Identity task lifetime after caller cancellation (MEDIUM)
+
+G1 identified that the Play Services `Identity.authorize()` and `Identity.revokeAccess()` tasks can outlive a caller coroutine. If cancellation released the shared operation gate before the underlying Google Task reached a terminal state, another authorization could begin while the old task could still complete and issue or revoke a grant. The gateway now wraps both task waits in the same `awaitGoogleIdentityTaskToTerminal` helper (`withContext(NonCancellable)`), and releases the shared gate only in `finally` after that wait returns or throws at the underlying task's terminal event. While the gate is held, `acquire()` returns `REQUEST_IN_PROGRESS` and competing authorization/revoke operations are rejected.
+
+After a successful authorization task becomes terminal, the gateway checks caller activity before mapping the result, creating/caching a lease or returning a token. The exception path also checks caller activity before caching a classified outcome, so a late task failure cannot write state for a canceled caller. Revoke checks caller activity after both a successful terminal task and in the generic task-failure catch before classifying an error. A caller canceled during a remote task therefore receives cancellation only after terminal completion, not a normal `NETWORK`/`UNAVAILABLE` failure result. The existing synchronous revoke-start invalidation remains fail-closed, and remote success, failure, or caller cancellation never restores old permissions or leases. The `finally` path only releases the operation gate.
+
+Deterministic regression IDs:
+
+- `GoogleAuthorizationTest#cancelledRevokeCallerKeepsAuthorizationBlockedUntilRemoteTaskIsTerminal`
+- `GoogleAuthorizationTest#cancelledAuthorizationWaitsForIdentityTaskBeforeReleasingSharedGate`
+- `GoogleAuthorizationTest#cancelledRevokeCallerPropagatesCancellationAfterRemoteFailureBecomesTerminal`
+- `GmailProviderSessionsTest#delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome`
+- `CalendarProviderSessionsTest#delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome`
+- `GmailProviderSessionsTest#delayedGmailResponseIsDeniedAfterAppLocalDisable`
+- `CalendarProviderSessionsTest#delayedCalendarResponseIsDeniedAfterAppLocalDisable`
+
+The authorization tests cancel the caller while a synthetic task remains unresolved, verify the task waiter is still pending and the shared gate blocks new operations, then complete the task and verify the gate is released only afterward. The authorize regression verifies a late successful result is not mapped/cached for a canceled caller. The revoke-failure regression completes the still-pending synthetic task exceptionally after caller cancellation, then verifies cancellation wins over error classification, the gate remains held until terminal failure, and invalidated permissions/leases stay invalid. Gmail and Calendar use a MockWebServer dispatcher barrier to hold each response until revoke-start invalidation has occurred; they release the response while the synthetic remote revoke remains pending and verify permission-denied/no result for remote success, failure, and caller cancellation. Existing generation assertions also verify the lease is invalidated before response delivery.
+
+The production gateway and these deterministic tests share `GoogleGrantLeaseState` and `awaitGoogleIdentityTaskToTerminal`; the tests exercise those exact components, not a duplicate model. They use `CompletableDeferred` to represent a suspended remote task and do not instantiate the Android-bound Play Services client or execute an actual `com.google.android.gms.tasks.Task`. Therefore actual Google Task completion/cancellation behavior and live OAuth remain **NOT_RUN**. The new code does not attempt to cancel the remote task; it waits for terminal completion to preserve serialization, and can keep the authorization/revoke gate held if Play Services never completes its task.
+
+#### Exact-source verification before final review follow-up
+
+Forced six-class JVM suite, run from `android/` on the working tree above:
+
+```text
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+```
+
+#### Review follow-up verification and timing-race classification
+
+A forced six-class run after adding the canceled-caller/failed-revoke regression completed 84 tests with one failure: `CalendarProviderSessionsTest#delayedCalendarResponseIsDeniedAfterAppLocalDisable` reported `Expected CalendarReadFailure` (Gradle session `49888`). The preserved JUnit XML and sanitized summary are at `docs/agent-reports/evidence/g2-oauth-02-six-class-first-failure/`. The failing test still used a 1-second MockWebServer body delay without a response barrier; JUnit reported 1.202 seconds for the test. The read returned before the assertion expecting a permission failure. This is classified as a **TEST_HARNESS timing race, supported but not directly timestamp-proven**: the test did not guarantee the app-local disable happened before the delayed body completed. It is not evidence that a disabled lease passed the post-body validity check under the intended ordering.
+
+To establish that ordering explicitly, the Calendar and symmetric Gmail app-disable tests now use the existing bounded `GatedResponseDispatcher`. Each asserts that the request reached the dispatcher and the read remains pending before disabling the feature, asserts the lease is invalid before release, then releases the response and verifies permission-denied plus a post-body validity trace of `false`. The barrier is released in `finally`. The targeted trio passed 3/3 (Gradle session `70702`), with XML under `docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/`.
+
+The final forced six-class suite on the settled candidate passed **84/84**, 0 failures, 0 errors, 0 skips, exit code 0 (`BUILD SUCCESSFUL`), Gradle session `10019`. Counts: authorization lifecycle 7, authorization 27, Gmail sessions 10, Gmail HTTP 11, Calendar sessions 9, Calendar HTTP 20. The exact six JUnit XMLs and sanitized summary are at `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/`.
+
+The isolated Android test source compile was rerun with `--rerun-tasks` on the settled candidate:
+
+```text
+./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin --rerun-tasks
+```
+
+It passed with exit code 0 in Gradle session `71674` (`BUILD SUCCESSFUL`, 26 tasks executed). Both isolated main Kotlin and isolated Android test Kotlin compilation executed. Compile summary is at `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/compile-summary.txt`; no emulator was started.
+
+The additional canceled-revoke failure regression passed alone (1/1, session `40281`); it is also included in the final 84-test result. The first failed six-class run remains preserved separately and was not overwritten. No CI run was initiated. No live account, OAuth UI, Google API endpoint, token, or secret was used. The compiler used temporary Temurin JDK 21.0.13+9 outside the repository; repository dependencies and JDK configuration were unchanged. `git diff --check` passes. G1 review is still required before integration; no changes are staged, committed, or pushed.

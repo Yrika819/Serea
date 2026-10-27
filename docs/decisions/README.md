@@ -45,6 +45,19 @@ ADR-0041 are Accepted. Their acceptance does not by itself authorize runtime wor
 | --- | --- | --- |
 | [ADR-0043](ADR-0043-p7-gate-b-limited-v1-and-gate-c-authorization.md) | Explicit 2026-10-12 limited V1 resource/retention direction; host-authenticated Owner and authenticated Forget/ledger contracts; backup/sync deferred; Gate C disabled engineering authorization | **Accepted within scope; Gate D not authorized** |
 
+## Proposed decisions
+
+ADR-0044, [Android independent chat mode](ADR-0044-android-independent-chat-mode.md),
+is **PROPOSED / NOT RATIFIED**. It defines a standalone Android boundary and
+does not amend the frozen `serea.device/2` protocol or approve production AI,
+credentials, OAuth, history persistence, or PC synchronization.
+
+ADR-0045, [Android encrypted history and bounded cloud probe](ADR-0045-android-phase2-encrypted-history-and-cloud-probe.md),
+is **PROPOSED / NOT RATIFIED**. Its implementation candidate keeps ordinary
+chat local and limits cloud traffic to an explicit fixed public contract probe;
+it does not approve user-message egress, production provider selection, or
+release distribution.
+
 ## Accepted decisions
 
 | ADR | Decision | Status |

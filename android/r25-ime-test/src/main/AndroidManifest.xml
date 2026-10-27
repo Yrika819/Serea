@@ -1,0 +1,24 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission
+        android:name="app.serea.android.r25testime.permission.DIAGNOSTICS"
+        android:protectionLevel="signature" />
+    <application android:label="Serea R2.5 test IME">
+        <provider
+            android:name="app.serea.android.diagnostics.RealImeDiagnosticsProvider"
+            android:authorities="app.serea.android.r25testime.diagnostics"
+            android:exported="true"
+            android:permission="app.serea.android.r25testime.permission.DIAGNOSTICS" />
+        <service
+            android:name="app.serea.android.diagnostics.RealImeService"
+            android:exported="true"
+            android:label="Serea R2.5 test IME"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/serea_test_ime" />
+        </service>
+    </application>
+</manifest>

@@ -1,0 +1,695 @@
+package app.serea.android
+
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToLog
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
+import android.os.ParcelFileDescriptor
+import android.util.Log
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Before
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class ChatScreenTest {
+    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    private var lastComposerTouch = "not attempted"
+
+    @Before fun startWithAnExplicitNewConversation() {
+        awaitComposerEnabled()
+        val restoredId = stateSnapshot().conversation.id
+        compose.onNodeWithText("新しい会話").performClick()
+        compose.waitUntil(10_000) {
+            val state = stateSnapshot()
+            state.conversation.id != restoredId && !state.isRestoring
+        }
+        compose.waitForIdle()
+    }
+
+    private fun composer() = compose.onNodeWithTag("chat-composer")
+
+    private companion object {
+        const val FOCUS_LOG_TAG = "SereaChatWindowFocus"
+    }
+
+    private fun assertDisplayedWithEvidence(tag: String, assertion: () -> Unit) {
+        try {
+            assertion()
+        } catch (failure: Throwable) {
+            compose.onRoot(useUnmergedTree = true).printToLog(tag)
+            throw failure
+        }
+    }
+
+    private fun assertSettingsFieldContains(tag: String, value: String) {
+        assertDisplayedWithEvidence("settings-field-$tag") {
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed().assertTextContains(value)
+        }
+    }
+
+    private fun awaitComposerEnabled() {
+        composer().assertExists()
+        compose.waitUntil(30_000) {
+            runCatching { composer().assertIsEnabled() }.isSuccess
+        }
+    }
+
+    private fun startNewConversationForCurrentConfiguration() {
+        val previousId = stateSnapshot().conversation.id
+        var compact = false
+        compose.activityRule.scenario.onActivity { activity ->
+            val configuration = activity.resources.configuration
+            compact = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
+        }
+        if (compact) openOverflow()
+        compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+        compose.waitUntil(10_000) {
+            val state = stateSnapshot()
+            state.conversation.id != previousId && !state.isRestoring
+        }
+        awaitComposerEnabled()
+    }
+
+    private fun awaitMainWindowFocus(stage: String) {
+        var snapshot = "MainActivity unavailable"
+        val focused = runCatching {
+            compose.waitUntil(10_000) {
+                var hasWindowFocus = false
+                compose.activityRule.scenario.onActivity { activity ->
+                    val decor = activity.window.decorView
+                    hasWindowFocus = decor.hasWindowFocus()
+                    snapshot = "stage=$stage activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                        "window=${System.identityHashCode(activity.window)} token=${decor.windowToken} " +
+                        "attached=${decor.isAttachedToWindow} display=${decor.display?.displayId} " +
+                        "lifecycle=${activity.lifecycle.currentState} " +
+                        "windowFocus=$hasWindowFocus decorFocus=${decor.hasFocus()} " +
+                        "decorFocused=${decor.isFocused} visible=${decor.isShown}"
+                }
+                hasWindowFocus
+            }
+        }.isSuccess
+        if (!focused) {
+            snapshot += captureFocusDiagnostics(stage)
+        }
+        Log.i(FOCUS_LOG_TAG, snapshot)
+        assertTrue("MainActivity did not own window focus at $stage: $snapshot", focused)
+    }
+
+    private fun tapComposerThroughSystemInput() {
+        val bounds = composer().fetchSemanticsNode().boundsInWindow
+        val origin = IntArray(2)
+        compose.activityRule.scenario.onActivity { activity ->
+            activity.window.decorView.getLocationOnScreen(origin)
+        }
+        val x = origin[0] + bounds.center.x.toInt()
+        val y = origin[1] + bounds.center.y.toInt()
+        val commandResult = shell("input tap $x $y")
+        lastComposerTouch = "boundsInWindow=$bounds screenOrigin=${origin.toList()} " +
+            "screenPoint=($x,$y) result=$commandResult"
+        Log.i(
+            FOCUS_LOG_TAG,
+            "SYSTEM_TOUCH|$lastComposerTouch",
+        )
+    }
+
+    private fun awaitComposerInputConnection(stage: String) {
+        var snapshot = "MainActivity unavailable"
+        val inputReady = runCatching {
+            compose.waitUntil(10_000) {
+                var activityReady = false
+                compose.activityRule.scenario.onActivity { activity ->
+                    val decor = activity.window.decorView
+                    val hasWindowFocus = decor.hasWindowFocus()
+                    val acceptingText = activity.getSystemService(InputMethodManager::class.java)
+                        ?.isAcceptingText == true
+                    activityReady = activity.lifecycle.currentState == androidx.lifecycle.Lifecycle.State.RESUMED &&
+                        acceptingText
+                    snapshot = "stage=$stage lifecycle=${activity.lifecycle.currentState} " +
+                        "windowFocus=$hasWindowFocus imeAcceptingText=$acceptingText " +
+                        "decorFocus=${decor.hasFocus()} visible=${decor.isShown}"
+                }
+                val composerFocused = runCatching { composer().assertIsFocused() }.isSuccess
+                snapshot += " composerFocused=$composerFocused"
+                activityReady && composerFocused
+            }
+        }.isSuccess
+        if (!inputReady) {
+            snapshot += captureFocusDiagnostics(stage)
+        }
+        Log.i(FOCUS_LOG_TAG, snapshot)
+        assertTrue("Composer did not have a live focused input connection at $stage: $snapshot", inputReady)
+    }
+
+    private fun captureFocusDiagnostics(stage: String): String {
+        val state = stateSnapshot()
+        val nodes = runCatching {
+            compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
+        }.getOrNull()
+        val composerSummary = nodes?.map { node ->
+            "id=${node.id} editable=${node.config.getOrElseNullable(SemanticsProperties.EditableText) { null }} " +
+                "config=${node.config} boundsWindow=${node.boundsInWindow}"
+        }
+        val activitySummary = StringBuilder()
+        compose.activityRule.scenario.onActivity { activity ->
+            val decor = activity.window.decorView
+            val imm = activity.getSystemService(InputMethodManager::class.java)
+            activitySummary.append(
+                "activity=${activity.javaClass.name}@${System.identityHashCode(activity)} " +
+                    "window=${System.identityHashCode(activity.window)} token=${decor.windowToken} " +
+                    "lifecycle=${activity.lifecycle.currentState} windowFocus=${decor.hasWindowFocus()} " +
+                    "decorFocus=${decor.hasFocus()} decorFocused=${decor.isFocused} visible=${decor.isShown} " +
+                    "imeAccepting=${imm?.isAcceptingText} input=${state.input} " +
+                    "loading=${state.isLoading} restoring=${state.isRestoring} messages=${state.conversation.messages.size}"
+            )
+        }
+        val composerText = nodes?.singleOrNull()?.config?.getOrElseNullable(SemanticsProperties.EditableText) { null }?.text
+        val detail = "lastTouch={$lastComposerTouch} activity={$activitySummary} " +
+            "composerValueText=$composerText composerMatchesStateInput=${composerText == state.input} " +
+            "composerNodeCount=${nodes?.size} composerNodes=$composerSummary"
+        Log.e(FOCUS_LOG_TAG, "DIAGNOSTIC|stage=$stage|$detail")
+        for ((name, command) in listOf("WINDOW" to "dumpsys window", "INPUT_METHOD" to "dumpsys input_method")) {
+            val output = runCatching { shell(command) }.getOrElse { "COMMAND_FAILED:$it" }
+            if (name == "WINDOW") {
+                val owners = output.lineSequence().filter {
+                    it.contains("mCurrentFocus") || it.contains("mFocusedWindow") || it.contains("mFocusedApp")
+                }.joinToString(" | ")
+                Log.e(FOCUS_LOG_TAG, "WINDOW_OWNER|stage=$stage|$owners")
+            }
+            output.chunked(3000).forEachIndexed { index, chunk ->
+                Log.e(FOCUS_LOG_TAG, "RAW_$name|stage=$stage|chunk=${index + 1}|$chunk")
+            }
+        }
+        return detail
+    }
+
+    private fun stateSnapshot(): ChatUiState {
+        var snapshot: ChatUiState? = null
+        compose.activityRule.scenario.onActivity { snapshot = it.chatViewModel.state.value }
+        return requireNotNull(snapshot)
+    }
+
+    private fun composerSnapshot(): String = runCatching {
+        val nodes = compose.onAllNodesWithTag("chat-composer", useUnmergedTree = true).fetchSemanticsNodes()
+        val stateInput = stateSnapshot().input
+        val text = nodes.singleOrNull()?.config?.getOrElseNullable(SemanticsProperties.EditableText) { null }?.text
+        "count=${nodes.size};composerValueText=$text;matchesStateInput=${text == stateInput};" + nodes.joinToString(";") {
+            "id=${it.id},editable=${it.config.getOrElseNullable(SemanticsProperties.EditableText) { null }},bounds=${it.boundsInWindow}"
+        }
+    }.getOrElse { "unavailable:$it" }
+
+    private fun awaitResponse(text: String) {
+        compose.waitUntil(30_000) {
+            val state = stateSnapshot()
+            !state.isLoading && (state.errorMessage != null || state.conversation.messages.lastOrNull()?.role == MessageRole.ASSISTANT)
+        }
+        val state = stateSnapshot()
+        assertTrue(
+            "Chat did not complete normally; error=${state.errorMessage}, " +
+                "statuses=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
+            state.errorMessage == null && state.conversation.messages.lastOrNull()?.role == MessageRole.ASSISTANT,
+        )
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(state.conversation.messages.lastIndex)
+        val response = compose.onAllNodes(hasText(text, substring = true))
+        compose.waitUntil(5_000) { response.fetchSemanticsNodes().isNotEmpty() }
+        response.assertCountEquals(1)
+    }
+
+    private fun send(text: String) {
+        Log.i(FOCUS_LOG_TAG, "SEND_BEGIN|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        // Inject a screen-coordinate tap through Android's input dispatcher so it can activate
+        // a resumed window that Compose's root-targeted touch injection cannot focus.
+        tapComposerThroughSystemInput()
+        // The soft keyboard may own Android window focus while the composer is the active
+        // input target. Require the Activity to remain resumed and the real IME connection
+        // to accept text, then verify the Compose field itself owns focus.
+        awaitComposerInputConnection("after composer tap, before typing")
+        composer().assertIsFocused()
+        composer().performTextInput(text)
+        val inputReachedViewModel = runCatching {
+            compose.waitUntil(30_000) { stateSnapshot().input == text }
+        }.isSuccess
+        if (!inputReachedViewModel) {
+            val state = stateSnapshot()
+            Log.e(
+                FOCUS_LOG_TAG,
+                "SEND_INPUT_TIMEOUT|expectedLength=${text.length}|stateLength=${state.input.length}|" +
+                    "editorGeneration=${state.editorInputGeneration}|selection=${state.editorValue.selection.start}:${state.editorValue.selection.end}|" +
+                    "restorePending=${compose.activity.chatViewModel.isActivitySelectionRestorePending()}|" +
+                    "composer=${composerSnapshot()}",
+            )
+        }
+        assertTrue("IME input must reach the ViewModel before send.", inputReachedViewModel)
+        Log.i(FOCUS_LOG_TAG, "SEND_TYPED|text=$text|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        awaitComposerInputConnection("after typing, before keyboard dismissal")
+        Espresso.closeSoftKeyboard()
+        awaitMainWindowFocus("after keyboard dismissal")
+        val sendButton = compose.onNodeWithText("送信", substring = false)
+        try {
+            sendButton.assertIsDisplayed().assertIsEnabled().performClick()
+        } catch (failure: Throwable) {
+            runCatching { compose.onRoot(useUnmergedTree = true).printToLog("chat-send-action") }
+            throw failure
+        }
+        val submitted = runCatching { compose.waitUntil(10_000) {
+            stateSnapshot().conversation.messages.any { it.role == MessageRole.USER && it.text == text }
+        } }.isSuccess
+        val state = stateSnapshot()
+        Log.i(FOCUS_LOG_TAG, "SEND_SUBMITTED|text=$text|stateInput=${state.input}|composer=${composerSnapshot()}|loading=${state.isLoading}|messages=${state.conversation.messages.map { it.role to it.text }}")
+        assertTrue(
+            "Send action did not append the message; input=${state.input}, loading=${state.isLoading}, " +
+                "error=${state.errorMessage}, statuses=${state.conversation.messages.map { it.role.name + ":" + it.status }}",
+            submitted,
+        )
+    }
+
+    @Test fun demoLabelAndConversationTitleAreVisible() {
+        awaitComposerEnabled()
+        compose.onNodeWithText("新しい会話").performClick()
+        awaitComposerEnabled()
+        val demoLabelSettled = runCatching {
+            compose.waitUntil(5_000) {
+                val compactChat = compose.activity.resources.configuration.fontScale >= 1.5f ||
+                    compose.activity.resources.configuration.screenWidthDp < 340
+                runCatching {
+                    compose.onNodeWithText(
+                        if (compactChat) "DEMO · Cloud送信: 無効" else "DEMO · Mock会話 · クラウドAI未接続",
+                        substring = false,
+                    ).assertIsDisplayed()
+                }.isSuccess
+            }
+        }.isSuccess
+        if (!demoLabelSettled) compose.onRoot(useUnmergedTree = true).printToLog("chat-demo-label")
+        assertTrue("The correct responsive demo label must become visible.", demoLabelSettled)
+        send("hello")
+        awaitResponse("Demo response: I received “hello”.")
+        val sentIndex = stateSnapshot().conversation.messages.indexOfFirst {
+            it.role == MessageRole.USER && it.text == "hello"
+        }
+        assertTrue("Sent user message is missing", sentIndex >= 0)
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(sentIndex)
+        compose.onNodeWithText("あなた", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(stateSnapshot().conversation.messages.lastIndex)
+        compose.onAllNodes(hasText("Demo response: I received “hello”.", substring = true))
+            .onFirst().assertTextContains("No cloud AI", substring = true)
+        compose.onNodeWithText("履歴").performClick()
+        compose.waitUntil(30_000) { stateSnapshot().showingHistory }
+        compose.onNodeWithText("保存された会話").assertIsDisplayed()
+        compose.onNodeWithText("hello · 2件").assertIsDisplayed()
+    }
+
+    @Test fun completedDemoConversationSurvivesActivityRecreation() {
+        awaitComposerEnabled()
+        Log.i(FOCUS_LOG_TAG, "ROTATION_BEFORE_SEND|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        send("rotation-check")
+        awaitResponse("Demo response: I received “rotation-check”.")
+        Log.i(FOCUS_LOG_TAG, "ROTATION_BEFORE_RECREATE|stateInput=${stateSnapshot().input}|composer=${composerSnapshot()}")
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(30_000) {
+            val state = stateSnapshot()
+            !state.isRestoring && state.conversation.messages.any { it.text == "rotation-check" }
+        }
+        val restored = stateSnapshot()
+        Log.i(FOCUS_LOG_TAG, "ROTATION_AFTER_RECREATE|stateInput=${restored.input}|composer=${composerSnapshot()}|messages=${restored.conversation.messages.map { it.role to it.text }}")
+        val restoredUserIndex = restored.conversation.messages.indexOfFirst { it.text == "rotation-check" }
+        assertTrue("Restored user message is missing", restoredUserIndex >= 0)
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("conversation-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(restoredUserIndex)
+        val duplicateNodes = compose.onAllNodesWithText("rotation-check", useUnmergedTree = true).fetchSemanticsNodes()
+        Log.i(FOCUS_LOG_TAG, "ROTATION_TEXT_NODES|count=${duplicateNodes.size}|nodes=${duplicateNodes.map { "id=${it.id},config=${it.config},bounds=${it.boundsInWindow}" }}")
+        compose.onNodeWithText("rotation-check").assertIsDisplayed()
+        compose.onNodeWithTag("conversation-list").performScrollToIndex(restored.conversation.messages.lastIndex)
+        assertDisplayedWithEvidence("chat-restored-conversation") {
+            val restoredResponse = compose.onAllNodes(hasText("Demo response: I received “rotation-check”.", substring = true))
+            compose.waitUntil(5_000) { restoredResponse.fetchSemanticsNodes().isNotEmpty() }
+            restoredResponse.assertCountEquals(1)
+        }
+    }
+
+    @Test fun settingsPreventScreenshotsWhileCredentialFieldIsAvailable() {
+        awaitComposerEnabled()
+        compose.onNodeWithTag("open_settings").performClick()
+        compose.waitUntil(30_000) {
+            var secure = false
+            compose.activityRule.scenario.onActivity {
+                secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
+            }
+            secure
+        }
+        compose.runOnIdle {
+            assertEquals(WindowManager.LayoutParams.FLAG_SECURE,
+                compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        compose.onNodeWithTag("destination_back").performClick()
+        compose.waitUntil(30_000) {
+            var secure = true
+            compose.activityRule.scenario.onActivity {
+                secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
+            }
+            !secure
+        }
+        compose.runOnIdle {
+            assertEquals(0, compose.activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    @Test fun previewShowsUnclassifiedUserTextWhileCloudSendRemainsDisabled() {
+        awaitComposerEnabled()
+        composer().performTextInput("draft stays local")
+        compose.onNodeWithTag("open_settings").performClick()
+        compose.onNodeWithText("Cloud接続テスト（未承認）").assertIsNotEnabled()
+        compose.onNodeWithText("送信予定内容をプレビュー").performScrollTo().performClick()
+        compose.onAllNodes(hasText("送信先候補", substring = true)).assertCountEquals(1)
+        compose.onAllNodes(hasText("分類: UNKNOWN", substring = true)).assertCountEquals(1)
+        compose.onAllNodes(hasText("予定本文: draft stays local")).assertCountEquals(1)
+    }
+
+    @Test fun modelModeAndPolicyPersistWhenSettingsAreReopened() {
+        val modelSettings = ModelSelectionSettings(
+            compose.activity.getSharedPreferences("model_selection", android.content.Context.MODE_PRIVATE),
+        )
+        modelSettings.save(ModelRoutingPolicy())
+        awaitComposerEnabled()
+        compose.onNodeWithTag("open_settings").performClick()
+        compose.onNodeWithText("手動").performScrollTo().performClick()
+        compose.onNodeWithText("費用優先").performScrollTo().performClick()
+        compose.onNodeWithTag("model-budget-amount").performScrollTo().performTextClearance()
+        compose.onNodeWithTag("model-budget-amount").performTextInput("0.05")
+        compose.onNodeWithTag("model-budget-currency").performScrollTo().performTextClearance()
+        compose.onNodeWithTag("model-budget-currency").performTextInput("USD")
+        Espresso.closeSoftKeyboard()
+        compose.waitForIdle()
+        compose.onNodeWithText("ルーター設定を保存").performScrollTo().performClick()
+        val saveSucceeded = "費用上限を保存しました。ローカル推定でありProvider請求上限ではありません。"
+        val saveFailed = "費用上限を保存できません。金額と3文字の通貨コードを確認してください。"
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText(saveSucceeded).fetchSemanticsNodes().isNotEmpty() ||
+                compose.onAllNodesWithText(saveFailed).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText(saveSucceeded).performScrollTo().assertIsDisplayed()
+        assertEquals(
+            ModelRoutingPolicy(
+                mode = ModelSelectionMode.MANUAL,
+                autoPolicy = AutoRoutingPolicy.COST_PRIORITY,
+                maxEstimatedCost = 0.05,
+                budgetCurrencyCode = "USD",
+            ),
+            modelSettings.load(),
+        )
+        Espresso.closeSoftKeyboard()
+        val savedPolicySummary = compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先")
+        savedPolicySummary.performScrollTo()
+        compose.waitUntil(15_000) {
+            runCatching { savedPolicySummary.assertIsDisplayed() }.isSuccess
+        }
+        savedPolicySummary.assertIsDisplayed()
+        compose.onNodeWithTag("destination_back").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
+        compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("選択モデルID: なし").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("外部Providerの手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。")
+            .performScrollTo().assertIsDisplayed()
+        assertSettingsFieldContains("model-budget-amount", "0.05")
+        assertSettingsFieldContains("model-budget-currency", "USD")
+    }
+
+    private fun openOverflow() {
+        compose.onNodeWithContentDescription("その他の操作").assertIsDisplayed().performClick()
+    }
+
+    private fun shell(command: String): String {
+        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }.trim()
+    }
+
+    @Test fun portraitPrimaryActionsAndOverflowAreReachableAndTappable() {
+        awaitComposerEnabled()
+        compose.waitUntil(10_000) {
+            var isPortrait = false
+            compose.activityRule.scenario.onActivity {
+                isPortrait = it.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+            }
+            isPortrait
+        }
+        val initialId = stateSnapshot().conversation.id
+        compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+        compose.waitUntil(10_000) { stateSnapshot().conversation.id != initialId && !stateSnapshot().isRestoring }
+        compose.onNodeWithText("履歴").assertIsDisplayed().performClick()
+        compose.waitUntil(10_000) { stateSnapshot().showingHistory }
+        compose.onNodeWithText("その他の操作").assertIsDisplayed()
+        openOverflow()
+        compose.onNodeWithText("この会話を削除").assertIsDisplayed()
+        compose.onNodeWithText("全履歴を削除").assertIsDisplayed()
+        openOverflow()
+        compose.onNodeWithTag("open_settings").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("destination_back").performClick()
+    }
+
+    @Test fun currentConversationDeletionRequiresConfirmationAndCancelKeepsMessages() {
+        awaitComposerEnabled()
+        send("keep on cancel")
+        awaitResponse("Demo response: I received “keep on cancel”.")
+        val before = stateSnapshot()
+        openOverflow()
+        compose.onNodeWithText("この会話を削除").performClick()
+        assertDisplayedWithEvidence("chat-current-delete-confirmation") {
+            compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        }
+        compose.onNodeWithText("対象: keep on cancel", substring = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("この操作はアプリ内から取り消せません。", substring = false)
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("キャンセル").performClick()
+        assertEquals(before.conversation.id, stateSnapshot().conversation.id)
+        assertEquals(before.conversation.messages, stateSnapshot().conversation.messages)
+    }
+
+    @Test fun confirmedCurrentConversationDeletionRemovesSelectedConversation() {
+        awaitComposerEnabled()
+        send("delete this conversation")
+        awaitResponse("Demo response: I received “delete this conversation”.")
+        val deletedId = stateSnapshot().conversation.id
+        openOverflow()
+        compose.onNodeWithText("この会話を削除").performClick()
+        assertDisplayedWithEvidence("chat-current-delete-confirmation") {
+            compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        }
+        compose.onNodeWithText("対象: delete this conversation", substring = false).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("この会話を削除").performClick()
+        compose.waitUntil(30_000) { !stateSnapshot().isRestoring && stateSnapshot().conversation.id != deletedId }
+        assertTrue(stateSnapshot().conversation.messages.isEmpty())
+        assertDisplayedWithEvidence("chat-current-delete-status") {
+            compose.onNodeWithText("この会話を削除しました。").assertIsDisplayed()
+        }
+    }
+
+    @Test fun deleteAllConfirmationCancelKeepsConversationAndConfirmClearsHistory() {
+        awaitComposerEnabled()
+        send("history remains until confirmation")
+        awaitResponse("Demo response: I received “history remains until confirmation”.")
+        val originalId = stateSnapshot().conversation.id
+        openOverflow()
+        compose.onNodeWithText("全履歴を削除").performClick()
+        assertDisplayedWithEvidence("chat-delete-all-confirmation") {
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        }
+        compose.onNodeWithText("すべてのローカル会話履歴が削除されます。", substring = false)
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("この操作はアプリ内から取り消せません。", substring = false)
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("キャンセル").performClick()
+        assertEquals(originalId, stateSnapshot().conversation.id)
+        assertTrue(stateSnapshot().conversation.messages.isNotEmpty())
+        openOverflow()
+        compose.onNodeWithText("全履歴を削除").performClick()
+        assertDisplayedWithEvidence("chat-delete-all-confirmation") {
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        }
+        compose.onNodeWithText("すべてのローカル会話履歴が削除されます。", substring = false)
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("この操作はアプリ内から取り消せません。", substring = false)
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("全履歴を削除").performClick()
+        compose.waitUntil(30_000) { stateSnapshot().history.isEmpty() && !stateSnapshot().isRestoring }
+        assertTrue(stateSnapshot().conversation.messages.isEmpty())
+        assertDisplayedWithEvidence("chat-delete-all-status") {
+            compose.onNodeWithText("全会話履歴を削除しました。").assertIsDisplayed()
+        }
+    }
+
+    @Test fun openDeletionConfirmationSurvivesActivityRecreationWithoutDeleting() {
+        awaitComposerEnabled()
+        val currentId = stateSnapshot().conversation.id
+        openOverflow()
+        compose.onNodeWithText("この会話を削除").performClick()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+        assertEquals(currentId, stateSnapshot().conversation.id)
+        compose.onNodeWithText("キャンセル").performClick()
+        assertEquals(currentId, stateSnapshot().conversation.id)
+    }
+
+    @Test fun landscapeKeepsPrimaryAndOverflowActionsTappable() {
+        awaitComposerEnabled()
+        compose.activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        compose.waitUntil(10_000) {
+            var isLandscape = false
+            compose.activityRule.scenario.onActivity {
+                isLandscape = it.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            }
+            isLandscape
+        }
+        compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+        awaitComposerEnabled()
+        compose.onNodeWithTag("open_settings").assertIsDisplayed()
+        openOverflow()
+        compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
+        compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+        compose.onNodeWithText("キャンセル").performClick()
+    }
+
+    @Test fun smallScreenKeepsDeletionActionsReachableAndTappable() {
+        awaitComposerEnabled()
+        shell("wm size 320x640")
+        shell("wm density 160")
+        try {
+            compose.waitUntil(15_000) {
+                var widthDp = 0
+                compose.activityRule.scenario.onActivity { widthDp = it.resources.configuration.screenWidthDp }
+                widthDp in 300..340
+            }
+            startNewConversationForCurrentConfiguration()
+            openOverflow()
+            compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("キャンセル").performClick()
+            composer().performClick()
+            compose.waitForIdle()
+            openOverflow()
+            compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
+            compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("キャンセル").performClick()
+        } finally {
+            shell("wm size reset")
+            shell("wm density reset")
+            compose.waitUntil(15_000) {
+                var width = 0
+                compose.activityRule.scenario.onActivity { width = it.resources.configuration.screenWidthDp }
+                width > 340
+            }
+        }
+    }
+
+    @Test fun fontScaleTwoKeepsDeletionActionsReachableAndTappable() {
+        awaitComposerEnabled()
+        val originalFontScaleSetting = shell("settings get system font_scale")
+        val originalScale = originalFontScaleSetting.toFloatOrNull()
+            ?: compose.activity.resources.configuration.fontScale
+        check(originalFontScaleSetting == "null" || originalFontScaleSetting.toFloatOrNull() != null) {
+            "Unable to read the original system font scale setting"
+        }
+        try {
+            shell("settings put system font_scale 2.0")
+            compose.waitUntil(15_000) {
+                var fontScale = 1f
+                compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
+                fontScale >= 1.99f
+            }
+            startNewConversationForCurrentConfiguration()
+            openOverflow()
+            compose.onNodeWithText("この会話を削除").assertIsDisplayed().performClick()
+            compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("キャンセル").performClick()
+        } finally {
+            if (originalFontScaleSetting == "null") shell("settings delete system font_scale")
+            else shell("settings put system font_scale $originalFontScaleSetting")
+            compose.waitUntil(15_000) {
+                var fontScale = 0f
+                compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
+                kotlin.math.abs(fontScale - originalScale) < 0.02f
+            }
+        }
+    }
+
+    @Test fun emptySoftLimitFieldShowsValidationAndDisablesSave() {
+        awaitComposerEnabled()
+        compose.onNodeWithTag("open_settings").performClick()
+        val dailyRequests = compose.onNodeWithText("日次requests")
+        dailyRequests.performScrollTo()
+        dailyRequests.performTextClearance()
+        val error = compose.onNodeWithText("日次requests はLong範囲内の整数で入力してください。")
+        error.performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test fun correctedSoftLimitInputCanBeSavedAndRestored() {
+        awaitComposerEnabled()
+        compose.onNodeWithTag("open_settings").performClick()
+        val dailyRequests = compose.onNodeWithText("日次requests")
+        dailyRequests.performScrollTo()
+        dailyRequests.performTextClearance()
+        dailyRequests.performTextInput("21")
+        compose.waitUntil(5_000) {
+            runCatching { dailyRequests.assertTextContains("21") }.isSuccess
+        }
+        compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsEnabled().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("Soft Limit設定を保存しました", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("destination_back").performClick()
+        compose.onNodeWithTag("open_settings").performClick()
+        compose.onNodeWithText("日次requests").performScrollTo().assertTextContains("21")
+    }
+
+    @Test fun softLimitRejectsZeroNegativeNonNumericOverflowAndDailyMonthlyMismatch() {
+        awaitComposerEnabled()
+        compose.onNodeWithTag("open_settings").performClick()
+        fun verifyInvalid(value: String, expectedError: String) {
+            val dailyRequests = compose.onNodeWithText("日次requests")
+            dailyRequests.performScrollTo()
+            dailyRequests.performTextClearance()
+            dailyRequests.performTextInput(value)
+            compose.onNodeWithText(expectedError).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
+        }
+        verifyInvalid("0", "日次requests は1以上で入力してください。")
+        verifyInvalid("-1", "日次requests は1以上で入力してください。")
+        verifyInvalid("abc", "日次requests はLong範囲内の整数で入力してください。")
+        verifyInvalid("9223372036854775808", "日次requests はLong範囲内の整数で入力してください。")
+        verifyInvalid("101", "日次requestsは月次requests以下にしてください。")
+        val dailyRequests = compose.onNodeWithText("日次requests")
+        dailyRequests.performScrollTo()
+        dailyRequests.performTextClearance()
+        dailyRequests.performTextInput("20")
+        val dailyTokens = compose.onNodeWithText("日次tokens")
+        dailyTokens.performScrollTo()
+        dailyTokens.performTextClearance()
+        dailyTokens.performTextInput("50001")
+        compose.onNodeWithText("日次tokensは月次tokens以下にしてください。").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
+    }
+}

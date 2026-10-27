@@ -1,0 +1,7 @@
+Command: `./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'`
+Runtime: temporary Temurin JDK 21.0.13+9 outside the repository.
+Result: exit 1; 81 tests completed, 2 failed, 0 errors, 0 skipped.
+Failures:
+- GmailProviderSessionsTest#delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome: Expected GmailReadFailure; the delayed response was delivered as a successful message.
+- CalendarProviderSessionsTest#delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome: Expected CalendarReadFailure; the delayed response was delivered as a successful calendar object.
+Observed at this point: direct use of the fixture's last lease after revoke failed as expected, but the HTTP result succeeded. The first attempt's XML is retained beside this summary. No credentials or real account data are present; fixtures are synthetic and HTTP uses MockWebServer.

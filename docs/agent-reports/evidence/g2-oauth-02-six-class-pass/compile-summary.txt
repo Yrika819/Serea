@@ -1,0 +1,8 @@
+Android isolated instrumentation source compile: PASS
+Gradle session: 71674
+Exit code: 0 (BUILD SUCCESSFUL; 26 tasks executed)
+Command (run from android/):
+./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin --rerun-tasks
+Both :app:compileIsolatedKotlin and :app:compileIsolatedAndroidTestKotlin executed successfully.
+JDK: temporary Temurin JDK 21.0.13+9 outside the repository.
+No emulator was started. Repository dependencies and JDK configuration were unchanged.

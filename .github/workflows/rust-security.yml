@@ -1,0 +1,62 @@
+name: Rust Dependency Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*', 'rc-*']
+  workflow_dispatch:
+    inputs:
+      full_scan:
+        description: Recheck every root, vendored, and standalone lockfile
+        type: boolean
+        default: true
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-audit:
+    name: RustSec dependency and vendor audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install current stable Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install pinned RustSec scanner
+        continue-on-error: true
+        run: cargo +stable install cargo-audit --version 0.22.2 --locked
+
+      - name: Scan lockfiles and vendored package sources
+        id: scan
+        env:
+          CARGO_AUDIT_VERSION: 0.22.2
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL_SCAN: ${{ github.event_name != 'pull_request' || inputs.full_scan }}
+        run: python3 tools/rust_security_scan.py
+
+      - name: Upload machine-readable scan evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rust-security-${{ github.sha }}-${{ github.run_id }}
+          path: security-results/
+          if-no-files-found: error
+          retention-days: 90

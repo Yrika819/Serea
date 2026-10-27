@@ -91,7 +91,7 @@ jobs:
         run: cargo +stable run --locked -p serea-host --features synthetic -- smoke --synthetic
 
       - name: Synthetic Host child-process lifecycle and crash relaunch
-        run: cargo +stable test --locked -p serea-host --features synthetic-test-hooks --test host_lifecycle
+        run: cargo +stable test --locked -p serea-host --features synthetic-test-hooks --test host_lifecycle -- --test-threads=1
 
       - name: Verify generated native executable architecture
         shell: bash
@@ -172,7 +172,7 @@ jobs:
         run: cargo +1.85.0 run -p serea-host --features synthetic --locked -- smoke --synthetic
 
       - name: Synthetic Host child-process lifecycle and crash relaunch
-        run: cargo +1.85.0 test -p serea-host --features synthetic-test-hooks --locked --test host_lifecycle
+        run: cargo +1.85.0 test -p serea-host --features synthetic-test-hooks --locked --test host_lifecycle -- --test-threads=1
 
       - name: Verify generated native executable architecture
         shell: bash

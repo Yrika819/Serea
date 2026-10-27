@@ -15,8 +15,9 @@ acceleration required; software-emulated fallback is rejected.
 
 The build and both device jobs record the exact source commit/tree. Each device job verifies the
 build artifact manifest and all three APK digests, then verifies the installed target, test, and
-Test IME APKs against those same files. The workflow refuses source diffs outside `.github/workflows`,
-the one diagnostic helper, and this evidence document since the stated base SHA.
+Test IME APKs against those same files. The workflow refuses source diffs outside the exact new
+workflow file `.github/workflows/android-api35-real-ime-independent-bc.yml`, the one diagnostic
+helper, and this evidence document since the stated base SHA.
 
 ## Device guards and evidence
 
@@ -31,8 +32,9 @@ checked for exactly one testcase, the exact requested identity, zero failures/er
 successful instrumentation result. The helper captures logcat, IME service state, Activity state,
 process and memory information, CPU/memory pressure, APK identities, campaign marker state, and
 default-IME restoration. The Test IME is disabled and uninstalled, and the original default IME is
-verified after each case. The GitHub-hosted AVD itself is disposable and the two methods do not
-share emulator or IME process state.
+verified after each case. Every ADB call made during cleanup/restoration has a 15-second deadline
+and a 3-second forced-kill grace. The GitHub-hosted AVD itself is disposable and the two methods
+do not share emulator or IME process state.
 
 ## Interpretation
 

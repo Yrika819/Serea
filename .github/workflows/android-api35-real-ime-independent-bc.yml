@@ -54,7 +54,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git merge-base --is-ancestor "$DIAGNOSTIC_BASE_SHA" HEAD
           unexpected="$(git diff --name-only "$DIAGNOSTIC_BASE_SHA" HEAD | awk '
-            $0 !~ /^\.github\/workflows\// &&
+            $0 != ".github/workflows/android-api35-real-ime-independent-bc.yml" &&
             $0 !~ /^tools\/run_serea_phase_r3_single_ime_case\.sh$/ &&
             $0 !~ /^docs\/verification\/api35-real-ime-independent-bc\.md$/ { print }
           ')"

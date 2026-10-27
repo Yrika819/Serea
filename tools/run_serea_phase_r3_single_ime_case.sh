@@ -29,6 +29,12 @@ fail() {
   exit 1
 }
 
+# Every ADB call performed by EXIT cleanup/restoration is bounded, including a
+# stuck adb client. This helper is not used to weaken or retry test operations.
+cleanup_adb() {
+  timeout --signal=TERM --kill-after=3s 15s adb "$@"
+}
+
 verify_installed_apk() {
   local package="$1" artifact="$2" output="$3" paths actual expected
   paths="$(adb shell pm path "$package" 2>/dev/null | tr -d '\r' | sed -n 's/^package://p')"
@@ -46,9 +52,9 @@ verify_installed_apk() {
 restore_test_ime() {
   local cleanup_file="$OUT/ime-cleanup.txt" restored enabled package_path status=0
   if [[ "$IME_INSTALLED" != true ]]; then
-    restored="$(adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"
-    enabled="$(adb shell settings get secure enabled_input_methods 2>/dev/null | tr -d '\r')"
-    package_path="$(adb shell pm path "$IME" 2>/dev/null | tr -d '\r')"
+    restored="$(cleanup_adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')" || status=1
+    enabled="$(cleanup_adb shell settings get secure enabled_input_methods 2>/dev/null | tr -d '\r')" || status=1
+    package_path="$(cleanup_adb shell pm path "$IME" 2>/dev/null | tr -d '\r')" || status=1
     {
       printf 'cleanup_action=NOT_REQUIRED\noriginal_default_ime=%s\nrestored_default_ime=%s\n' \
         "$ORIGINAL_IME" "$restored"
@@ -56,6 +62,7 @@ restore_test_ime() {
       if [[ -z "$ORIGINAL_IME" || "$ORIGINAL_IME" == null || "$restored" != "$ORIGINAL_IME" || -n "$package_path" ]]; then
         status=1
       fi
+      [[ "$enabled" != *"$IME_COMPONENT"* ]] || status=1
       printf 'cleanup_finished_at_utc=%s\ncleanup_status=%s\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$([[ "$status" -eq 0 ]] && echo PASS || echo FAIL)"
     } > "$cleanup_file" 2>&1
@@ -72,15 +79,15 @@ restore_test_ime() {
     if [[ -z "$ORIGINAL_IME" || "$ORIGINAL_IME" == null ]]; then
       echo 'Cannot restore because the original default IME was not captured.'
       status=1
-    elif ! adb shell ime set "$ORIGINAL_IME"; then
+    elif ! cleanup_adb shell ime set "$ORIGINAL_IME"; then
       echo 'Failed to restore original default IME.'
       status=1
     fi
-    adb shell ime disable "$IME_COMPONENT" || status=1
-    adb uninstall "$IME" || status=1
-    restored="$(adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"
-    enabled="$(adb shell settings get secure enabled_input_methods 2>/dev/null | tr -d '\r')"
-    package_path="$(adb shell pm path "$IME" 2>/dev/null | tr -d '\r')"
+    cleanup_adb shell ime disable "$IME_COMPONENT" || status=1
+    cleanup_adb uninstall "$IME" || status=1
+    restored="$(cleanup_adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')" || status=1
+    enabled="$(cleanup_adb shell settings get secure enabled_input_methods 2>/dev/null | tr -d '\r')" || status=1
+    package_path="$(cleanup_adb shell pm path "$IME" 2>/dev/null | tr -d '\r')" || status=1
     printf 'restored_default_ime=%s\nenabled_ime_state=%s\ntest_ime_package_path=%s\n' \
       "$restored" "$enabled" "$package_path"
     [[ "$restored" == "$ORIGINAL_IME" ]] || status=1
@@ -107,20 +114,20 @@ cleanup() {
     wait "$LOGCAT_PID" >/dev/null 2>&1
     LOGCAT_PID=''
   fi
-  if command -v adb >/dev/null 2>&1 && timeout 20s adb get-state >/dev/null 2>&1; then
-    timeout 20s adb logcat -d -b all -v threadtime > "$OUT/logcat.txt" 2>&1
-    timeout 20s adb shell dumpsys activity activities > "$OUT/activity-after.txt" 2>&1
-    timeout 20s adb shell dumpsys input_method > "$OUT/input-method-before-cleanup.txt" 2>&1
-    timeout 20s adb shell dumpsys meminfo > "$OUT/meminfo-after.txt" 2>&1
-    timeout 20s adb shell dumpsys cpuinfo > "$OUT/cpuinfo-after.txt" 2>&1
-    timeout 20s adb shell cat /proc/pressure/cpu > "$OUT/guest-cpu-pressure-after.txt" 2>&1
-    timeout 20s adb shell cat /proc/pressure/memory > "$OUT/guest-memory-pressure-after.txt" 2>&1
-    timeout 20s adb shell dumpsys activity lastanr > "$OUT/lastanr.txt" 2>&1
-    timeout 20s adb shell settings get secure default_input_method > "$OUT/default-ime-before-cleanup.txt" 2>&1
-    timeout 20s adb shell ps -A > "$OUT/processes-after.txt" 2>&1
-    timeout 20s adb root > "$OUT/adb-root.txt" 2>&1
-    timeout 30s adb wait-for-device >/dev/null 2>&1
-    timeout 30s adb pull /data/anr "$OUT/anr" > "$OUT/anr-pull.txt" 2>&1
+  if command -v adb >/dev/null 2>&1 && cleanup_adb get-state >/dev/null 2>&1; then
+    cleanup_adb logcat -d -b all -v threadtime > "$OUT/logcat.txt" 2>&1
+    cleanup_adb shell dumpsys activity activities > "$OUT/activity-after.txt" 2>&1
+    cleanup_adb shell dumpsys input_method > "$OUT/input-method-before-cleanup.txt" 2>&1
+    cleanup_adb shell dumpsys meminfo > "$OUT/meminfo-after.txt" 2>&1
+    cleanup_adb shell dumpsys cpuinfo > "$OUT/cpuinfo-after.txt" 2>&1
+    cleanup_adb shell cat /proc/pressure/cpu > "$OUT/guest-cpu-pressure-after.txt" 2>&1
+    cleanup_adb shell cat /proc/pressure/memory > "$OUT/guest-memory-pressure-after.txt" 2>&1
+    cleanup_adb shell dumpsys activity lastanr > "$OUT/lastanr.txt" 2>&1
+    cleanup_adb shell settings get secure default_input_method > "$OUT/default-ime-before-cleanup.txt" 2>&1
+    cleanup_adb shell ps -A > "$OUT/processes-after.txt" 2>&1
+    cleanup_adb root > "$OUT/adb-root.txt" 2>&1
+    cleanup_adb wait-for-device >/dev/null 2>&1
+    cleanup_adb pull /data/anr "$OUT/anr" > "$OUT/anr-pull.txt" 2>&1
   fi
   if [[ -s "$OUT/instrumentation.txt" ]]; then
     if python3 "$ROOT/tools/instrumentation_to_junit.py" "$OUT/instrumentation.txt" \
@@ -146,9 +153,14 @@ cleanup() {
   [[ "$restore_status" -eq 0 ]] || final_status=1
   if [[ -n "$ORIGINAL_IME" ]]; then
     observed_default_ime='unavailable'
-    if command -v adb >/dev/null 2>&1 && timeout 20s adb get-state >/dev/null 2>&1; then
-      observed_default_ime="$(timeout 20s adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"
-      timeout 20s adb shell ime list -s > "$OUT/available-ime-services-after-cleanup.txt" 2>&1
+    if command -v adb >/dev/null 2>&1 && cleanup_adb get-state >/dev/null 2>&1; then
+      if observed_default_ime="$(cleanup_adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"; then
+        :
+      else
+        observed_default_ime='unavailable'
+        final_status=1
+      fi
+      cleanup_adb shell ime list -s > "$OUT/available-ime-services-after-cleanup.txt" 2>&1 || final_status=1
     fi
     printf 'expected_default_ime=%s\nobserved_default_ime=%s\n' \
       "$ORIGINAL_IME" "$observed_default_ime" > "$OUT/default-ime-restoration-verification.txt"

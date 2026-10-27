@@ -62,9 +62,8 @@ if not all(
     for marker in (
         "racingEngine.load(model.absolutePath)",
         "false",
-        'failure.message == "Engine closed before model load"',
+        'if (failure.message == "Engine closed before model load") true else throw failure',
         "throw cancelled",
-        "else throw failure",
     )
 ) or cancel_catch < 0 or expected_catch < 0 or cancel_catch > expected_catch:
     raise SystemExit("race test must contain only the expected close rejection, preserve cancellation, and propagate unexpected failures")

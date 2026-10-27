@@ -7,6 +7,7 @@ import app.serea.android.googleauth.FakeGoogleAuthorizationGateway
 import app.serea.android.googleauth.GoogleAuthorizationGateway
 import app.serea.android.googleauth.GoogleAuthorizationMode
 import app.serea.android.googleauth.GoogleFeature
+import app.serea.android.googleauth.GoogleGrantInvalidationObservers
 import app.serea.android.googleauth.GoogleGrantLeaseState
 import app.serea.android.googleauth.GoogleScope
 import app.serea.android.googleauth.GoogleServiceState
@@ -27,6 +28,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.EventListener
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -61,6 +64,11 @@ class CalendarProviderSessionsTest {
         }
     }
 
+    private class CancellationProbe : EventListener() {
+        val callCancelled = CountDownLatch(1)
+        override fun canceled(call: Call) { callCancelled.countDown() }
+    }
+
     @After fun close() = server.shutdown()
 
     private class PlayServicesFixture(
@@ -69,9 +77,11 @@ class CalendarProviderSessionsTest {
             GoogleScope.CALENDAR_LIST_READ_ONLY,
         ),
         permission: ScopePermission = ScopePermission.GRANTED,
+        private val notifyInvalidationObservers: Boolean = true,
     ) : GoogleAuthorizationGateway {
         override val mode = GoogleAuthorizationMode.PLAY_SERVICES
         override var authorizationSessionId: String? = "calendar-session-fixture"
+        private val invalidationObservers = GoogleGrantInvalidationObservers()
         var tokenRequests = 0
         var rotateAfterNextToken = false
         private var accountChanged = false
@@ -92,7 +102,10 @@ class CalendarProviderSessionsTest {
                 invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
                 calendarVersionAtRevoke = grantState.version(GoogleFeature.CALENDAR)
             }
+            if (notifyInvalidationObservers) invalidationObservers.notifyInvalidationStarted()
         }
+        override fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable =
+            invalidationObservers.observe(listener)
         fun disableCalendar() {
             synchronized(stateLock) { grantState.disableInApp(GoogleFeature.CALENDAR) }
         }
@@ -237,7 +250,7 @@ class CalendarProviderSessionsTest {
 
     @Test fun delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome() = runBlocking {
         suspend fun assertInvalidatedRead(outcome: RevokeOutcome) {
-            val gateway = PlayServicesFixture()
+            val gateway = PlayServicesFixture(notifyInvalidationObservers = false)
             val previousRequestCount = server.requestCount
             val response = GatedResponseDispatcher("""{"id":"fixture@example.test","timeZone":"UTC","accessRole":"reader"}""")
             server.dispatcher = response
@@ -339,6 +352,49 @@ class CalendarProviderSessionsTest {
         }
 
         RevokeOutcome.entries.forEach { assertInvalidatedRead(it) }
+    }
+
+    @Test fun grantRevocationCancelsPendingCalendarHttpCallBeforeResponseBodyDelivery() = runBlocking {
+        val response = GatedResponseDispatcher(
+            """{"id":"fixture@example.test","timeZone":"UTC","accessRole":"reader"}""",
+        )
+        server.dispatcher = response
+        val cancellationProbe = CancellationProbe()
+        val gateway = PlayServicesFixture()
+        val session = CalendarProviderSessions(googleHttpEnabledByOwner = true).openGoogleReadOnly(
+            gateway,
+            OkHttpClient.Builder().eventListenerFactory { cancellationProbe }.build(),
+            server.url("/calendar/v3/"),
+        )
+        val read = async { runCatching { session.getCalendar(CalendarId("fixture@example.test")) } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { response.requestArrived.await(5, TimeUnit.SECONDS) })
+            assertEquals("GET", requireNotNull(response.recordedRequest).method)
+            assertFalse("the response body has not been released", read.isCompleted)
+
+            revoke = async {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            remoteRevokeStarted.await()
+            assertTrue(withContext(Dispatchers.IO) { cancellationProbe.callCancelled.await(5, TimeUnit.SECONDS) })
+            val outcome = read.await()
+            assertFalse("revoked data must not escape", outcome.isSuccess)
+            assertTrue("the provider read is cancelled", outcome.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+            assertEquals("the server is still holding the response before body delivery", 1L, response.releaseResponse.count)
+            assertFalse("revocation remains pending while the request has already been cancelled", revoke.isCompleted)
+        } finally {
+            remoteRevokeGate.complete(Unit)
+            response.releaseResponse.countDown()
+            revoke?.join()
+        }
+        assertEquals(1, server.requestCount)
     }
 
     @Test fun delayedCalendarResponseIsDeniedAfterAppLocalDisable() = runBlocking {

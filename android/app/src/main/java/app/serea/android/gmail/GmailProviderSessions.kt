@@ -51,7 +51,11 @@ class GmailProviderSessions(
         } else {
             GmailHttpReadPort(authorization, authorization, client, baseUrl)
         }
-        return replace(GmailProviderKind.GOOGLE_READ_ONLY, port, authorization)
+        val session = replace(GmailProviderKind.GOOGLE_READ_ONLY, port, authorization)
+        session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
+            session.cancelInFlightReadsForGrantInvalidation()
+        })
+        return session
     }
 
     private fun replace(
@@ -87,6 +91,7 @@ class GmailProviderSession internal constructor(
     private val lock = Any()
     private var closed = false
     private val activeJobs = linkedSetOf<Job>()
+    private var grantInvalidationObserver: AutoCloseable? = null
 
     override suspend fun status(): GmailAuthorizationStatus = withActiveSession { authorizationDelegate.status() }
     override suspend fun listInbox(pageToken: String?, pageSize: Int): GmailMessagePage =
@@ -103,12 +108,32 @@ class GmailProviderSession internal constructor(
 
     internal fun invalidateFromController() = invalidate()
 
-    private fun invalidate() {
+    internal fun attachGrantInvalidationObserver(observer: AutoCloseable) {
+        val closeImmediately = synchronized(lock) {
+            if (closed) true else {
+                grantInvalidationObserver = observer
+                false
+            }
+        }
+        if (closeImmediately) observer.close()
+    }
+
+    internal fun cancelInFlightReadsForGrantInvalidation() {
         val jobs = synchronized(lock) {
             if (closed) return
-            closed = true
-            activeJobs.toList().also { activeJobs.clear() }
+            activeJobs.toList()
         }
+        jobs.forEach { it.cancel(CancellationException("Google authorization was revoked.")) }
+    }
+
+    private fun invalidate() {
+        val (jobs, observer) = synchronized(lock) {
+            if (closed) return
+            closed = true
+            val active = activeJobs.toList().also { activeJobs.clear() }
+            active to grantInvalidationObserver.also { grantInvalidationObserver = null }
+        }
+        observer?.close()
         jobs.forEach { it.cancel(CancellationException("Gmail provider session ended.")) }
     }
 

@@ -38,4 +38,14 @@ for caller in ("prepare_build", "run_model_test"):
     if "gradlew" in body:
         raise SystemExit(f"{caller} must not invoke gradlew directly")
 
-print("gradle_project_directory_test=PASS callers=prepare_build,run_model_test")
+test_source = SCRIPT.parents[1] / "app/src/androidTest/java/app/serea/g3poc/OnDeviceInferenceTest.kt"
+android_test = test_source.read_text(encoding="utf-8")
+if "InstrumentationRegistry.getInstrumentation().targetContext" not in android_test:
+    raise SystemExit("AndroidTest must use InstrumentationRegistry instrumentation targetContext")
+if "InstrumentationRegistry.getTargetContext()" in android_test:
+    raise SystemExit("obsolete getTargetContext API call must not return")
+for variable in ("pssAfterLoadKb", "pssAfterGenerationKb", "pssAfterCloseKb"):
+    if not re.search(rf"var {variable} = 0L\b", android_test):
+        raise SystemExit(f"{variable} must use Long for Debug.getPss()")
+
+print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test")

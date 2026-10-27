@@ -1,0 +1,117 @@
+name: G3 On-device Inference PoC (Non-Required)
+
+on:
+  # A push to the owned G3 branch only runs when explicitly marked. Merely
+  # adding/updating this diagnostic workflow cannot start an Emulator or fetch weights.
+  push:
+    branches:
+      - codex/serea-g3-real-ai-feasibility
+    paths:
+      - '.github/workflows/g3-ondevice-poc.yml'
+      - 'tools/g3-ondevice-poc/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g3-ondevice-poc-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ondevice-poc:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[g3-poc-run]')
+    name: Pinned llama.cpp model lifecycle on disposable API 35 Emulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      G3_EVIDENCE_DIR: ${{ github.workspace }}/evidence/g3-ondevice-poc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install pinned Android build and Emulator packages
+        run: >-
+          sdkmanager
+          'platforms;android-35'
+          'build-tools;35.0.0'
+          'ndk;28.2.13676358'
+          'cmake;3.31.6'
+          'emulator'
+          'system-images;android-35;google_apis;x86_64'
+
+      - name: Capture runner and SDK metadata
+        run: |
+          set -euo pipefail
+          mkdir -p "$G3_EVIDENCE_DIR"
+          bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh host-metadata
+
+      - name: Require accessible KVM and verified Emulator acceleration
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -e /dev/kvm
+          stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm | tee "$G3_EVIDENCE_DIR/kvm-after-permissions.txt"
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tee "$G3_EVIDENCE_DIR/emulator-accel-check.txt"
+
+      - name: Verify transfer bound with a local synthetic oversize payload
+        run: |
+          set -euo pipefail
+          bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh test-download-bound \
+            2>&1 | tee "$G3_EVIDENCE_DIR/bounded-download-test.txt"
+
+      - name: Verify Gradle root and AndroidTest source contracts
+        run: python3 tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py
+
+      - name: Exercise optional CPU pressure and early-exit cleanup with fake adb
+        run: python3 tools/g3-ondevice-poc/scripts/test-runner-failure-paths.py
+
+      - name: Build app and instrumentation APKs before any model download
+        run: |
+          set -euo pipefail
+          bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh prepare
+
+      - name: Run exactly one pinned model lifecycle test on a disposable Emulator
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, repository-pinned)
+        timeout-minutes: 90
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          force-avd-creation: true
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -wipe-data
+          script: bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh execute
+
+      - name: Capture post-run host resource metadata
+        if: always()
+        run: |
+          mkdir -p "$G3_EVIDENCE_DIR"
+          bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh host-after || true
+
+      - name: Upload sanitized PoC evidence (never model weights)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-g3-ondevice-poc-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: evidence/g3-ondevice-poc/

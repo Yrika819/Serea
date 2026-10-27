@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.31.6)
+project(serea_g3_poc LANGUAGES C CXX)
+
+if(NOT DEFINED LLAMA_SRC OR NOT EXISTS "${LLAMA_SRC}/CMakeLists.txt")
+    message(FATAL_ERROR "LLAMA_SRC must point to the pinned llama.cpp checkout")
+endif()
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
+set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
+set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
+set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+
+add_subdirectory("${LLAMA_SRC}" "${CMAKE_BINARY_DIR}/llama")
+
+add_library(serea-g3-llama SHARED llama_jni.cpp)
+target_compile_features(serea-g3-llama PRIVATE cxx_std_17)
+target_include_directories(serea-g3-llama PRIVATE "${LLAMA_SRC}/include")
+target_link_libraries(serea-g3-llama PRIVATE llama log android)

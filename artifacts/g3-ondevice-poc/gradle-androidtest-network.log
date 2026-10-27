@@ -1,0 +1,94 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.6/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics
+> Task :app:mergeDebugJavaResource
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:mergeProjectDexDebug
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:configureCMakeRelease[arm64-v8a]
+> Task :app:buildCMakeRelease[arm64-v8a]
+> Task :app:configureCMakeRelease[x86_64]
+> Task :app:buildCMakeRelease[x86_64]
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
+> Task :app:preDebugAndroidTestBuild SKIPPED
+> Task :app:checkDebugAndroidTestAarMetadata FAILED
+> Task :app:compileDebugUnitTestKotlin
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:checkDebugAndroidTestAarMetadata'.
+> Could not resolve all files for configuration ':app:debugAndroidTestRuntimeClasspath'.
+   > Could not resolve androidx.annotation:annotation:1.7.0-beta01.
+     Required by:
+         project :app > androidx.test:runner:1.6.1
+         project :app > androidx.test.ext:junit:1.2.1
+         project :app > androidx.test:runner:1.6.1 > androidx.test.services:storage:1.5.0
+         project :app > androidx.test:runner:1.6.1 > androidx.test:monitor:1.7.1
+         project :app > androidx.test.ext:junit:1.2.1 > androidx.test:core:1.6.1
+      > No cached version of androidx.annotation:annotation:1.7.0-beta01 available for offline mode.
+      > No cached version of androidx.annotation:annotation:1.7.0-beta01 available for offline mode.
+   > Could not resolve androidx.tracing:tracing:1.1.0.
+     Required by:
+         project :app > androidx.test:runner:1.6.1
+         project :app > androidx.test:runner:1.6.1 > androidx.test:monitor:1.7.1
+         project :app > androidx.test.ext:junit:1.2.1 > androidx.test:core:1.6.1
+      > No cached version of androidx.tracing:tracing:1.1.0 available for offline mode.
+      > No cached version of androidx.tracing:tracing:1.1.0 available for offline mode.
+   > Could not resolve androidx.lifecycle:lifecycle-common:2.3.1.
+     Required by:
+         project :app > androidx.test.ext:junit:1.2.1 > androidx.test:core:1.6.1
+      > No cached version of androidx.lifecycle:lifecycle-common:2.3.1 available for offline mode.
+      > No cached version of androidx.lifecycle:lifecycle-common:2.3.1 available for offline mode.
+> There are 2 more failures with identical causes.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 14s
+44 actionable tasks: 14 executed, 30 up-to-date

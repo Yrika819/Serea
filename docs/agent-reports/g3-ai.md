@@ -1,5 +1,31 @@
 # G3 — Real AI / On-device Inference Feasibility
 
+## Orchestrator recovery checkpoint — API 35 first runtime result (2026-10-27)
+
+This is a separate recovery branch from the G3-owned PR #126 branch. The G3 implementation agent's turn ended at its execution usage limit; to preserve the no-overwrite boundary, Orchestrator is preparing a stacked recovery PR rather than editing that branch. No Serea product Chat or composition code is changed.
+
+**AGENT_ID:** G3 diagnostic recovery — Orchestrator-owned branch<br>
+**ACTIVE_PHASE:** repair deterministic API 35 instrumentation scheduling and bounded model cleanup<br>
+**OVERALL_STATUS:** PARTIAL — run `40515091197` booted an accelerated API 35 Emulator, built and installed both APKs with matching hashes, and fetched the pinned model. Its exact one-test JUnit executed 1 test and failed at `OnDeviceInferenceTest.kt:97` because the native generation gate was not observed. No generation result is PASS. The source review identified that the test creates `async {}` children on the `runBlocking` event loop and then blocks that same thread in a CountDownLatch wait; those children cannot run until the wait returns. The recovery changes dispatch blocking-test children to `Dispatchers.IO`, preserve the assertion thresholds, and add phase timestamps. Runner cleanup now applies a 10-second bound to each cleanup ADB call, records each result, continues cleanup, checks UTP package removal, and has fake-ADB hang/cleanup tests.
+**BASE_SHA:** `8ca55a32096bc4449717c2fd3332b0602381d7d5` (G3 PR #126 current head at recovery branch creation)<br>
+**CURRENT_HEAD:** pending; working changes are based on `8ca55a32096bc4449717c2fd3332b0602381d7d5`<br>
+**TREE_SHA:** pending<br>
+**WORKTREE:** `/workspace/Serea-g3-diagnostic-recovery`<br>
+**BRANCH:** `codex/serea-g3-diagnostic-recovery`<br>
+**DRAFT_PR:** pending review/commit; proposed base `codex/serea-g3-real-ai-feasibility`<br>
+**FAILED_RUN:** `40515091197`, source `8ca55a32096bc4449717c2fd3332b0602381d7d5`; artifact `12740455266`; artifact ZIP SHA-256 `d0a22bc992cd609d50ea1e65a2d5ef6b226c813528fd24a8aca2197a6c88b33e`.<br>
+**FAILURE_EVIDENCE:** API 35 x86_64 `google/sdk_gphone64_x86_64/emu64xa:15/AE3A.240806.043/12960925`, ranchu, KVM acceleration available, boot complete. Build/AndroidTest compile PASS. Built and installed target/test SHA-256 matched (`13741ec99951497b1ed4c92c57716ddb241a0c620338277fb8f12d060eb1c52a`, `6dd71875482e73ab2aa4f0427c21d445bc0ee22ada1a8426a0434ccca0cff8d0`). Model revision `1076b85d135017971845b19b8d07df1479155988`, size 101,016,128, SHA-256 `e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5`, staged hash matched. JUnit exactly 1 test / 1 failure / 0 errors / 0 skips; assertion `awaitStartGateForTest(15, SECONDS)` false. Cleanup: emulator temp removed; target app was already uninstalled by the test runner, `run-as` then reported unknown package and uninstall returned `DELETE_FAILED_INTERNAL_ERROR`; private model deletion was not proven by that artifact. The AVD was disposable and terminated after the run.<br>
+**TESTS:** recovery host tests now PASS: `python3 -B tools/g3-ondevice-poc/scripts/test-runner-failure-paths.py` exercises optional PSI denial, bounded hanging `adb logcat`, later cleanup continuation, primary exit preservation, host/app-private/temp model cleanup, UTP-uninstalled-package handling and cleanup-state reset. `test-gradle-project-dir.py`, `bash -n`, and `git diff --check` PASS. AndroidTest build/runtime on the recovery branch remains NOT_RUN pending hosted verification.<br>
+**NEXT_ACTION:** commit/push only the recovery branch, create a Draft PR stacked on PR #126, review source and checks, and run one more marker-gated disposable API 35 test if the host regression checks and hosted APK build pass. Do not integrate this diagnostic harness into product Chat. No cloud AI, real account, API key, Pixel performance or production-route result is claimed.
+
+### Independent recovery review update
+
+- An independent read-only reviewer found no blocking Kotlin scheduling or cleanup correctness/security issue. It confirmed that `async(Dispatchers.IO)` allows requests to progress while the instrumentation test waits on its blocking native gate, and that per-command ADB timeouts still allow later cleanup and host-side model removal.
+- The reviewer noted that the UTP-uninstall fake path had only asserted the cleanup record, not simulated removal of the target package's private model. The host regression now stages a synthetic app-private model, simulates PackageManager removing it together with the target package, and asserts the file is absent after cleanup. This closes that test-coverage note without claiming emulator verification.
+- Rechecked after this change: `test-runner-failure-paths.py` PASS (including intentional hanging `adb logcat`, UTP uninstall with private-file deletion, subsequent cleanup, and original failure status preservation); `test-gradle-project-dir.py` PASS; `bash -n` PASS; workflow YAML parse PASS; `git diff --check` PASS. AndroidTest compile and runtime remain pending hosted verification.
+
+---
+
 ## Continuation update — isolated Android JNI PoC (2026-10-27)
 
 The initial readiness report below predates toolchain provisioning and the isolated PoC. Its no-toolchain/Qwen-candidate statements are superseded by this section; provider-terms findings remain applicable. No product source or composition changed.

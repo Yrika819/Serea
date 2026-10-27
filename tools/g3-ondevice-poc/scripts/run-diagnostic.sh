@@ -22,6 +22,7 @@ G3_MODEL_HOST_PATH=''
 G3_MODEL_PRIVATE_PATH_MAY_EXIST=0
 G3_APP_INSTALLED=0
 G3_RESULTS_DIR=''
+CLEANUP_ADB_TIMEOUT_SECONDS=10
 
 mkdir -p "$EVIDENCE_DIR"
 
@@ -32,16 +33,29 @@ run_poc_gradle() (
 
 capture_optional_emulator_cpu_pressure() {
     local output_path="$1"
+    local cleanup_mode="${2:-false}"
     local raw_output
     local raw_error
     raw_output="$(mktemp "${RUNNER_TEMP}/g3-cpu-pressure-output.XXXXXX")"
     raw_error="$(mktemp "${RUNNER_TEMP}/g3-cpu-pressure-error.XXXXXX")"
     local command_status=0
-    if adb shell cat /proc/pressure/cpu > "$raw_output" 2> "$raw_error"; then
+    local cleanup_log="$EVIDENCE_DIR/cleanup-adb/cpu-pressure.log"
+    if [[ "$cleanup_mode" == 'true' ]]; then
+        if cleanup_adb cpu-pressure shell cat /proc/pressure/cpu; then
+            cp "$cleanup_log" "$raw_output"
+        else
+            command_status=$?
+            cp "$cleanup_log" "$raw_output"
+        fi
+    elif adb shell cat /proc/pressure/cpu > "$raw_output" 2> "$raw_error"; then
+        command_status=0
+    else
+        command_status=$?
+    fi
+    if [[ "$command_status" -eq 0 ]]; then
         cp "$raw_output" "$output_path"
         printf 'available=true\n' > "${output_path}.status"
     else
-        command_status=$?
         {
             echo 'available=false'
             echo "exit_status=$command_status"
@@ -54,47 +68,116 @@ capture_optional_emulator_cpu_pressure() {
     return 0
 }
 
+cleanup_adb() {
+    local label="$1"
+    shift
+    local log_directory="$EVIDENCE_DIR/cleanup-adb"
+    local output_path="$log_directory/${label}.log"
+    local command_text
+    local command_status=0
+    local outcome='failed'
+    mkdir -p "$log_directory"
+    printf -v command_text '%q ' adb "$@"
+    if timeout --foreground --signal=TERM --kill-after=2s \
+        "${CLEANUP_ADB_TIMEOUT_SECONDS}s" adb "$@" > "$output_path" 2>&1; then
+        printf 'cleanup_adb.%s=success command=%s\n' "$label" "$command_text" \
+            >> "$EVIDENCE_DIR/model-cleanup.txt"
+        return 0
+    else
+        command_status=$?
+        if [[ "$command_status" -eq 124 || "$command_status" -eq 137 || "$command_status" -eq 143 ]]; then
+            outcome='timeout'
+        fi
+        printf 'cleanup_adb.%s=%s exit_status=%s command=%s\n' \
+            "$label" "$outcome" "$command_status" "$command_text" \
+            >> "$EVIDENCE_DIR/model-cleanup.txt"
+        return 1
+    fi
+}
+
 cleanup_emulator() {
     local primary_status="$1"
     local final_status="$primary_status"
     local cleanup_status=0
     trap - EXIT INT TERM
     set +e
-    if adb get-state >/dev/null 2>&1; then
+    mkdir -p "$EVIDENCE_DIR/cleanup-adb"
+    echo 'cleanup_started=true' > "$EVIDENCE_DIR/model-cleanup.txt"
+    if cleanup_adb get-state get-state; then
         if [[ -n "$G3_RESULTS_DIR" && -d "$G3_RESULTS_DIR" ]]; then
             mkdir -p "$EVIDENCE_DIR/androidTest-results"
             cp -a "$G3_RESULTS_DIR"/. "$EVIDENCE_DIR/androidTest-results/" || cleanup_status=1
         fi
-        adb logcat -d -v threadtime > "$EVIDENCE_DIR/logcat.txt" 2>&1 || cleanup_status=1
-        capture_optional_emulator_cpu_pressure "$EVIDENCE_DIR/emulator-cpu-pressure-after.txt"
-        adb shell cat /proc/meminfo > "$EVIDENCE_DIR/emulator-meminfo-after.txt" 2>&1 || cleanup_status=1
-        adb shell dumpsys meminfo "$APP_ID" > "$EVIDENCE_DIR/app-meminfo-after.txt" 2>&1 || cleanup_status=1
-        if [[ "$G3_MODEL_PRIVATE_PATH_MAY_EXIST" -eq 1 ]]; then
-            adb shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" || cleanup_status=1
+        cleanup_adb logcat logcat -d -v threadtime || cleanup_status=1
+        cp "$EVIDENCE_DIR/cleanup-adb/logcat.log" "$EVIDENCE_DIR/logcat.txt" || cleanup_status=1
+        capture_optional_emulator_cpu_pressure "$EVIDENCE_DIR/emulator-cpu-pressure-after.txt" true
+        if cleanup_adb emulator-meminfo shell cat /proc/meminfo; then
+            cp "$EVIDENCE_DIR/cleanup-adb/emulator-meminfo.log" "$EVIDENCE_DIR/emulator-meminfo-after.txt" || cleanup_status=1
+        else
+            cp "$EVIDENCE_DIR/cleanup-adb/emulator-meminfo.log" "$EVIDENCE_DIR/emulator-meminfo-after.txt" || true
+            cleanup_status=1
         fi
-        adb shell rm -f "$DEVICE_MODEL_TEMP" || cleanup_status=1
+        if cleanup_adb app-meminfo shell dumpsys meminfo "$APP_ID"; then
+            cp "$EVIDENCE_DIR/cleanup-adb/app-meminfo.log" "$EVIDENCE_DIR/app-meminfo-after.txt" || cleanup_status=1
+        else
+            cp "$EVIDENCE_DIR/cleanup-adb/app-meminfo.log" "$EVIDENCE_DIR/app-meminfo-after.txt" || true
+            cleanup_status=1
+        fi
         if [[ "$G3_MODEL_PRIVATE_PATH_MAY_EXIST" -eq 1 ]]; then
-            if adb shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE"; then
-                echo 'app_private_model_removed=true' > "$EVIDENCE_DIR/model-cleanup.txt"
+            if cleanup_adb target-package-presence shell pm list packages "$APP_ID"; then
+                if grep -q "^package:${APP_ID}$" "$EVIDENCE_DIR/cleanup-adb/target-package-presence.log"; then
+                    if cleanup_adb app-private-remove shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE"; then
+                        if cleanup_adb app-private-verify shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE"; then
+                            echo 'app_private_model_removed=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                        else
+                            echo 'app_private_model_removed=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                            cleanup_status=1
+                        fi
+                    else
+                        echo 'app_private_model_removed=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                        cleanup_status=1
+                    fi
+                else
+                    # The test runner has already uninstalled the disposable target APK.
+                    # PackageManager removal deletes its private files directory.
+                    echo 'target_package_absent_after_test_runner=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                    echo 'app_private_model_removed=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                    echo 'app_private_model_removal_reason=target_package_uninstalled_by_test_runner' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                fi
             else
-                echo 'app_private_model_removed=false' > "$EVIDENCE_DIR/model-cleanup.txt"
+                echo 'app_private_model_removed=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
                 cleanup_status=1
             fi
-        else
-            echo 'app_private_model_staged=false' > "$EVIDENCE_DIR/model-cleanup.txt"
         fi
-        if adb shell test '!' -e "$DEVICE_MODEL_TEMP"; then
-            echo 'emulator_temp_model_removed=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
+        if cleanup_adb emulator-temp-remove shell rm -f "$DEVICE_MODEL_TEMP"; then
+            if cleanup_adb emulator-temp-verify shell test '!' -e "$DEVICE_MODEL_TEMP"; then
+                echo 'emulator_temp_model_removed=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
+            else
+                echo 'emulator_temp_model_removed=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                cleanup_status=1
+            fi
         else
             echo 'emulator_temp_model_removed=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
             cleanup_status=1
         fi
         if [[ "$G3_APP_INSTALLED" -eq 1 ]]; then
-            adb uninstall "$TEST_ID" >> "$EVIDENCE_DIR/model-cleanup.txt" 2>&1 || cleanup_status=1
-            adb uninstall "$APP_ID" >> "$EVIDENCE_DIR/model-cleanup.txt" 2>&1 || cleanup_status=1
+            for package in "$TEST_ID" "$APP_ID"; do
+                local package_label="package-path-${package//./-}"
+                local uninstall_label="uninstall-${package//./-}"
+                if cleanup_adb "$package_label" shell pm list packages "$package"; then
+                    if grep -q '^package:' "$EVIDENCE_DIR/cleanup-adb/${package_label}.log"; then
+                        cleanup_adb "$uninstall_label" uninstall "$package" || cleanup_status=1
+                    else
+                        echo "${package_label}_already_absent=true" >> "$EVIDENCE_DIR/model-cleanup.txt"
+                    fi
+                else
+                    cleanup_status=1
+                fi
+            done
         fi
     else
-        echo 'emulator_unreachable_during_cleanup=true' > "$EVIDENCE_DIR/model-cleanup.txt"
+        echo 'emulator_unreachable_during_cleanup=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
+        cleanup_status=1
         if [[ "$primary_status" -eq 0 ]]; then final_status=1; fi
     fi
     if [[ -n "$G3_MODEL_HOST_PATH" && -f "$G3_MODEL_HOST_PATH" ]]; then

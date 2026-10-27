@@ -70,9 +70,11 @@ class OnDeviceInferenceTest {
         var pssAfterGenerationKb = 0L
         var pssAfterCloseKb = 0L
         try {
+            phase("model_load_started")
             port.load()
             loadElapsedMs = SystemClock.elapsedRealtime() - loadStarted
             pssAfterLoadKb = Debug.getPss()
+            phase("model_load_completed elapsed_ms=$loadElapsedMs")
 
             val secondaryEngine = NativeLlamaEngine()
             val secondaryPort = GgufModelChatPort(model.absolutePath, expectedHash, secondaryEngine)
@@ -88,16 +90,18 @@ class OnDeviceInferenceTest {
                 // Both engine instances start request numbering at 1. The JNI owner ID must
                 // prevent the second instance's cancellation/free calls from touching the first.
                 nativeEngine.armStartGateForTest()
-                val firstRun = async {
+                // The test thread waits on a blocking latch below. Dispatch this coroutine
+                // away from runBlocking's event loop so it can submit the native request.
+                val firstRun = async(Dispatchers.IO) {
                     port.send(ModelChatRequest("synthetic", "Lease isolation check.", maxOutputTokens = 8))
                 }
+                phase("foreign_engine_generation_submitted")
                 var gateReached = false
                 var foreignFree: kotlinx.coroutines.Deferred<Boolean>? = null
                 try {
-                    assertTrue(
-                        "the first engine must enter its native generation gate",
-                        nativeEngine.awaitStartGateForTest(15, TimeUnit.SECONDS),
-                    )
+                    gateReached = nativeEngine.awaitStartGateForTest(15, TimeUnit.SECONDS)
+                    phase("foreign_engine_generation_gate_reached=$gateReached starts=${nativeEngine.nativeGenerationStartsForTest()}")
+                    assertTrue("the first engine must enter its native generation gate", gateReached)
                     gateReached = true
                     val activeRequestId = nativeEngine.activeGenerationIdForTest()
                     assertEquals("first request ID provides a deterministic namespace collision", 1L, activeRequestId)
@@ -148,7 +152,7 @@ class OnDeviceInferenceTest {
                     "test executor blocker must start before queuing the cancelled request",
                     nativeEngine.awaitExecutorBlockedForTest(15, TimeUnit.SECONDS),
                 )
-                val queuedRun = async {
+                val queuedRun = async(Dispatchers.IO) {
                     port.send(ModelChatRequest("synthetic", "This request is cancelled before JNI entry.", maxOutputTokens = 8))
                 }
                 cancelQueuedRun = { queuedRun.cancel() }
@@ -178,15 +182,15 @@ class OnDeviceInferenceTest {
             )
 
             nativeEngine.armStartGateForTest()
-            val longRun = async {
+            val longRun = async(Dispatchers.IO) {
                 port.send(ModelChatRequest("synthetic", "Continue this sequence: 1, 2, 3,", maxOutputTokens = 256))
             }
+            phase("cancellation_generation_submitted")
             var cancellationStarted = 0L
             try {
-                assertTrue(
-                    "native generation must reach the deterministic cancellation gate",
-                    nativeEngine.awaitStartGateForTest(15, TimeUnit.SECONDS),
-                )
+                val cancellationGateReached = nativeEngine.awaitStartGateForTest(15, TimeUnit.SECONDS)
+                phase("cancellation_generation_gate_reached=$cancellationGateReached starts=${nativeEngine.nativeGenerationStartsForTest()}")
+                assertTrue("native generation must reach the deterministic cancellation gate", cancellationGateReached)
                 cancellationStarted = SystemClock.elapsedRealtime()
             } finally {
                 // Always cancel and release the native test barrier, even when the start assertion fails.
@@ -257,7 +261,7 @@ class OnDeviceInferenceTest {
                 "race test executor blocker must be active before queuing model load",
                 racingEngine.awaitExecutorBlockedForTest(15, TimeUnit.SECONDS),
             )
-            racingLoad = async { racingEngine.load(model.absolutePath) }
+            racingLoad = async(Dispatchers.IO) { racingEngine.load(model.absolutePath) }
             assertTrue("load request must be queued behind the executor blocker", racingEngine.awaitLoadQueuedForTest(15, TimeUnit.SECONDS))
             racingClose = async(Dispatchers.IO) { racingEngine.close() }
             assertTrue("close must mark the engine closed before queue release", racingEngine.awaitCloseStartedForTest(15, TimeUnit.SECONDS))
@@ -306,5 +310,9 @@ class OnDeviceInferenceTest {
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun phase(detail: String) {
+        Log.i("G3_TEST_PHASE", "elapsed_realtime_ms=${SystemClock.elapsedRealtime()} $detail")
     }
 }

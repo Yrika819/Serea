@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 import subprocess
 import tempfile
+import time
 
 
 SCRIPT = Path(__file__).with_name("run-diagnostic.sh")
@@ -12,11 +13,15 @@ FAKE_ADB = r'''#!/usr/bin/env python3
 from pathlib import Path
 import os
 import sys
+import time
 
 args = sys.argv[1:]
 state = Path(os.environ["G3_TEST_ADB_STATE_DIR"])
 with (state / "adb-calls.txt").open("a", encoding="utf-8") as log:
     log.write(" ".join(args) + "\n")
+
+if os.environ.get("G3_TEST_ADB_HANG_MATCH") == "logcat" and args[:1] == ["logcat"]:
+    time.sleep(60)
 
 def stop(code=0, output=None, error=None):
     if output:
@@ -36,6 +41,11 @@ if args[:2] == ["shell", "cat"] and len(args) > 2:
         stop(output="MemTotal: 123 kB")
 if args[:2] == ["shell", "dumpsys"]:
     stop(output="synthetic meminfo")
+if args[:4] == ["shell", "pm", "list", "packages"] and len(args) == 5:
+    package = args[4]
+    if (state / f"package-{package}").exists():
+        stop(output=f"package:{package}")
+    stop()
 if args[:3] == ["shell", "run-as", "app.serea.g3poc"]:
     tail = args[3:]
     if tail == ["rm", "-f", "files/g3-smollm.gguf"]:
@@ -49,13 +59,23 @@ if args[:3] == ["shell", "rm", "-f"] and len(args) == 4:
     stop()
 if args[:2] == ["shell", "test"] and args[2:] == ["!", "-e", "/data/local/tmp/g3-smollm.gguf"]:
     stop(0 if not (state / "emulator-temp-model-present").exists() else 1)
-if args and args[0] == "uninstall":
+if args and args[0] == "uninstall" and len(args) == 2:
+    (state / f"package-{args[1]}").unlink(missing_ok=True)
+    if args[1] == "app.serea.g3poc":
+        (state / "app-private-model-present").unlink(missing_ok=True)
     stop()
 stop()
 '''
 
 
-def run(command: str, evidence: Path, runner_temp: Path, adb_bin: Path, state: Path) -> subprocess.CompletedProcess[str]:
+def run(
+    command: str,
+    evidence: Path,
+    runner_temp: Path,
+    adb_bin: Path,
+    state: Path,
+    hang_match: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment.update(
         {
@@ -65,6 +85,8 @@ def run(command: str, evidence: Path, runner_temp: Path, adb_bin: Path, state: P
             "PATH": f"{adb_bin}{os.pathsep}{environment['PATH']}",
         }
     )
+    if hang_match is not None:
+        environment["G3_TEST_ADB_HANG_MATCH"] = hang_match
     return subprocess.run(
         ["bash", str(SCRIPT), command],
         env=environment,
@@ -101,6 +123,8 @@ with tempfile.TemporaryDirectory(prefix="g3-runner-failures-") as directory:
 
     (state / "emulator-temp-model-present").write_text("synthetic", encoding="utf-8")
     (state / "app-private-model-present").write_text("synthetic", encoding="utf-8")
+    (state / "package-app.serea.g3poc").write_text("synthetic", encoding="utf-8")
+    (state / "package-app.serea.g3poc.test").write_text("synthetic", encoding="utf-8")
     cleanup_evidence = root / "cleanup-evidence"
     cleanup_evidence.mkdir()
     cleanup = run("test-cleanup-after-early-failure", cleanup_evidence, runner_temp, adb_bin, state)
@@ -120,4 +144,56 @@ with tempfile.TemporaryDirectory(prefix="g3-runner-failures-") as directory:
     if (state / "app-private-model-present").exists() or (state / "emulator-temp-model-present").exists():
         raise SystemExit("cleanup left a synthetic model copy behind")
 
-print("runner_failure_paths=PASS optional_psi_denied=recorded primary_exit=preserved models=removed state=reset")
+    (state / "emulator-temp-model-present").write_text("synthetic", encoding="utf-8")
+    (state / "app-private-model-present").write_text("synthetic", encoding="utf-8")
+    (state / "package-app.serea.g3poc").write_text("synthetic", encoding="utf-8")
+    (state / "package-app.serea.g3poc.test").write_text("synthetic", encoding="utf-8")
+    (runner_temp / "g3-host-model-fixture.bin").write_text("synthetic", encoding="utf-8")
+    hang_evidence = root / "hang-evidence"
+    hang_evidence.mkdir()
+    hung_cleanup = run("test-cleanup-after-early-failure", hang_evidence, runner_temp, adb_bin, state, "logcat")
+    if hung_cleanup.returncode != 23:
+        raise SystemExit(f"a hung ADB diagnostic must preserve the primary status 23, got {hung_cleanup.returncode}")
+    hang_record = (hang_evidence / "model-cleanup.txt").read_text(encoding="utf-8")
+    if "cleanup_adb.logcat=timeout" not in hang_record:
+        raise SystemExit("a hung cleanup ADB call must be recorded as a timeout")
+    if "cleanup_adb.emulator-meminfo=success" not in hang_record:
+        raise SystemExit("cleanup must continue to later ADB calls after a timeout")
+    if "primary_exit_status=23" not in hang_record or "final_exit_status=23" not in hang_record:
+        raise SystemExit("a cleanup timeout must preserve the primary failure status")
+    if "app_private_model_removed=true" not in hang_record or "emulator_temp_model_removed=true" not in hang_record:
+        raise SystemExit("cleanup must remove and verify both model copies after a hung ADB diagnostic")
+    if (runner_temp / "g3-host-model-fixture.bin").exists():
+        raise SystemExit("cleanup must remove the host model after a hung ADB diagnostic")
+    if (state / "app-private-model-present").exists() or (state / "emulator-temp-model-present").exists():
+        raise SystemExit("hung cleanup left a synthetic model copy behind")
+
+    # Android's instrumentation runner may remove the disposable app package before
+    # the EXIT trap. Model that PackageManager cleanup and require it to be recorded.
+    (state / "emulator-temp-model-present").write_text("synthetic", encoding="utf-8")
+    (state / "app-private-model-present").write_text("synthetic", encoding="utf-8")
+    (state / "package-app.serea.g3poc").write_text("synthetic", encoding="utf-8")
+    (state / "package-app.serea.g3poc.test").write_text("synthetic", encoding="utf-8")
+    # Simulate the test runner's uninstall transition, including PackageManager
+    # removal of the target package's private files directory.
+    (state / "package-app.serea.g3poc").unlink()
+    (state / "app-private-model-present").unlink()
+    (runner_temp / "g3-host-model-fixture.bin").write_text("synthetic", encoding="utf-8")
+    utp_evidence = root / "utp-uninstall-evidence"
+    utp_evidence.mkdir()
+    utp_cleanup = run("test-cleanup-after-early-failure", utp_evidence, runner_temp, adb_bin, state)
+    if utp_cleanup.returncode != 23:
+        raise SystemExit(f"cleanup after test-runner uninstall must preserve the primary status 23, got {utp_cleanup.returncode}")
+    utp_record = (utp_evidence / "model-cleanup.txt").read_text(encoding="utf-8")
+    if "target_package_absent_after_test_runner=true" not in utp_record:
+        raise SystemExit("cleanup must verify and record when UTP already uninstalled the target package")
+    if "app_private_model_removal_reason=target_package_uninstalled_by_test_runner" not in utp_record:
+        raise SystemExit("cleanup must record package removal as the app-private model cleanup boundary")
+    if "emulator_temp_model_removed=true" not in utp_record:
+        raise SystemExit("cleanup must still remove the emulator-temp model after UTP uninstalls the app")
+    if (state / "app-private-model-present").exists():
+        raise SystemExit("the simulated PackageManager uninstall left the app-private model behind")
+    if (runner_temp / "g3-host-model-fixture.bin").exists() or (state / "emulator-temp-model-present").exists():
+        raise SystemExit("cleanup after UTP uninstall left a synthetic host or emulator model copy behind")
+
+print("runner_failure_paths=PASS optional_psi_denied=recorded adb_hang=bounded later_cleanup=continued utp_uninstall=verified primary_exit=preserved models=removed state=reset")

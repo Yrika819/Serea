@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - codex/serea-g3-real-ai-feasibility
+      - codex/serea-g3-diagnostic-recovery
     paths:
       - '.github/workflows/g3-ondevice-poc.yml'
       - 'tools/g3-ondevice-poc/**'

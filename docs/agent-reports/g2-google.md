@@ -8,18 +8,18 @@ Official documentation retrieved: 2026-10-27
 ```text
 AGENT_ID: G2
 ACTIVE_PHASE: G2 — isolated authorization lifecycle and Google policy readiness
-OVERALL_STATUS: PARTIAL — local Fake/Mock implementation is covered; real Google readiness remains Owner-gated
+OVERALL_STATUS: PARTIAL — fake authorization races repaired and focused coverage passes; real Google readiness remains Owner-gated
 BASE_SHA: 3924b36080ffa43331f065a15db80c604c243355
-CURRENT_HEAD: d5ef1a9faf56818f47a2db4012d05cf6614ffb89 (G2 implementation commit; this report-only checkpoint follows it)
-TREE_SHA: 420a818a2a4c97ac06c7df0e3ec11db0d3a3c314 (implementation tree)
+CURRENT_HEAD: efa24f660d28ec92cc3095cc868f27b1d0e576b9 (authorization race repair; this report update is a subsequent documentation-only checkpoint)
+TREE_SHA: 730a944b66bb46ec46a1e944db57619aca9bc944 (race-repair implementation tree)
 WORKTREE: /workspace/Serea-g2-google-auth-readiness
 BRANCH: codex/serea-g2-google-auth-readiness
 DRAFT_PR: none
-CI_RUN_IDS: 40489486365 — `.github/workflows/android-personal-beta.yml`, feature branch push, zero jobs (main-only workflow; not a G2 test result)
+CI_RUN_IDS: 40489486365 — `.github/workflows/android-personal-beta.yml`, feature branch push, zero jobs (main-only workflow; not a G2 test result); 40489675684 — same main-only workflow/zero jobs
 ARTIFACT_IDS: none
 ```
 
-The G2 implementation commit is pushed to `refs/heads/codex/serea-g2-google-auth-readiness` at `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`. This document is being added in a subsequent documentation-only checkpoint commit, so use the remote branch ref for the latest branch HEAD; the implementation tree and test evidence below remain unchanged.
+The initial implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` (tree `420a818a2a4c97ac06c7df0e3ec11db0d3a3c314`) remains immutable. The report checkpoint was committed separately at `43c258b78bfc228a98c78609fa531210131588ea` (tree `41757fd3a497e4c9f4bb23e1961bab18ebf1886c`). G1 reviewed `d5ef` and requested repair of two Fake-only lifecycle races. The repair is a new commit `efa24f660d28ec92cc3095cc868f27b1d0e576b9` (tree `730a944b66bb46ec46a1e944db57619aca9bc944`); neither prior commit was amended or rewritten. This report update is a documentation-only descendant checkpoint. The branch remote ref will be checked after pushing both new commits.
 
 ## Existing implementation and reuse decision
 
@@ -78,17 +78,34 @@ Added focused test IDs:
 - `GoogleAuthorizationLifecycleTest#authorizationOutcomeMapsToUserFacingLifecycleWithoutLeakingFailureDetails`
 - `GoogleAuthorizationLifecycleTest#fakeViewModelWalksThroughAuthorizationExpiryRevocationAndDisconnectStates`
 
+### G1 review finding and repair
+
+G1 reproduced two LOW-severity races in the synthetic Settings walkthrough with a `StandardTestDispatcher`; these were test/demo state-machine reliability issues, not evidence of a real OAuth exposure:
+
+1. Two feature requests queued before the first coroutine ran could advance the generation twice. The first authorization outcome was then ignored, leaving a feature in `AUTHORIZING` with no consent handoff.
+2. A queued synthetic grant could execute after revoke or app-local disconnect, mutating Fake gateway scopes even though its stale UI result was discarded.
+
+The repair adds a synchronously set `inFlightFeature` guard before launching work, rejects a second operation without invalidating the first, disables competing feature actions while busy, and checks operation validity before the queued Fake gateway call. Cancellation, revoke, account switch/expiry, and feature disconnect invalidate the applicable operation; stale leases are closed. No real gateway/provider or scope was changed.
+
+Added deterministic test IDs:
+
+- `GoogleAuthorizationLifecycleTest#rapidFeatureRequestsKeepTheFirstAuthorizationAndCancellationReleasesTheGuard`
+- `GoogleAuthorizationLifecycleTest#queuedGrantCannotRestoreFakeScopesAfterSharedRevocation`
+- `GoogleAuthorizationLifecycleTest#queuedGrantCannotRestoreFakeScopesAfterInAppDisconnect`
+
+The first test requests Gmail and then Calendar before `runCurrent()` and verifies that Gmail remains coherent, the competing request is rejected, and cancellation releases the guard for a subsequent request. The other two queue a grant, invalidate it through revoke or app-local disconnect before `runCurrent()`, and verify that the Fake gateway remains without the stale grant.
+
 Final JUnit class counts:
 
 | Test class | Executed |
 |---|---:|
-| `GoogleAuthorizationLifecycleTest` | 3 |
+| `GoogleAuthorizationLifecycleTest` | 6 |
 | `GoogleAuthorizationTest` | 22 |
 | `GmailProviderSessionsTest` | 8 |
 | `GmailHttpReadPortTest` | 11 |
 | `CalendarProviderSessionsTest` | 7 |
 | `GoogleCalendarHttpReadPortTest` | 20 |
-| **Total** | **71** |
+| **Total** | **74** |
 
 Focused command:
 
@@ -96,7 +113,7 @@ Focused command:
 JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
 ```
 
-Result: **PASS**, exit code 0, Gradle `BUILD SUCCESSFUL` on implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`. JUnit recorded 71 tests across the six selected classes, with 0 failures, 0 errors, and 0 skips. XML is in `android/app/build/test-results/testDebugUnitTest/TEST-*.xml` in the local worktree. No emulator, real Google account, OAuth credential, or Google network endpoint was used.
+The initial pre-review run on `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` passed 71 tests (3 lifecycle tests plus the five existing provider/HTTP classes), 0 failures/errors/skips. After the G1-requested repair, the exact-source rerun on `efa24f660d28ec92cc3095cc868f27b1d0e576b9` passed **74 tests**, 0 failures/errors/skips, exit code 0, Gradle `BUILD SUCCESSFUL`. JUnit XML is in `android/app/build/test-results/testDebugUnitTest/TEST-*.xml` in the local worktree. No emulator, real Google account, OAuth credential, or Google network endpoint was used.
 
 ## Official Google policy and setup review
 
@@ -130,12 +147,13 @@ This is an implementation-readiness summary, not legal advice. Requirements belo
 ## Commands and results
 
 ```text
-Focused JVM: PASS — 71 tests, 0 failures, 0 errors, 0 skips, implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`, `--rerun-tasks`
+Pre-review focused JVM: PASS — 71 tests, 0 failures, 0 errors, 0 skips, immutable implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`, `--rerun-tasks`
+Repaired-source focused JVM: PASS — 74 tests, 0 failures, 0 errors, 0 skips, implementation commit `efa24f660d28ec92cc3095cc868f27b1d0e576b9`, `--rerun-tasks`
 Focused command: shown above
 Gradle result: BUILD SUCCESSFUL, exit code 0
 Artifact: none (local JUnit XML only)
 CI Run `40489486365`: `.github/workflows/android-personal-beta.yml`, feature-branch push, completed with zero jobs; this main-only workflow did not execute a test job and is not treated as a G2 verification result
-Android instrumentation source compile: PASS — `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin`, exit code 0; no emulator was launched
+Android instrumentation source compile after repair: PASS — `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin`, exit code 0 on `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; no emulator was launched
 Initial attempted compile command: `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileDebugAndroidTestKotlin` — failed because that task does not exist for this project's variants; task discovery identified `isolatedAndroidTest` and that source compile then passed
 Initial JVM attempt: exit 127 because installed OpenJDK runtime did not include `javac`
 Initial JVM command (session 60245): `./gradlew --no-daemon :app:testDebugUnitTest --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'` — exit 127; Gradle reported `/usr/lib/jvm/java-21-openjdk-amd64` lacked `[JAVA_COMPILER]`
@@ -144,12 +162,12 @@ JDK archive SHA-256: d7f5d5cf865a2902b70ff549b97586a7d3f234e016f041ab447ea740c7d
 Repository dependencies/configuration changed for JDK: no
 ```
 
-`git diff --check` passed before the final documentation update. The focused Android instrumentation source compile passed, but the instrumentation/E2E tests were **NOT_RUN** because this lane did not start an emulator. Full Formal Required was not run from this lane; parent integration owns those gates.
+`git diff --check` passed for the repair before its source commit and will be rerun for this report update. The focused Android instrumentation source compile passed, but instrumentation/E2E tests were **NOT_RUN** because this lane did not start an emulator. Full Formal Required was not run from this lane; parent integration owns those gates. G1 must re-review the repaired immutable implementation HEAD `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; prior review approval does not carry over automatically.
 
 ## Handoff contract
 
-- `REVIEW_REQUEST`: Review the explicit state vocabulary and confirm the synthetic walkthrough is sufficient as a UI-state contract.
+- `REVIEW_REQUEST`: Re-review `efa24f660d28ec92cc3095cc868f27b1d0e576b9` for G1 issue G2-DEMO-AUTH-REQUEST-RACE, including both queued-grant invalidation tests and the exact-source 74-test / isolated Android test-source compile evidence.
 - `KNOWN_ISSUES`: Real account selection, OAuth disclosure, Activity Result consent wiring, connection/revocation UX, and normal UI provider selection are not wired. Production package/certificate and scope verification status remain unknown.
 - `INTEGRATION_DEPENDENCIES`: Integration owner must provide explicit dependency injection for a `PlayServicesGoogleAuthorizationGateway` plus account-bound Gmail/Calendar sessions only after Owner configuration/authorization; keep Fake defaults and fail closed.
-- `NEXT_ACTION`: Integrate or request changes on this G2 branch after reviewing the focused JVM result; later implement the application UI connection flow only in the integration-owned Composition Root.
+- `NEXT_ACTION`: G1 independently verifies the repair and report at the pushed branch HEAD; integrate only after explicit review approval. Implement any application UI connection flow only in the integration-owned Composition Root.
 - `OWNER_APPROVAL_REQUIRED`: Real OAuth/project configuration, Google account access, scope verification, production package/signing identity, and any live-service acceptance.

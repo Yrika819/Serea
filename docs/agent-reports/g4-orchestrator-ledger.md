@@ -18,7 +18,7 @@ Status updated: 2026-10-27 UTC. This file is owned only by the Orchestrator.
 - ACTIVE_PHASE: G1/G2/G3 independent work in progress; G4-A integration baseline and provenance setup.
 - GOAL_STATUS: PARTIAL.
 - BASE_SHA / LAST_GOOD_HEAD: PR #123 functional candidate `3924b36080ffa43331f065a15db80c604c243355`.
-- CURRENT_HEAD: `3924b36080ffa43331f065a15db80c604c243355` before the first G4 checkpoint commit; subsequent ledger-only commits must not inherit candidate test results as exact-head evidence.
+- CURRENT_HEAD: Resolve from branch `codex/serea-g4-personal-beta-readiness`; the initial commit is a checkpoint-only descendant of BASE_SHA. Candidate test evidence belongs to BASE_SHA only; checkpoint-only commits do not inherit exact-head Required status.
 - OWNED_BRANCH: `codex/serea-g4-personal-beta-readiness`.
 - WORKTREE: `/workspace/Serea-g4-personal-beta-readiness`.
 - DRAFT_PR: not created. Create after G4 has reviewable integrated changes and a deliberate base decision; do not create a 409-commit main PR without G1's reviewed rehearsal.

@@ -15,6 +15,7 @@ import com.google.android.gms.common.api.ApiException
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -192,6 +193,8 @@ interface GoogleAuthorizationGateway : GoogleAccessTokenSupplier, GoogleAuthoriz
      * sessions. Implementations must not expose or log the account name through this value.
      */
     val authorizationSessionId: String? get() = null
+    /** In-memory generation changed synchronously when the shared Google grant is invalidated. */
+    val googleGrantInvalidationGeneration: Long get() = 0L
     /** Feature-local switch; disabling it leaves the shared Google grant untouched. */
     fun isEnabledInApp(feature: GoogleFeature): Boolean = true
     /** Subscribe to synchronous local invalidation when a shared Google grant revoke starts. */
@@ -316,7 +319,11 @@ class PlayServicesGoogleAuthorizationGateway(
     private val consentRequests = ConsentRequestRegistry()
     private val knownPermissions = mutableMapOf<GoogleScope, ScopePermission>()
     private val grantState = GoogleGrantLeaseState()
+    private val googleGrantGeneration = AtomicLong(0)
     private val grantInvalidationObservers = GoogleGrantInvalidationObservers()
+
+    override val googleGrantInvalidationGeneration: Long
+        get() = googleGrantGeneration.get()
 
     override fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable =
         grantInvalidationObservers.observe(listener)
@@ -479,6 +486,9 @@ class PlayServicesGoogleAuthorizationGateway(
             else {
                 // Fail closed immediately, before the Play Services task can suspend.
                 invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
+                // Provider delivery reads this same gateway-scoped generation. Advance it in
+                // the revoke-start critical section, before observer dispatch can race a return.
+                googleGrantGeneration.incrementAndGet()
                 true
             }
         }

@@ -52,7 +52,12 @@ class CalendarProviderSessions(
         } else {
             GoogleCalendarHttpReadPort(authorization, authorization, client, baseUrl)
         }
-        val session = replace(CalendarProviderKind.GOOGLE_READ_ONLY, port, authorization)
+        val session = replace(
+            CalendarProviderKind.GOOGLE_READ_ONLY,
+            port,
+            authorization,
+            currentGrantInvalidationGeneration = { gateway.googleGrantInvalidationGeneration },
+        )
         session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
             session.cancelInFlightReadsForGrantInvalidation()
         })
@@ -63,6 +68,7 @@ class CalendarProviderSessions(
         kind: CalendarProviderKind,
         delegate: CalendarReadPort,
         authorization: CalendarAuthorizationPort,
+        currentGrantInvalidationGeneration: () -> Long = { 0L },
     ): CalendarProviderSession = synchronized(lock) {
         current?.invalidateFromController()
         val id = nextId.incrementAndGet()
@@ -71,6 +77,7 @@ class CalendarProviderSessions(
             kind = kind,
             delegate = delegate,
             authorizationDelegate = authorization,
+            currentGrantInvalidationGeneration = currentGrantInvalidationGeneration,
             isCurrent = { synchronized(lock) { current?.id == id } },
             onClose = { closeIfCurrent(id) },
         ).also { current = it }
@@ -86,6 +93,7 @@ class CalendarProviderSession internal constructor(
     val kind: CalendarProviderKind,
     private val delegate: CalendarReadPort,
     private val authorizationDelegate: CalendarAuthorizationPort,
+    private val currentGrantInvalidationGeneration: () -> Long = { 0L },
     private val isCurrent: () -> Boolean,
     private val onClose: () -> Unit,
 ) : CalendarReadPort, CalendarAuthorizationPort, AutoCloseable {
@@ -145,13 +153,13 @@ class CalendarProviderSession internal constructor(
     private suspend fun <T> withActiveSession(block: suspend () -> T): T {
         val callerJob = currentCoroutineContext()[Job]
         val requestJob = SupervisorJob(callerJob)
-        val requestGrantGeneration = synchronized(lock) {
+        val (requestSessionGrantGeneration, requestGatewayGrantGeneration) = synchronized(lock) {
             if (closed) {
                 requestJob.cancel()
                 throw inactiveSession()
             }
             activeJobs += requestJob
-            grantInvalidationGeneration
+            grantInvalidationGeneration to currentGrantInvalidationGeneration()
         }
         try {
             if (!isCurrent()) throw inactiveSession()
@@ -163,7 +171,10 @@ class CalendarProviderSession internal constructor(
                 if (closed) throw inactiveSession()
                 // The revoke callback can arrive after the child request Job has completed but
                 // before result delivery; the generation closes that cancellation gap.
-                if (grantInvalidationGeneration != requestGrantGeneration) throw inactiveSession()
+                if (grantInvalidationGeneration != requestSessionGrantGeneration) throw inactiveSession()
+                // This gateway-scoped generation advances inside revoke-start state mutation,
+                // before the observer callback can cancel this request Job.
+                if (currentGrantInvalidationGeneration() != requestGatewayGrantGeneration) throw inactiveSession()
             }
             return value
         } catch (cancelled: CancellationException) {

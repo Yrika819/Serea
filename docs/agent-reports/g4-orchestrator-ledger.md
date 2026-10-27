@@ -42,7 +42,7 @@ All evidence below applies only to candidate SHA `3924b36080ffa43331f065a15db80c
 |---|---|---|---|---|---|
 | G1 | Main integration and release architecture | Working; interim graph/rehearsal evidence received, final audit pending | TBD | TBD | NOT_REVIEWED |
 | G2 | Google OAuth/Gmail/Calendar readiness | Working; interim scope/test report received, exact head/result pending | TBD | base `3924b360…` | NOT_REVIEWED |
-| G3 | Real AI / on-device inference feasibility | Working; preliminary note received, evidence/references not yet reviewed | TBD | TBD | NOT_REVIEWED |
+| G3 | Real AI / on-device inference feasibility | PARTIAL; report complete, PoC NOT_RUN | None | `6d6f362da2380b56ea0fb7bc9372dbcceae67e90` | REVIEWED — documentation-only; no correction requested; no runtime integration approved |
 | G4 | Orchestration, integration, independent security review and Required validation | Active | TBD | G4 branch above | BASELINE_VERIFIED; new changes pending |
 
 Each agent owns a separate worktree, branch, and checkpoint. No agent may modify another lane's files or branch. Only this Orchestrator edits this ledger.
@@ -64,6 +64,7 @@ Each agent owns a separate worktree, branch, and checkpoint. No agent may modify
 - G3 preliminary note says documented Gemini/ML Kit routes have age/consumer-use restrictions and Pixel 7a is absent from the currently listed supported device set; this is not yet accepted as a final eligibility finding. Account-specific age/region eligibility and primary-source citations remain unreviewed. G3 reports no local Android NDK/CMake and is not downloading a large model without a justified, reproducible PoC plan.
 - G1 interim reports #98 → #99 → #100 → #117 and sibling #122/#123 from #117; #122/#123 diverge at #117. It reports 45 versus 61 changed paths, no #122-only paths, 39 shared paths byte-identical, 6 evolved in #123, 16 additions in #123, and a conflict-free disposable main-based merge whose tree equals #123. This remains interim and NOT_REVIEWED until exact refs, semantic path list, parent SHAs, and required workflow audit are provided.
 - G2 interim reports existing `googleauth`, provider-session, Fake gateway, and MockWebServer tests already cover core authorization/session behavior. It is changing the fake Settings walkthrough and a JVM state test for explicit auth states; exact branch HEAD and test result remain pending. Product UI reachability of real Google providers is specifically under review; no real account/OAuth or emulator is used.
+- G3 report branch `codex/serea-g3-real-ai-feasibility` is pushed and verified at `6d6f362da2380b56ea0fb7bc9372dbcceae67e90`, tree `f4fe1cf534b855b58ea19683621bf3dc7f7a3cd6`; only `docs/agent-reports/g3-ai.md` changed. Orchestrator reviewed the exact diff, clean worktree, scope, explicit NOT_RUN inventory, model provenance/licensing caveats, and policy/runtime claims against current official Gemini, ML Kit GenAI, Ollama and llama.cpp sources. No correction requested. This report is feasibility evidence only; no model, cloud provider, or runtime is integrated or approved.
 
 ## NEXT_ACTIONS
 

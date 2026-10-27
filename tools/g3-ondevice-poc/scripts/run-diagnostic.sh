@@ -357,6 +357,11 @@ prepare_build() {
         echo 'Standalone PoC target APK must not request INTERNET permission' >&2
         return 1
     fi
+    "$ANDROID_HOME/build-tools/35.0.0/aapt" dump permissions "$test_apk" > "$EVIDENCE_DIR/androidtest-apk-permissions.txt"
+    if grep -q 'android.permission.INTERNET' "$EVIDENCE_DIR/androidtest-apk-permissions.txt"; then
+        echo 'Standalone PoC AndroidTest APK must not request INTERNET permission' >&2
+        return 1
+    fi
     cp "$POC_DIR/model-fixture.json" "$EVIDENCE_DIR/model-fixture.json"
     echo 'apk_build_and_androidtest_compile=PASS' > "$EVIDENCE_DIR/build-status.txt"
 }

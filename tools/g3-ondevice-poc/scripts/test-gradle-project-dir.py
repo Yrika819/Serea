@@ -95,4 +95,65 @@ for marker in (
 if "api-level: 35" in workflow:
     raise SystemExit("Emulator API level must not be hardcoded after API selection was added")
 
-print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test load_close_async_failure_isolated=true cancellation_preserved=true unexpected_failure_preserved=true explicit_api26_or_35=true x86_64_acceleration_required=true")
+prepare = function_body("prepare_build")
+for marker in (
+    'dump permissions "$APP_APK"',
+    'dump permissions "$test_apk"',
+    'androidtest-apk-permissions.txt',
+    "Standalone PoC target APK must not request INTERNET permission",
+    "Standalone PoC AndroidTest APK must not request INTERNET permission",
+):
+    if marker not in prepare:
+        raise SystemExit(f"both generated APK permission surfaces must be recorded and deny INTERNET: {marker}")
+
+if "python3 tools/g3-ondevice-poc/scripts/test-api-selection.py" not in workflow:
+    raise SystemExit("G3 workflow must execute host API marker regression tests")
+if "python3 tools/g3-ondevice-poc/scripts/api_selection.py \"$GITHUB_EVENT_PATH\" \"$G3_API_LEVEL\"" not in workflow:
+    raise SystemExit("G3 workflow must validate event markers against the selected API before SDK setup")
+if workflow.find("scripts/api_selection.py") > workflow.find("actions/setup-java"):
+    raise SystemExit("API marker validation must happen before SDK setup")
+
+cancellation_start = android_test.find("native abort callback test gate must arm")
+cancellation_end = android_test.find("val recoveryStarted", cancellation_start)
+if cancellation_start < 0 or cancellation_end < 0:
+    raise SystemExit("cancellation test boundaries are missing")
+cancellation_test = android_test[cancellation_start:cancellation_end]
+for marker in (
+    "armAbortCallbackGateForTest()",
+    "awaitAbortCallbackGateForTest(30, TimeUnit.SECONDS)",
+    "longRun.cancel()",
+    "releaseAbortCallbackGateForTest()",
+    "abortCallbackCancellationsForTest() > 0",
+):
+    if marker not in cancellation_test:
+        raise SystemExit(f"in-compute cancellation test must gate and assert the native abort callback: {marker}")
+if "awaitStartGateForTest" in cancellation_test:
+    raise SystemExit("cancellation proof must not use the pre-decode generation-start gate")
+
+source_root = SCRIPT.parents[1] / "app/src"
+native_source = source_root / "main/cpp/llama_jni.cpp"
+native = native_source.read_text(encoding="utf-8")
+abort_start = native.find("bool abort_requested(void * user_data)")
+abort_end = native.find("\n}\n", abort_start)
+if abort_start < 0 or abort_end < 0:
+    raise SystemExit("native llama abort callback implementation is missing")
+abort_body = native[abort_start:abort_end]
+for marker in (
+    "abort_test_gate_changed.wait",
+    "generation_cancelled(request.engine_id, request.generation_id)",
+    "return cancelled;",
+):
+    if marker not in abort_body:
+        raise SystemExit(f"native abort callback must gate and observe cancellation: {marker}")
+callback_install = native.find("llama_set_abort_callback(context, abort_requested, &request)")
+first_decode = native.find("llama_decode(context, prompt_batch)")
+if callback_install < 0 or first_decode < 0 or callback_install > first_decode:
+    raise SystemExit("native cancellation callback must be installed before prompt decode")
+
+network_apis = re.compile(r"java\.net\.|HttpURLConnection|HttpClient|OkHttp|Retrofit|Socket|URL\(")
+for suffix in ("*.kt", "*.java"):
+    for source_file in source_root.rglob(suffix):
+        if network_apis.search(source_file.read_text(encoding="utf-8")):
+            raise SystemExit(f"app source must not add network I/O for this local inference PoC: {source_file}")
+
+print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test load_close_async_failure_isolated=true cancellation_asserts_native_abort_callback=true target_and_androidtest_internet_denied=true api_marker_validation_pre_sdk=true explicit_api26_or_35=true x86_64_acceleration_required=true app_network_io=false")

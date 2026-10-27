@@ -47,6 +47,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Reject ambiguous API marker selection and run host regressions
+        run: |
+          set -euo pipefail
+          python3 tools/g3-ondevice-poc/scripts/test-api-selection.py
+          python3 tools/g3-ondevice-poc/scripts/api_selection.py "$GITHUB_EVENT_PATH" "$G3_API_LEVEL"
+
       - name: Require explicit supported Emulator API selection
         run: |
           set -euo pipefail

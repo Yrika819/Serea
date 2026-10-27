@@ -181,33 +181,47 @@ class OnDeviceInferenceTest {
                 nativeEngine.nativeGenerationStartsForTest(),
             )
 
-            nativeEngine.armStartGateForTest()
+            assertTrue("native abort callback test gate must arm for the owning engine", nativeEngine.armAbortCallbackGateForTest())
             val longRun = async(Dispatchers.IO) {
                 port.send(ModelChatRequest("synthetic", "Continue this sequence: 1, 2, 3,", maxOutputTokens = 256))
             }
             phase("cancellation_generation_submitted")
             var cancellationStarted = 0L
+            var abortCallbackGateReached = false
             try {
-                val cancellationGateReached = nativeEngine.awaitStartGateForTest(15, TimeUnit.SECONDS)
-                phase("cancellation_generation_gate_reached=$cancellationGateReached starts=${nativeEngine.nativeGenerationStartsForTest()}")
-                assertTrue("native generation must reach the deterministic cancellation gate", cancellationGateReached)
+                abortCallbackGateReached = nativeEngine.awaitAbortCallbackGateForTest(30, TimeUnit.SECONDS)
+                phase(
+                    "cancellation_abort_callback_gate_reached=$abortCallbackGateReached " +
+                        "callback_entries=${nativeEngine.abortCallbackEntriesForTest()} " +
+                        "starts=${nativeEngine.nativeGenerationStartsForTest()}",
+                )
+                assertTrue(
+                    "llama.cpp must enter its installed abort callback during decode",
+                    abortCallbackGateReached,
+                )
                 cancellationStarted = SystemClock.elapsedRealtime()
             } finally {
-                // Always cancel and release the native test barrier, even when the start assertion fails.
+                // Cancellation is recorded while the llama.cpp abort callback is held at its test-only gate.
                 longRun.cancel()
-                nativeEngine.releaseStartGateForTest()
+                nativeEngine.releaseAbortCallbackGateForTest()
                 nativeEngine.awaitFinishedForTest(5, TimeUnit.SECONDS)
             }
             assertTrue(
-                "native generation must return after cancellation",
+                "native decode must return after abort-callback cancellation",
                 nativeEngine.awaitFinishedForTest(15, TimeUnit.SECONDS),
+            )
+            assertTrue("the abort callback gate must have been reached", abortCallbackGateReached)
+            assertTrue("llama.cpp must invoke the installed abort callback", nativeEngine.abortCallbackEntriesForTest() > 0)
+            assertTrue(
+                "the installed llama.cpp abort callback must observe the cancelled generation",
+                nativeEngine.abortCallbackCancellationsForTest() > 0,
             )
             cancellationElapsedMs = SystemClock.elapsedRealtime() - cancellationStarted
             try {
                 longRun.await()
-                error("cancelling the coroutine must stop native inference")
+                error("cancelling at the llama.cpp abort callback must stop native inference")
             } catch (_: CancellationException) {
-                // Expected cancellation path: JNI abort callback observes cancellation.
+                // Expected only after the test has observed the callback return true for this request.
             }
 
             val recoveryStarted = SystemClock.elapsedRealtime()

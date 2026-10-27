@@ -2,6 +2,8 @@
 #include <llama.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <unordered_set>
@@ -10,6 +12,14 @@
 namespace {
 std::mutex engine_mutex;
 std::mutex cancellation_mutex;
+std::mutex abort_test_gate_mutex;
+std::condition_variable abort_test_gate_changed;
+bool abort_test_gate_armed = false;
+bool abort_test_gate_entered = false;
+bool abort_test_gate_released = false;
+jlong abort_test_gate_engine_id = 0;
+std::atomic<int> abort_callback_entries{0};
+std::atomic<int> abort_callback_cancellations{0};
 std::atomic<jlong> active_engine_id{0};
 struct RequestIdentity {
     jlong engine_id;
@@ -41,7 +51,19 @@ bool generation_cancelled(jlong engine_id, jlong generation_id) {
 
 bool abort_requested(void * user_data) {
     const auto request = *static_cast<const RequestIdentity *>(user_data);
-    return generation_cancelled(request.engine_id, request.generation_id);
+    abort_callback_entries.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::unique_lock<std::mutex> lock(abort_test_gate_mutex);
+        if (abort_test_gate_armed && request.engine_id == abort_test_gate_engine_id) {
+            abort_test_gate_entered = true;
+            abort_test_gate_changed.notify_all();
+            abort_test_gate_changed.wait(lock, [] { return abort_test_gate_released; });
+            abort_test_gate_armed = false;
+        }
+    }
+    const bool cancelled = generation_cancelled(request.engine_id, request.generation_id);
+    if (cancelled) abort_callback_cancellations.fetch_add(1, std::memory_order_relaxed);
+    return cancelled;
 }
 
 void throw_cancelled(JNIEnv * env) {
@@ -295,4 +317,47 @@ Java_app_serea_g3poc_NativeLlamaEngine_nativeHasModel(JNIEnv *, jobject, jlong e
     std::lock_guard<std::mutex> lock(engine_mutex);
     return active_engine_id.load(std::memory_order_acquire) == engine_id &&
         model != nullptr && context != nullptr && sampler != nullptr ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_serea_g3poc_NativeLlamaEngine_nativeArmAbortCallbackGateForTest(
+        JNIEnv *, jobject, jlong engine_id) {
+    if (active_engine_id.load(std::memory_order_acquire) != engine_id) return JNI_FALSE;
+    std::lock_guard<std::mutex> lock(abort_test_gate_mutex);
+    abort_test_gate_engine_id = engine_id;
+    abort_test_gate_entered = false;
+    abort_test_gate_released = false;
+    abort_test_gate_armed = true;
+    abort_callback_entries.store(0, std::memory_order_relaxed);
+    abort_callback_cancellations.store(0, std::memory_order_relaxed);
+    return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_app_serea_g3poc_NativeLlamaEngine_nativeAwaitAbortCallbackGateForTest(
+        JNIEnv *, jobject, jlong timeout_ms) {
+    std::unique_lock<std::mutex> lock(abort_test_gate_mutex);
+    const bool entered = abort_test_gate_changed.wait_for(
+            lock, std::chrono::milliseconds(timeout_ms), [] { return abort_test_gate_entered; });
+    return entered ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_app_serea_g3poc_NativeLlamaEngine_nativeReleaseAbortCallbackGateForTest(JNIEnv *, jobject) {
+    {
+        std::lock_guard<std::mutex> lock(abort_test_gate_mutex);
+        abort_test_gate_released = true;
+        abort_test_gate_armed = false;
+    }
+    abort_test_gate_changed.notify_all();
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_app_serea_g3poc_NativeLlamaEngine_nativeAbortCallbackEntriesForTest(JNIEnv *, jobject) {
+    return abort_callback_entries.load(std::memory_order_relaxed);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_app_serea_g3poc_NativeLlamaEngine_nativeAbortCallbackCancellationsForTest(JNIEnv *, jobject) {
+    return abort_callback_cancellations.load(std::memory_order_relaxed);
 }

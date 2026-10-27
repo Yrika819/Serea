@@ -296,3 +296,23 @@ The isolated Android test source compile was rerun with `--rerun-tasks` on the s
 It passed with exit code 0 in Gradle session `71674` (`BUILD SUCCESSFUL`, 26 tasks executed). Both isolated main Kotlin and isolated Android test Kotlin compilation executed. Compile summary is at `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/compile-summary.txt`; no emulator was started.
 
 The additional canceled-revoke failure regression passed alone (1/1, session `40281`); it is also included in the final 84-test result. The first failed six-class run remains preserved separately and was not overwritten. No CI run was initiated. No live account, OAuth UI, Google API endpoint, token, or secret was used. The compiler used temporary Temurin JDK 21.0.13+9 outside the repository; repository dependencies and JDK configuration were unchanged. `git diff --check` passes. G1 review is still required before integration; no changes are staged, committed, or pushed.
+
+
+### Lane B revoke cancellation and post-delegate delivery gate (2026-10-27)
+
+Code is on branch `codex/serea-g2-revoke-cancellation`, based on PR #125 source head `c9ce1c2674e57dbab787d97be5f24c9822f4fe22`. The cancellation patch invalidates active Gmail and Calendar HTTP request jobs synchronously when shared Google grant revocation begins. A follow-up race review identified that a request can finish its delegate call before the revoke callback and then pause before final session delivery; canceling its already-completed child job cannot retract that buffered value. The provider sessions now capture a grant-invalidation generation when registering each request and compare it under the session lock at the final result-delivery gate. A generation change therefore rejects a result even when the HTTP child already completed.
+
+Deterministic tests cover both transport cancellation before response-body delivery and revoke between delegate completion and final delivery:
+
+- `GmailProviderSessionsTest#grantRevocationCancelsPendingGmailHttpCallBeforeResponseBodyDelivery`
+- `CalendarProviderSessionsTest#grantRevocationCancelsPendingCalendarHttpCallBeforeResponseBodyDelivery`
+- `GmailProviderSessionsTest#grantRevocationBetweenDelegateCompletionAndDeliveryRejectsGmailResult`
+- `CalendarProviderSessionsTest#grantRevocationBetweenDelegateCompletionAndDeliveryRejectsCalendarResult`
+
+The existing authorization task/consent generation and session/account isolation tests remain in the focused run.
+
+#### Verification on exact source SHA `ea89da2c6b7d3abb403c5e88e3b93d9a04f270dc`
+
+The forced six-class Google JVM suite passed **90/90**, 0 failures, 0 errors, 0 skipped (`BUILD SUCCESSFUL`, exit 0; local Gradle tool session 94356). Per-class counts: authorization lifecycle 7, authorization 29, Gmail sessions 12, Gmail HTTP 11, Calendar sessions 11, Calendar HTTP 20. The exact six JUnit XML files, full Gradle output, summary, and SHA-256 list are retained at `docs/agent-reports/evidence/g2-revoke-cancellation-six-class-pass/`.
+
+The isolated AndroidTest source compile passed with `--rerun-tasks` (`BUILD SUCCESSFUL`, 26 tasks executed; local Gradle tool session 10930). Its full log is retained beside the JVM evidence. No emulator or formal campaign, CI, real OAuth/account, Google API endpoint, token, or secret was used. This evidence/report commit contains documentation and test artifacts only; the preceding code commit is `ea89da2c6b7d3abb403c5e88e3b93d9a04f270dc`. No source push or PR publication has occurred; independent review and the parent-managed workflow schedule remain pending.

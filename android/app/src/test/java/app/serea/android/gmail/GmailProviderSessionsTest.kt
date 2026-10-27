@@ -12,6 +12,7 @@ import app.serea.android.googleauth.GoogleServiceState
 import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -29,6 +30,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 
 class GmailProviderSessionsTest {
     private val server = MockWebServer().apply { start() }
@@ -36,24 +38,38 @@ class GmailProviderSessionsTest {
     @After fun close() = server.shutdown()
 
     private class PlayServicesFixture(
-        private val permission: ScopePermission = ScopePermission.GRANTED,
+        private var permission: ScopePermission = ScopePermission.GRANTED,
         override var authorizationSessionId: String? = "gmail-session-first",
     ) : GoogleAuthorizationGateway {
         override val mode = GoogleAuthorizationMode.PLAY_SERVICES
         var tokenRequests = 0
         var rotateAfterNextToken = false
         var onLeaseUse: (() -> Unit)? = null
+        private var leaseGeneration = 0L
+        private var disabled = false
         private var failure: AuthorizationFailure? = null
+
+        fun revokeGrant() {
+            permission = ScopePermission.NEEDS_CONSENT
+            leaseGeneration++
+        }
+
+        fun disableGmail() {
+            disabled = true
+            leaseGeneration++
+        }
 
         override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
             if (feature != GoogleFeature.GMAIL || scopes != setOf(GoogleScope.GMAIL_READ_ONLY)) {
                 return TokenSupplyResult.UserActionRequired(scopes)
             }
+            if (disabled) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
             if (permission != ScopePermission.GRANTED || authorizationSessionId == null) {
                 return TokenSupplyResult.Unavailable(failure ?: AuthorizationFailure.ACCOUNT_REQUIRED)
             }
             tokenRequests++
             val boundSession = authorizationSessionId
+            val boundGeneration = leaseGeneration
             val lease = AccessTokenLease(
                 "fixture-token-$boundSession",
                 setOf(GoogleScope.GMAIL_READ_ONLY),
@@ -61,7 +77,7 @@ class GmailProviderSessionsTest {
                 authorizationSessionId = boundSession,
                 validityCheck = {
                     onLeaseUse?.invoke()
-                    true
+                    !disabled && leaseGeneration == boundGeneration
                 },
             )
             if (rotateAfterNextToken) {
@@ -144,6 +160,33 @@ class GmailProviderSessionsTest {
         assertEquals(GmailAuthorizationState.REVOKED, session.status().state)
         assertEquals(1, gateway.tokenRequests)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun delayedGmailResponseIsRejectedAfterGrantRevocationOrFeatureDisable() = runBlocking {
+        suspend fun assertInvalidatedRead(action: (PlayServicesFixture) -> Unit) {
+            val gateway = PlayServicesFixture()
+            val previousRequestCount = server.requestCount
+            server.enqueue(
+                MockResponse()
+                    .setBody(messageJson)
+                    .setBodyDelay(2, TimeUnit.SECONDS),
+            )
+            val session = GmailProviderSessions(googleHttpEnabledByOwner = true)
+                .openGoogleReadOnly(gateway, baseUrl = server.url("/gmail/v1/"))
+            val read = async { failure { session.getMessage(GmailMessageId("message_1")) } }
+
+            val request = requireNotNull(withContext(Dispatchers.IO) { server.takeRequest(5, TimeUnit.SECONDS) })
+            assertEquals("GET", request.method)
+            assertEquals("Bearer fixture-token-gmail-session-first", request.getHeader("Authorization"))
+            action(gateway)
+
+            assertEquals(GmailReadFailureCode.PERMISSION_DENIED, read.await().code)
+            assertEquals(1, gateway.tokenRequests)
+            assertEquals(previousRequestCount + 1, server.requestCount)
+        }
+
+        assertInvalidatedRead(PlayServicesFixture::revokeGrant)
+        assertInvalidatedRead(PlayServicesFixture::disableGmail)
     }
 
     @Test fun replacingSessionImmediatelyAfterLeaseAcquisitionPreventsHttpDispatch() = runBlocking {

@@ -177,6 +177,7 @@ class GoogleAuthorizationTest {
     @Test fun appFeatureDisableDoesNotRevokeSharedGoogleGrant() = runBlocking {
         val fake = FakeGoogleAuthorizationGateway(both)
         val oldGmailLease = (fake.acquire(GMAIL, setOf(GMAIL_READ_ONLY)) as TokenSupplyResult.Available).lease
+        val calendarLease = (fake.acquire(CALENDAR, setOf(CALENDAR_EVENTS_READ_ONLY)) as TokenSupplyResult.Available).lease
         fake.disableInApp(GMAIL)
         assertFalse(fake.isEnabledInApp(GMAIL))
         assertTrue(fake.isEnabledInApp(CALENDAR))
@@ -184,6 +185,7 @@ class GoogleAuthorizationTest {
         assertEquals(AuthorizationFailure.FEATURE_DISABLED,
             (fake.acquire(GMAIL, setOf(GMAIL_READ_ONLY)) as TokenSupplyResult.Unavailable).failure)
         assertFalse(runCatching { oldGmailLease.useToken { it } }.isSuccess)
+        assertTrue("disabling Gmail must not invalidate Calendar's lease", runCatching { calendarLease.useToken { it } }.isSuccess)
         val calendar = fake.acquire(CALENDAR, setOf(CALENDAR_EVENTS_READ_ONLY))
         assertTrue(calendar is TokenSupplyResult.Available)
         (calendar as TokenSupplyResult.Available).lease.close()
@@ -191,6 +193,13 @@ class GoogleAuthorizationTest {
         fake.enableInApp(GMAIL)
         assertTrue(fake.isEnabledInApp(GMAIL))
         assertFalse(runCatching { oldGmailLease.useToken { it } }.isSuccess)
+
+        val freshGmailLease = (fake.acquire(GMAIL, setOf(GMAIL_READ_ONLY)) as TokenSupplyResult.Available).lease
+        fake.disableInApp(CALENDAR)
+        assertTrue("disabling Calendar must not invalidate Gmail's lease", runCatching { freshGmailLease.useToken { it } }.isSuccess)
+        assertFalse(runCatching { calendarLease.useToken { it } }.isSuccess)
+        freshGmailLease.close()
+        calendarLease.close()
     }
 
     @Test fun googleGrantRevocationRemovesAllServiceScopes() = runBlocking {
@@ -198,6 +207,54 @@ class GoogleAuthorizationTest {
         fake.revokeGoogleGrant()
         assertEquals(1, fake.revokeCount)
         assertEquals(AuthorizationOutcome.ConsentRequired(both), fake.authorize(both))
+    }
+
+    @Test fun appDisableDuringSuccessfulSharedRevokePersistsUntilExplicitReconnect() {
+        val knownPermissions = mutableMapOf(
+            GMAIL_READ_ONLY to ScopePermission.GRANTED,
+            CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED,
+        )
+        val disabledFeatures = mutableSetOf<GoogleFeature>()
+        val versions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
+
+        // Model a revoke request awaiting Play Services while the user disables Gmail.
+        disabledFeatures += GMAIL
+        versions[GMAIL] = versions.getValue(GMAIL) + 1
+        applySuccessfulGoogleGrantRevocation(knownPermissions, versions)
+
+        assertTrue(knownPermissions.isEmpty())
+        assertEquals(setOf(GMAIL), disabledFeatures)
+        assertEquals(2L, versions.getValue(GMAIL))
+        assertEquals(1L, versions.getValue(CALENDAR))
+
+        // Only an explicit app-local reconnect clears the disable gate.
+        disabledFeatures -= GMAIL
+        versions[GMAIL] = versions.getValue(GMAIL) + 1
+        assertTrue(disabledFeatures.isEmpty())
+        assertEquals(3L, versions.getValue(GMAIL))
+    }
+
+    @Test fun fakeRevokeClearsScopesAndInvalidatesLeasesButPreservesDisabledFeature() = runBlocking {
+        val fake = FakeGoogleAuthorizationGateway(both)
+        val gmailLease = (fake.authorize(setOf(GMAIL_READ_ONLY)) as AuthorizationOutcome.Authorized).lease
+        val calendarLease = (fake.authorize(setOf(CALENDAR_EVENTS_READ_ONLY)) as AuthorizationOutcome.Authorized).lease
+
+        fake.disableInApp(GMAIL)
+        assertFalse(runCatching { gmailLease.useToken { it } }.isSuccess)
+        fake.revokeGoogleGrant()
+
+        assertFalse(fake.isEnabledInApp(GMAIL))
+        assertFalse(runCatching { calendarLease.useToken { it } }.isSuccess)
+        assertEquals(
+            AuthorizationOutcome.ConsentRequired(setOf(CALENDAR_EVENTS_READ_ONLY)),
+            fake.authorize(setOf(CALENDAR_EVENTS_READ_ONLY)),
+        )
+        fake.enableInApp(GMAIL)
+        assertTrue(fake.isEnabledInApp(GMAIL))
+        assertEquals(
+            AuthorizationOutcome.ConsentRequired(setOf(GMAIL_READ_ONLY)),
+            fake.authorize(setOf(GMAIL_READ_ONLY)),
+        )
     }
 
     @Test fun tokenIsTransientRedactedAndInvalidatedWhenLeaseCloses() = runBlocking {
@@ -213,6 +270,7 @@ class GoogleAuthorizationTest {
 
     @Test fun expiredLeaseCannotYieldToken() {
         val lease = AccessTokenLease("fixture-expired-token", both, 0)
+        assertFalse(runCatching { lease.ensureValid() }.isSuccess)
         assertFalse(runCatching { lease.useToken { it } }.isSuccess)
     }
 

@@ -149,6 +149,8 @@ class GoogleCalendarHttpReadPort internal constructor(
             catch (_: ResponseTooLargeException) { throw failure(CalendarApiFailureCode.INVALID_RESPONSE, "Calendar response exceeds the payload limit.") }
             catch (_: java.io.InterruptedIOException) { throw failure(CalendarApiFailureCode.TIMEOUT, "Calendar response read timed out.") }
             catch (_: IOException) { throw failure(CalendarApiFailureCode.UNAVAILABLE, "Calendar response could not be read.") }
+            currentCoroutineContext().ensureActive()
+            token.ensureValid()
             return bytes.toString(Charsets.UTF_8)
             }
         } catch (cancelled: CancellationException) {

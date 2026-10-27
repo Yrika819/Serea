@@ -63,18 +63,34 @@ class AccessTokenLease internal constructor(
     private var tokenValue: String? = token
 
     fun <T> useToken(block: (String) -> T): T {
+        ensureValid()
+        return block(checkNotNull(tokenValue) { "Authorization lease is no longer valid." })
+    }
+
+    /** Recheck the authorization generation after an asynchronous operation without exposing token bytes. */
+    internal fun ensureValid() {
         check(validityCheck()) { "Authorization lease is no longer valid for this feature." }
         if (expiresAtElapsedRealtimeMillis?.let { android.os.SystemClock.elapsedRealtime() >= it } == true) {
             close()
             error("Authorization lease has expired.")
         }
-        val token = checkNotNull(tokenValue) { "Authorization lease is no longer valid." }
-        return block(token)
+        check(tokenValue != null) { "Authorization lease is no longer valid." }
     }
 
     override fun close() { tokenValue = null }
 
     override fun toString(): String = "AccessTokenLease(scopes=$grantedScopes, token=<redacted>)"
+}
+
+/** Apply a successful shared-grant revoke without changing independent app-local feature gates. */
+internal fun applySuccessfulGoogleGrantRevocation(
+    knownPermissions: MutableMap<GoogleScope, ScopePermission>,
+    featureVersions: MutableMap<GoogleFeature, Long>,
+) {
+    knownPermissions.clear()
+    featureVersions.keys.toList().forEach { feature ->
+        featureVersions[feature] = featureVersions.getValue(feature) + 1
+    }
 }
 
 sealed interface AuthorizationOutcome {
@@ -356,9 +372,7 @@ class PlayServicesGoogleAuthorizationGateway(
         return try {
             await { Identity.getAuthorizationClient(context).revokeAccess(RevokeAccessRequest.builder().build()) }
             synchronized(consentLock) {
-                knownPermissions.clear()
-                disabledFeatures.clear()
-                featureVersions.keys.forEach { feature -> featureVersions[feature] = featureVersions.getValue(feature) + 1 }
+                applySuccessfulGoogleGrantRevocation(knownPermissions, featureVersions)
             }
             consentRequests.clear()
             null

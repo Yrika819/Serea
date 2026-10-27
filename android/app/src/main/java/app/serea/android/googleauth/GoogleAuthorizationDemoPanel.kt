@@ -41,7 +41,8 @@ internal fun GoogleAuthorizationDemoPanel(
         )
         Text("架空アカウント ${if (state.accountGeneration % 2 == 1) "A" else "B"} · 実Googleアカウント、OAuth画面、ネットワーク、メールや予定データは使用しません。")
         Text(
-            "Gmail: ${state.gmail.label()} · Calendar: ${state.calendar.label()}",
+            "Gmail: ${state.gmail.label(GoogleFeature.GMAIL !in state.disabledInAppFeatures)} · " +
+                "Calendar: ${state.calendar.label(GoogleFeature.CALENDAR !in state.disabledInAppFeatures)}",
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("google_auth_demo_status"),
         )
         Text(
@@ -53,6 +54,7 @@ internal fun GoogleAuthorizationDemoPanel(
             title = "Gmail読み取りデモ",
             feature = GoogleFeature.GMAIL,
             status = state.gmail,
+            isEnabledInApp = GoogleFeature.GMAIL !in state.disabledInAppFeatures,
             onRequest = viewModel::requestConsent,
             onDisconnect = viewModel::disconnectInApp,
             onReconnect = viewModel::reconnectInApp,
@@ -61,6 +63,7 @@ internal fun GoogleAuthorizationDemoPanel(
             title = "Calendar読み取りデモ",
             feature = GoogleFeature.CALENDAR,
             status = state.calendar,
+            isEnabledInApp = GoogleFeature.CALENDAR !in state.disabledInAppFeatures,
             onRequest = viewModel::requestConsent,
             onDisconnect = viewModel::disconnectInApp,
             onReconnect = viewModel::reconnectInApp,
@@ -123,20 +126,21 @@ private fun FeatureActions(
     title: String,
     feature: GoogleFeature,
     status: GoogleDemoFeatureState,
+    isEnabledInApp: Boolean,
     onRequest: (GoogleFeature) -> Unit,
     onDisconnect: (GoogleFeature) -> Unit,
     onReconnect: (GoogleFeature) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(title, style = MaterialTheme.typography.labelLarge)
-        Text("状態: ${status.label()}", style = MaterialTheme.typography.bodySmall)
+        Text("状態: ${status.label(isEnabledInApp)}", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { onRequest(feature) },
-                enabled = status != GoogleDemoFeatureState.DISCONNECTED,
+                enabled = isEnabledInApp && status != GoogleDemoFeatureState.AUTHORIZING,
                 modifier = Modifier.weight(1f).testTag("google_auth_demo_request_${feature.name.lowercase()}"),
             ) { Text("デモ承認を要求") }
-            if (status == GoogleDemoFeatureState.DISCONNECTED) {
+            if (!isEnabledInApp) {
                 TextButton(
                     onClick = { onReconnect(feature) },
                     modifier = Modifier.testTag("google_auth_demo_reconnect_${feature.name.lowercase()}"),
@@ -151,13 +155,12 @@ private fun FeatureActions(
     }
 }
 
-private fun GoogleDemoFeatureState.label(): String = when (this) {
-    GoogleDemoFeatureState.NOT_CONNECTED -> "未接続（デモ）"
-    GoogleDemoFeatureState.CONSENT_REQUIRED -> "承認が必要（デモ）"
+private fun GoogleDemoFeatureState.label(isEnabledInApp: Boolean): String = when (this) {
+    GoogleDemoFeatureState.DISCONNECTED -> if (isEnabledInApp) "未接続（デモ）" else "アプリ内切断（デモ）"
+    GoogleDemoFeatureState.AUTHORIZATION_REQUIRED -> "承認が必要（デモ）"
+    GoogleDemoFeatureState.AUTHORIZING -> "認可中（デモ）"
     GoogleDemoFeatureState.AUTHORIZED -> "承認済み（デモのみ）"
-    GoogleDemoFeatureState.DENIED -> "拒否（デモ）"
     GoogleDemoFeatureState.EXPIRED -> "期限切れ（デモ）"
-    GoogleDemoFeatureState.DISCONNECTED -> "アプリ内切断（デモ）"
     GoogleDemoFeatureState.REVOKED -> "失効（デモ）"
     GoogleDemoFeatureState.ERROR -> "利用不可（デモ）"
 }

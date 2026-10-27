@@ -15,14 +15,14 @@ Status updated: 2026-10-27 UTC. This file is owned only by the Orchestrator.
 
 ## G4 Worktree / Branch
 
-- ACTIVE_PHASE: G1/G2/G3 independent work in progress; G4-A integration baseline and provenance setup.
+- ACTIVE_PHASE: G1/G2/G3 report review complete; G2 Fake authorization changes integrated; G4-A focused revalidation and G4-C preparation.
 - GOAL_STATUS: PARTIAL.
 - BASE_SHA / LAST_GOOD_HEAD: PR #123 functional candidate `3924b36080ffa43331f065a15db80c604c243355`.
-- CURRENT_HEAD: Resolve from branch `codex/serea-g4-personal-beta-readiness`; the initial commit is a checkpoint-only descendant of BASE_SHA. Candidate test evidence belongs to BASE_SHA only; checkpoint-only commits do not inherit exact-head Required status.
+- CURRENT_HEAD: `4c5f7c5d8a47f9325c3aca93fb0ad232acf84b6e` (G2 source/report commits integrated; focused validation pending).
 - OWNED_BRANCH: `codex/serea-g4-personal-beta-readiness`.
 - WORKTREE: `/workspace/Serea-g4-personal-beta-readiness`.
-- Checkpoint branch pushed and GitHub-verified at `06d182db41f957fdbb9f29b48ae50cd318e465f9` on 2026-10-27; this is documentation only and has no inherited test status.
-- DRAFT_PR: not created. Create after G4 has reviewable integrated changes and a deliberate base decision; do not create a 409-commit main PR without G1's reviewed rehearsal.
+- Checkpoint branch first pushed and GitHub-verified at `06d182db41f957fdbb9f29b48ae50cd318e465f9`; subsequent checkpoint heads are recorded in the Git branch history. The integrated G4 source head has no inherited Required status.
+- DRAFT_PR: not yet created. After focused validation, base G4 Draft PR on PR #123's head branch `codex/serea-personal-beta-functional-integration` to show only G4 changes.
 - main, PR #117, #120, #121, #122 and #123 are protected from modification/merge.
 
 ## Existing exact-head evidence
@@ -40,10 +40,10 @@ All evidence below applies only to candidate SHA `3924b36080ffa43331f065a15db80c
 
 | Agent | Goal | Status | PR | Head | Review status |
 |---|---|---|---|---|---|
-| G1 | Main integration and release architecture | SUCCESS for scoped provenance/rehearsal audit; independent G4 security review of G2 is next | [#124](https://github.com/Yrika819/Serea/pull/124) Draft | `e9dc99f5b204af38437e5dc3cb1b5595c21fb2dc` | REVIEWED — Git objects/trees and report checked; artifact XML unavailable |
-| G2 | Google OAuth/Gmail/Calendar readiness | CHANGES_REQUESTED — fake authorization/revoke races; repair/re-test pending | None | source `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`; checkpoint `43c258b78bfc228a98c78609fa531210131588ea` | REVIEWED — no real-provider security defect; low-severity demo state reliability fixes requested |
+| G1 | Main integration and release architecture | SUCCESS for scoped provenance/rehearsal audit; independent review of G2 repair completed | [#124](https://github.com/Yrika819/Serea/pull/124) Draft | `e9dc99f5b204af38437e5dc3cb1b5595c21fb2dc` | REVIEWED — provenance, rehearsal and G2 race repair accepted; baseline artifact XML access limitation recorded |
+| G2 | Google OAuth/Gmail/Calendar readiness | PARTIAL — fake lifecycle state repair integrated; real Google path remains NOT WIRED | None | source `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; final report `5931c7b5c4effeecd16b2fb5da011c9289ed207a` | REVIEWED/ACCEPTED by G1; 74 JVM PASS; isolated test-source compile PASS; no emulator |
 | G3 | Real AI / on-device inference feasibility | PARTIAL; report complete, PoC NOT_RUN | None | `6d6f362da2380b56ea0fb7bc9372dbcceae67e90` | REVIEWED — documentation-only; no correction requested; no runtime integration approved |
-| G4 | Orchestration, integration, independent security review and Required validation | Active | TBD | G4 branch above | BASELINE_VERIFIED; new changes pending |
+| G4 | Orchestration, integration, independent security review and Required validation | Active | TBD | `4c5f7c5d8a47f9325c3aca93fb0ad232acf84b6e` | G2 source integrated; exact-head JVM/compile and UI instrumentation pending |
 
 Each agent owns a separate worktree, branch, and checkpoint. No agent may modify another lane's files or branch. Only this Orchestrator edits this ledger.
 
@@ -56,29 +56,23 @@ Each agent owns a separate worktree, branch, and checkpoint. No agent may modify
 
 ## Current risks / decisions
 
-- PR #122 and #123 diverged from a shared base. G1 must review semantic file/contract differences, not infer equivalence from ancestry or head names.
-- PR #123 has a large cumulative diff against main; staged provenance and reviewed integration sequence are required before a main-based candidate is considered.
+- PR #122 and #123 diverged from a shared base. G1's exact-ref and semantic review found no #122-only paths; Required manifests/verifier blobs match, and the disposable merge rehearsal reproduced #123's tree. Main was not changed.
+- PR #123 has a large cumulative diff against main. G1's provenance matrix and disposable merge rehearsal are evidence for a staged integration path, not authorization to merge.
 - Google policy and scope research is not permission to use an account or enable OAuth.
 - Host/Emulator AI inference evidence is not Pixel 7a performance evidence. No real API key or model service call is authorized.
 - Main merge, production signing, Firebase distribution, real accounts/provider credentials, Pixel 7a operation, and final GO require Owner decision.
-- G3 preliminary note says documented Gemini/ML Kit routes have age/consumer-use restrictions and Pixel 7a is absent from the currently listed supported device set; this is not yet accepted as a final eligibility finding. Account-specific age/region eligibility and primary-source citations remain unreviewed. G3 reports no local Android NDK/CMake and is not downloading a large model without a justified, reproducible PoC plan.
-- G1 interim reports #98 → #99 → #100 → #117 and sibling #122/#123 from #117; #122/#123 diverge at #117. It reports 45 versus 61 changed paths, no #122-only paths, 39 shared paths byte-identical, 6 evolved in #123, 16 additions in #123, and a conflict-free disposable main-based merge whose tree equals #123. This remains interim and NOT_REVIEWED until exact refs, semantic path list, parent SHAs, and required workflow audit are provided.
-- G2 implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`, tree `420a818a2a4c97ac06c7df0e3ec11db0d3a3c314`, is pushed and was independently diff-reviewed; only Settings Fake consent walkthrough, its isolated Android UI assertions, a lifecycle JVM test, and the G2 report changed. Exact-source six-class JVM suite reports 71/71 (0 failures/errors/skips) and isolated Android test Kotlin compile passed. Temporary Temurin 21.0.13 archive SHA recorded by G2: `d7f5d5cf865a2902b70ff549b97586a7d3f234e016f041ab447ea740c7d66d1c`; no repo toolchain change. No emulator, real account, or live OAuth used. Real Gmail/Calendar provider path remains NOT WIRED in ordinary UI.
-- Orchestrator/G1 review found a low-severity latent synthetic UI state race: with the test's StandardTestDispatcher (or a suspending future gateway), two feature `requestConsent` calls before the first coroutine publishes `pendingFeature` cause the second to invalidate the first generation and can strand the first feature in `AUTHORIZING`. Current Main.immediate + non-suspending Fake path does not expose it in ordinary taps, but it undermines the lifecycle contract. Formal `CHANGES_REQUESTED` was sent as `G2-DEMO-AUTH-REQUEST-RACE`; G2 is fixing it atop immutable `d5ef1a9…`. No G2 change has been integrated.
-- Independent G1 review of checkpoint HEAD `43c258b78bfc228a98c78609fa531210131588ea` (tree `41757fd3a497e4c9f4bb23e1961bab18ebf1886c`) confirmed source blobs are unchanged from `d5ef1a9…`, fake-only wiring, clear no-network disclosure, immediate synthetic lease close, and no MainActivity/Composition Root/manifest/provider change; no live OAuth/account defect found. G1 reproduced a second stale-work issue under `StandardTestDispatcher`: queue `grantPendingConsent()`, then invalidate with `revokeDemoGrant()` before `runCurrent`; queued work can mutate Fake grants after displayed REVOKED state. This was added to the same CHANGES_REQUESTED acceptance along with no stale mutation after account switch/disconnect. No changes have been integrated.
+- G2's initial implementation exposed two Fake-only authorization races. G1 requested changes; G2 repaired them in `efa24f660d28ec92cc3095cc868f27b1d0e576b9`. The repair reserves the active feature synchronously, enforces single-flight consent, invalidates queued grants on revoke/disconnect, and adds three regression cases. G1 accepted the repair. Orchestrator parsed six exact-source JUnit XML files: 74 tests, 0 failures/errors/skips; isolated Android test-source compile passed. G4 integrated the agent commit chain; exact G4-head rerun is pending. No emulator, real account or live OAuth was used.
+- G2 cancellation invalidates authorization generations and closes stale leases but does not cancel coroutine Jobs. The current gateway is Fake-only and performs no live I/O; add Job cancellation before reusing the ViewModel with a real asynchronous gateway. Ordinary Gmail/Calendar UI remains NOT WIRED; OAuth/API and emulator E2E remain NOT_RUN.
 - G3 report branch `codex/serea-g3-real-ai-feasibility` is pushed and verified at `6d6f362da2380b56ea0fb7bc9372dbcceae67e90`, tree `f4fe1cf534b855b58ea19683621bf3dc7f7a3cd6`; only `docs/agent-reports/g3-ai.md` changed. Orchestrator reviewed the exact diff, clean worktree, scope, explicit NOT_RUN inventory, model provenance/licensing caveats, and policy/runtime claims against current official Gemini, ML Kit GenAI, Ollama and llama.cpp sources. No correction requested. This report is feasibility evidence only; no model, cloud provider, or runtime is integrated or approved.
-- G1 interim provenance reports `main` is an ancestor of #117/#123, the ordered stack is #98→#99→#100→#117→#123, and #122 is a sibling of #123. A disposable merge rehearsal reportedly had no conflicts and produced #123's tree exactly; #120/#121 changes named in that report are already present in #123 so no duplicate cherry-pick is indicated. G1 reports Required manifests/verifier are unchanged, and its artifact download attempt returned 403, so JUnit XML was not independently parsed. Exact rehearsal parents/commit, semantic path inventory, and workflow audit remain pending; not yet approved.
-- G1 final report was independently reviewed. Exact G1 head `e9dc99f5b204af38437e5dc3cb1b5595c21fb2dc`, tree `0dfb43e986d4c88fc6035fe7dc19cd82ffeb4a57`, is a report-only change on `main`; PR #124 is Draft. Orchestrator verified #122/#123 common base, zero #122-only paths, 16 #123 additions, six changed shared blobs, Required/additional/verifier blob equality across #117/#122/#123, #120/#121 changed-file parity, and rehearsal `898bf799d8eba2aec5b43253fc8c29b4ef750527` parents/tree equality. No correction requested. G1's artifact payload download 403 is retained as a limitation; prior exact-#123 CI evidence is not reclassified.
-- PR #124 automation found a real main-baseline integration issue: Fast CI run `40488015151` failed at the existing `tools/check_commit_identity.py` before tests. Orchestrator confirmed main's checker uses `git log --all` while checkout has `fetch-depth: 0`; the log lists 106 unrelated commits from fetched refs. #123 replaces this with event-bounded commit-range validation. This is a stale-main baseline issue to resolve through the approved stack, not a reason to weaken the guard. Other PR #124 broad runs were canceled by G1 and are not validation evidence: latest-head SQLite `40488015109`, Full `40488015078`, Native `40488015079`, Git hooks `40488015071`; earlier-head runs are recorded in PR #124.
+- PR #124 is an audit-only Draft based on main. Its Fast CI run `40488015151` failed before tests because main's existing `tools/check_commit_identity.py` scans `git log --all` in a full-depth checkout and finds unrelated commits from fetched refs. The newer #123 stack uses event-bounded commit-range validation. This is a stale-main-base integration issue, not grounds to relax the guard. G1-canceled broad runs `40488015109`, `40488015078`, `40488015079`, `40488015071` are not validation evidence.
 
 ## NEXT_ACTIONS
 
-1. G1/G2/G3 create independent worktrees, inspect existing implementations, and return exact HEAD/test evidence in their dedicated checkpoint docs.
-2. Orchestrator fetches each branch/diff and independently reviews scope, tests, security, base provenance, and Required impact; send formal CHANGES_REQUESTED records where needed.
-3. G1 completes a disposable main integration rehearsal; G2/G3 changes remain separate until reviewed.
-4. After G2/G3 Focused evidence, integrate only non-overlapping approved changes into this G4 branch, then run integration and security review.
-5. Run Required and cross-workflow CI only after the integrated source head stabilizes. Do not mix baseline PASS evidence with new source heads.
-6. Prepare release/OAuth/AI/Pixel checklists without using production credentials, services, or devices.
+1. Rerun the 74-test JVM suite and isolated Android test-source compile on G4's integrated HEAD using the validated temporary JDK; inspect the resulting JUnit XML.
+2. Run the bounded Fake Google UI instrumentation test through the disposable API 26/35 focused emulator workflow if the test identity is included; verify it executes and does not become a skip.
+3. Update the G4 ledger with exact-head results, push the owned branch, and open a Draft PR against #123's head branch with the G1/G2/G3 evidence and Owner decisions.
+4. Once the integrated source head is stable, run formal Required and relevant cross-workflow CI on that exact HEAD; do not inherit #123 PASS results.
+5. Prepare release/OAuth/AI/Pixel checklists without using production credentials, services, or devices.
 
 ## OWNER_APPROVAL_REQUIRED
 

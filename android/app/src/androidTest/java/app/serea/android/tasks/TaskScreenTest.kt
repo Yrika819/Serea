@@ -215,7 +215,7 @@ class TaskScreenTest {
         compose.onNodeWithTag("task_save").performClick()
         compose.waitUntil(5_000) { runBlocking { repository.updateEntered!!.isCompleted } }
         compose.onNodeWithTag("task_title").assertIsNotEnabled()
-        compose.onNodeWithTag("task_editor_saving").assertIsDisplayed()
+        compose.onNodeWithTag("task_editor_saving").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("閉じる").assertIsDisplayed()
 
         compose.onNodeWithTag("task_cancel").performClick()

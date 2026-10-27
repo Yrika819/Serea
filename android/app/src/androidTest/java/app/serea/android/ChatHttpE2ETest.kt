@@ -27,6 +27,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -60,11 +61,12 @@ class ChatHttpE2ETest {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"second answer"},"done":true,"prompt_eval_count":11,"eval_count":3}"""))
         val conversationId = "http-e2e-conversation"
         runBlocking { history.create(conversationId, "HTTP E2E") }
+        val catalogNow = Instant.parse("2026-10-26T12:00:00Z")
         val modelIds = listOf("fixture/first-model", "fixture/second-model")
         val models = modelIds.map { id -> ModelDescriptor(id, "fixture", id, Knowledge.Known(8192), Knowledge.Known(512),
             ModelCapabilities(setOf("text/plain")), ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE,
-            authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture (fictional)", verificationStatus = ModelVerificationStatus.TEST_FIXTURE) }
-        val catalog = FakeModelCatalog(models)
+            authorized = true, lastVerifiedAt = catalogNow.minusSeconds(30).toString(), source = "instrumentation fixture (fictional)", verificationStatus = ModelVerificationStatus.TEST_FIXTURE) }
+        val catalog = FakeModelCatalog(models, clock = { catalogNow })
         val router = AdaptiveModelRouter(catalog)
         var policy = ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelIds.first(), allowedProviderIds = setOf("fixture"))
         val usagePort = UsageControlledModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), usage,
@@ -116,10 +118,12 @@ class ChatHttpE2ETest {
 
     @Test fun manualRouterSelectionIsPassedToMockHttpRequestAndNeverFallsBack() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"message":{"content":"routed answer"},"done":true,"prompt_eval_count":3,"eval_count":2}"""))
+        val catalogNow = Instant.parse("2026-10-26T12:00:00Z")
         val descriptor = ModelDescriptor("fixture/manual-v1", "fixture", "Fixture Manual",
             Knowledge.Known(8192), Knowledge.Known(512), ModelCapabilities(setOf("text/plain")),
-            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true, lastVerifiedAt = "2026-10-19T00:00:00Z", source = "instrumentation fixture (fictional)", verificationStatus = ModelVerificationStatus.TEST_FIXTURE)
-        val router = AdaptiveModelRouter(FakeModelCatalog(listOf(descriptor)))
+            ModelPricing(Knowledge.UNKNOWN, Knowledge.UNKNOWN, Knowledge.UNKNOWN), ModelAvailability.AVAILABLE, authorized = true,
+            lastVerifiedAt = catalogNow.minusSeconds(30).toString(), source = "instrumentation fixture (fictional)", verificationStatus = ModelVerificationStatus.TEST_FIXTURE)
+        val router = AdaptiveModelRouter(FakeModelCatalog(listOf(descriptor), clock = { catalogNow }))
         val routed = RoutedModelChatPort(MockHttpChatPort(server.url("/api/chat"), clientCertificates), router) {
             ModelRoutingPolicy(mode = ModelSelectionMode.MANUAL, manualModelId = "fixture/manual-v1", allowedProviderIds = setOf("fixture"))
         }
@@ -272,7 +276,11 @@ class ChatHttpE2ETest {
             usage = usage,
             attributionResolver = CatalogUsageAttributionResolver(catalog),
         )
-        val outer = EgressCheckedModelChatPort(usagePort) { 1000L }
+        val outer = EgressCheckedModelChatPort(
+            usagePort,
+            clock = { 1000L },
+            expectedTarget = EgressTarget.CLOUD,
+        )
         val router = AdaptiveModelRouter(catalog)
         val routed = RoutedModelChatPort(outer, router) {
             ModelRoutingPolicy(ModelSelectionMode.MANUAL, manualModelId = modelId, allowedProviderIds = setOf("ollama"))

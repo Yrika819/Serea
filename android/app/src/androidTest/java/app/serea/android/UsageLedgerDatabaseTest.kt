@@ -317,17 +317,19 @@ class UsageLedgerDatabaseTest {
             sawReservedBeforeDispatch = true
         }
         val controlled = EgressCheckedModelChatPort(
-            UsageControlledModelChatPort(
+            delegate = UsageControlledModelChatPort(
                 fake,
                 usage,
                 outputReservationTokens = 16,
                 attributionResolver = CatalogUsageAttributionResolver(catalog, prices, { now }),
             ),
-        ) { now.toEpochMilli() }
+            clock = { now.toEpochMilli() },
+            expectedTarget = EgressTarget.CLOUD,
+        )
         val routed = RoutedModelChatPort(
             controlled,
             AdaptiveModelRouter(catalog),
-            { ModelRoutingPolicy(
+            policy = { ModelRoutingPolicy(
                 mode = ModelSelectionMode.MANUAL,
                 manualModelId = "fixture/model",
                 allowedProviderIds = setOf("fake-provider"),

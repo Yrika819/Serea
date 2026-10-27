@@ -29,6 +29,10 @@ fn configure_ready_marker(command: &mut Command, directory: &Path) {
 }
 
 fn start(directory: &Path) -> Child {
+    start_with_pause_after_ready(directory, None)
+}
+
+fn start_with_pause_after_ready(directory: &Path, marker: Option<&Path>) -> Child {
     let mut command = Command::new(env!("CARGO_BIN_EXE_serea-host"));
     command
         .args(["run", "--synthetic", "--data-dir"])
@@ -36,7 +40,28 @@ fn start(directory: &Path) -> Child {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_ready_marker(&mut command, directory);
+    if let Some(marker) = marker {
+        command.env("SEREA_TEST_PAUSE_AFTER_READY_MARKER", marker);
+    }
     command.spawn().expect("launch synthetic host")
+}
+
+fn wait_for_marker(child: &mut Child, marker: &Path) {
+    let deadline = monotonic_now() + Duration::from_secs(30);
+    loop {
+        if let Ok(contents) = std::fs::read_to_string(marker) {
+            assert_eq!(contents.trim(), format!("pid={}", child.id()));
+            return;
+        }
+        if let Some(status) = child.try_wait().expect("poll paused synthetic host") {
+            panic!("Host exited before pause marker was written: {status}");
+        }
+        assert!(
+            monotonic_now() < deadline,
+            "Host did not reach the pause marker"
+        );
+        thread::park_timeout(Duration::from_millis(10));
+    }
 }
 
 #[cfg(feature = "synthetic-test-hooks")]
@@ -459,8 +484,10 @@ fn long_running_host_is_single_instance_and_restarts_from_durable_schema() {
     stop(&directory, first, first_stdout);
     assert!(directory.join("host.lock").exists());
 
-    let mut crashed_run = start(&directory);
+    let pause_marker = directory.join("host.after-ready-paused");
+    let mut crashed_run = start_with_pause_after_ready(&directory, Some(&pause_marker));
     let _crashed_stdout = wait_ready(&mut crashed_run, &directory);
+    wait_for_marker(&mut crashed_run, &pause_marker);
     crashed_run.kill().expect("terminate host process");
     assert!(!crashed_run.wait().expect("reap terminated host").success());
 
@@ -996,7 +1023,8 @@ fn model_accounting_is_bound_to_a_task_created_by_the_scheduler_task_engine() {
             .expect("execute explicit fake Router call correlated to Task");
         assert!(
             result.status.success(),
-            "Task model call {index} failed: stdout={} stderr={}",
+            "Task model call {index} failed: status={:?} stdout={} stderr={}",
+            result.status,
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         );

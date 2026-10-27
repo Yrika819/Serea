@@ -46,10 +46,14 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import app.serea.android.assistant.taskproposal.DemoTaskProposalRepository
 import app.serea.android.assistant.taskproposal.TaskProposalDemoScreenForTest
+import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.calendar.FakeCalendarProvider
+import app.serea.android.gmail.GmailProviderKind
 import app.serea.android.calendar.ui.CalendarAgendaItemsKey
 import app.serea.android.calendar.ui.CalendarLazyListPositionKey
 import app.serea.android.calendar.ui.CalendarLazyListViewportKey
@@ -144,11 +148,18 @@ class SereaAppShellTest {
         }
         val x = origin[0] + bounds.center.x.toInt()
         val y = origin[1] + bounds.center.y.toInt()
-        val accepted = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).click(x, y)
+        val uiAutomatorAccepted = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).click(x, y)
+        val shellResult = if (uiAutomatorAccepted) {
+            "NOT_USED"
+        } else {
+            shell("input tap $x $y && echo SEREA_TOUCH_DISPATCHED")
+        }
+        val accepted = uiAutomatorAccepted || shellResult.endsWith("SEREA_TOUCH_DISPATCHED")
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "SYSTEM_TOUCH uptimeNanos=${SystemClock.elapsedRealtimeNanos()} bounds=$bounds " +
-                "screenOrigin=${origin.toList()} screenPoint=($x,$y) accepted=$accepted")
-        assertTrue("UiAutomator did not dispatch a touchscreen tap to the Chat Composer.", accepted)
+                "screenOrigin=${origin.toList()} screenPoint=($x,$y) " +
+                "uiAutomatorAccepted=$uiAutomatorAccepted shellResult=$shellResult accepted=$accepted")
+        assertTrue("Neither UiAutomator nor Android shell dispatched a touchscreen tap to the Chat Composer.", accepted)
     }
 
     private fun awaitComposerWindowFocus(stage: String) {
@@ -170,6 +181,53 @@ class SereaAppShellTest {
         assertTrue("Chat Composer Activity did not acquire Android window focus: $snapshot", focused)
     }
 
+    /** Bring a resumed but unfocused target task to the foreground before sending a real touch. */
+    private fun ensureChatWindowFocus(stage: String) {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        var hasWindowFocus = false
+        var activitySnapshot = "MainActivity unavailable"
+        compose.activityRule.scenario.onActivity { activity ->
+            hasWindowFocus = activity.window.decorView.hasWindowFocus()
+            activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
+                "attached=${activity.window.decorView.isAttachedToWindow} visible=${activity.window.decorView.isShown}"
+        }
+        Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+            "FOREGROUND_INITIAL uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage $activitySnapshot " +
+                "task=${shell("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")}")
+        if (!hasWindowFocus) {
+            if (device.wait(Until.hasObject(By.text("Wait")), 1_000)) {
+                Log.w(COMPOSER_IME_DIAGNOSTICS_TAG, "FOREGROUND_SYSTEM_ANR_DIALOG stage=$stage found=Wait")
+                device.findObject(By.text("Wait")).click()
+                device.waitForIdle(10_000)
+            }
+            device.pressHome()
+            val target = "$ISOLATED_PACKAGE/app.serea.android.MainActivity"
+            val launch = device.executeShellCommand("am start -W -f 0x30000000 -n $target")
+            Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+                "FOREGROUND_START uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage result=$launch")
+            assertTrue("Android did not confirm foreground Chat Activity launch: $launch", launch.contains("Status: ok"))
+            assertTrue("UiAutomator could not find the foreground Chat task",
+                device.wait(Until.hasObject(By.pkg(ISOLATED_PACKAGE)), 15_000))
+        }
+        val focused = runCatching {
+            compose.waitUntil(20_000) {
+                compose.activityRule.scenario.onActivity { activity ->
+                    hasWindowFocus = activity.window.decorView.hasWindowFocus()
+                    activitySnapshot = "activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                        "lifecycle=${activity.lifecycle.currentState} windowFocus=$hasWindowFocus " +
+                        "attached=${activity.window.decorView.isAttachedToWindow} visible=${activity.window.decorView.isShown}"
+                }
+                hasWindowFocus
+            }
+        }.isSuccess
+        Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+            "FOREGROUND_AFTER uptimeNanos=${SystemClock.elapsedRealtimeNanos()} stage=$stage $activitySnapshot " +
+                "task=${shell("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | tail -1")} " +
+                "windows=${shell("dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' | tail -2")}")
+        assertTrue("Chat Activity did not acquire Android window focus after foreground recovery: $activitySnapshot", focused)
+    }
+
     private fun imeOperation(
         method: String,
         session: TestImeSession,
@@ -178,8 +236,7 @@ class SereaAppShellTest {
         selectionEnd: Int? = null,
     ): Boolean {
         val args = Bundle().apply {
-            putLong("expectedSession", session.generation)
-            putString("expectedConnection", session.connection)
+            putString("expectedEditorPackage", session.editorPackage)
             if (text != null) {
                 putString("text", text)
                 putInt("cursor", 1)
@@ -200,10 +257,23 @@ class SereaAppShellTest {
             client.release()
         }
         val accepted = result.getBoolean("accepted")
+        val operationSession = result.getLong("operationSession")
+        val operationConnection = requireNotNull(result.getString("operationConnection"))
+        val operationEditorPackage = requireNotNull(result.getString("operationEditorPackage"))
+        val operationInputType = result.getInt("operationInputType")
+        assertTrue("IME operation must use a live system InputConnection.", operationConnection != "null")
+        assertEquals("IME operation must target the isolated Chat editor.", session.editorPackage, operationEditorPackage)
+        assertTrue("IME operation must use an active text editor session.",
+            operationSession > 0 && operationInputType != android.text.InputType.TYPE_NULL)
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "REAL_IME_OPERATION uptimeNanos=${SystemClock.elapsedRealtimeNanos()} method=$method " +
-                "accepted=$accepted session=${session.generation} connection=${session.connection} fixture=$text")
-        assertTrue("Android-managed Test IME rejected $method for session ${session.generation}.", accepted)
+                "accepted=$accepted baselineService=${session.service} baselineSession=${session.generation} " +
+                "baselineConnection=${session.connection} " +
+                "service=${result.getString("operationService")} session=$operationSession " +
+                "connection=$operationConnection editorPackage=$operationEditorPackage " +
+                "inputType=$operationInputType fixture=$text")
+        assertTrue("Android-managed Test IME rejected $method for active session $operationSession " +
+            "after snapshot $session.", accepted)
         return accepted
     }
 
@@ -1112,6 +1182,29 @@ class SereaAppShellTest {
         assertTrue("Tasks destination heading and add action must both become displayed", taskScreenDisplayed)
         compose.onNodeWithTag("task_add").assertIsDisplayed()
         pressBack()
+        val chatScreenRestored = runCatching {
+            compose.waitUntil(5_000) {
+                runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
+            }
+        }.isSuccess
+        if (!chatScreenRestored) {
+            val chatSelected = runCatching {
+                compose.onNodeWithTag("destination_chat").assertIsSelected()
+                true
+            }.getOrDefault(false)
+            val tasksSelected = runCatching {
+                compose.onNodeWithTag("destination_tasks").assertIsSelected()
+                true
+            }.getOrDefault(false)
+            Log.i(
+                TASKS_DESTINATION_STAGE_TAG,
+                "CHAT_BACK_TIMEOUT|chatSelected=$chatSelected tasksSelected=$tasksSelected " +
+                    "chatInputLength=${compose.activity.chatViewModel.state.value.input.length} " +
+                    "taskLoading=${compose.activity.shellTaskViewModel.state.value.loading}",
+            )
+            compose.onRoot(useUnmergedTree = true).printToLog("chat-tasks-back")
+        }
+        assertTrue("Chat composer must become displayed after returning from Tasks", chatScreenRestored)
         compose.onNodeWithTag("chat-composer").assertIsDisplayed()
         assertEquals("unsent task transition draft", compose.activity.chatViewModel.state.value.input)
         assertTrue(viewModel === compose.activity.chatViewModel)
@@ -1122,6 +1215,7 @@ class SereaAppShellTest {
     }
 
     @Test fun chatGmailBackShowsOnlyFictionalMailboxData() {
+        assertEquals(GmailProviderKind.FAKE, compose.activity.shellProviders.gmail.kind)
         select(SereaDestination.GMAIL)
         compose.onNodeWithText("DEMO / 架空のメール — 実アカウントには接続していません").assertIsDisplayed()
         compose.waitUntil(10_000) {
@@ -1183,6 +1277,7 @@ class SereaAppShellTest {
     }
 
     @Test fun chatCalendarBackShowsFictionalAgendaAndDetail() {
+        assertEquals(CalendarProviderKind.FAKE, compose.activity.shellProviders.calendar.kind)
         select(SereaDestination.CALENDAR)
         compose.onNodeWithTag("calendar_destination").assertIsDisplayed()
         compose.onNodeWithText("DEMO / 架空の予定").assertIsDisplayed()
@@ -1335,6 +1430,7 @@ class SereaAppShellTest {
             shell("ime set $TEST_IME_ID")
             assertEquals("Android did not select the isolated Test IME.", TEST_IME_ID,
                 shell("settings get secure default_input_method"))
+            ensureChatWindowFocus("initial real IME session")
             tapComposerThroughSystemInput()
             awaitComposerWindowFocus("initial real IME session")
             composer.assertIsFocused()
@@ -1381,9 +1477,16 @@ class SereaAppShellTest {
             shell("ime set $restoreIme")
             shell("ime set $TEST_IME_ID")
             assertEquals(TEST_IME_ID, shell("settings get secure default_input_method"))
-            tapComposerThroughSystemInput()
+            // Committing B and clearing the editor can leave the Activity resumed while Android
+            // has removed Window focus. Recover that state, then verify the fresh session created
+            // by switching IMEs. The Composer already has a real input session here; another
+            // injected screen tap is redundant and can fail even while that session is live.
+            ensureChatWindowFocus("synchronized real IME session")
             awaitComposerWindowFocus("synchronized real IME session")
             composer.assertIsFocused()
+            // Window focus can cause Android to replace the IME InputConnection after an
+            // onStartInput callback. Capture the session only after this focus boundary so the
+            // operation cannot accidentally target the just-finished connection.
             session = awaitTestImeSession(startsAfterReset)
             imeOperation("setComposingText", session, COMPOSER_DRAFT)
             awaitComposerImeState("R4-C-draft-composing", null) {
@@ -1816,12 +1919,10 @@ class SereaAppShellTest {
         val originalDensityOverride = shell("wm density").lineSequence()
             .firstOrNull { it.startsWith("Override density:") }
             ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-        try {
-            shell("wm size 320x640")
-            shell("wm density 160")
-            shell("settings put system font_scale 2.0")
-            compose.waitUntil(15_000) {
-                var fontScale = 1f
+        var lastActivityConfiguration = "not-observed"
+        fun activityConfigurationMatches(expectedScale: Float, expectedWidth: Int, expectedDensityDpi: Int): Boolean {
+            return try {
+                var fontScale = 0f
                 var width = 0
                 var densityDpi = 0
                 compose.activityRule.scenario.onActivity {
@@ -1829,7 +1930,27 @@ class SereaAppShellTest {
                     width = it.resources.configuration.screenWidthDp
                     densityDpi = it.resources.configuration.densityDpi
                 }
-                fontScale >= 1.99f && width == 320 && densityDpi == 160
+                lastActivityConfiguration = "fontScale=$fontScale,width=$width,densityDpi=$densityDpi"
+                kotlin.math.abs(fontScale - expectedScale) < 0.02f &&
+                    width == expectedWidth && densityDpi == expectedDensityDpi
+            } catch (failure: NullPointerException) {
+                // Android destroys and recreates the Activity for a system font/size change.
+                // ActivityScenario can observe the short DESTROYED interval between those callbacks.
+                if (failure.message == "Cannot run onActivity since Activity has been destroyed already") {
+                    lastActivityConfiguration = "activity-destroyed-during-recreation"
+                    false
+                } else {
+                    throw failure
+                }
+            }
+        }
+        var primaryFailure: Throwable? = null
+        try {
+            shell("wm size 320x640")
+            shell("wm density 160")
+            shell("settings put system font_scale 2.0")
+            compose.waitUntil(15_000) {
+                activityConfigurationMatches(expectedScale = 2f, expectedWidth = 320, expectedDensityDpi = 160)
             }
             fontScaleStage("font-scale-applied")
             DestinationContract.all.forEach { contract ->
@@ -1838,6 +1959,20 @@ class SereaAppShellTest {
                     .assertTextContains(contract.title)
             }
             compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+            fontScaleStage("compact-composer-visible")
+            compose.onNodeWithText("その他の操作").performClick()
+            fontScaleStage("compact-overflow-open")
+            compose.onNodeWithText("新しい会話").assertIsDisplayed()
+            fontScaleStage("compact-new-conversation-visible")
+            compose.onNodeWithText("履歴").assertIsDisplayed()
+            fontScaleStage("compact-history-visible")
+            compose.onNodeWithText("新しい会話").performClick()
+            fontScaleStage("compact-new-conversation-selected")
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithText("新しい会話").fetchSemanticsNodes().isEmpty()
+            }
+            compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+            fontScaleStage("compact-overflow-dismissed")
 
             select(SereaDestination.TASKS)
             fontScaleStage("tasks-destination-selected")
@@ -1908,50 +2043,53 @@ class SereaAppShellTest {
                 runCatching { compose.onNodeWithTag("task_proposal_close").performScrollTo().assertIsDisplayed() }.isSuccess
             }
         } catch (failure: Throwable) {
-            compose.onRoot(useUnmergedTree = true).printToLog("task-proposal-font-scale")
-            throw failure
+            primaryFailure = failure
+            runCatching { compose.onRoot(useUnmergedTree = true).printToLog("task-proposal-font-scale") }
         } finally {
-            runCatching {
-                if (originalFontScaleSetting == "null") {
-                    shell("settings delete system font_scale")
-                } else {
-                    shell("settings put system font_scale $originalFontScaleSetting")
+            try {
+                runCatching {
+                    if (originalFontScaleSetting == "null") {
+                        shell("settings delete system font_scale")
+                    } else {
+                        shell("settings put system font_scale $originalFontScaleSetting")
+                    }
                 }
-            }
-            runCatching {
-                if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
-            }
-            runCatching {
-                if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
-            }
-            val restoredSizeOverride = shell("wm size").lineSequence()
-                .firstOrNull { it.startsWith("Override size:") }
-                ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-            val restoredDensityOverride = shell("wm density").lineSequence()
-                .firstOrNull { it.startsWith("Override density:") }
-                ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
-            val restoredFontScaleSetting = shell("settings get system font_scale")
-            val originalSettingIsPlatformDefault = originalFontScaleSetting == "null" &&
-                originalScale == 1f && restoredFontScaleSetting.toFloatOrNull() == 1f
-            assertTrue(
-                "System font scale setting was not restored: original=$originalFontScaleSetting " +
-                    "restored=$restoredFontScaleSetting effectiveOriginal=$originalScale",
-                originalFontScaleSetting == restoredFontScaleSetting || originalSettingIsPlatformDefault,
-            )
-            assertEquals(originalSizeOverride, restoredSizeOverride)
-            assertEquals(originalDensityOverride, restoredDensityOverride)
-            compose.waitUntil(15_000) {
-                var width = 0
-                var densityDpi = 0
-                var fontScale = 0f
-                compose.activityRule.scenario.onActivity {
-                    width = it.resources.configuration.screenWidthDp
-                    densityDpi = it.resources.configuration.densityDpi
-                    fontScale = it.resources.configuration.fontScale
+                runCatching {
+                    if (originalSizeOverride == null) shell("wm size reset") else shell("wm size $originalSizeOverride")
                 }
-                width == originalWidthDp && densityDpi == originalDensityDpi &&
-                    kotlin.math.abs(fontScale - originalScale) < 0.02f
+                runCatching {
+                    if (originalDensityOverride == null) shell("wm density reset") else shell("wm density $originalDensityOverride")
+                }
+                val restoredSizeOverride = shell("wm size").lineSequence()
+                    .firstOrNull { it.startsWith("Override size:") }
+                    ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+                val restoredDensityOverride = shell("wm density").lineSequence()
+                    .firstOrNull { it.startsWith("Override density:") }
+                    ?.substringAfter(':')?.trim()?.takeIf { it.isNotEmpty() }
+                val restoredFontScaleSetting = shell("settings get system font_scale")
+                val originalSettingIsPlatformDefault = originalFontScaleSetting == "null" &&
+                    originalScale == 1f && restoredFontScaleSetting.toFloatOrNull() == 1f
+                assertTrue(
+                    "System font scale setting was not restored: original=$originalFontScaleSetting " +
+                        "restored=$restoredFontScaleSetting effectiveOriginal=$originalScale",
+                    originalFontScaleSetting == restoredFontScaleSetting || originalSettingIsPlatformDefault,
+                )
+                assertEquals(originalSizeOverride, restoredSizeOverride)
+                assertEquals(originalDensityOverride, restoredDensityOverride)
+                compose.waitUntil(15_000) {
+                    activityConfigurationMatches(
+                        expectedScale = originalScale,
+                        expectedWidth = originalWidthDp,
+                        expectedDensityDpi = originalDensityDpi,
+                    )
+                }
+            } catch (cleanupFailure: Throwable) {
+                fontScaleStage("cleanup-failed:${cleanupFailure::class.java.simpleName}:$lastActivityConfiguration")
+                val earlierFailure = primaryFailure
+                if (earlierFailure == null) primaryFailure = cleanupFailure
+                else earlierFailure.addSuppressed(cleanupFailure)
             }
         }
+        primaryFailure?.let { throw it }
     }
 }

@@ -45,7 +45,6 @@ data class CalendarAgendaQuery(
 
 enum class CalendarAgendaFailure {
     PERMISSION_REQUIRED,
-    MOCK_ONLY_REQUIRED,
     DENIED,
     EXPIRED,
     MISSING_SCOPE,
@@ -98,8 +97,8 @@ sealed interface CalendarAgendaUiState {
 }
 
 /**
- * Small read-only coordinator for the independent Calendar screen. It accepts read ports only;
- * the published Composable supplies FakeCalendarProvider and never constructs an HTTP adapter.
+ * Read-only coordinator for the Calendar screen. Provider/session construction stays in the
+ * composition root; this controller requires authorization and verifies the returned data source.
  */
 internal class CalendarAgendaUiController(
     private val readPort: CalendarReadPort,
@@ -122,6 +121,7 @@ internal class CalendarAgendaUiController(
     private var requestGeneration = 0L
     private var activeJob: Job? = null
     private var lastAgenda: CalendarAgendaUiState.Agenda? = null
+    private var currentMockOnly = true
 
     init { loadCurrentRoute() }
 
@@ -215,8 +215,13 @@ internal class CalendarAgendaUiController(
                         .distinctBy { it.stableIdentity() }
                         .toList()
                 }
-                if (events.any { it.source != CalendarEventSource.MOCK }) {
-                    throw UiCalendarFailure(CalendarAgendaFailure.MOCK_ONLY_REQUIRED)
+                val expectedSource = if (authorization.state == CalendarAuthorizationState.MOCK_ONLY) {
+                    CalendarEventSource.MOCK
+                } else {
+                    CalendarEventSource.GOOGLE_CALENDAR_API
+                }
+                if (events.any { it.source != expectedSource }) {
+                    throw UiCalendarFailure(CalendarAgendaFailure.INVALID_RESPONSE)
                 }
                 currentCoroutineContext().ensureActive()
                 if (generation != requestGeneration) return@launch
@@ -236,6 +241,7 @@ internal class CalendarAgendaUiController(
                         selectedCalendarId,
                         mutableState.value.calendars,
                         CalendarAgendaFailure.UNAVAILABLE,
+                        mockOnly = currentMockOnly,
                     )
                 }
                 throw cancelled
@@ -247,6 +253,7 @@ internal class CalendarAgendaUiController(
                         selectedCalendarId,
                         mutableState.value.calendars,
                         reason,
+                        mockOnly = currentMockOnly,
                     )
                 }
             }
@@ -278,8 +285,13 @@ internal class CalendarAgendaUiController(
                     CalendarApiFailureCode.INVALID_RESPONSE,
                     "Calendar provider returned an event for another key.",
                 )
-                if (event.source != CalendarEventSource.MOCK) {
-                    throw UiCalendarFailure(CalendarAgendaFailure.MOCK_ONLY_REQUIRED)
+                val expectedSource = if (authorization.state == CalendarAuthorizationState.MOCK_ONLY) {
+                    CalendarEventSource.MOCK
+                } else {
+                    CalendarEventSource.GOOGLE_CALENDAR_API
+                }
+                if (event.source != expectedSource) {
+                    throw UiCalendarFailure(CalendarAgendaFailure.INVALID_RESPONSE)
                 }
                 CalendarPermissionPolicy.assertCalendarEventSafe(event)
                 mutableState.value = CalendarAgendaUiState.EventDetail(
@@ -294,6 +306,7 @@ internal class CalendarAgendaUiController(
                         mutableState.value.calendars,
                         CalendarAgendaFailure.UNAVAILABLE,
                         detailKey = key,
+                        mockOnly = currentMockOnly,
                     )
                 }
                 throw cancelled
@@ -305,6 +318,7 @@ internal class CalendarAgendaUiController(
                         mutableState.value.calendars,
                         failure.toAgendaFailure(isDetail = true),
                         detailKey = key,
+                        mockOnly = currentMockOnly,
                     )
                 }
             }
@@ -313,9 +327,10 @@ internal class CalendarAgendaUiController(
 
     private suspend fun requireReadAccess(requireCalendarList: Boolean): CalendarAuthorizationStatus {
         val status = authorizationPort.status()
+        currentMockOnly = status.state == CalendarAuthorizationState.MOCK_ONLY
         when (status.state) {
             CalendarAuthorizationState.MOCK_ONLY -> Unit
-            CalendarAuthorizationState.AUTHORIZED -> throw UiCalendarFailure(CalendarAgendaFailure.MOCK_ONLY_REQUIRED)
+            CalendarAuthorizationState.AUTHORIZED -> Unit
             CalendarAuthorizationState.DENIED, CalendarAuthorizationState.REVOKED ->
                 throw UiCalendarFailure(CalendarAgendaFailure.DENIED)
             CalendarAuthorizationState.EXPIRED -> throw UiCalendarFailure(CalendarAgendaFailure.EXPIRED)
@@ -435,7 +450,6 @@ object CalendarAgendaJapaneseText {
 
     fun safeMessage(failure: CalendarAgendaFailure): String = when (failure) {
         CalendarAgendaFailure.PERMISSION_REQUIRED -> "予定を表示する権限が必要です。"
-        CalendarAgendaFailure.MOCK_ONLY_REQUIRED -> "この画面はDEMO / 架空の予定だけを表示します。"
         CalendarAgendaFailure.DENIED -> "予定を表示する権限がありません。"
         CalendarAgendaFailure.EXPIRED -> "予定を表示する権限の有効期限が切れています。"
         CalendarAgendaFailure.MISSING_SCOPE -> "予定の閲覧に必要な権限が不足しています。"

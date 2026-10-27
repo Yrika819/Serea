@@ -254,6 +254,8 @@ fn run_synthetic_host() -> Result<(), Box<dyn std::error::Error>> {
     // normal development Host has no environment-variable configuration path.
     #[cfg(feature = "synthetic-test-hooks")]
     test_readiness::write_ready_marker(model_recovered)?;
+    #[cfg(feature = "synthetic-test-hooks")]
+    test_readiness::pause_after_ready_if_configured()?;
     if model_recovered > 0 {
         println!("{{\"event\":\"model_recovery\",\"ambiguous_attempts\":{model_recovered}}}");
     }

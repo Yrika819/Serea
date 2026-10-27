@@ -80,6 +80,22 @@ class ChatScreenTest {
         }
     }
 
+    private fun startNewConversationForCurrentConfiguration() {
+        val previousId = stateSnapshot().conversation.id
+        var compact = false
+        compose.activityRule.scenario.onActivity { activity ->
+            val configuration = activity.resources.configuration
+            compact = configuration.fontScale >= 1.5f || configuration.screenWidthDp < 340
+        }
+        if (compact) openOverflow()
+        compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
+        compose.waitUntil(10_000) {
+            val state = stateSnapshot()
+            state.conversation.id != previousId && !state.isRestoring
+        }
+        awaitComposerEnabled()
+    }
+
     private fun awaitMainWindowFocus(stage: String) {
         var snapshot = "MainActivity unavailable"
         val focused = runCatching {
@@ -418,7 +434,7 @@ class ChatScreenTest {
         compose.onNodeWithTag("open_settings").performClick()
         compose.onNodeWithText("選択方式: 手動 · 方針: 費用優先").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("選択モデルID: なし").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。")
+        compose.onNodeWithText("外部Providerの手動モデル選択: 選択可能なモデルはありません。任意のモデルIDやProvider Hostは入力できません。")
             .performScrollTo().assertIsDisplayed()
         assertSettingsFieldContains("model-budget-amount", "0.05")
         assertSettingsFieldContains("model-budget-currency", "USD")
@@ -568,8 +584,7 @@ class ChatScreenTest {
                 compose.activityRule.scenario.onActivity { widthDp = it.resources.configuration.screenWidthDp }
                 widthDp in 300..340
             }
-            compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
-            awaitComposerEnabled()
+            startNewConversationForCurrentConfiguration()
             openOverflow()
             compose.onNodeWithText("全履歴を削除").assertIsDisplayed().performClick()
             compose.onNodeWithText("全会話履歴を削除しますか？").assertIsDisplayed()
@@ -606,8 +621,7 @@ class ChatScreenTest {
                 compose.activityRule.scenario.onActivity { fontScale = it.resources.configuration.fontScale }
                 fontScale >= 1.99f
             }
-            compose.onNodeWithText("新しい会話").assertIsDisplayed().performClick()
-            awaitComposerEnabled()
+            startNewConversationForCurrentConfiguration()
             openOverflow()
             compose.onNodeWithText("この会話を削除").assertIsDisplayed().performClick()
             compose.onNodeWithText("この会話を削除しますか？").assertIsDisplayed()

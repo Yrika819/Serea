@@ -321,9 +321,27 @@ else
   echo "Expected API $api_level, observed '$sdk'." > "$evidence/device-api-error.txt"
 fi
 if [[ "$sdk_ok" == true ]]; then
-  initial_default_ime="$(adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')"
-  if [[ -z "$initial_default_ime" || "$initial_default_ime" == "null" ]]; then
-    echo 'Could not capture the disposable emulator default IME before testing.' > "$evidence/device-api-error.txt"
+  source "$tool_dir/wait_for_android_default_ime.sh"
+  if wait_for_android_default_ime; then
+    initial_default_ime="$SEREA_ANDROID_DEFAULT_IME"
+    {
+      printf 'status=READY\ninitial_default_ime=%s\nattempts=%s\n' \
+        "$initial_default_ime" "$SEREA_ANDROID_DEFAULT_IME_ATTEMPTS"
+      printf 'available_ime_services:\n'
+      adb shell ime list -s 2>&1
+    } > "$evidence/ime-readiness.txt"
+  else
+    initial_default_ime="$SEREA_ANDROID_DEFAULT_IME"
+    {
+      printf 'status=NOT_READY\nobserved_default_ime=%s\nattempts=%s\n' \
+        "$initial_default_ime" "$SEREA_ANDROID_DEFAULT_IME_ATTEMPTS"
+      printf 'available_ime_services:\n'
+      adb shell ime list -s 2>&1
+      printf 'input_method_manager:\n'
+      adb shell dumpsys input_method 2>&1
+    } > "$evidence/ime-readiness.txt"
+    adb logcat -d -b all > "$evidence/ime-readiness-logcat.txt" 2>&1 || true
+    echo 'Could not capture the disposable emulator default IME after 30 readiness checks.' > "$evidence/device-api-error.txt"
     sdk_ok=false
   fi
 fi

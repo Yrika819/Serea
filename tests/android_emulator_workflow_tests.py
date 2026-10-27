@@ -27,6 +27,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('"$state" == device && "$sdk" == 35 && "$qemu" == 1 && "$boot_completed" == 1', script)
         self.assertIn('[[ "$stable_samples" -ge 3 ]]', script)
         self.assertIn('print_emulator_diagnostics "Emulator did not remain online', script)
+        reboot = script.split("reboot_emulator() {", 1)[1].split("\n}", 1)[0]
+        reboot_stability = reboot.index("wait_for_stable_emulator 'Android system reboot before root restart'")
+        root_restart = reboot.index('timeout 10s adb -s "$serial" root')
+        root_stability = reboot.index("wait_for_stable_emulator 'adb root restart after Android system reboot'")
+        self.assertLess(reboot_stability, root_restart)
+        self.assertLess(root_restart, root_stability)
+        self.assertIn('shell id -u', reboot)
+        self.assertIn('wait_for_package_manager', reboot)
         self.assertIn("set -Eeuo pipefail", script)
         self.assertIn("trap 'on_error \"$LINENO\" \"$BASH_COMMAND\"' ERR", script)
         self.assertIn('command=%q', script)
@@ -328,6 +336,67 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('while kill -0 "$gradle_pid" 2>/dev/null; do', stage_body)
         self.assertIn('pm path app.serea.android.isolated.test', stage_body)
         self.assertIn('test_expected_apk_sha256=%s', stage_body)
+
+    def test_android_default_ime_readiness_waits_for_value_without_mutating_settings(self) -> None:
+        helper = ROOT / "tools/wait_for_android_default_ime.sh"
+        helper_text = helper.read_text(encoding="utf-8")
+        self.assertIn('local max_attempts="${1:-30}"', helper_text)
+        self.assertIn('adb shell settings get secure default_input_method', helper_text)
+        self.assertIn('SEREA_ANDROID_DEFAULT_IME_ATTEMPTS="$attempt"', helper_text)
+        self.assertNotRegex(helper_text, r"\bime\s+(set|enable|disable)\b")
+        for script_path in (
+            ROOT / "tools/run_android_instrumentation_campaign.sh",
+            ROOT / "tools/run_android_functional_focused.sh",
+        ):
+            script = script_path.read_text(encoding="utf-8")
+            self.assertIn("wait_for_android_default_ime.sh", script)
+            self.assertIn("wait_for_android_default_ime", script)
+            subprocess.run(["bash", "-n", str(script_path)], check=True)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            mock_adb = Path(temporary) / "adb"
+            mock_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "count_file=\"$MOCK_ADB_COUNT_FILE\"\n"
+                "count=0; [[ ! -f \"$count_file\" ]] || count=$(cat \"$count_file\")\n"
+                "count=$((count + 1)); printf '%s' \"$count\" > \"$count_file\"\n"
+                "[[ \"$*\" == 'shell settings get secure default_input_method' ]] || exit 9\n"
+                "if [[ \"${MOCK_ADB_ALWAYS_NULL:-0}\" == 1 ]] || ((count < 3)); then echo null; "
+                "else echo 'com.example.ime/.Keyboard'; fi\n",
+                encoding="utf-8",
+            )
+            mock_adb.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{temporary}{os.pathsep}{environment['PATH']}"
+            environment["MOCK_ADB_COUNT_FILE"] = str(Path(temporary) / "count")
+            script = (
+                '. "$1"; wait_for_android_default_ime 4; '
+                'printf "%s\\n%s\\n" "$SEREA_ANDROID_DEFAULT_IME" '
+                '"$SEREA_ANDROID_DEFAULT_IME_ATTEMPTS"'
+            )
+            result = subprocess.run(
+                ["bash", "-c", script, "test", str(helper)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual("com.example.ime/.Keyboard\n3\n", result.stdout)
+
+            environment["MOCK_ADB_ALWAYS_NULL"] = "1"
+            failure_script = (
+                '. "$1"; if wait_for_android_default_ime 2; then exit 7; fi; '
+                'printf "%s\\n%s\\n" "$SEREA_ANDROID_DEFAULT_IME" '
+                '"$SEREA_ANDROID_DEFAULT_IME_ATTEMPTS"'
+            )
+            failure = subprocess.run(
+                ["bash", "-c", failure_script, "test", str(helper)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual("null\n2\n", failure.stdout)
 
     def test_pr82_dependency_seed_and_process_death_gates_remain_fail_closed(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")

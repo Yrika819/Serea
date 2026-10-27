@@ -142,4 +142,34 @@ class SecurityPortsTest {
             ContextMessage(MessageRole.USER, "partial", DataClassification.PUBLIC, "source", DataOrigin.USER_AUTHORED, "PENDING"),
         )), now).decision)
     }
+
+    @Test fun localDemoContractIsExplicitLocalOnlyAndNeedsNoCloudIntent() {
+        val contract = EgressContract(
+            conversationId = "local-conversation",
+            currentMessageId = "local-send",
+            origin = DataOrigin.USER_AUTHORED,
+            classification = DataClassification.UNKNOWN,
+            destination = ChatEgressGate.LOCAL_DEMO_DESTINATION,
+            plannedBody = "synthetic local fixture",
+            context = emptyList(),
+            preparation = PayloadPreparation.RAW,
+            explicitSendIntentAtMillis = null,
+            expiresAtMillis = null,
+            selectedModelId = ChatEgressGate.LOCAL_DEMO_MODEL_ID,
+            target = EgressTarget.LOCAL_DEMO,
+        )
+
+        val approved = ChatEgressGate.evaluate(contract, nowMillis = 0)
+        assertEquals(EgressContractDecision.APPROVED, approved.decision)
+        assertEquals(EgressTarget.LOCAL_DEMO, approved.payload?.target)
+        assertEquals(EgressContractDecision.CLASSIFICATION_DENIED,
+            ChatEgressGate.evaluate(contract.copy(classification = DataClassification.SECRET), 0).decision)
+        assertEquals(EgressContractDecision.ORIGIN_DENIED,
+            ChatEgressGate.evaluate(contract.copy(context = listOf(ContextMessage(
+                MessageRole.USER, "synthetic provider fixture", DataClassification.PUBLIC, "mail-item",
+                DataOrigin.GMAIL, conversationId = "local-conversation",
+            ))), 0).decision)
+        assertEquals(EgressContractDecision.MISSING_INTENT,
+            ChatEgressGate.evaluate(contract.copy(target = EgressTarget.CLOUD, destination = "https://ollama.com/api/chat"), 0).decision)
+    }
 }

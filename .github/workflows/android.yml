@@ -229,6 +229,10 @@ jobs:
           packages: platform-tools
       - name: Install API 35 emulator image
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+      - name: Install Emulator host runtime dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
       - name: Diagnose KVM before permission changes
         if: always() && !cancelled()
         run: |
@@ -710,6 +714,10 @@ jobs:
           packages: platform-tools
       - name: Install API 35 emulator image and build tools
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+      - name: Install Emulator host runtime dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
       - name: Apply official KVM udev permissions
         if: always() && !cancelled()
         run: |

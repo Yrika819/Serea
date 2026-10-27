@@ -10,19 +10,19 @@ import kotlinx.coroutines.launch
 
 /** State shown by the local-only Google authorization walkthrough in Settings. */
 internal enum class GoogleDemoFeatureState {
-    NOT_CONNECTED,
-    CONSENT_REQUIRED,
-    AUTHORIZED,
-    DENIED,
-    EXPIRED,
     DISCONNECTED,
+    AUTHORIZATION_REQUIRED,
+    AUTHORIZING,
+    AUTHORIZED,
+    EXPIRED,
     REVOKED,
     ERROR,
 }
 
 internal data class GoogleAuthorizationDemoState(
-    val gmail: GoogleDemoFeatureState = GoogleDemoFeatureState.NOT_CONNECTED,
-    val calendar: GoogleDemoFeatureState = GoogleDemoFeatureState.NOT_CONNECTED,
+    val gmail: GoogleDemoFeatureState = GoogleDemoFeatureState.DISCONNECTED,
+    val calendar: GoogleDemoFeatureState = GoogleDemoFeatureState.DISCONNECTED,
+    val disabledInAppFeatures: Set<GoogleFeature> = emptySet(),
     val pendingFeature: GoogleFeature? = null,
     val pendingScopes: Set<GoogleScope> = emptySet(),
     val message: String = "この画面は架空の認可フローを表示します。実アカウントと通信しません。",
@@ -47,6 +47,7 @@ internal class GoogleAuthorizationDemoViewModel(
             return
         }
         val generation = ++requestGeneration
+        setFeatureState(feature, GoogleDemoFeatureState.AUTHORIZING)
         viewModelScope.launch {
             applyOutcome(feature, runCatching { gateway.authorize(feature.scopes) }.getOrElse(::failure), generation)
         }
@@ -55,6 +56,7 @@ internal class GoogleAuthorizationDemoViewModel(
     fun grantPendingConsent() {
         val feature = mutableState.value.pendingFeature ?: return
         val generation = ++requestGeneration
+        setFeatureState(feature, GoogleDemoFeatureState.AUTHORIZING)
         viewModelScope.launch {
             gateway.setExpired(false)
             gateway.grant(*feature.scopes.toTypedArray())
@@ -65,6 +67,7 @@ internal class GoogleAuthorizationDemoViewModel(
     fun denyPendingConsent() {
         val feature = mutableState.value.pendingFeature ?: return
         val generation = ++requestGeneration
+        setFeatureState(feature, GoogleDemoFeatureState.AUTHORIZING)
         gateway.denyNext(AuthorizationFailure.DENIED)
         viewModelScope.launch {
             applyOutcome(feature, runCatching { gateway.authorize(feature.scopes) }.getOrElse(::failure), generation)
@@ -73,6 +76,8 @@ internal class GoogleAuthorizationDemoViewModel(
 
     fun cancelPendingConsent() {
         requestGeneration++
+        val current = mutableState.value
+        current.pendingFeature?.let { setFeatureState(it, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) }
         mutableState.value = mutableState.value.copy(
             pendingFeature = null,
             pendingScopes = emptySet(),
@@ -97,8 +102,8 @@ internal class GoogleAuthorizationDemoViewModel(
         gateway.switchAccount()
         val current = mutableState.value
         mutableState.value = current.copy(
-            gmail = if (current.gmail == GoogleDemoFeatureState.NOT_CONNECTED) current.gmail else GoogleDemoFeatureState.REVOKED,
-            calendar = if (current.calendar == GoogleDemoFeatureState.NOT_CONNECTED) current.calendar else GoogleDemoFeatureState.REVOKED,
+            gmail = if (current.gmail == GoogleDemoFeatureState.DISCONNECTED) current.gmail else GoogleDemoFeatureState.REVOKED,
+            calendar = if (current.calendar == GoogleDemoFeatureState.DISCONNECTED) current.calendar else GoogleDemoFeatureState.REVOKED,
             pendingFeature = null,
             pendingScopes = emptySet(),
             accountGeneration = current.accountGeneration + 1,
@@ -112,6 +117,7 @@ internal class GoogleAuthorizationDemoViewModel(
         gateway.disableInApp(feature)
         updateFeature(feature, GoogleDemoFeatureState.DISCONNECTED) { state ->
             state.copy(
+                disabledInAppFeatures = state.disabledInAppFeatures + feature,
                 pendingFeature = state.pendingFeature.takeUnless { it == feature },
                 pendingScopes = if (state.pendingFeature == feature) emptySet() else state.pendingScopes,
                 message = "${feature.label()}のアプリ内デモ接続を切りました。共有Grantの再利用はしていません。",
@@ -122,8 +128,11 @@ internal class GoogleAuthorizationDemoViewModel(
     fun reconnectInApp(feature: GoogleFeature) {
         requestGeneration++
         gateway.enableInApp(feature)
-        updateFeature(feature, GoogleDemoFeatureState.CONSENT_REQUIRED) { state ->
-            state.copy(message = "${feature.label()}を再接続するにはデモ承認を要求してください。")
+        updateFeature(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) { state ->
+            state.copy(
+                disabledInAppFeatures = state.disabledInAppFeatures - feature,
+                message = "${feature.label()}を再接続するにはデモ承認を要求してください。",
+            )
         }
     }
 
@@ -145,11 +154,14 @@ internal class GoogleAuthorizationDemoViewModel(
             return
         }
         when (outcome) {
-            is AuthorizationOutcome.ConsentRequired -> mutableState.value = mutableState.value.copy(
-                pendingFeature = feature,
-                pendingScopes = outcome.missingScopes,
-                message = "要求された範囲を確認してからデモ承認を選んでください。",
-            )
+            is AuthorizationOutcome.ConsentRequired -> {
+                setFeatureState(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED)
+                mutableState.value = mutableState.value.copy(
+                    pendingFeature = feature,
+                    pendingScopes = outcome.missingScopes,
+                    message = "要求された範囲を確認してからデモ承認を選んでください。",
+                )
+            }
             is AuthorizationOutcome.Authorized -> {
                 // The UI needs only a status. Do not retain even the synthetic token lease.
                 outcome.lease.close()
@@ -162,15 +174,7 @@ internal class GoogleAuthorizationDemoViewModel(
                 }
             }
             is AuthorizationOutcome.Rejected -> {
-                val status = when (outcome.failure) {
-                    AuthorizationFailure.DENIED -> GoogleDemoFeatureState.DENIED
-                    AuthorizationFailure.EXPIRED -> GoogleDemoFeatureState.EXPIRED
-                    AuthorizationFailure.ACCOUNT_CHANGED,
-                    AuthorizationFailure.STALE_CONSENT_RESULT -> GoogleDemoFeatureState.REVOKED
-                    AuthorizationFailure.FEATURE_DISABLED -> GoogleDemoFeatureState.DISCONNECTED
-                    AuthorizationFailure.CANCELLED -> GoogleDemoFeatureState.NOT_CONNECTED
-                    else -> GoogleDemoFeatureState.ERROR
-                }
+                val status = outcome.toDemoFeatureState()
                 updateFeature(feature, status) { state ->
                     state.copy(
                         pendingFeature = null,
@@ -195,9 +199,26 @@ internal class GoogleAuthorizationDemoViewModel(
         mutableState.value = transform(updated)
     }
 
+    private fun setFeatureState(feature: GoogleFeature, state: GoogleDemoFeatureState) {
+        updateFeature(feature, state) { it }
+    }
+
     private fun failure(error: Throwable): AuthorizationOutcome {
         if (error is CancellationException) throw error
         return AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
+    }
+}
+
+internal fun AuthorizationOutcome.toDemoFeatureState(): GoogleDemoFeatureState = when (this) {
+    is AuthorizationOutcome.ConsentRequired -> GoogleDemoFeatureState.AUTHORIZATION_REQUIRED
+    is AuthorizationOutcome.Authorized -> GoogleDemoFeatureState.AUTHORIZED
+    is AuthorizationOutcome.Rejected -> when (failure) {
+        AuthorizationFailure.EXPIRED -> GoogleDemoFeatureState.EXPIRED
+        AuthorizationFailure.ACCOUNT_CHANGED,
+        AuthorizationFailure.STALE_CONSENT_RESULT -> GoogleDemoFeatureState.REVOKED
+        AuthorizationFailure.FEATURE_DISABLED -> GoogleDemoFeatureState.DISCONNECTED
+        AuthorizationFailure.CANCELLED -> GoogleDemoFeatureState.AUTHORIZATION_REQUIRED
+        else -> GoogleDemoFeatureState.ERROR
     }
 }
 

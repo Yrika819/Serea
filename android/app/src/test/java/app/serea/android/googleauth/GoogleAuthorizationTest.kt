@@ -8,7 +8,13 @@ import app.serea.android.googleauth.GoogleScope.CALENDAR_LIST_READ_ONLY
 import app.serea.android.googleauth.GoogleScope.GMAIL_READ_ONLY
 import app.serea.android.googleauth.GoogleFeature.CALENDAR
 import app.serea.android.googleauth.GoogleFeature.GMAIL
+import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -209,29 +215,197 @@ class GoogleAuthorizationTest {
         assertEquals(AuthorizationOutcome.ConsentRequired(both), fake.authorize(both))
     }
 
-    @Test fun appDisableDuringSuccessfulSharedRevokePersistsUntilExplicitReconnect() {
+    @Test fun revokeStartInvalidatesLeaseAndPermissionsBeforeRemoteWorkAndPreservesAppDisable() {
         val knownPermissions = mutableMapOf(
             GMAIL_READ_ONLY to ScopePermission.GRANTED,
             CALENDAR_EVENTS_READ_ONLY to ScopePermission.GRANTED,
         )
-        val disabledFeatures = mutableSetOf<GoogleFeature>()
-        val versions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
+        val grantState = GoogleGrantLeaseState()
+        val gmailVersions = grantState.leaseVersions(setOf(GMAIL))
+        val calendarVersions = grantState.leaseVersions(setOf(CALENDAR))
+        val gmailLease = AccessTokenLease("fixture-gmail", setOf(GMAIL_READ_ONLY), null,
+            validityCheck = { grantState.isLeaseCurrent(gmailVersions) })
+        val calendarLease = AccessTokenLease("fixture-calendar", setOf(CALENDAR_EVENTS_READ_ONLY), null,
+            validityCheck = { grantState.isLeaseCurrent(calendarVersions) })
 
-        // Model a revoke request awaiting Play Services while the user disables Gmail.
-        disabledFeatures += GMAIL
-        versions[GMAIL] = versions.getValue(GMAIL) + 1
-        applySuccessfulGoogleGrantRevocation(knownPermissions, versions)
+        // The real gateway calls this same helper synchronously before awaiting Play Services.
+        grantState.disableInApp(GMAIL)
+        invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
 
         assertTrue(knownPermissions.isEmpty())
-        assertEquals(setOf(GMAIL), disabledFeatures)
-        assertEquals(2L, versions.getValue(GMAIL))
-        assertEquals(1L, versions.getValue(CALENDAR))
+        assertEquals(setOf(GMAIL), grantState.disabledFeaturesSnapshot())
+        assertEquals(2L, grantState.version(GMAIL))
+        assertEquals(1L, grantState.version(CALENDAR))
+        assertFalse(runCatching { gmailLease.useToken { it } }.isSuccess)
+        assertFalse(runCatching { calendarLease.useToken { it } }.isSuccess)
 
         // Only an explicit app-local reconnect clears the disable gate.
-        disabledFeatures -= GMAIL
-        versions[GMAIL] = versions.getValue(GMAIL) + 1
-        assertTrue(disabledFeatures.isEmpty())
-        assertEquals(3L, versions.getValue(GMAIL))
+        grantState.enableInApp(GMAIL)
+        assertTrue(grantState.disabledFeaturesSnapshot().isEmpty())
+        assertEquals(3L, grantState.version(GMAIL))
+        assertFalse(runCatching { gmailLease.useToken { it } }.isSuccess)
+    }
+
+    @Test fun cancelledRevokeCallerKeepsAuthorizationBlockedUntilRemoteTaskIsTerminal() = runBlocking {
+        val lock = Any()
+        val grantState = GoogleGrantLeaseState()
+        val knownPermissions = mutableMapOf(GMAIL_READ_ONLY to ScopePermission.GRANTED)
+        val oldLeaseVersions = grantState.leaseVersions(setOf(GMAIL))
+        val oldLease = AccessTokenLease(
+            "fixture-gmail-before-revoke",
+            setOf(GMAIL_READ_ONLY),
+            null,
+            validityCheck = { grantState.isLeaseCurrent(oldLeaseVersions) },
+        )
+        synchronized(lock) {
+            assertTrue(grantState.tryBeginAuthorizationOperation())
+            invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
+        }
+
+        val remoteTaskStarted = CompletableDeferred<Unit>()
+        val remoteTask = CompletableDeferred<Unit>()
+        val revokeCaller = launch {
+            try {
+                awaitGoogleIdentityTaskToTerminal {
+                    remoteTaskStarted.complete(Unit)
+                    remoteTask.await()
+                }
+            } finally {
+                synchronized(lock) { grantState.finishAuthorizationOperation() }
+            }
+        }
+        remoteTaskStarted.await()
+
+        revokeCaller.cancel()
+        yield()
+
+        assertFalse("caller cancellation must wait for the remote revoke task's terminal state", revokeCaller.isCompleted)
+        assertTrue(grantState.isAuthorizationOperationInFlight())
+        assertFalse("a new authorization reservation is blocked while revoke is unresolved",
+            grantState.tryBeginAuthorizationOperation())
+        assertTrue("shared permissions were cleared at revoke initiation", knownPermissions.isEmpty())
+        assertFalse("the pre-revoke lease stays invalid during the pending task",
+            runCatching { oldLease.useToken { it } }.isSuccess)
+
+        remoteTask.complete(Unit)
+        revokeCaller.join()
+
+        assertTrue(revokeCaller.isCancelled)
+        assertFalse("the gate opens only after remote task completion", grantState.isAuthorizationOperationInFlight())
+        assertTrue("a fresh authorization can reserve the gate after revoke is terminal",
+            grantState.tryBeginAuthorizationOperation())
+        grantState.finishAuthorizationOperation()
+        assertTrue("remote completion must not restore the old grant", knownPermissions.isEmpty())
+        assertFalse("remote completion must not revive the old lease", runCatching { oldLease.useToken { it } }.isSuccess)
+    }
+
+    @Test fun cancelledRevokeCallerPropagatesCancellationAfterRemoteFailureBecomesTerminal() = runBlocking {
+        val grantState = GoogleGrantLeaseState()
+        val knownPermissions = mutableMapOf(GMAIL_READ_ONLY to ScopePermission.GRANTED)
+        val oldLeaseVersions = grantState.leaseVersions(setOf(GMAIL))
+        val oldLease = AccessTokenLease(
+            "fixture-gmail-before-failed-revoke",
+            setOf(GMAIL_READ_ONLY),
+            null,
+            validityCheck = { grantState.isLeaseCurrent(oldLeaseVersions) },
+        )
+        assertTrue(grantState.tryBeginAuthorizationOperation())
+        invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
+
+        val remoteTaskStarted = CompletableDeferred<Unit>()
+        val remoteTask = CompletableDeferred<Unit>()
+        var classifiedFailure: AuthorizationFailure? = null
+        val revokeCaller = launch {
+            try {
+                try {
+                    awaitGoogleIdentityTaskToTerminal {
+                        remoteTaskStarted.complete(Unit)
+                        remoteTask.await()
+                    }
+                    currentCoroutineContext().ensureActive()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (exception: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    classifiedFailure = if (exception is IOException) {
+                        AuthorizationFailure.NETWORK
+                    } else {
+                        AuthorizationFailure.UNAVAILABLE
+                    }
+                }
+            } finally {
+                grantState.finishAuthorizationOperation()
+            }
+        }
+        remoteTaskStarted.await()
+
+        revokeCaller.cancel()
+        yield()
+
+        assertFalse("caller cancellation waits for the failed remote revoke task to become terminal",
+            revokeCaller.isCompleted)
+        assertTrue(grantState.isAuthorizationOperationInFlight())
+        assertFalse("a new operation remains blocked while remote revoke is unresolved",
+            grantState.tryBeginAuthorizationOperation())
+        assertTrue("permissions remain cleared while revoke is pending", knownPermissions.isEmpty())
+        assertFalse("the old lease remains invalid while revoke is pending",
+            runCatching { oldLease.useToken { it } }.isSuccess)
+
+        remoteTask.completeExceptionally(IOException("synthetic remote revoke failure"))
+        revokeCaller.join()
+
+        assertTrue("cancellation wins over classifying the late task failure", revokeCaller.isCancelled)
+        assertNull("a canceled revoke caller does not receive NETWORK/UNAVAILABLE", classifiedFailure)
+        assertFalse("the gate releases after the remote task is terminal", grantState.isAuthorizationOperationInFlight())
+        assertTrue("a fresh operation may begin after terminal completion",
+            grantState.tryBeginAuthorizationOperation())
+        grantState.finishAuthorizationOperation()
+        assertTrue("remote failure never restores revoked permissions", knownPermissions.isEmpty())
+        assertFalse("remote failure never revives the invalidated lease",
+            runCatching { oldLease.useToken { it } }.isSuccess)
+    }
+
+    @Test fun cancelledAuthorizationWaitsForIdentityTaskBeforeReleasingSharedGate() = runBlocking {
+        val grantState = GoogleGrantLeaseState()
+        assertTrue(grantState.tryBeginAuthorizationOperation())
+        val remoteTaskStarted = CompletableDeferred<Unit>()
+        val remoteAuthorizationTask = CompletableDeferred<String>()
+        var authorizationResultApplied = false
+
+        val authorizeCaller = launch {
+            try {
+                val result = awaitGoogleIdentityTaskToTerminal {
+                    remoteTaskStarted.complete(Unit)
+                    remoteAuthorizationTask.await()
+                }
+                currentCoroutineContext().ensureActive()
+                // This stands for mapping/caching the returned Google token into a lease.
+                authorizationResultApplied = result.isNotEmpty()
+            } finally {
+                grantState.finishAuthorizationOperation()
+            }
+        }
+        remoteTaskStarted.await()
+
+        authorizeCaller.cancel()
+        yield()
+
+        assertFalse("cancelled authorization must remain pending while its Play Services task is pending",
+            authorizeCaller.isCompleted)
+        assertTrue(grantState.isAuthorizationOperationInFlight())
+        assertFalse("a revoke or second authorization cannot claim the shared gate",
+            grantState.tryBeginAuthorizationOperation())
+        assertFalse("a late task result is not mapped while the caller is cancelled", authorizationResultApplied)
+
+        remoteAuthorizationTask.complete("synthetic-result")
+        authorizeCaller.join()
+
+        assertTrue(authorizeCaller.isCancelled)
+        assertFalse(grantState.isAuthorizationOperationInFlight())
+        assertFalse("cancellation prevents storing or delivering the task result", authorizationResultApplied)
+        assertTrue("a new operation may begin only after the task is terminal",
+            grantState.tryBeginAuthorizationOperation())
+        grantState.finishAuthorizationOperation()
     }
 
     @Test fun fakeRevokeClearsScopesAndInvalidatesLeasesButPreservesDisabledFeature() = runBlocking {

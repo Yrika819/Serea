@@ -14,7 +14,11 @@ import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.common.api.ApiException
 import java.io.IOException
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 /** OAuth scopes this app has approved for read-only Gmail and Calendar access. */
@@ -82,16 +86,65 @@ class AccessTokenLease internal constructor(
     override fun toString(): String = "AccessTokenLease(scopes=$grantedScopes, token=<redacted>)"
 }
 
-/** Apply a successful shared-grant revoke without changing independent app-local feature gates. */
-internal fun applySuccessfulGoogleGrantRevocation(
-    knownPermissions: MutableMap<GoogleScope, ScopePermission>,
-    featureVersions: MutableMap<GoogleFeature, Long>,
-) {
-    knownPermissions.clear()
-    featureVersions.keys.toList().forEach { feature ->
-        featureVersions[feature] = featureVersions.getValue(feature) + 1
+/** Shared grant generations and app-local gates used by the real gateway and deterministic tests. */
+internal class GoogleGrantLeaseState {
+    private val disabledFeatures = mutableSetOf<GoogleFeature>()
+    private val featureVersions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
+    private var authorizationOperationInFlight = false
+
+    /** Gateway calls this while holding its consent lock. */
+    fun tryBeginAuthorizationOperation(): Boolean {
+        if (authorizationOperationInFlight) return false
+        authorizationOperationInFlight = true
+        return true
+    }
+
+    /** Gateway calls this while holding its consent lock, after the remote operation is terminal. */
+    fun finishAuthorizationOperation() {
+        authorizationOperationInFlight = false
+    }
+
+    fun isAuthorizationOperationInFlight(): Boolean = authorizationOperationInFlight
+
+    fun disableInApp(feature: GoogleFeature) {
+        if (disabledFeatures.add(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
+    }
+
+    fun enableInApp(feature: GoogleFeature) {
+        if (disabledFeatures.remove(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
+    }
+
+    fun isEnabledInApp(feature: GoogleFeature): Boolean = feature !in disabledFeatures
+
+    fun disabledFeaturesSnapshot(): Set<GoogleFeature> = disabledFeatures.toSet()
+
+    fun leaseVersions(features: Set<GoogleFeature>): Map<GoogleFeature, Long> =
+        features.associateWith { featureVersions.getValue(it) }
+
+    fun isLeaseCurrent(versions: Map<GoogleFeature, Long>): Boolean = versions.all { (feature, version) ->
+        feature !in disabledFeatures && featureVersions[feature] == version
+    }
+
+    fun version(feature: GoogleFeature): Long = featureVersions.getValue(feature)
+
+    /** Invalidate local permissions/leases at revoke initiation; preserve app-local disconnects. */
+    fun invalidateGrant(knownPermissions: MutableMap<GoogleScope, ScopePermission>) {
+        knownPermissions.clear()
+        featureVersions.keys.toList().forEach { feature ->
+            featureVersions[feature] = featureVersions.getValue(feature) + 1
+        }
     }
 }
+
+/** The same synchronous cache/lease invalidation used by the real gateway at revoke initiation. */
+internal fun invalidateGoogleGrantAtRevokeStart(
+    grantState: GoogleGrantLeaseState,
+    knownPermissions: MutableMap<GoogleScope, ScopePermission>,
+) = grantState.invalidateGrant(knownPermissions)
+
+/** Wait for the underlying Play Services task to become terminal even if its caller is cancelled. */
+internal suspend fun <T> awaitGoogleIdentityTaskToTerminal(remoteOperation: suspend () -> T): T =
+    withContext(NonCancellable) { remoteOperation() }
 
 sealed interface AuthorizationOutcome {
     data class Authorized(val lease: AccessTokenLease) : AuthorizationOutcome
@@ -220,16 +273,19 @@ class PlayServicesGoogleAuthorizationGateway(
     private val consentLock = Any()
     private val consentRequests = ConsentRequestRegistry()
     private val knownPermissions = mutableMapOf<GoogleScope, ScopePermission>()
-    private val disabledFeatures = mutableSetOf<GoogleFeature>()
-    private val featureVersions = GoogleFeature.entries.associateWith { 0L }.toMutableMap()
-    private var authorizationInFlight = false
+    private val grantState = GoogleGrantLeaseState()
 
     override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
         if (!realOAuthEnabled) return TokenSupplyResult.Unavailable(AuthorizationFailure.NOT_CONFIGURED)
         if (selectedAccount == null) return TokenSupplyResult.Unavailable(AuthorizationFailure.ACCOUNT_REQUIRED)
-        if (synchronized(consentLock) { feature in disabledFeatures }) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
+        if (synchronized(consentLock) { !grantState.isEnabledInApp(feature) }) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
         if (scopes.isEmpty() || !feature.scopes.containsAll(scopes)) return TokenSupplyResult.Unavailable(AuthorizationFailure.UNAVAILABLE)
-        val missing = synchronized(consentLock) { scopes.filter { knownPermissions[it] != ScopePermission.GRANTED }.toSet() }
+        val missing = synchronized(consentLock) {
+            if (grantState.isAuthorizationOperationInFlight()) {
+                return TokenSupplyResult.Unavailable(AuthorizationFailure.REQUEST_IN_PROGRESS)
+            }
+            scopes.filter { knownPermissions[it] != ScopePermission.GRANTED }.toSet()
+        }
         if (missing.isNotEmpty()) return TokenSupplyResult.UserActionRequired(missing)
         if (consentRequests.peek() != null) return TokenSupplyResult.Unavailable(AuthorizationFailure.REQUEST_IN_PROGRESS)
         when (serviceState()) {
@@ -250,7 +306,7 @@ class PlayServicesGoogleAuthorizationGateway(
         if (selectedAccount == null) return AuthorizationOutcome.Rejected(AuthorizationFailure.ACCOUNT_REQUIRED)
         if (scopes.isEmpty()) return AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
         synchronized(consentLock) {
-            if (requestedScopesTouchDisabledFeature(scopes, disabledFeatures)) {
+            if (requestedScopesTouchDisabledFeature(scopes, grantState.disabledFeaturesSnapshot())) {
                 return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
             }
             if (consentRequests.peek() != null) return AuthorizationOutcome.Rejected(AuthorizationFailure.REQUEST_IN_PROGRESS)
@@ -265,27 +321,30 @@ class PlayServicesGoogleAuthorizationGateway(
 
     private suspend fun requestAuthorization(scopes: Set<GoogleScope>, allowConsent: Boolean): AuthorizationOutcome {
         synchronized(consentLock) {
-            if (requestedScopesTouchDisabledFeature(scopes, disabledFeatures)) {
+            if (requestedScopesTouchDisabledFeature(scopes, grantState.disabledFeaturesSnapshot())) {
                 return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
             }
-            if (authorizationInFlight || consentRequests.peek() != null) {
+            if (consentRequests.peek() != null || !grantState.tryBeginAuthorizationOperation()) {
                 return AuthorizationOutcome.Rejected(AuthorizationFailure.REQUEST_IN_PROGRESS)
             }
-            authorizationInFlight = true
         }
         return try {
             val request = AuthorizationRequest.builder()
                 .setRequestedScopes(scopes.map { com.google.android.gms.common.api.Scope(it.value) })
                 .setAccount(checkNotNull(selectedAccount))
                 .build()
-            val result = await { Identity.getAuthorizationClient(context).authorize(request) }
+            val result = awaitGoogleIdentityTaskToTerminal {
+                await { Identity.getAuthorizationClient(context).authorize(request) }
+            }
+            currentCoroutineContext().ensureActive()
             mapResult(result, scopes, allowConsent)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (exception: Exception) {
+            currentCoroutineContext().ensureActive()
             AuthorizationOutcome.Rejected(classify(exception)).also { cacheOutcome(scopes, it) }
         } finally {
-            synchronized(consentLock) { authorizationInFlight = false }
+            synchronized(consentLock) { grantState.finishAuthorizationOperation() }
         }
     }
 
@@ -314,13 +373,11 @@ class PlayServicesGoogleAuthorizationGateway(
     /** Explicitly discard a cancelled/failed foreground consent flow. */
     fun cancelConsentRequest(requestId: String): Boolean = consentRequests.cancel(requestId)
 
-    fun disableInApp(feature: GoogleFeature) = synchronized(consentLock) {
-        if (disabledFeatures.add(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
+    fun disableInApp(feature: GoogleFeature) = synchronized(consentLock) { grantState.disableInApp(feature) }
+    fun enableInApp(feature: GoogleFeature) = synchronized(consentLock) { grantState.enableInApp(feature) }
+    override fun isEnabledInApp(feature: GoogleFeature): Boolean = synchronized(consentLock) {
+        grantState.isEnabledInApp(feature)
     }
-    fun enableInApp(feature: GoogleFeature) = synchronized(consentLock) {
-        if (disabledFeatures.remove(feature)) featureVersions[feature] = featureVersions.getValue(feature) + 1
-    }
-    override fun isEnabledInApp(feature: GoogleFeature): Boolean = synchronized(consentLock) { feature !in disabledFeatures }
 
     override fun status(scopes: Set<GoogleScope>): AuthorizationStatus {
         val service = serviceState()
@@ -354,30 +411,33 @@ class PlayServicesGoogleAuthorizationGateway(
         if (!realOAuthEnabled) return AuthorizationFailure.NOT_CONFIGURED
         if (selectedAccount == null) return AuthorizationFailure.ACCOUNT_REQUIRED
         val mayRevoke = synchronized(consentLock) {
-            if (authorizationInFlight || consentRequests.peek() != null) false
-            else { authorizationInFlight = true; true }
+            if (consentRequests.peek() != null || !grantState.tryBeginAuthorizationOperation()) false
+            else {
+                // Fail closed immediately, before the Play Services task can suspend.
+                invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
+                true
+            }
         }
         if (!mayRevoke) return AuthorizationFailure.REQUEST_IN_PROGRESS
-        when (serviceState()) {
-            GoogleServiceState.MISSING -> {
-                synchronized(consentLock) { authorizationInFlight = false }
-                return AuthorizationFailure.SERVICE_MISSING
-            }
-            GoogleServiceState.OUTDATED -> {
-                synchronized(consentLock) { authorizationInFlight = false }
-                return AuthorizationFailure.SERVICE_OUTDATED
-            }
-            GoogleServiceState.AVAILABLE -> Unit
-        }
         return try {
-            await { Identity.getAuthorizationClient(context).revokeAccess(RevokeAccessRequest.builder().build()) }
-            synchronized(consentLock) {
-                applySuccessfulGoogleGrantRevocation(knownPermissions, featureVersions)
-            }
             consentRequests.clear()
+            when (serviceState()) {
+                GoogleServiceState.MISSING -> return AuthorizationFailure.SERVICE_MISSING
+                GoogleServiceState.OUTDATED -> return AuthorizationFailure.SERVICE_OUTDATED
+                GoogleServiceState.AVAILABLE -> Unit
+            }
+            awaitGoogleIdentityTaskToTerminal {
+                await { Identity.getAuthorizationClient(context).revokeAccess(RevokeAccessRequest.builder().build()) }
+            }
+            currentCoroutineContext().ensureActive()
             null
-        } catch (exception: Exception) { classify(exception) }
-        finally { synchronized(consentLock) { authorizationInFlight = false } }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (exception: Exception) {
+            currentCoroutineContext().ensureActive()
+            classify(exception)
+        }
+        finally { synchronized(consentLock) { grantState.finishAuthorizationOperation() } }
     }
 
     private fun serviceState(): GoogleServiceState = when (
@@ -391,7 +451,7 @@ class PlayServicesGoogleAuthorizationGateway(
 
     private fun mapResult(result: PlayAuthorizationResult, requested: Set<GoogleScope>, allowConsent: Boolean = true): AuthorizationOutcome {
         val features = GoogleFeature.entries.filter { feature -> requested.any { it in feature.scopes } }
-        if (synchronized(consentLock) { features.any { it in disabledFeatures } }) {
+        if (synchronized(consentLock) { features.any { !grantState.isEnabledInApp(it) } }) {
             return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
         }
         if (result.hasResolution()) {
@@ -413,8 +473,8 @@ class PlayServicesGoogleAuthorizationGateway(
         if (requested.any { it !in granted }) return AuthorizationOutcome.Rejected(AuthorizationFailure.DENIED).also { cacheOutcome(requested, it) }
         if (token.isNullOrBlank()) return AuthorizationOutcome.Rejected(AuthorizationFailure.EXPIRED).also { cacheOutcome(requested, it) }
         val versions = synchronized(consentLock) {
-            if (features.any { it in disabledFeatures }) return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
-            features.associateWith { featureVersions.getValue(it) }
+            if (features.any { !grantState.isEnabledInApp(it) }) return AuthorizationOutcome.Rejected(AuthorizationFailure.FEATURE_DISABLED)
+            grantState.leaseVersions(features.toSet())
         }
         return AuthorizationOutcome.Authorized(
             AccessTokenLease(
@@ -422,9 +482,7 @@ class PlayServicesGoogleAuthorizationGateway(
                 granted,
                 android.os.SystemClock.elapsedRealtime() + 5 * 60 * 1000L,
                 validityCheck = {
-                    synchronized(consentLock) {
-                        versions.all { (feature, version) -> feature !in disabledFeatures && featureVersions[feature] == version }
-                    }
+                    synchronized(consentLock) { grantState.isLeaseCurrent(versions) }
                 },
                 authorizationSessionId = authorizationSessionId,
             ),

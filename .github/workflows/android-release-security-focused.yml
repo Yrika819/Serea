@@ -1,0 +1,162 @@
+name: Android Release Security Focused (Non-Required)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/serea-functional-security-release
+      - codex/serea-functional-security-release-verified
+      - codex/serea-personal-beta-functional-integration
+      - codex/serea-g4-artifact-sbom-provenance-20261027
+    paths:
+      - '.github/workflows/android-release-security-focused.yml'
+      - '.github/workflows/android-personal-beta.yml'
+      - 'android/**'
+      - 'docs/security/android-personal-beta-release-posture-2026-10-26.md'
+      - 'tests/android_firebase_distribution_tests.py'
+      - 'tests/android_artifact_sbom_tests.py'
+      - 'tests/android_lockfile_sbom_tests.py'
+      - 'tools/assert_disposable_android_emulator.sh'
+      - 'tools/android_firebase_distribution.py'
+      - 'tools/bind_android_apk_sbom.py'
+      - 'tools/generate_android_lockfile_sbom.py'
+      - 'tools/test_android_update_compatibility.sh'
+      - 'tools/test_android_update_compatibility_guard.sh'
+      - 'tools/test_personal_beta_identity.sh'
+      - 'tools/verify_personal_beta_apk.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-security-focused-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-security:
+    name: Mock Release Contract and Artifact-Bound SBOM (Non-Required)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: android/app/gradle.lockfile
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install pinned Android build packages
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Run deterministic lockfile SBOM tests
+        run: python3 -m unittest discover -s tests -p android_lockfile_sbom_tests.py
+      - name: Run artifact-bound lockfile SBOM tests
+        run: python3 -m unittest discover -s tests -p android_artifact_sbom_tests.py
+      - name: Run mock signing and distribution contract tests
+        run: python3 -m unittest discover -s tests -p android_firebase_distribution_tests.py
+      - name: Check release and emulator guard shell syntax
+        run: |
+          for script in \
+            tools/assert_disposable_android_emulator.sh \
+            tools/test_android_update_compatibility.sh \
+            tools/test_android_update_compatibility_guard.sh \
+            tools/test_personal_beta_identity.sh \
+            tools/verify_personal_beta_apk.sh; do
+            bash -n "$script"
+          done
+      - name: Build the CI-only debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon :app:assembleDebug
+      - name: Generate source-bound lockfile SBOM inventory
+        run: |
+          set -euo pipefail
+          output=android/app/build/outputs/security/android-lockfile-inventory.cdx.json
+          python3 tools/generate_android_lockfile_sbom.py \
+            --source-sha "$GITHUB_SHA" \
+            --output "$output"
+          sha256sum "$output" > "$output.sha256"
+          python3 - "$output" "$GITHUB_SHA" <<'PY'
+          import json, pathlib, sys
+          bom = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          properties = {item["name"]: item["value"] for item in bom["metadata"]["properties"]}
+          assert len(bom["components"]) == 317
+          assert properties["serea:source:commit"] == sys.argv[2].lower()
+          assert properties["serea:sbom:publisher-authenticity"] == "not-established-by-this-inventory"
+          print(f"CycloneDX {bom['specVersion']}; lockfile components={len(bom['components'])}; source={sys.argv[2]}")
+          PY
+      - name: Bind the APK digest and package identity into the SBOM
+        env:
+          BUILD_TOOLS_VERSION: 35.0.0
+          EXPECTED_SOURCE_SHA: ${{ github.sha }}
+          ACTION_RUN_ID: ${{ github.run_id }}
+          ACTION_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          apk='android/app/build/outputs/apk/debug/app-debug.apk'
+          inventory='android/app/build/outputs/security/android-lockfile-inventory.cdx.json'
+          bound='android/app/build/outputs/security/android-debug-artifact-bound.cdx.json'
+          evidence='android/app/build/outputs/security/android-debug-artifact-evidence.txt'
+          test -s "$apk"
+          apk_sha256=$(sha256sum "$apk" | awk '{print $1}')
+          python3 tools/bind_android_apk_sbom.py \
+            --sbom "$inventory" \
+            --lockfile android/app/gradle.lockfile \
+            --apk "$apk" \
+            --aapt "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt" \
+            --output "$bound" \
+            --source-sha "$EXPECTED_SOURCE_SHA" \
+            --expected-apk-sha256 "$apk_sha256" \
+            --expected-package-id app.serea.android.demo
+          python3 - "$bound" "$apk_sha256" "$EXPECTED_SOURCE_SHA" "$ACTION_RUN_ID" "$ACTION_RUN_ATTEMPT" <<'PY'
+          import hashlib, json, pathlib, sys
+          bom_path = pathlib.Path(sys.argv[1])
+          bom = json.loads(bom_path.read_text(encoding="utf-8"))
+          subject = bom["metadata"]["component"]
+          subject_properties = {item["name"]: item["value"] for item in subject["properties"]}
+          assert subject["hashes"] == [{"alg": "SHA-256", "content": sys.argv[2]}]
+          properties = {item["name"]: item["value"] for item in bom["metadata"]["properties"]}
+          assert properties["serea:source:commit"] == sys.argv[3].lower()
+          assert properties["serea:sbom:dependency-graph"] == "not-represented-by-gradle-lockfile"
+          assert properties["serea:sbom:publisher-authenticity"] == "not-established-by-this-inventory"
+          assert properties["serea:sbom:dependency-association"] == "lockfile inventory; packaged-component membership not independently established"
+          assert properties["serea:sbom:source-artifact-provenance"] == "workflow source input; APK-to-source build provenance not independently attested"
+          evidence = pathlib.Path("android/app/build/outputs/security/android-debug-artifact-evidence.txt")
+          evidence.write_text("\n".join([
+              f"source_commit={sys.argv[3]}",
+              f"github_run_id={sys.argv[4]}",
+              f"github_run_attempt={sys.argv[5]}",
+              f"package_id={subject_properties['serea:android:package-id']}",
+              f"version_code={subject_properties['serea:android:version-code']}",
+              f"version_name={subject['version']}",
+              f"apk_sha256={sys.argv[2]}",
+              f"sbom_sha256={hashlib.sha256(bom_path.read_bytes()).hexdigest()}",
+              "artifact_purpose=CI-only debug APK; not a Beta package",
+              "dependency_edges=not represented by the app lockfile inventory",
+              "publisher_authenticity=not established by this inventory",
+              "source_artifact_provenance=workflow checkout/build input; APK-to-source build provenance not independently attested",
+              "build_plugins_wrapper_sdk=outside this SBOM scope",
+          ]) + "\n", encoding="utf-8")
+          PY
+          {
+            echo '### CI-only artifact-bound lockfile inventory'
+            cat "$evidence"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          sha256sum "$apk" "$bound" > android/app/build/outputs/security/android-debug-artifact-sha256.txt
+      - name: Upload non-secret release security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-android-release-security-focused
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/security/android-lockfile-inventory.cdx.json
+            android/app/build/outputs/security/android-lockfile-inventory.cdx.json.sha256
+            android/app/build/outputs/security/android-debug-artifact-bound.cdx.json
+            android/app/build/outputs/security/android-debug-artifact-evidence.txt
+            android/app/build/outputs/security/android-debug-artifact-sha256.txt

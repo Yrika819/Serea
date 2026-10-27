@@ -30,6 +30,10 @@ From this directory, set `G3_LLAMA_CPP_SOURCE` to that exact source checkout and
 
 The CMake arguments are pinned in `app/build.gradle.kts`: static llama/ggml libraries; tests, tools, examples, server, common utilities, app binary, OpenSSL, native CPU tuning, OpenMP, llamafile, dynamic backend loading, and KleidiAI disabled. Both `arm64-v8a` and `x86_64` are built. The command also requires AndroidX test dependencies from Google's Maven repository.
 
+## Diagnostic workflow boundary
+
+The non-required `.github/workflows/g3-ondevice-poc.yml` runs only for a push to the owned G3 branch whose commit message contains `[g3-poc-run]`. It records KVM/acceleration metadata, runs the synthetic download-bound check, and builds both the app and AndroidTest APKs before the Emulator step. If either APK build or AndroidTest compilation fails, the workflow stops before creating the Emulator or downloading model weights. Only after that build succeeds does the disposable API 35 `google_apis` x86_64 KVM Emulator step install and hash-check the APKs, fetch the exact bounded model fixture, stage it app-private, and invoke one exact non-skipped test. The cleanup trap removes both staged model copies; the workflow uploads evidence only, never model weights. This diagnostic remains separate from product Chat and all Required gates.
+
 ## Native ownership and lifecycle contract
 
 The llama.cpp JNI resources are process-global in this PoC, so `NativeLlamaEngine` enforces one active engine lease per process. A second engine cannot load while another owns the model; only the matching engine ID may generate, cancel its `(engineId, generationId)` request, or free the native state. Closing releases the lease, after which a new engine may load. Per-engine single-thread executors serialize load, generation, and close. A load queued before `close()` checks lifecycle state before native entry and completes with an error when close wins. This is an explicit PoC singleton contract, not a product concurrency design.

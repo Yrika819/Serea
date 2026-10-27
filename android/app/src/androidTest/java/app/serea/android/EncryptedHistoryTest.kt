@@ -54,19 +54,84 @@ class EncryptedHistoryTest {
         val name = "history-reopen-${UUID.randomUUID()}.db"
         val alias = "history-reopen-${UUID.randomUUID()}"
         val firstDb = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name).build()
-        val first = ConversationRepository(firstDb.historyDao(), KeystoreAesGcm(alias))
+        val cipher = KeystoreAesGcm(alias)
+        val first = ConversationRepository(firstDb.historyDao(), cipher)
         first.create("conversation-a", "A", now = 1)
         first.create("conversation-b", "B", now = 1)
+        first.create("conversation-c", "C", now = 1)
         (1..12).map { index -> async(Dispatchers.IO) {
             val id = "message-${index.toString().padStart(2, '0')}"
             val conversationId = if (index % 2 == 0) "conversation-a" else "conversation-b"
-            first.addMessage(StoredMessage(id, conversationId, MessageRole.USER, "body-$index", DataClassification.UNKNOWN, index.toLong() + 1, "COMPLETED"))
+            val lineageMessage = index == 2
+            first.addMessage(StoredMessage(
+                id = id,
+                conversationId = conversationId,
+                role = if (lineageMessage) MessageRole.ASSISTANT else MessageRole.USER,
+                text = "body-$index",
+                classification = if (lineageMessage) DataClassification.PUBLIC else DataClassification.UNKNOWN,
+                createdAt = index.toLong() + 1,
+                status = "COMPLETED",
+                origin = if (lineageMessage) DataOrigin.MODEL_OUTPUT else DataOrigin.USER_AUTHORED,
+                sourceLineage = if (lineageMessage) setOf(
+                    DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED, DataOrigin.GMAIL, DataOrigin.CALENDAR,
+                ) else setOf(DataOrigin.USER_AUTHORED),
+            ))
         } }.awaitAll()
+        val lineageCiphertext = firstDb.historyDao().messages("conversation-a").first { it.id == "message-02" }.encryptedSourceLineage
+        assertFalse(lineageCiphertext.contains("GMAIL"))
+        assertFalse(lineageCiphertext.contains("CALENDAR"))
+        first.addMessage(StoredMessage(
+            id = "future-lineage-message",
+            conversationId = "conversation-c",
+            role = MessageRole.ASSISTANT,
+            text = "synthetic future-source summary",
+            classification = DataClassification.PUBLIC,
+            createdAt = 20,
+            status = "COMPLETED",
+            origin = DataOrigin.MODEL_OUTPUT,
+            sourceLineage = setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED),
+        ))
+        val futureLineage = cipher.encrypt(
+            "USER_AUTHORED,MODEL_OUTPUT,FUTURE_SOURCE".toByteArray(),
+            "message:future-lineage-message:lineage".toByteArray(),
+        )
+        firstDb.openHelper.writableDatabase.execSQL(
+            "UPDATE messages SET encryptedSourceLineage = ? WHERE id = ?",
+            arrayOf(futureLineage, "future-lineage-message"),
+        )
         firstDb.close()
 
         val reopened = Room.databaseBuilder(context, SereaHistoryDatabase::class.java, name).build()
         val restored = ConversationRepository(reopened.historyDao(), KeystoreAesGcm(alias))
         assertEquals("body-2", restored.get("conversation-a")!!.messages.first().text)
+        assertEquals(setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED, DataOrigin.GMAIL, DataOrigin.CALENDAR),
+            restored.get("conversation-a")!!.messages.first().sourceLineage)
+        val futureMessage = restored.get("conversation-c")!!.messages.single()
+        assertEquals(setOf(DataOrigin.UNKNOWN), futureMessage.sourceLineage)
+        val futureContext = ContextMessage(
+            role = futureMessage.role,
+            text = futureMessage.text,
+            classification = futureMessage.classification,
+            sourceMessageId = futureMessage.id,
+            origin = futureMessage.origin,
+            conversationId = futureMessage.conversationId,
+            sourceLineage = futureMessage.sourceLineage,
+        )
+        val now = 50_000L
+        val futureContract = EgressContract(
+            conversationId = futureMessage.conversationId,
+            currentMessageId = "future-lineage-follow-up",
+            origin = DataOrigin.USER_AUTHORED,
+            classification = DataClassification.PUBLIC,
+            destination = "https://ollama.com/api/chat",
+            plannedBody = "synthetic follow-up",
+            context = listOf(futureContext),
+            preparation = PayloadPreparation.RAW,
+            explicitSendIntentAtMillis = now,
+            expiresAtMillis = now + 30_000,
+        )
+        assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED,
+            ChatEgressGate.evaluate(futureContract, now).decision)
         assertEquals(6, restored.get("conversation-a")!!.messages.size)
         assertEquals(6, restored.get("conversation-b")!!.messages.size)
         restored.delete("conversation-a")

@@ -226,7 +226,40 @@ class ChatViewModelTest {
         assertEquals(1, context.size)
         assertEquals("current", context.single().sourceMessageId)
         assertEquals(DataOrigin.CALENDAR, context.single().origin)
+        assertEquals(setOf(DataOrigin.CALENDAR), context.single().sourceLineage)
         assertEquals("conversation-current", context.single().conversationId)
+    }
+
+    @Test fun modelOutputAndFutureContextRetainGoogleSourceLineage() = runTest(dispatcher) {
+        for (source in listOf(DataOrigin.GMAIL, DataOrigin.CALENDAR)) {
+            val conversationId = "lineage-${source.name.lowercase()}"
+            val sourceMessage = ChatMessage(
+                id = "summary-${source.name.lowercase()}",
+                role = MessageRole.ASSISTANT,
+                text = "synthetic summarized source",
+                createdAt = java.time.Instant.EPOCH,
+                classification = DataClassification.PUBLIC,
+                origin = DataOrigin.MODEL_OUTPUT,
+                conversationId = conversationId,
+                sourceLineage = setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED, source),
+            )
+            val requests = mutableListOf<ModelChatRequest>()
+            val vm = ChatViewModel(object : ModelChatPort {
+                override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                    requests += request
+                    return ModelChatResponse("synthetic follow-up answer")
+                }
+            }, initialConversation = Conversation(conversationId, messages = listOf(sourceMessage)))
+
+            vm.updateInput("synthetic follow-up")
+            vm.sendMessage()
+            advanceUntilIdle()
+
+            assertEquals(listOf(setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED, source)),
+                requests.single().context.map { it.sourceLineage })
+            assertEquals(setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED, source),
+                vm.state.value.conversation.messages.last().sourceLineage)
+        }
     }
 
     @Test fun conversationTitlesNormalizeWhitespaceAndKeepJapaneseEmojiAndWholeCodePoints() {

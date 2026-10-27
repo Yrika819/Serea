@@ -9,7 +9,14 @@ data class ContextMessage(
     val origin: DataOrigin = DataOrigin.UNKNOWN,
     val status: String = "COMPLETED",
     val conversationId: String? = null,
+    /** Immediate and inherited sources; model output without recorded ancestry fails closed. */
+    val sourceLineage: Set<DataOrigin> = defaultSourceLineage(origin),
 )
+
+internal fun defaultSourceLineage(origin: DataOrigin): Set<DataOrigin> = when (origin) {
+    DataOrigin.MODEL_OUTPUT -> setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.UNKNOWN)
+    else -> setOf(origin)
+}
 
 /** Bounded, chronological context construction for the Android-only conversation engine. */
 object ChatContextBuilder {
@@ -38,7 +45,7 @@ object ChatContextBuilder {
             val clipped = message.text.substring(0, clippedLength)
             if (clipped.isNotEmpty()) {
                 selected.addFirst(ContextMessage(message.role, clipped, message.classification, message.id, message.origin,
-                    message.status, message.conversationId))
+                    message.status, message.conversationId, message.sourceLineage.toSet()))
                 remaining -= clipped.length
             }
         }

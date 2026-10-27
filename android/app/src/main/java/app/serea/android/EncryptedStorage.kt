@@ -115,7 +115,11 @@ data class MessageRow(
     val inputTokens: Int? = null,
     val outputTokens: Int? = null,
     @ColumnInfo(defaultValue = "'UNKNOWN'") val origin: String = "UNKNOWN",
+    /** Ciphertext containing the immutable message source lineage; UNKNOWN marks pre-lineage rows. */
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val encryptedSourceLineage: String = LEGACY_SOURCE_LINEAGE,
 )
+
+private const val LEGACY_SOURCE_LINEAGE = "UNKNOWN"
 
 @Dao
 interface HistoryDao {
@@ -173,7 +177,7 @@ interface HistoryDao {
     }
 }
 
-@Database(entities = [ConversationRow::class, MessageRow::class, UsageWindowRow::class, UsageReservationRow::class, UsageSettingsRow::class, ModelUsageLedgerRow::class], version = 4, exportSchema = true)
+@Database(entities = [ConversationRow::class, MessageRow::class, UsageWindowRow::class, UsageReservationRow::class, UsageSettingsRow::class, ModelUsageLedgerRow::class], version = 5, exportSchema = true)
 abstract class SereaHistoryDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
     abstract fun usageDao(): UsageDao
@@ -182,7 +186,7 @@ abstract class SereaHistoryDatabase : RoomDatabase() {
         @Volatile private var instance: SereaHistoryDatabase? = null
         fun open(context: Context): SereaHistoryDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, SereaHistoryDatabase::class.java, "serea-history.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build().also { instance = it }
         }
 
@@ -206,6 +210,13 @@ abstract class SereaHistoryDatabase : RoomDatabase() {
                 database.execSQL("INSERT INTO model_usage_ledger (requestId, modelId, providerId, createdAt, dayKey, monthKey, estimatedInputTokens, reservedOutputTokens, providerInputTokens, providerOutputTokens, usageStatus, costStatus, estimatedCost, currency, pricingSource, pricingVerifiedAt, inputPricePerMillion, outputPricePerMillion, pricingEffectiveAt, pricingRevision, reservationState, settledAt, uncertainOutcomeReason, modelAttributionStatus) SELECT requestId, 'UNKNOWN', 'UNKNOWN', 0, dayKey, monthKey, CASE WHEN state = 'SETTLED' THEN 0 ELSE inputTokens END, CASE WHEN state = 'SETTLED' THEN 0 ELSE outputTokens END, CASE WHEN state = 'SETTLED' THEN inputTokens ELSE NULL END, CASE WHEN state = 'SETTLED' THEN outputTokens ELSE NULL END, state, 'UNKNOWN', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, state, NULL, CASE WHEN state IN ('OUTCOME_UNKNOWN', 'USAGE_UNKNOWN') THEN 'Migrated pre-ledger uncertain reservation.' ELSE NULL END, 'UNKNOWN' FROM usage_reservations")
             }
         }
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Legacy rows have no authenticated lineage. The sentinel is interpreted through
+                // defaultSourceLineage(origin), which treats old MODEL_OUTPUT as UNKNOWN ancestry.
+                database.execSQL("ALTER TABLE messages ADD COLUMN encryptedSourceLineage TEXT NOT NULL DEFAULT '$LEGACY_SOURCE_LINEAGE'")
+            }
+        }
     }
 }
 
@@ -213,6 +224,7 @@ data class StoredMessage(
     val id: String, val conversationId: String, val role: MessageRole, val text: String,
     val classification: DataClassification, val createdAt: Long, val status: String,
     val origin: DataOrigin = DataOrigin.UNKNOWN,
+    val sourceLineage: Set<DataOrigin> = defaultSourceLineage(origin),
 )
 data class StoredConversation(val id: String, val title: String, val createdAt: Long, val updatedAt: Long, val modelId: String, val messages: List<StoredMessage>)
 
@@ -236,7 +248,8 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
     override suspend fun addMessage(message: StoredMessage) {
         dao.putMessageIfConversationIsActive(MessageRow(message.id, message.conversationId, message.role.name,
             encrypt(message.text, "message:${message.id}:body"), message.classification.name,
-            message.createdAt, message.status, origin = message.origin.name))
+            message.createdAt, message.status, origin = message.origin.name,
+            encryptedSourceLineage = encrypt(encodeSourceLineage(message.sourceLineage), "message:${message.id}:lineage")))
     }
     override suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String) {
         require(message.conversationId == id && message.role == MessageRole.USER && message.status == "PENDING")
@@ -244,7 +257,8 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
         dao.createConversationWithFirstMessage(
             ConversationRow(id, encrypt(title, "conversation:$id:title"), timestamp, timestamp, modelId),
             MessageRow(message.id, id, message.role.name, encrypt(message.text, "message:${message.id}:body"),
-                message.classification.name, timestamp, message.status, origin = message.origin.name),
+                message.classification.name, timestamp, message.status, origin = message.origin.name,
+                encryptedSourceLineage = encrypt(encodeSourceLineage(message.sourceLineage), "message:${message.id}:lineage")),
         )
     }
     override suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) {
@@ -253,6 +267,7 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
             assistant.id, assistant.conversationId, assistant.role.name,
             encrypt(assistant.text, "message:${assistant.id}:body"), assistant.classification.name,
             assistant.createdAt, assistant.status, origin = assistant.origin.name,
+            encryptedSourceLineage = encrypt(encodeSourceLineage(assistant.sourceLineage), "message:${assistant.id}:lineage"),
         ))
     }
     override suspend fun updateStatus(messageId: String, conversationId: String, status: String): Boolean {
@@ -268,16 +283,38 @@ internal class ConversationRepository(private val dao: HistoryDao, private val c
         row.id, decrypt(row.encryptedTitle, "conversation:${row.id}:title"), row.createdAt, row.updatedAt, row.modelId,
         dao.messages(row.id).map { message ->
             try {
+                val origin = DataOrigin.valueOf(message.origin)
                 StoredMessage(message.id, message.conversationId, MessageRole.valueOf(message.role),
                     decrypt(message.encryptedBody, "message:${message.id}:body"),
                     DataClassification.valueOf(message.classification), message.createdAt, message.status,
-                    DataOrigin.valueOf(message.origin))
+                    origin, decryptSourceLineage(message))
             } catch (error: Exception) {
                 if (error is HistoryUnavailableException) throw error
                 throw HistoryUnavailableException("Saved history contains an invalid record.", error)
             }
         },
     )
+    private fun decryptSourceLineage(row: MessageRow): Set<DataOrigin> {
+        if (row.encryptedSourceLineage == LEGACY_SOURCE_LINEAGE) return setOf(DataOrigin.UNKNOWN)
+        return try {
+            decodeSourceLineage(decrypt(row.encryptedSourceLineage, "message:${row.id}:lineage"))
+        } catch (_: Exception) {
+            // Corrupt/unreadable trust metadata must not be replaced with an allow-capable default.
+            setOf(DataOrigin.UNKNOWN)
+        }
+    }
+
+    private fun encodeSourceLineage(lineage: Set<DataOrigin>): String =
+        lineage.toSet().sortedBy { it.ordinal }.joinToString(",") { it.name }.ifBlank { DataOrigin.UNKNOWN.name }
+
+    private fun decodeSourceLineage(encoded: String): Set<DataOrigin> {
+        val names = encoded.split(',')
+        if (names.isEmpty() || names.any(String::isBlank)) return setOf(DataOrigin.UNKNOWN)
+        val values = names.map { name ->
+            runCatching { DataOrigin.valueOf(name) }.getOrElse { return setOf(DataOrigin.UNKNOWN) }
+        }.toSet()
+        return values.takeIf { it.isNotEmpty() } ?: setOf(DataOrigin.UNKNOWN)
+    }
     private fun encrypt(value: String, aad: String) = cipher.encrypt(value.toByteArray(Charsets.UTF_8), aad.toByteArray(Charsets.UTF_8))
     private fun decrypt(value: String, aad: String): String = cipher.decrypt(value, aad.toByteArray(Charsets.UTF_8)).toString(Charsets.UTF_8)
 }

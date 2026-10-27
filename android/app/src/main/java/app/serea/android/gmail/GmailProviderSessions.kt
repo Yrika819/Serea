@@ -92,6 +92,7 @@ class GmailProviderSession internal constructor(
     private var closed = false
     private val activeJobs = linkedSetOf<Job>()
     private var grantInvalidationObserver: AutoCloseable? = null
+    private var grantInvalidationGeneration = 0L
 
     override suspend fun status(): GmailAuthorizationStatus = withActiveSession { authorizationDelegate.status() }
     override suspend fun listInbox(pageToken: String?, pageSize: Int): GmailMessagePage =
@@ -121,6 +122,7 @@ class GmailProviderSession internal constructor(
     internal fun cancelInFlightReadsForGrantInvalidation() {
         val jobs = synchronized(lock) {
             if (closed) return
+            grantInvalidationGeneration++
             activeJobs.toList()
         }
         jobs.forEach { it.cancel(CancellationException("Google authorization was revoked.")) }
@@ -140,12 +142,13 @@ class GmailProviderSession internal constructor(
     private suspend fun <T> withActiveSession(block: suspend () -> T): T {
         val callerJob = currentCoroutineContext()[Job]
         val requestJob = SupervisorJob(callerJob)
-        synchronized(lock) {
+        val requestGrantGeneration = synchronized(lock) {
             if (closed) {
                 requestJob.cancel()
                 throw inactiveSession()
             }
             activeJobs += requestJob
+            grantInvalidationGeneration
         }
         try {
             if (!isCurrent()) throw inactiveSession()
@@ -155,6 +158,9 @@ class GmailProviderSession internal constructor(
             // becomes current, making this the result-delivery linearization point.
             synchronized(lock) {
                 if (closed) throw inactiveSession()
+                // The revoke callback can arrive after the child request Job has completed but
+                // before result delivery; the generation closes that cancellation gap.
+                if (grantInvalidationGeneration != requestGrantGeneration) throw inactiveSession()
             }
             return value
         } catch (cancelled: CancellationException) {

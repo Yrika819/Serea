@@ -43,6 +43,7 @@ import org.junit.Test
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 
 class GmailProviderSessionsTest {
     private val server = MockWebServer().apply { start() }
@@ -486,6 +487,57 @@ class GmailProviderSessionsTest {
         assertTrue("caller cancellation must not close the provider session", currentCoroutineContext().isActive)
         assertEquals(GmailAuthorizationState.MOCK_ONLY, session.status().state)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun grantRevocationBetweenDelegateCompletionAndDeliveryRejectsGmailResult() = runBlocking {
+        val gateway = PlayServicesFixture()
+        val delegate = FakeGmailProvider()
+        val isCurrentCalls = AtomicInteger()
+        val postDelegateCheckEntered = CountDownLatch(1)
+        val releasePostDelegateCheck = CountDownLatch(1)
+        val session = GmailProviderSession(
+            id = 8,
+            kind = GmailProviderKind.GOOGLE_READ_ONLY,
+            delegate = delegate,
+            authorizationDelegate = FakeGmailProvider(),
+            isCurrent = {
+                if (isCurrentCalls.incrementAndGet() == 2) {
+                    postDelegateCheckEntered.countDown()
+                    check(releasePostDelegateCheck.await(5, TimeUnit.SECONDS))
+                }
+                true
+            },
+            onClose = {},
+        )
+        session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
+            session.cancelInFlightReadsForGrantInvalidation()
+        })
+        val read = async(Dispatchers.Default) { runCatching { session.listInbox() } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { postDelegateCheckEntered.await(5, TimeUnit.SECONDS) })
+            revoke = async {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            remoteRevokeStarted.await()
+            releasePostDelegateCheck.countDown()
+
+            val outcome = read.await()
+            assertFalse("a result buffered before revoke must not escape", outcome.isSuccess)
+            assertEquals(GmailReadFailureCode.PERMISSION_DENIED, (outcome.exceptionOrNull() as GmailReadFailure).code)
+            assertFalse("remote revoke remains pending while the delivery gate rejects the result", revoke.isCompleted)
+        } finally {
+            releasePostDelegateCheck.countDown()
+            remoteRevokeGate.complete(Unit)
+            revoke?.join()
+            session.close()
+        }
     }
 
     private fun testSession(delegate: GmailReadPort) = GmailProviderSession(

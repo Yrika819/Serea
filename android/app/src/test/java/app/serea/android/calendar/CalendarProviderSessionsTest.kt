@@ -42,6 +42,7 @@ import org.junit.Test
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 
 class CalendarProviderSessionsTest {
     private val server = MockWebServer().apply { start() }
@@ -526,6 +527,57 @@ class CalendarProviderSessionsTest {
         caller.join()
         assertTrue("provider replacement must not cancel the caller job", caller.isCompleted && !caller.isCancelled)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun grantRevocationBetweenDelegateCompletionAndDeliveryRejectsCalendarResult() = runBlocking {
+        val gateway = PlayServicesFixture()
+        val delegate = FakeCalendarProvider()
+        val isCurrentCalls = AtomicInteger()
+        val postDelegateCheckEntered = CountDownLatch(1)
+        val releasePostDelegateCheck = CountDownLatch(1)
+        val session = CalendarProviderSession(
+            id = 9,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = delegate,
+            authorizationDelegate = FakeCalendarProvider(),
+            isCurrent = {
+                if (isCurrentCalls.incrementAndGet() == 2) {
+                    postDelegateCheckEntered.countDown()
+                    check(releasePostDelegateCheck.await(5, TimeUnit.SECONDS))
+                }
+                true
+            },
+            onClose = {},
+        )
+        session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
+            session.cancelInFlightReadsForGrantInvalidation()
+        })
+        val read = async(Dispatchers.Default) { runCatching { session.listCalendars() } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { postDelegateCheckEntered.await(5, TimeUnit.SECONDS) })
+            revoke = async {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            remoteRevokeStarted.await()
+            releasePostDelegateCheck.countDown()
+
+            val outcome = read.await()
+            assertFalse("a result buffered before revoke must not escape", outcome.isSuccess)
+            assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, (outcome.exceptionOrNull() as CalendarReadFailure).code)
+            assertFalse("remote revoke remains pending while the delivery gate rejects the result", revoke.isCompleted)
+        } finally {
+            releasePostDelegateCheck.countDown()
+            remoteRevokeGate.complete(Unit)
+            revoke?.join()
+            session.close()
+        }
     }
 
     private suspend fun calendarFailure(block: suspend () -> Any): CalendarReadFailure = try {

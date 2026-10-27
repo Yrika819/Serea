@@ -60,7 +60,19 @@ Existing tests cover the backend invariants with Fake gateways, synthetic fixtur
 
 The exact-head GitHub Android Unit artifact for PR #132 run `40599571275` is artifact `12778060790` (`sha256:a5ed666eaeea203e30cdeea648a271c19a6639ea572fc82806a52ff5b2d48430`). Its JUnit packet contains 335 cases total; these six Google authorization/session/transport classes contribute 92 tests, 0 failures, 0 errors and 0 skips. This is exact-head JVM/Mock evidence only, not live OAuth or service acceptance.
 
-Local focused JVM test on this review branch is recorded in the handoff after it runs. Emulator tests, real Google accounts/OAuth, credentials, Gmail/Calendar endpoints, and Play Services authorization/revoke are **NOT_RUN**.
+Local focused JVM command (run from `android/`):
+
+```text
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks \
+  --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' \
+  --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' \
+  --tests 'app.serea.android.gmail.GmailProviderSessionsTest' \
+  --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' \
+  --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' \
+  --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+```
+
+The command passed on review commit `eaaeb24af4c6dac2d7bc41cbba8fab32fdb79f4f` (source base `373b8be…`): 92 tests, 0 failures, 0 errors and 0 skipped; Gradle `BUILD SUCCESSFUL`, exit 0. JUnit XML is in `android/app/build/test-results/testDebugUnitTest/` for those six exact classes. The run used the local JDK 21 toolchain and no Emulator. Emulator tests, real Google accounts/OAuth, credentials, Gmail/Calendar endpoints, and Play Services authorization/revoke are **NOT_RUN**.
 
 ## External acceptance and Owner decisions
 

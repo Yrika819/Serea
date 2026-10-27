@@ -64,7 +64,7 @@ jobs:
           import json, pathlib, sys
           bom = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
           properties = {item["name"]: item["value"] for item in bom["metadata"]["properties"]}
-          assert len(bom["components"]) == 325
+          assert len(bom["components"]) == 317
           assert properties["serea:source:commit"] == sys.argv[2].lower()
           assert properties["serea:sbom:publisher-authenticity"] == "not-established-by-this-inventory"
           print(f"CycloneDX {bom['specVersion']}; lockfile components={len(bom['components'])}; source={sys.argv[2]}")

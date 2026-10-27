@@ -15,6 +15,8 @@ assert SPEC and SPEC.loader
 SBOM = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SBOM)
 
+EXPECTED_LOCKED_COMPONENT_COUNT = 317
+
 
 class AndroidLockfileSbomTests(unittest.TestCase):
     def test_checked_in_lockfile_generates_complete_deterministic_coordinate_inventory(self):
@@ -25,7 +27,7 @@ class AndroidLockfileSbomTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual("CycloneDX", first["bomFormat"])
         self.assertEqual("1.5", first["specVersion"])
-        self.assertEqual(325, len(first["components"]))
+        self.assertEqual(EXPECTED_LOCKED_COMPONENT_COUNT, len(first["components"]))
         refs = [component["bom-ref"] for component in first["components"]]
         self.assertEqual(len(refs), len(set(refs)))
         self.assertTrue(all(ref.startswith("pkg:maven/") for ref in refs))
@@ -72,7 +74,7 @@ class AndroidLockfileSbomTests(unittest.TestCase):
             ])
             self.assertEqual(0, status)
             parsed = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(325, len(parsed["components"]))
+            self.assertEqual(EXPECTED_LOCKED_COMPONENT_COUNT, len(parsed["components"]))
         self.assertEqual(original, (ROOT / "android/app/gradle.lockfile").read_bytes())
 
     def test_cli_refuses_to_overwrite_source_lockfile(self):

@@ -1,0 +1,18 @@
+G2 revoke-cancellation six-class JVM suite
+Source code SHA: ea89da2c6b7d3abb403c5e88e3b93d9a04f270dc
+Branch: codex/serea-g2-revoke-cancellation
+Gradle command (run from android/):
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --console=plain --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+Local execution session: 94356; Gradle 8.14.6; Temurin JDK 21 at /workspace/jdk21.
+Result: BUILD SUCCESSFUL, exit 0. Counts from copied JUnit XML:
+- GoogleAuthorizationLifecycleTest: 7 tests, 0 failures, 0 errors, 0 skipped
+- GoogleAuthorizationTest: 29 tests, 0 failures, 0 errors, 0 skipped
+- GmailProviderSessionsTest: 12 tests, 0 failures, 0 errors, 0 skipped
+- GmailHttpReadPortTest: 11 tests, 0 failures, 0 errors, 0 skipped
+- CalendarProviderSessionsTest: 11 tests, 0 failures, 0 errors, 0 skipped
+- GoogleCalendarHttpReadPortTest: 20 tests, 0 failures, 0 errors, 0 skipped
+- TOTAL: 90 tests, 0 failures, 0 errors, 0 skipped
+Full Gradle output: gradle-run.log (tool session 94356).
+Isolated AndroidTest compile: PASS, --rerun-tasks, BUILD SUCCESSFUL, 26 tasks executed; full output in isolated-android-test-compile.log (tool session 10930).
+No emulator/formal campaign, CI run, live account, OAuth UI, Google API endpoint, token, or secret was used.
+The isolated AndroidTest check was source compilation only; it did not launch instrumentation.

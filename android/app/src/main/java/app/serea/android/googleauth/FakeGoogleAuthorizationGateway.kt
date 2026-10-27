@@ -114,7 +114,7 @@ class FakeGoogleAuthorizationGateway(
     fun revokeGoogleGrant() {
         revokeCount++
         grantedScopes.clear()
-        disabledInApp.clear()
+        // Google grant revocation does not override an independent app-local feature disconnect.
         featureVersions.keys.forEach { feature -> featureVersions[feature] = featureVersions.getValue(feature) + 1 }
         expired = false
     }

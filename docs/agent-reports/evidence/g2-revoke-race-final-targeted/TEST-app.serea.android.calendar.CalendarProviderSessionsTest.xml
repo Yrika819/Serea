@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.calendar.CalendarProviderSessionsTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-27T12:32:51.810Z" hostname="b49fd8b02ed6" time="0.222">
+  <properties/>
+  <testcase name="delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome" classname="app.serea.android.calendar.CalendarProviderSessionsTest" time="0.222"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -7,6 +7,8 @@ import re
 
 SCRIPT = Path(__file__).with_name("run-diagnostic.sh")
 source = SCRIPT.read_text(encoding="utf-8")
+WORKFLOW = SCRIPT.parents[3] / ".github/workflows/g3-ondevice-poc.yml"
+workflow = WORKFLOW.read_text(encoding="utf-8")
 
 
 def function_body(name: str) -> str:
@@ -70,4 +72,27 @@ if not all(
 if "val loadRejectedByClose = withTimeout(15_000) { checkNotNull(racingLoad).await() }" not in android_test:
     raise SystemExit("load-close race must await the successful Boolean result")
 
-print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test load_close_async_failure_isolated=true cancellation_preserved=true unexpected_failure_preserved=true")
+if 'EXPECTED_EMULATOR_API_LEVEL="${G3_API_LEVEL:-35}"' not in source:
+    raise SystemExit("diagnostic runner must take its expected API from G3_API_LEVEL")
+if '[[ "$actual_api_level" == "$EXPECTED_EMULATOR_API_LEVEL" ]]' not in source:
+    raise SystemExit("diagnostic runner must reject an Emulator at the wrong selected API")
+if 'echo "emulator_api: $actual_api_level"' not in source:
+    raise SystemExit("diagnostic evidence must record the API actually reported by Android")
+for marker in (
+    "workflow_dispatch:",
+    "api_level:",
+    "inputs.api_level",
+    "[g3-poc-run]",
+    "[g3-api=26]",
+    "[g3-api=35]",
+    'system-images;android-${G3_API_LEVEL};google_apis;x86_64',
+    "api-level: ${{ env.G3_API_LEVEL }}",
+    "arch: x86_64",
+    "disable-linux-hw-accel: false",
+):
+    if marker not in workflow:
+        raise SystemExit(f"workflow must preserve explicit accelerated API selection contract: {marker}")
+if "api-level: 35" in workflow:
+    raise SystemExit("Emulator API level must not be hardcoded after API selection was added")
+
+print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test load_close_async_failure_isolated=true cancellation_preserved=true unexpected_failure_preserved=true explicit_api26_or_35=true x86_64_acceleration_required=true")

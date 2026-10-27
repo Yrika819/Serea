@@ -13,6 +13,7 @@ MODEL_SHA256="e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5"
 MODEL_SIZE_BYTES="101016128"
 MODEL_REPOSITORY_REVISION="1076b85d135017971845b19b8d07df1479155988"
 MODEL_URL="https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/${MODEL_REPOSITORY_REVISION}/SmolLM2-135M-Q4_K_M.gguf"
+EXPECTED_EMULATOR_API_LEVEL="${G3_API_LEVEL:-35}"
 DEVICE_MODEL_TEMP="/data/local/tmp/g3-smollm.gguf"
 DEVICE_MODEL_RELATIVE="files/g3-smollm.gguf"
 APP_APK="$APP_DIR/build/outputs/apk/debug/app-debug.apk"
@@ -25,6 +26,10 @@ G3_RESULTS_DIR=''
 CLEANUP_ADB_TIMEOUT_SECONDS=10
 
 mkdir -p "$EVIDENCE_DIR"
+if [[ "$EXPECTED_EMULATOR_API_LEVEL" != '26' && "$EXPECTED_EMULATOR_API_LEVEL" != '35' ]]; then
+    echo "Unsupported G3 Emulator API selection: $EXPECTED_EMULATOR_API_LEVEL" >&2
+    exit 2
+fi
 
 run_poc_gradle() (
     cd "$POC_DIR"
@@ -371,10 +376,12 @@ run_model_test() {
     (cd "$ROOT_DIR" && sha256sum --check "$EVIDENCE_DIR/androidtest-apk.sha256")
     adb wait-for-device
     [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == '1' ]]
-    [[ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" == '35' ]]
+    local actual_api_level
+    actual_api_level="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+    [[ "$actual_api_level" == "$EXPECTED_EMULATOR_API_LEVEL" ]]
     [[ "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" == 'x86_64' ]]
     {
-        echo 'emulator_api: 35'
+        echo "emulator_api: $actual_api_level"
         echo "emulator_abi: $(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
         echo "emulator_hardware: $(adb shell getprop ro.hardware | tr -d '\r')"
         echo "emulator_fingerprint: $(adb shell getprop ro.build.fingerprint | tr -d '\r')"

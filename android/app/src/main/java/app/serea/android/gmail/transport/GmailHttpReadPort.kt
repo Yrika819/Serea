@@ -178,6 +178,8 @@ class GmailHttpReadPort internal constructor(
                 catch (_: GmailResponseTooLargeException) { throw GmailReadFailure(GmailReadFailureCode.INVALID_RESPONSE) }
                 catch (_: java.io.InterruptedIOException) { throw GmailReadFailure(GmailReadFailureCode.TIMEOUT) }
                 catch (_: IOException) { throw GmailReadFailure(GmailReadFailureCode.UNAVAILABLE) }
+                currentCoroutineContext().ensureActive()
+                token.ensureValid()
                 return bytes.toString(Charsets.UTF_8) to bytes.size
             }
         } catch (cancelled: CancellationException) {

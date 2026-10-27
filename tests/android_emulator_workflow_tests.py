@@ -22,14 +22,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('local deadline=$((SECONDS + 120))', script)
         self.assertIn('while (( SECONDS < deadline )); do', script)
         self.assertIn('timeout "${cap}s" adb "$@"', script)
-        self.assertIn('timeout 10s adb -s "$serial" root', script)
+        self.assertIn('source "$(dirname "${BASH_SOURCE[0]}")/android_emulator_lifecycle.sh"', script)
+        self.assertIn('serea_retry_adb_root "$serial"', script)
         self.assertIn('adb -s "$serial" get-state', script)
         self.assertIn('"$state" == device && "$sdk" == 35 && "$qemu" == 1 && "$boot_completed" == 1', script)
         self.assertIn('[[ "$stable_samples" -ge 3 ]]', script)
         self.assertIn('print_emulator_diagnostics "Emulator did not remain online', script)
         reboot = script.split("reboot_emulator() {", 1)[1].split("\n}", 1)[0]
         reboot_stability = reboot.index("wait_for_stable_emulator 'Android system reboot before root restart'")
-        root_restart = reboot.index('timeout 10s adb -s "$serial" root')
+        root_restart = reboot.index('serea_retry_adb_root "$serial"')
         root_stability = reboot.index("wait_for_stable_emulator 'adb root restart after Android system reboot'")
         self.assertLess(reboot_stability, root_restart)
         self.assertLess(root_restart, root_stability)
@@ -45,6 +46,95 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("'Error: package not found'|\"Error: package not found: $beta_package\")", script)
         self.assertIn('Beta package query failed (exit=%s): %s', script)
         subprocess.run(["bash", "-n", str(ROOT / "tools/test_personal_beta_identity.sh")], check=True)
+
+    def test_adb_root_retries_only_transient_transport_failures(self) -> None:
+        helper = ROOT / "tools/android_emulator_lifecycle.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            bindir = temporary_path / "bin"
+            bindir.mkdir()
+            attempts = temporary_path / "root-attempts"
+            reconnect = temporary_path / "reconnect-called"
+            adb = bindir / "adb"
+            adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$*\" == *'reconnect offline'* ]]; then touch \"$ADB_RECONNECT_MARKER\"; exit 0; fi\n"
+                "if [[ \"$*\" == *' root' ]]; then\n"
+                "  count=$(cat \"$ADB_ROOT_ATTEMPTS\" 2>/dev/null || echo 0)\n"
+                "  count=$((count + 1)); printf '%s' \"$count\" > \"$ADB_ROOT_ATTEMPTS\"\n"
+                "  if [[ \"$count\" == 1 ]]; then echo 'adb: unable to connect for root: closed' >&2; exit 1; fi\n"
+                "  echo 'restarting adbd as root'; exit 0\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            adb.chmod(0o755)
+            sleep = bindir / "sleep"
+            sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            sleep.chmod(0o755)
+            env = os.environ.copy()
+            env.update({
+                "PATH": f"{bindir}{os.pathsep}{env['PATH']}",
+                "ADB_ROOT_ATTEMPTS": str(attempts),
+                "ADB_RECONNECT_MARKER": str(reconnect),
+            })
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1"; serea_retry_adb_root emulator-5554', "test", str(helper)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(attempts.read_text(encoding="utf-8"), "2")
+            self.assertTrue(reconnect.exists())
+            self.assertIn("restarting adbd as root", result.stdout)
+            self.assertIn("RETRY: transient ADB transport failure", result.stderr)
+
+    def test_adb_root_fails_closed_on_non_transient_error(self) -> None:
+        helper = ROOT / "tools/android_emulator_lifecycle.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            bindir = temporary_path / "bin"
+            bindir.mkdir()
+            attempts = temporary_path / "root-attempts"
+            reconnect = temporary_path / "reconnect-called"
+            adb = bindir / "adb"
+            adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$*\" == *'reconnect offline'* ]]; then touch \"$ADB_RECONNECT_MARKER\"; exit 0; fi\n"
+                "if [[ \"$*\" == *' root' ]]; then\n"
+                "  count=$(cat \"$ADB_ROOT_ATTEMPTS\" 2>/dev/null || echo 0)\n"
+                "  count=$((count + 1)); printf '%s' \"$count\" > \"$ADB_ROOT_ATTEMPTS\"\n"
+                "  echo 'adbd cannot run as root in production builds' >&2; exit 1\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            adb.chmod(0o755)
+            env = os.environ.copy()
+            env.update({
+                "PATH": f"{bindir}{os.pathsep}{env['PATH']}",
+                "ADB_ROOT_ATTEMPTS": str(attempts),
+                "ADB_RECONNECT_MARKER": str(reconnect),
+            })
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; if serea_retry_adb_root emulator-5554; then exit 1; else exit 0; fi',
+                    "test",
+                    str(helper),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(attempts.read_text(encoding="utf-8"), "1")
+            self.assertFalse(reconnect.exists())
+            self.assertIn("non-transient error", result.stderr)
 
     def test_personal_beta_identity_does_not_mask_package_probe_transport_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

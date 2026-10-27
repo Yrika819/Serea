@@ -11,6 +11,7 @@ fun interface CalendarAccessTokenPort {
 /** Never persist or log this value. A new value may be requested for each HTTP call. */
 class CalendarAccessToken internal constructor(private val lease: AccessTokenLease) : AutoCloseable {
     internal fun <T> useToken(block: (String) -> T): T = lease.useToken(block)
+    internal fun ensureValid() = lease.ensureValid()
     override fun close() = lease.close()
     override fun toString(): String = "CalendarAccessToken(token=<redacted>)"
 }

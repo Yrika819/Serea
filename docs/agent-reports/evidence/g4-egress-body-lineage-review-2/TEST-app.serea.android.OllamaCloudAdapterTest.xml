@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.OllamaCloudAdapterTest" tests="22" skipped="0" failures="0" errors="0" timestamp="2026-10-27T23:37:26.885Z" hostname="b49fd8b02ed6" time="0.839">
+  <properties/>
+  <testcase name="cloudPortRejectsMatchingGoogleBodyLineageBeforeCredentialOrHttp" classname="app.serea.android.OllamaCloudAdapterTest" time="0.116"/>
+  <testcase name="invalidatedCredentialFailsBeforeHttp" classname="app.serea.android.OllamaCloudAdapterTest" time="0.006"/>
+  <testcase name="malformedAndOversizedStreamsFailClosed" classname="app.serea.android.OllamaCloudAdapterTest" time="0.096"/>
+  <testcase name="connectionFailureIsMappedWithoutRetry" classname="app.serea.android.OllamaCloudAdapterTest" time="0.008"/>
+  <testcase name="acceptsDocumentedNonStreamingJsonResponseAndUsage" classname="app.serea.android.OllamaCloudAdapterTest" time="0.005"/>
+  <testcase name="unlistedModelIsRejectedBeforeNetwork" classname="app.serea.android.OllamaCloudAdapterTest" time="0.002"/>
+  <testcase name="untrustedTlsCertificateIsRejectedBeforeHttpRequest" classname="app.serea.android.OllamaCloudAdapterTest" time="0.233"/>
+  <testcase name="mapsAuthenticationRateLimitAndServerFailuresWithoutDisplayingBody" classname="app.serea.android.OllamaCloudAdapterTest" time="0.025"/>
+  <testcase name="disabledCloudDoesNotReadCredentialOrConnect" classname="app.serea.android.OllamaCloudAdapterTest" time="0.003"/>
+  <testcase name="streamsSeededManyShortDeltasAcrossFragmentedTransportChunks" classname="app.serea.android.OllamaCloudAdapterTest" time="0.017"/>
+  <testcase name="missingProviderUsageRemainsUnknown" classname="app.serea.android.OllamaCloudAdapterTest" time="0.004"/>
+  <testcase name="approvedMultiTurnConversationIsSentAsOneMockHttpRequest" classname="app.serea.android.OllamaCloudAdapterTest" time="0.006"/>
+  <testcase name="streamsChunksAndReturnsUsage" classname="app.serea.android.OllamaCloudAdapterTest" time="0.021"/>
+  <testcase name="egressRejectionDoesNotReadCredentialOrCreateHttpRequest" classname="app.serea.android.OllamaCloudAdapterTest" time="0.004"/>
+  <testcase name="fragmentedUtf8CodePointIsDecodedWithoutCorruption" classname="app.serea.android.OllamaCloudAdapterTest" time="0.004"/>
+  <testcase name="redirectsAreNotFollowed" classname="app.serea.android.OllamaCloudAdapterTest" time="0.009"/>
+  <testcase name="timeoutCancellationAndStreamCutoffDoNotRetry" classname="app.serea.android.OllamaCloudAdapterTest" time="0.265"/>
+  <testcase name="historicalCandidateIsNotDefaultAndExplicitSelectionIsUsed" classname="app.serea.android.OllamaCloudAdapterTest" time="0.006"/>
+  <testcase name="fictionalFixtureCatalogCannotAuthorizeARealProviderDestination" classname="app.serea.android.OllamaCloudAdapterTest" time="0.002"/>
+  <testcase name="arbitraryHttpsEndpointCannotBeConfigured" classname="app.serea.android.OllamaCloudAdapterTest" time="0.001"/>
+  <testcase name="missingCredentialDoesNotCreateHttpRequest" classname="app.serea.android.OllamaCloudAdapterTest" time="0.002"/>
+  <testcase name="cloudPortRejectsRequestContractLineageMismatchBeforeCredentialOrHttp" classname="app.serea.android.OllamaCloudAdapterTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Oct 27, 2026 11:37:27 PM okhttp3.mockwebserver.MockWebServer$SocketHandler handle
+WARNING: MockWebServer[52939] connection from /127.0.0.1 didn't make a request
+]]></system-err>
+</testsuite>

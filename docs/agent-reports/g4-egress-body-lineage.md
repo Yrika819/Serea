@@ -1,8 +1,8 @@
 # G4 Cloud Egress Body Lineage
 
-Date: 2026-10-27 UTC  
-Remediation commit: `4f86c5283edcfb7e0a0868d711a05bf7680247a3`  
-Base integration candidate: `373b8be15f407d951157d2a80a632e86d979acdf`  
+Date: 2026-10-27 UTC
+Remediation commit: `4f86c5283edcfb7e0a0868d711a05bf7680247a3`
+Base integration candidate: `373b8be15f407d951157d2a80a632e86d979acdf`
 Worktree / branch: `/workspace/Serea-g4-egress-body-lineage` / `codex/serea-g4-egress-body-lineage`
 
 ## Finding and scope
@@ -56,11 +56,14 @@ JUnit XML is preserved under [`evidence/g4-egress-body-lineage/`](evidence/g4-eg
 
 ## Independent review
 
-The same read-only G4 reviewer first returned CHANGES_REQUESTED with the two findings above. After the fixes and new regressions, the reviewer returned: “prior findings addressed for the app-internal provider-prefill path. No remaining blocker in this remediation.” The review also reiterated the external clipboard attribution limitation. Review did not run tests; the test results above are from the orchestrator’s local run.
+The read-only G4 reviewer confirmed the two earlier implementation findings were closed for app-internal provider-prefill and reiterated that external clipboard attribution remains unknown. A second read-only review requested one more direct Cloud-port regression where both the request and contract carry matching Gmail/Calendar lineage, plus removal of trailing whitespace in this report. Both changes are now included and the focused suite was rerun.
+
+Follow-up evidence: [`evidence/g4-egress-body-lineage-review-2/`](evidence/g4-egress-body-lineage-review-2/) records 72/72 passing tests with zero failures, errors, or skips. The added direct Cloud-port test exercises both Gmail and Calendar taint, and asserts zero credential reads and zero MockWebServer requests. `git diff --check` passes after removing the trailing whitespace. This run used Temurin 21.0.13+9 and no Emulator.
 
 ## Integration state
 
-- The current PR #132 candidate at `373b8be...` has in-progress exact-head Android and Native runs. Full, Fast, SQLite, RustSec, Git Hooks, and Android Contract results on that SHA are tracked separately in the orchestrator ledger/PR.
+- The PR #132 candidate at `373b8be...` completed its exact-head campaign: API 26 Required 105/105 passed; API 35 failed before formal Required, at one focused `chatDraftSurvivesGmailAndCalendarDestinationChanges` check when Compose remained empty at `R4-B-committed` after accepted IME operations across three Android-created input sessions. API 35 Formal Required is NOT_RUN. Full, Fast, Native, SQLite, RustSec, Git Hooks, and Android Contract passed on `373b8be...`.
 - No result from `373b8be...` is attributed to remediation commit `4f86c52...`.
-- This remediation is not yet on PR #132. After the parent SHA's current Required campaign finishes, advance only the owned integration branch by fast-forward and rerun the complete Required campaign on the resulting exact HEAD.
+- A non-Required R3 real-IME diagnostic was dispatched at exact HEAD `373b8be...`, Run `40603105338`. It is still in progress; its workflow runs API 35 startup/IME-state cases, then B/C/D and API 26 follow-up, so it is broader than an isolated fresh-AVD-per-case experiment.
+- This remediation is not yet on PR #132. Independent review of the new follow-up commit is pending. Preserve the API 35 root cause as UNKNOWN; do not use a passing R3 diagnostic as a substitute for the formal gate.
 - Real Google/AI services remain disabled/unconnected; Personal Beta remains NO-GO.

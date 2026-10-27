@@ -1,0 +1,10 @@
+Focused Cloud Egress lineage review follow-up
+
+Source branch: codex/serea-g4-egress-body-lineage
+Source HEAD before this follow-up commit: bf53addce6c5bcd346f3da166cfdc0bef866fa8a
+Additional source diff: direct Ollama Cloud port regression for matching Gmail/Calendar body lineage; evidence report whitespace cleanup.
+JDK: Temurin 21.0.13+9 with javac available.
+Command (from android/): ./gradlew --no-daemon :app:testDebugUnitTest --tests 'app.serea.android.SecurityPortsTest' --tests 'app.serea.android.LocalFakeRoutingAdversarialTest' --tests 'app.serea.android.GoogleOriginEgressAdversarialTest' --tests 'app.serea.android.ChatViewModelTest' --tests 'app.serea.android.OllamaCloudAdapterTest'
+Result: 72 tests, 0 failures, 0 errors, 0 skipped.
+Class counts: SecurityPortsTest 10; LocalFakeRoutingAdversarialTest 3; GoogleOriginEgressAdversarialTest 1; ChatViewModelTest 36; OllamaCloudAdapterTest 22.
+Environment: local JVM focused run. No Emulator, Google account, real provider, key, or user data.

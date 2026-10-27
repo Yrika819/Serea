@@ -148,6 +148,47 @@ class OllamaCloudAdapterTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test fun cloudPortRejectsMatchingGoogleBodyLineageBeforeCredentialOrHttp() = runBlocking {
+        var credentialReads = 0
+        val port = OllamaModelChatPort(adapter(reader = object : CredentialReader {
+            override fun readForRequest(): String { credentialReads++; return key }
+        }), { 20_000 })
+
+        listOf(DataOrigin.GMAIL, DataOrigin.CALENDAR).forEachIndexed { index, providerOrigin ->
+            val lineage = setOf(DataOrigin.USER_AUTHORED, providerOrigin)
+            val contract = EgressContract(
+                conversationId = "google-lineage-$index",
+                currentMessageId = "send-google-lineage-$index",
+                origin = DataOrigin.USER_AUTHORED,
+                classification = DataClassification.PUBLIC,
+                destination = "https://ollama.com/api/chat",
+                plannedBody = "synthetic imported body",
+                context = emptyList(),
+                preparation = PayloadPreparation.RAW,
+                explicitSendIntentAtMillis = 10_000,
+                expiresAtMillis = 30_000,
+                selectedModelId = "gemma4:31b",
+                plannedBodySourceLineage = lineage,
+            )
+
+            try {
+                port.send(ModelChatRequest(
+                    conversationId = contract.conversationId,
+                    message = contract.plannedBody,
+                    sendId = contract.currentMessageId,
+                    classification = DataClassification.PUBLIC,
+                    egressContract = contract,
+                    selectedModelId = "gemma4:31b",
+                    bodySourceLineage = lineage,
+                ))
+                throw AssertionError("$providerOrigin ancestry must be denied by the Cloud port")
+            } catch (_: ModelChatFailure) { }
+        }
+
+        assertEquals(0, credentialReads)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun streamsSeededManyShortDeltasAcrossFragmentedTransportChunks() = runBlocking {
         val seed = 0x5E2EA
         val chunks = (0 until 256).map { index ->

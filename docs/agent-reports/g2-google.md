@@ -10,14 +10,16 @@ AGENT_ID: G2
 ACTIVE_PHASE: G2 — isolated authorization lifecycle and Google policy readiness
 OVERALL_STATUS: PARTIAL — local Fake/Mock implementation is covered; real Google readiness remains Owner-gated
 BASE_SHA: 3924b36080ffa43331f065a15db80c604c243355
-CURRENT_HEAD: pending G2 commit
-TREE_SHA: pending G2 commit
+CURRENT_HEAD: d5ef1a9faf56818f47a2db4012d05cf6614ffb89 (G2 implementation commit; this report-only checkpoint follows it)
+TREE_SHA: 420a818a2a4c97ac06c7df0e3ec11db0d3a3c314 (implementation tree)
 WORKTREE: /workspace/Serea-g2-google-auth-readiness
 BRANCH: codex/serea-g2-google-auth-readiness
 DRAFT_PR: none
-CI_RUN_IDS: none
+CI_RUN_IDS: 40489486365 — `.github/workflows/android-personal-beta.yml`, feature branch push, zero jobs (main-only workflow; not a G2 test result)
 ARTIFACT_IDS: none
 ```
+
+The G2 implementation commit is pushed to `refs/heads/codex/serea-g2-google-auth-readiness` at `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`. This document is being added in a subsequent documentation-only checkpoint commit, so use the remote branch ref for the latest branch HEAD; the implementation tree and test evidence below remain unchanged.
 
 ## Existing implementation and reuse decision
 
@@ -94,7 +96,7 @@ Focused command:
 JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
 ```
 
-Result: **PASS**, exit code 0, Gradle `BUILD SUCCESSFUL` on final source. JUnit recorded 71 tests across the six selected classes, with 0 failures, 0 errors, and 0 skips. XML is in `android/app/build/test-results/testDebugUnitTest/TEST-*.xml` in the local worktree. No emulator, real Google account, OAuth credential, or Google network endpoint was used.
+Result: **PASS**, exit code 0, Gradle `BUILD SUCCESSFUL` on implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`. JUnit recorded 71 tests across the six selected classes, with 0 failures, 0 errors, and 0 skips. XML is in `android/app/build/test-results/testDebugUnitTest/TEST-*.xml` in the local worktree. No emulator, real Google account, OAuth credential, or Google network endpoint was used.
 
 ## Official Google policy and setup review
 
@@ -128,10 +130,11 @@ This is an implementation-readiness summary, not legal advice. Requirements belo
 ## Commands and results
 
 ```text
-Focused JVM: PASS — 71 tests, 0 failures, 0 errors, 0 skips, final source, `--rerun-tasks`
+Focused JVM: PASS — 71 tests, 0 failures, 0 errors, 0 skips, implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89`, `--rerun-tasks`
 Focused command: shown above
 Gradle result: BUILD SUCCESSFUL, exit code 0
-Artifact / CI Run: none (local evidence only)
+Artifact: none (local JUnit XML only)
+CI Run `40489486365`: `.github/workflows/android-personal-beta.yml`, feature-branch push, completed with zero jobs; this main-only workflow did not execute a test job and is not treated as a G2 verification result
 Android instrumentation source compile: PASS — `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin`, exit code 0; no emulator was launched
 Initial attempted compile command: `JAVA_HOME=/tmp/serea-g2-jdk PATH=/tmp/serea-g2-jdk/bin:$PATH ./gradlew --no-daemon :app:compileDebugAndroidTestKotlin` — failed because that task does not exist for this project's variants; task discovery identified `isolatedAndroidTest` and that source compile then passed
 Initial JVM attempt: exit 127 because installed OpenJDK runtime did not include `javac`

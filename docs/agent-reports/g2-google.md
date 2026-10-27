@@ -7,23 +7,22 @@ Official documentation retrieved: 2026-10-27
 
 ```text
 AGENT_ID: G2
-ACTIVE_PHASE: G2 — isolated Google authorization lifecycle, revocation and cancellation safety
+ACTIVE_PHASE: G2 — OAuth policy/readiness audit and checkpoint correction
 OVERALL_STATUS: PARTIAL — Gmail/Calendar in-flight reads and Identity authorization/revoke tasks fail closed across invalidation and caller cancellation; live Google readiness remains Owner-gated
 BASE_SHA: 3924b36080ffa43331f065a15db80c604c243355
-CURRENT_HEAD: 89dd846ec8872df6a9ce1dd594d37450e4bd8180 (G2 branch base for this proposed documentation-only policy correction)
-HEAD_TREE_SHA: bd87c92ba5f9293a4fc8d9a6c8ef975ea6ba4da2 (G2 branch base tree)
-TREE_SHA: bd87c92ba5f9293a4fc8d9a6c8ef975ea6ba4da2 (committed branch HEAD tree)
-ACCEPTED_SOURCE_EVIDENCE_TREE_SHA: 7101d331ee116ee92e3c660b1df068e629267bf9
-PROPOSED_WORKTREE_TREE_SHA: ab0f81d8f491b0c25e93bd64be5090170a43ea16 (candidate before this checkpoint-field normalization; recompute candidate tree after this edit)
-WORKTREE: `Serea-g2-google-auth-readiness` (isolated; one documentation-only file modified, no source/test edits)
+CURRENT_HEAD: 32fec170949ee054bb8ed4b62e2f4b41de8c473f (parent/source revision for this documentation-only checkpoint correction)
+TREE_SHA: 8ef38f163ddaaa5f8afac7e3d33c7d4cf8322efc (tree at CURRENT_HEAD above)
+SOURCE_EVIDENCE_HEAD: 69c9bcb3118343fbcbc4d7595125525420744a7b
+SOURCE_EVIDENCE_TREE: 7101d331ee116ee92e3c660b1df068e629267bf9
+WORKTREE: `/workspace/Serea-g2-google-auth-readiness` (isolated; this update is one documentation-only child commit, no source/test edits)
 BRANCH: codex/serea-g2-google-auth-readiness
-REMOTE_REF: `origin/codex/serea-g2-google-auth-readiness` at branch base `89dd846ec8872df6a9ce1dd594d37450e4bd8180` (verified); current documentation-only patch is not committed or pushed
+REMOTE_REF: `origin/codex/serea-g2-google-auth-readiness` at `32fec170949ee054bb8ed4b62e2f4b41de8c473f` before this checkpoint child is pushed; parent verification should resolve the resulting branch HEAD
 DRAFT_PR: none — G4 PR #129 carries the accepted G2 source/evidence changes; no change is being made to that PR
-CI_RUN_IDS: 40489486365, 40489675684, 40490686989, 40494126664, 40494480729, 40510449122 — `.github/workflows/android-personal-beta.yml`, feature-branch pushes, each with zero jobs (main-only workflow; not G2 test results); latest zero-job run: `40510449122`
+CI_RUN_IDS: none for documentation-only commit `32fec17`; historical main-only workflow runs `40489486365`, `40489675684`, `40490686989`, `40494126664`, `40494480729`, and `40510449122` each had zero jobs and are not G2 test results
 ARTIFACT_IDS: none
 ```
 
-The initial implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` (tree `420a818a2a4c97ac06c7df0e3ec11db0d3a3c314`) remains immutable. The report checkpoint was committed separately at `43c258b78bfc228a98c78609fa531210131588ea` (tree `41757fd3a497e4c9f4bb23e1961bab18ebf1886c`). G1's Fake-only authorization race repair is `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; the app-disconnect/revoke semantic repair is `b87b39d9c86d94bc6121c0605aaccd9497e9694c`. This latest provider in-flight invalidation repair is `7c3af22605b202ec55eb61cc59e029948dd1217b` (tree `13cd093386321a6bb496dcd894a379538a08e7dd`). No prior commit was amended or rewritten. This report update is a documentation-only descendant checkpoint; the current branch ref is verified after push.
+The initial implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` (tree `420a818a2a4c97ac06c7df0e3ec11db0d3a3c314`) remains immutable. The report checkpoint was committed separately at `43c258b78bfc228a98c78609fa531210131588ea` (tree `41757fd3a497e4c9f4bb23e1961bab18ebf1886c`). G1's Fake-only authorization race repair is `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; the app-disconnect/revoke semantic repair is `b87b39d9c86d94bc6121c0605aaccd9497e9694c`. The latest provider in-flight invalidation repair is `7c3af22605b202ec55eb61cc59e029948dd1217b` (tree `13cd093386321a6bb496dcd894a379538a08e7dd`), and accepted G2 source/evidence is recorded at `SOURCE_EVIDENCE_HEAD` above. No prior commit was amended or rewritten. The current branch's documentation-only policy correction is `32fec170949ee054bb8ed4b62e2f4b41de8c473f`; this follow-up corrects its stale checkpoint metadata only.
 
 ## Existing implementation and reuse decision
 

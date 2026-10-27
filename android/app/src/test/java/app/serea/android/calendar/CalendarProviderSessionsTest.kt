@@ -7,6 +7,7 @@ import app.serea.android.googleauth.FakeGoogleAuthorizationGateway
 import app.serea.android.googleauth.GoogleAuthorizationGateway
 import app.serea.android.googleauth.GoogleAuthorizationMode
 import app.serea.android.googleauth.GoogleFeature
+import app.serea.android.googleauth.GoogleGrantInvalidationObservers
 import app.serea.android.googleauth.GoogleGrantLeaseState
 import app.serea.android.googleauth.GoogleScope
 import app.serea.android.googleauth.GoogleServiceState
@@ -27,6 +28,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.EventListener
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -39,6 +42,8 @@ import org.junit.Test
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 class CalendarProviderSessionsTest {
     private val server = MockWebServer().apply { start() }
@@ -61,6 +66,11 @@ class CalendarProviderSessionsTest {
         }
     }
 
+    private class CancellationProbe : EventListener() {
+        val callCancelled = CountDownLatch(1)
+        override fun canceled(call: Call) { callCancelled.countDown() }
+    }
+
     @After fun close() = server.shutdown()
 
     private class PlayServicesFixture(
@@ -69,9 +79,13 @@ class CalendarProviderSessionsTest {
             GoogleScope.CALENDAR_LIST_READ_ONLY,
         ),
         permission: ScopePermission = ScopePermission.GRANTED,
+        private val notifyInvalidationObservers: Boolean = true,
     ) : GoogleAuthorizationGateway {
         override val mode = GoogleAuthorizationMode.PLAY_SERVICES
         override var authorizationSessionId: String? = "calendar-session-fixture"
+        private val invalidationObservers = GoogleGrantInvalidationObservers()
+        private val googleGrantGeneration = AtomicLong(0)
+        override val googleGrantInvalidationGeneration: Long get() = googleGrantGeneration.get()
         var tokenRequests = 0
         var rotateAfterNextToken = false
         private var accountChanged = false
@@ -85,14 +99,22 @@ class CalendarProviderSessionsTest {
         var capturedCalendarVersion: Long = -1
         var calendarVersionAtRevoke: Long = -1
         val validityTrace = CopyOnWriteArrayList<Pair<Long, Boolean>>()
+        @Volatile var afterGrantGenerationIncrementBeforeLeaseInvalidation: (() -> Unit)? = null
+        @Volatile var afterGrantGenerationIncrementBeforeObservers: (() -> Unit)? = null
 
         private fun beginRevoke() {
             synchronized(stateLock) {
                 check(grantState.tryBeginAuthorizationOperation())
+                googleGrantGeneration.incrementAndGet()
+                afterGrantGenerationIncrementBeforeLeaseInvalidation?.invoke()
                 invalidateGoogleGrantAtRevokeStart(grantState, knownPermissions)
                 calendarVersionAtRevoke = grantState.version(GoogleFeature.CALENDAR)
             }
+            afterGrantGenerationIncrementBeforeObservers?.invoke()
+            if (notifyInvalidationObservers) invalidationObservers.notifyInvalidationStarted()
         }
+        override fun observeGoogleGrantInvalidation(listener: () -> Unit): AutoCloseable =
+            invalidationObservers.observe(listener)
         fun disableCalendar() {
             synchronized(stateLock) { grantState.disableInApp(GoogleFeature.CALENDAR) }
         }
@@ -237,7 +259,7 @@ class CalendarProviderSessionsTest {
 
     @Test fun delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome() = runBlocking {
         suspend fun assertInvalidatedRead(outcome: RevokeOutcome) {
-            val gateway = PlayServicesFixture()
+            val gateway = PlayServicesFixture(notifyInvalidationObservers = false)
             val previousRequestCount = server.requestCount
             val response = GatedResponseDispatcher("""{"id":"fixture@example.test","timeZone":"UTC","accessRole":"reader"}""")
             server.dispatcher = response
@@ -339,6 +361,49 @@ class CalendarProviderSessionsTest {
         }
 
         RevokeOutcome.entries.forEach { assertInvalidatedRead(it) }
+    }
+
+    @Test fun grantRevocationCancelsPendingCalendarHttpCallBeforeResponseBodyDelivery() = runBlocking {
+        val response = GatedResponseDispatcher(
+            """{"id":"fixture@example.test","timeZone":"UTC","accessRole":"reader"}""",
+        )
+        server.dispatcher = response
+        val cancellationProbe = CancellationProbe()
+        val gateway = PlayServicesFixture()
+        val session = CalendarProviderSessions(googleHttpEnabledByOwner = true).openGoogleReadOnly(
+            gateway,
+            OkHttpClient.Builder().eventListenerFactory { cancellationProbe }.build(),
+            server.url("/calendar/v3/"),
+        )
+        val read = async { runCatching { session.getCalendar(CalendarId("fixture@example.test")) } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { response.requestArrived.await(5, TimeUnit.SECONDS) })
+            assertEquals("GET", requireNotNull(response.recordedRequest).method)
+            assertFalse("the response body has not been released", read.isCompleted)
+
+            revoke = async {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            remoteRevokeStarted.await()
+            assertTrue(withContext(Dispatchers.IO) { cancellationProbe.callCancelled.await(5, TimeUnit.SECONDS) })
+            val outcome = read.await()
+            assertFalse("revoked data must not escape", outcome.isSuccess)
+            assertTrue("the provider read is cancelled", outcome.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+            assertEquals("the server is still holding the response before body delivery", 1L, response.releaseResponse.count)
+            assertFalse("revocation remains pending while the request has already been cancelled", revoke.isCompleted)
+        } finally {
+            remoteRevokeGate.complete(Unit)
+            response.releaseResponse.countDown()
+            revoke?.join()
+        }
+        assertEquals(1, server.requestCount)
     }
 
     @Test fun delayedCalendarResponseIsDeniedAfterAppLocalDisable() = runBlocking {
@@ -470,6 +535,156 @@ class CalendarProviderSessionsTest {
         caller.join()
         assertTrue("provider replacement must not cancel the caller job", caller.isCompleted && !caller.isCancelled)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun grantRevocationBetweenDelegateCompletionAndDeliveryRejectsCalendarResult() = runBlocking {
+        val gateway = PlayServicesFixture()
+        val delegate = FakeCalendarProvider()
+        val isCurrentCalls = AtomicInteger()
+        val postDelegateCheckEntered = CountDownLatch(1)
+        val releasePostDelegateCheck = CountDownLatch(1)
+        val session = CalendarProviderSession(
+            id = 9,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = delegate,
+            authorizationDelegate = FakeCalendarProvider(),
+            isCurrent = {
+                if (isCurrentCalls.incrementAndGet() == 2) {
+                    postDelegateCheckEntered.countDown()
+                    check(releasePostDelegateCheck.await(5, TimeUnit.SECONDS))
+                }
+                true
+            },
+            onClose = {},
+        )
+        session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
+            session.cancelInFlightReadsForGrantInvalidation()
+        })
+        val read = async(Dispatchers.Default) { runCatching { session.listCalendars() } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { postDelegateCheckEntered.await(5, TimeUnit.SECONDS) })
+            revoke = async {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            remoteRevokeStarted.await()
+            releasePostDelegateCheck.countDown()
+
+            val outcome = read.await()
+            assertFalse("a result buffered before revoke must not escape", outcome.isSuccess)
+            assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, (outcome.exceptionOrNull() as CalendarReadFailure).code)
+            assertFalse("remote revoke remains pending while the delivery gate rejects the result", revoke.isCompleted)
+        } finally {
+            releasePostDelegateCheck.countDown()
+            remoteRevokeGate.complete(Unit)
+            revoke?.join()
+            session.close()
+        }
+    }
+
+    @Test fun sharedGrantGenerationRejectsCalendarResultBeforeObserverNotification() = runBlocking {
+        val gateway = PlayServicesFixture()
+        val backing = FakeCalendarProvider()
+        val delegate = object : CalendarReadPort {
+            override suspend fun listCalendars(): List<CalendarDescriptor> {
+                val lease = (gateway.acquire(
+                    GoogleFeature.CALENDAR,
+                    setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY, GoogleScope.CALENDAR_LIST_READ_ONLY),
+                ) as TokenSupplyResult.Available).lease
+                val calendars = backing.listCalendars()
+                lease.useToken { }
+                return calendars
+            }
+            override suspend fun getCalendar(calendarId: CalendarId) = backing.getCalendar(calendarId)
+            override suspend fun getEvent(key: CalendarEventKey) = backing.getEvent(key)
+            override suspend fun listEventsPage(
+                calendarId: CalendarId,
+                range: CalendarDateRange,
+                pageToken: String?,
+            ) = backing.listEventsPage(calendarId, range, pageToken)
+        }
+        val isCurrentCalls = AtomicInteger()
+        val postDelegateCheckEntered = CountDownLatch(1)
+        val releasePostDelegateCheck = CountDownLatch(1)
+        val observerNotified = CountDownLatch(1)
+        val generationAdvanced = CountDownLatch(1)
+        val releaseLeaseInvalidation = CountDownLatch(1)
+        val leaseInvalidationCompleted = CountDownLatch(1)
+        val releaseObserverNotification = CountDownLatch(1)
+        val session = CalendarProviderSession(
+            id = 11,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = delegate,
+            authorizationDelegate = FakeCalendarProvider(),
+            currentGrantInvalidationGeneration = { gateway.googleGrantInvalidationGeneration },
+            isCurrent = {
+                if (isCurrentCalls.incrementAndGet() == 2) {
+                    postDelegateCheckEntered.countDown()
+                    check(releasePostDelegateCheck.await(5, TimeUnit.SECONDS))
+                }
+                true
+            },
+            onClose = {},
+        )
+        session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
+            observerNotified.countDown()
+            session.cancelInFlightReadsForGrantInvalidation()
+        })
+        gateway.afterGrantGenerationIncrementBeforeLeaseInvalidation = {
+            generationAdvanced.countDown()
+            check(releaseLeaseInvalidation.await(5, TimeUnit.SECONDS))
+        }
+        gateway.afterGrantGenerationIncrementBeforeObservers = {
+            leaseInvalidationCompleted.countDown()
+            check(releaseObserverNotification.await(5, TimeUnit.SECONDS))
+        }
+        val read = async(Dispatchers.Default) { runCatching { session.listCalendars() } }
+        val remoteRevokeStarted = CompletableDeferred<Unit>()
+        val remoteRevokeGate = CompletableDeferred<Unit>()
+        var revoke: kotlinx.coroutines.Deferred<Unit>? = null
+
+        try {
+            assertTrue(withContext(Dispatchers.IO) { postDelegateCheckEntered.await(5, TimeUnit.SECONDS) })
+            assertTrue("delegate validated its lease before returning", gateway.validityTrace.last().second)
+            revoke = async(Dispatchers.Default) {
+                gateway.revokeWithRemote {
+                    remoteRevokeStarted.complete(Unit)
+                    remoteRevokeGate.await()
+                }
+            }
+            assertTrue(withContext(Dispatchers.IO) { generationAdvanced.await(5, TimeUnit.SECONDS) })
+            assertTrue("the gateway generation is the revoke-start linearization point", gateway.googleGrantInvalidationGeneration > 0L)
+            assertEquals("lease invalidation and observer dispatch are still held", 1L, observerNotified.count)
+            assertFalse("remote revoke has not started", remoteRevokeStarted.isCompleted)
+            releasePostDelegateCheck.countDown()
+
+            val outcome = read.await()
+            assertFalse("the buffered result must not cross the generation before lease invalidation", outcome.isSuccess)
+            assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, (outcome.exceptionOrNull() as CalendarReadFailure).code)
+            assertEquals("neither lease invalidation nor observer notification has completed", 1L, leaseInvalidationCompleted.count)
+            assertEquals(1L, observerNotified.count)
+            assertFalse("remote revoke remains pending", revoke.isCompleted)
+
+            releaseLeaseInvalidation.countDown()
+            assertTrue(withContext(Dispatchers.IO) { leaseInvalidationCompleted.await(5, TimeUnit.SECONDS) })
+            assertEquals("observer dispatch remains held after lease invalidation", 1L, observerNotified.count)
+            releaseObserverNotification.countDown()
+            remoteRevokeStarted.await()
+        } finally {
+            releasePostDelegateCheck.countDown()
+            releaseLeaseInvalidation.countDown()
+            releaseObserverNotification.countDown()
+            remoteRevokeGate.complete(Unit)
+            revoke?.join()
+            session.close()
+        }
+        assertEquals(0L, observerNotified.count)
     }
 
     private suspend fun calendarFailure(block: suspend () -> Any): CalendarReadFailure = try {

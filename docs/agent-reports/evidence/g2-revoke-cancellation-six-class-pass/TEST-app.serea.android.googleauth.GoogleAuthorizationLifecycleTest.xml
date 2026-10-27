@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-27T16:07:04.801Z" hostname="b49fd8b02ed6" time="0.043">
+  <properties/>
+  <testcase name="authorizationOutcomeMapsToUserFacingLifecycleWithoutLeakingFailureDetails" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.008"/>
+  <testcase name="queuedGrantCannotRestoreFakeScopesAfterInAppDisconnect" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.021"/>
+  <testcase name="sharedRevocationPreservesAppDisconnectUntilExplicitReconnect" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.003"/>
+  <testcase name="queuedGrantCannotRestoreFakeScopesAfterSharedRevocation" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.003"/>
+  <testcase name="fakeViewModelWalksThroughAuthorizationExpiryRevocationAndDisconnectStates" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.003"/>
+  <testcase name="rapidFeatureRequestsKeepTheFirstAuthorizationAndCancellationReleasesTheGuard" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.002"/>
+  <testcase name="requestedLifecycleStatesAreExplicitAndDistinct" classname="app.serea.android.googleauth.GoogleAuthorizationLifecycleTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

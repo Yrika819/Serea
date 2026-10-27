@@ -51,13 +51,23 @@ class GmailProviderSessions(
         } else {
             GmailHttpReadPort(authorization, authorization, client, baseUrl)
         }
-        return replace(GmailProviderKind.GOOGLE_READ_ONLY, port, authorization)
+        val session = replace(
+            GmailProviderKind.GOOGLE_READ_ONLY,
+            port,
+            authorization,
+            currentGrantInvalidationGeneration = { gateway.googleGrantInvalidationGeneration },
+        )
+        session.attachGrantInvalidationObserver(gateway.observeGoogleGrantInvalidation {
+            session.cancelInFlightReadsForGrantInvalidation()
+        })
+        return session
     }
 
     private fun replace(
         kind: GmailProviderKind,
         delegate: GmailReadPort,
         authorization: GmailAuthorizationPort,
+        currentGrantInvalidationGeneration: () -> Long = { 0L },
     ): GmailProviderSession = synchronized(lock) {
         current?.invalidateFromController()
         val id = nextId.incrementAndGet()
@@ -66,6 +76,7 @@ class GmailProviderSessions(
             kind = kind,
             delegate = delegate,
             authorizationDelegate = authorization,
+            currentGrantInvalidationGeneration = currentGrantInvalidationGeneration,
             isCurrent = { synchronized(lock) { current?.id == id } },
             onClose = { closeIfCurrent(id) },
         ).also { current = it }
@@ -81,12 +92,15 @@ class GmailProviderSession internal constructor(
     val kind: GmailProviderKind,
     private val delegate: GmailReadPort,
     private val authorizationDelegate: GmailAuthorizationPort,
+    private val currentGrantInvalidationGeneration: () -> Long = { 0L },
     private val isCurrent: () -> Boolean,
     private val onClose: () -> Unit,
 ) : GmailReadPort, GmailAuthorizationPort, AutoCloseable {
     private val lock = Any()
     private var closed = false
     private val activeJobs = linkedSetOf<Job>()
+    private var grantInvalidationObserver: AutoCloseable? = null
+    private var grantInvalidationGeneration = 0L
 
     override suspend fun status(): GmailAuthorizationStatus = withActiveSession { authorizationDelegate.status() }
     override suspend fun listInbox(pageToken: String?, pageSize: Int): GmailMessagePage =
@@ -103,24 +117,46 @@ class GmailProviderSession internal constructor(
 
     internal fun invalidateFromController() = invalidate()
 
-    private fun invalidate() {
+    internal fun attachGrantInvalidationObserver(observer: AutoCloseable) {
+        val closeImmediately = synchronized(lock) {
+            if (closed) true else {
+                grantInvalidationObserver = observer
+                false
+            }
+        }
+        if (closeImmediately) observer.close()
+    }
+
+    internal fun cancelInFlightReadsForGrantInvalidation() {
         val jobs = synchronized(lock) {
             if (closed) return
-            closed = true
-            activeJobs.toList().also { activeJobs.clear() }
+            grantInvalidationGeneration++
+            activeJobs.toList()
         }
+        jobs.forEach { it.cancel(CancellationException("Google authorization was revoked.")) }
+    }
+
+    private fun invalidate() {
+        val (jobs, observer) = synchronized(lock) {
+            if (closed) return
+            closed = true
+            val active = activeJobs.toList().also { activeJobs.clear() }
+            active to grantInvalidationObserver.also { grantInvalidationObserver = null }
+        }
+        observer?.close()
         jobs.forEach { it.cancel(CancellationException("Gmail provider session ended.")) }
     }
 
     private suspend fun <T> withActiveSession(block: suspend () -> T): T {
         val callerJob = currentCoroutineContext()[Job]
         val requestJob = SupervisorJob(callerJob)
-        synchronized(lock) {
+        val (requestSessionGrantGeneration, requestGatewayGrantGeneration) = synchronized(lock) {
             if (closed) {
                 requestJob.cancel()
                 throw inactiveSession()
             }
             activeJobs += requestJob
+            grantInvalidationGeneration to currentGrantInvalidationGeneration()
         }
         try {
             if (!isCurrent()) throw inactiveSession()
@@ -130,6 +166,12 @@ class GmailProviderSession internal constructor(
             // becomes current, making this the result-delivery linearization point.
             synchronized(lock) {
                 if (closed) throw inactiveSession()
+                // The revoke callback can arrive after the child request Job has completed but
+                // before result delivery; the generation closes that cancellation gap.
+                if (grantInvalidationGeneration != requestSessionGrantGeneration) throw inactiveSession()
+                // This gateway-scoped generation advances inside revoke-start state mutation,
+                // before the observer callback can cancel this request Job.
+                if (currentGrantInvalidationGeneration() != requestGatewayGrantGeneration) throw inactiveSession()
             }
             return value
         } catch (cancelled: CancellationException) {

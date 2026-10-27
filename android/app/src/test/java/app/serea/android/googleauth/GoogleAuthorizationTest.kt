@@ -10,6 +10,7 @@ import app.serea.android.googleauth.GoogleFeature.CALENDAR
 import app.serea.android.googleauth.GoogleFeature.GMAIL
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -503,6 +504,56 @@ class GoogleAuthorizationTest {
         assertTrue(requestedScopesTouchDisabledFeature(setOf(GMAIL_READ_ONLY), setOf(GMAIL)))
         assertFalse(requestedScopesTouchDisabledFeature(setOf(CALENDAR_EVENTS_READ_ONLY), setOf(GMAIL)))
         assertTrue(requestedScopesTouchDisabledFeature(both, setOf(GMAIL)))
+    }
+
+    @Test fun disableThenReenableRejectsLateAuthorizationTaskResult() = runBlocking {
+        val grantState = GoogleGrantLeaseState()
+        val scopes = setOf(GMAIL_READ_ONLY)
+        val featureVersions = grantState.leaseVersions(googleFeaturesForScopes(scopes))
+        val remoteResult = CompletableDeferred<AccessTokenLease>()
+        var resultApplied = false
+        val authorization = async {
+            val lease = remoteResult.await()
+            val stale = googleAuthorizationOperationFailure(grantState, scopes, featureVersions)
+            if (stale != null) {
+                lease.close()
+                AuthorizationOutcome.Rejected(stale)
+            } else {
+                resultApplied = true
+                AuthorizationOutcome.Authorized(lease)
+            }
+        }
+
+        grantState.disableInApp(GMAIL)
+        grantState.enableInApp(GMAIL)
+        val lateLease = AccessTokenLease("fixture-late-authorization", scopes, null)
+        remoteResult.complete(lateLease)
+
+        assertEquals(AuthorizationOutcome.Rejected(AuthorizationFailure.STALE_CONSENT_RESULT), authorization.await())
+        assertFalse("the old generation cannot publish its authorization result", resultApplied)
+        assertFalse("the stale result lease is closed", runCatching { lateLease.useToken { it } }.isSuccess)
+    }
+
+    @Test fun disablingFeatureCancelsItsPendingConsentAcrossReconnect() {
+        val registry = ConsentRequestRegistry()
+        val grantState = GoogleGrantLeaseState()
+        val scopes = setOf(GMAIL_READ_ONLY)
+        val featureVersions = grantState.leaseVersions(googleFeaturesForScopes(scopes))
+        val request = ConsentRequestRegistry.Request(
+            id = "gmail-consent-generation-1",
+            scopes = scopes,
+            grantedScopes = emptySet(),
+            pendingIntent = null,
+            launched = true,
+            featureVersions = featureVersions,
+        )
+        assertTrue(registry.register(request))
+
+        grantState.disableInApp(GMAIL)
+        assertTrue(registry.cancelFeature(GMAIL))
+        grantState.enableInApp(GMAIL)
+
+        assertNull("a late result from the cancelled consent handoff is stale", registry.complete(request.id))
     }
 
     @Test fun realOAuthWithoutOwnerConfigurationRemainsDisabled() = runBlocking {

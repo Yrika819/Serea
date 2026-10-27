@@ -4,7 +4,11 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
+
+API_MARKER_PATTERN = re.compile(r"\[g3-api=[^\]\r\n]*(?:\]|(?=$))")
+SUPPORTED_API_MARKERS = {"[g3-api=26]": "26", "[g3-api=35]": "35"}
 
 
 def select_api(event_name: str, message: str = "", dispatch_input: str | None = None) -> str:
@@ -18,13 +22,13 @@ def select_api(event_name: str, message: str = "", dispatch_input: str | None = 
     if "[g3-poc-run]" not in message:
         raise ValueError("diagnostic push must include [g3-poc-run]")
 
-    marker_counts = {
-        "26": message.count("[g3-api=26]"),
-        "35": message.count("[g3-api=35]"),
-    }
-    if sum(marker_counts.values()) != 1:
+    api_markers = API_MARKER_PATTERN.findall(message)
+    unsupported = [marker for marker in api_markers if marker not in SUPPORTED_API_MARKERS]
+    if unsupported:
+        raise ValueError(f"unsupported or malformed G3 API marker(s): {unsupported!r}")
+    if len(api_markers) != 1:
         raise ValueError("diagnostic push must contain exactly one API marker: [g3-api=26] or [g3-api=35]")
-    return "26" if marker_counts["26"] == 1 else "35"
+    return SUPPORTED_API_MARKERS[api_markers[0]]
 
 
 def main() -> int:

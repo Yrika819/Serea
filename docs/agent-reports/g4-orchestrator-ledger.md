@@ -21,6 +21,7 @@ Status updated: 2026-10-27 UTC. This file is owned only by the Orchestrator.
 - CURRENT_HEAD: Resolve from branch `codex/serea-g4-personal-beta-readiness`; the initial commit is a checkpoint-only descendant of BASE_SHA. Candidate test evidence belongs to BASE_SHA only; checkpoint-only commits do not inherit exact-head Required status.
 - OWNED_BRANCH: `codex/serea-g4-personal-beta-readiness`.
 - WORKTREE: `/workspace/Serea-g4-personal-beta-readiness`.
+- Checkpoint branch pushed and GitHub-verified at `06d182db41f957fdbb9f29b48ae50cd318e465f9` on 2026-10-27; this is documentation only and has no inherited test status.
 - DRAFT_PR: not created. Create after G4 has reviewable integrated changes and a deliberate base decision; do not create a 409-commit main PR without G1's reviewed rehearsal.
 - main, PR #117, #120, #121, #122 and #123 are protected from modification/merge.
 
@@ -41,7 +42,7 @@ All evidence below applies only to candidate SHA `3924b36080ffa43331f065a15db80c
 |---|---|---|---|---|---|
 | G1 | Main integration and release architecture | Spawned; awaiting initial report | TBD | TBD | NOT_REVIEWED |
 | G2 | Google OAuth/Gmail/Calendar readiness | Spawned; awaiting initial report | TBD | TBD | NOT_REVIEWED |
-| G3 | Real AI / on-device inference feasibility | Spawned; awaiting initial report | TBD | TBD | NOT_REVIEWED |
+| G3 | Real AI / on-device inference feasibility | Working; preliminary note received, evidence/references not yet reviewed | TBD | TBD | NOT_REVIEWED |
 | G4 | Orchestration, integration, independent security review and Required validation | Active | TBD | G4 branch above | BASELINE_VERIFIED; new changes pending |
 
 Each agent owns a separate worktree, branch, and checkpoint. No agent may modify another lane's files or branch. Only this Orchestrator edits this ledger.
@@ -60,6 +61,7 @@ Each agent owns a separate worktree, branch, and checkpoint. No agent may modify
 - Google policy and scope research is not permission to use an account or enable OAuth.
 - Host/Emulator AI inference evidence is not Pixel 7a performance evidence. No real API key or model service call is authorized.
 - Main merge, production signing, Firebase distribution, real accounts/provider credentials, Pixel 7a operation, and final GO require Owner decision.
+- G3 preliminary note says documented Gemini/ML Kit routes have age/consumer-use restrictions and Pixel 7a is absent from the currently listed supported device set; this is not yet accepted as a final eligibility finding. Account-specific age/region eligibility and primary-source citations remain unreviewed. G3 reports no local Android NDK/CMake and is not downloading a large model without a justified, reproducible PoC plan.
 
 ## NEXT_ACTIONS
 

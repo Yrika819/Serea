@@ -40,7 +40,7 @@ All evidence below applies only to candidate SHA `3924b36080ffa43331f065a15db80c
 
 | Agent | Goal | Status | PR | Head | Review status |
 |---|---|---|---|---|---|
-| G1 | Main integration and release architecture | Spawned; awaiting initial report | TBD | TBD | NOT_REVIEWED |
+| G1 | Main integration and release architecture | Working; interim graph/rehearsal evidence received, final audit pending | TBD | TBD | NOT_REVIEWED |
 | G2 | Google OAuth/Gmail/Calendar readiness | Spawned; awaiting initial report | TBD | TBD | NOT_REVIEWED |
 | G3 | Real AI / on-device inference feasibility | Working; preliminary note received, evidence/references not yet reviewed | TBD | TBD | NOT_REVIEWED |
 | G4 | Orchestration, integration, independent security review and Required validation | Active | TBD | G4 branch above | BASELINE_VERIFIED; new changes pending |
@@ -62,6 +62,7 @@ Each agent owns a separate worktree, branch, and checkpoint. No agent may modify
 - Host/Emulator AI inference evidence is not Pixel 7a performance evidence. No real API key or model service call is authorized.
 - Main merge, production signing, Firebase distribution, real accounts/provider credentials, Pixel 7a operation, and final GO require Owner decision.
 - G3 preliminary note says documented Gemini/ML Kit routes have age/consumer-use restrictions and Pixel 7a is absent from the currently listed supported device set; this is not yet accepted as a final eligibility finding. Account-specific age/region eligibility and primary-source citations remain unreviewed. G3 reports no local Android NDK/CMake and is not downloading a large model without a justified, reproducible PoC plan.
+- G1 interim reports #98 → #99 → #100 → #117 and sibling #122/#123 from #117; #122/#123 diverge at #117. It reports 45 versus 61 changed paths, no #122-only paths, 39 shared paths byte-identical, 6 evolved in #123, 16 additions in #123, and a conflict-free disposable main-based merge whose tree equals #123. This remains interim and NOT_REVIEWED until exact refs, semantic path list, parent SHAs, and required workflow audit are provided.
 
 ## NEXT_ACTIONS
 

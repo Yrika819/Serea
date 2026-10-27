@@ -10,14 +10,14 @@ AGENT_ID: G2
 ACTIVE_PHASE: G2 — isolated Google authorization lifecycle, revocation and cancellation safety
 OVERALL_STATUS: PARTIAL — Gmail/Calendar in-flight reads and Identity authorization/revoke tasks fail closed across invalidation and caller cancellation; live Google readiness remains Owner-gated
 BASE_SHA: 3924b36080ffa43331f065a15db80c604c243355
-CURRENT_HEAD: c9482ef6be15783cdf7908d20e081c308f0acadb (current branch commit; G2-OAUTH-02 source/evidence changes are uncommitted)
-HEAD_TREE_SHA: bdb363f7a3c2e497f0c091d23b29b7ac4a800820
-TREE_SHA: uncommitted candidate tree SHA is provided in the Orchestrator handoff; this report cannot contain its own enclosing tree hash
-WORKTREE: `Serea-g2-google-auth-readiness` (isolated worktree; host path omitted)
+CURRENT_HEAD: 69c9bcb3118343fbcbc4d7595125525420744a7b (G1-accepted source/evidence commit; this report-only checkpoint is its fast-forward descendant)
+HEAD_TREE_SHA: 7101d331ee116ee92e3c660b1df068e629267bf9 (accepted source/evidence tree)
+TREE_SHA: source/evidence tree above; this checkpoint changes documentation only
+WORKTREE: `Serea-g2-google-auth-readiness` (isolated; clean after the documentation-only commit/push)
 BRANCH: codex/serea-g2-google-auth-readiness
-REMOTE_REF: origin/codex/serea-g2-google-auth-readiness = c9482ef6be15783cdf7908d20e081c308f0acadb; candidate changes are unpushed
-DRAFT_PR: none
-CI_RUN_IDS: 40489486365, 40489675684, 40490686989, 40494126664, 40494480729 — `.github/workflows/android-personal-beta.yml`, feature branch pushes, each with zero jobs (main-only workflow; not G2 test results)
+REMOTE_REF: `origin/codex/serea-g2-google-auth-readiness`; accepted source/evidence commit `69c9bcb3118343fbcbc4d7595125525420744a7b` was verified remotely before this documentation-only fast-forward
+DRAFT_PR: none — G4 PR #125 carries the accepted G2 source/evidence changes
+CI_RUN_IDS: 40489486365, 40489675684, 40490686989, 40494126664, 40494480729, 40510449122 — `.github/workflows/android-personal-beta.yml`, feature-branch pushes, each with zero jobs (main-only workflow; not G2 test results); latest zero-job run: `40510449122`
 ARTIFACT_IDS: none
 ```
 
@@ -197,10 +197,10 @@ JDK stored/extracted temporarily outside the repository. Repository dependencies
 
 ## Handoff contract
 
-- `REVIEW_REQUEST`: Independently review `7c3af22605b202ec55eb61cc59e029948dd1217b`, especially post-response lease validation, session-current delivery gating, delayed MockWebServer tests, and the revoke state helper.
+- `REVIEW_REQUEST`: G1 accepted source/evidence commit `69c9bcb3118343fbcbc4d7595125525420744a7b` (tree `7101d331ee116ee92e3c660b1df068e629267bf9`); G4 PR #125 carries the integrated changes.
 - `KNOWN_ISSUES`: Real account selection, OAuth disclosure, Activity Result consent wiring, connection/revocation UX, and normal UI provider selection are not wired. Production package/certificate and scope verification status remain unknown. Real revoke now preserves app-local disabled features in source, but live OAuth behavior remains untested.
 - `INTEGRATION_DEPENDENCIES`: Integration owner must provide explicit dependency injection for a `PlayServicesGoogleAuthorizationGateway` plus account-bound Gmail/Calendar sessions only after Owner configuration/authorization; keep Fake defaults and fail closed.
-- `NEXT_ACTION`: G1 independently reviews and may cherry-pick the provider invalidation fix and report checkpoint. Keep live OAuth disabled pending separately approved real authorization and service acceptance.
+- `NEXT_ACTION`: G4 carries the accepted G2 source/evidence commit in PR #125 and owns the exact-head integrated Required run. Keep live OAuth disabled pending separately approved real authorization and service acceptance.
 - `OWNER_APPROVAL_REQUIRED`: Real OAuth/project configuration, Google account access, scope verification, production package/signing identity, and any live-service acceptance.
 
 ### G1 follow-up G4-OAUTH-01: revoke initiation invalidation (MEDIUM)

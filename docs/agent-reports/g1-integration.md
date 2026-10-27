@@ -11,11 +11,11 @@
 | ACTIVE_PHASE | G1: dependency/provenance audit and main integration rehearsal |
 | OVERALL_STATUS | SUCCESS (G1 deliverables complete; integration approval remains separate) |
 | BASE_SHA | `e0acb0254820c381dd97828824bef86a1db5176c` |
-| CURRENT_HEAD | See this report's containing commit; initial work branch started at `e0acb0254820c381dd97828824bef86a1db5176c` |
-| TREE_SHA | See this report's containing commit |
+| CURRENT_HEAD | See Draft PR #124 head; initial report commit was `4b01fc5822b724c0205b90f615c300b40ca95716` (parent `e0acb0254820c381dd97828824bef86a1db5176c`, tree `0229f8098806230751ed21332c038c7a86692616`) |
+| TREE_SHA | The G1 report commit above has tree `0229f8098806230751ed21332c038c7a86692616`; latest follow-up is reported with the final agent response and PR metadata |
 | WORKTREE | `/workspace/Serea-g1-main-integration-readiness` |
 | BRANCH | `codex/serea-g1-main-integration-readiness` |
-| DRAFT_PR | To be created after the checkpoint commit; it will contain this audit only |
+| DRAFT_PR | [#124 — G1 integration provenance and merge rehearsal](https://github.com/Yrika819/Serea/pull/124), Draft; audit only |
 | CI_RUN_IDS | Existing exact-#123 evidence: `40427448635`, `40425595932`, `40425866784`, `40427448605`, `40427448681`, `40427448836`, `40427448709`, `40427448616`, `40427448704`, `40427448688` |
 | ARTIFACT_IDS | Required run `40427448635`: `12703250122`, `12702701890`, `12702662029`, `12702479957`, `12701024855`, `12700521566`, `12700507955`, `12700382715`, `12699894031`, `12699669873`. Focused run `40425595932`: `12700535333`, `12700187700`, `12699214853`. Release-security run `40425866784`: `12699746258`. |
 
@@ -144,3 +144,12 @@ Commands/evidence used:
 ### Review request / next action
 
 Review the dependency sequence and the six evolved shared files, then retain #123 as the selected functional candidate if no additional source-level issue is found. The G4 orchestrator should record this provenance and carry forward the exact-head run/artifact IDs. Owner action is required only for protected-main merge and eventual real-service/signing/device steps; those are not part of this G1 completion.
+
+## G1 Draft PR automation
+
+Creating Draft PR #124 automatically queued broad PR workflows on this documentation-only branch. To limit unnecessary work, G1 submitted cancellation requests for all runs it created. GitHub reports these outcomes at `4b01fc5822b724c0205b90f615c300b40ca95716`:
+
+- Cancelled: SQLite `40487833072`, Fast `40487833076`, and Git Hooks `40487833000`.
+- Cancellation requested; status was still in progress at report time: Full `40487833125` and Native `40487833119`.
+
+These runs are not G1 validation evidence. No change to workflow definitions or gate behavior was made.

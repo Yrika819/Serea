@@ -15,7 +15,7 @@ TREE_SHA: 63b0593992ddfdfd3aca5b3da3ffab3bc3b83c80 (semantic-repair implementati
 WORKTREE: /workspace/Serea-g2-google-auth-readiness
 BRANCH: codex/serea-g2-google-auth-readiness
 DRAFT_PR: none
-CI_RUN_IDS: 40489486365, 40489675684, 40490686989 — `.github/workflows/android-personal-beta.yml`, feature branch pushes, each with zero jobs (main-only workflow; not G2 test results)
+CI_RUN_IDS: 40489486365, 40489675684, 40490686989, 40494126664 — `.github/workflows/android-personal-beta.yml`, feature branch pushes, each with zero jobs (main-only workflow; not G2 test results)
 ARTIFACT_IDS: none
 ```
 
@@ -98,6 +98,8 @@ The first test requests Gmail and then Calendar before `runCurrent()` and verifi
 
 G1's later G4 review found that a shared-grant revoke cleared the Fake gateway's feature-disabled flag but left the ViewModel flag set. The intended invariant is that shared authorization revocation clears scopes and invalidates leases, while an independent app-local feature disconnect persists until the user explicitly reconnects that feature. The Fake gateway now preserves the app-local disabled set on shared revoke; the ViewModel blocks even a direct consent request while disabled; and the visible feature label says “アプリ内切断（デモ）” while the shared status message reports the revoke. The deterministic regression verifies the feature stays disabled, the scope remains `NEEDS_CONSENT`, consent is not queued while disconnected, explicit reconnect re-enables the request action, and a fresh consent request still remains pending rather than silently granting a scope.
 
+G1 accepted this Fake-only repair after independently parsing the 75-test JUnit XML and confirming the isolated Android test-source compile. G1 also found a remaining parity issue outside this lane's change scope: `PlayServicesGoogleAuthorizationGateway.revokeGoogleGrant()` currently clears its `disabledFeatures` set after a successful revoke (`GoogleAuthorization.kt:358–361`), while the Fake now preserves app-local disconnect. Do not wire the real OAuth flow until this contract is reconciled and tested. No real gateway code was changed in this phase.
+
 Final JUnit class counts:
 
 | Test class | Executed |
@@ -176,12 +178,12 @@ JDK archive SHA-256: d7f5d5cf865a2902b70ff549b97586a7d3f234e016f041ab447ea740c7d
 Repository dependencies/configuration changed for JDK: no
 ```
 
-`git diff --check` passed before source commit `b87b39d`. The focused Android instrumentation source compile passed, but instrumentation/E2E tests were **NOT_RUN** because this lane did not start an emulator. Full Formal Required was not run from this lane; parent integration owns those gates. G1 must re-review `b87b39d9c86d94bc6121c0605aaccd9497e9694c`; earlier review approval does not carry over automatically.
+`git diff --check` passed before source commit `b87b39d`. The focused Android instrumentation source compile passed, but instrumentation/E2E tests were **NOT_RUN** because this lane did not start an emulator. Full Formal Required was not run from this lane; parent integration owns those gates. G1 accepted the Fake-only source repair; real OAuth/provider parity remains unresolved.
 
 ## Handoff contract
 
-- `REVIEW_REQUEST`: Review `b87b39d9c86d94bc6121c0605aaccd9497e9694c` for the disconnect→shared revoke mismatch, including preserved disabled-state semantics, disabled consent guard, explicit reconnect behavior, exact-source 75-test JUnit XML, and isolated Android test-source compilation.
-- `KNOWN_ISSUES`: Real account selection, OAuth disclosure, Activity Result consent wiring, connection/revocation UX, and normal UI provider selection are not wired. Production package/certificate and scope verification status remain unknown.
+- `REVIEW_REQUEST`: G1 read-only review accepted Fake-only commit `b87b39d9c86d94bc6121c0605aaccd9497e9694c`; before real OAuth flow wiring, reconcile real gateway revoke behavior with the Fake app-local disconnect contract and add corresponding contract coverage.
+- `KNOWN_ISSUES`: Real account selection, OAuth disclosure, Activity Result consent wiring, connection/revocation UX, and normal UI provider selection are not wired. Production package/certificate and scope verification status remain unknown. Real `PlayServicesGoogleAuthorizationGateway.revokeGoogleGrant()` clears `disabledFeatures` after successful revoke while the Fake preserves app-local disabled features; reconcile semantics and tests before wiring the real flow.
 - `INTEGRATION_DEPENDENCIES`: Integration owner must provide explicit dependency injection for a `PlayServicesGoogleAuthorizationGateway` plus account-bound Gmail/Calendar sessions only after Owner configuration/authorization; keep Fake defaults and fail closed.
-- `NEXT_ACTION`: G1 independently verifies the repair and report at the pushed branch HEAD; integrate only after explicit review approval. Implement any application UI connection flow only in the integration-owned Composition Root.
+- `NEXT_ACTION`: G1 may cherry-pick the accepted Fake-only fix and report checkpoint. Reconcile and test real-gateway revocation semantics before enabling a real OAuth flow; keep all OAuth wiring in the integration-owned Composition Root.
 - `OWNER_APPROVAL_REQUIRED`: Real OAuth/project configuration, Google account access, scope verification, production package/signing identity, and any live-service acceptance.

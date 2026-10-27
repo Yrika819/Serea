@@ -175,7 +175,7 @@ data class Conversation(
 data class ChatUiState(
     val conversation: Conversation = Conversation(id = UUID.randomUUID().toString()),
     val editorValue: TextFieldValue = TextFieldValue(),
-    /** Inherited source taint for the current draft; an empty draft has no source lineage. */
+    /** Inherited source taint can remain while blank until an explicit fresh-conversation boundary. */
     val editorSourceLineage: Set<DataOrigin> = emptySet(),
     val editorInputGeneration: Long = 0,
     val editorSelectionCorrectionGeneration: Long = 0,

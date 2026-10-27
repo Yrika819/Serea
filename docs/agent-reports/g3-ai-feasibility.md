@@ -7,7 +7,23 @@
 **AUDIT_TARGET_HEADS:** PR #123 `3924b36080ffa43331f065a15db80c604c243355`; PR #126 `8ca55a32096bc4449717c2fd3332b0602381d7d5`; PR #127 `f96e77a798575c971313599ded8b267a353d5b46`.
 **WORKTREE:** independent docs-only worktree, based on PR #127
 **BRANCH:** `codex/serea-g3-ai-evidence`
-**DRAFT_PR:** none; this documentation branch is local and unpushed.
+**DRAFT_PR:** none; this docs-only branch is pushed to `origin` and has no PR.
+
+## Continuation — exact-SHA recovery rerun queue blocker (2026-10-27 17:11 UTC)
+
+The G4 run `40546007995` reached terminal status before this continuation was recorded. Its Android Storage and Emulator job and temporary-key Identity job were both **CANCELLED**; no Emulator job remains active. The separate Pixel 7a evidence-bundle job also reached a terminal state. This was not a G3 test result.
+
+One rerun request was made for the existing cancelled G3 diagnostic run `40533524841`. It retains the exact PR #127 source SHA `f96e77a798575c971313599ded8b267a353d5b46`, branch/ref `codex/serea-g3-diagnostic-recovery`, push event, and existing workflow `G3 On-device Inference PoC (Non-Required)`. No new source commit or branch update was made.
+
+- At `2026-10-27T17:11:14Z`, GitHub's top-level run API reported `status=queued`, `run_attempt=1`, no conclusion, and `updated_at=2026-10-27T16:55:12Z`.
+- The Jobs API returned no jobs. `GET /actions/runs/40533524841/attempts/2` returned HTTP 404. The original attempt 1 is the earlier cancelled run; the requested retry has not materialized as an attempt.
+- The normal cancellation call `gh run cancel 40533524841` failed with “Cannot cancel a workflow run that is completed.” The REST force-cancel call returned HTTP 409: “Cannot cancel a workflow re-run that has not yet queued.” No other run was cancelled, and no second dispatch was made.
+- The pending retry has no job, Emulator, artifact, JUnit, APK build, model fetch/stage, or cleanup result. These are **NOT_RUN / NOT_CREATED**, not PASS or FAIL. The prior attempt's artifact `12748226296` is the cancelled-run artifact described above and is not evidence for this pending request.
+- No model, test, or Emulator activity was initiated during this queue investigation. Source SHA/ref remains unchanged.
+
+**Classification:** `ENVIRONMENT / CI_QUEUE`. GitHub exposes an unmaterialized rerun request that cannot yet be cancelled or observed as attempt 2. Do not start another G3 run while this request's status is unresolved, and do not treat the queued state as a test result.
+
+**Next recovery condition:** after the G4 dependency/security repair is stable at its final head and no Required Emulator job is active, the Orchestrator will coordinate one exact-SHA G3 recovery attempt. First resolve the pending/unmaterialized request; if GitHub materializes it, use that exact recovery attempt. If it remains stuck, document the queue limitation and use only an Orchestrator-approved way to execute the existing diagnostic at the same `f96e77a…` source SHA. Do not substitute a newer G3 head or run alongside G4 Emulator work.
 
 ## Findings and disposition
 
@@ -77,7 +93,7 @@ Official primary sources:
 - `40533524841`: cancelled before JUnit completion; inference and cleanup **NOT_RUN / NOT_CONFIRMED**. Artifact `12748226296`.
 - PR #127's other platform checks passing does not turn its cancelled diagnostic into an inference pass. Android Required jobs classified/skipped for tool-only scope are **NOT_RUN**, not Required PASS.
 
-**CURRENT_BLOCKER:** At the audit check, G4 run `40533346554` remained in its API 35 Emulator stage; its Android Dependency Audit had failed. No concurrent G3 Emulator run was started.
+**CURRENT_BLOCKER (historical audit snapshot):** At the initial audit check, G4 run `40533346554` remained in its API 35 Emulator stage; its Android Dependency Audit had failed. That run is not the current G4 attempt; see the continuation above.
 
 ## Common report contract
 
@@ -85,8 +101,8 @@ Official primary sources:
 **SECURITY_IMPACT:** No source, permission, egress, provider, model, or runtime changes. No high/critical product security defect found in the inspected boundaries. The README discrepancy is a low-severity evidence-integrity issue.
 **COMPATIBILITY_IMPACT:** None. No provider or PoC integration.
 **KNOWN_ISSUES:** Generation gate did not run; PR #127 remedy lacks Emulator verification; prior artifact did not directly prove host model-file removal; README/PR #126 body had stale “not downloaded/not compiled” wording.
-**CURRENT_BLOCKERS:** G4 Required API 35 Emulator serialization; recovery runtime test still needed. Provider-specific Owner eligibility/approval is separate and does not block offline source/evidence work.
+**CURRENT_BLOCKERS:** The exact-SHA G3 recovery rerun is an unmaterialized GitHub Actions queue request, with no jobs or attempt 2, and cannot yet be cancelled. G4 run `40546007995` is terminal with its Emulator and Identity jobs cancelled. Provider-specific Owner eligibility/approval is separate and does not block offline source/evidence work.
 **INTEGRATION_DEPENDENCIES:** None for normal Chat. Any real local model needs a separate target/catalog identity, provenance and license review, memory/cancellation/process lifecycle evidence, product tests, and integration review.
 **REVIEW_REQUEST:** Orchestrator read-only review of this docs-only checkpoint.
-**NEXT_ACTION:** After G4's Emulator run is terminal and Orchestrator reviews the source, decide whether one bounded API 35 run on the recovery head is useful. Do not present model-load-only evidence as inference success.
+**NEXT_ACTION:** After the G4 repair/head is stable, have the Orchestrator resolve and coordinate the one exact-SHA recovery run as described above. Do not present model-load-only evidence as inference success.
 **OWNER_APPROVAL_REQUIRED:** Real OAuth/provider accounts, credentials, paid AI requests, Pixel 7a use, production signing/distribution, main merge, and final GO remain owner-controlled.

@@ -1,0 +1,92 @@
+G1 checkpoint hook-validation evidence — 2026-10-27 UTC
+
+Commit invocation used for the first checkpoint:
+  git -C /workspace/Serea-g1-reintegration-audit -c core.hooksPath=/dev/null commit -m "docs: preserve G1 integration re-audit"
+
+The temporary hooksPath override applied only to that git commit process. It was not persisted in configuration. The repository pre-commit hook was then invoked manually after setting approved identity values only in this worktree's config.worktree. Its final invocation exited 0. Exact output follows.
+
+PASS repository: Yrika819/Serea; root=/workspace/Serea-g1-reintegration-audit
+PASS remote origin: fetch/push repository match; URLs redacted
+PASS HEAD=4bb420dc338cbefa2422b203958df232a675ad1a; branch=codex/serea-g1-integration-reaudit-20261027-r1; detached=false
+PASS GIT_AUTHOR_IDENT: profile=codex, name=Codex, email=approved-noreply
+PASS GIT_COMMITTER_IDENT: profile=codex, name=Codex, email=approved-noreply
+PASS user.name: scope/source=global:.gitconfig,local:config,worktree:config.worktree; effective-value=validated
+PASS user.email: scope/source=global:.gitconfig,local:config,worktree:config.worktree; effective-value=validated
+PASS user.useConfigOnly: scope/source=worktree:config.worktree; effective-value=validated
+PASS worktree: clean
+PASS push.default=nothing
+PASS commit target: current branch; no remote mutation requested
+
+Manual pre-push check command (synthetic input represents the already-pushed same-SHA update):
+  printf 'refs/heads/codex/serea-g1-integration-reaudit-20261027-r1 4bb420dc338cbefa2422b203958df232a675ad1a refs/heads/codex/serea-g1-integration-reaudit-20261027-r1 4bb420dc338cbefa2422b203958df232a675ad1a\n' | sh .githooks/pre-push origin https://github.com/Yrika819/Serea.git
+
+Exit: 1. The unchanged pre-push hook stops at tools/check_commit_identity.py. It reports 57 malformed author/committer commits reachable through git log --all. Exact output follows.
+
+commit identity check failed; malformed author/committer on:
+003a6ffbd83234d8fe1fcf99ad099513ca61b348
+f4fe40400f5dded8fe5006420a2e91ca6d2a803e
+5e7de02e4993450c3f4103242b91aa6a6f638c6a
+ccefdb49d400fbfd43e0c5e34966bfec9a22b994
+cbb45d722e1bd2706dcf32278d7ff3d0fb2bf379
+d74998f60c9062343ce9c62a326343e9a4d18e45
+802828ede2615bae51f3843b261a56868f152ed7
+d449f22c5d05597d7d02529e19ea9a92f608567d
+0026f247f2514dc78dd7bc09701c49ee61238f9d
+ae8ada1392564f7e751f424850a97ad9ce4f55d6
+6a580d311ebc48ebb548f9eaecb2afef4b931ea1
+ec57d22cd98558eb48907601215b7aa3b24fc1f4
+60b477849f700148c864f1bc54984c53f4ec3890
+8759b1d179a94a2d586fbbe596af2870ada9a934
+3b0f8582f0d08f4dd4a8dde0c0722336fc4fa972
+93e2da60ed1b1ea05e6fdce04076800214d8a833
+c5d8998dcf5bfadb9e230647fe11a74b3309f7c3
+5c7f473b17817b933bf70e636fcb02aec43648c8
+57e17d3b3c2f732ee60652cc4dedd0639e6ebe98
+8fa69086ca66708caa79822fe7ce60926bd76599
+5941423f5ace1d5a4c6ccbf16bf4eeef135990a0
+a28976fa92156a4da849e68df6ce1321602f9033
+ae532fda82e202433cd6bde5f4a4e9000a57d01a
+4d4a6bbb1b9350edfe523a4a00920b8c3c5dd828
+864fddc18059719359dcefe697eb9e93f372e73b
+6ad3d5b6cc724d7a3cd6561ba7188be871596041
+c9f800447b32713a9fe3dd6765e2d61f2c660c18
+0ddeb028f15cb820953ac5532c1ef34ddcbc9025
+39399145640a958a589f19d4318793024fa4ecd6
+b90e6cd5ed23c1e9498b7e5c4b4338a2c362a843
+a73e2bac8f4591068bffd0b48f93050cbd145078
+38751e3312f3c1fb0de3f022c4c72078750d81c1
+ccd29eea87c83bc58aaf93cc0a4e35b6a5ccd19b
+72e813e45246ac5a5d06aa0c36cf9e82ed8273d6
+a26c7fe1ce7232e9581bffff481469c0c8a75c91
+1edcd8cfdd4f08c7cbb94772c6115a8642e9899a
+e6d9f41abe35d412999fce04fe19f875a85e5b1e
+aae55906cc3aa534b725830e1fc75fb2e5efa8c3
+c7e8c12aff6f3a657e8b374e26ca445563c2be30
+822795c7281beaa08c2b27ceefbcfea350a1c8ad
+f27c7716c6fb517ed338bb06bb4bd59c0f2aeb9d
+f05f27d2bbb6ee43d5f7ecd28354b41d04fcc8c9
+311d625063241858e58de44d46a43f9ffbabb66c
+fb748174e330de167bb9be6436b5cd0c4e8c55ec
+bf64e87f1452f6f4002ff92bf820665b695b7eb0
+835d7901fc737bdc1a670d948b19bd2151e0bee0
+6d17f7659949ed7ea01c5bfdf34afe90d7cb8216
+1f37a9b9403e640f255a827931f666e7ef72acb3
+00a0fe56173d77dba7ac301d7d9e4417a9ba20b4
+f0e7aa2a3d8993d1c13740cce21dfdf18865e963
+61b14eba1cda9908ea2262056a4b8019452f37c2
+8327a32f3003651fbe269872dfff51b2cc5fdf98
+01e74eaccedae380943826977699c057a470c597
+1cbfad4ffb16296155865a2dd333ffdec893f7eb
+109aacb16583896727b4a815697e880387d68023
+7373141c86cf394a5fce06bd2ee6771c106167de
+227dc15ec870241eaadea0b21761c685bf2dbb34
+
+Actual remote push command and result:
+  git -C /workspace/Serea-g1-reintegration-audit push -u origin codex/serea-g1-integration-reaudit-20261027-r1
+  exit 0; new remote branch created at 4bb420dc338cbefa2422b203958df232a675ad1a.
+
+The actual push command had no -c hooksPath override and no environment hook override. `git config --show-origin --get core.hooksPath` returned exit 1 (unset); Git's default hooks directory was `/workspace/Serea/.git/hooks` and contained only sample hooks, with no executable pre-push or pre-commit hook. Therefore `.githooks/pre-push` was not automatically active for that push; its failure above is from the explicit manual invocation. No hook script, identity check, gate, protected ref, or source file was changed.
+
+Captured output hashes before adding this evidence file:
+  pre-commit output SHA-256: a89a04a485366a82733cc695f27e0406b3630cf49d7cb76a83af2b4d7ee0f125
+  pre-push output SHA-256:   dfd317c512ff5b0b4f10ebe2a9ac6fea4ec60e170f4f9baa94323434543e0039

@@ -128,6 +128,7 @@ class CalendarProviderSession internal constructor(
         try {
             if (!isCurrent()) throw inactiveSession()
             val value = withContext(requestJob) { block() }
+            if (!isCurrent()) throw inactiveSession()
             // invalidate() closes this session under the same lock before replacement, so a
             // response racing account/session replacement cannot cross this delivery gate.
             synchronized(lock) {

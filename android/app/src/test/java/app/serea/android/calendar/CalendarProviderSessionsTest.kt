@@ -12,6 +12,7 @@ import app.serea.android.googleauth.GoogleServiceState
 import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -19,6 +20,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -27,6 +29,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 
 class CalendarProviderSessionsTest {
     private val server = MockWebServer().apply { start() }
@@ -34,7 +37,7 @@ class CalendarProviderSessionsTest {
     @After fun close() = server.shutdown()
 
     private class PlayServicesFixture(
-        private val granted: Set<GoogleScope> = setOf(
+        private var granted: Set<GoogleScope> = setOf(
             GoogleScope.CALENDAR_EVENTS_READ_ONLY,
             GoogleScope.CALENDAR_LIST_READ_ONLY,
         ),
@@ -45,14 +48,34 @@ class CalendarProviderSessionsTest {
         var tokenRequests = 0
         var rotateAfterNextToken = false
         private var accountChanged = false
+        private var leaseGeneration = 0L
+        private var disabled = false
+
+        fun revokeGrant() {
+            granted = emptySet()
+            leaseGeneration++
+        }
+        fun disableCalendar() {
+            disabled = true
+            leaseGeneration++
+        }
+
         override suspend fun acquire(feature: GoogleFeature, scopes: Set<GoogleScope>): TokenSupplyResult {
-            if (feature != GoogleFeature.CALENDAR || !granted.containsAll(scopes)) {
+            if (feature != GoogleFeature.CALENDAR) {
                 return TokenSupplyResult.UserActionRequired(scopes - granted)
             }
+            if (disabled) return TokenSupplyResult.Unavailable(AuthorizationFailure.FEATURE_DISABLED)
+            if (!granted.containsAll(scopes)) return TokenSupplyResult.UserActionRequired(scopes - granted)
             tokenRequests++
             val boundSession = authorizationSessionId
-            val lease = AccessTokenLease("fixture-never-valid", granted, null,
-                authorizationSessionId = boundSession)
+            val boundGeneration = leaseGeneration
+            val lease = AccessTokenLease(
+                "fixture-never-valid",
+                granted,
+                null,
+                authorizationSessionId = boundSession,
+                validityCheck = { !disabled && leaseGeneration == boundGeneration },
+            )
             if (rotateAfterNextToken) {
                 rotateAfterNextToken = false
                 authorizationSessionId = "calendar-session-second"
@@ -143,6 +166,33 @@ class CalendarProviderSessionsTest {
         assertEquals(CalendarAuthorizationState.REVOKED, session.status().state)
         assertEquals(1, gateway.tokenRequests)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun delayedCalendarResponseIsRejectedAfterGrantRevocationOrFeatureDisable() = runBlocking {
+        suspend fun assertInvalidatedRead(action: (PlayServicesFixture) -> Unit) {
+            val gateway = PlayServicesFixture()
+            val previousRequestCount = server.requestCount
+            server.enqueue(
+                MockResponse()
+                    .setBody("""{"id":"fixture@example.test","timeZone":"UTC","accessRole":"reader"}""")
+                    .setBodyDelay(2, TimeUnit.SECONDS),
+            )
+            val session = CalendarProviderSessions(googleHttpEnabledByOwner = true)
+                .openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
+            val read = async { calendarFailure { session.getCalendar(CalendarId("fixture@example.test")) } }
+
+            val request = requireNotNull(withContext(Dispatchers.IO) { server.takeRequest(5, TimeUnit.SECONDS) })
+            assertEquals("GET", request.method)
+            assertEquals("Bearer fixture-never-valid", request.getHeader("Authorization"))
+            action(gateway)
+
+            assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, read.await().code)
+            assertEquals(1, gateway.tokenRequests)
+            assertEquals(previousRequestCount + 1, server.requestCount)
+        }
+
+        assertInvalidatedRead(PlayServicesFixture::revokeGrant)
+        assertInvalidatedRead(PlayServicesFixture::disableCalendar)
     }
 
     @Test fun replacingSessionImmediatelyAfterLeaseAcquisitionPreventsCalendarHttpDispatch() = runBlocking {

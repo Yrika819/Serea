@@ -125,6 +125,7 @@ class GmailProviderSession internal constructor(
         try {
             if (!isCurrent()) throw inactiveSession()
             val value = withContext(requestJob) { block() }
+            if (!isCurrent()) throw inactiveSession()
             // invalidate() marks this session closed under the same lock before a replacement
             // becomes current, making this the result-delivery linearization point.
             synchronized(lock) {

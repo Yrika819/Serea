@@ -52,6 +52,14 @@ Each agent owns a separate worktree, branch, and checkpoint. No agent may modify
 - Local/Fake Chat, Gmail, Calendar, Local Tasks, Egress/session tests and exact-head Required are verified on the frozen candidate.
 - Real Gmail/Calendar OAuth, real AI selection/activation, production signer/distribution, and Pixel 7a acceptance are Owner-gated or device-unavailable and remain NOT_RUN.
 - Lane B PR #120 and Lane C PR #121 remain separate Drafts; selected tests/release checks already present in candidate are not automatically duplicated or merged.
+
+## Release readiness prepared, not authorized
+
+- Existing owner-facing preparation is in `docs/plans/2026-ANDROID-PERSONAL-BETA-SECURE-DISTRIBUTION.md`, `docs/plans/2026-ANDROID-PHASE2-PIXEL7A-TEST-CHECKLIST.md`, `docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md`, and `docs/security/android-personal-beta-release-posture-2026-10-26.md`. These cover package/certificate binding, monotonic version code, update identity, mock signing/distribution, main-only protected deployment, WIF, SBOM limitations, OAuth setup, and physical-device checks.
+- Release/SBOM Mock Focused run `40498633589` passed on G4's earlier head `80f20aa5257cff6bb18a087d6518d62b4001e41f`: deterministic lockfile SBOM tests, fake signing/distribution contract tests, and shell syntax. This is not exact-head evidence for `32cc2c5`/`71ccdd1`; rerun at the final G4 head.
+- A local exact-source recheck at G4 HEAD `71ccdd1767c4597b19f584e19901f7a28aa479ea` passed `android_lockfile_sbom_tests.py` **7/7** and `android_firebase_distribution_tests.py` **19/19**, plus release/ADB guard `bash -n`. It generated CycloneDX 1.5 with 325 lockfile components, source property `71ccdd1...`, and SHA-256 `daebb2b8b3caf2de371484a7225e6320b5ab61d494671fad5cc9f1945865ca05`. Output is preserved in `docs/agent-reports/evidence/g4-release-readiness/`. This inventory explicitly says publisher authenticity is not established; it is not an artifact-level SBOM.
+- The release posture audit explicitly leaves publisher authenticity incomplete for some Gradle coordinates and does not call the lockfile SBOM an artifact-level SBOM. The Owner-controlled Environment, protected `main` rules, release key/certificate, version baseline, Firebase App ID/group/WIF policy, and actual update chain have not been inspected or exercised here. Do not access signing secrets or perform a signed build/distribution before Owner authorization.
+- Main-only workflow `.github/workflows/android-personal-beta.yml` is intentionally not runnable from this feature branch. A zero-job run on a non-main ref is expected and does not count as a release-workflow failure or success.
 - No Required acceptance identities, counts, thresholds, skip conditions, security gates, or workflow requirements may be relaxed.
 
 ## Current risks / decisions

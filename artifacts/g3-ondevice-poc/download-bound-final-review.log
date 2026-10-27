@@ -1,0 +1,2 @@
+curl: (63) Exceeded the maximum allowed file size (32) with 32 bytes
+bounded_download_test=PASS fixture_bytes=33 maximum_bytes=32 curl_status=63 partial_bytes=32

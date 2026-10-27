@@ -1,0 +1,12 @@
+{
+  "repository": "ggml-org/SmolLM2-135M-GGUF",
+  "repositoryRevision": "1076b85d135017971845b19b8d07df1479155988",
+  "baseModel": "HuggingFaceTB/SmolLM2-135M",
+  "license": "apache-2.0",
+  "file": "SmolLM2-135M-Q4_K_M.gguf",
+  "sizeBytes": 101016128,
+  "sha256": "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5",
+  "url": "https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/1076b85d135017971845b19b8d07df1479155988/SmolLM2-135M-Q4_K_M.gguf",
+  "retrievedUtc": "2026-10-27",
+  "downloaded": false
+}

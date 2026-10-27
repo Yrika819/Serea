@@ -1,6 +1,85 @@
 # G3 — Real AI / On-device Inference Feasibility
 
+## Continuation update — isolated Android JNI PoC (2026-10-27)
+
+The initial readiness report below predates toolchain provisioning and the isolated PoC. Its no-toolchain/Qwen-candidate statements are superseded by this section; provider-terms findings remain applicable. No product source or composition changed.
+
+**AGENT_ID:** G3 — Real AI / On-device Inference Feasibility
+**ACTIVE_PHASE:** isolated llama.cpp Android feasibility PoC
+**OVERALL_STATUS:** PARTIAL — isolated adapter/JNI code and ARM64/x86_64 app APK build pass; host contract tests are 3/3. AndroidTest APK dependency resolution is blocked locally by unavailable Google Maven artifacts, so the new instrumentation assertions are NOT_COMPILED/NOT_RUN. Model inference is NOT_RUN.
+**BASE_SHA:** `6d6f362da2380b56ea0fb7bc9372dbcceae67e90`
+**CURRENT_HEAD:** `6d6f362da2380b56ea0fb7bc9372dbcceae67e90` (PoC files are uncommitted pending Orchestrator scope review)
+**TREE_SHA:** `f4fe1cf534b855b58ea19683621bf3dc7f7a3cd6` (last committed tree; worktree has the G3 PoC, workflow proposal, report, and small build logs)
+**WORKTREE:** `/workspace/Serea-g3-ai`
+**BRANCH:** `codex/serea-g3-real-ai-feasibility`
+**DRAFT_PR:** none
+**CI_RUN_IDS:** none for this G3 PoC; the diagnostic workflow has not been pushed or run.
+**ARTIFACT_IDS:** none for this G3 PoC; local build logs are listed below.
+
+### INDEPENDENT_REVIEW
+
+- G1 review status: **ACCEPTED** for the isolated G3 source, test, workflow, and evidence scope.
+- Accepted contract: the JNI resources use a documented process-wide single-engine lease; second-owner load is rejected; cancellation identities include engine and request IDs; only the owner can free/cancel; close serializes with queued work; tests cover cross-engine isolation, reuse after close, and queued-load-versus-close.
+- Review limitation: AndroidTest did not compile in this environment, so those assertions are source-reviewed only. The queued-load test does not separately exercise a load that has already entered native model loading before close.
+- Preservation action: this owned branch is being committed and pushed for a diagnostic Draft PR. No model download, Emulator, real provider, or product integration is part of this preservation step.
+
+### COMPLETED_WORK
+
+- Installed/used isolated toolchains: Temurin 17.0.21+9 (archive SHA-256 `8b9b611d917e3dfd8419d3566b5949226f69b052fed7e109c1368add1dfe8711`), NDK 28.2.13676358, CMake 3.31.6, Ninja 1.12.1, Gradle wrapper 8.14.6, AGP 8.12.3, Kotlin 2.4.21.
+- Built llama.cpp source pinned at tag `b11927`, commit `276378515ceebee5d14bcc8536603dd5c87491a2`, using `ANDROID_PLATFORM=android-26`, `ANDROID_ABI=arm64-v8a`, Release, static libraries, no OpenMP/dynamic backends/KleidiAI/native CPU tuning. `libllama.a` SHA-256: `19f2c604e11333ca61a07655595a560c67c5be45fae0bce217b6087f4de2be8f`.
+- Added standalone project `tools/g3-ondevice-poc/`, outside the normal Android Gradle settings. It contains a test-local suspend `ModelChatPort`-shaped adapter, JNI wrapper, native CPU generation path, manifest without network permission, host contract/hash tests, and instrumentation tests. It does not touch `MainActivity`, `SereaAppShell`, product composition, normal Chat routing, or provider settings.
+- Final corrected Kotlin/JNI source builds the standalone debug app APK for `arm64-v8a` and `x86_64`; the exact APK SHA-256 and native library hashes are recorded below.
+- Selected a smaller fixed model candidate from official `ggml-org/SmolLM2-135M-GGUF` metadata: repo revision `1076b85d135017971845b19b8d07df1479155988`, Q4_K_M artifact size `101016128` bytes, Apache-2.0 metadata, SHA-256 `e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5`. The weight file was not downloaded. `tools/g3-ondevice-poc/model-fixture.json` records the immutable source/revision/hash.
+- Host contract and model-hash tests verify multi-turn prompt serialization and that a mismatched digest is rejected before native loading. They use a fake engine and synthetic bytes, so they do not claim inference.
+- The final native resource contract is an explicit process-wide singleton lease: one `NativeLlamaEngine` owns the process-global llama.cpp model/context/sampler; a second active owner is rejected, engine IDs namespace request IDs, and only the owner can cancel or free native state. Per-engine executors serialize load/generate/close, and queued loads recheck closure before native entry. Instrumentation deterministically covers second-engine rejection, same-numbered cross-engine cancel/free isolation, successful new-engine use after close, and a blocked queued load versus close. It also retains queued-before-JNI and in-flight cancellation checks. This AndroidTest source remains NOT_COMPILED because AndroidX dependency resolution failed before source compilation.
+- Added a standalone **non-required** workflow proposal and host runner at `.github/workflows/g3-ondevice-poc.yml` and `tools/g3-ondevice-poc/scripts/run-diagnostic.sh`. It is restricted to pushes on this owned branch whose head commit message contains `[g3-poc-run]`; adding/updating the workflow alone cannot fetch a model or start an Emulator. The proposed job pins existing Actions, uses read-only repository permission, requires readable/writable `/dev/kvm` and successful `emulator -accel-check`, provisions disposable API 35 `google_apis/x86_64`, runs the local synthetic oversize-transfer check, builds both APKs before model acquisition, validates the exact 101,016,128-byte model SHA before app-private staging, requests one exact instrumentation method and validates one non-skipped JUnit testcase, records resource/APK hash/log evidence, and removes possible partial and complete model copies in an exit trap. It does not change any Required workflow or gate, and does not upload model weights or APK binaries.
+- Workflow/script are **proposed for Orchestrator review only**. The runner checks exactly one JUnit case with both expected class and method names, and requires zero skipped/failure/error counts. Static checks: `bash -n` PASS; PyYAML workflow syntax parse PASS; `git diff --check` PASS. `actionlint` is unavailable. The synthetic transfer check using a local 33-byte payload and 32-byte cap PASSed with curl status 63 and at most 32 partial bytes. Emulator and system-image package revisions are resolved by SDK package name rather than pinned; the workflow records the actual installed package and emulator versions, so bit-for-bit environment reproducibility is not claimed. No workflow, model download, or Emulator execution has occurred.
+
+### CHANGED_FILES
+
+- `tools/g3-ondevice-poc/` — standalone Gradle test app, JNI, instrumentation/unit tests, pinned fixture manifest, build notes.
+- `.github/workflows/g3-ondevice-poc.yml` — non-required, commit-marker-gated diagnostic workflow proposal; NOT_RUN.
+- `tools/g3-ondevice-poc/scripts/run-diagnostic.sh` — metadata/build/run/evidence/cleanup and bounded-transfer-test script; only static/synthetic checks run.
+- `artifacts/g3-ondevice-poc/` — bounded Gradle build, AndroidX resolution failure, and host-test logs (no model weights or secrets).
+- `docs/agent-reports/g3-ai.md` — this continuation checkpoint.
+
+### TEST_COMMANDS / TEST_RESULTS
+
+- **PASS (native cross-compile only):**
+  `cmake -S /tmp/serea-g3-llama.cpp -B /tmp/serea-g3-llama-arm64-build -DCMAKE_TOOLCHAIN_FILE=/workspace/android-sdk/ndk/28.2.13676358/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_COMMON=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_LLAMAFILE=OFF -DGGML_VULKAN=OFF -DGGML_BACKEND_DL=OFF` then `cmake --build /tmp/serea-g3-llama-arm64-build --target llama -j2`.
+- **PASS (final host JVM contract rerun):** `JAVA_HOME=/tmp/temurin17 PATH=/tmp/temurin17/bin:$PATH ./gradlew --offline --no-daemon --console=plain -Pg3LlamaCppSource=/tmp/serea-g3-llama.cpp --rerun-tasks :app:testDebugUnitTest`; JUnit XML reports **3 tests, 0 failures, 0 errors, 0 skipped**. Log: `artifacts/g3-ondevice-poc/gradle-unit-final-review.log`, SHA-256 `a76a67c75ea176d5d51dc17664f250dff0e317779485f31f77f3ba736fdd8195`. JUnit XML: `artifacts/g3-ondevice-poc/host-junit.xml`, SHA-256 `7097139bbe1cd210436ddc209e16a64ce6e4da5800c1ddc7c4dfb1b60f3183f7`.
+- **PASS (final corrected Android JNI/app build):** `JAVA_HOME=/tmp/temurin17 PATH=/tmp/temurin17/bin:$PATH ./gradlew --offline --no-daemon --console=plain -Pg3LlamaCppSource=/tmp/serea-g3-llama.cpp :app:assembleDebug`; both ARM64 and x86_64 JNI builds and APK assembly passed. `app-debug.apk` is 14,557,726 bytes, SHA-256 `4115f121e329bc765ebb3b92242ac6789d9f0647e1e673efba65fb3a9506f4c3`. Final log: `artifacts/g3-ondevice-poc/gradle-assemble-final-review.log`, SHA-256 `587c9122f0039e497ab61c503625ba2676992e6c7f7df044de17adc347d384e9`.
+- **PASS (bounded-download synthetic test, no external fetch):** `G3_EVIDENCE_DIR="$PWD/artifacts/g3-ondevice-poc" RUNNER_TEMP=/tmp bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh test-download-bound`; local 33-byte payload was rejected by `curl --max-filesize 32` with expected status 63; partial file was 32 bytes, no model content. Final review log `artifacts/g3-ondevice-poc/download-bound-final-review.log`, SHA-256 `a09990283dfdbda853613ef3d030583179a9d37cb44de96d4605d01a0f2b4aa1`.
+- **BLOCKED (final AndroidTest APK compile attempt):** `JAVA_HOME=/tmp/temurin17 PATH=/tmp/temurin17/bin:$PATH ./gradlew --no-daemon --console=plain -Pg3LlamaCppSource=/tmp/serea-g3-llama.cpp :app:assembleDebugAndroidTest` failed at `:app:checkDebugAndroidTestAarMetadata` before AndroidTest Kotlin compilation. Google Maven returned `Network is unreachable`; `androidx.annotation:annotation:1.7.0-beta01` and other AndroidX test artifacts could not resolve. Therefore the new instrumentation source, including singleton and load/close race tests, is **NOT_COMPILED**, and no instrumentation method ran. Log: `artifacts/g3-ondevice-poc/gradle-androidtest-final-review.log`, SHA-256 `462971e670cdbcb185faf4e793715d1e22887820cab6f455347c3bc31e24e677`; earlier attempts are preserved in `gradle-build-failure.log` and `gradle-androidtest-network.log`. No successful Test APK exists.
+- **PASS (static proposal checks only):** `bash -n tools/g3-ondevice-poc/scripts/run-diagnostic.sh`, PyYAML workflow parse, and `git diff --check`; `actionlint` unavailable. No Actions workflow execution, model download, or Emulator execution.
+- `aapt dump permissions` on the final APK reports only `package: app.serea.g3poc` and no permissions; target app manifest requests no INTERNET permission.
+- Local Emulator availability: `/dev/kvm` absent, `emulator -accel-check` reports that CPU lacks VMX/SVM; `adb devices -l` empty. No Emulator was launched.
+- **NOT_RUN:** model download/hash of model bytes, native model load, generation, Android instrumentation, cancellation/recovery, corrupt GGUF parse on-device, offline socket observation, emulator inference, Pixel 7a memory/latency/thermal/battery. A metadata hash is not a measurement of a downloaded weight artifact.
+
+### Native output evidence
+
+| ABI | Output | Size | SHA-256 | Evidence |
+|---|---|---:|---|---|
+| arm64-v8a | final unstripped `libserea-g3-llama.so` | 59,005,016 bytes | `beaac45f37ba3e7f9cb475879ece2cfe64ab6631418ee760bb00366cc0215f3d` | Android NDK 28.2.13676358; API 26 target; final engine-lease JNI |
+| arm64-v8a | final packaged/stripped `libserea-g3-llama.so` | 6,308,144 bytes | `6e0a6fa041f69dcede352853446fc10b0d91891c1ee6a95223c6ed68e66f6309` | APK build output |
+| x86_64 | final unstripped `libserea-g3-llama.so` | 57,520,360 bytes | `1a53ce1b918d0e726f61e4d5880ae579e4f928964eb2b61f13d5974ebb1688b7` | Android x86_64 Emulator ABI build |
+| x86_64 | final packaged/stripped `libserea-g3-llama.so` | 6,787,224 bytes | `353a969f431af16a9d1414d587b3e4a393838074ad1c8c438c274f4cb811a6f7` | APK build output |
+
+### SECURITY_IMPACT / COMPATIBILITY_IMPACT
+
+- Product/provider behavior and normal Chat remain unchanged. The standalone manifest has no permissions, no exported components, and no Internet permission. The only model input is the synthetic Apache-licensed fixture described above, once a parent-approved Emulator run exists.
+- The local adapter is structurally compatible with the `suspend send(request): response` shape, not linked to Serea's production interface. No local-model egress target or product catalog was added. It must not be integrated as `LOCAL_DEMO`.
+- ARM64 API26 native compilation does not prove model load/runtime compatibility; the ABI APK can include either architecture, and x86_64 Emulator inference would not prove ARM64/Pixel 7a performance.
+
+### CURRENT_BLOCKERS / NEXT_ACTION
+
+- The final corrected JNI/app build and three host JVM tests pass. AndroidTest APK compilation is blocked before source compilation by unreachable Google Maven (`Network is unreachable`); the instrumentation tests are NOT_COMPILED/NOT_RUN. The model remains undownloaded, and no Emulator has run.
+- G1 source review is accepted. AndroidTest APK compilation remains blocked by unreachable Google Maven, and API35 inference requires the separately coordinated KVM-backed Emulator slot after the active G4 API35 Required campaign. Do not download the model before that run is authorized and the test APK builds. Keep AndroidTest, model runtime, API26 inference, and Pixel 7a performance NOT_RUN until directly tested.
+- No AI route is activated. Cloud eligibility facts for the Owner/audience remain unverified separately from provider terms; the earlier route comparison and official source register above remain applicable.
+
 Retrieved official provider/runtime pages: **2026-10-27 UTC**. This is a readiness review, not a legal opinion or a provider activation. No live account, API key, paid request, Google account, or model weight was used.
+
+## Initial readiness inventory (historical; superseded where the continuation above differs)
 
 ## Agent report contract
 
@@ -92,6 +171,7 @@ Provider policies are facts about provider conditions, not proof that the Owner�
 - Gemini Nano/AICore does not list Pixel 7a as supported in the current official device list. The owner’s physical Pixel 7a is unavailable; no device query or performance test occurred.
 - There is no valid local inference PoC. Model load/generation, multi-turn, cancellation, release, recovery, corrupt-file rejection, offline behavior, memory, latency, API 26 compatibility, emulator/ARM64 execution, and Pixel 7a performance are all **NOT_RUN**.
 - The current local egress identity is explicitly demo-only. A real local inference route needs a new separately reviewed local target/catalog/provenance contract and must not be made to appear as cloud AI or demo output.
+- The PoC JNI model/context/sampler remain process-global behind the documented single-owner lease; support for parallel model instances is intentionally not provided. Instrumentation has not yet compiled, so cross-engine and load/close tests are source-level expectations, not verified passing results. PSS before/load/after-generation/after-close is logged as an Emulator diagnostic metric only; it is not asserted as proof of memory reclamation.
 - Pinned library revision, transitive license inventory, SBOM, model SHA verification, model download/update plan, resource constraints, and safety evaluation remain open.
 
 ### CURRENT_BLOCKERS
@@ -105,7 +185,7 @@ Provider policies are facts about provider conditions, not proof that the Owner�
 
 - G4 must not replace ordinary Chat with any real route on the basis of this research.
 - A cloud integration requires Owner approval of a specific provider/model, intended user age and supported countries, data terms/retention, cost ceiling, and operator credential custody. It must retain Egress → Usage reservation → dispatch ordering and keep Google-origin data blocked by default.
-- A local model integration requires a dedicated `LOCAL_ON_DEVICE` (or equally explicit) contract separate from `LOCAL_DEMO`, immutable runtime/model provenance, SHA verification, asset/update policy, Android API 26 compatibility evidence, and a model-sized device benchmark.
+- A local model integration requires a dedicated `LOCAL_ON_DEVICE` (or equally explicit) contract separate from `LOCAL_DEMO`, immutable runtime/model provenance, SHA verification, asset/update policy, Android API 26 compatibility evidence, and a model-sized device benchmark. The new project is test-only source; it is not an inference result or product integration.
 - No modifications are requested to `MainActivity.kt`, `SereaAppShell.kt`, or composition root.
 
 ### REVIEW_REQUEST

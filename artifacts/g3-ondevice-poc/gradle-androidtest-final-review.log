@@ -1,0 +1,53 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.6/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:preDebugAndroidTestBuild SKIPPED
+> Task :app:checkDebugAndroidTestAarMetadata FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:checkDebugAndroidTestAarMetadata'.
+> Could not resolve all files for configuration ':app:debugAndroidTestRuntimeClasspath'.
+   > Could not resolve androidx.annotation:annotation:1.7.0-beta01.
+     Required by:
+         project :app > androidx.test:runner:1.6.1
+         project :app > androidx.test.ext:junit:1.2.1
+         project :app > androidx.test:runner:1.6.1 > androidx.test.services:storage:1.5.0
+         project :app > androidx.test:runner:1.6.1 > androidx.test:monitor:1.7.1
+         project :app > androidx.test.ext:junit:1.2.1 > androidx.test:core:1.6.1
+      > Repository Google is disabled due to earlier error below:
+         > Could not download com.android.application.gradle.plugin-8.12.3.jar (com.android.application:com.android.application.gradle.plugin:8.12.3)
+            > Could not get resource 'https://dl.google.com/dl/android/maven2/com/android/application/com.android.application.gradle.plugin/8.12.3/com.android.application.gradle.plugin-8.12.3.jar'.
+               > Could not HEAD 'https://dl.google.com/dl/android/maven2/com/android/application/com.android.application.gradle.plugin/8.12.3/com.android.application.gradle.plugin-8.12.3.jar'.
+                  > Got socket exception during request. It might be caused by SSL misconfiguration
+                     > Network is unreachable
+> There are 3 more failures with identical causes.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 44s
+17 actionable tasks: 1 executed, 16 up-to-date

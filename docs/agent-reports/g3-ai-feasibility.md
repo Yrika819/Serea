@@ -47,6 +47,20 @@ Official Google pages were checked on 2026-10-27. Gemini API Additional Terms ef
 
 **Disposition remains unchanged:** an offline local model is the only currently plausible P0 route, but its generation/runtime lifecycle has no passing Emulator evidence. Cloud eligibility is not established and Gemini API is inappropriate for consumer Personal Beta. Do not wire this PoC into ordinary Chat or label any synthetic provider response as real AI.
 
+## Host-only diagnostic checks on exact recovery source (2026-10-27 18:30 UTC)
+
+These three checks were run from a clean checkout of exact recovery source `f96e77a798575c971313599ded8b267a353d5b46`, tree `b737967dcf760990f6b2323afebddc45b7f29ea0`, in `/workspace/Serea-g3-diagnostic-recovery`. No app/test source was modified. They do not download model weights or start an Emulator.
+
+| Command | Exit | Result |
+|---|---:|---|
+| `python3 tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py` | 0 | `runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test` |
+| `python3 tools/g3-ondevice-poc/scripts/test-runner-failure-paths.py` | 0 | `runner_failure_paths=PASS optional_psi_denied=recorded adb_hang=bounded later_cleanup=continued utp_uninstall=verified primary_exit=preserved models=removed state=reset` |
+| `G3_EVIDENCE_DIR=/tmp/serea-g3-hostcheck-f96-evidence RUNNER_TEMP=/tmp/serea-g3-hostcheck-f96-runner bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh test-download-bound` | 0 | `bounded_download_test=PASS fixture_bytes=33 maximum_bytes=32 curl_status=63 partial_bytes=32` |
+
+The `test-download-bound` command uses only a locally created 33-byte synthetic file through `file://`, validates a 32-byte cap, and removes its temporary directory. Its `curl: (63) Exceeded the maximum allowed file size` line is the expected rejection. The cleanup regression uses a fake `adb` and synthetic paths/files only. No Google/model download, real device, Android SDK invocation, Gradle build, Emulator, or GitHub workflow was started. The queued run `40533524841` was left untouched.
+
+**Disposition:** these host-only guard checks PASS for the exact recovery source, but they do not verify native generation, Android runtime behavior, model cleanup on a real Emulator, ARM64 runtime, or Pixel 7a performance. Those remain NOT_RUN / NOT_CONFIRMED.
+
 ## Findings and disposition
 
 ### Product Chat / cloud egress

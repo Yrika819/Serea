@@ -10,6 +10,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.Description
@@ -206,5 +207,53 @@ class GoogleAuthorizationLifecycleTest {
             gateway.status(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)).permissions[GoogleScope.CALENDAR_EVENTS_READ_ONLY],
         )
         assertEquals(GoogleDemoFeatureState.DISCONNECTED, viewModel.state.value.calendar)
+    }
+
+    @Test
+    fun sharedRevocationPreservesAppDisconnectUntilExplicitReconnect() = runTest(mainDispatcher.dispatcher) {
+        val gateway = FakeGoogleAuthorizationGateway()
+        val viewModel = GoogleAuthorizationDemoViewModel(gateway)
+
+        viewModel.disconnectInApp(GoogleFeature.GMAIL)
+        assertFalse(gateway.isEnabledInApp(GoogleFeature.GMAIL))
+        assertEquals(setOf(GoogleFeature.GMAIL), viewModel.state.value.disabledInAppFeatures)
+
+        viewModel.revokeDemoGrant()
+
+        assertFalse(gateway.isEnabledInApp(GoogleFeature.GMAIL))
+        assertEquals(setOf(GoogleFeature.GMAIL), viewModel.state.value.disabledInAppFeatures)
+        assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.gmail)
+        assertEquals("アプリ内切断（デモ）", viewModel.state.value.gmail.label(isEnabledInApp = false))
+        assertEquals(null, viewModel.state.value.pendingFeature)
+        assertEquals(
+            ScopePermission.NEEDS_CONSENT,
+            gateway.status(setOf(GoogleScope.GMAIL_READ_ONLY)).permissions[GoogleScope.GMAIL_READ_ONLY],
+        )
+
+        // The panel derives its request/reconnect controls from this same disabled state:
+        // reconnect remains available and a direct consent request must not dispatch.
+        viewModel.requestConsent(GoogleFeature.GMAIL)
+        assertEquals(null, viewModel.state.value.inFlightFeature)
+        assertEquals(null, viewModel.state.value.pendingFeature)
+        assertEquals(GoogleDemoFeatureState.REVOKED, viewModel.state.value.gmail)
+        assertTrue(viewModel.state.value.message.contains("再接続"))
+
+        viewModel.reconnectInApp(GoogleFeature.GMAIL)
+        assertTrue(gateway.isEnabledInApp(GoogleFeature.GMAIL))
+        assertEquals(emptySet<GoogleFeature>(), viewModel.state.value.disabledInAppFeatures)
+        assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.gmail)
+        assertEquals("承認が必要（デモ）", viewModel.state.value.gmail.label(isEnabledInApp = true))
+        assertEquals(
+            ScopePermission.NEEDS_CONSENT,
+            gateway.status(setOf(GoogleScope.GMAIL_READ_ONLY)).permissions[GoogleScope.GMAIL_READ_ONLY],
+        )
+
+        viewModel.requestConsent(GoogleFeature.GMAIL)
+        assertEquals(GoogleFeature.GMAIL, viewModel.state.value.inFlightFeature)
+        runCurrent()
+        assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.gmail)
+        assertEquals(GoogleFeature.GMAIL, viewModel.state.value.pendingFeature)
+        assertEquals(setOf(GoogleScope.GMAIL_READ_ONLY), viewModel.state.value.pendingScopes)
+        assertEquals(emptySet<GoogleFeature>(), viewModel.state.value.disabledInAppFeatures)
     }
 }

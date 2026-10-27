@@ -165,14 +165,17 @@ private fun FeatureActions(
     }
 }
 
-private fun GoogleDemoFeatureState.label(isEnabledInApp: Boolean): String = when (this) {
-    GoogleDemoFeatureState.DISCONNECTED -> if (isEnabledInApp) "未接続（デモ）" else "アプリ内切断（デモ）"
-    GoogleDemoFeatureState.AUTHORIZATION_REQUIRED -> "承認が必要（デモ）"
-    GoogleDemoFeatureState.AUTHORIZING -> "認可中（デモ）"
-    GoogleDemoFeatureState.AUTHORIZED -> "承認済み（デモのみ）"
-    GoogleDemoFeatureState.EXPIRED -> "期限切れ（デモ）"
-    GoogleDemoFeatureState.REVOKED -> "失効（デモ）"
-    GoogleDemoFeatureState.ERROR -> "利用不可（デモ）"
+internal fun GoogleDemoFeatureState.label(isEnabledInApp: Boolean): String {
+    if (!isEnabledInApp) return "アプリ内切断（デモ）"
+    return when (this) {
+        GoogleDemoFeatureState.DISCONNECTED -> "未接続（デモ）"
+        GoogleDemoFeatureState.AUTHORIZATION_REQUIRED -> "承認が必要（デモ）"
+        GoogleDemoFeatureState.AUTHORIZING -> "認可中（デモ）"
+        GoogleDemoFeatureState.AUTHORIZED -> "承認済み（デモのみ）"
+        GoogleDemoFeatureState.EXPIRED -> "期限切れ（デモ）"
+        GoogleDemoFeatureState.REVOKED -> "失効（デモ）"
+        GoogleDemoFeatureState.ERROR -> "利用不可（デモ）"
+    }
 }
 
 private fun GoogleFeature.label(): String = when (this) {

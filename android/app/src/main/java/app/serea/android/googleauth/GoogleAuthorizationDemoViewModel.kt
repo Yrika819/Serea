@@ -221,6 +221,12 @@ internal class GoogleAuthorizationDemoViewModel(
 
     private fun beginAuthorization(feature: GoogleFeature, allowPendingConsent: Boolean): Long? {
         val current = mutableState.value
+        if (feature in current.disabledInAppFeatures) {
+            mutableState.value = current.copy(
+                message = "${feature.label()}はアプリ内で切断されています。再接続してからデモ承認を要求してください。",
+            )
+            return null
+        }
         val canStart = current.inFlightFeature == null && if (allowPendingConsent) {
             current.pendingFeature == feature
         } else {

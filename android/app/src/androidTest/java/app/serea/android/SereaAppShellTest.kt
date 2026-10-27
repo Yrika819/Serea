@@ -113,7 +113,9 @@ class SereaAppShellTest {
             val state = imeSnapshot()
             val events = state.getStringArrayList("events").orEmpty()
             if (state.getBoolean("serviceBound") && state.getBoolean("connectionBound") &&
-                events.count { it.contains(" onStartInput restarting=") } > startEventsBefore
+                events.count { it.contains(" onStartInput restarting=") } > startEventsBefore &&
+                state.getString("editorPackage") == ISOLATED_PACKAGE &&
+                state.getInt("inputType") != android.text.InputType.TYPE_NULL
             ) {
                 found = TestImeSession(
                     requireNotNull(state.getString("serviceIdentity")),

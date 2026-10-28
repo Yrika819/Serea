@@ -1,0 +1,13 @@
+Orchestrator exact-candidate focused verification
+Source HEAD: b3ee75b81948913a59f12431c65e2293f1e8e9f6
+Tree SHA: 2d9d0493cfa8e990840b6cf0c1ec43ecb2ee206d
+The JVM run was executed on the staged source immediately before the commit; no source files changed between test completion and commit.
+JDK: Temurin 21.0.13+9 at /tmp/serea-g4-jdk/jdk-21.0.13+9
+Command (from android/):
+JAVA_HOME=/tmp/serea-g4-jdk/jdk-21.0.13+9 PATH=/tmp/serea-g4-jdk/jdk-21.0.13+9/bin:$PATH ./gradlew --no-daemon :app:testDebugUnitTest --tests 'app.serea.android.SecurityPortsTest' --tests 'app.serea.android.LocalFakeRoutingAdversarialTest' --tests 'app.serea.android.GoogleOriginEgressAdversarialTest' --tests 'app.serea.android.ChatViewModelTest' --tests 'app.serea.android.OllamaCloudAdapterTest' :app:compileIsolatedAndroidTestKotlin
+Result: BUILD SUCCESSFUL; 55 actionable tasks executed.
+JUnit total: 72 tests, 0 failures, 0 errors, 0 skipped.
+Classes: ChatViewModelTest 36; LocalFakeRoutingAdversarialTest 3; GoogleOriginEgressAdversarialTest 1; SecurityPortsTest 10; OllamaCloudAdapterTest 22.
+Isolated Android instrumentation Kotlin compilation: PASS.
+Emulator and live Google/AI service tests: NOT_RUN. No account, API credential, network provider, or user data was used.
+Warnings: existing Kotlin warnings only (callback parameter names, redundant casts, unnecessary assertions/safe call); no compilation errors.

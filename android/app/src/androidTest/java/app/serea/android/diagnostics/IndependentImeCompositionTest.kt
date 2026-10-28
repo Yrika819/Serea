@@ -63,8 +63,8 @@ class IndependentImeCompositionTest {
         focusComposer()
         var session = awaitImeSession(callbackCountBefore)
         var connection = session.connectionIdentity
-        assertWrongExpectedPackageIsRejected(session)
-        assertUnapprovedFixtureTextIsRejected(session)
+        assertWrongExpectedPackageIsRejected(session, "setComposingText")
+        assertUnapprovedFixtureTextIsRejected(session, "setComposingText")
         // Establish focus once before the unsynchronized sequence. Between operations B only
         // samples the IME-owned session token needed by the provider's stale-session guard;
         // it does not read TextFieldValue, ViewModel state, or Compose semantics until the
@@ -95,8 +95,8 @@ class IndependentImeCompositionTest {
         focusComposer()
         var session = awaitImeSession(callbackCountBefore)
         var connection = session.connectionIdentity
-        assertWrongExpectedPackageIsRejected(session)
-        assertUnapprovedFixtureTextIsRejected(session)
+        assertWrongExpectedPackageIsRejected(session, "commitText")
+        assertUnapprovedFixtureTextIsRejected(session, "commitText")
         assertMissingExpectedPackageIsRejected(session)
         assertWrongExpectedInputTypeIsRejected(session)
         logCurrentActivity("C.initial", connection, null)
@@ -520,7 +520,7 @@ class IndependentImeCompositionTest {
         assertComposerFocused()
     }
 
-    private fun assertWrongExpectedPackageIsRejected(session: ImeSession) {
+    private fun assertWrongExpectedPackageIsRejected(session: ImeSession, method: String) {
         val request = Bundle().apply {
             putString("text", FIXTURE)
             putInt("cursor", 1)
@@ -530,14 +530,14 @@ class IndependentImeCompositionTest {
             putString("expectedConnection", session.connectionIdentity)
             putInt("expectedInputType", session.inputType)
         }
-        val observation = operationObservation(imeCall("setComposingText", request))
-        logImeOperation("setComposingText-wrong-package-probe", observation)
+        val observation = operationObservation(imeCall(method, request))
+        logImeOperation("$method-wrong-package-probe", observation)
         assertTrue("Wrong expected editor package must be rejected before invocation: $observation",
             !observation.operationInvoked && !observation.accepted)
         assertEquals("WRONG_EXPECTED_PACKAGE", observation.reason)
     }
 
-    private fun assertUnapprovedFixtureTextIsRejected(session: ImeSession) {
+    private fun assertUnapprovedFixtureTextIsRejected(session: ImeSession, method: String) {
         val request = Bundle().apply {
             putString("text", "unapproved synthetic input")
             putInt("cursor", 1)
@@ -547,8 +547,8 @@ class IndependentImeCompositionTest {
             putString("expectedConnection", session.connectionIdentity)
             putInt("expectedInputType", session.inputType)
         }
-        val observation = operationObservation(imeCall("setComposingText", request))
-        logImeOperation("setComposingText-unapproved-text-probe", observation)
+        val observation = operationObservation(imeCall(method, request))
+        logImeOperation("$method-unapproved-text-probe", observation)
         assertTrue("Unapproved fixture text must be rejected before invocation: $observation",
             !observation.operationInvoked && !observation.accepted)
         assertEquals("UNAPPROVED_FIXTURE_TEXT", observation.reason)

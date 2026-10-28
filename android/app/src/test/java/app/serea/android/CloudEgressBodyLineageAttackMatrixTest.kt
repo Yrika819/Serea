@@ -33,7 +33,7 @@ class CloudEgressBodyLineageAttackMatrixTest {
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
 
-    @Test fun providerBodyTaintSurvivesWholeTextFieldValueReplacementWhitespaceClearAndReentry() = runTest(dispatcher) {
+    @Test fun providerBodyTaintSurvivesEditsButChangedDraftCannotDispatch() = runTest(dispatcher) {
         for (providerOrigin in listOf(DataOrigin.GMAIL, DataOrigin.CALENDAR)) {
             val captured = mutableListOf<ModelChatRequest>()
             val vm = ChatViewModel(object : ModelChatPort {
@@ -46,7 +46,7 @@ class CloudEgressBodyLineageAttackMatrixTest {
             vm.prefillEditorFromProvider(
                 "synthetic imported body",
                 providerOrigin,
-                syntheticLocalDemoAuthorization(providerOrigin, expectedMessage = "typed again"),
+                syntheticLocalDemoAuthorization(providerOrigin, expectedMessage = "synthetic imported body"),
             )
             val generation = vm.state.value.editorInputGeneration
             vm.updateEditorValue(TextFieldValue("synthetic edited body", selection = TextRange(12, 12)), generation)
@@ -62,11 +62,11 @@ class CloudEgressBodyLineageAttackMatrixTest {
             vm.sendMessage()
             advanceUntilIdle()
 
-            assertEquals(1, captured.size)
-            assertEquals("typed again", captured.single().message)
-            assertEquals(setOf(providerOrigin, DataOrigin.USER_AUTHORED), captured.single().bodySourceLineage)
-            assertEquals(captured.single().bodySourceLineage, vm.state.value.conversation.messages.first().sourceLineage)
-            assertTrue(vm.state.value.editorSourceLineage.isEmpty())
+            assertEquals(0, captured.size)
+            assertTrue(vm.state.value.errorMessage.orEmpty().contains("Google handoff"))
+            assertEquals("typed again", vm.state.value.input)
+            assertEquals(setOf(providerOrigin, DataOrigin.USER_AUTHORED), vm.state.value.editorSourceLineage)
+            assertTrue(vm.state.value.conversation.messages.isEmpty())
         }
     }
 
@@ -222,7 +222,7 @@ class CloudEgressBodyLineageAttackMatrixTest {
         assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED, ChatEgressGate.evaluate(contract, 20_000L).decision)
     }
 
-    @Test fun viewModelStoreReuseRetainsProviderBodyTaint() = runTest(dispatcher) {
+    @Test fun viewModelStoreReuseRetainsProviderBodyTaintAndRejectsEditedDraft() = runTest(dispatcher) {
         val store = ViewModelStore()
         val captured = mutableListOf<ModelChatRequest>()
         val port = object : ModelChatPort {
@@ -239,7 +239,7 @@ class CloudEgressBodyLineageAttackMatrixTest {
         val beforeRecreation = ViewModelProvider(store, factory)[ChatViewModel::class.java]
         beforeRecreation.prefillEditorFromProvider(
             "synthetic calendar excerpt", DataOrigin.CALENDAR,
-            syntheticLocalDemoAuthorization(DataOrigin.CALENDAR, expectedMessage = "edited calendar excerpt"),
+            syntheticLocalDemoAuthorization(DataOrigin.CALENDAR, expectedMessage = "synthetic calendar excerpt"),
         )
         beforeRecreation.updateEditorValue(TextFieldValue("edited calendar excerpt"))
         val afterConfigurationRecreation = ViewModelProvider(store, factory)[ChatViewModel::class.java]
@@ -249,11 +249,14 @@ class CloudEgressBodyLineageAttackMatrixTest {
         afterConfigurationRecreation.sendMessage()
         advanceUntilIdle()
 
-        assertEquals(setOf(DataOrigin.CALENDAR, DataOrigin.USER_AUTHORED), captured.single().bodySourceLineage)
+        assertEquals(0, captured.size)
+        assertTrue(afterConfigurationRecreation.state.value.errorMessage.orEmpty().contains("Google handoff"))
+        assertEquals("edited calendar excerpt", afterConfigurationRecreation.state.value.input)
+        assertEquals(setOf(DataOrigin.CALENDAR, DataOrigin.USER_AUTHORED), afterConfigurationRecreation.state.value.editorSourceLineage)
         store.clear()
     }
 
-    @Test fun conversationSwitchDoesNotClearCurrentProviderBodyTaint() = runTest(dispatcher) {
+    @Test fun conversationSwitchRejectsHandoffBoundToPreviousDestination() = runTest(dispatcher) {
         val savedMessage = StoredMessage(
             id = "saved-user-message",
             conversationId = "saved-conversation",
@@ -267,33 +270,47 @@ class CloudEgressBodyLineageAttackMatrixTest {
         )
         val saved = StoredConversation("saved-conversation", "Saved fixture", 1L, 1L, "demo-local", listOf(savedMessage))
         val history = SingleConversationHistory(saved)
+        val usageDao = MemoryUsageDao()
         val captured = mutableListOf<ModelChatRequest>()
-        val vm = ChatViewModel(object : ModelChatPort {
-            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
-                captured += request
-                return ModelChatResponse("synthetic local reply")
-            }
-        }, historyRepository = history, initialConversation = Conversation("before-switch"))
+        val now = Instant.parse("2026-10-28T08:00:00Z")
+        val localChat = DemoChatComposition.create(
+            usage = UsageRepository(usageDao) { now.toEpochMilli() },
+            demoPort = object : ModelChatPort {
+                override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                    captured += request
+                    return ModelChatResponse("synthetic local reply")
+                }
+            },
+            clock = { now },
+        )
+        val vm = ChatViewModel(localChat, historyRepository = history, initialConversation = Conversation("before-switch"))
+        val originalConversationId = vm.state.value.conversation.id
+        var authorizationChecks = 0
 
         vm.prefillEditorFromProvider(
             "synthetic Gmail fixture", DataOrigin.GMAIL,
-            syntheticLocalDemoAuthorization(DataOrigin.GMAIL, expectedMessage = "edited after conversation switch"),
+            syntheticLocalDemoAuthorization(
+                DataOrigin.GMAIL,
+                expectedMessage = "synthetic Gmail fixture",
+                expectedConversationId = originalConversationId,
+                onConsume = { authorizationChecks += 1 },
+            ),
         )
         vm.openConversation(saved.id)
         advanceUntilIdle()
         assertEquals(saved.id, vm.state.value.conversation.id)
         assertEquals(setOf(DataOrigin.GMAIL), vm.state.value.editorSourceLineage)
 
-        vm.updateEditorValue(TextFieldValue("edited after conversation switch"))
         vm.sendMessage()
         advanceUntilIdle()
 
-        assertEquals(setOf(DataOrigin.GMAIL, DataOrigin.USER_AUTHORED), captured.single().bodySourceLineage)
-        val messages = vm.state.value.conversation.messages
-        val sentUser = messages[messages.lastIndex - 1]
-        val assistant = messages.last()
-        assertEquals(setOf(DataOrigin.GMAIL, DataOrigin.USER_AUTHORED), sentUser.sourceLineage)
-        assertEquals(sentUser.sourceLineage + setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED), assistant.sourceLineage)
+        assertEquals(1, authorizationChecks)
+        assertEquals(0, captured.size)
+        assertEquals(0, usageDao.reservationCount)
+        assertEquals(saved.id, vm.state.value.conversation.id)
+        assertTrue(vm.state.value.errorMessage.orEmpty().contains("Google handoff"))
+        assertEquals(setOf(DataOrigin.GMAIL), vm.state.value.conversation.messages.last().sourceLineage)
+        assertEquals("FAILED", vm.state.value.conversation.messages.last().status)
     }
 
     @Test fun modifiedExpiredOrGoogleTaintedCloudRequestsStopBeforeUsageCredentialAndHttp() = runBlocking {
@@ -461,12 +478,17 @@ class CloudEgressBodyLineageAttackMatrixTest {
     private fun syntheticLocalDemoAuthorization(
         selectedOrigin: DataOrigin,
         expectedMessage: String,
+        expectedConversationId: String? = null,
+        onConsume: (() -> Unit)? = null,
     ): LocalDemoGoogleHandoffAuthorization = object : LocalDemoGoogleHandoffAuthorization() {
         override val origin = selectedOrigin
 
-        override suspend fun consume(request: ModelChatRequest): Boolean =
-            request.message == expectedMessage &&
-                request.bodySourceLineage.intersect(GOOGLE_ORIGINS) == setOf(selectedOrigin)
+        override suspend fun consume(request: ModelChatRequest): Boolean {
+            onConsume?.invoke()
+            return request.message == expectedMessage &&
+                request.bodySourceLineage.intersect(GOOGLE_ORIGINS) == setOf(selectedOrigin) &&
+                (expectedConversationId == null || request.conversationId == expectedConversationId)
+        }
     }
 
     private fun fixtureCatalog(): FakeModelCatalog {

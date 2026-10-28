@@ -10,17 +10,17 @@ AGENT_ID: B — On-device AI / Product Adapter
 ACTIVE_PHASE: G6-B adapter contract and ARM64 readiness audit
 GOAL_STATUS: PARTIAL
 BASE_SHA: b84feb337cd57918346ab31cb3ea4af4ba880ffb
-CURRENT_HEAD: e6feb576d03c23a73e95baa667446b0b8da56c33 (implementation snapshot; checkpoint is a following docs-only commit)
-TREE_SHA: c2de3250d8e8cb9bdab7557d38fbb840b461df0b
+CURRENT_HEAD: 06e78d1f1032a034bf8c7f22ace7c45710d27648 (PR head at checkpoint update; implementation snapshot `e6feb576d03c23a73e95baa667446b0b8da56c33`)
+TREE_SHA: c4e612ea71f255d88c5105d285f8c7d19cf14ca5
 WORKTREE: /workspace/Serea-g6-agent-b
 BRANCH: codex/serea-g6-local-ai-adapter
-DRAFT_PR: not opened; parent review requested before PR creation
+DRAFT_PR: [#136](https://github.com/Yrika819/Serea/pull/136), OPEN/DRAFT against G5 branch `codex/serea-g5-evidence-closure-20261028`
 COMPLETED_WORK: audited isolated G3 source/model metadata; added Product ModelChatPort adapter contract, one-use local Egress consent, model hash/identity checks, usage attribution, backend lifecycle contract, and fake-native hostile tests
 CHANGED_FILES: android/app/src/main/java/app/serea/android/SecurityPorts.kt; android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt; android/app/src/main/java/app/serea/android/LocalModelSecurity.kt; android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt
 TEST_COMMANDS: `cd android && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 PATH=/usr/lib/jvm/java-21-openjdk-amd64/bin:$PATH ./gradlew --no-daemon --console=plain :app:testDebugUnitTest --tests 'app.serea.android.LocalModelChatAdapterTest'`; `git diff --check`
-JUNIT_RESULT: NOT_RUN — Gradle 8.14.6 wrapper download failed with `java.net.ConnectException: Connection refused`; `git diff --check` PASS
-CI_RUN_IDS: G3 PoC diagnostic run 40657508541 (API 35 x86_64 emulator, not G6 adapter CI)
-ARTIFACT_IDS: 12802681672, digest sha256:df06078f5c8b4164bd24e255d1df0e2df9069570e08c08eea1295f4f391161f8
+JUNIT_RESULT: Local NOT_RUN — Gradle 8.14.6 wrapper download failed with `java.net.ConnectException: Connection refused`; PR Android Unit check pending; `git diff --check` PASS
+CI_RUN_IDS: 40680773548 (Android PR checks, pending at checkpoint); 40680773509 (Fast, pending); 40680773784 (Full/MSRV, pending); G3 PoC diagnostic 40657508541 (API 35 x86_64, not G6 adapter CI); 40680743375 (existing main-only Beta workflow, zero jobs / failure on branch push)
+ARTIFACT_IDS: G3 PoC artifact 12802681672, digest sha256:df06078f5c8b4164bd24e255d1df0e2df9069570e08c08eea1295f4f391161f8; G6 PR CI artifacts pending
 SECURITY_IMPACT: adds LOCAL_MODEL as a distinct local-only Egress target; requires exact consent/body/context/model binding, a live conversation ID+generation, and one-time authorization consumption before Usage/provider delegate; Google lineage requires typed validated handoff evidence and current session/account validation; Cloud remains separate and default Chat composition is untouched
 DEPENDENCIES: parent composition must create explicit local-model route and usage resolver; Agent A TrustedGoogleHandoff must be mapped from the exact accepted object and revalidated through coordinator.isCurrent with live conversation identity; native backend factory, private model-file staging/hash verification, catalog identity, lifecycle owner, and independent review remain required
 KNOWN_ISSUES: G6 adapter tests not executed; no concrete JNI backend is added; local-model route is not wired into product Chat; Google-originated prior-turn context is denied until every context item has an independently bound source proof; llama.cpp vendor notice/SBOM closure is incomplete so redistribution is not authorized

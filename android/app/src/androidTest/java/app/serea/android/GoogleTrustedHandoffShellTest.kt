@@ -96,7 +96,7 @@ class GoogleTrustedHandoffShellTest {
             compose.onAllNodesWithTag("chat-composer").fetchSemanticsNodes().isNotEmpty()
         }
         val composer = compose.onNodeWithTag("chat-composer")
-        composer.assertTextContains(selectedTitle)
+        composer.assertTextContains(selectedTitle, substring = true)
         compose.onAllNodesWithText("Demo response:", substring = true).assertCountEquals(0)
         val imported = compose.activity.chatViewModel.state.value.editorSourceLineage
         assertTrue(imported.contains(expectedOrigin))

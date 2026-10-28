@@ -123,7 +123,19 @@ Focused command attempted from `android/` on the audit worktree:
   --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
 ```
 
-Result: **NOT_RUN / ENVIRONMENT**. Gradle stopped during task configuration before compilation or JUnit discovery because the configured installation `/usr/lib/jvm/java-21-openjdk-amd64` lacks `JAVA_COMPILER` (`Could not create task ':app:compileDebugUnitTestJavaWithJavac'`). Therefore this run has no test count and no JUnit XML; it is not a test failure or pass. `git diff --check` passed for the audit patch. No Emulator or credentials were used.
+The first invocation with the container default Java failed before compilation because `/usr/lib/jvm/java-21-openjdk-amd64` lacks `JAVA_COMPILER`. The same command was then run successfully from this isolated worktree using Eclipse Temurin `21.0.13+9` at `/tmp/serea-g4-jdk/jdk-21.0.13+9` (with that JDK's `bin` first on `PATH`). Exact source HEAD was `23da0e648732ec175aef1e57a13ba2a6d53bf2c3`, tree `3260971979718abef46cb8fcf681145f0c1a1938`. Result: **BUILD SUCCESSFUL; 94 tests, 0 failures, 0 errors, 0 skipped**.
+
+| JUnit class | Tests | Failures | Errors | Skipped |
+|---|---:|---:|---:|---:|
+| `GoogleAuthorizationLifecycleTest` | 7 | 0 | 0 | 0 |
+| `GoogleAuthorizationTest` | 30 | 0 | 0 | 0 |
+| `GmailProviderSessionsTest` | 13 | 0 | 0 | 0 |
+| `GmailHttpReadPortTest` | 11 | 0 | 0 | 0 |
+| `CalendarProviderSessionsTest` | 13 | 0 | 0 | 0 |
+| `GoogleCalendarHttpReadPortTest` | 20 | 0 | 0 | 0 |
+| **Total** | **94** | **0** | **0** | **0** |
+
+Raw JUnit XMLs, their SHA-256 manifest, and a run summary are preserved under `docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/`. The XML includes both newly added test methods and is the evidence for this exact-source run. `git diff --check` passed after recording the evidence. This was a JVM-only run; no Emulator, credentials, Google account, OAuth, or live API was used. No GitHub CI was started for this unpushed branch.
 
 Prior evidence remains distinct: the six existing Google classes contributed 92/92 passing tests in Android Unit run `40599571275`, artifact `12778060790`, digest `sha256:a5ed666eaeea203e30cdeea648a271c19a6639ea572fc82806a52ff5b2d48430`, for source `373b8be15f407d951157d2a80a632e86d979acdf` as recorded above. That artifact predates both new tests and verifies neither. No CI was started for this unpushed audit commit.
 
@@ -132,8 +144,10 @@ REAL_GOOGLE_OAUTH: NOT_RUN / owner-gated
 REAL_GOOGLE_ACCOUNT: NOT_USED
 PLAY_SERVICES_IDENTITY_CONCURRENCY: NOT_RUN
 REAL_GOOGLE_TOKEN_EXPIRY_OR_REVOCATION: NOT_RUN
-NEW_GOOGLE_CONCURRENCY_GATE_TEST: NOT_RUN / local JDK compiler unavailable
-NEW_CALENDAR_STALE_RESPONSE_TEST: NOT_RUN / local JDK compiler unavailable
+FOCUSED_LOCAL_RESULT: PASS / 94 tests, 0 failures, 0 errors, 0 skipped; exact HEAD 23da0e648732ec175aef1e57a13ba2a6d53bf2c3 / tree 3260971979718abef46cb8fcf681145f0c1a1938
+NEW_GOOGLE_CONCURRENCY_GATE_TEST: PASS / GoogleAuthorizationTest (30 total)
+NEW_CALENDAR_STALE_RESPONSE_TEST: PASS / CalendarProviderSessionsTest (13 total)
+FOCUSED_JUNIT_EVIDENCE: docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/
 SOURCE_BASE_HEAD: a688f8385431e655fdc2a6da86617ea0f570cf2d
 SOURCE_BASE_TREE: 6866234fa8b7752fbebed880c90aa3296b8d583d
 ```

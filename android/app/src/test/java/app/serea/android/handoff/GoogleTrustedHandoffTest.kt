@@ -28,7 +28,12 @@ class GoogleTrustedHandoffTest {
         override var scope: String = "fake:gmail.read",
         override var isSyntheticProvider: Boolean = true,
         var authorization: HandoffAuthorizationState = HandoffAuthorizationState.MOCK_ONLY,
-        var current: HandoffSourceSnapshot = snapshot("message-1", "rev-1", "Fictional note: bring tea"),
+        var current: HandoffSourceSnapshot = HandoffSourceSnapshot(
+            "message-1",
+            "rev-1",
+            "Fictional note: bring tea",
+            "Selected item",
+        ),
         var reads: Int = 0,
         var cancelReads: Boolean = false,
         var returnDifferentItem: Boolean = false,

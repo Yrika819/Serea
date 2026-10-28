@@ -39,8 +39,10 @@ import app.serea.android.gmail.GmailProviderKind
 import app.serea.android.tasks.TaskScreen
 import app.serea.android.tasks.TaskViewModel
 import app.serea.android.handoff.GoogleHandoffPreview
+import app.serea.android.handoff.GoogleHandoffPreviewRequest
 import app.serea.android.handoff.GoogleTrustedHandoffCoordinator
 import app.serea.android.handoff.HandoffResult
+import app.serea.android.handoff.GoogleHandoffRejection
 import app.serea.android.handoff.TrustedGoogleHandoff
 import app.serea.android.handoff.HandoffDestination
 import app.serea.android.handoff.HandoffAuthorizationState
@@ -130,6 +132,19 @@ internal fun SereaAppShell(
         }
     }
 
+    suspend fun prepareGoogleHandoffPreview(
+        coordinator: GoogleTrustedHandoffCoordinator,
+        request: GoogleHandoffPreviewRequest,
+    ): HandoffResult<GoogleHandoffPreview> {
+        val current = chatViewModel.state.value
+        val generation = chatViewModel.currentConversationSelectionGeneration()
+        if (current.conversation.id != request.conversationId || generation != request.conversationGeneration ||
+            current.isLoading || current.isFinalizing || current.isRestoring || current.showingHistory) {
+            return HandoffResult.Rejected(GoogleHandoffRejection.CONVERSATION_CHANGED)
+        }
+        return coordinator.preparePreview(request)
+    }
+
     BackHandler(enabled = taskProposalActionPending || canGoBack) {
         if (!taskProposalActionPending) goBack()
     }
@@ -200,6 +215,7 @@ internal fun SereaAppShell(
                             onBack = ::goBack,
                             conversationId = chatState.conversation.id,
                             conversationGeneration = chatViewModel.currentConversationSelectionGeneration(),
+                            onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(activeProviders.gmailHandoff, request) },
                             onHandoffConfirmed = { preview -> confirmGoogleHandoff(activeProviders.gmailHandoff, preview) },
                         )
                         SereaDestination.CALENDAR -> CalendarDestination(
@@ -207,6 +223,7 @@ internal fun SereaAppShell(
                             onBack = ::goBack,
                             conversationId = chatState.conversation.id,
                             conversationGeneration = chatViewModel.currentConversationSelectionGeneration(),
+                            onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(activeProviders.calendarHandoff, request) },
                             onHandoffConfirmed = { preview -> confirmGoogleHandoff(activeProviders.calendarHandoff, preview) },
                         )
                         SereaDestination.SETTINGS -> ChatScreen(
@@ -235,6 +252,7 @@ private fun GmailDestination(
     onBack: () -> Unit,
     conversationId: String,
     conversationGeneration: Long,
+    onCreateHandoffPreview: suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>,
     onHandoffConfirmed: suspend (GoogleHandoffPreview) -> Boolean,
 ) {
     val vm: GmailViewModel = viewModel(
@@ -250,7 +268,7 @@ private fun GmailDestination(
         modifier = Modifier.fillMaxSize().testTag("gmail_destination"),
         conversationId = conversationId,
         conversationGeneration = conversationGeneration,
-        onCreateHandoffPreview = providers.gmailHandoff::preparePreview,
+        onCreateHandoffPreview = onCreateHandoffPreview,
         onHandoffConfirmed = onHandoffConfirmed,
         onCancelHandoffPreview = providers.gmailHandoff::cancelPreview,
     )
@@ -262,6 +280,7 @@ private fun CalendarDestination(
     onBack: () -> Unit,
     conversationId: String,
     conversationGeneration: Long,
+    onCreateHandoffPreview: suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>,
     onHandoffConfirmed: suspend (GoogleHandoffPreview) -> Boolean,
 ) {
     val displayZone = androidx.compose.runtime.remember { ZoneId.systemDefault() }
@@ -274,7 +293,7 @@ private fun CalendarDestination(
         modifier = Modifier.fillMaxSize().testTag("calendar_destination"),
         conversationId = conversationId,
         conversationGeneration = conversationGeneration,
-        onCreateHandoffPreview = providers.calendarHandoff::preparePreview,
+        onCreateHandoffPreview = onCreateHandoffPreview,
         onHandoffConfirmed = onHandoffConfirmed,
         onCancelHandoffPreview = providers.calendarHandoff::cancelPreview,
     )

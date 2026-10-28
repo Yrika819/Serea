@@ -9,6 +9,7 @@ on:
     paths:
       - '.github/workflows/android-functional-focused.yml'
       - 'android/**'
+      - 'tools/assert_exact_source_checkout.sh'
       - 'tools/run_android_functional_focused.sh'
       - 'tools/verify_android_instrumentation.py'
   push:
@@ -18,6 +19,7 @@ on:
     paths:
       - '.github/workflows/android-functional-focused.yml'
       - 'android/**'
+      - 'tools/assert_exact_source_checkout.sh'
       - 'tools/run_android_functional_focused.sh'
       - 'tools/verify_android_instrumentation.py'
 

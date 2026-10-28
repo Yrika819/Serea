@@ -410,7 +410,32 @@ class GoogleTrustedHandoffCoordinator(
         return HandoffResult.Accepted(handoff)
     }
 
-    /** Rechecks the consumed proof immediately before a local model request is dispatched. */
+    /**
+     * Atomically consumes the accepted proof at the final local Chat send boundary, then checks
+     * that this exact payload still belongs to the same live Fake provider source and Chat turn.
+     * The proof is removed before any validation or suspension, so every rejection and
+     * cancellation is one-use and cannot be retried with stale data.
+     */
+    suspend fun consumeForLocalChatSend(
+        handoff: TrustedGoogleHandoff,
+        currentConversationId: String,
+        currentConversationGeneration: Long,
+        message: String,
+        sourceLineage: Set<DataOrigin>,
+    ): Boolean {
+        val acceptedHandoff = synchronized(lock) {
+            accepted.entries.removeAll { it.value.expiresAtMillis <= nowMillis() }
+            accepted.remove(handoff.id)
+        } ?: return false
+        if (acceptedHandoff !== handoff) return false
+        currentCoroutineContext().ensureActive()
+        if (message.trim() != handoff.localChatText().trim() || sourceLineage != handoff.sourceLineage()) {
+            return false
+        }
+        return validateCurrentHandoff(handoff, currentConversationId, currentConversationGeneration)
+    }
+
+    /** Rechecks an accepted proof without consuming it for the separate LocalModel validator. */
     suspend fun isCurrent(
         handoff: TrustedGoogleHandoff,
         currentConversationId: String,
@@ -422,6 +447,15 @@ class GoogleTrustedHandoffCoordinator(
             accepted[handoff.id]
         } ?: return false
         if (acceptedHandoff !== handoff) return false
+        return validateCurrentHandoff(handoff, currentConversationId, currentConversationGeneration)
+    }
+
+    private suspend fun validateCurrentHandoff(
+        handoff: TrustedGoogleHandoff,
+        currentConversationId: String,
+        currentConversationGeneration: Long,
+    ): Boolean {
+        currentCoroutineContext().ensureActive()
         if (nowMillis() >= handoff.expiresAtMillis || handoff.authorizationState != HandoffAuthorizationState.MOCK_ONLY ||
             handoff.selectionState != HandoffSelectionState.SELECTED ||
             handoff.consentState != HandoffConsentState.LOCAL_PROCESSING_ONLY ||

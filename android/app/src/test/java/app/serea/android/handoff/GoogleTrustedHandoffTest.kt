@@ -352,6 +352,178 @@ class GoogleTrustedHandoffTest {
         assertNoSideEffects(source)
     }
 
+    @Test fun consumeForLocalChatSendIsOneUseAndRequiresExactPayloadAndDestination() = runBlocking {
+        val source = Source()
+        val coordinator = GoogleTrustedHandoffCoordinator(source) { 100L }
+        val preview = accepted(coordinator.preparePreview(request(candidate(source))))
+        val handoff = accepted(coordinator.confirmLocalOnly(preview, "conversation-1", 7))
+
+        val copiedHandoff = handoff.copy()
+        assertTrue(
+            !coordinator.consumeForLocalChatSend(
+                copiedHandoff, "conversation-1", 7, copiedHandoff.localChatText(), copiedHandoff.sourceLineage(),
+            ),
+        )
+        assertTrue(
+            !coordinator.consumeForLocalChatSend(
+                handoff, "conversation-1", 7, handoff.localChatText(), handoff.sourceLineage(),
+            ),
+        )
+
+        val validSource = Source()
+        val validCoordinator = GoogleTrustedHandoffCoordinator(validSource) { 100L }
+        val validPreview = accepted(validCoordinator.preparePreview(request(candidate(validSource))))
+        val validHandoff = accepted(validCoordinator.confirmLocalOnly(validPreview, "conversation-1", 7))
+        assertTrue(
+            validCoordinator.consumeForLocalChatSend(
+                validHandoff, "conversation-1", 7, validHandoff.localChatText(), validHandoff.sourceLineage(),
+            ),
+        )
+        assertTrue(
+            !validCoordinator.consumeForLocalChatSend(
+                validHandoff, "conversation-1", 7, validHandoff.localChatText(), validHandoff.sourceLineage(),
+            ),
+        )
+        assertTrue(!validCoordinator.isCurrent(validHandoff, "conversation-1", 7))
+        assertNoSideEffects(validSource)
+
+        data class InvalidSend(
+            val message: String,
+            val lineage: Set<DataOrigin>,
+            val conversationId: String,
+            val generation: Long,
+        )
+        for (invalidSend in listOf(
+            InvalidSend(validHandoff.localChatText() + " substituted", validHandoff.sourceLineage(), "conversation-1", 7),
+            InvalidSend(validHandoff.localChatText(), setOf(DataOrigin.GMAIL, DataOrigin.CALENDAR), "conversation-1", 7),
+            InvalidSend(validHandoff.localChatText(), validHandoff.sourceLineage(), "other-conversation", 7),
+            InvalidSend(validHandoff.localChatText(), validHandoff.sourceLineage(), "conversation-1", 8),
+        )) {
+            val changedSource = Source()
+            val changedCoordinator = GoogleTrustedHandoffCoordinator(changedSource) { 100L }
+            val changedPreview = accepted(changedCoordinator.preparePreview(request(candidate(changedSource))))
+            val changedHandoff = accepted(changedCoordinator.confirmLocalOnly(changedPreview, "conversation-1", 7))
+            assertTrue(
+                !changedCoordinator.consumeForLocalChatSend(
+                    changedHandoff, invalidSend.conversationId, invalidSend.generation,
+                    invalidSend.message, invalidSend.lineage,
+                ),
+            )
+            assertTrue(
+                !changedCoordinator.consumeForLocalChatSend(
+                    changedHandoff, "conversation-1", 7, changedHandoff.localChatText(), changedHandoff.sourceLineage(),
+                ),
+            )
+            assertNoSideEffects(changedSource)
+        }
+    }
+
+    @Test fun consumeForLocalChatSendRejectsRevokedAuthorizationAndChangedBindings() = runBlocking {
+        val cases = listOf<Source.() -> Unit>(
+            { authorization = HandoffAuthorizationState.REVOKED },
+            { syntheticAccountIdentifier = "serea-fake-gmail-account-switched" },
+            { sessionIdentifier = "gmail-provider-session-switched" },
+            { sessionGeneration = 2 },
+            { scope = "fake:gmail.write" },
+            { isSyntheticProvider = false },
+        )
+        for (change in cases) {
+            val source = Source()
+            val coordinator = GoogleTrustedHandoffCoordinator(source) { 100L }
+            val preview = accepted(coordinator.preparePreview(request(candidate(source))))
+            val handoff = accepted(coordinator.confirmLocalOnly(preview, "conversation-1", 7))
+            source.change()
+
+            assertTrue(
+                !coordinator.consumeForLocalChatSend(
+                    handoff, "conversation-1", 7, handoff.localChatText(), handoff.sourceLineage(),
+                ),
+            )
+            assertTrue(
+                !coordinator.consumeForLocalChatSend(
+                    handoff, "conversation-1", 7, handoff.localChatText(), handoff.sourceLineage(),
+                ),
+            )
+            assertNoSideEffects(source)
+        }
+    }
+
+    @Test fun consumeForLocalChatSendRejectsChangedSourceAndExpiredProof() = runBlocking {
+        for (replacement in listOf(
+            snapshot("message-1", "rev-2", "Fictional note: bring tea"),
+            snapshot("message-1", "rev-1", "Replacement content"),
+        )) {
+            val source = Source()
+            val coordinator = GoogleTrustedHandoffCoordinator(source) { 100L }
+            val preview = accepted(coordinator.preparePreview(request(candidate(source))))
+            val handoff = accepted(coordinator.confirmLocalOnly(preview, "conversation-1", 7))
+            source.current = replacement
+
+            assertTrue(
+                !coordinator.consumeForLocalChatSend(
+                    handoff, "conversation-1", 7, handoff.localChatText(), handoff.sourceLineage(),
+                ),
+            )
+            assertTrue(
+                !coordinator.consumeForLocalChatSend(
+                    handoff, "conversation-1", 7, handoff.localChatText(), handoff.sourceLineage(),
+                ),
+            )
+            assertNoSideEffects(source)
+        }
+
+        var now = 100L
+        val expiredSource = Source()
+        val expiredCoordinator = GoogleTrustedHandoffCoordinator(expiredSource) { now }
+        val expiredPreview = accepted(expiredCoordinator.preparePreview(request(candidate(expiredSource))))
+        val expiredHandoff = accepted(expiredCoordinator.confirmLocalOnly(expiredPreview, "conversation-1", 7))
+        now += GoogleTrustedHandoffCoordinator.PREVIEW_TTL_MILLIS + 1
+        assertTrue(
+            !expiredCoordinator.consumeForLocalChatSend(
+                expiredHandoff, "conversation-1", 7,
+                expiredHandoff.localChatText(), expiredHandoff.sourceLineage(),
+            ),
+        )
+        assertNoSideEffects(expiredSource)
+
+        val wrongItemSource = Source()
+        val wrongItemCoordinator = GoogleTrustedHandoffCoordinator(wrongItemSource) { 100L }
+        val wrongItemPreview = accepted(wrongItemCoordinator.preparePreview(request(candidate(wrongItemSource))))
+        val wrongItemHandoff = accepted(wrongItemCoordinator.confirmLocalOnly(wrongItemPreview, "conversation-1", 7))
+        wrongItemSource.returnDifferentItem = true
+        assertTrue(
+            !wrongItemCoordinator.consumeForLocalChatSend(
+                wrongItemHandoff, "conversation-1", 7,
+                wrongItemHandoff.localChatText(), wrongItemHandoff.sourceLineage(),
+            ),
+        )
+        assertNoSideEffects(wrongItemSource)
+    }
+
+    @Test fun consumeForLocalChatSendPropagatesCancellationAfterConsumingProof() = runBlocking {
+        val source = Source()
+        val coordinator = GoogleTrustedHandoffCoordinator(source) { 100L }
+        val preview = accepted(coordinator.preparePreview(request(candidate(source))))
+        val handoff = accepted(coordinator.confirmLocalOnly(preview, "conversation-1", 7))
+        source.cancelReads = true
+
+        var cancellationPropagated = false
+        try {
+            coordinator.consumeForLocalChatSend(
+                handoff, "conversation-1", 7, handoff.localChatText(), handoff.sourceLineage(),
+            )
+        } catch (_: CancellationException) {
+            cancellationPropagated = true
+        }
+        assertTrue(cancellationPropagated)
+        assertTrue(
+            !coordinator.consumeForLocalChatSend(
+                handoff, "conversation-1", 7, handoff.localChatText(), handoff.sourceLineage(),
+            ),
+        )
+        assertNoSideEffects(source)
+    }
+
     @Test fun googleLineageCannotUseCloudEgressEvenAfterLocalConsent() = runBlocking {
         val source = Source()
         val coordinator = GoogleTrustedHandoffCoordinator(source) { 5L }

@@ -7,7 +7,7 @@
 **BASE_TREE_SHA:** `8398b17aeaf4c4e3dd699b75ca9d26394de9808b`
 **WORKTREE:** `/workspace/Serea-g9-gmail-preflight`
 **BRANCH:** `codex/serea-g9-gmail-preflight`
-**DRAFT_PR:** Pending publication against the parent G8 branch `codex/serea-g8-integration-candidate-20261029`.
+**DRAFT_PR:** [#143](https://github.com/Yrika819/Serea/pull/143), OPEN / DRAFT, based on `codex/serea-g8-integration-candidate-20261029`.
 **JUNIT_RESULT:** NOT_RUN locally; Gradle stopped before Java test compilation.
 **OWNER_APPROVAL_REQUIRED:** None for this synthetic loopback test. Real Gmail, OAuth, Google data, Cloud AI, production signing, Pixel 7a and main merge remain Owner-controlled and were not used.
 
@@ -60,7 +60,7 @@ BUILD FAILED
 
 ### Exact-SHA CI
 
-No CI run was attached to this branch at the time this checkpoint was written. After publishing the branch and Draft PR, inspect only runs whose source SHA equals the resulting branch HEAD. The formal Android Required workflow filters this test through the explicit non-required identity file, so a Required PASS would validate source compilation and manifest accounting but would not prove the focused UI test ran. Do not report the test as PASS without a focused JUnit result.
+At initial PR head `b07f91612b28a1f9338f04dd081ef3a94180c84f`, GitHub queued Android `40790767803`, SQLite `40790767806`, RustSec `40790767711`, Full `40790767733`, Fast `40790767660`, Native `40790767676`, and Git Hooks `40790767715`. All were still QUEUED with no jobs started at the last check; there is no JUnit or artifact result yet. A report-metadata commit will produce a new HEAD, so these initial-head runs must not be carried forward as evidence for it. The formal Android Required workflow filters this test through the explicit non-required identity file, so a Required PASS would validate source compilation and manifest accounting but would not prove the focused UI test ran. Do not report the test as PASS without a focused JUnit result on the current HEAD.
 
 ## Checkpoint contract
 
@@ -69,13 +69,13 @@ No CI run was attached to this branch at the time this checkpoint was written. A
 **CHANGED_FILES:** `android/app/src/androidTest/java/app/serea/android/GmailHtmlInertUiSecurityTest.kt`; `android/app/src/androidTest/assets/serea-non-required-test-identities.txt`; `docs/agent-reports/g9-gmail-preflight.md`
 **TEST_COMMANDS:** Focused command above — blocked before compilation by missing Java compiler; `git diff --check` PASS; source/manifest identity comparison PASS.
 **JUNIT_RESULT:** NOT_RUN, 0 tests executed.
-**CI_RUN_IDS:** None at checkpoint creation.
+**CI_RUN_IDS:** Initial PR head `b07f91612b28a1f9338f04dd081ef3a94180c84f`: Android `40790767803`, SQLite `40790767806`, RustSec `40790767711`, Full `40790767733`, Fast `40790767660`, Native `40790767676`, Git Hooks `40790767715` — all QUEUED with no job started at last check. These runs are not evidence for any later report-metadata commit.
 **ARTIFACT_IDS:** None.
 **SECURITY_IMPACT:** Test and classification only; no production code, OAuth, HTTP provider or Cloud route changed. Mock HTTP is loopback-only.
 **KNOWN_ISSUES:** Focused UI assertion has no execution evidence until a JDK-backed emulator CI run or equivalent test environment executes the exact class on the resulting HEAD.
-**CURRENT_BLOCKERS:** No `javac` and no local Android emulator.
+**CURRENT_BLOCKERS:** No `javac` and no local Android emulator; initial PR-head GitHub workflows were queued and had not started at last check.
 **DEPENDENCIES:** Parent G8 integration candidate `3b20faac13907146858f7aa8ce5c2832f47175c4`; exact-SHA GitHub CI.
 **INTEGRATION_READY:** PARTIAL pending independent source review and a focused JUnit result.
 **REVIEW_REQUEST:** Inspect the loopback-only adversarial HTML, Fake provider path, parser/text boundary, and Required/non-required manifest accounting.
-**NEXT_ACTION:** Commit and push the isolated branch, open a Draft PR against the parent G8 branch, inspect exact-SHA CI, then update this checkpoint with run/artifact IDs or retain NOT_RUN.
+**NEXT_ACTION:** Parent review; inspect newly triggered exact-SHA CI after the report update. The focused UI JUnit remains NOT_RUN unless that exact class has a focused JUnit result.
 **OWNER_APPROVAL_REQUIRED:** None for mock work; real service/device/release decisions remain pending separately.

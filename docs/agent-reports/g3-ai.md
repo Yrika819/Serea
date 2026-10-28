@@ -1,5 +1,26 @@
 # G3 — Real AI / On-device Inference Feasibility
 
+## Latest G3-owned checkpoint — model-metadata evidence wording corrected (2026-10-28)
+
+An independent review found that an older README sentence overstated what the metadata-only request established. This follow-up separates repository/license/base-model metadata from model-file fixture expectations and the later byte-level weight-fetch check.
+
+**AGENT_ID:** G3 — PR #127 owner<br>
+**ACTIVE_PHASE:** correct metadata-evidence wording and prevent regression<br>
+**OVERALL_STATUS:** PARTIAL — documentation boundary is corrected and five offline host regression suites pass; no Android rebuild or runtime inference was performed.<br>
+**BASE_SHA:** `eecfabe9e6fd1b7a016658000de793083a6a8ada`<br>
+**CURRENT_HEAD:** `3323ba943074ef2b794a3f1ca700dd46c93f107d`<br>
+**CURRENT_TREE:** `1cb47c8b6b16e733ae3c9b2632f1f9f73b827747`<br>
+**WORKTREE:** `/workspace/Serea-g3-diagnostic-recovery` — clean after the source/documentation commit<br>
+**BRANCH:** `codex/serea-g3-diagnostic-recovery` — G3-owned<br>
+**DRAFT_PR:** [#127](https://github.com/Yrika819/Serea/pull/127), Open/Draft; no merge.<br>
+**CHANGED_FILES:** `tools/g3-ondevice-poc/README.md`; `tools/g3-ondevice-poc/scripts/test-poc-metadata-contracts.py`.<br>
+**CORRECTION:** README now says the immutable repository metadata response confirms the `apache-2.0` declaration and base-model metadata only. Filename/byte-count/SHA in the model fixture are expected values, not confirmed by that response; the selected weight-fetch step compares actual downloaded bytes against fixture size/SHA. The metadata capture downloads no model weights.<br>
+**REGRESSION:** the metadata-contract host test requires exactly one README metadata-only claim and checks for the repository-metadata-only, expected-fixture-values, and separate weight-fetch boundaries.<br>
+**FOCUSED_TESTS:** all five passed with `python3 -B`: `test-api-selection.py`; `test-gradle-project-dir.py`; `test-native-source-contract.py`; `test-poc-metadata-contracts.py` (including the new README regression); `test-runner-failure-paths.py`. `git diff --check` PASS.<br>
+**FILE_SHA256:** `README.md` `d1561507d88bcf604d032a8387eb61fefe2a6af7d2cf7df2e28aca97e2ab0b94`; `test-poc-metadata-contracts.py` `4f70326e857a5fa98c49b4a3df0f3c0f39a24ee25eefad2fd83668b99ceba165`.<br>
+**NATIVE_BUILD / ALLOCATION-FAULT-INJECTION / API26 / API35:** NOT_RUN. The no-network/no-Emulator restriction remains; no model weights were fetched.<br>
+**NEXT_ACTION:** Orchestrator re-review and incorporate only after confirming the documentation/test diff and exact-head host evidence. Keep native compile/runtime and allocation-failure behavior explicitly unverified.<br>
+
 ## Latest G3-owned checkpoint — native PoC review findings closed (2026-10-28)
 
 This checkpoint records the focused G3-only repair after the independent source review. It does not claim an Android APK rebuild, AndroidTest compilation, model inference, or Emulator result. No model weights, network services, real credentials, or device were used.

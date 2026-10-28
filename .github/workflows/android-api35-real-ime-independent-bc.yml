@@ -15,7 +15,7 @@ env:
   TARGET_APK: android/app/build/outputs/apk/isolated/app-isolated.apk
   TEST_APK: android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk
   IME_APK: android/r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk
-  DIAGNOSTIC_BASE_SHA: 373b8be15f407d951157d2a80a632e86d979acdf
+  DIAGNOSTIC_BASE_SHA: e0643750321a682fdf53b1024b8491ebcb128fa7
 
 jobs:
   build-diagnostic-apks:
@@ -60,8 +60,31 @@ jobs:
             $0 !~ /^tools\/test_serea_real_ime_avd_guards\.sh$/ &&
             $0 !~ /^docs\/verification\/api35-real-ime-independent-bc\.md$/ &&
             $0 != "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt" &&
+            $0 != "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt" &&
             $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java" &&
-            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java" { print }
+            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java" &&
+            $0 != "android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt" &&
+            $0 != "android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt" &&
+            $0 != "docs/agent-reports/g2-google-policy-readiness-2026-10-28.md" &&
+            $0 != "docs/agent-reports/g2-p0-backend-acceptance-review.md" &&
+            $0 != "docs/agent-reports/g4-orchestrator-ledger.md" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/gradle-summary.txt" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/sha256sums.txt" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle.log" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/summary.txt" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/sha256sums.txt" { print }
           ')"
           if [[ -n "$unexpected" ]]; then
             printf 'Unexpected changes since diagnostic base:\n%s\n' "$unexpected" >&2

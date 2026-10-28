@@ -1,8 +1,12 @@
 # API 26/35 Independent Real IME B/C Diagnostic
 
-Status: harness implemented; no emulator run has been dispatched from this branch.
+Status: harness implemented and integrated with the isolated Test IME session-contract repair;
+no emulator run has been dispatched from the campaign branch.
 
-Base: `373b8be15f407d951157d2a80a632e86d979acdf` (PR #132 diagnostic source).
+Functional source origin: PR #132 diagnostic source `373b8be15f407d951157d2a80a632e86d979acdf`.
+Campaign source-scope base: `e0643750321a682fdf53b1024b8491ebcb128fa7`, the clean G4 candidate
+with the reviewed Google-origin egress-lineage repair and its local focused evidence. The workflow
+compares only changes after this campaign base against its narrow diagnostic allowlist.
 
 ## Scope and execution model
 
@@ -23,10 +27,16 @@ verifies the same three APK files produced by the single build job. No API-speci
 performed.
 
 The workflow's source-scope guard permits only its exact workflow path, the single-case helper,
-this evidence document, and the three diagnostic-only source files involved in the request-contract
-repair (`IndependentImeCompositionTest.kt`, `RealImeDiagnosticsProvider.java`, and
-`RealImeService.java`), plus the exact AVD guard module and its regression script. It rejects all
-other changes since the diagnostic base.
+this evidence document, the B/C and provider request-contract sources
+(`IndependentImeCompositionTest.kt`, `RealImeDiagnosticsProvider.java`, and `RealImeService.java`),
+the formal Chat acceptance test's Test IME adapter (`SereaAppShellTest.kt`), and the exact AVD guard
+module and its regression script. It rejects all other changes since the campaign base.
+
+The formal test adapter was updated to read a fresh Android-owned service/session/connection/input
+type snapshot immediately before each operation, submit all four identities as preconditions, and
+assert that the provider invoked that exact connection and accepted the call. This removes the old
+`fieldName` expectation (which the provider does not expose) and prevents reuse of a stale connection.
+No product source or acceptance assertion was changed.
 
 ## Device guards and evidence
 
@@ -65,10 +75,11 @@ credentials, and user data are not used.
 
 ## Pending evidence
 
-- Build/run IDs: NOT_RUN
+- Local target/test/IME APK build: PASS on the campaign worktree; exact final commit evidence pending
+- Workflow Run ID / artifact IDs: NOT_RUN
 - API 26 B/C: NOT_RUN
 - API 35 B/C: NOT_RUN
-- Artifacts and APK SHA-256: NOT_RUN
+- Campaign APK SHA-256: pending exact-head build capture
 - Emulator cleanup and IME restoration: NOT_RUN
 
 ## Request-contract build checkpoint

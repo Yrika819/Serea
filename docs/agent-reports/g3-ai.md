@@ -1,5 +1,29 @@
 # G3 — Real AI / On-device Inference Feasibility
 
+## Latest G3-owned checkpoint — exact-head CI refresh (2026-10-28)
+
+This checkpoint refreshes CI outcomes only. It adds no product, PoC, provider, or test implementation. Every run below reports the exact pre-checkpoint source HEAD `5fd17b8985653dcdea47eda09169285a0c8278c8`.
+
+**AGENT_ID:** G3 — PR #127 owner<br>
+**ACTIVE_PHASE:** G3 real-AI/on-device feasibility readiness<br>
+**OVERALL_STATUS:** PARTIAL — repository CI runs completed successfully, but they do not establish a G3 product build or current-head on-device inference result.<br>
+**VERIFIED_SOURCE_HEAD:** `5fd17b8985653dcdea47eda09169285a0c8278c8`<br>
+**VERIFIED_SOURCE_TREE:** `cd0823b64f35485e26578703680e503a21eda287`<br>
+**WORKTREE:** `/workspace/Serea-g3-diagnostic-recovery` — clean before this docs-only update.<br>
+**BRANCH:** `codex/serea-g3-diagnostic-recovery` — G3-owned; remote matched the verified source HEAD before this checkpoint commit.<br>
+**DRAFT_PR:** [#127](https://github.com/Yrika819/Serea/pull/127), Open/Draft; no merge.<br>
+**CI_RUN_IDS:** Full CI `40651252925` PASS; Native `40651252941` PASS; SQLite `40651252943` PASS; Fast CI `40651252917` PASS; Android `40651252847` PASS (scope summary only, see below); RustSec `40651252843` PASS; Git Hooks `40651252837` PASS. GitHub run metadata independently confirms all seven runs used `5fd17b8985653dcdea47eda09169285a0c8278c8`.<br>
+**ARTIFACT_IDS:** SQLite `12800605260` (`portable-db-intel`) and `12799736503` (`portable-db-arm64`); RustSec `12799662684`. Full, Native, Fast, Android, and Git Hooks returned no artifacts.<br>
+**ANDROID_SCOPE_LIMIT:** In Android run `40651252847`, change-scope and documentation jobs passed, but Android Unit, Security Tests, Build/Lint/Instrumentation Compile, Integration, Pixel 7a bundle, Storage/Emulator, and Identity jobs were SKIPPED. The Android Emulator Required Gate summary job was green, but this Android run did not build or execute the standalone G3 PoC, AndroidTest APK, or inference runtime. Do not interpret it as G3 Android evidence.
+**G3_DIAGNOSTIC_WORKFLOW:** NOT_RUN at this HEAD; no API 26/35 G3 diagnostic workflow run or G3 diagnostic artifact exists for this source revision. The marker-gated non-required workflow was not dispatched.
+**REAL_AI / REAL_SERVICE:** NOT_RUN. No cloud AI provider was qualified or enabled, no API key or real Google account was used, and no real provider request occurred.<br>
+**ON_DEVICE / PIXEL:** No current-head model build or inference run. Historical PoC results remain tied to their recorded earlier source revisions. Pixel 7a inference, throughput, memory, thermal, battery, and storage measurements remain NOT_RUN.<br>
+**FOCUSED_SOURCE_CHECKS:** Existing offline host regression evidence and metadata-wording review remain as recorded below; the CI runs above are repository-level validation, not substitutes for the G3-specific diagnostic workflow.<br>
+**SECURITY / INTEGRATION:** G3 remains a standalone feasibility PoC outside Serea product Chat and the Required CI runtime path. No G4 integration is requested or implied by these CI results.<br>
+**CHANGED_FILES:** this checkpoint only: `docs/agent-reports/g3-ai.md`.<br>
+**NEXT_ACTION:** Keep real AI and Pixel inference NOT_RUN. Any future G3 runtime claim requires an explicitly selected, exact-head G3 diagnostic build and Emulator run; product integration requires separate review.<br>
+**OWNER_APPROVAL_REQUIRED:** real cloud-provider eligibility/credentials/fees, real accounts, Pixel 7a, production signing, distribution, merge, and Personal Beta GO remain Owner-gated.<br>
+
 ## Latest G3-owned checkpoint — model-metadata evidence wording corrected (2026-10-28)
 
 An independent review found that an older README sentence overstated what the metadata-only request established. This follow-up separates repository/license/base-model metadata from model-file fixture expectations and the later byte-level weight-fetch check.

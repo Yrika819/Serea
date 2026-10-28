@@ -1,5 +1,31 @@
 # G3 — Real AI / On-device Inference Feasibility
 
+## Latest G3-owned checkpoint — native PoC review findings closed (2026-10-28)
+
+This checkpoint records the focused G3-only repair after the independent source review. It does not claim an Android APK rebuild, AndroidTest compilation, model inference, or Emulator result. No model weights, network services, real credentials, or device were used.
+
+**AGENT_ID:** G3 — PR #127 owner<br>
+**ACTIVE_PHASE:** close native allocation, JNI exception-safety, and license-evidence review findings<br>
+**OVERALL_STATUS:** PARTIAL — three review findings are addressed and five offline host regression suites pass. Android native rebuild and runtime verification remain NOT_RUN.<br>
+**BASE_SHA:** `844b45bcabb2871fa4f46d0fa9ef5aefcc11d539`<br>
+**SOURCE_HEAD:** `3b32050d346b2b7812dea4fb4fb8870b5826b6b1`<br>
+**SOURCE_TREE:** `c0c9aca132dca5b717a8dbebaee7707bca1c7ba0`<br>
+**WORKTREE:** `/workspace/Serea-g3-diagnostic-recovery` — clean after source commit<br>
+**BRANCH:** `codex/serea-g3-diagnostic-recovery` — pushed fast-forward from remote `8d4c5cf77b4a0207ee15d36dad8ae9027722845d`<br>
+**DRAFT_PR:** [#127](https://github.com/Yrika819/Serea/pull/127), Open/Draft, base `codex/serea-g3-real-ai-feasibility`. Existing PR retained; no merge or unrelated branch change.<br>
+**COMMIT:** `3b32050d346b2b7812dea4fb4fb8870b5826b6b1` (`fix(g3): close native PoC review findings`)<br>
+**CHANGED_FILES:** `tools/g3-ondevice-poc/app/src/main/cpp/llama_jni.cpp`; `tools/g3-ondevice-poc/scripts/capture-model-license.py`; `tools/g3-ondevice-poc/scripts/test-native-source-contract.py`; `tools/g3-ondevice-poc/scripts/test-poc-metadata-contracts.py`.<br>
+**REVIEW_FINDINGS:** (1) Batch allocation now frees exactly the successfully allocated per-token `seq_id` buffers and all parent buffers on partial failure without relying on `n_tokens` being populated. (2) JNI UTF-16 chars have scoped release; `nativeGenerate` and `nativeUnicodeRoundTrip` catch `std::bad_alloc` and report `OutOfMemoryError`. (3) License evidence labels model filename/size/SHA as fixture-expected values not observed in the license metadata response; the response SHA and pinned repo metadata remain separately captured.<br>
+**FOCUSED_TESTS:** `python3 scripts/test-api-selection.py` PASS; `python3 scripts/test-gradle-project-dir.py` PASS; `python3 scripts/test-native-source-contract.py` PASS; `python3 scripts/test-poc-metadata-contracts.py` PASS; `python3 scripts/test-runner-failure-paths.py` PASS; `git diff --check` PASS. The native source-contract test initially failed because it still required the old `make_batch` signature and `llama_batch_free` marker; the test was updated to cover the new cleanup helper and JNI RAII/OOM behavior, then the full host suite passed. No tests were skipped in these host scripts.<br>
+**FILE_SHA256:** `llama_jni.cpp` `54d44fa265bbd071d1c956f2b38425f04d30cb2d9de40f1af2eba81a0b50be88`; `capture-model-license.py` `b3998378aa5806a40574cda7504ea1ab29e2a91ba867a19e0bd1723a323dc497`; `test-native-source-contract.py` `ca98631d24f63515fbf5828d86bc04031444bc1be48a08625ad2797591ed274b`; `test-poc-metadata-contracts.py` `ce5c1aecdc4b7f5196eb3a66777f59c4b656577eb1fed27c973cf8ef886cdabe`.<br>
+**ANDROID_BUILD / APK_SHA256:** NOT_RUN. The pinned llama.cpp source checkout is not available in this workspace (`G3_LLAMA_CPP_SOURCE` unset; no `llama.h` checkout); no network access was used to restore it. Prior APK/JNI hashes belong to earlier source and do not validate this commit.<br>
+**API26_RESULT / API35_RESULT:** NOT_RUN at `3b32050`; no model or Emulator used. The API 35 abort-callback cancellation, partial allocator failure at runtime, and JNI Unicode runtime behavior remain NOT_VERIFIED.<br>
+**CI_RUN_IDS / ARTIFACT_IDS:** none for this repair. The non-required model workflow was not dispatched. Existing historical runs/artifacts are not treated as this HEAD's evidence.<br>
+**SECURITY_IMPACT:** no product/provider integration, app permissions, cloud egress, or Serea runtime path changed. Model metadata capture remains metadata-only; no weights were fetched.<br>
+**CURRENT_BLOCKER:** native compilation and instrumentation/runtime evidence require the exact pinned llama.cpp checkout and AndroidX test dependencies; these were not restored under the no-network/no-Emulator restriction.<br>
+**NEXT_ACTION:** Orchestrator to independently review this exact source commit and coordinate any later Android build/Emulator work after the API 26/35 real-IME campaign has released the serialized Emulator slot. Keep real AI, device performance, and product integration unclaimed.<br>
+**OWNER_APPROVAL_REQUIRED:** none for these local isolated fixes. Real provider/model activation, live credentials, Pixel 7a, production signing, distribution, merge, and Beta GO remain Owner-gated.<br>
+
 ## Latest G3-owned checkpoint — G1 review follow-up (2026-10-28)
 
 This checkpoint addresses G1's low-severity source review findings in the G3-only isolated PoC. No Serea product integration, API workflow dispatch, Emulator, model-weight download, live provider access, or push was performed. The API 26/35 runtime matrix and API35 in-compute cancellation callback are still **NOT_RUN / NOT_VERIFIED** at this source revision.

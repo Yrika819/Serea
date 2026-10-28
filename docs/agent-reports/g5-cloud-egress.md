@@ -18,6 +18,8 @@
 
 The remote source branch `codex/serea-g4-egress-body-lineage` resolved to the stated base SHA at audit time. This branch is an independent regression-test patch; it must not be treated as a green product candidate while its intended regression assertions fail.
 
+After review clarification, the exact test-source HEAD is `928066233ce9cbc993e7f2a38f2fddfe78c283b4` (tree `42367238f39a7a5c061fac53317cb9877ece1ec4`). Product source remains unchanged at `fc1c0527eea8ea92509935dc8721d24b27fd7f9d`.
+
 ## Findings
 
 ### Confirmed test-harness observation on the unchanged `fc1c` product source
@@ -66,6 +68,8 @@ Command from `android/`:
 
 **9 tests, 4 failures, 0 errors, 0 skips.** Kotlin compilation succeeded; Gradle failed only on the recorded assertions. Exact JUnit XML: `evidence/g5-cloud-egress-20261028/attack-matrix-before-product-patch.junit.xml`.
 
+Following the requested naming clarification, the same 9-test matrix was rerun at exact test-source HEAD `928066233ce9cbc993e7f2a38f2fddfe78c283b4`: **9 tests, 4 failures, 0 errors, 0 skips**. The failures remain the Gmail, Calendar, conversation-switch, and bounded-context regression assertions; the two renamed coverage-only tests pass. Exact-head JUnit XML: `evidence/g5-cloud-egress-20261028/attack-matrix-renamed-exact-head.junit.xml`; command output: `attack-matrix-renamed-exact-head.log`.
+
 | JUnit test | Result | Evidence / interpretation |
 |---|---|---|
 | `gmailFirstTurnModelOutputInheritsCurrentBodyLineage` | FAIL | Actual assistant lineage `{MODEL_OUTPUT, USER_AUTHORED}`; expected additionally `GMAIL`. |
@@ -109,6 +113,8 @@ No Activity recreation, delayed Google-session callback, account-generation-to-C
 ## Evidence files
 
 - `evidence/g5-cloud-egress-20261028/attack-matrix-before-product-patch.junit.xml`
+- `evidence/g5-cloud-egress-20261028/attack-matrix-renamed-exact-head.junit.xml`
+- `evidence/g5-cloud-egress-20261028/attack-matrix-renamed-exact-head.log`
 - `evidence/g5-cloud-egress-20261028/failure-run.txt`
 - `evidence/g5-cloud-egress-20261028/existing-egress-suite.log`
 - `evidence/g5-cloud-egress-20261028/existing-egress-suite-junit/`
@@ -116,4 +122,4 @@ No Activity recreation, delayed Google-session callback, account-generation-to-C
 
 No GitHub Actions run was started in this lane; CI run and artifact IDs are therefore **none**.
 
-Review clarification: the original pre-fix JUnit artifact is preserved unchanged as `attack-matrix-before-product-patch.junit.xml`. After the test-name-only clarification, rerun output is separately saved as `attack-matrix-renamed-pre-fix.junit.xml` and must show the same 9 tests, 4 regression failures, 0 errors, and 0 skips.
+Review clarification: the original pre-fix JUnit artifact is preserved unchanged as `attack-matrix-before-product-patch.junit.xml` (it contains the prior method labels). An intermediate working-tree run is preserved separately as `attack-matrix-renamed-pre-fix.junit.xml`; the report's authoritative renamed-method result is `attack-matrix-renamed-exact-head.junit.xml` at the exact test-source HEAD above.

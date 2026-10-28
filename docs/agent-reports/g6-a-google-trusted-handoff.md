@@ -7,8 +7,10 @@ AGENT_ID: A — Google Trusted Handoff
 ACTIVE_PHASE: G6-A implementation and focused verification
 GOAL_STATUS: PARTIAL — Fake provider contract, both screen previews, binding-race checks, and hostile tests are implemented; Gradle/JUnit and Android UI verification unavailable in this environment
 BASE_SHA: b84feb337cd57918346ab31cb3ea4af4ba880ffb
-CURRENT_HEAD: 00fedba7aa1dd31a9017e33a2624b791b9dc0f68 (implementation plus A-CI-02 Compose test API correction; checkpoint is docs-only)
-TREE_SHA: bf248f9682ff9be5b682d5ba15d30447c5018060
+CURRENT_HEAD: 76cd89d112f3c4a4e017fbc33def302c2a947939 (PR #137 branch head before this checkpoint-only update)
+TREE_SHA: 7575962d9b64576cd8ebef60f232ffdf673676b3
+SOURCE_FIX_HEAD: 00fedba7aa1dd31a9017e33a2624b791b9dc0f68
+SOURCE_FIX_TREE: bf248f9682ff9be5b682d5ba15d30447c5018060
 WORKTREE: /workspace/Serea-g6-agent-a
 BRANCH: codex/serea-g6-google-trusted-handoff
 DRAFT_PR: #137 — OPEN/DRAFT, base codex/serea-g5-evidence-closure-20261028
@@ -52,12 +54,12 @@ TEST_COMMANDS:
   - Android API 26 focused UI campaign — NOT_RUN: no emulator executable or connected Android device is available in this environment.
   - Android API 35 focused UI campaign — NOT_RUN: no emulator executable or connected Android device is available in this environment.
 JUNIT_RESULT: NOT_RUN — Gradle 8.14.6 could not be downloaded (`services.gradle.org` connection refused), and no Android runtime is available. No local test PASS is claimed. Prepared 18 focused JVM tests and 4 focused Android UI tests.
-CI_RUN_IDS: A branch head `aca13afd8c2c0f5995d7c0ceec68b7dc9ebae789`: Fast CI 40691291278 PASS; Android 40691291156 Change Scope job 122826464719 PASS, Docs 122827773273, Unit 122827773317, Dependency Audit 122827773374, Build/Lint/Instrumentation Compile 122827773487, Security 122827773639, and Integration 122827773855 queued; RustSec 40691291093, SQLite 40691291071, Git Hooks 40691291251, Native 40691291239, and Full CI 40691291209 queued. Integrated PR #138 head `766d966ed89a75cf51580762ad60965852e9d443`: focused run 40685979096 provider JVM job 122808317749 PASS; API 26 job 122819545014 failed before A-CI-02 correction (artifact 12816109577), API 35 job 122823421854 skipped. Android run 40685978759 Integration 122819737596, Docs 122819737615, Dependency Audit 122819737663, and Security 122819737728 PASS; Android Unit 122819737642 and Build/Lint/Instrumentation Compile 122819737905 FAIL on the old test API, Required Gate 122824303535 FAIL.
-ARTIFACT_IDS: none
+CI_RUN_IDS: PR #137 head `76cd89d112f3c4a4e017fbc33def302c2a947939`: Fast CI 40691864327 queued; Android 40691864677 pending with no jobs materialized; Full CI 40691864339 pending; Native 40691864405 pending; SQLite 40691864313, RustSec 40691864478, and Git Hooks 40691864340 queued. Prior A source-head run 40691291278 Fast CI PASS; Android Change Scope 122826464719 PASS, then remaining Android jobs and other workflows were cancelled after checkpoint-head update. PR #138 head `766d966ed89a75cf51580762ad60965852e9d443`: focused run 40685979096 provider JVM job 122808317749 PASS; API 26 job 122819545014 failed before A-CI-02 correction, API 35 job 122823421854 skipped. Android run 40685978759 Integration 122819737596, Docs 122819737615, Dependency Audit 122819737663, and Security 122819737728 PASS; Android Unit 122819737642 and Build/Lint/Instrumentation Compile 122819737905 failed on the old test API; Required Gate 122824303535 failed. Corrected #138 exact-head compile and API 26/35 campaign have not run.
+ARTIFACT_IDS: 12816715437 (PR #138 focused provider-unit JUnit evidence, run 40685979096); 12816109577 (PR #138 API 26 focused evidence with pre-correction Compose compile failure, run 40685979096).
 SECURITY_IMPACT: Keeps Cloud egress disabled for Google lineage; rejection occurs before any Chat/Usage dispatch; actual session reads use the Fake-only provider session API. No credential, real Google account, network, cloud, or model request is used.
 DEPENDENCIES: Parent composition is integrated in the PR #138 candidate: it checks the live destination, consumes one-use local handoff proof, preserves lineage, and prefills Chat without sending. Exact-head instrumentation compile and API 26/35 functional acceptance remain pending; Agent B's local-model proof mapping is a separate integration decision.
 KNOWN_ISSUES:
-  - Full source compilation and tests remain unverified because the environment has no installed Gradle and the wrapper distribution host rejected the connection. A-CI-02 must be verified by an exact-head Android test compile and focused API 26/35 campaign.
+  - Source review is complete: Agent C ACCEPTED A-CI-02 source commit 00fedba. Parent composition and live Chat routing are in the PR #138 candidate.
   - The A-CI-02 corrected instrumentation source has not yet compiled on an exact updated integration head; local Gradle 8.14.6 download is unavailable.
 CURRENT_BLOCKERS: Local Gradle distribution unavailable; no Android UI runtime in this worktree; corrected exact-head compile and integrated API 26/35 campaign pending. Parent-owned `GoogleTrustedHandoffShellTest` API correction and exact-40 run remain pending.
 INTEGRATION_READY: NO — source review is accepted and parent composition is in the candidate, but corrected Android test compilation and focused API 26/35 execution remain pending.

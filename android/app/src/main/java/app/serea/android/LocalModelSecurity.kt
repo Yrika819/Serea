@@ -136,7 +136,7 @@ internal class LocalModelAuthorizationRegistry(
             require(providerHandoff == null)
         }
         val now = clock()
-        pending.entries.removeAll { it.value.expiresAtMillis < now }
+        pending.entries.removeAll { it.value.expiresAtMillis <= now }
         check(pending.size < MAX_PENDING_CONSENTS) { "Too many pending local-model consent proofs." }
         val proof = LocalModelConsentProof.issue(
             id = UUID.randomUUID().toString(), request = request, selectedModelId = selectedModelId,
@@ -153,35 +153,45 @@ internal class LocalModelAuthorizationRegistry(
 
     override suspend fun consumeOnce(proof: LocalModelConsentProof, contract: EgressContract): Boolean {
         val issued = pending.remove(proof.id) ?: return false
-        val now = clock()
-        val currentBinding = try {
+        val initialBinding = try {
             currentConversation?.currentBinding() ?: return false
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             return false
         }
-        if (currentBinding.conversationId != contract.conversationId ||
-            currentBinding.conversationId != proof.conversationId ||
-            currentBinding.generation != proof.conversationGeneration) return false
+        if (initialBinding.conversationId != contract.conversationId ||
+            initialBinding.conversationId != proof.conversationId ||
+            initialBinding.generation != proof.conversationGeneration) return false
         val handoff = proof.providerHandoff
-        if (handoff != null && (currentBinding.conversationId != handoff.destinationConversationId ||
-                currentBinding.generation != handoff.destinationConversationGeneration)) return false
+        if (handoff != null && (initialBinding.conversationId != handoff.destinationConversationId ||
+                initialBinding.generation != handoff.destinationConversationGeneration)) return false
         val currentHandoff = try {
             proof.providerHandoff?.let { evidence ->
-                handoffValidator.isCurrent(evidence, currentBinding)
+                handoffValidator.isCurrent(evidence, initialBinding)
             } ?: true
         } catch (cancelled: CancellationException) {
             throw cancelled // proof was already removed, so cancellation cannot leave it reusable
         } catch (_: Exception) {
             false
         }
-        return issued === proof && currentHandoff && now in proof.approvedAtMillis..proof.expiresAtMillis &&
+        val finalBinding = try {
+            currentConversation?.currentBinding() ?: return false
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return false
+        }
+        // Binding and clock are sampled again after the suspending handoff validator. A tab
+        // switch or elapsed TTL during that call invalidates this one-use proof.
+        val now = clock()
+        return issued === proof && currentHandoff && finalBinding == initialBinding &&
+            now >= proof.approvedAtMillis && now < proof.expiresAtMillis &&
             proof.conversationId == contract.conversationId && proof.sendId == contract.currentMessageId &&
             proof.selectedModelId == contract.selectedModelId &&
             proof.payloadSha256 == localModelPayloadSha256(contract.plannedBody, contract.context) &&
             proof.sourceLineage == contract.plannedBodySourceLineage &&
-            (proof.providerHandoff == null || proof.providerHandoff.expiresAtMillis >= now)
+            (proof.providerHandoff == null || proof.providerHandoff.expiresAtMillis > now)
     }
 
     private companion object { const val MAX_PENDING_CONSENTS = 16 }

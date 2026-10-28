@@ -36,7 +36,7 @@ data class LocalModelArtifact(
 internal interface LocalModelInferenceBackend : AutoCloseable {
     suspend fun load(modelPath: String, limits: LocalModelRuntimeLimits)
     suspend fun generate(prompt: String, maxOutputTokens: Int): LocalModelInferenceResult
-    /** Thread-safe while generate is active; cancels that request without freeing model state. */
+    /** Thread-safe while load or generate is active; cancels work without freeing model state. */
     fun cancelActive()
     /** Called by the adapter only after active generation has unwound under its lifecycle lock. */
     override fun close()
@@ -88,6 +88,7 @@ internal class LocalModelChatAdapter(
     private val maxPromptChars: Int = 16_384,
 ) : ModelChatPort, AutoCloseable {
     private val mutex = Mutex()
+    private val lifecycleLock = Any()
     private val closed = AtomicBoolean(false)
     @Volatile private var backend: LocalModelInferenceBackend? = null
     private var loaded = false
@@ -98,7 +99,7 @@ internal class LocalModelChatAdapter(
     }
 
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
-        check(!closed.get()) { "Local model is closed." }
+        if (closed.get()) throw PreDispatchModelChatFailure("Local model is closed.")
         val contract = request.egressContract
             ?: throw PreDispatchModelChatFailure("A typed local-model consent contract is required.")
         if (contract.target != EgressTarget.LOCAL_MODEL ||
@@ -114,57 +115,107 @@ internal class LocalModelChatAdapter(
         if (prompt.length.toLong() > promptCharLimit || request.timeoutMillis !in 1..60_000) {
             throw PreDispatchModelChatFailure("The local model request exceeds its bounded limits.")
         }
-        return mutex.withLock {
-            var activeBackend: LocalModelInferenceBackend? = null
-            try {
-                withTimeout(request.timeoutMillis) {
-                    check(!closed.get()) { "Local model is closed." }
-                    if (!loaded) {
-                        verifyModelFile()
-                        activeBackend = backend ?: backendFactory.create().also { backend = it }
-                        activeBackend!!.load(modelFile.canonicalPath, runtimeLimits)
-                        loaded = true
+        var generationStarted = false
+        try {
+            return mutex.withLock {
+                var activeBackend: LocalModelInferenceBackend? = null
+                try {
+                    withTimeout(request.timeoutMillis) {
+                        if (closed.get()) throw PreDispatchModelChatFailure("Local model is closed.")
+                        if (!loaded) {
+                            verifyModelFile()
+                            activeBackend = backend
+                            if (activeBackend == null) {
+                                val created = backendFactory.create()
+                                val published = synchronized(lifecycleLock) {
+                                    if (closed.get()) false else {
+                                        backend = created
+                                        true
+                                    }
+                                }
+                                if (!published) {
+                                    runCatching { created.close() }
+                                    throw PreDispatchModelChatFailure("Local model was closed before runtime load.")
+                                }
+                                activeBackend = created
+                            }
+                            val loadMayStart = synchronized(lifecycleLock) { !closed.get() }
+                            if (!loadMayStart) throw PreDispatchModelChatFailure("Local model was closed before runtime load.")
+                            activeBackend!!.load(modelFile.canonicalPath, runtimeLimits)
+                            if (closed.get()) throw PreDispatchModelChatFailure("Local model was closed during runtime load.")
+                            loaded = true
+                        }
+                        activeBackend = backend
+                            ?: throw PreDispatchModelChatFailure("Local model backend is unavailable.")
+                        val generationMayStart = synchronized(lifecycleLock) {
+                            if (closed.get()) false else {
+                                // This is the lifecycle linearization point: close() takes the same
+                                // lock, so whichever wins determines whether native dispatch began.
+                                generationStarted = true
+                                true
+                            }
+                        }
+                        if (!generationMayStart) throw PreDispatchModelChatFailure("Local model was closed before generation.")
+                        val generated = activeBackend!!.generate(prompt, runtimeLimits.maxOutputTokens)
+                        if (closed.get()) throw CancellationException("Local model closed during inference.")
+                        if (generated.text.isBlank() || generated.text.length > runtimeLimits.maxOutputTokens * 64) {
+                            throw ModelChatFailure("The local model returned an invalid response.")
+                        }
+                        if (listOfNotNull(generated.inputTokens, generated.outputTokens).any { it < 0 || it > 1_000_000 }) {
+                            throw ModelChatFailure("The local model returned invalid usage data.")
+                        }
+                        ModelChatResponse(
+                            text = generated.text,
+                            usage = ProviderUsage(generated.inputTokens, generated.outputTokens),
+                        )
                     }
-                    activeBackend = backend ?: throw ModelChatFailure("Local model backend is unavailable.")
-                    if (closed.get()) throw CancellationException("Local model closed before generation.")
-                    val generated = activeBackend!!.generate(prompt, runtimeLimits.maxOutputTokens)
-                    if (closed.get()) throw CancellationException("Local model closed during inference.")
-                    if (generated.text.isBlank() || generated.text.length > runtimeLimits.maxOutputTokens * 64) {
-                        throw ModelChatFailure("The local model returned an invalid response.")
+                } catch (cancelled: CancellationException) {
+                    runCatching { activeBackend?.cancelActive() }
+                    releaseBackendLocked()
+                    if (!generationStarted) {
+                        throw PreDispatchModelChatFailure("Local model work was cancelled before inference started.")
                     }
-                    if (listOfNotNull(generated.inputTokens, generated.outputTokens).any { it < 0 || it > 1_000_000 }) {
-                        throw ModelChatFailure("The local model returned invalid usage data.")
+                    throw cancelled
+                } catch (failure: ModelChatFailure) {
+                    releaseBackendLocked()
+                    if (!generationStarted && failure !is PreDispatchModelChatFailure) {
+                        throw PreDispatchModelChatFailure("Local model setup failed before inference started.")
                     }
-                    ModelChatResponse(
-                        text = generated.text,
-                        usage = ProviderUsage(generated.inputTokens, generated.outputTokens),
-                    )
+                    throw failure
+                } catch (failure: Exception) {
+                    releaseBackendLocked()
+                    if (!generationStarted) {
+                        throw PreDispatchModelChatFailure("Local model setup failed before inference started.")
+                    }
+                    throw ModelChatFailure("Local model inference failed: ${failure::class.simpleName ?: "native error"}.")
+                } catch (failure: LinkageError) {
+                    releaseBackendLocked()
+                    if (!generationStarted) {
+                        throw PreDispatchModelChatFailure("Local model runtime is unavailable before inference.")
+                    }
+                    throw ModelChatFailure("Local model runtime is unavailable for this device ABI.")
+                } finally {
+                    if (closed.get()) releaseBackendLocked()
                 }
-            } catch (cancelled: CancellationException) {
-                runCatching { activeBackend?.cancelActive() }
-                throw cancelled
-            } catch (failure: ModelChatFailure) {
-                if (failure !is PreDispatchModelChatFailure) releaseBackendLocked()
-                throw failure
-            } catch (failure: Exception) {
-                releaseBackendLocked()
-                throw ModelChatFailure("Local model inference failed: ${failure::class.simpleName ?: "native error"}.")
-            } catch (failure: LinkageError) {
-                releaseBackendLocked()
-                throw ModelChatFailure("Local model runtime is unavailable for this device ABI.")
-            } finally {
-                if (closed.get()) releaseBackendLocked()
             }
+        } catch (cancelled: CancellationException) {
+            // Cancellation while waiting for the adapter mutex happens before this request can
+            // enter native inference, so UsageControlledModelChatPort may safely release it.
+            if (!generationStarted) {
+                throw PreDispatchModelChatFailure("Local model work was cancelled before inference started.")
+            }
+            throw cancelled
         }
     }
 
     override fun close() {
-        if (closed.compareAndSet(false, true)) {
-            val runningBackend = backend
-            runCatching { runningBackend?.cancelActive() }
-            if (mutex.tryLock()) {
-                try { releaseBackendLocked() } finally { mutex.unlock() }
-            }
+        val runningBackend = synchronized(lifecycleLock) {
+            if (!closed.compareAndSet(false, true)) return
+            backend
+        }
+        runCatching { runningBackend?.cancelActive() }
+        if (mutex.tryLock()) {
+            try { releaseBackendLocked() } finally { mutex.unlock() }
         }
     }
 

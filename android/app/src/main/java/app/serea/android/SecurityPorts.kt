@@ -106,8 +106,8 @@ object ChatEgressGate {
                 consent.sourceLineage != contract.plannedBodySourceLineage.toSet()) {
                 return denied(EgressContractDecision.CONTENT_MISMATCH)
             }
-            if (consent.approvedAtMillis > nowMillis || nowMillis > consent.expiresAtMillis ||
-                consent.expiresAtMillis < consent.approvedAtMillis ||
+            if (consent.approvedAtMillis > nowMillis || nowMillis >= consent.expiresAtMillis ||
+                consent.expiresAtMillis <= consent.approvedAtMillis ||
                 consent.expiresAtMillis - consent.approvedAtMillis > 60_000L) {
                 return denied(EgressContractDecision.EXPIRED_INTENT)
             }

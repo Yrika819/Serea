@@ -1,13 +1,18 @@
 package app.serea.android
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 import java.security.MessageDigest
+import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class LocalModelChatAdapterTest {
     private val now = 1_800_000_000_000L
@@ -196,7 +201,7 @@ class LocalModelChatAdapterTest {
             val noBindingRegistry = LocalModelAuthorizationRegistry({ clock })
             val noBindingProof = noBindingRegistry.approve(missingBindingRequest, modelId)
             assertTrue(runCatching {
-                egressWith(noBindingRegistry, usage, clock).send(
+                egressWith(noBindingRegistry, usage, { clock }).send(
                     missingBindingRequest.copy(selectedModelId = modelId,
                         egressContract = localContract(missingBindingRequest, noBindingProof)),
                 )
@@ -297,6 +302,266 @@ class LocalModelChatAdapterTest {
         } finally { adapter.close(); file.delete() }
     }
 
+    @Test fun knownPreInferenceFailuresReleaseUsageAndDoNotReachNativeGeneration() = runBlocking {
+        val file = tempModel(byteArrayOf(2, 3, 5, 7))
+        try {
+            val factoryDao = CountingUsageDao()
+            val factoryRegistry = registry { now }
+            val factoryAdapter = LocalModelChatAdapter(
+                artifact(file), file,
+                LocalModelInferenceBackendFactory { error("synthetic backend factory failure") },
+                deviceAbi = "x86_64",
+            )
+            val factoryRequest = request("factory fails", sendId = "send-factory-failure")
+            assertTrue(runCatching {
+                sendWithConsent(composed(factoryAdapter, factoryRegistry, factoryDao) { now }, factoryRegistry, factoryRequest)
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals(1, factoryDao.insertedReservationCount)
+            assertEquals(0, factoryDao.reservationCount)
+
+            val loadDao = CountingUsageDao()
+            val loadRegistry = registry { now }
+            val brokenBackend = FakeBackend(failLoad = true)
+            val loadAdapter = createAdapter(artifact(file), file, brokenBackend)
+            val loadRequest = request("load fails", sendId = "send-load-failure")
+            assertTrue(runCatching {
+                sendWithConsent(composed(loadAdapter, loadRegistry, loadDao) { now }, loadRegistry, loadRequest)
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals(1, loadDao.insertedReservationCount)
+            assertEquals(0, loadDao.reservationCount)
+            assertEquals(0, brokenBackend.generateCalls)
+            assertTrue(brokenBackend.closed)
+
+            val closedDao = CountingUsageDao()
+            val closedRegistry = registry { now }
+            val closedBackend = FakeBackend()
+            val closedAdapter = createAdapter(artifact(file), file, closedBackend)
+            closedAdapter.close()
+            val closedRequest = request("already closed", sendId = "send-closed")
+            assertTrue(runCatching {
+                sendWithConsent(composed(closedAdapter, closedRegistry, closedDao) { now }, closedRegistry, closedRequest)
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals(1, closedDao.insertedReservationCount)
+            assertEquals(0, closedDao.reservationCount)
+            assertEquals(0, closedBackend.generateCalls)
+        } finally { file.delete() }
+    }
+
+    @Test fun preGenerationCancellationReleasesUsageReservation() = runBlocking {
+        val file = tempModel(byteArrayOf(3, 1, 4, 1))
+        val backend = FakeBackend(blockLoad = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        val registry = registry { now }
+        val dao = CountingUsageDao()
+        try {
+            val request = request("cancel during model load", sendId = "send-cancel-load")
+            val send = async {
+                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            }
+            backend.loadStarted.await()
+            send.cancelAndJoin()
+            assertTrue(send.isCancelled)
+            assertEquals(1, dao.insertedReservationCount)
+            assertTrue(backend.cancelled)
+            assertTrue(backend.closed)
+            assertEquals(0, backend.generateCalls)
+            assertEquals("A pre-inference cancellation must release its reservation", 0, dao.reservationCount)
+            assertEquals(0, dao.unknownCount)
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun closeDuringLoadCancelsLoadAndEventuallyReleasesBackend() = runBlocking {
+        val file = tempModel(byteArrayOf(1, 6, 1, 8))
+        val backend = FakeBackend(blockLoad = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        val registry = registry { now }
+        val dao = CountingUsageDao()
+        try {
+            val request = request("close during model load", sendId = "send-close-load")
+            val send = async {
+                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            }
+            backend.loadStarted.await()
+            adapter.close()
+            assertTrue(runCatching { send.await() }.isFailure)
+            assertEquals(1, dao.insertedReservationCount)
+            assertTrue(backend.cancelled)
+            assertTrue(backend.closed)
+            assertEquals(0, backend.generateCalls)
+            assertEquals(0, dao.reservationCount)
+            assertEquals(0, dao.unknownCount)
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun closeBeforeBackendPublicationPreventsLoadAndClosesLateFactoryResult() = runBlocking {
+        val file = tempModel(byteArrayOf(5, 3, 5, 8))
+        val backend = FakeBackend()
+        val factoryEntered = CompletableDeferred<Unit>()
+        val releaseFactory = CountDownLatch(1)
+        val adapter = LocalModelChatAdapter(
+            artifact(file), file,
+            LocalModelInferenceBackendFactory {
+                factoryEntered.complete(Unit)
+                check(releaseFactory.await(5, TimeUnit.SECONDS))
+                backend
+            },
+            deviceAbi = "x86_64",
+        )
+        val registry = registry { now }
+        val dao = CountingUsageDao()
+        try {
+            val request = request("close while factory creates backend", sendId = "send-close-factory")
+            val send = async(Dispatchers.Default) {
+                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            }
+            withTimeout(5_000) { factoryEntered.await() }
+            adapter.close()
+            releaseFactory.countDown()
+            assertTrue(runCatching { send.await() }.isFailure)
+            assertEquals(0, backend.loadCalls)
+            assertEquals(0, backend.generateCalls)
+            assertTrue(backend.closed)
+            assertEquals(1, dao.insertedReservationCount)
+            assertEquals(0, dao.reservationCount)
+            assertEquals(0, dao.unknownCount)
+        } finally {
+            releaseFactory.countDown()
+            adapter.close()
+            file.delete()
+        }
+    }
+
+    @Test fun generationFailureAfterNativeDispatchRemainsOutcomeUnknown() = runBlocking {
+        val file = tempModel(byteArrayOf(2, 7, 1, 8))
+        val backend = FakeBackend(failGeneration = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        val registry = registry { now }
+        val dao = CountingUsageDao()
+        try {
+            val request = request("native generation fails", sendId = "send-generation-unknown")
+            assertTrue(runCatching {
+                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            }.isFailure)
+            assertEquals(1, dao.insertedReservationCount)
+            assertEquals(1, backend.generateCalls)
+            assertEquals(1, dao.unknownCount)
+            assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.reservationState(request.sendId))
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun handoffValidationRechecksBindingAndClockAfterSuspension() = runBlocking {
+        val file = tempModel(byteArrayOf(4, 2, 4, 2))
+        val backend = FakeBackend()
+        val adapter = createAdapter(artifact(file), file, backend)
+        var clock = now
+        var generation = 7L
+        val validationStarted = CompletableDeferred<Unit>()
+        val finishValidation = CompletableDeferred<Unit>()
+        val registry = LocalModelAuthorizationRegistry(
+            { clock },
+            handoffValidator = LocalModelProviderHandoffValidator { _, _ ->
+                validationStarted.complete(Unit)
+                finishValidation.await()
+                true
+            },
+            currentConversation = LocalModelCurrentConversationPort {
+                LocalModelConversationBinding("conversation-1", generation)
+            },
+        )
+        val dao = CountingUsageDao()
+        try {
+            val request = request("approved provider text", sendId = "send-stale-handoff", origin = DataOrigin.GMAIL)
+            val evidence = fakeHandoff(request, expiresAt = now + 30_000, conversationGeneration = 7)
+            val proof = registry.approve(request, modelId, evidence, conversationGeneration = 7)
+            val egress = composed(adapter, registry, dao) { clock }
+            val sending = async {
+                egress.send(request.copy(selectedModelId = modelId, egressContract = localContract(request, proof, DataOrigin.GMAIL)))
+            }
+            validationStarted.await()
+            generation = 8
+            clock = proof.expiresAtMillis + 1
+            finishValidation.complete(Unit)
+            assertTrue(runCatching { sending.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals(0, dao.reservationCount)
+            assertEquals(0, dao.insertedReservationCount)
+            assertEquals(0, backend.generateCalls)
+        } finally { finishValidation.complete(Unit); adapter.close(); file.delete() }
+    }
+
+    @Test fun localModelConsentExpiresAtExactDeadline() = runBlocking {
+        val file = tempModel(byteArrayOf(6, 2, 6, 4))
+        val backend = FakeBackend()
+        val adapter = createAdapter(artifact(file), file, backend)
+        var clock = now
+        val registry = LocalModelAuthorizationRegistry(
+            { clock }, maxLifetimeMillis = 10,
+            currentConversation = LocalModelCurrentConversationPort {
+                LocalModelConversationBinding("conversation-1", 0)
+            },
+        )
+        val dao = CountingUsageDao()
+        try {
+            val request = request("deadline", sendId = "send-exact-deadline")
+            val proof = registry.approve(request, modelId)
+            clock = proof.expiresAtMillis
+            val egress = composed(adapter, registry, dao) { clock }
+            assertTrue(runCatching {
+                egress.send(request.copy(selectedModelId = modelId, egressContract = localContract(request, proof)))
+            }.isFailure)
+            assertEquals(0, dao.reservationCount)
+            assertEquals(0, dao.insertedReservationCount)
+            assertEquals(0, backend.generateCalls)
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun routedEgressUsageAndLocalAdapterComposeWithTestOnlyDescriptor() = runBlocking {
+        val file = tempModel(byteArrayOf(1, 6, 1, 8, 0))
+        val backend = FakeBackend()
+        val adapter = createAdapter(artifact(file), file, backend)
+        val clockInstant = Instant.parse("2026-10-28T00:00:00Z")
+        val catalog = FakeModelCatalog(
+            entries = listOf(ModelDescriptor(
+                id = modelId, providerId = "local-device", displayName = "Fake local model test fixture",
+                contextWindow = Knowledge.Known(2_048), maxOutput = Knowledge.Known(512),
+                capabilities = ModelCapabilities(input = setOf("text/plain")),
+                availability = ModelAvailability.AVAILABLE, authorized = true,
+                lastVerifiedAt = clockInstant.toString(), source = "test fixture only",
+                verificationStatus = ModelVerificationStatus.TEST_FIXTURE,
+            )),
+            clock = { clockInstant },
+        )
+        val registry = registry { now }
+        val dao = CountingUsageDao()
+        val usage = UsageControlledModelChatPort(
+            adapter, UsageRepository(dao) { now },
+            attributionResolver = LocalModelUsageAttributionResolver(artifact(file)),
+        )
+        val egress = EgressCheckedModelChatPort(usage, { now }, EgressTarget.LOCAL_MODEL, registry, { now })
+        val routed = RoutedModelChatPort(
+            delegate = egress,
+            router = AdaptiveModelRouter(catalog),
+            contractFactory = { original, selected ->
+                val proof = registry.approve(original, selected.id)
+                localContract(original, proof)
+            },
+            policy = {
+                ModelRoutingPolicy(
+                    mode = ModelSelectionMode.MANUAL, manualModelId = modelId,
+                    allowedProviderIds = setOf("local-device"),
+                )
+            },
+        )
+        try {
+            val request = request("router test", sendId = "send-router")
+            val response = routed.send(request)
+            assertEquals("local answer", response.text)
+            assertEquals(1, backend.generateCalls)
+            assertEquals(1, dao.insertedReservationCount)
+            assertEquals(1, dao.reservationCount)
+            assertEquals(UsageLedgerState.COMPLETED.name, dao.reservationState(request.sendId))
+        } finally { adapter.close(); file.delete() }
+    }
+
     private fun gated(adapter: ModelChatPort, registry: LocalModelAuthorizationRegistry, request: ModelChatRequest) =
         egressWith(registry, adapter, { now }).let { egress ->
             val proof = registry.approve(request, modelId)
@@ -309,6 +574,55 @@ class LocalModelChatAdapterTest {
 
     private fun egressWith(registry: LocalModelAuthorizationRegistry, delegate: ModelChatPort, clock: () -> Long) =
         EgressCheckedModelChatPort(delegate, clock, EgressTarget.LOCAL_MODEL, registry, clock)
+
+    private fun composed(
+        adapter: ModelChatPort,
+        registry: LocalModelAuthorizationRegistry,
+        dao: CountingUsageDao,
+        clock: () -> Long,
+    ): EgressCheckedModelChatPort {
+        val usage = UsageControlledModelChatPort(
+            adapter, UsageRepository(dao, clock),
+            attributionResolver = LocalModelUsageAttributionResolver(artifactForResolver),
+        )
+        return EgressCheckedModelChatPort(usage, clock, EgressTarget.LOCAL_MODEL, registry, clock)
+    }
+
+    private val artifactForResolver: LocalModelArtifact by lazy {
+        // The resolver uses identity only; the hash and size are verified by the adapter itself.
+        LocalModelArtifact(
+            modelId = modelId, displayName = "Test local model", modelRepository = "https://huggingface.co/test/model",
+            modelRevision = "1076b85d135017971845b19b8d07df1479155988", licenseId = "Apache-2.0",
+            expectedSha256 = "0".repeat(64), expectedSizeBytes = 1, runtimeName = "test-runtime",
+            runtimeRevision = "2763785", supportedAbis = setOf("x86_64"),
+        )
+    }
+
+    private suspend fun sendWithConsent(
+        egress: ModelChatPort,
+        registry: LocalModelAuthorizationRegistry,
+        request: ModelChatRequest,
+        origin: DataOrigin = request.bodySourceLineage.single(),
+    ): ModelChatResponse {
+        val proof = registry.approve(request, modelId)
+        return egress.send(request.copy(
+            selectedModelId = modelId,
+            egressContract = localContract(request, proof, origin),
+        ))
+    }
+
+    private fun fakeHandoff(request: ModelChatRequest, expiresAt: Long, conversationGeneration: Long) = FakeHandoff(
+        handoffId = "handoff-${request.sendId}", origin = request.bodySourceLineage.single(),
+        serviceType = request.bodySourceLineage.single().name,
+        syntheticAccountIdentifier = "synthetic-account-1", sessionIdentifier = "session-1",
+        sessionGeneration = 3, scope = "gmail.readonly", sourceItemIdentifier = "message-1",
+        sourceRevision = "rev-1", contentIdentitySha256 = "sha256:${sha256Utf8("raw source")}",
+        selectedContent = "raw source", approvedChatBodySha256 = sha256Utf8(request.message),
+        expiresAtMillis = expiresAt, authorizationState = "MOCK_ONLY", selectionState = "SELECTED",
+        consentState = "LOCAL_PROCESSING_ONLY", destination = "LOCAL_CHAT",
+        destinationConversationId = request.conversationId,
+        destinationConversationGeneration = conversationGeneration,
+    )
 
     private fun registry(clock: () -> Long) = LocalModelAuthorizationRegistry(
         clock,
@@ -390,6 +704,7 @@ class LocalModelChatAdapterTest {
         private val blockGeneration: Boolean = false,
         private val failGeneration: Boolean = false,
         private val failLoad: Boolean = false,
+        private val blockLoad: Boolean = false,
     ) : LocalModelInferenceBackend {
         var loaded = false
         var closed = false
@@ -399,9 +714,13 @@ class LocalModelChatAdapterTest {
         var lastPrompt: String? = null
         val generationStarted = CompletableDeferred<Unit>()
         private val releaseGeneration = CompletableDeferred<Unit>()
+        val loadStarted = CompletableDeferred<Unit>()
+        private val releaseLoad = CompletableDeferred<Unit>()
 
         override suspend fun load(modelPath: String, limits: LocalModelRuntimeLimits) {
             loadCalls++
+            loadStarted.complete(Unit)
+            if (blockLoad) releaseLoad.await()
             if (failLoad) error("synthetic native load failure")
             loaded = true
         }
@@ -413,7 +732,11 @@ class LocalModelChatAdapterTest {
             if (failGeneration) error("synthetic native inference failure")
             return LocalModelInferenceResult("local answer", 4, 2)
         }
-        override fun cancelActive() { cancelled = true; releaseGeneration.complete(Unit) }
+        override fun cancelActive() {
+            cancelled = true
+            releaseGeneration.complete(Unit)
+            releaseLoad.complete(Unit)
+        }
         override fun close() { closed = true }
     }
 
@@ -422,12 +745,20 @@ class LocalModelChatAdapterTest {
         private val reservations = mutableMapOf<String, UsageReservationRow>()
         private var savedSettings: UsageSettingsRow? = null
         private val ledgers = mutableMapOf<String, ModelUsageLedgerRow>()
+        var insertedReservationCount = 0
+            private set
         val reservationCount get() = reservations.size
+        val unknownCount get() = reservations.values.count { it.state == UsageLedgerState.OUTCOME_UNKNOWN.name }
+        fun reservationState(id: String) = reservations[id]?.state
 
         override suspend fun window(key: String) = windows[key]
         override suspend fun putWindow(row: UsageWindowRow) { windows[row.windowKey] = row }
         override suspend fun reservation(id: String) = reservations[id]
-        override suspend fun insertReservation(row: UsageReservationRow) { check(row.requestId !in reservations); reservations[row.requestId] = row }
+        override suspend fun insertReservation(row: UsageReservationRow) {
+            check(row.requestId !in reservations)
+            insertedReservationCount++
+            reservations[row.requestId] = row
+        }
         override suspend fun putReservation(row: UsageReservationRow) { reservations[row.requestId] = row }
         override suspend fun deleteInFlightReservation(id: String): Int {
             if (reservations[id]?.state != UsageLedgerState.IN_FLIGHT.name) return 0

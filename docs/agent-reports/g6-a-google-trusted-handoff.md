@@ -7,8 +7,8 @@ AGENT_ID: A — Google Trusted Handoff
 ACTIVE_PHASE: G6-A implementation and focused verification
 GOAL_STATUS: PARTIAL — Fake provider contract, both screen previews, binding-race checks, and hostile tests are implemented; Gradle/JUnit and Android UI verification unavailable in this environment
 BASE_SHA: b84feb337cd57918346ab31cb3ea4af4ba880ffb
-CURRENT_HEAD: f6b355eac634031b3e9960570f0b67b8975b508c (implementation source; checkpoint follow-up is docs-only)
-TREE_SHA: 5109822c52959459de658f5211a2dcba0f218cbb
+CURRENT_HEAD: 256aae4c6a71261dd21f43cda6597ab40857b932 (implementation plus A-INT-01 focused test registration; checkpoint is docs-only)
+TREE_SHA: 21f01baae56d3a4220c9ffbf7039fa3966dd16e8
 WORKTREE: /workspace/Serea-g6-agent-a
 BRANCH: codex/serea-g6-google-trusted-handoff
 DRAFT_PR: none
@@ -24,6 +24,7 @@ COMPLETED_WORK:
   - Added a source-lineage preserving Chat prefill text helper. Handoff confirmation does not send a model request.
   - Added Gmail and Calendar detail actions and a Japanese preview dialog naming selected content, source, purpose, local destination, cancel and local-only confirm.
   - Preview state uses Compose remember only; it is not saved across recreation or process death.
+  - Addressed review issue A-INT-01: restored Formal Additional to its original two identities, kept all four handoff UI identities in the non-required identity asset, and added their exact filter/required assertions to the independent focused UI campaign (33 → 37 expected tests). Formal Required remains 105 total (103 required + 2 additional).
 CHANGED_FILES:
   - android/app/src/main/java/app/serea/android/handoff/GoogleTrustedHandoff.kt
   - android/app/src/main/java/app/serea/android/handoff/GoogleHandoffPreviewDialog.kt
@@ -33,13 +34,19 @@ CHANGED_FILES:
   - android/app/src/androidTest/java/app/serea/android/GoogleTrustedHandoffUiTest.kt
   - android/app/src/androidTest/assets/serea-non-required-test-identities.txt
   - tools/android-instrumentation-additional-tests.txt
+  - tools/run_android_functional_focused.sh
   - docs/agent-reports/g6-a-google-trusted-handoff.md
 TEST_COMMANDS:
-  - `cd android && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest --tests app.serea.android.handoff.GoogleTrustedHandoffTest --no-daemon` — attempted on CURRENT_HEAD; Gradle wrapper distribution download failed (`services.gradle.org` connection refused)
+  - `cd android && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest --tests app.serea.android.handoff.GoogleTrustedHandoffTest --no-daemon` — attempted on implementation HEAD f6b355e; Gradle wrapper distribution download failed (`services.gradle.org` connection refused)
   - `cd android && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:connectedDebugAndroidTest --no-daemon` — NOT_RUN; wrapper unavailable and no Android runtime attached
-  - `git diff --check` — PASS
+  - `bash -n tools/run_android_functional_focused.sh` — PASS
+  - Focused campaign static assertion — PASS: all four exact handoff UI identities are filtered and required; verifier exact/minimum count is 37.
+  - Formal Required invariants — PASS: additional manifest contains exactly the original two identities; required manifest has 103 identities; `run_android_instrumentation_campaign.sh` remains pinned to 105 / 103 / 2; required-manifest and formal-runner diff is empty.
+  - `git diff --check` — PASS (A-INT-01 follow-up)
   - `python3 tools/validate_docs.py docs` — PASS (192 Markdown files scanned)
-JUNIT_RESULT: NOT_RUN — Gradle 8.14.6 could not be downloaded; no test PASS is claimed. Prepared 18 focused JVM tests and 4 additional Android UI tests.
+  - Android API 26 focused UI campaign — NOT_RUN: no emulator executable or connected Android device is available in this environment.
+  - Android API 35 focused UI campaign — NOT_RUN: no emulator executable or connected Android device is available in this environment.
+JUNIT_RESULT: NOT_RUN — Gradle 8.14.6 could not be downloaded (`services.gradle.org` connection refused), and no Android runtime is available. No test PASS is claimed. Prepared 18 focused JVM tests and 4 focused Android UI tests.
 CI_RUN_IDS: none
 ARTIFACT_IDS: none
 SECURITY_IMPACT: Keeps Cloud egress disabled for Google lineage; rejection occurs before any Chat/Usage dispatch; actual session reads use the Fake-only provider session API. No credential, real Google account, network, cloud, or model request is used.

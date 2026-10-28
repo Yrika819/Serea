@@ -91,7 +91,6 @@ class SereaAppShellTest {
         val editorPackage: String,
         val inputType: Int,
         val fieldId: Int,
-        val fieldName: String,
     )
 
     private fun imeSnapshot(): Bundle {
@@ -124,7 +123,6 @@ class SereaAppShellTest {
                     requireNotNull(state.getString("editorPackage")),
                     state.getInt("inputType"),
                     state.getInt("fieldId"),
-                    requireNotNull(state.getString("fieldName")),
                 )
                 true
             } else false
@@ -141,6 +139,29 @@ class SereaAppShellTest {
     }
 
     private fun statefulImeEvents(): List<String> = imeSnapshot().getStringArrayList("events").orEmpty().toList()
+
+    /** Read the currently Android-bound Test IME session immediately before an operation. */
+    private fun currentTestImeSession(): TestImeSession {
+        val state = imeSnapshot()
+        assertTrue("Test IME service is not currently bound", state.getBoolean("serviceBound"))
+        assertTrue("Test IME has no current Android InputConnection", state.getBoolean("connectionBound"))
+        val session = TestImeSession(
+            service = requireNotNull(state.getString("serviceIdentity")),
+            connection = requireNotNull(state.getString("connectionIdentity")),
+            generation = state.getLong("session"),
+            editorPackage = requireNotNull(state.getString("editorPackage")),
+            inputType = state.getInt("inputType"),
+            fieldId = state.getInt("fieldId"),
+        )
+        assertTrue("Test IME service identity is unexpected: $session",
+            session.service.startsWith("app.serea.android.diagnostics.RealImeService@"))
+        assertTrue("Test IME must expose a positive input session: $session", session.generation > 0)
+        assertTrue("Test IME must expose a live system InputConnection: $session", session.connection != "null")
+        assertEquals("Test IME must remain bound to isolated Chat", ISOLATED_PACKAGE, session.editorPackage)
+        assertTrue("EditorInfo must describe a text field: $session",
+            session.inputType != android.text.InputType.TYPE_NULL)
+        return session
+    }
 
     private fun tapComposerThroughSystemInput() {
         val bounds = compose.onNodeWithTag("chat-composer").fetchSemanticsNode().boundsInWindow
@@ -232,13 +253,23 @@ class SereaAppShellTest {
 
     private fun imeOperation(
         method: String,
-        session: TestImeSession,
+        baselineSession: TestImeSession,
         text: String? = null,
         selectionStart: Int? = null,
         selectionEnd: Int? = null,
     ): Boolean {
+        // A previous InputConnection may have been replaced by Android. Bind every operation
+        // to a fresh IME-owned identity, then require the provider to report that exact identity
+        // at invocation time. This reads no Chat/ViewModel/Semantics state.
+        val session = currentTestImeSession()
+        assertEquals("The baseline session must describe the same isolated editor.",
+            ISOLATED_PACKAGE, baselineSession.editorPackage)
         val args = Bundle().apply {
             putString("expectedEditorPackage", session.editorPackage)
+            putString("expectedService", session.service)
+            putLong("expectedSession", session.generation)
+            putString("expectedConnection", session.connection)
+            putInt("expectedInputType", session.inputType)
             if (text != null) {
                 putString("text", text)
                 putInt("cursor", 1)
@@ -259,19 +290,35 @@ class SereaAppShellTest {
             client.release()
         }
         val accepted = result.getBoolean("accepted")
+        val invoked = result.getBoolean("operationInvoked")
+        val reason = result.getString("operationReason")
+        val expectedService = result.getString("operationExpectedService")
+        val expectedSession = result.getLong("operationExpectedSession")
+        val expectedConnection = result.getString("operationExpectedConnection")
+        val expectedInputType = result.getInt("operationExpectedInputType", android.text.InputType.TYPE_NULL)
         val operationSession = result.getLong("operationSession")
         val operationConnection = requireNotNull(result.getString("operationConnection"))
+        val operationService = requireNotNull(result.getString("operationService"))
         val operationEditorPackage = requireNotNull(result.getString("operationEditorPackage"))
         val operationInputType = result.getInt("operationInputType")
+        assertTrue("Test IME must invoke the Android-managed connection for $method: $result", invoked)
+        assertEquals("Test IME must accept $method", "INVOKED_ACCEPTED", reason)
         assertTrue("IME operation must use a live system InputConnection.", operationConnection != "null")
+        assertEquals("IME operation must use the current service", session.service, expectedService)
+        assertEquals("IME operation must use the current session", session.generation, expectedSession)
+        assertEquals("IME operation must use the current connection", session.connection, expectedConnection)
+        assertEquals("IME operation must use the current input type", session.inputType, expectedInputType)
+        assertEquals("IME operation must invoke the current service", session.service, operationService)
+        assertEquals("IME operation must invoke the current InputConnection", session.connection, operationConnection)
+        assertEquals("IME operation must invoke the current session", session.generation, operationSession)
         assertEquals("IME operation must target the isolated Chat editor.", session.editorPackage, operationEditorPackage)
-        assertTrue("IME operation must use an active text editor session.",
-            operationSession > 0 && operationInputType != android.text.InputType.TYPE_NULL)
+        assertEquals("IME operation must use the active editor input type", session.inputType, operationInputType)
         Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
             "REAL_IME_OPERATION uptimeNanos=${SystemClock.elapsedRealtimeNanos()} method=$method " +
-                "accepted=$accepted baselineService=${session.service} baselineSession=${session.generation} " +
-                "baselineConnection=${session.connection} " +
-                "service=${result.getString("operationService")} session=$operationSession " +
+                "invoked=$invoked accepted=$accepted reason=$reason " +
+                "baselineService=${baselineSession.service} baselineSession=${baselineSession.generation} " +
+                "baselineConnection=${baselineSession.connection} " +
+                "service=$operationService session=$operationSession " +
                 "connection=$operationConnection editorPackage=$operationEditorPackage " +
                 "inputType=$operationInputType fixture=$text")
         assertTrue("Android-managed Test IME rejected $method for active session $operationSession " +

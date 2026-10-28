@@ -1,0 +1,23 @@
+Exact local verification before evidence-only checkpoint commit
+Source HEAD: dd236abf75c26b8ba8f4c5db7c696b7b380a1548
+Source tree: 2ef2610a320cfdab8e3f3e74a6170430848b27a6
+
+JVM focused command:
+JAVA_HOME=/tmp/serea-g5-jdk17 PATH=/tmp/serea-g5-jdk17/bin:$PATH ./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests CloudEgressBodyLineageAttackMatrixTest --tests SecurityPortsTest --tests LocalFakeRoutingAdversarialTest --tests GoogleOriginEgressAdversarialTest --tests ChatViewModelTest --tests OllamaCloudAdapterTest
+Result: 81 tests, 0 failures, 0 errors, 0 skips (9 + 10 + 3 + 1 + 36 + 22).
+
+Build command additionally included:
+:app:processDebugMainManifest :app:processIsolatedMainManifest :app:processBetaMainManifest
+:app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug
+Result: BUILD SUCCESSFUL; isolated AndroidTest Kotlin compilation passed.
+
+Manifest scope verifier: MANIFEST_SCOPE_PASS. AVD guard regression tests: PASS. Real IME workflow YAML parse: PASS.
+All three APKs used signer certificate SHA-256:
+36c5b853ac2bf2a5fde88f6d93fb6a2aeb6a8888e725c06bcd45dba65924d8d8
+
+Local APK SHA-256 (build outputs are not uploaded here):
+app-isolated.apk eb8461ff75dbcfed14c8f8c3d2dd0a71e9c04f83887e4416ef10daee245dfffc
+app-isolated-androidTest.apk 05d0d5eaab971fa20cd02be8d6038eaac1564bc647a07d9bdf37d7886559681b
+r25-ime-test-debug.apk 8a182f9ac81e7b8d20e1b2349cec5ecda06cd0aa55f859a9328031c68c824d0d
+
+Local runtime initially had Java 21 without javac. A temporary Temurin JDK 17.0.21 was downloaded to /tmp, verified against Adoptium API SHA-256 8b9b611d917e3dfd8419d3566b5949226f69b052fed7e109c1368add1dfe8711, and used only for this local run. No JDK files or APKs were added to the repository.

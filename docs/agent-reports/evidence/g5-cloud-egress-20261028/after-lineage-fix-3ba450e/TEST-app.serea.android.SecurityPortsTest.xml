@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.SecurityPortsTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-28T09:04:49.813Z" hostname="4c0fe241dfed" time="0.004">
+  <properties/>
+  <testcase name="publicMayPassAndUnpreparedPersonalFailsClosed" classname="app.serea.android.SecurityPortsTest" time="0.0"/>
+  <testcase name="privateSecretCredentialAndUnknownNeverPass" classname="app.serea.android.SecurityPortsTest" time="0.001"/>
+  <testcase name="rejectedCloudRequestNeverReachesProvider" classname="app.serea.android.SecurityPortsTest" time="0.001"/>
+  <testcase name="typedEgressContractRequiresPublicClassificationOriginIntentAndFreshness" classname="app.serea.android.SecurityPortsTest" time="0.0"/>
+  <testcase name="preparationMarkerNeverReachesProvider" classname="app.serea.android.SecurityPortsTest" time="0.001"/>
+  <testcase name="sensitiveClassificationInPriorHistoryBlocksWholeRequest" classname="app.serea.android.SecurityPortsTest" time="0.0"/>
+  <testcase name="modelRoutingCannotChangeClassificationOrBypassEgressGate" classname="app.serea.android.SecurityPortsTest" time="0.001"/>
+  <testcase name="overLimitContextIsRejectedBeforeDelegate" classname="app.serea.android.SecurityPortsTest" time="0.0"/>
+  <testcase name="preparationMarkerCannotAuthorizePersonalData" classname="app.serea.android.SecurityPortsTest" time="0.0"/>
+  <testcase name="localDemoContractIsExplicitLocalOnlyAndNeedsNoCloudIntent" classname="app.serea.android.SecurityPortsTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

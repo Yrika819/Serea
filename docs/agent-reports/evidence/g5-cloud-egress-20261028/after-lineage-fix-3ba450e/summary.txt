@@ -1,0 +1,14 @@
+head=3ba450ec1d6c4adf0b29daf42909e28fa242f087
+tree=04a3f951263fd96475c11454a521e1fd28745f3f
+command=./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests app.serea.android.CloudEgressBodyLineageAttackMatrixTest --tests app.serea.android.SecurityPortsTest --tests app.serea.android.LocalFakeRoutingAdversarialTest --tests app.serea.android.GoogleOriginEgressAdversarialTest --tests app.serea.android.ChatViewModelTest --tests app.serea.android.OllamaCloudAdapterTest
+total_tests=81
+failures=0
+errors=0
+skips=0
+
+CloudEgressBodyLineageAttackMatrixTest: 9 tests, failures=0, errors=0, skips=0
+SecurityPortsTest: 10 tests, failures=0, errors=0, skips=0
+LocalFakeRoutingAdversarialTest: 3 tests, failures=0, errors=0, skips=0
+GoogleOriginEgressAdversarialTest: 1 tests, failures=0, errors=0, skips=0
+ChatViewModelTest: 36 tests, failures=0, errors=0, skips=0
+OllamaCloudAdapterTest: 22 tests, failures=0, errors=0, skips=0

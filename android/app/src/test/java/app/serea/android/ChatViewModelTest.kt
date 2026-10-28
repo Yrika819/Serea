@@ -125,6 +125,33 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.isLoading)
     }
 
+    @Test fun providerPrefillLineageSurvivesEditorChangesAndIsBoundToTheSentBody() = runTest(dispatcher) {
+        val requests = mutableListOf<ModelChatRequest>()
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                requests += request
+                return ModelChatResponse("local fixture response")
+            }
+        })
+        vm.prefillEditorFromProvider("synthetic Gmail body", DataOrigin.GMAIL)
+        assertEquals(setOf(DataOrigin.GMAIL), vm.state.value.editorSourceLineage)
+
+        // A normal delete-to-empty edit is not an explicit new-draft boundary.
+        vm.updateInput("")
+        assertTrue(vm.state.value.input.isEmpty())
+        assertEquals(setOf(DataOrigin.GMAIL), vm.state.value.editorSourceLineage)
+
+        vm.updateInput("synthetic edited Gmail body")
+        assertEquals(setOf(DataOrigin.GMAIL, DataOrigin.USER_AUTHORED), vm.state.value.editorSourceLineage)
+        vm.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals(1, requests.size)
+        assertEquals(setOf(DataOrigin.GMAIL, DataOrigin.USER_AUTHORED), requests.single().bodySourceLineage)
+        assertEquals(requests.single().bodySourceLineage, vm.state.value.conversation.messages.first().sourceLineage)
+        assertTrue(vm.state.value.editorSourceLineage.isEmpty())
+    }
+
     @Test fun staleEditorCallbackFromSentComposerCannotRestoreDraft() = runTest(dispatcher) {
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("Demo: ${request.message}")
@@ -160,6 +187,17 @@ class ChatViewModelTest {
         assertEquals("", vm.state.value.input)
         vm.updateEditorValue(TextFieldValue("unsent draft"), draftGeneration)
         assertEquals("", vm.state.value.input)
+
+        vm.prefillEditorFromProvider("synthetic imported body", DataOrigin.GMAIL)
+        vm.updateInput("")
+        val blankImportedGeneration = vm.state.value.editorInputGeneration
+        assertTrue(vm.state.value.editorSourceLineage.contains(DataOrigin.GMAIL))
+        vm.newConversation()
+        assertTrue(vm.state.value.editorInputGeneration > blankImportedGeneration)
+        assertTrue(vm.state.value.editorSourceLineage.isEmpty())
+        vm.updateEditorValue(TextFieldValue("stale imported callback"), blankImportedGeneration)
+        assertEquals("", vm.state.value.input)
+        assertTrue(vm.state.value.editorSourceLineage.isEmpty())
     }
 
     @Test fun navigationKeepsUnchangedDraftSelectionUntilComposerRegainsFocus() = runTest(dispatcher) {

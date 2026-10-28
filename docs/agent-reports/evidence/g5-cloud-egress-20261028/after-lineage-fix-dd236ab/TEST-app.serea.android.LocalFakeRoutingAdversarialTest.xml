@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.LocalFakeRoutingAdversarialTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-28T09:11:34.523Z" hostname="4c0fe241dfed" time="0.019">
+  <properties/>
+  <testcase name="importedGoogleCurrentBodyIsDeniedBeforeUsageAndProvider" classname="app.serea.android.LocalFakeRoutingAdversarialTest" time="0.003"/>
+  <testcase name="routedFakePassesEgressAndUsageAndDeniedRequestsStopBeforeReservation" classname="app.serea.android.LocalFakeRoutingAdversarialTest" time="0.015"/>
+  <testcase name="publicModelOutputDerivedFromGmailOrCalendarIsDeniedBeforeUsageAndProvider" classname="app.serea.android.LocalFakeRoutingAdversarialTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

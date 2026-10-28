@@ -76,9 +76,11 @@ class OllamaCloudAdapterTest {
             "source-1", DataOrigin.USER_AUTHORED, conversationId = "conversation-1"))
         val contract = EgressContract("conversation-1", "send-2", DataOrigin.USER_AUTHORED,
             DataClassification.PUBLIC, "https://ollama.com/api/chat", "second question", context,
-            PayloadPreparation.RAW, now, now + 30_000, selectedModelId = "gemma4:31b")
+            PayloadPreparation.RAW, now, now + 30_000, selectedModelId = "gemma4:31b",
+            plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED))
         val request = ModelChatRequest("conversation-1", "second question", sendId = "send-2",
-            classification = DataClassification.PUBLIC, context = context, egressContract = contract, selectedModelId = "gemma4:31b")
+            classification = DataClassification.PUBLIC, context = context, egressContract = contract, selectedModelId = "gemma4:31b",
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED))
         val result = OllamaModelChatPort(adapter(), { now }).send(request)
         assertEquals("second answer", result.text)
         assertEquals(ProviderUsage(19, 3), result.usage)
@@ -98,12 +100,91 @@ class OllamaCloudAdapterTest {
         val context = listOf(ContextMessage(MessageRole.USER, "private prior", DataClassification.PRIVATE,
             "source-private", DataOrigin.USER_AUTHORED))
         val contract = EgressContract("c", "s", DataOrigin.USER_AUTHORED, DataClassification.PUBLIC,
-            "https://ollama.com/api/chat", "current", context, PayloadPreparation.RAW, 10_000, 30_000)
+            "https://ollama.com/api/chat", "current", context, PayloadPreparation.RAW, 10_000, 30_000,
+            plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED))
         try {
             port.send(ModelChatRequest("c", "current", sendId = "s", classification = DataClassification.PUBLIC,
-                context = context, egressContract = contract))
+                context = context, egressContract = contract, bodySourceLineage = setOf(DataOrigin.USER_AUTHORED)))
             throw AssertionError("private context must be denied")
         } catch (_: ModelChatFailure) { }
+        assertEquals(0, credentialReads)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun cloudPortRejectsRequestContractLineageMismatchBeforeCredentialOrHttp() = runBlocking {
+        var credentialReads = 0
+        val port = OllamaModelChatPort(adapter(reader = object : CredentialReader {
+            override fun readForRequest(): String { credentialReads++; return key }
+        }), { 20_000 })
+        val contract = EgressContract(
+            conversationId = "lineage-mismatch",
+            currentMessageId = "send-lineage-mismatch",
+            origin = DataOrigin.USER_AUTHORED,
+            classification = DataClassification.PUBLIC,
+            destination = "https://ollama.com/api/chat",
+            plannedBody = "synthetic fixture body",
+            context = emptyList(),
+            preparation = PayloadPreparation.RAW,
+            explicitSendIntentAtMillis = 10_000,
+            expiresAtMillis = 30_000,
+            selectedModelId = "gemma4:31b",
+            plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+        )
+
+        try {
+            port.send(ModelChatRequest(
+                conversationId = contract.conversationId,
+                message = contract.plannedBody,
+                sendId = contract.currentMessageId,
+                classification = DataClassification.PUBLIC,
+                egressContract = contract,
+                selectedModelId = "gemma4:31b",
+                bodySourceLineage = setOf(DataOrigin.USER_AUTHORED, DataOrigin.GMAIL),
+            ))
+            throw AssertionError("request/contract lineage mismatch must be denied")
+        } catch (_: ModelChatFailure) { }
+
+        assertEquals(0, credentialReads)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun cloudPortRejectsMatchingGoogleBodyLineageBeforeCredentialOrHttp() = runBlocking {
+        var credentialReads = 0
+        val port = OllamaModelChatPort(adapter(reader = object : CredentialReader {
+            override fun readForRequest(): String { credentialReads++; return key }
+        }), { 20_000 })
+
+        listOf(DataOrigin.GMAIL, DataOrigin.CALENDAR).forEachIndexed { index, providerOrigin ->
+            val lineage = setOf(DataOrigin.USER_AUTHORED, providerOrigin)
+            val contract = EgressContract(
+                conversationId = "google-lineage-$index",
+                currentMessageId = "send-google-lineage-$index",
+                origin = DataOrigin.USER_AUTHORED,
+                classification = DataClassification.PUBLIC,
+                destination = "https://ollama.com/api/chat",
+                plannedBody = "synthetic imported body",
+                context = emptyList(),
+                preparation = PayloadPreparation.RAW,
+                explicitSendIntentAtMillis = 10_000,
+                expiresAtMillis = 30_000,
+                selectedModelId = "gemma4:31b",
+                plannedBodySourceLineage = lineage,
+            )
+
+            try {
+                port.send(ModelChatRequest(
+                    conversationId = contract.conversationId,
+                    message = contract.plannedBody,
+                    sendId = contract.currentMessageId,
+                    classification = DataClassification.PUBLIC,
+                    egressContract = contract,
+                    selectedModelId = "gemma4:31b",
+                    bodySourceLineage = lineage,
+                ))
+                throw AssertionError("$providerOrigin ancestry must be denied by the Cloud port")
+            } catch (_: ModelChatFailure) { }
+        }
+
         assertEquals(0, credentialReads)
         assertEquals(0, server.requestCount)
     }
@@ -190,7 +271,7 @@ class OllamaCloudAdapterTest {
         val contract = EgressContract("fixture-conversation", "fixture-send", DataOrigin.USER_AUTHORED,
             DataClassification.PUBLIC, "https://ollama.com/api/chat", "fixture prompt", emptyList(),
             PayloadPreparation.RAW, System.currentTimeMillis(), System.currentTimeMillis() + 30_000,
-            selectedModelId = modelId)
+            selectedModelId = modelId, plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED))
         val payload = ChatEgressGate.evaluate(contract, System.currentTimeMillis()).payload!!
         val cloudEndpointAdapter = OllamaCloudAdapter(object : CredentialReader {
             override fun readForRequest(): String { credentialReads++; return key }

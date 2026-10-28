@@ -1,0 +1,12 @@
+Product source: fc1c0527eea8ea92509935dc8721d24b27fd7f9d
+Product tree: 756b6ee4112894f0317ee89bf0a5989bcc9d73c3
+Test source: android/app/src/test/java/app/serea/android/CloudEgressBodyLineageAttackMatrixTest.kt (test-only untracked addition at run time)
+Command (from android/): ./gradlew --no-daemon -Dorg.gradle.java.home=/tmp/serea-g4-jdk/jdk-21.0.13+9 :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.CloudEgressBodyLineageAttackMatrixTest'
+JUnit: 9 tests, 4 failures, 0 errors, 0 skipped. Kotlin compilation succeeded; Gradle task failed only due to assertions.
+Failures:
+- calendarFirstTurnModelOutputInheritsCurrentBodyLineage: expected [CALENDAR, MODEL_OUTPUT, USER_AUTHORED], actual [MODEL_OUTPUT, USER_AUTHORED]
+- conversationSwitchDoesNotClearCurrentProviderBodyTaint: expected [GMAIL, USER_AUTHORED, MODEL_OUTPUT], actual [MODEL_OUTPUT, USER_AUTHORED]
+- gmailFirstTurnModelOutputInheritsCurrentBodyLineage: expected [GMAIL, MODEL_OUTPUT, USER_AUTHORED], actual [MODEL_OUTPUT, USER_AUTHORED]
+- boundedContextCannotLaunderGoogleOriginThroughUnlineagedModelSummary: expected SOURCE_LINEAGE_DENIED, actual APPROVED (synthetic hypothetical assistant classification set to PUBLIC; current production-generated assistant is UNKNOWN)
+Passing checks include current UNKNOWN-classified assistant context denial before usage/credential/HTTP and the other matrix checks.
+No production source patch was applied before this run.

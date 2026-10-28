@@ -1,28 +1,31 @@
 # G2 — Google OAuth / Gmail / Calendar Readiness
 
-Report date: 2026-10-27
+Report date: 2026-10-28
 Official documentation retrieved: 2026-10-27
 
 ## Agent checkpoint
 
 ```text
 AGENT_ID: G2
-ACTIVE_PHASE: G2 — OAuth policy/readiness audit and checkpoint correction
-OVERALL_STATUS: PARTIAL — Gmail/Calendar in-flight reads and Identity authorization/revoke tasks fail closed across invalidation and caller cancellation; live Google readiness remains Owner-gated
+ACTIVE_PHASE: G2 — Google OAuth/Gmail/Calendar readiness revalidation
+OVERALL_STATUS: PARTIAL — read-only provider/session contracts and synthetic tests exist; ordinary UI remains Fake-only and live Google readiness is Owner-gated
 BASE_SHA: 3924b36080ffa43331f065a15db80c604c243355
-CURRENT_HEAD: 32fec170949ee054bb8ed4b62e2f4b41de8c473f (parent/source revision for this documentation-only checkpoint correction)
-TREE_SHA: 8ef38f163ddaaa5f8afac7e3d33c7d4cf8322efc (tree at CURRENT_HEAD above)
+CURRENT_HEAD_AT_REVALIDATION: db68ba2f39bebe1263f00a0ca0612d24cc556a2a
+TREE_SHA_AT_REVALIDATION: 792169407ad402c20188b68f09c544e1f6e6a7e4
 SOURCE_EVIDENCE_HEAD: 69c9bcb3118343fbcbc4d7595125525420744a7b
 SOURCE_EVIDENCE_TREE: 7101d331ee116ee92e3c660b1df068e629267bf9
-WORKTREE: `/workspace/Serea-g2-google-auth-readiness` (isolated; this update is one documentation-only child commit, no source/test edits)
+LOCAL_FOCUSED_PACKET: 84/84 XML cases; its summary labels source `c9482ef6be15783cdf7908d20e081c308f0acadb`, not `69c9bcb` or the current branch head. Do not treat it as exact-source evidence for later code.
+INTEGRATED_EXACT_HEAD_EVIDENCE: G4 PR #129, head `113a81ea5ab8739740edf0d7c17deb2354adad78`, Android Run `40560882784` SUCCESS; 335/335 unit JUnit cases, including 92 Google auth/provider cases
+WORKTREE: dedicated isolated G2 worktree (this checkpoint update is documentation-only)
 BRANCH: codex/serea-g2-google-auth-readiness
-REMOTE_REF: `origin/codex/serea-g2-google-auth-readiness` at `32fec170949ee054bb8ed4b62e2f4b41de8c473f` before this checkpoint child is pushed; parent verification should resolve the resulting branch HEAD
-DRAFT_PR: none — G4 PR #129 carries the accepted G2 source/evidence changes; no change is being made to that PR
-CI_RUN_IDS: none for documentation-only commit `32fec17`; historical main-only workflow runs `40489486365`, `40489675684`, `40490686989`, `40494126664`, `40494480729`, and `40510449122` each had zero jobs and are not G2 test results
-ARTIFACT_IDS: none
+REMOTE_REF_AT_REVALIDATION: `origin/codex/serea-g2-google-auth-readiness` matched `db68ba2f39bebe1263f00a0ca0612d24cc556a2a` before this documentation-only child commit
+DRAFT_PR: none for G2; semantically evolved G2 changes are carried by G4 PR #129 (Open/Draft). G2 source commit is not itself the PR #129 head or an ancestor of it.
+CI_RUN_IDS: `40560882784` (G4 exact-head Android verification); latest G2-branch workflow run `40575808576` had zero jobs and is not test evidence
+ARTIFACT_IDS: unit JUnit `12760163124` (`sha256:c5b9b4ae4667474a48bf259ec12c205b56f68b8f517407cd92bfc0f9a725253c`); API 26 `12767514119`; API 35 `12769230563`; emulator evidence `12768751218`; Identity isolation `12769822124`
+REAL_SERVICE_STATUS: Fake authorization walkthrough and MockWebServer only; real Google OAuth, account access, and Gmail/Calendar API E2E are NOT_RUN
 ```
 
-The initial implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` (tree `420a818a2a4c97ac06c7df0e3ec11db0d3a3c314`) remains immutable. The report checkpoint was committed separately at `43c258b78bfc228a98c78609fa531210131588ea` (tree `41757fd3a497e4c9f4bb23e1961bab18ebf1886c`). G1's Fake-only authorization race repair is `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; the app-disconnect/revoke semantic repair is `b87b39d9c86d94bc6121c0605aaccd9497e9694c`. The latest provider in-flight invalidation repair is `7c3af22605b202ec55eb61cc59e029948dd1217b` (tree `13cd093386321a6bb496dcd894a379538a08e7dd`), and accepted G2 source/evidence is recorded at `SOURCE_EVIDENCE_HEAD` above. No prior commit was amended or rewritten. The current branch's documentation-only policy correction is `32fec170949ee054bb8ed4b62e2f4b41de8c473f`; this follow-up corrects its stale checkpoint metadata only.
+The initial implementation commit `d5ef1a9faf56818f47a2db4012d05cf6614ffb89` (tree `420a818a2a4c97ac06c7df0e3ec11db0d3a3c314`) remains immutable. The report checkpoint was committed separately at `43c258b78bfc228a98c78609fa531210131588ea` (tree `41757fd3a497e4c9f4bb23e1961bab18ebf1886c`). G1's Fake-only authorization race repair is `efa24f660d28ec92cc3095cc868f27b1d0e576b9`; the app-disconnect/revoke semantic repair is `b87b39d9c86d94bc6121c0605aaccd9497e9694c`. The provider in-flight invalidation repair is `7c3af22605b202ec55eb61cc59e029948dd1217b` (tree `13cd093386321a6bb496dcd894a379538a08e7dd`), followed by the authorization-task serialization source commit `69c9bcb3118343fbcbc4d7595125525420744a7b` (tree `7101d331ee116ee92e3c660b1df068e629267bf9`). The 84/84 packet's summary labels the preceding source commit `c9482ef6be15783cdf7908d20e081c308f0acadb`; that commit is the parent of `69c9bcb`, and source files differ, so the packet is not exact-source evidence for `69c9b` or this current branch. The local compile summary does not record a source SHA, so it cannot independently establish which exact source tree compiled; it is not live OAuth or emulator evidence. G4 PR #129 has independently integrated semantically evolved changes and has exact-head CI evidence, detailed below. No prior source commit was amended or rewritten. This checkpoint is a documentation-only child of the verified G2 branch head above.
 
 ## Existing implementation and reuse decision
 
@@ -202,10 +205,10 @@ JDK stored/extracted temporarily outside the repository. Repository dependencies
 
 ## Handoff contract
 
-- `REVIEW_REQUEST`: G1 accepted source/evidence commit `69c9bcb3118343fbcbc4d7595125525420744a7b` (tree `7101d331ee116ee92e3c660b1df068e629267bf9`); G4 PR #125 carries the integrated changes.
+- `REVIEW_REQUEST`: G1 accepted source/evidence commit `69c9bcb3118343fbcbc4d7595125525420744a7b` (tree `7101d331ee116ee92e3c660b1df068e629267bf9`); G4 PR #129 carries semantically evolved changes and has exact-head CI evidence. The G2 source commit is not an ancestor of PR #129.
 - `KNOWN_ISSUES`: Real account selection, OAuth disclosure, Activity Result consent wiring, connection/revocation UX, and normal UI provider selection are not wired. The Personal Beta package ID is pinned to `app.serea.android.beta`; the Android OAuth client registration, owner-controlled signing certificate SHA-1, Cloud project tier setup, public privacy-policy/Limited Use statement, audience classification, scope verification, and CASA/assessment applicability remain unresolved. Real revoke now preserves app-local disabled features in source, but live OAuth behavior remains untested.
 - `INTEGRATION_DEPENDENCIES`: Integration owner must provide explicit dependency injection for a `PlayServicesGoogleAuthorizationGateway` plus account-bound Gmail/Calendar sessions only after Owner configuration/authorization; keep Fake defaults and fail closed.
-- `NEXT_ACTION`: G4 carries the accepted G2 source/evidence commit in PR #129 and owns the exact-head integrated Required run. Keep live OAuth disabled pending separately approved real authorization and service acceptance.
+- `NEXT_ACTION`: G4 PR #129 contains semantically evolved equivalents of the accepted G2 changes and owns its exact-head integrated Required evidence. Keep live OAuth disabled pending separately approved real authorization and service acceptance.
 - `OWNER_APPROVAL_REQUIRED`: Real OAuth/project configuration, Google account access, scope verification, owner-controlled signing identity/SHA-1, production Cloud project setup, and any live-service acceptance.
 
 ### Orchestrator G4 review refresh (2026-10-27)
@@ -217,7 +220,7 @@ This is a review-only checkpoint; no application source or test was changed in t
 | G2 branch | `codex/serea-g2-google-auth-readiness`, HEAD `fa52d2ca411c8ba1df6c78eb1b1d4cca5f36f690`, tree `07639a1cd60a2afd34958280572f0a40230eb337`, clean. |
 | G4 integration candidate | reviewed HEAD `113a81ea5ab8739740edf0d7c17deb2354adad78`; it contains regression IDs for serialized authorize/revoke task cancellation and post-response invalidation. Its provider-session path additionally has gateway/session invalidation generations and observer cancellation. This is semantically evolved code, so the G2 branch is not a cherry-pick candidate. |
 | Composition Root | `AppProviderComposition.fakeDefault()` is still the app default. It constructs `FakeGmailProvider` and `FakeCalendarProvider`; it does not create `PlayServicesGoogleAuthorizationGateway` or open a live Google session. The Settings authorization walkthrough owns `FakeGoogleAuthorizationGateway` directly and states that it does not contact a real account or service. This keeps live access disabled, but ordinary Gmail/Calendar UI is not yet connected to real OAuth. |
-| G2 source evidence | The six-class 84/84 JUnit packet is preserved under `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/`. Its `gradle-summary.txt` records source commit `c9482ef6be15783cdf7908d20e081c308f0acadb`, not the later cancellation commit `69c9bcb` or this branch HEAD. Treat 84/84 as evidence for the recorded c9482 source only; it does not prove the later source by itself. Independently downloaded and digest-checked G4 Android Unit artifact `12760163124` from run `40560882784` (job `122434307007`) is tied to HEAD `113a81ea5ab8739740edf0d7c17deb2354adad78`: all 335 JUnit cases passed (0 failures/errors/skips), including 92 cases across Google Authorization Lifecycle (7), Google Authorization (29), Gmail Provider Sessions (13), Gmail HTTP (11), Calendar Provider Sessions (12), and Calendar HTTP (20). The artifact digest is `sha256:c5b9b4ae4667474a48bf259ec12c205b56f68b8f517407cd92bfc0f9a725253c`. This is exact-head JVM/MockWebServer evidence, not live OAuth or UI E2E. |
+| G2 source evidence | The six-class 84/84 JUnit packet is preserved under `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/`. Its `gradle-summary.txt` labels source commit `c9482ef6be15783cdf7908d20e081c308f0acadb`. That commit is the parent of later source commit `69c9bcb3118343fbcbc4d7595125525420744a7b`, and the source files differ. Therefore the packet establishes the recorded 84/84 result but does **not** establish that later G2 source commit or the current documentation-only branch head passed; do not substitute it for exact-source evidence. G4 PR #129 is Open/Draft at head `113a81ea5ab8739740edf0d7c17deb2354adad78`. Its Android Run `40560882784` succeeded, and the independently downloaded and digest-checked Android Unit artifact `12760163124` (job `122434307007`) is tied to that exact head: all 335 JUnit cases passed (0 failures/errors/skips), including 92 cases across Google Authorization Lifecycle (7), Google Authorization (29), Gmail Provider Sessions (13), Gmail HTTP (11), Calendar Provider Sessions (12), and Calendar HTTP (20). The artifact digest is `sha256:c5b9b4ae4667474a48bf259ec12c205b56f68b8f517407cd92bfc0f9a725253c`. This is exact-head JVM/MockWebServer evidence, not live OAuth or UI E2E. The same run's API 26, API 35, emulator, and Identity artifacts are listed in the checkpoint; they are CI verification artifacts, not live Google-service evidence. |
 | Local rerun | Attempted the six-class focused Gradle suite from `android/` on this worktree. It stopped during Gradle toolchain discovery before tests: `/usr/lib/jvm/java-21-openjdk-amd64` lacks `JAVA_COMPILER` (`javac`). Result is **NOT_RUN**, not a code/test failure. No repository JDK setting or dependency was changed. |
 | Branch CI | Pushes on this branch selected `.github/workflows/android-personal-beta.yml`, whose protected-main condition creates no branch jobs; these runs are not G2 test evidence. No new run was started during this review. |
 | Live Google validation | NOT_RUN. No real OAuth, account, token, Gmail/Calendar API, or Owner secret was used. |
@@ -324,7 +327,7 @@ A forced six-class run after adding the canceled-caller/failed-revoke regression
 
 To establish that ordering explicitly, the Calendar and symmetric Gmail app-disable tests now use the existing bounded `GatedResponseDispatcher`. Each asserts that the request reached the dispatcher and the read remains pending before disabling the feature, asserts the lease is invalid before release, then releases the response and verifies permission-denied plus a post-body validity trace of `false`. The barrier is released in `finally`. The targeted trio passed 3/3 (Gradle session `70702`), with XML under `docs/agent-reports/evidence/g2-oauth-02-deterministic-targets/`.
 
-The final forced six-class suite on the settled candidate passed **84/84**, 0 failures, 0 errors, 0 skips, exit code 0 (`BUILD SUCCESSFUL`), Gradle session `10019`. Counts: authorization lifecycle 7, authorization 27, Gmail sessions 10, Gmail HTTP 11, Calendar sessions 9, Calendar HTTP 20. The exact six JUnit XMLs and sanitized summary are at `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/`.
+The preserved six-class XML packet totals **84/84**, 0 failures, 0 errors, 0 skips. Counts: authorization lifecycle 7, authorization 27, Gmail sessions 10, Gmail HTTP 11, Calendar sessions 9, Calendar HTTP 20. Its `gradle-summary.txt` identifies `c9482ef6be15783cdf7908d20e081c308f0acadb` as the source commit. Since later source commit `69c9bcb3118343fbcbc4d7595125525420744a7b` differs from that parent, report this as historical packet evidence and not as proof for the later commit or current branch. The exact six JUnit XMLs and sanitized summary are at `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/`. For later integrated-code evidence, use G4 PR #129 Run `40560882784` at exact head `113a81ea5ab8739740edf0d7c17deb2354adad78` (335/335 JVM JUnit; Google-specific counts and artifact digest are recorded above).
 
 The isolated Android test source compile was rerun with `--rerun-tasks` on the settled candidate:
 
@@ -332,6 +335,6 @@ The isolated Android test source compile was rerun with `--rerun-tasks` on the s
 ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin --rerun-tasks
 ```
 
-It passed with exit code 0 in Gradle session `71674` (`BUILD SUCCESSFUL`, 26 tasks executed). Both isolated main Kotlin and isolated Android test Kotlin compilation executed. Compile summary is at `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/compile-summary.txt`; no emulator was started.
+It passed with exit code 0 in Gradle session `71674` (`BUILD SUCCESSFUL`, 26 tasks executed). Both isolated main Kotlin and isolated Android test Kotlin compilation executed. The compile summary is at `docs/agent-reports/evidence/g2-oauth-02-six-class-pass/compile-summary.txt`; it records no source SHA, so it cannot be treated as exact compile proof for source commit `69c9bcb` or the current branch head. No emulator was started.
 
-The additional canceled-revoke failure regression passed alone (1/1, session `40281`); it is also included in the final 84-test result. The first failed six-class run remains preserved separately and was not overwritten. No CI run was initiated. No live account, OAuth UI, Google API endpoint, token, or secret was used. The compiler used temporary Temurin JDK 21.0.13+9 outside the repository; repository dependencies and JDK configuration were unchanged. `git diff --check` passes. G1 review is still required before integration; no changes are staged, committed, or pushed.
+The additional canceled-revoke failure regression passed alone (1/1, session `40281`); it is included in the preserved 84-test packet, whose source-binding limitation is stated above. The first failed six-class run remains preserved separately and was not overwritten. No live account, OAuth UI, Google API endpoint, token, or secret was used. The compiler used temporary Temurin JDK 21.0.13+9 outside the repository; repository dependencies and JDK configuration were unchanged. `git diff --check` passed. This paragraph records the pre-commit verification state: G1 subsequently accepted the source/evidence commit `69c9bcb3118343fbcbc4d7595125525420744a7b`, and G4 PR #129 later carried semantically evolved equivalents with exact-head CI evidence. The current change is documentation-only.

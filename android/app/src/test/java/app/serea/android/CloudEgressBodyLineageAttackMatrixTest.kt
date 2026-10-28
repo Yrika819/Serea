@@ -94,7 +94,7 @@ class CloudEgressBodyLineageAttackMatrixTest {
         assertEquals(userMessage.sourceLineage + setOf(DataOrigin.MODEL_OUTPUT, DataOrigin.USER_AUTHORED), assistant.sourceLineage)
     }
 
-    @Test fun currentUnknownAssistantClassificationStillStopsCloudBeforeCredentialAndHttp() = runTest(dispatcher) {
+    @Test fun googleOriginLineageOnCurrentAssistantStopsCloudBeforeCredentialAndHttp() = runTest(dispatcher) {
         val now = 20_000L
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("synthetic summary")
@@ -159,7 +159,7 @@ class CloudEgressBodyLineageAttackMatrixTest {
                 expectedTarget = EgressTarget.CLOUD,
             )
 
-            assertEquals(EgressContractDecision.CLASSIFICATION_DENIED, ChatEgressGate.evaluate(contract, now).decision)
+            assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED, ChatEgressGate.evaluate(contract, now).decision)
             assertThrows(ModelChatFailure::class.java) { runBlocking { port.send(request) } }
             assertEquals(0, usageDao.reservationCount)
             assertEquals(0, credentialReads)

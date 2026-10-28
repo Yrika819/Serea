@@ -421,6 +421,7 @@ internal class ChatViewModel(
                     sourceLineage = buildSet {
                         add(DataOrigin.MODEL_OUTPUT)
                         add(DataOrigin.USER_AUTHORED)
+                        addAll(userMessage.sourceLineage)
                         context.forEach { addAll(it.sourceLineage) }
                     })
                 mutableState.update { current ->

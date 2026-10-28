@@ -2,12 +2,14 @@ package app.serea.android
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -30,9 +32,10 @@ class GoogleTrustedHandoffShellTest {
     @Test fun calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend() {
         assertChatHandoff(
             destinationTag = "destination_calendar",
-            selectedTitle = "Design review",
+            selectedTitle = "Date-line test",
             handoffAction = "この予定をChatへ渡す",
             expectedOrigin = DataOrigin.CALENDAR,
+            selectedCalendarName = "Demo Global",
         )
     }
 
@@ -61,18 +64,33 @@ class GoogleTrustedHandoffShellTest {
         selectedTitle: String,
         handoffAction: String,
         expectedOrigin: DataOrigin,
+        selectedCalendarName: String? = null,
     ) {
         waitForChatReady()
         compose.onNodeWithTag(destinationTag).performClick()
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithText(selectedTitle).fetchSemanticsNodes().isNotEmpty()
+        if (selectedCalendarName != null) {
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithText("表示するカレンダー").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText(selectedCalendarName).performClick()
+            compose.waitUntil(10_000) {
+                runCatching {
+                    compose.onNodeWithTag("calendar_agenda_list")
+                        .performScrollToNode(hasText(selectedTitle))
+                }.isSuccess
+            }
+        } else {
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText(selectedTitle).fetchSemanticsNodes().isNotEmpty()
+            }
         }
         compose.onNodeWithText(selectedTitle).performClick()
         compose.onNodeWithText(handoffAction).performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithText("Chatへ渡す内容を確認").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("送信先: この端末内のローカルChat").assertTextContains("ローカルChat")
+        compose.onNodeWithText("送信先: この端末内のローカルChat")
+            .assertTextContains("ローカルChat", substring = true)
         compose.onNodeWithText("端末内で処理してChatへ渡す").performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("chat-composer").fetchSemanticsNodes().isNotEmpty()

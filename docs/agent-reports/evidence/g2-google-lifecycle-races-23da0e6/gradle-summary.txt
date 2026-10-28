@@ -1,0 +1,31 @@
+Focused Google authorization/session JVM verification
+
+Result: BUILD SUCCESSFUL
+Run type: local focused JVM unit tests; no Emulator, account, OAuth, credential, or live Google API use
+Source HEAD: 23da0e648732ec175aef1e57a13ba2a6d53bf2c3
+Source tree: 3260971979718abef46cb8fcf681145f0c1a1938
+Worktree: /workspace/Serea-g2-google-readiness-hardening
+Branch: codex/g2-google-readiness-hardening
+Java: Eclipse Temurin 21.0.13+9 (JAVA_HOME=/tmp/serea-g4-jdk/jdk-21.0.13+9)
+Gradle: wrapper 8.14.6
+
+Command, run from android/:
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks \
+  --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' \
+  --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' \
+  --tests 'app.serea.android.gmail.GmailProviderSessionsTest' \
+  --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' \
+  --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' \
+  --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+
+JUnit totals: 94 tests, 0 failures, 0 errors, 0 skipped.
+
+Class results:
+app.serea.android.googleauth.GoogleAuthorizationLifecycleTest: 7 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.googleauth.GoogleAuthorizationTest: 30 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.gmail.GmailProviderSessionsTest: 13 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.gmail.transport.GmailHttpReadPortTest: 11 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.calendar.CalendarProviderSessionsTest: 13 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest: 20 tests, 0 failures, 0 errors, 0 skipped
+
+The six raw JUnit XML files are adjacent to this summary. `sha256sums.txt` records their individual SHA-256 values. The first attempt using the container's JRE-only default Java stopped before compilation; the successful rerun used the Temurin JDK listed above.

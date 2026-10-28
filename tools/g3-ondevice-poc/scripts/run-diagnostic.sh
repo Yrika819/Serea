@@ -144,10 +144,11 @@ cleanup_emulator() {
                     fi
                 else
                     # The test runner has already uninstalled the disposable target APK.
-                    # PackageManager removal deletes its private files directory.
+                    # Its deleted files directory cannot be independently inspected here;
+                    # the ephemeral AVD/host job is the final cleanup boundary.
                     echo 'target_package_absent_after_test_runner=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
-                    echo 'app_private_model_removed=true' >> "$EVIDENCE_DIR/model-cleanup.txt"
-                    echo 'app_private_model_removal_reason=target_package_uninstalled_by_test_runner' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                    echo 'app_private_model_removed=not_individually_verified' >> "$EVIDENCE_DIR/model-cleanup.txt"
+                    echo 'app_private_cleanup_boundary=disposable_avd_destroyed_with_ephemeral_runner_after_job' >> "$EVIDENCE_DIR/model-cleanup.txt"
                 fi
             else
                 echo 'app_private_model_removed=false' >> "$EVIDENCE_DIR/model-cleanup.txt"
@@ -291,7 +292,11 @@ collect_host_metadata() {
         echo 'runner_memoryinfo:'
         cat /proc/meminfo
         echo 'runner_cpu_pressure:'
-        cat /proc/pressure/cpu
+        if [[ -r /proc/pressure/cpu ]]; then
+            cat /proc/pressure/cpu
+        else
+            echo '/proc/pressure/cpu: unavailable'
+        fi
         echo 'runner_kvm:'
         if [[ -e /dev/kvm ]]; then
             stat -Lc 'device=%n owner=%U group=%G mode=%a' /dev/kvm
@@ -306,7 +311,59 @@ collect_host_metadata() {
         echo 'emulator_acceleration_check:'
         "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
         echo 'sdk_packages:'
-        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed 2>&1 || true
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed \
+            > "$EVIDENCE_DIR/sdk-packages-installed.txt" 2>&1 || true
+        cat "$EVIDENCE_DIR/sdk-packages-installed.txt"
+        echo 'sdk_toolchain_package_revisions:'
+        python3 - "$ANDROID_HOME" "$EXPECTED_EMULATOR_API_LEVEL" "$EVIDENCE_DIR/sdk-toolchain-revisions.json" <<'PY'
+from pathlib import Path
+import json
+import sys
+import xml.etree.ElementTree as ET
+
+sdk = Path(sys.argv[1])
+api = sys.argv[2]
+output = Path(sys.argv[3])
+packages = {
+    "emulator": sdk / "emulator/package.xml",
+    "platform-tools": sdk / "platform-tools/package.xml",
+    "platform-35": sdk / "platforms/android-35/package.xml",
+    "build-tools-35.0.0": sdk / "build-tools/35.0.0/package.xml",
+    "ndk-28.2.13676358": sdk / "ndk/28.2.13676358/package.xml",
+    "cmake-3.31.6": sdk / "cmake/3.31.6/package.xml",
+    "selected-google-apis-x86_64-system-image":
+        sdk / f"system-images/android-{api}/google_apis/x86_64/package.xml",
+}
+captured = {}
+missing = []
+for name, path in packages.items():
+    if not path.is_file():
+        captured[name] = {"package_xml": str(path), "installed": False}
+        missing.append(name)
+        continue
+    root = ET.parse(path).getroot()
+    local = next((node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "localPackage"), None)
+    revision = next(
+        (node for node in local if node.tag.rsplit("}", 1)[-1] == "revision"),
+        None,
+    ) if local is not None else None
+    if local is None or revision is None:
+        raise SystemExit(f"missing localPackage/revision in {path}")
+    version = ".".join(
+        child.text or "0" for child in list(revision)
+        if child.tag.rsplit("}", 1)[-1] in {"major", "minor", "micro", "preview"}
+    )
+    captured[name] = {
+        "package_path": local.attrib.get("path"),
+        "revision": version,
+        "package_xml": str(path),
+        "installed": True,
+    }
+output.write_text(json.dumps(captured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(json.dumps(captured, sort_keys=True))
+if missing:
+    raise SystemExit("required SDK package revisions missing: " + ", ".join(missing))
+PY
         echo 'ndk_version:'
         if [[ -r "$ANDROID_HOME/ndk/28.2.13676358/source.properties" ]]; then
             sed -n 's/^Pkg.Revision *= */\0/p' "$ANDROID_HOME/ndk/28.2.13676358/source.properties"
@@ -358,10 +415,9 @@ prepare_build() {
         return 1
     fi
     "$ANDROID_HOME/build-tools/35.0.0/aapt" dump permissions "$test_apk" > "$EVIDENCE_DIR/androidtest-apk-permissions.txt"
-    if grep -q 'android.permission.INTERNET' "$EVIDENCE_DIR/androidtest-apk-permissions.txt"; then
-        echo 'Standalone PoC AndroidTest APK must not request INTERNET permission' >&2
-        return 1
-    fi
+    python3 "$POC_DIR/scripts/verify-apk-permissions.py" \
+        "$EVIDENCE_DIR/app-apk-permissions.txt" \
+        "$EVIDENCE_DIR/androidtest-apk-permissions.txt"
     cp "$POC_DIR/model-fixture.json" "$EVIDENCE_DIR/model-fixture.json"
     echo 'apk_build_and_androidtest_compile=PASS' > "$EVIDENCE_DIR/build-status.txt"
 }
@@ -514,6 +570,10 @@ case "${1:-}" in
     test-cleanup-after-early-failure)
         test_cleanup_after_early_failure
         ;;
+    capture-model-license)
+        python3 "$POC_DIR/scripts/capture-model-license.py" \
+            "$POC_DIR/model-fixture.json" "$EVIDENCE_DIR/model-license-evidence.json"
+        ;;
     host-after)
         {
             echo 'recorded_at_utc:'
@@ -525,7 +585,7 @@ case "${1:-}" in
         } > "$EVIDENCE_DIR/host-after-emulator.txt"
         ;;
     *)
-        echo "Usage: $0 {host-metadata|prepare|execute|host-after|test-download-bound|test-cpu-pressure-optional|test-cleanup-after-early-failure}" >&2
+        echo "Usage: $0 {host-metadata|prepare|execute|host-after|capture-model-license|test-download-bound|test-cpu-pressure-optional|test-cleanup-after-early-failure}" >&2
         exit 2
         ;;
 esac

@@ -187,8 +187,10 @@ with tempfile.TemporaryDirectory(prefix="g3-runner-failures-") as directory:
     utp_record = (utp_evidence / "model-cleanup.txt").read_text(encoding="utf-8")
     if "target_package_absent_after_test_runner=true" not in utp_record:
         raise SystemExit("cleanup must verify and record when UTP already uninstalled the target package")
-    if "app_private_model_removal_reason=target_package_uninstalled_by_test_runner" not in utp_record:
-        raise SystemExit("cleanup must record package removal as the app-private model cleanup boundary")
+    if "app_private_model_removed=not_individually_verified" not in utp_record:
+        raise SystemExit("cleanup must not claim direct verification after test-runner package uninstall")
+    if "app_private_cleanup_boundary=disposable_avd_destroyed_with_ephemeral_runner_after_job" not in utp_record:
+        raise SystemExit("cleanup must record disposable AVD destruction as the final app-private boundary")
     if "emulator_temp_model_removed=true" not in utp_record:
         raise SystemExit("cleanup must still remove the emulator-temp model after UTP uninstalls the app")
     if (state / "app-private-model-present").exists():
@@ -196,4 +198,4 @@ with tempfile.TemporaryDirectory(prefix="g3-runner-failures-") as directory:
     if (runner_temp / "g3-host-model-fixture.bin").exists() or (state / "emulator-temp-model-present").exists():
         raise SystemExit("cleanup after UTP uninstall left a synthetic host or emulator model copy behind")
 
-print("runner_failure_paths=PASS optional_psi_denied=recorded adb_hang=bounded later_cleanup=continued utp_uninstall=verified primary_exit=preserved models=removed state=reset")
+print("runner_failure_paths=PASS optional_psi_denied=recorded adb_hang=bounded later_cleanup=continued utp_uninstall=unverified_with_disposable_avd_boundary primary_exit=preserved models=removed state=reset")

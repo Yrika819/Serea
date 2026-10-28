@@ -70,6 +70,19 @@ class OnDeviceInferenceTest {
         var pssAfterGenerationKb = 0L
         var pssAfterCloseKb = 0L
         try {
+            val unicodeFixture = "Serea 日本語 🌱 café"
+            assertEquals(
+                "JNI must round-trip BMP and supplementary Unicode",
+                unicodeFixture,
+                nativeEngine.roundTripUnicodeForTest(unicodeFixture),
+            )
+            try {
+                nativeEngine.roundTripUnicodeForTest(String(charArrayOf('\uD800')))
+                fail("unpaired UTF-16 surrogate must be rejected before llama.cpp input")
+            } catch (_: IllegalArgumentException) {
+                // The JNI boundary accepts valid Unicode scalar values only.
+            }
+            phase("unicode_jni_contract_passed")
             phase("model_load_started")
             port.load()
             loadElapsedMs = SystemClock.elapsedRealtime() - loadStarted

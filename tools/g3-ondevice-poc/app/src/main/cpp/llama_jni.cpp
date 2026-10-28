@@ -4,7 +4,10 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -113,6 +116,108 @@ void throw_java(JNIEnv * env, const char * class_name, const std::string & messa
     if (klass != nullptr) env->ThrowNew(klass, message.c_str());
 }
 
+void append_utf8(std::string & output, uint32_t code_point) {
+    if (code_point <= 0x7f) {
+        output.push_back(static_cast<char>(code_point));
+    } else if (code_point <= 0x7ff) {
+        output.push_back(static_cast<char>(0xc0 | (code_point >> 6)));
+        output.push_back(static_cast<char>(0x80 | (code_point & 0x3f)));
+    } else if (code_point <= 0xffff) {
+        output.push_back(static_cast<char>(0xe0 | (code_point >> 12)));
+        output.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3f)));
+        output.push_back(static_cast<char>(0x80 | (code_point & 0x3f)));
+    } else {
+        output.push_back(static_cast<char>(0xf0 | (code_point >> 18)));
+        output.push_back(static_cast<char>(0x80 | ((code_point >> 12) & 0x3f)));
+        output.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3f)));
+        output.push_back(static_cast<char>(0x80 | (code_point & 0x3f)));
+    }
+}
+
+std::optional<std::string> java_string_to_utf8(JNIEnv * env, jstring value) {
+    if (value == nullptr) return std::nullopt;
+    const jsize length = env->GetStringLength(value);
+    const jchar * chars = env->GetStringChars(value, nullptr);
+    if (chars == nullptr) return std::nullopt;
+    std::string output;
+    output.reserve(static_cast<size_t>(length));
+    for (jsize i = 0; i < length; ++i) {
+        uint32_t code_point = chars[i];
+        if (code_point >= 0xd800 && code_point <= 0xdbff) {
+            if (i + 1 >= length || chars[i + 1] < 0xdc00 || chars[i + 1] > 0xdfff) {
+                env->ReleaseStringChars(value, chars);
+                return std::nullopt;
+            }
+            const uint32_t low = chars[++i];
+            code_point = 0x10000 + ((code_point - 0xd800) << 10) + (low - 0xdc00);
+        } else if (code_point >= 0xdc00 && code_point <= 0xdfff) {
+            env->ReleaseStringChars(value, chars);
+            return std::nullopt;
+        }
+        append_utf8(output, code_point);
+    }
+    env->ReleaseStringChars(value, chars);
+    return output;
+}
+
+jstring utf8_to_java_string(JNIEnv * env, const std::string & value) {
+    std::vector<jchar> utf16;
+    utf16.reserve(value.size());
+    for (size_t i = 0; i < value.size();) {
+        const auto first = static_cast<uint8_t>(value[i++]);
+        uint32_t code_point = 0;
+        size_t continuation_count = 0;
+        if (first <= 0x7f) {
+            code_point = first;
+        } else if ((first & 0xe0) == 0xc0) {
+            code_point = first & 0x1f;
+            continuation_count = 1;
+        } else if ((first & 0xf0) == 0xe0) {
+            code_point = first & 0x0f;
+            continuation_count = 2;
+        } else if ((first & 0xf8) == 0xf0) {
+            code_point = first & 0x07;
+            continuation_count = 3;
+        } else {
+            throw_java(env, "java/lang/IllegalStateException", "Native output is not valid UTF-8");
+            return nullptr;
+        }
+        if (i + continuation_count > value.size()) {
+            throw_java(env, "java/lang/IllegalStateException", "Native output contains truncated UTF-8");
+            return nullptr;
+        }
+        for (size_t j = 0; j < continuation_count; ++j) {
+            const auto next = static_cast<uint8_t>(value[i++]);
+            if ((next & 0xc0) != 0x80) {
+                throw_java(env, "java/lang/IllegalStateException", "Native output contains invalid UTF-8");
+                return nullptr;
+            }
+            code_point = (code_point << 6) | (next & 0x3f);
+        }
+        const bool overlong = (continuation_count == 1 && code_point < 0x80) ||
+                (continuation_count == 2 && code_point < 0x800) ||
+                (continuation_count == 3 && code_point < 0x10000);
+        if (overlong || code_point > 0x10ffff ||
+                (code_point >= 0xd800 && code_point <= 0xdfff)) {
+            throw_java(env, "java/lang/IllegalStateException", "Native output contains invalid UTF-8 code point");
+            return nullptr;
+        }
+        if (code_point <= 0xffff) {
+            utf16.push_back(static_cast<jchar>(code_point));
+        } else {
+            code_point -= 0x10000;
+            utf16.push_back(static_cast<jchar>(0xd800 + (code_point >> 10)));
+            utf16.push_back(static_cast<jchar>(0xdc00 + (code_point & 0x3ff)));
+        }
+    }
+    if (utf16.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+        throw_java(env, "java/lang/IllegalStateException", "Native output exceeds the Java string bound");
+        return nullptr;
+    }
+    static constexpr jchar empty = 0;
+    return env->NewString(utf16.empty() ? &empty : utf16.data(), static_cast<jsize>(utf16.size()));
+}
+
 void free_locked() {
     if (sampler != nullptr) {
         llama_sampler_free(sampler);
@@ -130,8 +235,30 @@ void free_locked() {
 }
 
 llama_batch make_batch(const std::vector<llama_token> & tokens, llama_pos start_position) {
-    llama_batch batch = llama_batch_init(static_cast<int32_t>(tokens.size()), 0, 1);
-    batch.n_tokens = static_cast<int32_t>(tokens.size());
+    llama_batch batch{};
+    if (tokens.empty() || tokens.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        return batch;
+    }
+    const auto token_count = static_cast<int32_t>(tokens.size());
+    batch.token = static_cast<llama_token *>(std::malloc(sizeof(llama_token) * tokens.size()));
+    batch.pos = static_cast<llama_pos *>(std::malloc(sizeof(llama_pos) * tokens.size()));
+    batch.n_seq_id = static_cast<int32_t *>(std::malloc(sizeof(int32_t) * tokens.size()));
+    batch.seq_id = static_cast<llama_seq_id **>(
+            std::calloc(tokens.size() + 1, sizeof(llama_seq_id *)));
+    batch.logits = static_cast<int8_t *>(std::malloc(sizeof(int8_t) * tokens.size()));
+    if (batch.token == nullptr || batch.pos == nullptr || batch.n_seq_id == nullptr ||
+            batch.seq_id == nullptr || batch.logits == nullptr) {
+        llama_batch_free(batch);
+        return {};
+    }
+    for (int32_t i = 0; i < token_count; ++i) {
+        batch.seq_id[i] = static_cast<llama_seq_id *>(std::malloc(sizeof(llama_seq_id)));
+        if (batch.seq_id[i] == nullptr) {
+            llama_batch_free(batch);
+            return {};
+        }
+    }
+    batch.n_tokens = token_count;
     for (int32_t i = 0; i < batch.n_tokens; ++i) {
         batch.token[i] = tokens[static_cast<size_t>(i)];
         batch.pos[i] = start_position + i;
@@ -195,18 +322,22 @@ Java_app_serea_g3poc_NativeLlamaEngine_nativeLoad(JNIEnv * env, jobject, jlong e
 extern "C" JNIEXPORT jstring JNICALL
 Java_app_serea_g3poc_NativeLlamaEngine_nativeGenerate(
         JNIEnv * env, jobject engine_instance, jlong engine_id, jstring prompt_value, jint max_tokens, jlong generation_id) {
-    const char * prompt = env->GetStringUTFChars(prompt_value, nullptr);
-    if (prompt == nullptr) return nullptr;
+    const auto prompt_value_utf8 = java_string_to_utf8(env, prompt_value);
+    if (!prompt_value_utf8.has_value()) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/IllegalArgumentException", "Prompt contains invalid UTF-16");
+        }
+        return nullptr;
+    }
+    const std::string & prompt = *prompt_value_utf8;
     std::lock_guard<std::mutex> lock(engine_mutex);
     if (active_engine_id.load(std::memory_order_acquire) != engine_id || model == nullptr || context == nullptr || sampler == nullptr) {
-        env->ReleaseStringUTFChars(prompt_value, prompt);
         throw_java(env, "java/lang/IllegalStateException", "This engine does not own the loaded model");
         return nullptr;
     }
 
     RequestIdentity request{engine_id, generation_id};
     if (generation_cancelled(engine_id, generation_id)) {
-        env->ReleaseStringUTFChars(prompt_value, prompt);
         throw_cancelled(env);
         return nullptr;
     }
@@ -214,17 +345,19 @@ Java_app_serea_g3poc_NativeLlamaEngine_nativeGenerate(
     abort_callback_reset reset_abort_callback(context);
     llama_memory_clear(llama_get_memory(context), true);
     llama_sampler_reset(sampler);
-    const int32_t prompt_length = static_cast<int32_t>(std::char_traits<char>::length(prompt));
-    const int32_t required = -llama_tokenize(vocab, prompt, prompt_length, nullptr, 0, true, true);
+    if (prompt.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        throw_java(env, "java/lang/IllegalArgumentException", "Prompt exceeds the native byte bound");
+        return nullptr;
+    }
+    const int32_t prompt_length = static_cast<int32_t>(prompt.size());
+    const int32_t required = -llama_tokenize(vocab, prompt.data(), prompt_length, nullptr, 0, true, true);
     if (required <= 0 || required + max_tokens > 512) {
-        env->ReleaseStringUTFChars(prompt_value, prompt);
         throw_java(env, "java/lang/IllegalArgumentException", "Prompt exceeds the PoC context bound");
         return nullptr;
     }
     std::vector<llama_token> tokens(static_cast<size_t>(required));
     const int32_t token_count = llama_tokenize(
-            vocab, prompt, prompt_length, tokens.data(), required, true, true);
-    env->ReleaseStringUTFChars(prompt_value, prompt);
+            vocab, prompt.data(), prompt_length, tokens.data(), required, true, true);
     if (generation_cancelled(engine_id, generation_id)) {
         throw_cancelled(env);
         return nullptr;
@@ -245,6 +378,12 @@ Java_app_serea_g3poc_NativeLlamaEngine_nativeGenerate(
     }
 
     llama_batch prompt_batch = make_batch(tokens, 0);
+    if (prompt_batch.token == nullptr || prompt_batch.pos == nullptr ||
+            prompt_batch.n_seq_id == nullptr || prompt_batch.seq_id == nullptr ||
+            prompt_batch.logits == nullptr) {
+        throw_java(env, "java/lang/OutOfMemoryError", "Unable to allocate prompt batch buffers");
+        return nullptr;
+    }
     const int32_t prompt_result = llama_decode(context, prompt_batch);
     llama_batch_free(prompt_batch);
     if (generation_cancelled(engine_id, generation_id) || prompt_result == 2) {
@@ -276,6 +415,11 @@ Java_app_serea_g3poc_NativeLlamaEngine_nativeGenerate(
         result.append(piece, static_cast<size_t>(piece_length));
         std::vector<llama_token> next_token{token};
         llama_batch batch = make_batch(next_token, position++);
+        if (batch.token == nullptr || batch.pos == nullptr || batch.n_seq_id == nullptr ||
+                batch.seq_id == nullptr || batch.logits == nullptr) {
+            throw_java(env, "java/lang/OutOfMemoryError", "Unable to allocate generation batch buffers");
+            return nullptr;
+        }
         const int32_t decode_result = llama_decode(context, batch);
         llama_batch_free(batch);
         if (generation_cancelled(engine_id, generation_id) || decode_result == 2) {
@@ -287,7 +431,19 @@ Java_app_serea_g3poc_NativeLlamaEngine_nativeGenerate(
             return nullptr;
         }
     }
-    return env->NewStringUTF(result.c_str());
+    return utf8_to_java_string(env, result);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_app_serea_g3poc_NativeLlamaEngine_nativeUnicodeRoundTrip(JNIEnv * env, jobject, jstring value) {
+    const auto converted = java_string_to_utf8(env, value);
+    if (!converted.has_value()) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/IllegalArgumentException", "Input contains invalid UTF-16");
+        }
+        return nullptr;
+    }
+    return utf8_to_java_string(env, *converted);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

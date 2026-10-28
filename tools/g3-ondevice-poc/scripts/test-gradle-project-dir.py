@@ -125,11 +125,33 @@ for marker in (
     'dump permissions "$APP_APK"',
     'dump permissions "$test_apk"',
     'androidtest-apk-permissions.txt',
-    "Standalone PoC target APK must not request INTERNET permission",
-    "Standalone PoC AndroidTest APK must not request INTERNET permission",
+    'scripts/verify-apk-permissions.py',
 ):
-    if marker not in prepare:
-        raise SystemExit(f"both generated APK permission surfaces must be recorded and deny INTERNET: {marker}")
+    if marker not in prepare and marker not in source:
+        raise SystemExit(f"both generated APK permission surfaces must use the explicit allowlist: {marker}")
+permission_verifier = (SCRIPT.parent / "verify-apk-permissions.py").read_text(encoding="utf-8")
+for marker in (
+    'APP_ALLOWED = frozenset()',
+    'TEST_ALLOWED = frozenset({"android.permission.REORDER_TASKS"})',
+    'if actual != expected:',
+):
+    if marker not in permission_verifier:
+        raise SystemExit(f"generated APK permissions must be constrained by exact allowlists: {marker}")
+
+for marker in (
+    'sdk-packages-installed.txt',
+    'sdk-toolchain-revisions.json',
+    'emulator/package.xml',
+    'ndk/28.2.13676358/package.xml',
+    'cmake/3.31.6/package.xml',
+    'selected-google-apis-x86_64-system-image',
+):
+    if marker not in source:
+        raise SystemExit(f"host metadata must retain installed SDK/NDK/CMake/Emulator revisions: {marker}")
+if "capture-model-license" not in workflow or "capture-model-license.py" not in source or "model-license-evidence.json" not in source:
+    raise SystemExit("workflow must capture immutable pinned model license metadata without weights")
+if "disposable-avd-cleanup-boundary.txt" not in workflow or "app_private_model_removed=not_individually_verified" not in source:
+    raise SystemExit("private model cleanup must be truthful and identify the disposable AVD boundary")
 
 if "python3 tools/g3-ondevice-poc/scripts/test-api-selection.py" not in workflow:
     raise SystemExit("G3 workflow must execute host API marker regression tests")
@@ -181,4 +203,4 @@ for suffix in ("*.kt", "*.java"):
         if network_apis.search(source_file.read_text(encoding="utf-8")):
             raise SystemExit(f"app source must not add network I/O for this local inference PoC: {source_file}")
 
-print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test lease_wait_dispatcher=Dispatchers.IO load_close_async_failure_isolated=true cancellation_asserts_native_abort_callback=true target_and_androidtest_internet_denied=true api_marker_validation_pre_sdk=true explicit_api26_or_35=true x86_64_acceleration_required=true app_network_io=false")
+print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test lease_wait_dispatcher=Dispatchers.IO load_close_async_failure_isolated=true cancellation_asserts_native_abort_callback=true target_and_androidtest_permission_allowlists_exact=true toolchain_revisions_captured=true pinned_model_license_evidence=true disposable_avd_cleanup_boundary=true api_marker_validation_pre_sdk=true explicit_api26_or_35=true x86_64_acceleration_required=true app_network_io=false")

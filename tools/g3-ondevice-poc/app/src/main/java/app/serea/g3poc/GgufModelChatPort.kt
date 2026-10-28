@@ -267,6 +267,8 @@ internal class NativeLlamaEngine : LocalInferenceEngine, AutoCloseable {
 
     internal fun abortCallbackCancellationsForTest(): Int = nativeAbortCallbackCancellationsForTest()
 
+    internal fun roundTripUnicodeForTest(value: String): String = nativeUnicodeRoundTrip(value)
+
     internal fun activeGenerationIdForTest(): Long? = synchronized(lifecycleLock) {
         activeRequests.firstOrNull { it.nativeMayRun && !it.completed }?.id
     }
@@ -379,4 +381,5 @@ internal class NativeLlamaEngine : LocalInferenceEngine, AutoCloseable {
     private external fun nativeReleaseAbortCallbackGateForTest()
     private external fun nativeAbortCallbackEntriesForTest(): Int
     private external fun nativeAbortCallbackCancellationsForTest(): Int
+    private external fun nativeUnicodeRoundTrip(value: String): String
 }

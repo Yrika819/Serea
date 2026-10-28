@@ -87,6 +87,11 @@ jobs:
           mkdir -p "$G3_EVIDENCE_DIR"
           bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh host-metadata
 
+      - name: Verify license metadata at the pinned model revision (no weights)
+        run: |
+          set -euo pipefail
+          bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh capture-model-license
+
       - name: Require accessible KVM and verified Emulator acceleration
         run: |
           set -euo pipefail
@@ -107,7 +112,10 @@ jobs:
             2>&1 | tee "$G3_EVIDENCE_DIR/bounded-download-test.txt"
 
       - name: Verify Gradle root and AndroidTest source contracts
-        run: python3 tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py
+        run: |
+          python3 tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py
+          python3 tools/g3-ondevice-poc/scripts/test-native-source-contract.py
+          python3 tools/g3-ondevice-poc/scripts/test-poc-metadata-contracts.py
 
       - name: Exercise optional CPU pressure and early-exit cleanup with fake adb
         run: python3 tools/g3-ondevice-poc/scripts/test-runner-failure-paths.py
@@ -131,6 +139,23 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -wipe-data
           script: bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh execute
+
+      - name: Record the disposable AVD cleanup boundary
+        if: always()
+        run: |
+          mkdir -p "$G3_EVIDENCE_DIR"
+          {
+            echo 'runner=GitHub-hosted ubuntu-24.04 ephemeral job VM'
+            echo 'avd_force_created=true'
+            echo 'avd_wipe_data=true'
+            echo 'avd_reused=false'
+            echo 'model_weights_uploaded_as_artifact=false'
+            echo 'app_private_model_cleanup=verified by adb when package remains installed; otherwise not individually verified'
+            echo 'final_cleanup_boundary=AVD and job VM are discarded when this GitHub-hosted job ends'
+          } | tee "$G3_EVIDENCE_DIR/disposable-avd-cleanup-boundary.txt"
+          if [ -f "$G3_EVIDENCE_DIR/model-cleanup.txt" ]; then
+            cat "$G3_EVIDENCE_DIR/model-cleanup.txt" >> "$G3_EVIDENCE_DIR/disposable-avd-cleanup-boundary.txt"
+          fi
 
       - name: Capture post-run host resource metadata
         if: always()

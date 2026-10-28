@@ -10,7 +10,7 @@
 | LAST_GOOD_SHA | Formal run `40650170110` SUCCESS on `029c5aa6267fe3b4c44ac6fd5b082ed1c763b140` only. G5 focused egress tests pass locally on `3ba450ec1d6c4adf0b29daf42909e28fa242f087` only. Neither result is inherited by later commits. |
 | WORKTREE | `/workspace/Serea-g5-evidence-closure` |
 | BRANCH | `codex/serea-g5-evidence-closure-20261028` |
-| CURRENT_HEAD | `3ba450ec1d6c4adf0b29daf42909e28fa242f087`; tree `04a3f951263fd96475c11454a521e1fd28745f3f`; local only at checkpoint creation |
+| CURRENT_HEAD | `dd236abf75c26b8ba8f4c5db7c696b7b380a1548`; tree `2ef2610a320cfdab8e3f3e74a6170430848b27a6`; local checkpoint before preserving the new exact-head evidence |
 | DRAFT_PR | None yet; intended base `codex/serea-g4-final-integration-candidate-20261027` (PR #132 branch) |
 | CI_RUN_IDS | Old-head Formal `40650170110` SUCCESS; PR133 IME matrix `40657482497` FAIL; PR133 Formal `40657482550` FAIL; Agent C API35 inference `40657508541` SUCCESS; PR133 Full `40657482463`, Fast `40657482477`, RustSec `40657482449`, Git Hooks `40657482501`, Native `40657482527`, SQLite `40657482541` SUCCESS on `b06c1ac` only |
 | ARTIFACT_IDS | IME build `12801519343`, build evidence `12802301577`; API26 B `12803116378`, API26 C `12802653113`, API35 B `12802623709`, API35 C `12803148298`; Formal API26 `12803068069`, API35 `12802953852`; on-device AI `12802681672`; Cloud local exact-head evidence under `docs/agent-reports/evidence/g5-cloud-egress-20261028/after-lineage-fix-3ba450e/` |
@@ -47,7 +47,7 @@ Agent B's branch `codex/serea-g5-cloud-egress-20261028` is pushed at HEAD `e62d1
 
 Agent A independently reviewed the final root patch and accepted it. Root commit `9b9e7fa53b744c991fa575e73ba739b2d0c66553` adds current `userMessage.sourceLineage` to the generated model-output lineage while retaining `MODEL_OUTPUT`, `USER_AUTHORED`, prior context lineage, and UNKNOWN classification. A first focused run observed the stronger `SOURCE_LINEAGE_DENIED` result instead of `CLASSIFICATION_DENIED`, evidence that Google source was retained and denied. The assertion was updated to the stronger denial reason; commit `3ba450ec1d6c4adf0b29daf42909e28fa242f087` adds an explicit Gmail-origin assertion across bounded context.
 
-Exact local focused suite at `3ba450e` passed: 81 tests, 0 failures, 0 errors, 0 skips across `CloudEgressBodyLineageAttackMatrixTest` (9), `SecurityPortsTest` (10), `LocalFakeRoutingAdversarialTest` (3), `GoogleOriginEgressAdversarialTest` (1), `ChatViewModelTest` (36), and `OllamaCloudAdapterTest` (22). Gradle log and JUnit XMLs with SHA-256 manifest are preserved under `docs/agent-reports/evidence/g5-cloud-egress-20261028/after-lineage-fix-3ba450e/`. This is local focused evidence on `3ba450e`, not CI or a result for a later commit. Agent A's independent source review was ACCEPT at the same HEAD.
+Exact local focused suite at `3ba450e` passed: 81 tests, 0 failures, 0 errors, 0 skips. Its Gradle log and JUnit XMLs are preserved under `docs/agent-reports/evidence/g5-cloud-egress-20261028/after-lineage-fix-3ba450e/`. Agent A's independent source review was ACCEPT at the same HEAD. Then at exact HEAD `dd236abf75c26b8ba8f4c5db7c696b7b380a1548` / tree `2ef2610a320cfdab8e3f3e74a6170430848b27a6`, the same focused suite passed again: 81 tests, 0 failures, 0 errors, 0 skips. The same run built isolated target, instrumentation, and Test IME APKs; compiled AndroidTest Kotlin; passed debug/isolated/beta manifest generation, manifest-scope verification, and AVD guard tests. All three local APKs had the same signer certificate SHA-256 `36c5b853ac2bf2a5fde88f6d93fb6a2aeb6a8888e725c06bcd45dba65924d8d8`; local APK digests and the Gradle/JUnit evidence are recorded under `docs/agent-reports/evidence/g5-cloud-egress-20261028/after-lineage-fix-dd236ab/`. This remains local evidence, not CI, and is not transferred to a later commit.
 
 Security residuals: `prefillEditorFromProvider` currently has no production call site, so a future Gmail/Calendar-to-Chat UI handoff must pass the correct explicit origin. Arbitrary clipboard or pasted text provenance is not inferred. Account/session generation binding across a real Google handoff is not covered. No disclosure was observed. Real Provider and Cloud AI remain **DISABLED** until production handoff lineage, authorization binding, and same-head security evidence are complete.
 
@@ -71,11 +71,10 @@ Run `40657482550` on PR #133 HEAD `b06c1ac` completed **FAILURE**. Focused Chat 
 
 ## Next actions
 
-1. Preserve this checkpoint and exact-head Cloud evidence in a root-owned commit.
-2. Run exact-candidate local egress JVM tests and isolated APK/manifest/signer checks on the resulting HEAD; do not run concurrent local emulators while GitHub IME jobs are active.
-3. Push the root-owned branch and create a new Draft PR based on PR #132's branch; do not modify or merge PR #132/#133/#126/#127.
-4. On the pushed exact HEAD, run independent IME B/C and inspect each JUnit, Android-owned connection, target editor identity, composition/selection, APK digests, and cleanup. If still failing, classify from the new trace before changing code.
-5. Run Formal Required and cross-cutting CI only on the stable exact candidate HEAD. No old SHA result transfers.
-6. Keep real Google, Cloud AI, production signing/distribution, Pixel 7a, main merge, and Personal Beta final GO as Owner-controlled/not run.
+1. Preserve this checkpoint and local exact-head Cloud evidence in a root-owned commit.
+2. Push the root-owned branch and create a new Draft PR based on PR #132's branch; do not modify or merge PR #132/#133/#126/#127.
+3. On the pushed exact HEAD, run independent IME B/C and inspect each JUnit, Android-owned connection, target editor identity, composition/selection, APK digests, and cleanup. If still failing, classify from the new trace before changing code.
+4. Run Formal Required and cross-cutting CI only on the stable exact candidate HEAD. No old SHA result transfers.
+5. Keep real Google, Cloud AI, production signing/distribution, Pixel 7a, main merge, and Personal Beta final GO as Owner-controlled/not run.
 
 Personal Beta remains **NO-GO**.

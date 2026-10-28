@@ -618,6 +618,7 @@ internal class ChatViewModel(
 
     private fun restoreLatest() {
         val generation = selectionGeneration
+        var generationToFinalize = generation
         viewModelScope.launch {
             try {
                 usageRepository?.recoverAfterProcessRestart()
@@ -640,7 +641,10 @@ internal class ChatViewModel(
                         message.copy(status = if (message.status == "PENDING") "OUTCOME_UNKNOWN" else message.status).toChatMessage()
                     }
                     if (generation != selectionGeneration) return@launch
-                    if (latest.id != mutableState.value.conversation.id) selectionGeneration += 1
+                    if (latest.id != mutableState.value.conversation.id) {
+                        selectionGeneration += 1
+                        generationToFinalize = selectionGeneration
+                    }
                     mutableState.update {
                         val warnings = it.historyPersistenceWarnings.toMutableMap()
                         persistenceWarningUpdates.forEach { (messageId, warning) ->
@@ -659,7 +663,7 @@ internal class ChatViewModel(
             } catch (_: Exception) {
                 if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Could not restore saved history.") }
             } finally {
-                if (generation == selectionGeneration) mutableState.update { it.copy(isRestoring = false) }
+                if (generationToFinalize == selectionGeneration) mutableState.update { it.copy(isRestoring = false) }
             }
         }
     }

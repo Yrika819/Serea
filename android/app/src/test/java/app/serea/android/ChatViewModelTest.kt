@@ -219,6 +219,7 @@ class ChatViewModelTest {
 
         advanceUntilIdle()
         assertEquals("restored-conversation", vm.state.value.conversation.id)
+        assertFalse(vm.state.value.isRestoring)
         assertTrue(vm.currentConversationSelectionGeneration() > initialGeneration)
 
         val restoredGeneration = vm.currentConversationSelectionGeneration()

@@ -74,15 +74,15 @@ Command from `android/`:
 | `boundedContextCannotLaunderGoogleOriginThroughUnlineagedModelSummary` | FAIL | Under the explicit hypothetical PUBLIC classification and bounded context, gate returns `APPROVED` instead of `SOURCE_LINEAGE_DENIED`. Latent only; current UNKNOWN case separately denies. |
 | `currentUnknownAssistantClassificationStillStopsCloudBeforeCredentialAndHttp` | PASS | `CLASSIFICATION_DENIED`; 0 usage reservations, 0 credential reads, 0 loopback HTTP dispatches. |
 | `modifiedExpiredOrGoogleTaintedCloudRequestsStopBeforeUsageCredentialAndHttp` | PASS | Changed body, wrong destination, expired intent, Gmail-origin body, UNKNOWN lineage, model-origin claim, and model text claiming consent with no explicit intent are rejected; 0 reservation/read/dispatch across attempts. |
-| `providerBodyTaintSurvivesPartialEditWhitespaceClearAndReentry` | PASS | Gmail and Calendar taint remain on changed text, whitespace, clear, and re-entry; sent body carries lineage. This is ViewModel-level text mutation, not character-by-character IME/UI input. |
+| `providerBodyTaintSurvivesWholeTextFieldValueReplacementWhitespaceClearAndReentry` | PASS | Gmail and Calendar taint remain on replacement text, whitespace, clear, and re-entry; sent body carries lineage. It replaces the entire `TextFieldValue`; this does not test character-level edits or IME input. |
 | `sameApprovedSendIdCannotDispatchTwice` | PASS | First synthetic request dispatches once; duplicate send ID is rejected before a second credential read or HTTP dispatch. |
-| `configurationChangeRetainsProviderBodyTaintInTheRetainedViewModel` | PASS | Retained `ViewModelStore` returns the same VM instance. This is **not** ActivityScenario recreation and does not prove Activity lifecycle persistence. |
+| `viewModelStoreReuseRetainsProviderBodyTaint` | PASS | A second provider lookup on the same `ViewModelStore` returns the same VM instance. This is **not** ActivityScenario recreation and does not prove Activity lifecycle persistence. |
 
 ## Attack-case coverage and limits
 
 | Scenario | Status | Existing/new test |
 |---|---|---|
-| Google-source taint after text replacement, blank/whitespace, clear, re-entry | Covered at ViewModel level | New `providerBodyTaintSurvivesPartialEditWhitespaceClearAndReentry`; existing `ChatViewModelTest.providerPrefillLineageSurvivesEditorChangesAndIsBoundToTheSentBody` |
+| Google-source taint after whole-`TextFieldValue` replacement, blank/whitespace, clear, re-entry | Covered at ViewModel level | New `providerBodyTaintSurvivesWholeTextFieldValueReplacementWhitespaceClearAndReentry`; this is not character-level editing. Existing `ChatViewModelTest.providerPrefillLineageSurvivesEditorChangesAndIsBoundToTheSentBody` is also ViewModel-level. |
 | First-turn Gmail/Calendar source to generated assistant | Covered; fails | New Gmail and Calendar first-turn tests |
 | Conversation switching with provider-prefilled text | Covered; assistant lineage fails | New `conversationSwitchDoesNotClearCurrentProviderBodyTaint` |
 | Bounded-context laundering when an unlineaged summary is treated as PUBLIC | Covered as a hypothetical; gate approves | New `boundedContextCannotLaunderGoogleOriginThroughUnlineagedModelSummary` |
@@ -94,7 +94,7 @@ Command from `android/`:
 | Model output text pretending to grant consent | Covered; no explicit send intent is still required | New `modifiedExpiredOrGoogleTaintedCloudRequestsStopBeforeUsageCredentialAndHttp` |
 | Session revocation / account switch during provider token acquisition | Covered in Google read adapters, separate from Chat source lineage | `GmailProviderSessionsTest.accountSwitchDuringTokenLeaseAcquisitionCannotDispatchAGmailRequest`; `CalendarProviderSessionsTest.accountSwitchDuringTokenLeaseAcquisitionCannotDispatchACalendarRequest`; HTTP adapter account-switch tests |
 | Session/account generation bound from Google prefill into Chat and checked at send | Not covered | No UI/Composition Root integration found; provider session tests are separate |
-| Actual Activity recreation for lineage | Not covered | New retained-ViewModelStore test is not Activity recreation |
+| Actual Activity recreation for lineage | Not covered | New `viewModelStoreReuseRetainsProviderBodyTaint` test is only same-`ViewModelStore` reuse, not Activity recreation |
 | True Compose/IME character-by-character partial edits | Not covered by this new suite | New ViewModel test changes a complete `TextFieldValue`; Real IME diagnostic is a separate lane |
 | Real Google account/provider data or actual Cloud request | Not run / prohibited | All fixtures synthetic; no credentials or Google account used |
 
@@ -115,3 +115,5 @@ No Activity recreation, delayed Google-session callback, account-generation-to-C
 - Test-only source: `android/app/src/test/java/app/serea/android/CloudEgressBodyLineageAttackMatrixTest.kt`
 
 No GitHub Actions run was started in this lane; CI run and artifact IDs are therefore **none**.
+
+Review clarification: the original pre-fix JUnit artifact is preserved unchanged as `attack-matrix-before-product-patch.junit.xml`. After the test-name-only clarification, rerun output is separately saved as `attack-matrix-renamed-pre-fix.junit.xml` and must show the same 9 tests, 4 regression failures, 0 errors, and 0 skips.

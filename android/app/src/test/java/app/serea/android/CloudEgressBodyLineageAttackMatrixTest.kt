@@ -33,7 +33,7 @@ class CloudEgressBodyLineageAttackMatrixTest {
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
 
-    @Test fun providerBodyTaintSurvivesPartialEditWhitespaceClearAndReentry() = runTest(dispatcher) {
+    @Test fun providerBodyTaintSurvivesWholeTextFieldValueReplacementWhitespaceClearAndReentry() = runTest(dispatcher) {
         for (providerOrigin in listOf(DataOrigin.GMAIL, DataOrigin.CALENDAR)) {
             val captured = mutableListOf<ModelChatRequest>()
             val vm = ChatViewModel(object : ModelChatPort {
@@ -205,7 +205,7 @@ class CloudEgressBodyLineageAttackMatrixTest {
         assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED, ChatEgressGate.evaluate(contract, 20_000L).decision)
     }
 
-    @Test fun configurationChangeRetainsProviderBodyTaintInTheRetainedViewModel() = runTest(dispatcher) {
+    @Test fun viewModelStoreReuseRetainsProviderBodyTaint() = runTest(dispatcher) {
         val store = ViewModelStore()
         val captured = mutableListOf<ModelChatRequest>()
         val port = object : ModelChatPort {

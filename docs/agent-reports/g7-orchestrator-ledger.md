@@ -75,7 +75,7 @@ The Android Cloud adapter is fixed to `https://ollama.com/api/chat`, but Cloud i
 | Ollama Cloud | [Terms of Service](https://ollama.com/terms) page reports “Last updated: May 2026”; section 2 says users must be at least 18. The page says prompts/outputs are not used to train models and grants a limited license to process content to provide the service. [Privacy Policy](https://ollama.com/privacy) says cloud prompts/responses are processed transiently, with account/basic usage metadata collected; it also describes sharing with cloud infrastructure/model inference providers, US processing and international transfers, retention and deletion. | Not approved. Age eligibility, downstream recipients, region, account, service tier, current retention, cost, and provider-specific data handling need an Owner decision. No Cloud key/API use. Google-origin content remains blocked regardless of this preliminary provider review. |
 | Other hosted model providers | No service or current terms were selected for this G7 packet. | Not evaluated and not a candidate. Do not infer eligibility from consumer chat-product terms. |
 
-The Ollama Terms page requires users to be 18 or older. Its Privacy Policy also contains a statement that permits a 13+ user with parent or guardian consent, while elsewhere describing the service as intended for adults. The published materials therefore conflict, and this review does not determine which provision controls. Retain 18+ as a conservative provisional gate and require written Ollama clarification or legal review before activation. The dated pages are not a legal determination. Recheck current age, jurisdiction, downstream recipient, data-processing, retention, cost, abuse and deletion terms before any separately authorized activation.
+The Ollama Terms page requires users to be 18 or older. Its Privacy Policy says the service is intended for adults and that Ollama does not knowingly collect information from under-18s, but then says a user represents either that they are at least 13 or that they are a parent/guardian consenting to a minor dependent's use. These statements conflict with each other and with the Terms age requirement; this review does not determine which provision controls. Retain 18+ as a conservative provisional gate and require written Ollama clarification or legal review before activation. The dated pages are not a legal determination. Recheck current age, jurisdiction, downstream recipient, data-processing, retention, cost, abuse and deletion terms before any separately authorized activation.
 
 Google's [API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy) states that use/transfer of Google user data is limited to providing or improving prominent user-facing features with user consent, with additional requirements for sensitive/restricted scopes and applicable verification/security assessments. That policy does not make this app's local-only handoff a Cloud consent, and this packet does not determine legal or Google verification eligibility. Keep Google→Cloud disabled.
 
@@ -92,8 +92,10 @@ AGENT_ID: Parent Orchestrator
 ACTIVE_PHASE: G7 Readiness Preparation
 GOAL_STATUS: PARTIAL — initial review requested CHANGES_REQUESTED; corrections and exact-head CI pending
 BASE_SHA: 23b884cf2815a2f3287652d5ffd2c3913d09df76
-CURRENT_HEAD: 047d46f6905d33b6c80cbb6daff9e0f0cb13013e (initial reviewed submission; corrections follow)
-TREE_SHA: 4da3a00c1347b60fc5035e763cb2d834fc051d34
+CURRENT_HEAD: 3594008a909c6abd1413972872efb7ccfd835b41 (reviewed revision before final policy wording correction)
+TREE_SHA: b89c96d3351400c7809926258b3cda6c71e93cf8
+REVIEWED_SUBMISSION_HEAD: 047d46f6905d33b6c80cbb6daff9e0f0cb13013e
+REVIEWED_SUBMISSION_TREE: 4da3a00c1347b60fc5035e763cb2d834fc051d34
 WORKTREE: /workspace/Serea-g7-calendar-readiness
 BRANCH: codex/serea-g7-calendar-readiness
 DRAFT_PR: #139 OPEN / DRAFT, base codex/serea-g6-integration-candidate at 23b884cf2815a2f3287652d5ffd2c3913d09df76; https://github.com/Yrika819/Serea/pull/139
@@ -122,6 +124,7 @@ At initial submission head `047d46f`, Agent B and Agent C independently returned
 - **G7-LEDGER-02:** identify Formal Android run attempt 2 as the successful attempt and retain attempt 1 as superseded UTP failure evidence.
 - **G7-DOC-01:** remove trailing whitespace caught by `git diff --check`.
 - **G7-POLICY-01:** state the conflicting Ollama age language as a conflict, keep 18+ as a provisional conservative gate, and require provider clarification or legal review; include downstream inference/cloud infrastructure recipients and international transfer in Owner review.
+- **G7-PROVIDER-02:** accurately quote the Privacy Policy's age statement as “13 or parent/guardian consenting to a minor dependent” rather than 13+ with parental consent.
 
 Corrections are being applied by the parent-owned ledger/workflow owner. The G7 JVM and exact-head CI status remain pending until the corrected branch head completes its checks.
 

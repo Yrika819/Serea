@@ -11,7 +11,7 @@
 **Protected `main`:** `e0acb0254820c381dd97828824bef86a1db5176c` — unchanged
 
 **G7 branch:** `codex/serea-g7-calendar-readiness`, based on the exact G6 candidate above
-**Status:** PARTIAL — initial independent reviews requested changes; corrections and exact-head G7 CI are pending. No live service or production action was performed.
+**Status:** PARTIAL — G7 mock/readiness work and reviews are complete. Exact-head Android API 35 Required instrumentation fails twice in the same pre-existing Chat/composer UI test; Android Identity is skipped as a dependent gate. Other exact-head CI scopes pass. No live service or production action was performed.
 
 ## G6 handoff
 
@@ -87,48 +87,84 @@ The trial does not alter Android Required, branch protection, Formal manifest/as
 
 ## Change and verification status
 
+The G7 source/test candidate is `acde94c3c0f81ac2e76d0b0e51e48fd84589ebeb`, tree `f2fa81955f4c8834b83073ef4d239c831ff4f773`. Its only code change after the previously tested `e3054f7c75111374f62acf25d272460706fc2411` is removal of a redundant Kotlin non-null assertion in the new test. Product code and security behavior are unchanged. The branch is `codex/serea-g7-calendar-readiness`; PR #139 remains OPEN/DRAFT, based on G6 candidate `23b884cf2815a2f3287652d5ffd2c3913d09df76`. Protected `main` and the frozen G5 candidate remain unchanged.
+
+**Independent review:** ACCEPTED. Agent C accepted the G7 test/workflow boundaries at `e3054f7`; Agent B accepted the provider/privacy correction. A separate review of the one-line warning cleanup accepted it as semantics-preserving and confirmed the loopback and account-switch assertions remain intact. Earlier findings `G7-WF-01`, `G7-LEDGER-01`, `G7-LEDGER-02`, `G7-DOC-01`, `G7-POLICY-01`, and `G7-PROVIDER-02` were corrected and accepted. The Android API 35 failure below is in an existing Chat/composer UI test that G7 did not change; no change request or out-of-scope code fix was made.
+
+**Exact-head CI (`acde94c`):**
+
+| Scope | Run | Result |
+|---|---:|---|
+| Android build, lint, unit, integration, security, docs, dependency audit | `40740591530` | PASS |
+| Android API 26 Required | `40740591530` | PASS, 105 tests, 0 failures/errors/skips; Process Death recovery PASS |
+| Android API 35 Required | `40740591530` | FAIL twice across the initial job and its same-SHA failed-job rerun |
+| Android Emulator Required Gate | `40740591530` | FAIL; Identity Isolation job skipped because Emulator did not pass |
+| Full | `40740591333` | PASS, 5/5 jobs |
+| Fast | `40740591693` | PASS |
+| Native | `40740591770` | PASS, 12/12 platform/toolchain jobs |
+| SQLite cross-architecture | `40740591310` | PASS, all four Intel/ARM64 produce/open directions |
+| RustSec | `40740591795` | PASS |
+| Git Hooks | `40740591836` | PASS, Ubuntu, Windows, macOS |
+| Focused Calendar OAuth Mock E2E | `40740591868` | PASS, exact one JUnit case, 0 failures/errors/skips |
+| Dedicated Calendar read-only regression | `40740596654` | PASS |
+| Mock release contract and artifact-bound SBOM | `40740596450` | PASS |
+
+On both API 35 attempts, the failing case was `app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges`. The first attempt failed with a Compose condition timeout after 10 seconds. The same-SHA rerun failed with `AssertionError: Composer IME state did not settle at R4-B-committed` in `awaitComposerImeState` at `SereaAppShellTest.kt:382`. API 26 passed 105/105 on the rerun; API 35 did not provide a successful all-tests result. The cross-API emulator Required gate therefore fails, and Identity Isolation is **SKIPPED**, not PASS. This failure is retained as an out-of-scope Android UI/IME reliability issue; no further retry or source investigation was started.
+
+Android Unit, Integration, Security, Dependency Audit, Documentation, and Build/Lint all passed on `acde94c`. The Focused G7 test and the dedicated Calendar suite both pass after the warning cleanup. Release/SBOM evidence consists of 7 deterministic SBOM tests, 10 artifact-bound SBOM tests, 19 mock signing/distribution tests, a CI-only debug APK, and a 317-component CycloneDX inventory bound to APK SHA-256 `3d17349477f44e2b0702acc3a277c86e1246a58eef650b451042f60e61fa4022`. This is mock release evidence only; it does not establish Owner-key signing or package membership beyond the recorded inventory limitations.
+
+### Current exact-head artifacts
+
+| Evidence | Artifact ID | Digest |
+|---|---:|---|
+| Focused Calendar OAuth Mock JUnit | `12838468155` | `sha256:5c55510bf6d63f7d130990b56e1a7bdee36c1eb440e1509b251942b88ac615fe` |
+| Dedicated Calendar read-only JUnit | `12839571771` | `sha256:bccf83ef485e251eb1b4c2f2d04bb314346e25b4eb112ae39aa5bd83c5c7679f` |
+| Release contract and bound SBOM bundle | `12838982972` | `sha256:601f57d431528bbc4aa7e7a10cf74f334f6992157a328cd97731f7f4179a84c2` |
+| Android Unit JUnit | `12839961670` | `sha256:e891bae32ec6533eb366e5c2fad19dae15684b5ae2cd32ac7a476aa1b60a1d31` |
+| Android Integration JUnit | `12839238062` | `sha256:35a81080fc490824899e71d454a85ff91158112c8e3def955975ded9f6e2321d` |
+| Android Security JUnit | `12839002703` | `sha256:874bb1047265bfc032a958bc5a2bbc814b9e65d145ec79be57c5c868c88c2b13` |
+| API 26 instrumentation (same-SHA rerun) | `12842417651` | `sha256:66cbe01db5ce2445f8b37c75af1745e1e897c98a468bf8066069307db81f9039` |
+| API 35 instrumentation (same-SHA rerun; contains failure) | `12841523972` | `sha256:a9efefb5adb6f1ddc95a37b742a2065ce8e231937071e52850508315f0c9b867` |
+| Emulator evidence bundle (same-SHA rerun) | `12842257543` | `sha256:8ee8ae7878ee320b88a0127e24ab3ceeab14c23201cc8233ef59cf1ebd8f7f69` |
+| Pixel 7a reacceptance report bundle | `12842881437` | `sha256:94685dbed8958b5851249dccd1d92c7798fc5ddfb3dcf29cec379e6d3ab1ba9d` |
+| SQLite Intel database | `12840105460` | `sha256:8c097b4bf26afc71e3a65b0e25bd0bb0d9192ae68bee82cd0568bb1528230731` |
+| SQLite ARM64 database | `12839630915` | `sha256:9205cc6a7cc4ea8c9d0924d738819f3f224acf281d25b926e2fc89e6c1222599` |
+
+The Pixel 7a item is a CI reacceptance report bundle, not a physical-device run. The temporary-key Identity artifact was not created because the job was skipped. No Pixel 7a, Owner key, Google account, live Google endpoint, Cloud credential, or production distribution was used.
+
+The focused workflow is a Non-Required one-test signal. On `e3054f7`, it completed in about 1m47s with Gradle around 88s; Android Unit completed in 2m15s with Gradle around 85s. On `acde94c`, the focused JUnit case passed with Gradle in 1m09s. This is one narrow early result and does not establish a repeatable CI time reduction.
+
+A main-only Personal Beta workflow was observed on feature-branch push run `40740583274`. It had no jobs because the existing `github.ref == 'refs/heads/main'` guard excluded this branch. No signing, attestation, Firebase, or distribution step ran. The guard was not changed or bypassed.
+
 ```text
 AGENT_ID: Parent Orchestrator
 ACTIVE_PHASE: G7 Readiness Preparation
-GOAL_STATUS: PARTIAL — initial review requested CHANGES_REQUESTED; corrections and exact-head CI pending
+GOAL_STATUS: PARTIAL — mock/readiness work and reviews are complete; API 35 Android Required fails twice on the same existing Chat/composer UI case, and Identity is skipped
 BASE_SHA: 23b884cf2815a2f3287652d5ffd2c3913d09df76
-CURRENT_HEAD: c66b39f7b8a1ac7a68d8e1b75af9e21a9882053b (G7 source revision before this documentation-only checkpoint update)
-TREE_SHA: 5801a564eaa54e1c83234ca6b71ac1f21af19013
-REVIEWED_SUBMISSION_HEAD: 047d46f6905d33b6c80cbb6daff9e0f0cb13013e
-REVIEWED_SUBMISSION_TREE: 4da3a00c1347b60fc5035e763cb2d834fc051d34
-INTERMEDIATE_REVIEW_HEAD: 3594008a909c6abd1413972872efb7ccfd835b41
-INTERMEDIATE_REVIEW_TREE: b89c96d3351400c7809926258b3cda6c71e93cf8
+CURRENT_HEAD: acde94c3c0f81ac2e76d0b0e51e48fd84589ebeb
+TREE_SHA: f2fa81955f4c8834b83073ef4d239c831ff4f773
 WORKTREE: /workspace/Serea-g7-calendar-readiness
 BRANCH: codex/serea-g7-calendar-readiness
-DRAFT_PR: #139 OPEN / DRAFT, base codex/serea-g6-integration-candidate at 23b884cf2815a2f3287652d5ffd2c3913d09df76; https://github.com/Yrika819/Serea/pull/139
-COMPLETED_WORK: read supplied roadmap v4; inspected G6 OAuth, Calendar, handoff, local adapter and release readiness evidence; added synthetic Calendar mock E2E and non-required focused CI trial; reviewed current Ollama Terms/Privacy and Google User Data Policy
+DRAFT_PR: #139 OPEN / DRAFT, based on codex/serea-g6-integration-candidate at 23b884cf2815a2f3287652d5ffd2c3913d09df76
+COMPLETED_WORK: read supplied roadmap v4; reviewed G6 OAuth, Calendar, trusted handoff, local-model and release evidence; added synthetic Calendar OAuth-to-Mock E2E and non-required focused workflow; documented Calendar-first OAuth gap, Owner decisions, UI/Usage and provider conditions; independent reviews accepted; removed one redundant test assertion after a compiler warning
 CHANGED_FILES: android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt; .github/workflows/android-g7-calendar-oauth-mock-focused.yml; docs/agent-reports/g7-orchestrator-ledger.md
-TEST_COMMANDS: `python3 tools/validate_docs.py docs`; `git diff --check`; targeted Gradle JVM run attempted but wrapper download failed with `ConnectException: Connection refused`
-JUNIT_RESULT: NOT_RUN locally; GitHub CI pending
-CI_RUN_IDS: initial head 047d46f runs `40727601520`, `40727601444`, `40727601497`, `40727601493`, `40727601392`, `40727601256`, `40727601384`, and focused G7 `40727601552` were superseded by branch updates; intermediate head 3594008 runs likewise superseded; current-at-checkpoint c66b39f: Android `40728607755`; Fast `40728607905`; Full `40728608055`; Native `40728607988`; Git Hooks `40728607747`; RustSec `40728607740`; SQLite `40728607753`; focused G7 `40728607853` (queued/pending)
-ARTIFACT_IDS: none
-SECURITY_IMPACT: no production code, credential, OAuth configuration or live endpoint changed; new test uses a synthetic token and loopback-only MockWebServer
-DEPENDENCIES: independent review; exact-head G7 CI; Owner O-01 Package ID, O-02 OAuth configuration, O-03 AI/provider eligibility decisions
-KNOWN_ISSUES: Google Activity Result/UI composition remains unwired; LocalModelSecurity only accepts MOCK_ONLY handoffs; ARM64 runtime, Pixel 7a speed/thermal acceptance and complete native dependency notices remain open
-CURRENT_BLOCKERS: local Gradle distribution could not be downloaded; exact-head GitHub CI is queued/in progress
-INTEGRATION_READY: no — review and CI pending
-REVIEW_REQUEST: independent Source/Test/Security/Integration review of the synthetic OAuth test, non-required workflow and provider/adapter contract
-NEXT_ACTION: apply review corrections on the G7 branch, obtain review acceptance, inspect focused and normal exact-head CI
-OWNER_APPROVAL_REQUIRED: real Google OAuth/account/data; Cloud AI API key/billing/provider activation; production signing/distribution; Pixel 7a operation; main merge; Personal Beta GO
+TEST_COMMANDS: `python3 tools/validate_docs.py docs`; `git diff --check`; local targeted Gradle unavailable because wrapper distribution download returned `ConnectException: Connection refused`; exact-head GitHub CI recorded above
+JUNIT_RESULT: Focused G7 JUnit 1/1 PASS; API 26 Required 105/105 PASS; API 35 fails on chatDraftSurvivesGmailAndCalendarDestinationChanges in both same-SHA attempts; Android Unit, Integration and Security jobs PASS
+CI_RUN_IDS: Android 40740591530 (initial plus failed-job same-SHA rerun); Full 40740591333; Fast 40740591693; Native 40740591770; SQLite 40740591310; RustSec 40740591795; Git Hooks 40740591836; G7 focused 40740591868; Calendar read-only 40740596654; Release Security 40740596450
+ARTIFACT_IDS: Focused 12838468155; Calendar 12839571771; release/SBOM 12838982972; Android API26 12842417651; Android API35 12841523972; Android emulator bundle 12842257543; Pixel 7a CI report bundle 12842881437; SQLite Intel 12840105460 and ARM64 12839630915; Identity artifact NOT_CREATED because job SKIPPED
+SECURITY_IMPACT: test and documentation only; synthetic invalid token and loopback MockWebServer; no production source, credential, OAuth configuration, live endpoint or external account
+DEPENDENCIES: Android API 35 Required UI/IME reliability remains outside G7 source scope; Owner O-01 package ID, O-02 OAuth configuration, O-03 AI/provider eligibility remain pending
+KNOWN_ISSUES: repeated API 35 timeout/assertion in existing Chat destination/composer IME UI test; Android Identity skipped; Google Activity Result and consent UI/composition remain unwired; real OAuth remains NOT_RUN; local model runtime and Pixel 7a performance remain NOT_RUN; linked native dependency notices/SBOM are not closed; Ollama age/eligibility conflict remains unresolved
+CURRENT_BLOCKERS: Android API 35 Required test fails on unchanged UI test and makes emulator/Identity composite gate fail; no Owner approval is needed for the current fake/mock work
+INTEGRATION_READY: mock/readiness work is review-accepted, but G7 candidate is not CI-complete and remains PARTIAL
+REVIEW_REQUEST: none open; the existing API 35 failure was not assigned to G7 code owners because this campaign excludes Android/IME re-investigation
+NEXT_ACTION: keep PR #139 Draft and Personal Beta NO-GO; retain the API 35 failure evidence; continue only independent G7 roadmap preparation, with real OAuth, accounts, Pixel 7a, Owner signing and Cloud still NOT_RUN
+OWNER_APPROVAL_REQUIRED: real Google OAuth/account/data, Cloud AI API key/billing/provider activation, production signing/distribution, physical Pixel 7a operation, main merge, Personal Beta GO
 ```
 
-### Independent review findings and disposition
+## Independent review findings and disposition
 
-At initial submission head `047d46f`, Agent B and Agent C independently returned `CHANGES_REQUESTED`.
-
-- **G7-WF-01:** include `tools/assert_exact_source_checkout.sh` in the focused workflow path filter.
-- **G7-LEDGER-01:** replace pending head/tree fields with the reviewed submission's exact SHA/tree and record PR #139.
-- **G7-LEDGER-02:** identify Formal Android run attempt 2 as the successful attempt and retain attempt 1 as superseded UTP failure evidence.
-- **G7-DOC-01:** remove trailing whitespace caught by `git diff --check`.
-- **G7-POLICY-01:** state the conflicting Ollama age language as a conflict, keep 18+ as a provisional conservative gate, and require provider clarification or legal review; include downstream inference/cloud infrastructure recipients and international transfer in Owner review.
-- **G7-PROVIDER-02:** accurately quote the Privacy Policy's age statement as “13 or parent/guardian consenting to a minor dependent” rather than 13+ with parental consent.
-
-The workflow path, attempt history, whitespace, provider recipient/age-conflict language, and exact source-head bookkeeping have been corrected by the parent-owned ledger/workflow owner. Agent B confirmed the provider conditions correction; Agent C confirmed the test and workflow boundaries. This latest ledger update is documentation-only. Final independent acceptance and the exact-head G7 JVM result remain pending.
+Review findings were closed before the warning-only cleanup. Agent C accepted the synthetic authorization, loopback transport, account-switch cancellation and workflow boundary on `e3054f7`; Agent B accepted the provider-policy correction. A second independent reviewer accepted the cleanup from `e3054f7` to the `acde94c` tree as test-only and semantics-preserving. The two API 35 failures are recorded as CI evidence; they do not change the G7 implementation review result, but they prevent CI readiness acceptance.
 
 ## Owner decisions and release status
 
@@ -145,4 +181,6 @@ The workflow path, attempt history, whitespace, provider recipient/age-conflict 
 
 ## G7 gate outlook
 
-G7 preparation is not the 2026-11-10 release decision. Before that gate, close the mock CI/review evidence, complete the Owner OAuth decision packet with any required package/certificate inputs, and update the AI acceptance matrix. If Owner decisions or device/service approvals are unavailable, keep corresponding real-service/device items `NOT_RUN`, maintain Fake/Local operation, and report `PARTIAL`; do not relax the G6 Security Gates.
+The Calendar Mock E2E, Owner readiness materials, AI/Product/Usage acceptance contract, provider terms review, and CI efficiency trial are prepared. The 2026-11-10 G7 decision remains pending because the exact-head Android API 35 Required gate fails twice in the same existing Chat/composer UI test and Identity is consequently skipped. This campaign did not investigate or patch that out-of-scope Android/IME issue, and did not relax the G6 Security Gates.
+
+Owner decisions O-01 through O-03 remain pending on the 2026-11-03 and 2026-11-10 schedule. Calendar real OAuth and real AI acceptance remain `NOT_RUN` for the 2026-11-20 target; Gmail real read remains `NOT_RUN` for the 2026-11-30 target. No schedule date overrides the approval boundaries.

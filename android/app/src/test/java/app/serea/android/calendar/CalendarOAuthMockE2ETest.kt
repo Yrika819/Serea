@@ -121,7 +121,7 @@ class CalendarOAuthMockE2ETest {
             listOf("calendar", "v3", "calendars", calendarId.value, "events"),
             request.requestUrl!!.pathSegments,
         )
-        assertEquals("127.0.0.1", request.requestUrl!!.host)
+        assertEquals("localhost", request.requestUrl!!.host)
         assertEquals("Bearer synthetic-never-valid-token", request.getHeader("Authorization"))
         assertFalse(request.requestLine!!.contains("gmail"))
 

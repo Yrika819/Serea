@@ -124,7 +124,31 @@ internal fun SereaAppShell(
                     stillCurrent.isLoading || stillCurrent.isFinalizing || stillCurrent.isRestoring || stillCurrent.showingHistory) {
                     false
                 } else {
-                    chatViewModel.prefillEditorFromProvider(handoff.localChatText(), handoff.origin)
+                    val sendAuthorization = object : LocalDemoGoogleHandoffAuthorization() {
+                        override val origin = handoff.origin
+
+                        override suspend fun consume(request: ModelChatRequest): Boolean {
+                            val initial = chatViewModel.state.value
+                            val generation = chatViewModel.currentConversationSelectionGeneration()
+                            if (request.conversationId != handoff.conversationId ||
+                                request.message.trim() != handoff.localChatText().trim() ||
+                                request.bodySourceLineage != setOf(handoff.origin) ||
+                                initial.conversation.id != handoff.conversationId || generation != handoff.conversationGeneration) {
+                                return false
+                            }
+                            val acceptedForSend = coordinator.consumeForLocalChatSend(
+                                handoff = handoff,
+                                currentConversationId = initial.conversation.id,
+                                currentConversationGeneration = generation,
+                                message = request.message,
+                                sourceLineage = request.bodySourceLineage,
+                            )
+                            val finalState = chatViewModel.state.value
+                            return acceptedForSend && finalState.conversation.id == handoff.conversationId &&
+                                chatViewModel.currentConversationSelectionGeneration() == handoff.conversationGeneration
+                        }
+                    }
+                    chatViewModel.prefillEditorFromProvider(handoff.localChatText(), handoff.origin, sendAuthorization)
                     navigate(SereaDestination.CHAT)
                     true
                 }

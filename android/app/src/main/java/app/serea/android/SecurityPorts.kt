@@ -16,6 +16,12 @@ enum class PayloadPreparation { RAW, TRUSTED_MINIMIZED, UNKNOWN }
 /** Separates local-only processing from an external provider destination. */
 enum class EgressTarget { CLOUD, LOCAL_DEMO, LOCAL_MODEL }
 
+/** One-use validation capability for Google-origin text entering the deterministic local Demo. */
+abstract class LocalDemoGoogleHandoffAuthorization internal constructor() {
+    abstract val origin: DataOrigin
+    abstract suspend fun consume(request: ModelChatRequest): Boolean
+}
+
 /** Exact provider payload preview and its lineage. A user-authored string is not PUBLIC by default. */
 data class EgressContract(
     val conversationId: String,
@@ -36,6 +42,8 @@ data class EgressContract(
     val plannedBodySourceLineage: Set<DataOrigin> = emptySet(),
     /** Local real-model use requires a fresh, content-bound local consent proof. */
     val localModelConsent: LocalModelConsentProof? = null,
+    /** Google-origin text requires a live one-use handoff proof before local Demo Usage. */
+    val localDemoGoogleHandoffAuthorization: LocalDemoGoogleHandoffAuthorization? = null,
 )
 
 enum class EgressContractDecision { APPROVED, MISSING_INTENT, EXPIRED_INTENT, DESTINATION_DENIED, ORIGIN_DENIED, SOURCE_LINEAGE_DENIED, CLASSIFICATION_DENIED, PREPARATION_DENIED, CONTENT_MISMATCH, LIMIT_EXCEEDED }
@@ -69,6 +77,13 @@ object ChatEgressGate {
             }
             if (contract.origin != DataOrigin.USER_AUTHORED) return denied(EgressContractDecision.ORIGIN_DENIED)
             if (contract.preparation != PayloadPreparation.RAW) return denied(EgressContractDecision.PREPARATION_DENIED)
+            val googleLineage = contract.plannedBodySourceLineage.intersect(setOf(DataOrigin.GMAIL, DataOrigin.CALENDAR))
+            val handoffAuthorization = contract.localDemoGoogleHandoffAuthorization
+            if ((googleLineage.isEmpty() && handoffAuthorization != null) ||
+                googleLineage.size > 1 ||
+                (googleLineage.isNotEmpty() && (handoffAuthorization == null || handoffAuthorization.origin !in googleLineage))) {
+                return denied(EgressContractDecision.SOURCE_LINEAGE_DENIED)
+            }
             val locallyAllowed = setOf(DataClassification.PUBLIC, DataClassification.PERSONAL, DataClassification.UNKNOWN)
             if (contract.classification !in locallyAllowed) return denied(EgressContractDecision.CLASSIFICATION_DENIED)
             if (contract.context.any { it.origin !in setOf(DataOrigin.USER_AUTHORED, DataOrigin.MODEL_OUTPUT) }) {
@@ -207,6 +222,7 @@ internal class EgressCheckedModelChatPort(
         if (contract.conversationId != request.conversationId || contract.currentMessageId != request.sendId ||
             contract.plannedBody != request.message || contract.context != request.context ||
             contract.plannedBodySourceLineage.toSet() != request.bodySourceLineage.toSet() ||
+            contract.localDemoGoogleHandoffAuthorization !== request.localDemoGoogleHandoffAuthorization ||
             contract.classification != request.classification ||
             (contract.origin != DataOrigin.USER_AUTHORED && !localProviderOrigin) ||
             (contract.selectedModelId != null && contract.selectedModelId != request.selectedModelId)) {
@@ -221,6 +237,9 @@ internal class EgressCheckedModelChatPort(
         }
         if (boundContract.target == EgressTarget.LOCAL_DEMO && request.preparedPersonal != null) {
             throw ModelChatFailure("The local demo accepts only the original typed message and context.")
+        }
+        if (boundContract.target != EgressTarget.LOCAL_DEMO && request.localDemoGoogleHandoffAuthorization != null) {
+            throw PreDispatchModelChatFailure("Google handoff authorization is valid only for the local Demo route.")
         }
         val now = if (boundContract.target == EgressTarget.LOCAL_MODEL) localMonotonicClock() else clock()
         val result = ChatEgressGate.evaluate(boundContract, now)
@@ -245,6 +264,14 @@ internal class EgressCheckedModelChatPort(
                 ?: throw PreDispatchModelChatFailure("Local model authorization is not composed.")
             if (!authorizer.consumeOnce(proof, boundContract)) {
                 throw PreDispatchModelChatFailure("Local model consent is stale, mismatched, or already used.")
+            }
+        }
+        if (boundContract.target == EgressTarget.LOCAL_DEMO) {
+            val googleLineage = request.bodySourceLineage.intersect(setOf(DataOrigin.GMAIL, DataOrigin.CALENDAR))
+            val authorization = boundContract.localDemoGoogleHandoffAuthorization
+            if (googleLineage.isNotEmpty() && (googleLineage.size != 1 || authorization == null ||
+                    authorization.origin !in googleLineage || !authorization.consume(request))) {
+                throw PreDispatchModelChatFailure("Google handoff is stale, mismatched, or already used.")
             }
         }
         return delegate.send(request)

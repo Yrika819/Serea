@@ -147,6 +147,52 @@ class LocalFakeRoutingAdversarialTest {
         }
     }
 
+    @Test fun staleGoogleHandoffAfterConfirmationIsDeniedBeforeUsageAndProvider() = runBlocking {
+        val now = 50_000L
+        val dao = MemoryUsageDao()
+        val provider = LocalFakeModelChatPort()
+        val authorization = object : LocalDemoGoogleHandoffAuthorization() {
+            override val origin = DataOrigin.GMAIL
+            override suspend fun consume(request: ModelChatRequest) = false
+        }
+        val usage = UsageControlledModelChatPort(provider, UsageRepository(dao) { now })
+        val egress = EgressCheckedModelChatPort(usage, clock = { now }, expectedTarget = EgressTarget.LOCAL_DEMO)
+        val sendId = "stale-confirmed-google-handoff"
+        val body = "Google-origin content from an expired session"
+        val lineage = setOf(DataOrigin.GMAIL)
+        val contract = EgressContract(
+            conversationId = "handoff-conversation",
+            currentMessageId = sendId,
+            origin = DataOrigin.USER_AUTHORED,
+            classification = DataClassification.PUBLIC,
+            destination = ChatEgressGate.LOCAL_DEMO_DESTINATION,
+            plannedBody = body,
+            context = emptyList(),
+            preparation = PayloadPreparation.RAW,
+            explicitSendIntentAtMillis = null,
+            expiresAtMillis = null,
+            selectedModelId = DemoChatComposition.DEMO_MODEL_ID,
+            target = EgressTarget.LOCAL_DEMO,
+            plannedBodySourceLineage = lineage,
+            localDemoGoogleHandoffAuthorization = authorization,
+        )
+        val request = ModelChatRequest(
+            conversationId = contract.conversationId,
+            message = body,
+            sendId = sendId,
+            classification = DataClassification.PUBLIC,
+            egressContract = contract,
+            selectedModelId = DemoChatComposition.DEMO_MODEL_ID,
+            bodySourceLineage = lineage,
+            localDemoGoogleHandoffAuthorization = authorization,
+        )
+
+        assertEquals(EgressContractDecision.APPROVED, ChatEgressGate.evaluate(contract, now).decision)
+        assertThrows(ModelChatFailure::class.java) { runBlocking { egress.send(request) } }
+        assertNull("Expired/revoked handoff is rejected before reservation", dao.reservation(sendId))
+        assertEquals("Expired/revoked handoff never reaches the local provider", 0, provider.calls)
+    }
+
     @Test fun routedFakePassesEgressAndUsageAndDeniedRequestsStopBeforeReservation() = runBlocking {
         val now = 50_000L
         val nowInstant = Instant.ofEpochMilli(now)

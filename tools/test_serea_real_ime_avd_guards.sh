@@ -73,6 +73,16 @@ if serea_verify_isolated_seed_log "$tmp/seed-without-pass.log"; then
   echo 'FAIL: a seed log without the host PASS marker was accepted' >&2
   exit 1
 fi
+sed 's/^PASS: /ERROR PASS: /' "$tmp/seed.log" > "$tmp/seed-prefixed-pass.log"
+if serea_verify_isolated_seed_log "$tmp/seed-prefixed-pass.log"; then
+  echo 'FAIL: a prefixed host PASS marker was accepted' >&2
+  exit 1
+fi
+sed 's/^PASS: \(.*\)$/PASS: \1 extra/' "$tmp/seed.log" > "$tmp/seed-suffixed-pass.log"
+if serea_verify_isolated_seed_log "$tmp/seed-suffixed-pass.log"; then
+  echo 'FAIL: a suffixed host PASS marker was accepted' >&2
+  exit 1
+fi
 sed '/^SEED_OK /d' "$tmp/seed.log" > "$tmp/seed-without-device-marker.log"
 if serea_verify_isolated_seed_log "$tmp/seed-without-device-marker.log"; then
   echo 'FAIL: a seed log without the run-as SEED_OK marker was accepted' >&2

@@ -22,6 +22,20 @@ def load_script(name: str, path: Path):
 license_module = load_script("capture_model_license", ROOT / "scripts/capture-model-license.py")
 permissions = load_script("verify_apk_permissions", ROOT / "scripts/verify-apk-permissions.py")
 fixture = json.loads((ROOT / "model-fixture.json").read_text(encoding="utf-8"))
+readme_lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+metadata_claims = [line for line in readme_lines if "metadata-only query" in line]
+if len(metadata_claims) != 1:
+    raise SystemExit("README must state the evidence boundary for the metadata-only query exactly once")
+metadata_claim = metadata_claims[0]
+for marker in (
+    "repository's `apache-2.0` license declaration",
+    "base-model metadata only",
+    "expected fixture values",
+    "not confirmed by the metadata response",
+    "weight-fetch step checks the actual downloaded bytes",
+):
+    if marker not in metadata_claim:
+        raise SystemExit(f"README metadata evidence claim must preserve this boundary: {marker}")
 metadata = {
     "id": fixture["repository"],
     "sha": fixture["repositoryRevision"],

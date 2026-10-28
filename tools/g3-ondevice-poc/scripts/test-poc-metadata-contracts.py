@@ -28,6 +28,20 @@ metadata = {
     "cardData": {"license": fixture["license"], "base_model": [fixture["baseModel"]]},
 }
 assert license_module.validate_metadata(metadata, fixture)["declared_license"] == "apache-2.0"
+evidence = license_module.build_evidence(
+    metadata,
+    fixture,
+    "https://huggingface.co/api/models/fixture/revision/immutable",
+    b"synthetic metadata only",
+    "2026-10-28T00:00:00Z",
+)
+assert evidence["expected_artifact_from_model_fixture"] == {
+    "file": fixture["file"],
+    "size_bytes": fixture["sizeBytes"],
+    "sha256": fixture["sha256"],
+}
+assert evidence["artifact_values_status"] == "expected fixture values; not verified by the license metadata response"
+assert "model_file_sha256" not in evidence
 for altered in (
     {**metadata, "sha": "0" * 40},
     {**metadata, "cardData": {"license": "unknown", "base_model": [fixture["baseModel"]]}},

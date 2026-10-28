@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -45,7 +46,7 @@ llama_context * context = nullptr;
 llama_sampler * sampler = nullptr;
 const llama_vocab * vocab = nullptr;
 
-void throw_java(JNIEnv * env, const char * class_name, const std::string & message);
+void throw_java(JNIEnv * env, const char * class_name, const char * message);
 
 bool generation_cancelled(jlong engine_id, jlong generation_id) {
     std::lock_guard<std::mutex> lock(cancellation_mutex);
@@ -111,9 +112,9 @@ void clear_engine_owner(jlong engine_id) {
     }
 }
 
-void throw_java(JNIEnv * env, const char * class_name, const std::string & message) {
+void throw_java(JNIEnv * env, const char * class_name, const char * message) {
     jclass klass = env->FindClass(class_name);
-    if (klass != nullptr) env->ThrowNew(klass, message.c_str());
+    if (klass != nullptr) env->ThrowNew(klass, message);
 }
 
 void append_utf8(std::string & output, uint32_t code_point) {
@@ -134,29 +135,42 @@ void append_utf8(std::string & output, uint32_t code_point) {
     }
 }
 
+class scoped_java_string_chars {
+public:
+    scoped_java_string_chars(JNIEnv * env, jstring value)
+            : env_(env), value_(value), chars_(env->GetStringChars(value, nullptr)) {}
+    ~scoped_java_string_chars() {
+        if (chars_ != nullptr) env_->ReleaseStringChars(value_, chars_);
+    }
+    scoped_java_string_chars(const scoped_java_string_chars &) = delete;
+    scoped_java_string_chars & operator=(const scoped_java_string_chars &) = delete;
+    const jchar * get() const { return chars_; }
+
+private:
+    JNIEnv * env_;
+    jstring value_;
+    const jchar * chars_;
+};
+
 std::optional<std::string> java_string_to_utf8(JNIEnv * env, jstring value) {
     if (value == nullptr) return std::nullopt;
     const jsize length = env->GetStringLength(value);
-    const jchar * chars = env->GetStringChars(value, nullptr);
+    const scoped_java_string_chars acquired_chars(env, value);
+    const jchar * chars = acquired_chars.get();
     if (chars == nullptr) return std::nullopt;
     std::string output;
     output.reserve(static_cast<size_t>(length));
     for (jsize i = 0; i < length; ++i) {
         uint32_t code_point = chars[i];
         if (code_point >= 0xd800 && code_point <= 0xdbff) {
-            if (i + 1 >= length || chars[i + 1] < 0xdc00 || chars[i + 1] > 0xdfff) {
-                env->ReleaseStringChars(value, chars);
-                return std::nullopt;
-            }
+            if (i + 1 >= length || chars[i + 1] < 0xdc00 || chars[i + 1] > 0xdfff) return std::nullopt;
             const uint32_t low = chars[++i];
             code_point = 0x10000 + ((code_point - 0xd800) << 10) + (low - 0xdc00);
         } else if (code_point >= 0xdc00 && code_point <= 0xdfff) {
-            env->ReleaseStringChars(value, chars);
             return std::nullopt;
         }
         append_utf8(output, code_point);
     }
-    env->ReleaseStringChars(value, chars);
     return output;
 }
 
@@ -234,10 +248,24 @@ void free_locked() {
     vocab = nullptr;
 }
 
-llama_batch make_batch(const std::vector<llama_token> & tokens, llama_pos start_position) {
-    llama_batch batch{};
+void free_batch_storage(llama_batch & batch, size_t initialized_seq_ids) {
+    if (batch.seq_id != nullptr) {
+        for (size_t i = 0; i < initialized_seq_ids; ++i) {
+            std::free(batch.seq_id[i]);
+        }
+    }
+    std::free(batch.seq_id);
+    std::free(batch.logits);
+    std::free(batch.n_seq_id);
+    std::free(batch.pos);
+    std::free(batch.token);
+    batch = {};
+}
+
+bool make_batch(const std::vector<llama_token> & tokens, llama_pos start_position, llama_batch & batch) {
+    batch = {};
     if (tokens.empty() || tokens.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
-        return batch;
+        return false;
     }
     const auto token_count = static_cast<int32_t>(tokens.size());
     batch.token = static_cast<llama_token *>(std::malloc(sizeof(llama_token) * tokens.size()));
@@ -248,15 +276,17 @@ llama_batch make_batch(const std::vector<llama_token> & tokens, llama_pos start_
     batch.logits = static_cast<int8_t *>(std::malloc(sizeof(int8_t) * tokens.size()));
     if (batch.token == nullptr || batch.pos == nullptr || batch.n_seq_id == nullptr ||
             batch.seq_id == nullptr || batch.logits == nullptr) {
-        llama_batch_free(batch);
-        return {};
+        free_batch_storage(batch, 0);
+        return false;
     }
+    size_t initialized_seq_ids = 0;
     for (int32_t i = 0; i < token_count; ++i) {
         batch.seq_id[i] = static_cast<llama_seq_id *>(std::malloc(sizeof(llama_seq_id)));
         if (batch.seq_id[i] == nullptr) {
-            llama_batch_free(batch);
-            return {};
+            free_batch_storage(batch, initialized_seq_ids);
+            return false;
         }
+        ++initialized_seq_ids;
     }
     batch.n_tokens = token_count;
     for (int32_t i = 0; i < batch.n_tokens; ++i) {
@@ -266,7 +296,7 @@ llama_batch make_batch(const std::vector<llama_token> & tokens, llama_pos start_
         batch.seq_id[i][0] = 0;
         batch.logits[i] = (i == batch.n_tokens - 1) ? 1 : 0;
     }
-    return batch;
+    return true;
 }
 }
 
@@ -322,128 +352,139 @@ Java_app_serea_g3poc_NativeLlamaEngine_nativeLoad(JNIEnv * env, jobject, jlong e
 extern "C" JNIEXPORT jstring JNICALL
 Java_app_serea_g3poc_NativeLlamaEngine_nativeGenerate(
         JNIEnv * env, jobject engine_instance, jlong engine_id, jstring prompt_value, jint max_tokens, jlong generation_id) {
-    const auto prompt_value_utf8 = java_string_to_utf8(env, prompt_value);
-    if (!prompt_value_utf8.has_value()) {
-        if (!env->ExceptionCheck()) {
-            throw_java(env, "java/lang/IllegalArgumentException", "Prompt contains invalid UTF-16");
+    try {
+        const auto prompt_value_utf8 = java_string_to_utf8(env, prompt_value);
+        if (!prompt_value_utf8.has_value()) {
+            if (!env->ExceptionCheck()) {
+                throw_java(env, "java/lang/IllegalArgumentException", "Prompt contains invalid UTF-16");
+            }
+            return nullptr;
         }
-        return nullptr;
-    }
-    const std::string & prompt = *prompt_value_utf8;
-    std::lock_guard<std::mutex> lock(engine_mutex);
-    if (active_engine_id.load(std::memory_order_acquire) != engine_id || model == nullptr || context == nullptr || sampler == nullptr) {
-        throw_java(env, "java/lang/IllegalStateException", "This engine does not own the loaded model");
-        return nullptr;
-    }
+        const std::string & prompt = *prompt_value_utf8;
+        std::lock_guard<std::mutex> lock(engine_mutex);
+        if (active_engine_id.load(std::memory_order_acquire) != engine_id || model == nullptr || context == nullptr || sampler == nullptr) {
+            throw_java(env, "java/lang/IllegalStateException", "This engine does not own the loaded model");
+            return nullptr;
+        }
 
-    RequestIdentity request{engine_id, generation_id};
-    if (generation_cancelled(engine_id, generation_id)) {
-        throw_cancelled(env);
-        return nullptr;
-    }
-    llama_set_abort_callback(context, abort_requested, &request);
-    abort_callback_reset reset_abort_callback(context);
-    llama_memory_clear(llama_get_memory(context), true);
-    llama_sampler_reset(sampler);
-    if (prompt.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
-        throw_java(env, "java/lang/IllegalArgumentException", "Prompt exceeds the native byte bound");
-        return nullptr;
-    }
-    const int32_t prompt_length = static_cast<int32_t>(prompt.size());
-    const int32_t required = -llama_tokenize(vocab, prompt.data(), prompt_length, nullptr, 0, true, true);
-    if (required <= 0 || required + max_tokens > 512) {
-        throw_java(env, "java/lang/IllegalArgumentException", "Prompt exceeds the PoC context bound");
-        return nullptr;
-    }
-    std::vector<llama_token> tokens(static_cast<size_t>(required));
-    const int32_t token_count = llama_tokenize(
-            vocab, prompt.data(), prompt_length, tokens.data(), required, true, true);
-    if (generation_cancelled(engine_id, generation_id)) {
-        throw_cancelled(env);
-        return nullptr;
-    }
-    if (token_count <= 0) {
-        throw_java(env, "java/lang/IllegalArgumentException", "Prompt tokenization failed");
-        return nullptr;
-    }
-
-    jclass engine_class = env->GetObjectClass(engine_instance);
-    jmethodID started_callback = env->GetMethodID(engine_class, "onNativeGenerationStart", "()V");
-    if (started_callback == nullptr) return nullptr;
-    env->CallVoidMethod(engine_instance, started_callback);
-    if (env->ExceptionCheck()) return nullptr;
-    if (generation_cancelled(engine_id, generation_id)) {
-        throw_cancelled(env);
-        return nullptr;
-    }
-
-    llama_batch prompt_batch = make_batch(tokens, 0);
-    if (prompt_batch.token == nullptr || prompt_batch.pos == nullptr ||
-            prompt_batch.n_seq_id == nullptr || prompt_batch.seq_id == nullptr ||
-            prompt_batch.logits == nullptr) {
-        throw_java(env, "java/lang/OutOfMemoryError", "Unable to allocate prompt batch buffers");
-        return nullptr;
-    }
-    const int32_t prompt_result = llama_decode(context, prompt_batch);
-    llama_batch_free(prompt_batch);
-    if (generation_cancelled(engine_id, generation_id) || prompt_result == 2) {
-        throw_cancelled(env);
-        return nullptr;
-    }
-    if (prompt_result != 0) {
-        throw_java(env, "java/lang/IllegalStateException", "Prompt evaluation failed");
-        return nullptr;
-    }
-
-    std::string result;
-    llama_pos position = token_count;
-    for (jint generated = 0; generated < max_tokens; ++generated) {
+        RequestIdentity request{engine_id, generation_id};
         if (generation_cancelled(engine_id, generation_id)) {
             throw_cancelled(env);
             return nullptr;
         }
-        const llama_token token = llama_sampler_sample(sampler, context, -1);
-        if (llama_vocab_is_eog(vocab, token)) break;
-        llama_sampler_accept(sampler, token);
-
-        char piece[256];
-        const int32_t piece_length = llama_token_to_piece(vocab, token, piece, sizeof(piece), 0, true);
-        if (piece_length < 0) {
-            throw_java(env, "java/lang/IllegalStateException", "Token-to-text conversion failed");
+        llama_set_abort_callback(context, abort_requested, &request);
+        abort_callback_reset reset_abort_callback(context);
+        llama_memory_clear(llama_get_memory(context), true);
+        llama_sampler_reset(sampler);
+        if (prompt.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+            throw_java(env, "java/lang/IllegalArgumentException", "Prompt exceeds the native byte bound");
             return nullptr;
         }
-        result.append(piece, static_cast<size_t>(piece_length));
-        std::vector<llama_token> next_token{token};
-        llama_batch batch = make_batch(next_token, position++);
-        if (batch.token == nullptr || batch.pos == nullptr || batch.n_seq_id == nullptr ||
-                batch.seq_id == nullptr || batch.logits == nullptr) {
-            throw_java(env, "java/lang/OutOfMemoryError", "Unable to allocate generation batch buffers");
+        const int32_t prompt_length = static_cast<int32_t>(prompt.size());
+        const int32_t required = -llama_tokenize(vocab, prompt.data(), prompt_length, nullptr, 0, true, true);
+        if (required <= 0 || required + max_tokens > 512) {
+            throw_java(env, "java/lang/IllegalArgumentException", "Prompt exceeds the PoC context bound");
             return nullptr;
         }
-        const int32_t decode_result = llama_decode(context, batch);
-        llama_batch_free(batch);
-        if (generation_cancelled(engine_id, generation_id) || decode_result == 2) {
+        std::vector<llama_token> tokens(static_cast<size_t>(required));
+        const int32_t token_count = llama_tokenize(
+                vocab, prompt.data(), prompt_length, tokens.data(), required, true, true);
+        if (generation_cancelled(engine_id, generation_id)) {
             throw_cancelled(env);
             return nullptr;
         }
-        if (decode_result != 0) {
-            throw_java(env, "java/lang/IllegalStateException", "Token evaluation failed");
+        if (token_count <= 0) {
+            throw_java(env, "java/lang/IllegalArgumentException", "Prompt tokenization failed");
             return nullptr;
         }
+
+        jclass engine_class = env->GetObjectClass(engine_instance);
+        jmethodID started_callback = env->GetMethodID(engine_class, "onNativeGenerationStart", "()V");
+        if (started_callback == nullptr) return nullptr;
+        env->CallVoidMethod(engine_instance, started_callback);
+        if (env->ExceptionCheck()) return nullptr;
+        if (generation_cancelled(engine_id, generation_id)) {
+            throw_cancelled(env);
+            return nullptr;
+        }
+
+        llama_batch prompt_batch{};
+        if (!make_batch(tokens, 0, prompt_batch)) {
+            throw_java(env, "java/lang/OutOfMemoryError", "Unable to allocate prompt batch buffers");
+            return nullptr;
+        }
+        const int32_t prompt_result = llama_decode(context, prompt_batch);
+        free_batch_storage(prompt_batch, tokens.size());
+        if (generation_cancelled(engine_id, generation_id) || prompt_result == 2) {
+            throw_cancelled(env);
+            return nullptr;
+        }
+        if (prompt_result != 0) {
+            throw_java(env, "java/lang/IllegalStateException", "Prompt evaluation failed");
+            return nullptr;
+        }
+
+        std::string result;
+        llama_pos position = token_count;
+        for (jint generated = 0; generated < max_tokens; ++generated) {
+            if (generation_cancelled(engine_id, generation_id)) {
+                throw_cancelled(env);
+                return nullptr;
+            }
+            const llama_token token = llama_sampler_sample(sampler, context, -1);
+            if (llama_vocab_is_eog(vocab, token)) break;
+            llama_sampler_accept(sampler, token);
+
+            char piece[256];
+            const int32_t piece_length = llama_token_to_piece(vocab, token, piece, sizeof(piece), 0, true);
+            if (piece_length < 0) {
+                throw_java(env, "java/lang/IllegalStateException", "Token-to-text conversion failed");
+                return nullptr;
+            }
+            result.append(piece, static_cast<size_t>(piece_length));
+            std::vector<llama_token> next_token{token};
+            llama_batch batch{};
+            if (!make_batch(next_token, position++, batch)) {
+                throw_java(env, "java/lang/OutOfMemoryError", "Unable to allocate generation batch buffers");
+                return nullptr;
+            }
+            const int32_t decode_result = llama_decode(context, batch);
+            free_batch_storage(batch, next_token.size());
+            if (generation_cancelled(engine_id, generation_id) || decode_result == 2) {
+                throw_cancelled(env);
+                return nullptr;
+            }
+            if (decode_result != 0) {
+                throw_java(env, "java/lang/IllegalStateException", "Token evaluation failed");
+                return nullptr;
+            }
+        }
+        return utf8_to_java_string(env, result);
+    } catch (const std::bad_alloc &) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/OutOfMemoryError", "Native inference allocation failed");
+        }
+        return nullptr;
     }
-    return utf8_to_java_string(env, result);
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_app_serea_g3poc_NativeLlamaEngine_nativeUnicodeRoundTrip(JNIEnv * env, jobject, jstring value) {
-    const auto converted = java_string_to_utf8(env, value);
-    if (!converted.has_value()) {
+    try {
+        const auto converted = java_string_to_utf8(env, value);
+        if (!converted.has_value()) {
+            if (!env->ExceptionCheck()) {
+                throw_java(env, "java/lang/IllegalArgumentException", "Input contains invalid UTF-16");
+            }
+            return nullptr;
+        }
+        return utf8_to_java_string(env, *converted);
+    } catch (const std::bad_alloc &) {
         if (!env->ExceptionCheck()) {
-            throw_java(env, "java/lang/IllegalArgumentException", "Input contains invalid UTF-16");
+            throw_java(env, "java/lang/OutOfMemoryError", "Native Unicode conversion allocation failed");
         }
         return nullptr;
     }
-    return utf8_to_java_string(env, *converted);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

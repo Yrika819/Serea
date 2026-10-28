@@ -39,6 +39,22 @@ def validate_metadata(metadata: dict, fixture: dict) -> dict:
     }
 
 
+def build_evidence(metadata: dict, fixture: dict, url: str, payload: bytes, retrieved_utc: str) -> dict:
+    return {
+        "source_url": url,
+        "retrieved_utc": retrieved_utc,
+        "metadata_response_sha256": hashlib.sha256(payload).hexdigest(),
+        **validate_metadata(metadata, fixture),
+        "expected_artifact_from_model_fixture": {
+            "file": fixture["file"],
+            "size_bytes": fixture["sizeBytes"],
+            "sha256": fixture["sha256"],
+        },
+        "artifact_values_status": "expected fixture values; not verified by the license metadata response",
+        "weights_downloaded_by_this_step": False,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("fixture", type=Path)
@@ -56,22 +72,18 @@ def main() -> int:
     if len(payload) > MAX_METADATA_BYTES:
         raise ValueError("pinned model metadata response exceeded the size bound")
     metadata = json.loads(payload)
-    verified = validate_metadata(metadata, fixture)
-    evidence = {
-        "source_url": url,
-        "retrieved_utc": datetime.now(timezone.utc).isoformat(),
-        "metadata_response_sha256": hashlib.sha256(payload).hexdigest(),
-        "model_file": fixture["file"],
-        "model_file_size_bytes": fixture["sizeBytes"],
-        "model_file_sha256": fixture["sha256"],
-        **verified,
-        "weights_downloaded_by_this_step": False,
-    }
+    evidence = build_evidence(
+        metadata,
+        fixture,
+        url,
+        payload,
+        datetime.now(timezone.utc).isoformat(),
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
-        f"model_license_metadata=PASS repository={verified['metadata_repository']} "
-        f"revision={verified['metadata_revision']} license={verified['declared_license']} "
+        f"model_license_metadata=PASS repository={evidence['metadata_repository']} "
+        f"revision={evidence['metadata_revision']} license={evidence['declared_license']} "
         "weights_downloaded=false"
     )
     return 0

@@ -50,6 +50,31 @@ for variable in ("pssAfterLoadKb", "pssAfterGenerationKb", "pssAfterCloseKb"):
     if not re.search(rf"var {variable} = 0L\b", android_test):
         raise SystemExit(f"{variable} must use Long for Debug.getPss()")
 
+# Regression guard for run 40515091197: a default `async {}` child inherited the
+# runBlocking event loop, which the test then blocked while awaiting this latch.
+first_run = re.search(
+    r"val firstRun = async\(([^)]*)\)\s*\{(.*?)\n\s*\}",
+    android_test,
+    flags=re.DOTALL,
+)
+first_run_start = android_test.find("val firstRun = async(")
+first_gate_wait = android_test.find("nativeEngine.awaitStartGateForTest", first_run_start)
+if (
+    first_run is None
+    or first_run.group(1).strip() != "Dispatchers.IO"
+    or "port.send(ModelChatRequest(\"synthetic\", \"Lease isolation check.\"" not in first_run.group(2)
+    or first_run_start < 0
+    or first_gate_wait <= first_run_start
+):
+    raise SystemExit(
+        "the lease-isolation generation must run on Dispatchers.IO before the blocking native-start latch wait"
+    )
+async_dispatchers = re.findall(r"\basync\(([^)]*)\)", android_test)
+if re.search(r"\basync\s*\{", android_test) or not async_dispatchers or any(
+    dispatcher.strip() != "Dispatchers.IO" for dispatcher in async_dispatchers
+):
+    raise SystemExit("all instrumentation async children must use Dispatchers.IO around blocking latch waits")
+
 if "var racingLoad: kotlinx.coroutines.Deferred<Boolean>? = null" not in android_test:
     raise SystemExit("load-close race must return an expected result instead of failing its async child")
 racing_load_start = android_test.find("racingLoad = async(Dispatchers.IO) {")
@@ -156,4 +181,4 @@ for suffix in ("*.kt", "*.java"):
         if network_apis.search(source_file.read_text(encoding="utf-8")):
             raise SystemExit(f"app source must not add network I/O for this local inference PoC: {source_file}")
 
-print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test load_close_async_failure_isolated=true cancellation_asserts_native_abort_callback=true target_and_androidtest_internet_denied=true api_marker_validation_pre_sdk=true explicit_api26_or_35=true x86_64_acceleration_required=true app_network_io=false")
+print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test lease_wait_dispatcher=Dispatchers.IO load_close_async_failure_isolated=true cancellation_asserts_native_abort_callback=true target_and_androidtest_internet_denied=true api_marker_validation_pre_sdk=true explicit_api26_or_35=true x86_64_acceleration_required=true app_network_io=false")

@@ -8,7 +8,7 @@
 **BASE_TREE_SHA:** `10d07a8ec57d7f67fc94663c489347938cccbd58`
 **WORKTREE:** `/workspace/Serea-g8-release-preflight`
 **BRANCH:** `codex/serea-g8-release-preflight`
-**DRAFT_PR:** Pending publication of this report branch.
+**DRAFT_PR:** [#142](https://github.com/Yrika819/Serea/pull/142), OPEN / DRAFT, based on G7 #139.
 **JUNIT_RESULT:** NOT_RUN — documentation-only work.
 **OWNER_APPROVAL_REQUIRED:** Real OAuth/project activation, real Google account/data, Owner package/signing decisions, production signing/distribution, Pixel 7a operation, protected-main merge, and Personal Beta GO.
 
@@ -132,9 +132,9 @@ This is a G9 preparation list, not a completed G9 E2E. Real Gmail, OAuth, Cloud 
 **CURRENT_HEAD:** `00384eb6468214362435140c9a2d848fa2e0f12e` before this report commit
 **TREE_SHA:** `10d07a8ec57d7f67fc94663c489347938cccbd58` before this report commit
 **CHANGED_FILES:** `docs/agent-reports/g8-agent-c-release-preflight.md` only
-**TEST_COMMANDS:** None — documentation-only; GitHub API facts and official documentation were checked directly.
+**TEST_COMMANDS:** `git diff --cached --check`; Python documentation sanity assertions for final newline, balanced code fences, authority SHA, runner-unassigned evidence, and NO-GO status. JUnit NOT_RUN because this is documentation-only.
 **CI_RUN_IDS:** G7 exact final head: `40749231249`, `40749231295`, `40749231298`, `40749231228`, `40749231215`, `40749231235`, `40749231318`; SQLite `40749231272`; historical G7 code/test Android `40740591530` at `acde94c…`.
-**ARTIFACT_IDS:** SQLite producer DBs `12843411146`, `12843930249`; focused test `12843121520`; API26 `12845730516`; API35 `12847400793`; Identity `12846168567`; G7 artifacts expire per GitHub retention.
+**ARTIFACT_IDS:** SQLite producer DBs `12843411146`, `12843930249` (expire 2026-10-29 18:54 UTC); focused test `12843121520`; API26 `12845730516`; API35 `12847400793`; Identity `12846168567`.
 **SECURITY_IMPACT:** Documentation only; records scope breadth, consent separation, restricted Gmail implications, release provenance gaps and owner blockers.
 **KNOWN_ISSUES:** G7 SQLite Intel→ARM64 Open NOT_RUN due no runner; historical API35 IME flake risk; Owner OAuth, package, signing, physical-device and AI decisions remain unresolved.
 **DEPENDENCIES:** Parent independent review; G8 OAuth UI and native runtime reports for consolidated release checklist.

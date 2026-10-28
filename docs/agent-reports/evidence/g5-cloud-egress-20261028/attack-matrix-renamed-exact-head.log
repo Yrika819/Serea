@@ -1,0 +1,86 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.6/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResValues
+> Task :app:checkDebugAarMetadata
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:processDebugMainManifest
+> Task :app:mergeDebugResources
+> Task :app:packageDebugResources
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugManifest
+> Task :app:processDebugManifestForPackage
+> Task :app:javaPreCompileDebug
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:processDebugUnitTestManifest
+> Task :app:processDebugResources
+> Task :app:packageDebugUnitTestForUnitTest
+> Task :app:generateDebugUnitTestConfig
+> Task :app:kspDebugKotlin
+
+> Task :app:compileDebugKotlin
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/CloudProvider.kt:162:52 The corresponding parameter in the supertype 'Callback' is named 'e'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:194:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:201:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:206:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:214:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/MainActivity.kt:830:17 Cast is redundant.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/calendar/CalendarReadPort.kt:90:62 Cast is redundant.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/gmail/GmailMimeParser.kt:74:17 Unnecessary safe call on a non-null receiver of type 'JsonObject'.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt:197:48 The corresponding parameter in the supertype 'Callback' is named 'e'. This may cause problems when calling this function with named arguments.
+
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:processDebugJavaRes
+
+> Task :app:compileDebugUnitTestKotlin
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/test/java/app/serea/android/assistant/taskproposal/TaskProposalTest.kt:88:13 Expression is unused.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/test/java/app/serea/android/calendar/CalendarAgendaTest.kt:35:82 Cast is redundant.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt:113:52 Unnecessary non-null assertion (!!) on a non-null receiver of type 'String'.
+w: file:///workspace/Serea-g5-cloud-egress/android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt:294:52 Unnecessary non-null assertion (!!) on a non-null receiver of type 'String'.
+
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+
+> Task :app:testDebugUnitTest FAILED
+
+CloudEgressBodyLineageAttackMatrixTest > calendarFirstTurnModelOutputInheritsCurrentBodyLineage FAILED
+    java.lang.AssertionError at CloudEgressBodyLineageAttackMatrixTest.kt:83
+
+CloudEgressBodyLineageAttackMatrixTest > conversationSwitchDoesNotClearCurrentProviderBodyTaint FAILED
+    java.lang.AssertionError at CloudEgressBodyLineageAttackMatrixTest.kt:236
+
+CloudEgressBodyLineageAttackMatrixTest > gmailFirstTurnModelOutputInheritsCurrentBodyLineage FAILED
+    java.lang.AssertionError at CloudEgressBodyLineageAttackMatrixTest.kt:69
+
+CloudEgressBodyLineageAttackMatrixTest > boundedContextCannotLaunderGoogleOriginThroughUnlineagedModelSummary FAILED
+    java.lang.AssertionError at CloudEgressBodyLineageAttackMatrixTest.kt:172
+
+9 tests completed, 4 failed
+
+[Incubating] Problems report is available at: file:///workspace/Serea-g5-cloud-egress/android/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testDebugUnitTest'.
+> There were failing tests. See the report at: file:///workspace/Serea-g5-cloud-egress/android/app/build/reports/tests/testDebugUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights.
+
+BUILD FAILED in 28s
+29 actionable tasks: 29 executed
+EXIT_CODE=1

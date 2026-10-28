@@ -9,6 +9,9 @@ import app.serea.android.googleauth.GoogleScope.GMAIL_READ_ONLY
 import app.serea.android.googleauth.GoogleFeature.CALENDAR
 import app.serea.android.googleauth.GoogleFeature.GMAIL
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
@@ -484,6 +487,41 @@ class GoogleAuthorizationTest {
         assertTrue(registry.cancel("calendar-2"))
         assertFalse(registry.cancel("calendar-2"))
         assertEquals(null, registry.complete("calendar-2"))
+    }
+
+    @Test fun concurrentAuthorizationOperationsShareASingleFlightReservation() {
+        val grantState = GoogleGrantLeaseState()
+        val consentLock = Any()
+        val ready = CountDownLatch(2)
+        val startTogether = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+
+        try {
+            val attempts = (1..2).map {
+                executor.submit<Boolean> {
+                    ready.countDown()
+                    check(startTogether.await(5, TimeUnit.SECONDS))
+                    synchronized(consentLock) { grantState.tryBeginAuthorizationOperation() }
+                }
+            }
+            assertTrue("both contenders must be ready before the gate opens", ready.await(5, TimeUnit.SECONDS))
+            startTogether.countDown()
+
+            val reservations = attempts.map { it.get(5, TimeUnit.SECONDS) }
+            assertEquals("only one concurrent authorization/revoke may reserve the shared operation gate",
+                1, reservations.count { it })
+            synchronized(consentLock) {
+                assertTrue(grantState.isAuthorizationOperationInFlight())
+                grantState.finishAuthorizationOperation()
+                assertFalse(grantState.isAuthorizationOperationInFlight())
+            }
+        } finally {
+            startTogether.countDown()
+            synchronized(consentLock) {
+                if (grantState.isAuthorizationOperationInFlight()) grantState.finishAuthorizationOperation()
+            }
+            executor.shutdownNow()
+        }
     }
 
     @Test fun googleReconsentResolutionReplacesStaleGrantedPermission() {

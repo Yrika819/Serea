@@ -85,3 +85,61 @@ The command passed on review commit `eaaeb24af4c6dac2d7bc41cbba8fab32fdb79f4f` (
 - Google-data transfer to any Cloud AI remains disabled pending separate policy, provider-data-terms and Owner review.
 
 These are activation blockers rather than authorization to loosen the current defaults. Main merge and production OAuth activation remain outside this lane.
+
+## Additional lifecycle and race audit — 2026-10-28
+
+### Source path map
+
+| Boundary | Implementation | Behavior reviewed |
+|---|---|---|
+| Short-lived credential | `android/app/src/main/java/app/serea/android/googleauth/GoogleAuthorization.kt` (`AccessTokenLease`, `GoogleGrantLeaseState`) | Access token remains in a closeable in-memory lease; validity checks cover expiry and feature/grant generations. The string form redacts the token. |
+| Authorization/account binding | Same file (`PlayServicesGoogleAuthorizationGateway.acquire`, `authorize`, `requestAuthorization`) | Live OAuth defaults off and an explicit `Account` is required. Requested scopes are checked against the feature. A consent lock plus one in-flight operation gate rejects overlapping requests; leases/results carry feature generation and opaque authorization-session binding. Account switching requires replacement of the gateway and provider sessions. |
+| Consent lifecycle | Same file (`ConsentRequestRegistry`, `completeConsentResult`, `cancelConsentRequest`) | Single pending request binds request ID, scope and feature-generation snapshots, one-shot PendingIntent launch, completion, and cancellation. Late or mismatched results are rejected. |
+| Shared grant revocation | Same file (`revokeGoogleGrant`, `GoogleGrantInvalidationObservers`) | Local permission cache and lease generations are invalidated synchronously at revoke start; provider observers are notified before the remote revoke is awaited. The operation gate stays held until the underlying Play Services task is terminal, even if its caller is cancelled. |
+| Read-result delivery | `android/app/src/main/java/app/serea/android/gmail/GmailProviderSessions.kt`; `android/app/src/main/java/app/serea/android/calendar/CalendarProviderSessions.kt` | Provider sessions capture their account-session/generation, cancel reads on replacement/revoke, and recheck current-session and grant generations before returning buffered results. |
+
+### Transition test coverage
+
+| Transition | Existing/new test evidence | Assessment |
+|---|---|---|
+| Overlapping authorization/consent requests | `GoogleAuthorizationTest.concurrentAuthorizationOperationsShareASingleFlightReservation` (added); `consentRegistryRejectsOverlapAndStaleResultsAndAllowsCancellation`; `cancelledAuthorizationWaitsForIdentityTaskBeforeReleasingSharedGate`; `GoogleAuthorizationLifecycleTest.rapidFeatureRequestsKeepTheFirstAuthorizationAndCancellationReleasesTheGuard` | A two-thread contention test now checks the same synchronized single-flight reservation used by `requestAuthorization`; the registry, cancellation contract, and Fake UI behavior are also covered. Tests still do not invoke concurrent calls through the actual Play Services `Identity` client; that Android/Play Services path remains unverified. |
+| Expired token lease | `GoogleAuthorizationTest.expiredLeaseCannotYieldToken`; `GmailProviderSessionsTest.unknownAccountBindingAndExpiredAuthorizationFailBeforeNetwork`; equivalent Calendar expiry/read-denial coverage | Lease expiration and provider fail-closed behavior are covered with synthetic state. No real Google-issued lease is exercised. |
+| Revocation during read | Gmail and Calendar `delayed*ResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome`, `grantRevocationCancelsPending*HttpCallBeforeResponseBodyDelivery`, and `grantRevocationBetweenDelegateCompletionAndDeliveryRejects*Result` tests | Fake gateway + MockWebServer tests cover pending network work, cancellation, and the buffered-result delivery race. Real Play Services revocation is NOT_RUN. |
+| Old-account response after replacement | `GmailProviderSessionsTest.responseAlreadyProducedByOldSessionIsDeniedWhenAccountSwitchWinsBeforeDelivery` existed. Added `CalendarProviderSessionsTest.responseAlreadyProducedByOldSessionIsDeniedWhenAccountSwitchWinsBeforeDelivery`, which holds an already-parsed synthetic Calendar response across old-session invalidation and verifies `PERMISSION_DENIED` on delivery. | Symmetric Gmail/Calendar session-delivery contracts are now represented. The new Calendar test has not yet been executed in this environment (see verification below). |
+
+The two new tests change only G2-owned JVM files: `android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt` and `android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt`. No production code, UI, Composition Root, manifest, or live OAuth configuration changed. The Calendar test uses only `FakeCalendarProvider.Fixtures` and does not contact MockWebServer or Google (`server.requestCount == 0`); the authorization test uses an in-memory gate and two JVM threads.
+
+### Verification for this audit
+
+Focused command attempted from `android/` on the audit worktree:
+
+```text
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks \
+  --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' \
+  --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' \
+  --tests 'app.serea.android.gmail.GmailProviderSessionsTest' \
+  --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' \
+  --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' \
+  --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+```
+
+Result: **NOT_RUN / ENVIRONMENT**. Gradle stopped during task configuration before compilation or JUnit discovery because the configured installation `/usr/lib/jvm/java-21-openjdk-amd64` lacks `JAVA_COMPILER` (`Could not create task ':app:compileDebugUnitTestJavaWithJavac'`). Therefore this run has no test count and no JUnit XML; it is not a test failure or pass. `git diff --check` passed for the audit patch. No Emulator or credentials were used.
+
+Prior evidence remains distinct: the six existing Google classes contributed 92/92 passing tests in Android Unit run `40599571275`, artifact `12778060790`, digest `sha256:a5ed666eaeea203e30cdeea648a271c19a6639ea572fc82806a52ff5b2d48430`, for source `373b8be15f407d951157d2a80a632e86d979acdf` as recorded above. That artifact predates both new tests and verifies neither. No CI was started for this unpushed audit commit.
+
+```text
+REAL_GOOGLE_OAUTH: NOT_RUN / owner-gated
+REAL_GOOGLE_ACCOUNT: NOT_USED
+PLAY_SERVICES_IDENTITY_CONCURRENCY: NOT_RUN
+REAL_GOOGLE_TOKEN_EXPIRY_OR_REVOCATION: NOT_RUN
+NEW_GOOGLE_CONCURRENCY_GATE_TEST: NOT_RUN / local JDK compiler unavailable
+NEW_CALENDAR_STALE_RESPONSE_TEST: NOT_RUN / local JDK compiler unavailable
+SOURCE_BASE_HEAD: a688f8385431e655fdc2a6da86617ea0f570cf2d
+SOURCE_BASE_TREE: 6866234fa8b7752fbebed880c90aa3296b8d583d
+```
+
+### Remaining test/harness gaps
+
+- The actual `PlayServicesGoogleAuthorizationGateway` still has no injected `AuthorizationClient` seam. Unit tests can verify its pure consent/generation/lease helpers, but cannot establish concurrent behavior against real Play Services without adding a test seam or an Android integration test. Do not treat the Fake tests as live OAuth proof.
+- The new Calendar buffered-response test must be rerun on a JDK with a compiler before acceptance. If it fails, inspect the session delivery gate before changing provider behavior.
+- Normal app UI still does not provide the account selection/consent/revoke lifecycle. Lane A must satisfy the UI contract above before any real provider can be selected.

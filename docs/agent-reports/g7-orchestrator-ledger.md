@@ -92,10 +92,12 @@ AGENT_ID: Parent Orchestrator
 ACTIVE_PHASE: G7 Readiness Preparation
 GOAL_STATUS: PARTIAL — initial review requested CHANGES_REQUESTED; corrections and exact-head CI pending
 BASE_SHA: 23b884cf2815a2f3287652d5ffd2c3913d09df76
-CURRENT_HEAD: 3594008a909c6abd1413972872efb7ccfd835b41 (reviewed revision before final policy wording correction)
-TREE_SHA: b89c96d3351400c7809926258b3cda6c71e93cf8
+CURRENT_HEAD: c66b39f7b8a1ac7a68d8e1b75af9e21a9882053b (G7 source revision before this documentation-only checkpoint update)
+TREE_SHA: 5801a564eaa54e1c83234ca6b71ac1f21af19013
 REVIEWED_SUBMISSION_HEAD: 047d46f6905d33b6c80cbb6daff9e0f0cb13013e
 REVIEWED_SUBMISSION_TREE: 4da3a00c1347b60fc5035e763cb2d834fc051d34
+INTERMEDIATE_REVIEW_HEAD: 3594008a909c6abd1413972872efb7ccfd835b41
+INTERMEDIATE_REVIEW_TREE: b89c96d3351400c7809926258b3cda6c71e93cf8
 WORKTREE: /workspace/Serea-g7-calendar-readiness
 BRANCH: codex/serea-g7-calendar-readiness
 DRAFT_PR: #139 OPEN / DRAFT, base codex/serea-g6-integration-candidate at 23b884cf2815a2f3287652d5ffd2c3913d09df76; https://github.com/Yrika819/Serea/pull/139
@@ -103,7 +105,7 @@ COMPLETED_WORK: read supplied roadmap v4; inspected G6 OAuth, Calendar, handoff,
 CHANGED_FILES: android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt; .github/workflows/android-g7-calendar-oauth-mock-focused.yml; docs/agent-reports/g7-orchestrator-ledger.md
 TEST_COMMANDS: `python3 tools/validate_docs.py docs`; `git diff --check`; targeted Gradle JVM run attempted but wrapper download failed with `ConnectException: Connection refused`
 JUNIT_RESULT: NOT_RUN locally; GitHub CI pending
-CI_RUN_IDS: initial reviewed head 047d46f: Android `40727601520`; Fast `40727601444`; Full `40727601497`; Native `40727601493`; Git Hooks `40727601392`; RustSec `40727601256`; SQLite `40727601384`; focused G7 `40727601552` (results pending at this checkpoint)
+CI_RUN_IDS: initial head 047d46f runs `40727601520`, `40727601444`, `40727601497`, `40727601493`, `40727601392`, `40727601256`, `40727601384`, and focused G7 `40727601552` were superseded by branch updates; intermediate head 3594008 runs likewise superseded; current-at-checkpoint c66b39f: Android `40728607755`; Fast `40728607905`; Full `40728608055`; Native `40728607988`; Git Hooks `40728607747`; RustSec `40728607740`; SQLite `40728607753`; focused G7 `40728607853` (queued/pending)
 ARTIFACT_IDS: none
 SECURITY_IMPACT: no production code, credential, OAuth configuration or live endpoint changed; new test uses a synthetic token and loopback-only MockWebServer
 DEPENDENCIES: independent review; exact-head G7 CI; Owner O-01 Package ID, O-02 OAuth configuration, O-03 AI/provider eligibility decisions
@@ -115,7 +117,7 @@ NEXT_ACTION: apply review corrections on the G7 branch, obtain review acceptance
 OWNER_APPROVAL_REQUIRED: real Google OAuth/account/data; Cloud AI API key/billing/provider activation; production signing/distribution; Pixel 7a operation; main merge; Personal Beta GO
 ```
 
-### Initial independent review findings and correction plan
+### Independent review findings and disposition
 
 At initial submission head `047d46f`, Agent B and Agent C independently returned `CHANGES_REQUESTED`.
 
@@ -126,7 +128,7 @@ At initial submission head `047d46f`, Agent B and Agent C independently returned
 - **G7-POLICY-01:** state the conflicting Ollama age language as a conflict, keep 18+ as a provisional conservative gate, and require provider clarification or legal review; include downstream inference/cloud infrastructure recipients and international transfer in Owner review.
 - **G7-PROVIDER-02:** accurately quote the Privacy Policy's age statement as “13 or parent/guardian consenting to a minor dependent” rather than 13+ with parental consent.
 
-Corrections are being applied by the parent-owned ledger/workflow owner. The G7 JVM and exact-head CI status remain pending until the corrected branch head completes its checks.
+The workflow path, attempt history, whitespace, provider recipient/age-conflict language, and exact source-head bookkeeping have been corrected by the parent-owned ledger/workflow owner. Agent B confirmed the provider conditions correction; Agent C confirmed the test and workflow boundaries. This latest ledger update is documentation-only. Final independent acceptance and the exact-head G7 JVM result remain pending.
 
 ## Owner decisions and release status
 

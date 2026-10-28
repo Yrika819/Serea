@@ -103,7 +103,7 @@ class CalendarOAuthMockE2ETest {
         gateway.approveSyntheticCalendarEventsScope()
         server.enqueue(
             MockResponse().setBody(
-                """{"timeZone":"America/Los_Angeles","items":[{"id":"fixture-event-1","summary":"Synthetic review","status":"confirmed","start":{"dateTime":"2026-10-28T09:00:00-07:00"},"end":{"dateTime":"2026-10-28T09:30:00-07:00"}}]}""",
+                """{"timeZone":"America/Los_Angeles","items":[{"id":"fixture-event-1","summary":"Synthetic review","status":"confirmed","start":{"dateTime":"2026-10-28T09:00:00-07:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2026-10-28T09:30:00-07:00","timeZone":"America/Los_Angeles"}}]}""",
             ),
         )
 

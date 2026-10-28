@@ -2,6 +2,15 @@ name: Android Functional Focused (Non-Required)
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - codex/serea-g5-evidence-closure-20261028
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/android-functional-focused.yml'
+      - 'android/**'
+      - 'tools/run_android_functional_focused.sh'
+      - 'tools/verify_android_instrumentation.py'
   push:
     branches:
       - codex/serea-personal-beta-functional-integration

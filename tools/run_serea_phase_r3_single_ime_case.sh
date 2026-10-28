@@ -75,17 +75,32 @@ restore_test_ime() {
     return 1
   fi
   {
+    local set_default_exit disable_test_ime_exit uninstall_test_ime_exit
     printf 'cleanup_started_at_utc=%s\noriginal_default_ime=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$ORIGINAL_IME"
     if [[ -z "$ORIGINAL_IME" || "$ORIGINAL_IME" == null ]]; then
       echo 'Cannot restore because the original default IME was not captured.'
       status=1
-    elif ! cleanup_adb shell ime set "$ORIGINAL_IME"; then
+      set_default_exit=125
+    elif cleanup_adb shell ime set "$ORIGINAL_IME"; then
+      set_default_exit=0
+    else
+      set_default_exit=$?
       echo 'Failed to restore original default IME.'
       status=1
     fi
-    cleanup_adb shell ime disable "$IME_COMPONENT" || status=1
-    cleanup_adb uninstall "$IME" || status=1
+    if cleanup_adb shell ime disable "$IME_COMPONENT"; then
+      disable_test_ime_exit=0
+    else
+      disable_test_ime_exit=$?
+      status=1
+    fi
+    if cleanup_adb uninstall "$IME"; then
+      uninstall_test_ime_exit=0
+    else
+      uninstall_test_ime_exit=$?
+      status=1
+    fi
     restored="$(cleanup_adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')" || status=1
     enabled="$(cleanup_adb shell settings get secure enabled_input_methods 2>/dev/null | tr -d '\r')" || status=1
     package_path="$(cleanup_adb shell pm path "$IME" 2>/dev/null | tr -d '\r')" || status=1
@@ -94,6 +109,8 @@ restore_test_ime() {
     [[ "$restored" == "$ORIGINAL_IME" ]] || status=1
     [[ "$enabled" != *"$IME_COMPONENT"* ]] || status=1
     [[ -z "$package_path" ]] || status=1
+    printf 'restore_default_exit=%s\ndisable_test_ime_exit=%s\nuninstall_test_ime_exit=%s\n' \
+      "$set_default_exit" "$disable_test_ime_exit" "$uninstall_test_ime_exit"
     printf 'cleanup_finished_at_utc=%s\ncleanup_status=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$([[ "$status" -eq 0 ]] && echo PASS || echo FAIL)"
   } > "$cleanup_file" 2>&1
@@ -346,7 +363,7 @@ if ! SEREA_DISPOSABLE_CI_EMULATOR=1 SEREA_EXPECTED_ANDROID_API="$API" EXPECTED_A
     > "$OUT/campaign-seed.log" 2>&1; then
   fail fresh-data-seed 'The existing run-as based isolated namespace seed guard failed.'
 fi
-if ! grep -Fq 'PASS: empty isolated app storage authorized' "$OUT/campaign-seed.log"; then
+if ! serea_verify_isolated_seed_log "$OUT/campaign-seed.log"; then
   fail fresh-data-seed 'Campaign seed helper did not report its explicit PASS marker.'
 fi
 

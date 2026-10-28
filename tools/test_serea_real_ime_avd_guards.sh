@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tools/serea_real_ime_avd_guards.sh
 source "$ROOT/tools/serea_real_ime_avd_guards.sh"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
 
 campaign_token="$(serea_make_campaign_token 35 40610433596 1 B_realImeCompositionWithoutSynchronizationBoundaries)"
 [[ "$campaign_token" == 'serea-api35-40610433596-1-B-realImeCompositionWithoutSynchronizationBoundaries' ]]
@@ -13,8 +15,24 @@ if serea_make_campaign_token 35 40610433596 1 'Invalid method!' > /dev/null 2>&1
   exit 1
 fi
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+cat > "$tmp/seed.log" <<'EOF'
+SEED_OK uid=10078 dataDir=/data/data/app.serea.android.isolated marker=no_backup/serea-instrumentation-token
+PASS: fresh isolated namespace received a one-use host seed without starting the app.
+EOF
+if ! serea_verify_isolated_seed_log "$tmp/seed.log"; then
+  echo 'FAIL: a valid run-as seed log was rejected' >&2
+  exit 1
+fi
+sed '/^PASS:/d' "$tmp/seed.log" > "$tmp/seed-without-pass.log"
+if serea_verify_isolated_seed_log "$tmp/seed-without-pass.log"; then
+  echo 'FAIL: a seed log without the host PASS marker was accepted' >&2
+  exit 1
+fi
+sed '/^SEED_OK /d' "$tmp/seed.log" > "$tmp/seed-without-device-marker.log"
+if serea_verify_isolated_seed_log "$tmp/seed-without-device-marker.log"; then
+  echo 'FAIL: a seed log without the run-as SEED_OK marker was accepted' >&2
+  exit 1
+fi
 
 cat > "$tmp/api26.config.ini" <<'EOF'
 image.sysdir.1 = system-images/android-26/google_apis/x86_64/

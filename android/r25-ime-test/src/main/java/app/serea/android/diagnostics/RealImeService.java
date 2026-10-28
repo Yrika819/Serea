@@ -19,7 +19,6 @@ public final class RealImeService extends InputMethodService {
     public volatile String currentEditorPackage = "none";
     public volatile int currentInputType = InputType.TYPE_NULL;
     public volatile int currentFieldId = -1;
-    public volatile String currentFieldName = "null";
     private long session;
 
     public long getInputSessionId() {
@@ -59,14 +58,10 @@ public final class RealImeService extends InputMethodService {
         currentEditorPackage = attribute == null ? "null" : String.valueOf(attribute.packageName);
         currentInputType = attribute == null ? InputType.TYPE_NULL : attribute.inputType;
         currentFieldId = attribute == null ? -1 : attribute.fieldId;
-        currentFieldName = attribute == null ? "null" : String.valueOf(attribute.fieldName);
         record("onStartInput restarting=" + restarting + " session=" + session
                 + " package=" + (attribute == null ? "null" : attribute.packageName)
                 + " fieldId=" + (attribute == null ? -1 : attribute.fieldId)
-                + " fieldName=" + (attribute == null ? "null" : attribute.fieldName)
-                + " inputType=" + (attribute == null ? -1 : attribute.inputType)
-                + " imeOptions=" + (attribute == null ? -1 : attribute.imeOptions)
-                + " privateImeOptions=" + (attribute == null ? "null" : attribute.privateImeOptions));
+                + " inputType=" + (attribute == null ? -1 : attribute.inputType));
     }
 
     @Override public void onFinishInput() {
@@ -74,7 +69,6 @@ public final class RealImeService extends InputMethodService {
         currentEditorPackage = "none";
         currentInputType = InputType.TYPE_NULL;
         currentFieldId = -1;
-        currentFieldName = "null";
         super.onFinishInput();
     }
 

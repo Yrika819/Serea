@@ -193,6 +193,7 @@ internal class EgressCheckedModelChatPort(
     private val clock: () -> Long = System::currentTimeMillis,
     private val expectedTarget: EgressTarget? = null,
     private val localModelAuthorizations: LocalModelAuthorizationPort? = null,
+    private val localMonotonicClock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : ModelChatPort {
     override suspend fun send(request: ModelChatRequest): ModelChatResponse {
         if (request.message.length > ChatContextBuilder.MAX_INPUT_CHARS ||
@@ -221,7 +222,8 @@ internal class EgressCheckedModelChatPort(
         if (boundContract.target == EgressTarget.LOCAL_DEMO && request.preparedPersonal != null) {
             throw ModelChatFailure("The local demo accepts only the original typed message and context.")
         }
-        val result = ChatEgressGate.evaluate(boundContract, clock())
+        val now = if (boundContract.target == EgressTarget.LOCAL_MODEL) localMonotonicClock() else clock()
+        val result = ChatEgressGate.evaluate(boundContract, now)
         if (result.decision != EgressContractDecision.APPROVED) {
             throw ModelChatFailure("Egress was denied: ${result.decision.name.lowercase()}.")
         }

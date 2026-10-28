@@ -21,6 +21,7 @@ internal interface LocalModelProviderHandoffEvidence {
     val selectedContent: String
     /** SHA-256 of the exact reviewed `TrustedGoogleHandoff.localChatText()` rendering. */
     val approvedChatBodySha256: String
+    /** Monotonic milliseconds, shared with `SystemClock.elapsedRealtime()`, never epoch time. */
     val expiresAtMillis: Long
     val authorizationState: String
     val selectionState: String
@@ -31,8 +32,9 @@ internal interface LocalModelProviderHandoffEvidence {
 }
 
 /**
- * Short-lived consent to process one exact request using one exact local model. It has no
- * constructor exposed to product callers; the registry issues and consumes it once.
+ * Short-lived consent to process one exact request using one exact local model. Its timestamps
+ * use monotonic elapsed milliseconds. It has no constructor exposed to product callers; the
+ * registry issues and consumes it once.
  */
 class LocalModelConsentProof private constructor(
     internal val id: String,
@@ -95,7 +97,7 @@ internal fun interface LocalModelCurrentConversationPort {
  * approvals. Composition must call [approve] only in response to the explicit local consent UI.
  */
 internal class LocalModelAuthorizationRegistry(
-    private val clock: () -> Long = System::currentTimeMillis,
+    private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
     private val maxLifetimeMillis: Long = 60_000L,
     private val handoffValidator: LocalModelProviderHandoffValidator = LocalModelProviderHandoffValidator { _, _ -> false },
     private val currentConversation: LocalModelCurrentConversationPort? = null,
@@ -134,6 +136,8 @@ internal class LocalModelAuthorizationRegistry(
             require(providerHandoff == null)
         }
         val now = clock()
+        pending.entries.removeAll { it.value.expiresAtMillis < now }
+        check(pending.size < MAX_PENDING_CONSENTS) { "Too many pending local-model consent proofs." }
         val proof = LocalModelConsentProof.issue(
             id = UUID.randomUUID().toString(), request = request, selectedModelId = selectedModelId,
             conversationGeneration = conversationGeneration,
@@ -143,6 +147,9 @@ internal class LocalModelAuthorizationRegistry(
         pending[proof.id] = proof
         return proof
     }
+
+    /** Remove an approval when the user cancels before Chat dispatch. */
+    fun revoke(proof: LocalModelConsentProof): Boolean = pending.remove(proof.id, proof)
 
     override suspend fun consumeOnce(proof: LocalModelConsentProof, contract: EgressContract): Boolean {
         val issued = pending.remove(proof.id) ?: return false
@@ -176,6 +183,8 @@ internal class LocalModelAuthorizationRegistry(
             proof.sourceLineage == contract.plannedBodySourceLineage &&
             (proof.providerHandoff == null || proof.providerHandoff.expiresAtMillis >= now)
     }
+
+    private companion object { const val MAX_PENDING_CONSENTS = 16 }
 }
 
 internal fun localModelPayloadSha256(body: String, context: List<ContextMessage>): String {

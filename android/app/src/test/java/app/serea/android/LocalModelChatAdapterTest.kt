@@ -88,6 +88,14 @@ class LocalModelChatAdapterTest {
         } finally { file.delete() }
     }
 
+    @Test fun cancellingLocalConsentRevokesPendingOneUseProof() = runBlocking {
+        val registry = registry { now }
+        val request = request("consent cancelled", sendId = "send-cancel-consent")
+        val proof = registry.approve(request, modelId)
+        assertTrue(registry.revoke(proof))
+        assertFalse(registry.consumeOnce(proof, localContract(request, proof)))
+    }
+
     @Test fun providerHandoffRequiresCurrentTypedEvidenceAndCannotBeReused() = runBlocking {
         val file = tempModel(byteArrayOf(6, 7))
         val backend = FakeBackend()
@@ -116,7 +124,7 @@ class LocalModelChatAdapterTest {
             )
             val proof = registry.approve(request, modelId, evidence, conversationGeneration = 7)
             val contract = localContract(request, proof, DataOrigin.GMAIL)
-            val gatedPort = EgressCheckedModelChatPort(adapter, { now }, EgressTarget.LOCAL_MODEL, registry)
+            val gatedPort = EgressCheckedModelChatPort(adapter, { now }, EgressTarget.LOCAL_MODEL, registry, { now })
             assertEquals("local answer", gatedPort.send(request.copy(selectedModelId = modelId, egressContract = contract)).text)
             assertEquals(1, backend.generateCalls)
             assertFalse(registry.consumeOnce(proof, contract))
@@ -126,7 +134,7 @@ class LocalModelChatAdapterTest {
                 approvedChatBodySha256 = sha256Utf8(revokedRequest.message),
             ), conversationGeneration = 7)
             current = false
-            val denied = EgressCheckedModelChatPort(adapter, { now }, EgressTarget.LOCAL_MODEL, registry)
+            val denied = EgressCheckedModelChatPort(adapter, { now }, EgressTarget.LOCAL_MODEL, registry, { now })
             assertTrue(runCatching {
                 denied.send(revokedRequest.copy(selectedModelId = modelId,
                     egressContract = localContract(revokedRequest, revokedProof, DataOrigin.GMAIL)))
@@ -152,7 +160,7 @@ class LocalModelChatAdapterTest {
             adapter, UsageRepository(usageDao) { clock },
             attributionResolver = LocalModelUsageAttributionResolver(artifact(file)),
         )
-        val egress = EgressCheckedModelChatPort(usage, { clock }, EgressTarget.LOCAL_MODEL, registry)
+        val egress = EgressCheckedModelChatPort(usage, { clock }, EgressTarget.LOCAL_MODEL, registry, { clock })
         try {
             val original = request("approved selected text", sendId = "send-envelope", origin = DataOrigin.GMAIL)
             val evidence = FakeHandoff(
@@ -300,7 +308,7 @@ class LocalModelChatAdapterTest {
         }
 
     private fun egressWith(registry: LocalModelAuthorizationRegistry, delegate: ModelChatPort, clock: () -> Long) =
-        EgressCheckedModelChatPort(delegate, clock, EgressTarget.LOCAL_MODEL, registry)
+        EgressCheckedModelChatPort(delegate, clock, EgressTarget.LOCAL_MODEL, registry, clock)
 
     private fun registry(clock: () -> Long) = LocalModelAuthorizationRegistry(
         clock,

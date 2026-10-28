@@ -23,9 +23,10 @@ verifies the same three APK files produced by the single build job. No API-speci
 performed.
 
 The workflow's source-scope guard permits only its exact workflow path, the single-case helper,
-this evidence document, and the two diagnostic-only source files involved in the request-contract
-repair (`IndependentImeCompositionTest.kt` and `RealImeDiagnosticsProvider.java`), plus the exact
-AVD guard module and its regression script. It rejects all other changes since the diagnostic base.
+this evidence document, and the three diagnostic-only source files involved in the request-contract
+repair (`IndependentImeCompositionTest.kt`, `RealImeDiagnosticsProvider.java`, and
+`RealImeService.java`), plus the exact AVD guard module and its regression script. It rejects all
+other changes since the diagnostic base.
 
 ## Device guards and evidence
 

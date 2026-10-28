@@ -60,7 +60,8 @@ jobs:
             $0 !~ /^tools\/test_serea_real_ime_avd_guards\.sh$/ &&
             $0 !~ /^docs\/verification\/api35-real-ime-independent-bc\.md$/ &&
             $0 != "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt" &&
-            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java" { print }
+            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java" &&
+            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java" { print }
           ')"
           if [[ -n "$unexpected" ]]; then
             printf 'Unexpected changes since diagnostic base:\n%s\n' "$unexpected" >&2

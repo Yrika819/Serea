@@ -4,57 +4,78 @@
 
 | Field | State |
 |---|---|
-| ACTIVE_PHASE | G5 evidence closure |
-| GOAL_STATUS | PARTIAL — harness regression identified; lineage regression reproduced; API 35 on-device PoC validated |
-| AUTHORITY_SHA | G4 IME branch `b06c1acd5f3ddb4f59f0cad6ae1a1d291b086671`; base candidate #132 `373b8be15f407d951157d2a80a632e86d979acdf` |
-| LAST_GOOD_SHA | `029c5aa6267fe3b4c44ac6fd5b082ed1c763b140` for Formal Run `40650170110` only; not inherited by `b06c1ac` |
+| ACTIVE_PHASE | G5 evidence closure; exact-head reruns pending |
+| GOAL_STATUS | PARTIAL — IME provider permission regression isolated and patched locally; Cloud lineage fix focused-pass locally; API 35 isolated inference PoC validated on its own PR |
+| AUTHORITY_SHA | PR #132 `373b8be15f407d951157d2a80a632e86d979acdf`; PR #133 `b06c1acd5f3ddb4f59f0cad6ae1a1d291b086671` (base PR #132); main `e0acb0254820c381dd97828824bef86a1db5176c` |
+| LAST_GOOD_SHA | Formal run `40650170110` SUCCESS on `029c5aa6267fe3b4c44ac6fd5b082ed1c763b140` only. G5 focused egress tests pass locally on `3ba450ec1d6c4adf0b29daf42909e28fa242f087` only. Neither result is inherited by later commits. |
 | WORKTREE | `/workspace/Serea-g5-evidence-closure` |
 | BRANCH | `codex/serea-g5-evidence-closure-20261028` |
-| CURRENT_HEAD | `b06c1acd5f3ddb4f59f0cad6ae1a1d291b086671` before local harness fix commit |
-| DRAFT_PR | None |
-| CI_RUN_IDS | `40657482497` IME B/C matrix; `40657482550` Formal Android/Identity; `40657482463` Full; `40657482477` Fast; `40657482449` RustSec; `40657482501` Git Hooks; `40657482527` Native; `40657482541` SQLite |
-| OWNER_APPROVAL_REQUIRED | Real Google/OAuth/account/data, real AI credentials or billing, production signing/distribution, Pixel 7a, main merge, final Beta GO |
+| CURRENT_HEAD | `3ba450ec1d6c4adf0b29daf42909e28fa242f087`; tree `04a3f951263fd96475c11454a521e1fd28745f3f`; local only at checkpoint creation |
+| DRAFT_PR | None yet; intended base `codex/serea-g4-final-integration-candidate-20261027` (PR #132 branch) |
+| CI_RUN_IDS | Old-head Formal `40650170110` SUCCESS; PR133 IME matrix `40657482497` FAIL; PR133 Formal `40657482550` FAIL; Agent C API35 inference `40657508541` SUCCESS; PR133 Full `40657482463`, Fast `40657482477`, RustSec `40657482449`, Git Hooks `40657482501`, Native `40657482527`, SQLite `40657482541` SUCCESS on `b06c1ac` only |
+| ARTIFACT_IDS | IME build `12801519343`, build evidence `12802301577`; API26 B `12803116378`, API26 C `12802653113`, API35 B `12802623709`, API35 C `12803148298`; Formal API26 `12803068069`, API35 `12802953852`; on-device AI `12802681672`; Cloud local exact-head evidence under `docs/agent-reports/evidence/g5-cloud-egress-20261028/after-lineage-fix-3ba450e/` |
+| OWNER_APPROVAL_REQUIRED | Real Google OAuth/account/data, real Cloud AI credentials/billing, production signing/distribution, Pixel 7a, main merge, final Beta GO |
 
 ## Lane A — independent real IME
 
-The previous `40650170070` matrix failed before instrumentation because of a stale seed success marker; its JUnit methods were **NOT_RUN**. The current `40657482497` run passed seed, fresh-AVD, package, and APK-hash guards for each case and ran one JUnit method in every completed case.
+### Prior seed failure
 
-- API 26 B artifact `12802301577` (APK build evidence) / `12803116378` (case evidence): 1 test, 1 failure, 0 errors, 0 skips. The Android-managed IME emitted `onStartInput` for `app.serea.android.isolated`. Opening `RealImeDiagnosticsProvider` then failed with a signature-permission `SecurityException`; composition operations and Compose state assertions were not reached.
-- API 26 C artifact `12802653113`: 1 test, 1 failure, 0 errors, 0 skips. Same provider permission denial before B/C assertions. ZIP SHA-256 `4ed42d9df4d297db9b5a8cbc7b21009fcc4fbf2a90ac7558e3cc6892531b0a4b`.
-- API 35 B artifact `12802623709`: 1 test, 1 failure, 0 errors, 0 skips. The provider wrapper reports `Could not connect to the test IME diagnostics provider`; it fails at the first `imeEvents()` call after `onStartInput`, before composition assertions. ZIP SHA-256 `796649eb7a0bb6be2200cdbfa8b0c8a12ea2b6ea899c3b7e329e8dead4e1a683`.
-- API 35 C artifact `12803148298`: 1 test, 1 failure, 0 errors, 0 skips. The same provider connection exception occurs after `onStartInput` and before composition assertions. ZIP SHA-256 `a6825418b3dc7c29cfa16d9dc7835ae2cf331b93d2e6e8b3f062d3e58481eea6`.
-- Completed cases recorded cleanup PASS: original Latin IME restored, Test IME disabled and uninstalled, package absent. The cases do **not** prove composition failure or product defect.
+The earlier matrix Run `40650170070` failed its fresh-data seed guard. Its four requested JUnit methods were **NOT_RUN**. It does not describe IME behavior.
 
-The isolated target variant had been reusing `src/debug/AndroidManifest.xml`, while the IME diagnostic signature permission was removed from that debug manifest. Historical source `029c5aa` had the permission request in that manifest. The fix under review moves the permission request into an isolated-only manifest while retaining the Process Death harness receiver. It does not add the permission or Test IME service to debug or beta manifests. The B/C provider helper now asserts `targetContext.checkSelfPermission()` before IPC and logs the result; the host script no longer tries to runtime-grant a signature-only permission.
+### PR #133 exact-head matrix
 
-Local verification on the root-owned worktree:
+Run `40657482497` used PR #133 source HEAD `b06c1acd5f3ddb4f59f0cad6ae1a1d291b086671`. The APK build/provenance job passed, and all four case jobs passed source/APK identity, fresh AVD/API, seed/campaign, target-package, installed-hash, and IME selection guards. Each requested one JUnit method and recorded 1 failure, 0 errors, 0 skips:
 
-- `:app:processDebugMainManifest`, `:app:processIsolatedMainManifest`, `:app:processBetaMainManifest`: PASS.
-- Merged manifest check: `DIAGNOSTICS` permission appears only in `isolated`; no Test IME component appears in debug, isolated target, or beta.
-- Added `tools/verify_serea_real_ime_manifest_scope.py` as a build-workflow guard for the merged target/Test IME manifests; local invocation PASS. The diagnostic Workflow source guard now compares G5 changes against frozen #133 HEAD `b06c1ac` and allowlists the exact new G5 paths.
-- `:app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug`: PASS.
-- AndroidTest Kotlin compile, `bash tools/test_serea_real_ime_avd_guards.sh`, workflow YAML parse, manifest-scope guard, and `git diff --check`: PASS.
-- Target, AndroidTest, and Test IME APKs share signer certificate SHA-256 `36c5b853ac2bf2a5fde88f6d93fb6a2aeb6a8888e725c06bcd45dba65924d8d8` in the local build. Local APK SHA-256: target `a21fd835beffc9254c55eea8f46b139c98363cbc300ca6f101982a69d303df46`; AndroidTest `dc1cd73dd2e9a3e4a10f809bd5e625b8f47e2766902f77276b210e0e9354363e`; Test IME `c65604f39498bbf144d5e4ead812e0fad5071a124a489d51f573c8d5c62cccac`. These local APK hashes are not CI-run artifacts and must not be confused with the old matrix APKs.
+| Case | Artifact | Observed first failure | IME input assertions |
+|---|---:|---|---|
+| API 26 B | `12803116378` | Signature-protected Test IME diagnostics provider denied target access | NOT_REACHED |
+| API 26 C | `12802653113` | Same signature permission denial | NOT_REACHED |
+| API 35 B | `12802623709` | Diagnostics provider connection unavailable after `onStartInput` | NOT_REACHED |
+| API 35 C | `12803148298` | Same provider connection failure after `onStartInput` | NOT_REACHED |
 
-## Lane B — Cloud Egress
+Root Cause category: **TEST_HARNESS**. The trace and manifests show the isolated target did not request the provider's signature permission. The Android-managed Test IME did receive `onStartInput`, but the harness could not read diagnostics. These results neither pass nor fail the actual composing operations and do not establish a product defect. Each case reported cleanup PASS: restore Latin IME, disable/uninstall the Test IME, and verify the package absent.
 
-Agent B branch `codex/serea-g5-cloud-egress-20261028` HEAD `e62d16e34a4227d0ff99d2a6af6da9894e960baa`, tree `087147e32f712e978888c936b175842b88432441`, is pushed and clean. Its clarified regression matrix on unchanged product source `fc1c0527eea8ea92509935dc8721d24b27fd7f9d` ran 9 tests: 4 expected regression failures, 0 errors, 0 skips; the prior focused egress suite ran 72/72 PASS. Independent review confirmed current-turn `userMessage.sourceLineage` is omitted from generated assistant lineage. Current assistant classification remains `UNKNOWN`, and the test confirms 0 usage reservations, 0 credential reads, and 0 HTTP dispatches. The `PUBLIC` bounded-context case is hypothetical and is not an observed disclosure. The renamed exact-head JUnit is `attack-matrix-renamed-exact-head.junit.xml`, SHA-256 `a99f330ed982c36734613a3696ad921ba8708cdf1e4c7272db29040d5c98a021`; the original pre-fix JUnit remains unchanged.
+### Root-owned harness correction
 
-Review requested clearer names for the whole-`TextFieldValue` replacement and retained-`ViewModelStore` tests. Agent B is updating its own branch. No Agent B changes are integrated yet. The minimal product fix is root-owned: union `userMessage.sourceLineage` into assistant lineage; keep Cloud disabled until same-HEAD focused tests pass.
+Commit `abdc320a09ebc6d69bc32a0cacd42609f925ce26` adds `src/isolated/AndroidManifest.xml`, keeping the signature permission request within `app.serea.android.isolated`. The Test IME provider remains signature-protected; the isolated target requests the permission; debug and Beta do not. `ProcessDeathHarnessReceiver` remains protected by DUMP. The workflow compares the signer of target, instrumentation, and Test IME APKs. The host script records that runtime `pm grant` is not applicable for a signature permission, and the instrumentation verifies `targetContext.checkSelfPermission()` before provider IPC.
+
+Preliminary local checks passed: debug/isolated/beta merged manifest scope, APK assemblies, AndroidTest Kotlin compilation, AVD guard script, YAML parsing, manifest-scope verifier, and `git diff --check`. The local signer certificate SHA-256 was `36c5b853ac2bf2a5fde88f6d93fb6a2aeb6a8888e725c06bcd45dba65924d8d8`. The earlier local APK hashes recorded during this check were from a pre-lineage-fix build and are **not** CI evidence or evidence for the current HEAD. Required next: rerun B/C on the final pushed G5 HEAD, verify all four exact JUnit IDs, connection/editor identity, composition, selection, APK hashes, and cleanup. No post-fix IME case has run yet.
+
+## Lane B — Cloud Egress lineage
+
+Agent B's branch `codex/serea-g5-cloud-egress-20261028` is pushed at HEAD `e62d16e34a4227d0ff99d2a6af6da9894e960baa`, tree `087147e32f712e978888c936b175842b88432441`. Its matrix exposed that the current provider-origin `userMessage.sourceLineage` was omitted from the generated assistant lineage. On the unchanged product candidate `fc1c0527eea8ea92509935dc8721d24b27fd7f9d`, the clarified attack matrix ran 9 tests with 4 expected regression failures, 0 errors, 0 skips; prior focused egress tests were 72/72. The matrix showed the current assistant remained UNKNOWN and the Cloud gate denied before reservation, credential read, and HTTP dispatch. The bounded-context PUBLIC assertion was a hypothetical regression test, not an observed disclosure.
+
+Agent A independently reviewed the final root patch and accepted it. Root commit `9b9e7fa53b744c991fa575e73ba739b2d0c66553` adds current `userMessage.sourceLineage` to the generated model-output lineage while retaining `MODEL_OUTPUT`, `USER_AUTHORED`, prior context lineage, and UNKNOWN classification. A first focused run observed the stronger `SOURCE_LINEAGE_DENIED` result instead of `CLASSIFICATION_DENIED`, evidence that Google source was retained and denied. The assertion was updated to the stronger denial reason; commit `3ba450ec1d6c4adf0b29daf42909e28fa242f087` adds an explicit Gmail-origin assertion across bounded context.
+
+Exact local focused suite at `3ba450e` passed: 81 tests, 0 failures, 0 errors, 0 skips across `CloudEgressBodyLineageAttackMatrixTest` (9), `SecurityPortsTest` (10), `LocalFakeRoutingAdversarialTest` (3), `GoogleOriginEgressAdversarialTest` (1), `ChatViewModelTest` (36), and `OllamaCloudAdapterTest` (22). Gradle log and JUnit XMLs with SHA-256 manifest are preserved under `docs/agent-reports/evidence/g5-cloud-egress-20261028/after-lineage-fix-3ba450e/`. This is local focused evidence on `3ba450e`, not CI or a result for a later commit. Agent A's independent source review was ACCEPT at the same HEAD.
+
+Security residuals: `prefillEditorFromProvider` currently has no production call site, so a future Gmail/Calendar-to-Chat UI handoff must pass the correct explicit origin. Arbitrary clipboard or pasted text provenance is not inferred. Account/session generation binding across a real Google handoff is not covered. No disclosure was observed. Real Provider and Cloud AI remain **DISABLED** until production handoff lineage, authorization binding, and same-head security evidence are complete.
 
 ## Lane C — On-device AI
 
-PR #127 HEAD `a2bafeea77160e8e2746bdfdd0d309348ac04aa7` Run `40657508541` SUCCESS, artifact `12802681672` (SHA-256 `df06078f5c8b4164bd24e255d1df0e2df9069570e08c08eea1295f4f391161f8`). API 35 x86_64 Emulator inference passed 1/1, 0 failures/errors/skips, including load, single/multi-turn generation, native cancellation, recovery, close/reopen, and corrupt-model rejection. ARM64 native build succeeded; ARM64 runtime, Pixel 7a performance, and product Chat integration are **NOT_RUN**. PoC remains unintegrated and does not pass through production Router/Egress/Usage.
+PR #127 HEAD `a2bafeea77160e8e2746bdfdd0d309348ac04aa7`, tree `25874a7f3fc53028ae72aa7ddf4cc42a5e823f70`, Run `40657508541` SUCCESS, artifact `12802681672` (SHA-256 `df06078f5c8b4164bd24e255d1df0e2df9069570e08c08eea1295f4f391161f8`). The API 35 x86_64 Emulator test passed 1/1 with 0 failures/errors/skips for model load, single/multi-turn generation, native cancellation, recovery, close/reopen, and corrupt-model rejection. The run built ARM64 and x86_64 native targets. API26 Run `40589226410` passed on older source `8d4c5cf...`, not current PR #127 HEAD. ARM64 runtime, Pixel 7a performance, and product Chat integration are **NOT_RUN**. The PoC remains isolated and is not integrated into Serea Router/Egress/Usage.
 
-## Formal result / next actions
+## Formal Required and Identity
 
-Run `40650170110` completed SUCCESS on the old exact SHA `029c5aa...`, including Formal Identity. It is not evidence for later heads. Run `40657482550` on `b06c1ac` was running its API 35 emulator suite at checkpoint time; no final conclusion may be inferred.
+Old-head Run `40650170110` completed **SUCCESS** on exact SHA `029c5aa6267fe3b4c44ac6fd5b082ed1c763b140`. All jobs succeeded, including Formal Identity, Android Emulator Required Gate, storage/emulator, and Pixel 7a CI bundle. This success does not transfer to later heads.
 
-Next actions:
+Run `40657482550` on PR #133 HEAD `b06c1ac` completed **FAILURE**. Focused Chat failed while opening the same diagnostics provider. Full Required 105-test suites did **NOT_RUN** on API26 or API35; Identity was **SKIPPED**. Storage/Emulator failed. Build/Lint, Unit, Integration, Security, Dependency Audit, Documentation, and Pixel 7a CI bundle succeeded on `b06c1ac`. Other cross-cutting runs on `b06c1ac` (Full, Fast, RustSec, Git Hooks, Native, SQLite) succeeded but do not transfer to G5.
 
-1. Commit the isolated-only permission fix in this G5 worktree; wait until current emulator workflows finish before dispatching the next B/C matrix.
-2. Accept Agent B's clarified test-only commit after rechecking its source, exact JUnit, hashes, and remote HEAD; apply the minimal assistant-lineage fix in this worktree and run focused security tests.
-4. Open a new Draft PR based on #132 only after the candidate is coherent. Do not edit or merge #132/#133/#126/#127.
-5. Re-run the required and cross-cutting gates on the final exact G5 HEAD. No old-head PASS transfers.
+## Agent review status
 
-Personal Beta remains **NO-GO**. Real Google services, real Cloud AI, Pixel 7a, production signing, distribution, and main merge remain unapproved/not run.
+| Lane | Branch / HEAD | Review | State |
+|---|---|---|---|
+| A — Real IME | no independent source branch; root harness fix at `abdc320`, current combined HEAD `3ba450e` | Provider permission issue classified TEST_HARNESS; source fix awaits post-fix B/C. Cloud patch independently ACCEPTED by A at `3ba450e`. | Post-fix B/C NOT_RUN |
+| B — Cloud Egress | `codex/serea-g5-cloud-egress-20261028` / `e62d16e` | Test-only regression patch; independently checked; root fix is separate and narrowly scoped. | Integrated in root branch; exact local tests PASS at `3ba450e` |
+| C — On-device AI | PR #127 / `a2bafee` | Evidence reviewed; no product integration. | API35 x86_64 PoC PASS; product use NOT_RUN |
+
+## Next actions
+
+1. Preserve this checkpoint and exact-head Cloud evidence in a root-owned commit.
+2. Run exact-candidate local egress JVM tests and isolated APK/manifest/signer checks on the resulting HEAD; do not run concurrent local emulators while GitHub IME jobs are active.
+3. Push the root-owned branch and create a new Draft PR based on PR #132's branch; do not modify or merge PR #132/#133/#126/#127.
+4. On the pushed exact HEAD, run independent IME B/C and inspect each JUnit, Android-owned connection, target editor identity, composition/selection, APK digests, and cleanup. If still failing, classify from the new trace before changing code.
+5. Run Formal Required and cross-cutting CI only on the stable exact candidate HEAD. No old SHA result transfers.
+6. Keep real Google, Cloud AI, production signing/distribution, Pixel 7a, main merge, and Personal Beta final GO as Owner-controlled/not run.
+
+Personal Beta remains **NO-GO**.

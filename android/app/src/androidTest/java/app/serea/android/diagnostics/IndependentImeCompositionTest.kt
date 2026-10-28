@@ -63,24 +63,27 @@ class IndependentImeCompositionTest {
         focusComposer()
         var session = awaitImeSession(callbackCountBefore)
         var connection = session.connectionIdentity
+        // Establish focus once before the unsynchronized sequence. Between operations B only
+        // samples the IME-owned session token needed by the provider's stale-session guard;
+        // it does not read TextFieldValue, ViewModel state, or Compose semantics until the
+        // final state-reflection boundary below.
         logCurrentActivity("B.initial", connection, null)
         logSemantics("B.initial", connection)
-        val draftAccepted = imeSetComposingText(session, FIXTURE)
-        logCurrentActivity("B.set-draft", connection, draftAccepted)
-        logSemantics("B.set-draft", connection)
-        // Refresh only the Android-owned session token; Test B deliberately does not wait for
-        // TextFieldValue or ViewModel state between the IME operations.
-        session = currentImeSession()
+        val draftAccepted = imeSetComposingText(session, FIXTURE, verifyComposerFocus = false)
+        assertTrue("B draft InputConnection call was rejected", draftAccepted)
+        // Refresh only the Android-owned session token; this provider snapshot does not observe
+        // target Activity, TextFieldValue, ViewModel, or Semantics state.
+        session = requireNotNull(currentImeSessionOrNull()) { "B lost the Android-bound IME session after draft" }
         connection = session.connectionIdentity
-        val replacementAccepted = imeSetComposingText(session, REPLACEMENT)
-        logCurrentActivity("B.replace", connection, replacementAccepted)
-        logSemantics("B.replace", connection)
-        session = currentImeSession()
+        val replacementAccepted = imeSetComposingText(session, REPLACEMENT, verifyComposerFocus = false)
+        assertTrue("B replacement InputConnection call was rejected", replacementAccepted)
+        session = requireNotNull(currentImeSessionOrNull()) { "B lost the Android-bound IME session after replacement" }
         connection = session.connectionIdentity
-        val finishAccepted = imeFinishComposingText(session)
-        logCurrentActivity("B.finish", connection, finishAccepted)
-        logSemantics("B.finish", connection)
+        val finishAccepted = imeFinishComposingText(session, verifyComposerFocus = false)
+        assertTrue("B finish InputConnection call was rejected", finishAccepted)
         awaitValue("B.settled", connection) { it.text == REPLACEMENT && it.composition == null && it.selection == TextRange(REPLACEMENT.length) }
+        logCurrentActivity("B.final", connection, true)
+        assertComposerFocused()
         assertTrue("Android did not start a new input session: ${imeEvents()}", imeEvents().count { it.contains(" onStartInput restarting=") } > callbackCountBefore)
     }
 
@@ -372,17 +375,26 @@ class IndependentImeCompositionTest {
 
     private fun imeEvents(): List<String> = imeCall("events").getStringArrayList("events")?.toList().orEmpty()
 
-    private fun imeSetComposingText(session: ImeSession, text: String): Boolean = runImeOperation(
+    private fun imeSetComposingText(
+        session: ImeSession,
+        text: String,
+        verifyComposerFocus: Boolean = true,
+    ): Boolean = runImeOperation(
         "setComposingText",
         session,
+        verifyComposerFocus,
     ) {
         putString("text", text)
         putInt("cursor", 1)
     }
 
-    private fun imeFinishComposingText(session: ImeSession): Boolean = runImeOperation(
+    private fun imeFinishComposingText(
+        session: ImeSession,
+        verifyComposerFocus: Boolean = true,
+    ): Boolean = runImeOperation(
         "finishComposingText",
         session,
+        verifyComposerFocus,
     ) { }
 
     private fun imeSetSelection(session: ImeSession, start: Int, end: Int): Boolean = runImeOperation(
@@ -420,9 +432,10 @@ class IndependentImeCompositionTest {
     private fun runImeOperation(
         method: String,
         session: ImeSession,
+        verifyComposerFocus: Boolean = true,
         request: Bundle.() -> Unit,
     ): Boolean {
-        assertComposerFocused()
+        if (verifyComposerFocus) assertComposerFocused()
         val arguments = Bundle().apply {
             putString("expectedEditorPackage", TARGET_PACKAGE)
             putString("expectedService", session.serviceIdentity)
@@ -447,7 +460,7 @@ class IndependentImeCompositionTest {
         assertEquals("$method operation used another editor package: $observation", TARGET_PACKAGE, observation.editorPackage)
         assertEquals("$method operation input type changed: $observation", session.inputType, observation.inputType)
         assertEquals("$method invocation reason mismatch: $observation", "INVOKED_ACCEPTED", observation.reason)
-        assertComposerFocused()
+        if (verifyComposerFocus) assertComposerFocused()
         return observation.accepted
     }
 

@@ -23,6 +23,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -54,15 +55,25 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.serea.android.calendar.CalendarDescriptor
 import app.serea.android.calendar.CalendarEvent
+import app.serea.android.calendar.CalendarEventSource
 import app.serea.android.calendar.CalendarEventKey
 import app.serea.android.calendar.CalendarAuthorizationPort
 import app.serea.android.calendar.CalendarReadPort
 import app.serea.android.calendar.CalendarId
 import app.serea.android.calendar.EventTime
 import app.serea.android.calendar.FakeCalendarProvider
+import app.serea.android.handoff.GoogleHandoffPreview
+import app.serea.android.handoff.GoogleHandoffPreviewDialog
+import app.serea.android.handoff.GoogleHandoffPreviewRequest
+import app.serea.android.handoff.HandoffResult
+import app.serea.android.handoff.calendarHandoffCandidate
 import java.time.Clock
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 
 /** Exposes the real lazy-list position to Compose tests without adding accessibility text. */
 internal val CalendarLazyListPositionKey =
@@ -105,6 +116,11 @@ fun CalendarAgendaScreen(
     clock: Clock = (provider as? FakeCalendarProvider)?.clock ?: Clock.systemUTC(),
     displayZone: ZoneId = ZoneId.systemDefault(),
     modifier: Modifier = Modifier,
+    conversationId: String? = null,
+    conversationGeneration: Long = 0,
+    onCreateHandoffPreview: (suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>)? = null,
+    onHandoffConfirmed: (suspend (GoogleHandoffPreview) -> Boolean)? = null,
+    onCancelHandoffPreview: ((GoogleHandoffPreview) -> Unit)? = null,
 ) {
     val configuration = LocalConfiguration.current
     val compactControls = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
@@ -134,6 +150,46 @@ fun CalendarAgendaScreen(
         }.getOrNull()
     }
     val scope = rememberCoroutineScope()
+    var handoffPreview by remember { mutableStateOf<GoogleHandoffPreview?>(null) }
+    var handoffError by remember { mutableStateOf<String?>(null) }
+    var handoffBusy by remember { mutableStateOf(false) }
+    var handoffRequestGeneration by remember { mutableStateOf(0L) }
+    val selectForHandoff: (CalendarEvent) -> Unit = { event ->
+        val candidate = calendarHandoffCandidate(event)
+        if (candidate == null || conversationId == null || onCreateHandoffPreview == null) {
+            handoffError = "この情報はFakeセッションから選択できません。セッションを確認してください。"
+        } else {
+            val requestGeneration = ++handoffRequestGeneration
+            handoffError = null
+            handoffBusy = true
+            scope.launch {
+                val result = try {
+                    onCreateHandoffPreview(
+                        GoogleHandoffPreviewRequest(candidate, conversationId, conversationGeneration,
+                            "選択した予定の内容を端末内Chatで整理する"),
+                    )
+                } catch (cancelled: CancellationException) {
+                    if (!currentCoroutineContext().isActive) throw cancelled
+                    HandoffResult.Rejected(app.serea.android.handoff.GoogleHandoffRejection.SESSION_EXPIRED)
+                } catch (_: Exception) {
+                    HandoffResult.Rejected(app.serea.android.handoff.GoogleHandoffRejection.SESSION_EXPIRED)
+                }
+                if (!currentCoroutineContext().isActive) {
+                    if (result is HandoffResult.Accepted) onCancelHandoffPreview?.invoke(result.value)
+                    throw CancellationException("Calendar handoff screen left before preview delivery.")
+                }
+                if (requestGeneration != handoffRequestGeneration) {
+                    if (result is HandoffResult.Accepted) onCancelHandoffPreview?.invoke(result.value)
+                    return@launch
+                }
+                when (result) {
+                    is HandoffResult.Accepted -> handoffPreview = result.value
+                    is HandoffResult.Rejected -> handoffError = "セッションが失効したか、選択内容を確認できません。Fake Calendarを開き直してください。"
+                }
+                handoffBusy = false
+            }
+        }
+    }
     val controller = remember(provider, clock, displayZone) {
         CalendarAgendaUiController(
             readPort = provider,
@@ -167,6 +223,12 @@ fun CalendarAgendaScreen(
         is CalendarAgendaUiState.Loading -> (state as CalendarAgendaUiState.Loading).detailKey != null
         is CalendarAgendaUiState.Failure -> (state as CalendarAgendaUiState.Failure).detailKey != null
         is CalendarAgendaUiState.Agenda -> false
+    }
+    LaunchedEffect(inDetail, detailKey) {
+        if (handoffBusy && handoffPreview == null) {
+            handoffRequestGeneration++
+            handoffBusy = false
+        }
     }
     val agendaControlsEnabled = state !is CalendarAgendaUiState.Loading
 
@@ -231,6 +293,9 @@ fun CalendarAgendaScreen(
                 if (isDemoProvider) "デモのみ · Google Calendar未接続" else "Google Calendarから取得 · 変更はできません",
                 style = MaterialTheme.typography.labelMedium,
             )
+            if (handoffError != null && handoffPreview == null) {
+                Text(handoffError!!, color = MaterialTheme.colorScheme.error)
+            }
 
             if (!inDetail) {
                 val onMode: (CalendarAgendaMode) -> Unit = { mode ->
@@ -305,6 +370,7 @@ fun CalendarAgendaScreen(
                         current.event,
                         current.calendars.firstOrNull { it.id == current.event.key.calendarId },
                         displayZone,
+                        onHandoff = selectForHandoff,
                     )
                     is CalendarAgendaUiState.Agenda -> AgendaContent(
                         current,
@@ -320,6 +386,49 @@ fun CalendarAgendaScreen(
                 }
             }
         }
+    }
+    handoffPreview?.let { preview ->
+        GoogleHandoffPreviewDialog(
+            preview = preview,
+            errorMessage = handoffError,
+            confirming = handoffBusy,
+            onCancel = {
+                handoffRequestGeneration++
+                onCancelHandoffPreview?.invoke(preview)
+                handoffPreview = null
+                handoffError = null
+            },
+            onConfirm = {
+                if (conversationId != preview.conversationId || conversationGeneration != preview.conversationGeneration) {
+                    handoffError = "Chatの送信先が変わりました。内容を選び直してください。"
+                } else if (onHandoffConfirmed == null) {
+                    handoffError = "Chatへの受け渡し先が利用できません。"
+                } else {
+                    handoffBusy = true
+                    scope.launch {
+                        val accepted = try {
+                            onHandoffConfirmed(preview)
+                        } catch (cancelled: CancellationException) {
+                            if (!currentCoroutineContext().isActive) throw cancelled
+                            false
+                        } catch (_: Exception) {
+                            false
+                        }
+                        if (!currentCoroutineContext().isActive) {
+                            throw CancellationException("Calendar handoff screen left during confirmation.")
+                        }
+                        if (handoffPreview !== preview) return@launch
+                        if (accepted) {
+                            handoffPreview = null
+                            handoffError = null
+                        } else {
+                            handoffError = "セッションが失効したか、Chatの送信先が変わりました。Fake Calendarを開き直してください。"
+                        }
+                        handoffBusy = false
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -550,6 +659,7 @@ private fun EventDetailContent(
     event: CalendarEvent,
     calendar: CalendarDescriptor?,
     displayZone: ZoneId,
+    onHandoff: (CalendarEvent) -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     val listPosition by remember(listState) {
@@ -608,6 +718,13 @@ private fun EventDetailContent(
                 calendar?.displayName?.takeIf { it.isNotBlank() } ?: "名称なし",
                 modifier = Modifier.testTag("calendar_event_detail_item_3"),
             )
+        }
+        if (event.source == CalendarEventSource.MOCK) {
+            item {
+                OutlinedButton(onClick = { onHandoff(event) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("この予定をChatへ渡す")
+                }
+            }
         }
         item {
             Column(Modifier.fillMaxWidth().testTag("calendar_event_detail_item_4")) {

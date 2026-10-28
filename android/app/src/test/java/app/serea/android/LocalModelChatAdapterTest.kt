@@ -371,6 +371,30 @@ class LocalModelChatAdapterTest {
         } finally { adapter.close(); file.delete() }
     }
 
+    @Test fun postGenerationCancellationRemainsOutcomeUnknown() = runBlocking {
+        val file = tempModel(byteArrayOf(2, 7, 1, 8))
+        val backend = FakeBackend(blockGeneration = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        val registry = registry { now }
+        val dao = CountingUsageDao()
+        try {
+            val request = request("cancel after native generation starts", sendId = "send-cancel-generation")
+            val send = async {
+                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            }
+            backend.generationStarted.await()
+            send.cancelAndJoin()
+            assertTrue(send.isCancelled)
+            assertTrue(backend.cancelled)
+            assertTrue(backend.closed)
+            assertEquals(1, backend.generateCalls)
+            assertEquals(1, dao.insertedReservationCount)
+            assertEquals(1, dao.reservationCount)
+            assertEquals(1, dao.unknownCount)
+            assertEquals(UsageLedgerState.OUTCOME_UNKNOWN.name, dao.reservationState(request.sendId))
+        } finally { adapter.close(); file.delete() }
+    }
+
     @Test fun closeDuringLoadCancelsLoadAndEventuallyReleasesBackend() = runBlocking {
         val file = tempModel(byteArrayOf(1, 6, 1, 8))
         val backend = FakeBackend(blockLoad = true)

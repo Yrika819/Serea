@@ -209,6 +209,17 @@ PR #134 exact reviewed revision was `e6f3a2593ce9ad652a34e7eda68374d70d5d95e1` /
 
 The exact-e6 GitHub workflow snapshot (queried during review) was not an all-green candidate: Fast CI `40662590940`, Git hooks `40662590692`, RustSec `40662590863`, and Android Personal Beta contract tests `40662590766` succeeded; Android Required `40662590743` failed at its final required-check verifier with several jobs cancelled; Real IME diagnostic `40662590463` failed its APK-build job and skipped the API cases; Full `40662590523`, SQLite `40662590720`, and Native `40662590661` were cancelled. The main-only Beta workflow Run `40662543653` failed with zero jobs. These runs are not Agent B evidence and do not transfer to the current PR #134 head. GitHub artifacts observed for those PR checks: `12804023663` IME build evidence; `12804528138` Android security JUnit; `12804432729` Android dependency audit; `12804098038` Rust security. Agent B itself started no GitHub Actions run and has no remote artifact ID.
 
+### Exact-b84 GitHub JUnit artifact audit
+
+Read-only inspection of Android Run `40664188621`, source HEAD `b84feb337cd57918346ab31cb3ea4af4ba880ffb`: Android Unit and Android Security jobs were successful; the overall run was still in progress at inspection. Artifact digests matched the downloaded ZIP bytes:
+
+| Artifact | JUnit result | ZIP SHA-256 |
+|---|---|---|
+| `12805840704` — `serea-android-unit-junit` | 350 tests; 0 failures, 0 errors, 0 skips. `CloudEgressBodyLineageAttackMatrixTest`: 9/9 pass. | `bab79ecf7f04f5f3b5c76adf5898a640681d770e3eecad4c82966e67de9da34b` |
+| `12806135450` — `serea-android-security-junit` | 26 tests; 0 failures, 0 errors, 0 skips. | `bb641c916186549698d40070213d904db03c22a27adda6666831422413bc51d0` |
+
+This confirms the lineage regression suite on exact PR #134 head `b84feb337cd57918346ab31cb3ea4af4ba880ffb` and strengthens the conditional acceptance of the fix. It does not close the overall Required run or enable Cloud: real Google consent/session handoff, real Cloud credentials, and external dispatch remain untested, and Cloud must remain disabled.
+
 ### Checkpoint ownership
 
 The dedicated checkpoint already exists at `docs/agent-reports/g5-cloud-egress.md` on the owned branch `codex/serea-g5-cloud-egress-20261028`. This structured appendix is on that branch only. No PR #132/#133 or orchestrator worktree was modified.

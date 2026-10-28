@@ -64,3 +64,28 @@ INTEGRATION_READY: YES for preserving this diagnostic evidence; no product code 
 NEXT_ACTION: Orchestrator may close Agent A's B/C diagnostic task, retain the artifact IDs/digests, and treat any later source changes as requiring new exact-head evidence.  
 OWNER_ACTION_REQUIRED: None for this diagnostic review. Personal Beta remains NO-GO pending the separate required, security, real-service, release, and Owner approval gates.
 
+## Formal API 26 Required artifact follow-up
+
+This follow-up records the separate Formal API 26 artifact from Run `40664188621`; it does not change or extend the non-Required matrix result above. The workflow run was still `IN_PROGRESS` when inspected, with the Android Storage and Emulator job active, so this artifact alone is not a final whole-run conclusion.
+
+Artifact ID: `12807200481` (`serea-android-instrumentation-api26`)
+
+Verified ZIP SHA-256: `1ca4464caf0197ce04f5312e0f163f56728739c1719cdd7fc1616d6773cc8993`
+
+Exact source: run head, source checkout SHA, and candidate SHA all `b84feb337cd57918346ab31cb3ea4af4ba880ffb`; API level 26.
+
+The formal JUnit XML contains 105 test cases, failures 0, errors 0, skips 0. I compared the exact XML identity set to the manifests at the same b84 source: the Original Required manifest contains 103 identities, the Additional manifest contains 2, the manifests are disjoint, and XML equals their union exactly (missing Required 0, extra 0, missing Additional 0). The verifier log independently records `Original Required Set: 103/103 PASS; Additional Tests: 2/2 PASS; total=105`.
+
+The two Additional identities are:
+
+- `app.serea.android.UsageLedgerDatabaseTest#fakeProviderBridgeRoutesApprovedDataAndKeepsCostAndUnknownOutcomesDurable`
+- `app.serea.android.tasks.TasksDatabaseTest#approvedProposalMutationsAndSingleUseReceiptsSurviveDatabaseReopen`
+
+The Formal IME acceptance identity `app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges` is present in the 105-case XML and passed. Its test log confirms the Android Test IME session bound to `app.serea.android.isolated`, non-null InputConnection, inputType 163841, and accepted composition calls. In the same test, the draft transitions through `draft` composition 0..5, `draft survives navigation` composition 0..25, then committed text with composition null and selection 25; Semantics selection matches. The test subsequently records insertion after Gmail and Calendar returns and after Activity recreation, with the restored cursor position checked by the passing test. Test IME cleanup records restoring LatinIME and disabling the diagnostic service.
+
+The separate Process Death artifact markers are all positive: `process-death-status.txt=PASS`, readiness status PASS, host lifecycle exit code 0, and `process-death.log` ends with a PASS for Android OS Process Death recovery, encrypted history/Usage Ledger recovery, no replay, Delete All, and demo sentinel preservation. The readiness log has a `NOT_READY` line followed by `PASS: freshly installed isolated target accepted the Process Death seed`; the status file and subsequent full process-death result are PASS.
+
+Data isolation status is PASS. Its log records the debug/demo package `app.serea.android.demo`, isolated target `app.serea.android.isolated`, instrumentation package `app.serea.android.isolated.test`, demo history and `model_selection` sentinel seed and verification, and sentinel token `serea-api26-40664188621-1`. It explicitly states no demo history mutation was requested. The diagnostics cleanup status is also PASS.
+
+`junit-verification.log` separately records ProfileVerifier as unsupported on API 26 (`resultCode=262144`, embedded=false, marker absent); the verifier still reports the instrumentation JUnit threshold PASS. This does not change the JUnit counts above. Formal results for the other API and other workflow jobs must be judged from their own artifacts and the final Run conclusion.
+

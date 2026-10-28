@@ -89,3 +89,21 @@ Data isolation status is PASS. Its log records the debug/demo package `app.serea
 
 `junit-verification.log` separately records ProfileVerifier as unsupported on API 26 (`resultCode=262144`, embedded=false, marker absent); the verifier still reports the instrumentation JUnit threshold PASS. This does not change the JUnit counts above. Formal results for the other API and other workflow jobs must be judged from their own artifacts and the final Run conclusion.
 
+
+## Formal API 35 Required artifact follow-up
+
+This follow-up records the separate Formal API 35 artifact from Run `40664188621`, exact b84 source. At the time of inspection, the Android Storage and Emulator job and API 35 artifact were complete, but the whole workflow remained `IN_PROGRESS` because Personal Beta Identity Isolation was still running. Therefore this API artifact is a positive API 35 result, not a final whole-run conclusion.
+
+Artifact ID: `12807019854` (`serea-android-instrumentation-api35`)
+
+Verified ZIP SHA-256: `c8282d542a8e4e24d0d5e93e77f7cd55fb5d9eebd9812c039955e440eb94d8f0`
+
+Exact source: workflow head, source checkout SHA, and candidate SHA all `b84feb337cd57918346ab31cb3ea4af4ba880ffb`; source tree `9133d4a3ba2ab870d126e56cdd22336b856c94e1`; API level 35. Target APK SHA-256 is `e8b9514a3b45622aee078eb9a78e46c0fbaa2939ead9af22cb2eaf73a3d1aeb4`, instrumentation APK is `829a187ef042ccff841f692e2239fd29afd9cfece7867b6b57f5a7fef8dcc318`, and Test IME APK is `6f96dd825f9db0156fea1300259339e9bd1263d1563c6afe010f206c8abc6f32`.
+
+The XML suite reports 105 test cases, 0 failures, 0 errors, and 0 skips. Its exact identity set equals the union of the b84 Required manifest (103) and Additional manifest (2), with no missing or unexpected identities. The verifier log independently records Original Required 103/103, Additional 2/2, total 105. The Formal IME acceptance identity `app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges` is present and passed (5.175s).
+
+The test log records a non-null Android-managed `android.inputmethodservice.RemoteInputConnection`, current TestImeSession service/session/connection identity, and editor package `app.serea.android.isolated`. `setComposingText` and `finishComposingText` operations were accepted with matching service, session, connection, and package. B state: empty/null/selection 0; `draft`, composition 0..5, selection 5; replacement `draft survives navigation`, composition 0..25, selection 25; finish leaves same text, composition null, selection 25. C independently repeats those states with synchronization boundaries. Semantics selection matches at the logged checkpoints. `editorInputGeneration` and selection-correction generation remain 0 during the composition sequence.
+
+The same formal test verifies cursor behavior: selection 5 is restored before Gmail return; Gmail insertion yields `draft! survives navigation`, selection 6; Calendar insertion yields `draft!? survives navigation`, selection 7; after recreation, insertion yields `draft!? !survives navigation`, selection 9. These operations are recorded through the Android-managed Test IME and accepted against the current editor session. The final cleanup records restoring LatinIME and disabling the Test IME. `test-ime-cleanup-status.txt`, `process-death-status.txt`, `process-death-readiness-status.txt`, `data-isolation-status.txt`, `diagnostic-status.txt`, `instrumentation-status.txt`, and `api-result.txt` all say PASS. Process Death and data-isolation logs preserve the demo sentinel.
+
+The shared emulator evidence artifact is `12807019864`, ZIP digest `ea8cf07f983f549ef6d2ae16805e8239cfd7cd2ea3e107fa5e01a9df787242c4`. GitHub reports API 35 artifact creation at `2026-10-28T10:13:55Z` and shared evidence at `10:14:00Z`. The Identity job `122755666193` started its disposable Beta identity/encrypted-data check at approximately `10:14:06Z` and was still `IN_PROGRESS` when this artifact review was completed. The whole Formal Run must remain pending until Identity and the final workflow conclusion are available.

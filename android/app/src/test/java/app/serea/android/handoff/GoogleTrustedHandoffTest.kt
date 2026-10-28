@@ -31,6 +31,7 @@ class GoogleTrustedHandoffTest {
         var current: HandoffSourceSnapshot = snapshot("message-1", "rev-1", "Fictional note: bring tea"),
         var reads: Int = 0,
         var cancelReads: Boolean = false,
+        var returnDifferentItem: Boolean = false,
         var beforeAuthorization: suspend () -> Unit = {},
         var beforeItemRead: suspend () -> Unit = {},
     ) : GoogleTrustedHandoffSource {
@@ -47,7 +48,7 @@ class GoogleTrustedHandoffTest {
             check(isSyntheticProvider)
             if (cancelReads) throw CancellationException("cancelled test read")
             if (sourceItemIdentifier != current.sourceItemIdentifier) error("not found")
-            return current
+            return if (returnDifferentItem) current.copy(sourceItemIdentifier = "message-1-other") else current
         }
     }
 
@@ -222,6 +223,18 @@ class GoogleTrustedHandoffTest {
         val preview = accepted(coordinator.preparePreview(request(candidate(source))))
         source.current = snapshot("message-1", "rev-2", "Content changed after the dialog opened")
         assertRejected(coordinator.confirmLocalOnly(preview, "conversation-1", 7), GoogleHandoffRejection.CONTENT_CHANGED)
+        assertNoSideEffects(source)
+    }
+
+    @Test fun confirmationRejectsProviderResponseForDifferentSourceItem() = runBlocking {
+        val source = Source()
+        val coordinator = GoogleTrustedHandoffCoordinator(source) { 100L }
+        val preview = accepted(coordinator.preparePreview(request(candidate(source))))
+        source.returnDifferentItem = true
+        assertRejected(
+            coordinator.confirmLocalOnly(preview, "conversation-1", 7),
+            GoogleHandoffRejection.INVALID_CONTENT_ID,
+        )
         assertNoSideEffects(source)
     }
 

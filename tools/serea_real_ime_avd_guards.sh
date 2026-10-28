@@ -2,6 +2,29 @@
 
 # Shared fail-closed checks for the disposable real-IME diagnostic workflow.
 
+serea_make_campaign_token() {
+  local api="$1" run_id="$2" attempt="$3" method="$4"
+  local safe_method token
+
+  if [[ "$api" != 26 && "$api" != 35 ]] || \
+     [[ ! "$run_id" =~ ^[0-9]+$ ]] || \
+     [[ ! "$attempt" =~ ^[0-9]+$ ]] || \
+     [[ ! "$method" =~ ^[A-Za-z][A-Za-z0-9_]{0,119}$ ]]; then
+    echo 'invalid_campaign_token_input' >&2
+    return 1
+  fi
+
+  # The instrumentation method identifier may contain underscores, while the
+  # seed helper deliberately accepts only alphanumerics and hyphens.
+  safe_method="${method//_/-}"
+  token="serea-api${api}-${run_id}-${attempt}-${safe_method}"
+  if [[ ${#token} -gt 120 || ! "$token" =~ ^[A-Za-z0-9-]+$ ]]; then
+    echo 'campaign_token_outside_seed_contract' >&2
+    return 1
+  fi
+  printf '%s' "$token"
+}
+
 serea_verify_active_google_apis_avd() {
   local api="$1" fingerprint="$2" config="$3"
   local expected_package image_sysdir actual_package tag_id abi

@@ -5,6 +5,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tools/serea_real_ime_avd_guards.sh
 source "$ROOT/tools/serea_real_ime_avd_guards.sh"
 
+campaign_token="$(serea_make_campaign_token 35 40610433596 1 B_realImeCompositionWithoutSynchronizationBoundaries)"
+[[ "$campaign_token" == 'serea-api35-40610433596-1-B-realImeCompositionWithoutSynchronizationBoundaries' ]]
+[[ "$campaign_token" =~ ^[A-Za-z0-9-]{1,120}$ ]]
+if serea_make_campaign_token 35 40610433596 1 'Invalid method!' > /dev/null 2>&1; then
+  echo 'FAIL: invalid campaign-token method was accepted' >&2
+  exit 1
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

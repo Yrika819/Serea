@@ -335,8 +335,8 @@ if ! adb shell pm clear "$TARGET" > "$OUT/target-pm-clear.txt" 2>&1 || \
    ! grep -Fq Success "$OUT/target-pm-clear.txt"; then
   fail fresh-data-seed 'Could not clear the newly installed isolated target before seeding.'
 fi
-TOKEN="serea-api${API}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}-${METHOD}"
-if [[ ! "$TOKEN" =~ ^[A-Za-z0-9-]{1,120}$ ]]; then
+if ! TOKEN="$(serea_make_campaign_token "$API" "${GITHUB_RUN_ID:-}" \
+    "${GITHUB_RUN_ATTEMPT:-1}" "$METHOD")"; then
   fail fresh-data-seed 'Generated campaign token does not satisfy the isolated runner token contract.'
 fi
 printf 'campaign_token=%s\nmethod=%s\nseed_started_at_utc=%s\n' \

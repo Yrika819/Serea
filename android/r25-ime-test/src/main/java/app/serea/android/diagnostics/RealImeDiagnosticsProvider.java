@@ -20,6 +20,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Signature-permission-gated IPC bridge to the currently Android-bound IME session. */
 public final class RealImeDiagnosticsProvider extends ContentProvider {
     private static final long IME_THREAD_TIMEOUT_SECONDS = 5;
+    private static final String TARGET_EDITOR_PACKAGE = "app.serea.android.isolated";
+    private static final String FIXTURE_DRAFT = "draft";
+    private static final String FIXTURE_REPLACEMENT = "draft survives navigation";
+    private static final String FIXTURE_INSERTION_GMAIL = "!";
+    private static final String FIXTURE_INSERTION_CALENDAR = "?";
 
     private static final int TASK_PENDING = 0;
     private static final int TASK_READING_OR_VALIDATING = 1;
@@ -33,6 +38,7 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
     private static final String REASON_NO_LIVE_CONNECTION = "NO_LIVE_CONNECTION";
     private static final String REASON_MISSING_EXPECTED_PACKAGE = "MISSING_EXPECTED_PACKAGE";
     private static final String REASON_WRONG_EXPECTED_PACKAGE = "WRONG_EXPECTED_PACKAGE";
+    private static final String REASON_UNAPPROVED_FIXTURE_TEXT = "UNAPPROVED_FIXTURE_TEXT";
     private static final String REASON_MISSING_EXPECTED_SERVICE = "MISSING_EXPECTED_SERVICE";
     private static final String REASON_STALE_SERVICE = "STALE_SERVICE";
     private static final String REASON_MISSING_EXPECTED_SESSION = "MISSING_EXPECTED_SESSION";
@@ -71,12 +77,16 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
         if ("setComposingText".equals(method)) {
             final String text = extras == null ? null : extras.getString("text");
             if (text == null) throw new IllegalArgumentException("Missing synthetic fixture text");
-            final int cursor = extras.getInt("cursor", 1);
-            operation = runOnImeThread(method, extras, new ImeOperation() {
-                @Override public boolean run(InputConnection current) {
-                    return current.setComposingText(text, cursor);
-                }
-            });
+            if (!isSyntheticFixtureText(text)) {
+                operation = rejectedFixtureText(extras);
+            } else {
+                final int cursor = extras.getInt("cursor", 1);
+                operation = runOnImeThread(method, extras, new ImeOperation() {
+                    @Override public boolean run(InputConnection current) {
+                        return current.setComposingText(text, cursor);
+                    }
+                });
+            }
         } else if ("finishComposingText".equals(method)) {
             operation = runOnImeThread(method, extras, new ImeOperation() {
                 @Override public boolean run(InputConnection current) {
@@ -94,12 +104,16 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
         } else if ("commitText".equals(method)) {
             final String text = extras == null ? null : extras.getString("text");
             if (text == null) throw new IllegalArgumentException("Missing synthetic fixture text");
-            final int cursor = extras.getInt("cursor", 1);
-            operation = runOnImeThread(method, extras, new ImeOperation() {
-                @Override public boolean run(InputConnection current) {
-                    return current.commitText(text, cursor);
-                }
-            });
+            if (!isSyntheticFixtureText(text)) {
+                operation = rejectedFixtureText(extras);
+            } else {
+                final int cursor = extras.getInt("cursor", 1);
+                operation = runOnImeThread(method, extras, new ImeOperation() {
+                    @Override public boolean run(InputConnection current) {
+                        return current.commitText(text, cursor);
+                    }
+                });
+            }
         } else {
             throw new IllegalArgumentException("Unsupported diagnostic method");
         }
@@ -107,6 +121,29 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
         recordOperation(method, operation);
         Bundle result = new Bundle();
         putOperationResult(result, operation);
+        return result;
+    }
+
+    private static boolean isSyntheticFixtureText(String text) {
+        return FIXTURE_DRAFT.equals(text)
+                || FIXTURE_REPLACEMENT.equals(text)
+                || FIXTURE_INSERTION_GMAIL.equals(text)
+                || FIXTURE_INSERTION_CALENDAR.equals(text);
+    }
+
+    private OperationResult rejectedFixtureText(Bundle request) {
+        OperationResult result = new OperationResult();
+        result.reason = REASON_UNAPPROVED_FIXTURE_TEXT;
+        if (request != null) {
+            String expectedPackage = request.getString("expectedEditorPackage");
+            String expectedService = request.getString("expectedService");
+            String expectedConnection = request.getString("expectedConnection");
+            result.expectedEditorPackage = expectedPackage == null ? "null" : expectedPackage;
+            result.expectedServiceIdentity = expectedService == null ? "null" : expectedService;
+            result.expectedSession = request.getLong("expectedSession", 0);
+            result.expectedConnectionIdentity = expectedConnection == null ? "null" : expectedConnection;
+            result.expectedInputType = request.getInt("expectedInputType", InputType.TYPE_NULL);
+        }
         return result;
     }
 
@@ -311,7 +348,10 @@ public final class RealImeDiagnosticsProvider extends ContentProvider {
         if (expectedEditorPackage == null || expectedEditorPackage.trim().isEmpty()) {
             return REASON_MISSING_EXPECTED_PACKAGE;
         }
-        if (!expectedEditorPackage.equals(active.currentEditorPackage)) return REASON_WRONG_EXPECTED_PACKAGE;
+        if (!TARGET_EDITOR_PACKAGE.equals(expectedEditorPackage)
+                || !TARGET_EDITOR_PACKAGE.equals(active.currentEditorPackage)) {
+            return REASON_WRONG_EXPECTED_PACKAGE;
+        }
         if (expectedServiceIdentity == null || expectedServiceIdentity.trim().isEmpty()
                 || "null".equals(expectedServiceIdentity)) {
             return REASON_MISSING_EXPECTED_SERVICE;

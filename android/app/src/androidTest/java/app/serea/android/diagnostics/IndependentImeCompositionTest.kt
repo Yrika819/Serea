@@ -63,6 +63,8 @@ class IndependentImeCompositionTest {
         focusComposer()
         var session = awaitImeSession(callbackCountBefore)
         var connection = session.connectionIdentity
+        assertWrongExpectedPackageIsRejected(session)
+        assertUnapprovedFixtureTextIsRejected(session)
         // Establish focus once before the unsynchronized sequence. Between operations B only
         // samples the IME-owned session token needed by the provider's stale-session guard;
         // it does not read TextFieldValue, ViewModel state, or Compose semantics until the
@@ -93,6 +95,8 @@ class IndependentImeCompositionTest {
         focusComposer()
         var session = awaitImeSession(callbackCountBefore)
         var connection = session.connectionIdentity
+        assertWrongExpectedPackageIsRejected(session)
+        assertUnapprovedFixtureTextIsRejected(session)
         assertMissingExpectedPackageIsRejected(session)
         assertWrongExpectedInputTypeIsRejected(session)
         logCurrentActivity("C.initial", connection, null)
@@ -468,7 +472,7 @@ class IndependentImeCompositionTest {
         assertComposerFocused()
         val before = snapshot()
         val request = Bundle().apply {
-            putString("text", "diagnostic guard probe")
+            putString("text", FIXTURE)
             putInt("cursor", 1)
             putLong("expectedSession", session.session)
             putString("expectedService", session.serviceIdentity)
@@ -496,7 +500,7 @@ class IndependentImeCompositionTest {
             android.text.InputType.TYPE_CLASS_NUMBER
         }
         val request = Bundle().apply {
-            putString("text", "diagnostic input-type guard probe")
+            putString("text", FIXTURE)
             putInt("cursor", 1)
             putString("expectedEditorPackage", TARGET_PACKAGE)
             putString("expectedService", session.serviceIdentity)
@@ -514,6 +518,40 @@ class IndependentImeCompositionTest {
         assertTrue("Probe must send a different exact input type", wrongInputType != session.inputType)
         assertEditorStateUnchanged("wrong-input-type", before, snapshot())
         assertComposerFocused()
+    }
+
+    private fun assertWrongExpectedPackageIsRejected(session: ImeSession) {
+        val request = Bundle().apply {
+            putString("text", FIXTURE)
+            putInt("cursor", 1)
+            putString("expectedEditorPackage", "app.serea.unrelated")
+            putString("expectedService", session.serviceIdentity)
+            putLong("expectedSession", session.session)
+            putString("expectedConnection", session.connectionIdentity)
+            putInt("expectedInputType", session.inputType)
+        }
+        val observation = operationObservation(imeCall("setComposingText", request))
+        logImeOperation("setComposingText-wrong-package-probe", observation)
+        assertTrue("Wrong expected editor package must be rejected before invocation: $observation",
+            !observation.operationInvoked && !observation.accepted)
+        assertEquals("WRONG_EXPECTED_PACKAGE", observation.reason)
+    }
+
+    private fun assertUnapprovedFixtureTextIsRejected(session: ImeSession) {
+        val request = Bundle().apply {
+            putString("text", "unapproved synthetic input")
+            putInt("cursor", 1)
+            putString("expectedEditorPackage", TARGET_PACKAGE)
+            putString("expectedService", session.serviceIdentity)
+            putLong("expectedSession", session.session)
+            putString("expectedConnection", session.connectionIdentity)
+            putInt("expectedInputType", session.inputType)
+        }
+        val observation = operationObservation(imeCall("setComposingText", request))
+        logImeOperation("setComposingText-unapproved-text-probe", observation)
+        assertTrue("Unapproved fixture text must be rejected before invocation: $observation",
+            !observation.operationInvoked && !observation.accepted)
+        assertEquals("UNAPPROVED_FIXTURE_TEXT", observation.reason)
     }
 
     private fun assertGuardRejected(

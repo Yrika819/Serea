@@ -206,6 +206,8 @@ data class ModelChatRequest(
     val selectedModelId: String? = null,
     /** Provenance of the current message body, separate from prior-turn context. */
     val bodySourceLineage: Set<DataOrigin> = setOf(DataOrigin.UNKNOWN),
+    /** Kept in memory through routing so Egress can consume Google handoff consent before Usage. */
+    val localDemoGoogleHandoffAuthorization: LocalDemoGoogleHandoffAuthorization? = null,
 )
 data class ModelChatResponse(val text: String, val usage: ProviderUsage? = null)
 
@@ -218,6 +220,9 @@ open class ModelChatFailure(message: String) : Exception(message)
 
 /** A local validation failed before the provider adapter could dispatch a request. */
 internal class PreDispatchModelChatFailure(message: String) : ModelChatFailure(message)
+
+/** Cancellation that is known to precede native/model dispatch and can release Usage safely. */
+internal class PreDispatchModelChatCancellation(message: String) : CancellationException(message)
 
 /** Deterministic demo only. It makes no network calls and never claims cloud inference. */
 class MockModelChatPort(private val responseDelayMillis: Long = 450) : ModelChatPort {
@@ -248,18 +253,31 @@ internal class ChatViewModel(
     private var preserveEditorSelectionDuringRestore = false
     private var preserveEditorSelectionDuringNavigation = false
     private var selectionRestoreOwner: Activity? = null
+    private var pendingLocalDemoGoogleHandoffAuthorization: LocalDemoGoogleHandoffAuthorization? = null
     private val persistedConversationIds = mutableSetOf<String>().apply {
         if (historyRepository != null && initialConversation != null) add(initialConversation.id)
     }
 
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
 
+    /**
+     * Generation used to bind a provider handoff to the selected Chat destination.
+     * It advances whenever conversation selection changes, so a preview opened for
+     * one conversation cannot be consumed after switching to another one.
+     */
+    internal fun currentConversationSelectionGeneration(): Long = selectionGeneration
+
     fun updateInput(value: String) = updateEditorValue(TextFieldValue(value))
 
     /** Provider-prefill entry point. Imported content stays tainted through later user edits. */
-    internal fun prefillEditorFromProvider(value: String, origin: DataOrigin) {
+    internal fun prefillEditorFromProvider(
+        value: String,
+        origin: DataOrigin,
+        localDemoGoogleHandoffAuthorization: LocalDemoGoogleHandoffAuthorization? = null,
+    ) {
         require(origin in setOf(DataOrigin.GMAIL, DataOrigin.CALENDAR))
         require(value.isNotBlank()) { "Provider prefill must contain text; use a new conversation to clear the editor." }
+        require(localDemoGoogleHandoffAuthorization == null || localDemoGoogleHandoffAuthorization.origin == origin)
         mutableState.update { current ->
             current.copy(
                 editorValue = TextFieldValue(value),
@@ -269,6 +287,7 @@ internal class ChatViewModel(
                 errorMessage = null,
             )
         }
+        pendingLocalDemoGoogleHandoffAuthorization = localDemoGoogleHandoffAuthorization
     }
 
     fun beginActivitySelectionRestore(owner: Activity? = null) {
@@ -323,6 +342,7 @@ internal class ChatViewModel(
                 value.text.isBlank() -> current.editorSourceLineage
                 else -> current.editorSourceLineage + DataOrigin.USER_AUTHORED
             }
+            if (value.text != current.editorValue.text) pendingLocalDemoGoogleHandoffAuthorization = null
             current.copy(
                 editorValue = editorValue,
                 editorSourceLineage = editorSourceLineage,
@@ -374,6 +394,19 @@ internal class ChatViewModel(
             mutableState.update { it.copy(errorMessage = "Message exceeds the ${ChatContextBuilder.MAX_INPUT_CHARS}-character local limit.") }
             return
         }
+        val googleLineage = snapshot.editorSourceLineage.intersect(setOf(DataOrigin.GMAIL, DataOrigin.CALENDAR))
+        val googleHandoffAuthorization = pendingLocalDemoGoogleHandoffAuthorization
+        if (googleLineage.isNotEmpty() &&
+            (googleLineage.size != 1 || googleHandoffAuthorization == null || googleHandoffAuthorization.origin !in googleLineage)) {
+            mutableState.update { it.copy(errorMessage = "Google handoff is stale or changed. Select the source again and confirm local processing.") }
+            return
+        }
+        if (googleLineage.isEmpty() && googleHandoffAuthorization != null) {
+            pendingLocalDemoGoogleHandoffAuthorization = null
+            mutableState.update { it.copy(errorMessage = "Google handoff no longer matches this draft. Select the source again.") }
+            return
+        }
+        pendingLocalDemoGoogleHandoffAuthorization = null
         val conversationId = snapshot.conversation.id
         val userMessage = ChatMessage(UUID.randomUUID().toString(), MessageRole.USER, messageText, nextMessageTime(snapshot.conversation), status = "PENDING",
             origin = DataOrigin.USER_AUTHORED, conversationId = conversationId,
@@ -407,6 +440,7 @@ internal class ChatViewModel(
                 val request = ModelChatRequest(
                     conversationId, messageText, sendId = userMessage.id, context = context,
                     bodySourceLineage = userMessage.sourceLineage,
+                    localDemoGoogleHandoffAuthorization = googleHandoffAuthorization,
                 )
                 val reply = withTimeout(request.timeoutMillis) { modelChat.send(request) }
                 currentCoroutineContext().ensureActive()
@@ -475,6 +509,7 @@ internal class ChatViewModel(
 
     fun newConversation() {
         cancelCurrent()
+        pendingLocalDemoGoogleHandoffAuthorization = null
         selectionGeneration += 1
         val id = UUID.randomUUID().toString()
         mutableState.update { it.copy(conversation = Conversation(id), editorValue = TextFieldValue(), editorSourceLineage = emptySet(),
@@ -608,6 +643,7 @@ internal class ChatViewModel(
 
     private fun restoreLatest() {
         val generation = selectionGeneration
+        var generationToFinalize = generation
         viewModelScope.launch {
             try {
                 usageRepository?.recoverAfterProcessRestart()
@@ -630,6 +666,10 @@ internal class ChatViewModel(
                         message.copy(status = if (message.status == "PENDING") "OUTCOME_UNKNOWN" else message.status).toChatMessage()
                     }
                     if (generation != selectionGeneration) return@launch
+                    if (latest.id != mutableState.value.conversation.id) {
+                        selectionGeneration += 1
+                        generationToFinalize = selectionGeneration
+                    }
                     mutableState.update {
                         val warnings = it.historyPersistenceWarnings.toMutableMap()
                         persistenceWarningUpdates.forEach { (messageId, warning) ->
@@ -648,7 +688,7 @@ internal class ChatViewModel(
             } catch (_: Exception) {
                 if (generation == selectionGeneration) mutableState.update { it.copy(errorMessage = "Could not restore saved history.") }
             } finally {
-                if (generation == selectionGeneration) mutableState.update { it.copy(isRestoring = false) }
+                if (generationToFinalize == selectionGeneration) mutableState.update { it.copy(isRestoring = false) }
             }
         }
     }

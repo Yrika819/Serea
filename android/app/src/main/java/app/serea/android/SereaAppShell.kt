@@ -14,6 +14,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -37,6 +38,14 @@ import app.serea.android.gmail.ui.GmailViewModel
 import app.serea.android.gmail.GmailProviderKind
 import app.serea.android.tasks.TaskScreen
 import app.serea.android.tasks.TaskViewModel
+import app.serea.android.handoff.GoogleHandoffPreview
+import app.serea.android.handoff.GoogleHandoffPreviewRequest
+import app.serea.android.handoff.GoogleTrustedHandoffCoordinator
+import app.serea.android.handoff.HandoffResult
+import app.serea.android.handoff.GoogleHandoffRejection
+import app.serea.android.handoff.TrustedGoogleHandoff
+import app.serea.android.handoff.HandoffDestination
+import app.serea.android.handoff.HandoffAuthorizationState
 import java.time.ZoneId
 
 @Composable
@@ -59,6 +68,7 @@ internal fun SereaAppShell(
     providers: AppProviderComposition? = null,
 ) {
     val activeProviders = providers ?: remember { AppProviderComposition.fakeDefault() }
+    val chatState by chatViewModel.state.collectAsState()
     DisposableEffect(activeProviders) {
         onDispose { if (providers == null) activeProviders.close() }
     }
@@ -93,6 +103,70 @@ internal fun SereaAppShell(
         val state = SereaNavigationState.restore(destinationName, backStackNames).back()
         destinationName = state.current.name
         backStackNames = state.backStack.map { it.name }
+    }
+
+    suspend fun confirmGoogleHandoff(
+        coordinator: GoogleTrustedHandoffCoordinator,
+        preview: GoogleHandoffPreview,
+    ): Boolean {
+        val current = chatViewModel.state.value
+        if (current.isLoading || current.isFinalizing || current.isRestoring || current.showingHistory) return false
+        val generation = chatViewModel.currentConversationSelectionGeneration()
+        return when (val result = coordinator.confirmLocalOnly(preview, current.conversation.id, generation)) {
+            is HandoffResult.Rejected -> false
+            is HandoffResult.Accepted -> {
+                val handoff: TrustedGoogleHandoff = result.value
+                val stillCurrent = chatViewModel.state.value
+                if (handoff.destination != HandoffDestination.LOCAL_CHAT ||
+                    handoff.authorizationState != HandoffAuthorizationState.MOCK_ONLY ||
+                    stillCurrent.conversation.id != handoff.conversationId ||
+                    chatViewModel.currentConversationSelectionGeneration() != handoff.conversationGeneration ||
+                    stillCurrent.isLoading || stillCurrent.isFinalizing || stillCurrent.isRestoring || stillCurrent.showingHistory) {
+                    false
+                } else {
+                    val sendAuthorization = object : LocalDemoGoogleHandoffAuthorization() {
+                        override val origin = handoff.origin
+
+                        override suspend fun consume(request: ModelChatRequest): Boolean {
+                            val initial = chatViewModel.state.value
+                            val generation = chatViewModel.currentConversationSelectionGeneration()
+                            if (request.conversationId != handoff.conversationId ||
+                                request.message.trim() != handoff.localChatText().trim() ||
+                                request.bodySourceLineage != setOf(handoff.origin) ||
+                                initial.conversation.id != handoff.conversationId || generation != handoff.conversationGeneration) {
+                                return false
+                            }
+                            val acceptedForSend = coordinator.consumeForLocalChatSend(
+                                handoff = handoff,
+                                currentConversationId = initial.conversation.id,
+                                currentConversationGeneration = generation,
+                                message = request.message,
+                                sourceLineage = request.bodySourceLineage,
+                            )
+                            val finalState = chatViewModel.state.value
+                            return acceptedForSend && finalState.conversation.id == handoff.conversationId &&
+                                chatViewModel.currentConversationSelectionGeneration() == handoff.conversationGeneration
+                        }
+                    }
+                    chatViewModel.prefillEditorFromProvider(handoff.localChatText(), handoff.origin, sendAuthorization)
+                    navigate(SereaDestination.CHAT)
+                    true
+                }
+            }
+        }
+    }
+
+    suspend fun prepareGoogleHandoffPreview(
+        coordinator: GoogleTrustedHandoffCoordinator,
+        request: GoogleHandoffPreviewRequest,
+    ): HandoffResult<GoogleHandoffPreview> {
+        val current = chatViewModel.state.value
+        val generation = chatViewModel.currentConversationSelectionGeneration()
+        if (current.conversation.id != request.conversationId || generation != request.conversationGeneration ||
+            current.isLoading || current.isFinalizing || current.isRestoring || current.showingHistory) {
+            return HandoffResult.Rejected(GoogleHandoffRejection.CONVERSATION_CHANGED)
+        }
+        return coordinator.preparePreview(request)
     }
 
     BackHandler(enabled = taskProposalActionPending || canGoBack) {
@@ -160,8 +234,22 @@ internal fun SereaAppShell(
                             focusClearRequest = focusClearRequest,
                         )
                         SereaDestination.TASKS -> TaskScreen(taskViewModel)
-                        SereaDestination.GMAIL -> GmailDestination(activeProviders, onBack = ::goBack)
-                        SereaDestination.CALENDAR -> CalendarDestination(activeProviders, onBack = ::goBack)
+                        SereaDestination.GMAIL -> GmailDestination(
+                            activeProviders,
+                            onBack = ::goBack,
+                            conversationId = chatState.conversation.id,
+                            conversationGeneration = chatViewModel.currentConversationSelectionGeneration(),
+                            onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(activeProviders.gmailHandoff, request) },
+                            onHandoffConfirmed = { preview -> confirmGoogleHandoff(activeProviders.gmailHandoff, preview) },
+                        )
+                        SereaDestination.CALENDAR -> CalendarDestination(
+                            activeProviders,
+                            onBack = ::goBack,
+                            conversationId = chatState.conversation.id,
+                            conversationGeneration = chatViewModel.currentConversationSelectionGeneration(),
+                            onCreateHandoffPreview = { request -> prepareGoogleHandoffPreview(activeProviders.calendarHandoff, request) },
+                            onHandoffConfirmed = { preview -> confirmGoogleHandoff(activeProviders.calendarHandoff, preview) },
+                        )
                         SereaDestination.SETTINGS -> ChatScreen(
                             chatViewModel = chatViewModel,
                             credentials = credentials,
@@ -183,7 +271,14 @@ internal fun SereaAppShell(
 }
 
 @Composable
-private fun GmailDestination(providers: AppProviderComposition, onBack: () -> Unit) {
+private fun GmailDestination(
+    providers: AppProviderComposition,
+    onBack: () -> Unit,
+    conversationId: String,
+    conversationGeneration: Long,
+    onCreateHandoffPreview: suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>,
+    onHandoffConfirmed: suspend (GoogleHandoffPreview) -> Boolean,
+) {
     val vm: GmailViewModel = viewModel(
         factory = GmailViewModel.factory(
             providers.gmail,
@@ -191,11 +286,27 @@ private fun GmailDestination(providers: AppProviderComposition, onBack: () -> Un
             demoProvider = providers.gmail.kind == GmailProviderKind.FAKE,
         ),
     )
-    GmailScreen(viewModel = vm, onBack = onBack, modifier = Modifier.fillMaxSize().testTag("gmail_destination"))
+    GmailScreen(
+        viewModel = vm,
+        onBack = onBack,
+        modifier = Modifier.fillMaxSize().testTag("gmail_destination"),
+        conversationId = conversationId,
+        conversationGeneration = conversationGeneration,
+        onCreateHandoffPreview = onCreateHandoffPreview,
+        onHandoffConfirmed = onHandoffConfirmed,
+        onCancelHandoffPreview = providers.gmailHandoff::cancelPreview,
+    )
 }
 
 @Composable
-private fun CalendarDestination(providers: AppProviderComposition, onBack: () -> Unit) {
+private fun CalendarDestination(
+    providers: AppProviderComposition,
+    onBack: () -> Unit,
+    conversationId: String,
+    conversationGeneration: Long,
+    onCreateHandoffPreview: suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>,
+    onHandoffConfirmed: suspend (GoogleHandoffPreview) -> Boolean,
+) {
     val displayZone = androidx.compose.runtime.remember { ZoneId.systemDefault() }
     CalendarAgendaScreen(
         onBack = onBack,
@@ -204,5 +315,10 @@ private fun CalendarDestination(providers: AppProviderComposition, onBack: () ->
         clock = providers.calendarClock,
         displayZone = displayZone,
         modifier = Modifier.fillMaxSize().testTag("calendar_destination"),
+        conversationId = conversationId,
+        conversationGeneration = conversationGeneration,
+        onCreateHandoffPreview = onCreateHandoffPreview,
+        onHandoffConfirmed = onHandoffConfirmed,
+        onCancelHandoffPreview = providers.calendarHandoff::cancelPreview,
     )
 }

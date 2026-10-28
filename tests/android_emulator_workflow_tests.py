@@ -14,6 +14,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AndroidEmulatorWorkflowTests(unittest.TestCase):
+    def test_exact_source_helper_changes_trigger_android_and_focused_checks(self) -> None:
+        android_workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        focused_workflow = (ROOT / ".github/workflows/android-functional-focused.yml").read_text(encoding="utf-8")
+        android_classifier = android_workflow.split("name: Classify changed files", 1)[1].split("esac", 1)[0]
+        self.assertIn("|tools/assert_exact_source_checkout.sh|", android_classifier)
+        pull_request_paths = focused_workflow.split("  pull_request:", 1)[1].split("  push:", 1)[0]
+        push_paths = focused_workflow.split("  push:", 1)[1].split("\npermissions:", 1)[0]
+        helper_path = "      - 'tools/assert_exact_source_checkout.sh'"
+        self.assertIn(helper_path, pull_request_paths)
+        self.assertIn(helper_path, push_paths)
+
     def test_personal_beta_identity_preflight_waits_for_stable_disposable_emulator(self) -> None:
         script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")
         self.assertIn('discovery_deadline=$((SECONDS + 60))', script)
@@ -526,7 +537,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             scripts,
         )
         self.assertIn('build_checkout_commit=$(git rev-parse HEAD)', workflow)
-        self.assertIn('build_checkout_commit=$GITHUB_SHA', workflow)
+        self.assertIn('build_checkout_commit=$provenance_checkout_sha', workflow)
+        self.assertIn('provenance_source_sha', workflow)
+        self.assertIn('provenance_checkout_sha', workflow)
+        self.assertIn('"$provenance_source_sha" != "$SOURCE_SHA"', workflow)
+        self.assertIn('"$provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA"', workflow)
+        self.assertIn('find "$RUNNER_TEMP/serea-candidate" -type f -name provenance.txt', workflow)
         self.assertIn('base_commit=$BASE_SHA', workflow)
         self.assertIn('github_run_attempt=$GITHUB_RUN_ATTEMPT', workflow)
         self.assertIn(

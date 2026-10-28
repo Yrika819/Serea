@@ -125,7 +125,7 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.isLoading)
     }
 
-    @Test fun providerPrefillLineageSurvivesEditorChangesAndIsBoundToTheSentBody() = runTest(dispatcher) {
+    @Test fun providerPrefillWithoutTrustedHandoffCannotReachChatRoute() = runTest(dispatcher) {
         val requests = mutableListOf<ModelChatRequest>()
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest): ModelChatResponse {
@@ -146,10 +146,31 @@ class ChatViewModelTest {
         vm.sendMessage()
         advanceUntilIdle()
 
+        assertEquals(0, requests.size)
+        assertTrue(vm.state.value.errorMessage.orEmpty().contains("Google handoff"))
+        assertEquals("synthetic edited Gmail body", vm.state.value.input)
+        assertEquals(setOf(DataOrigin.GMAIL, DataOrigin.USER_AUTHORED), vm.state.value.editorSourceLineage)
+    }
+
+    @Test fun typedGoogleHandoffAuthorizationIsCarriedToEgressRequest() = runTest(dispatcher) {
+        val requests = mutableListOf<ModelChatRequest>()
+        val authorization = object : LocalDemoGoogleHandoffAuthorization() {
+            override val origin = DataOrigin.GMAIL
+            override suspend fun consume(request: ModelChatRequest) = true
+        }
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                requests += request
+                return ModelChatResponse("local fixture response")
+            }
+        })
+        vm.prefillEditorFromProvider("synthetic Gmail body", DataOrigin.GMAIL, authorization)
+        vm.sendMessage()
+        advanceUntilIdle()
+
         assertEquals(1, requests.size)
-        assertEquals(setOf(DataOrigin.GMAIL, DataOrigin.USER_AUTHORED), requests.single().bodySourceLineage)
-        assertEquals(requests.single().bodySourceLineage, vm.state.value.conversation.messages.first().sourceLineage)
-        assertTrue(vm.state.value.editorSourceLineage.isEmpty())
+        assertEquals(setOf(DataOrigin.GMAIL), requests.single().bodySourceLineage)
+        assertEquals(authorization, requests.single().localDemoGoogleHandoffAuthorization)
     }
 
     @Test fun staleEditorCallbackFromSentComposerCannotRestoreDraft() = runTest(dispatcher) {
@@ -198,6 +219,33 @@ class ChatViewModelTest {
         vm.updateEditorValue(TextFieldValue("stale imported callback"), blankImportedGeneration)
         assertEquals("", vm.state.value.input)
         assertTrue(vm.state.value.editorSourceLineage.isEmpty())
+    }
+
+    @Test fun handoffDestinationGenerationChangesWhenConversationSelectionChanges() = runTest(dispatcher) {
+        val saved = StoredConversation("restored-conversation", "Saved", 1L, 1L, "demo-local", emptyList())
+        val history = object : ConversationHistoryPort {
+            override suspend fun list() = listOf(saved)
+            override suspend fun get(id: String) = saved.takeIf { it.id == id }
+            override suspend fun addMessage(message: StoredMessage) = Unit
+            override suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String) = Unit
+            override suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) = Unit
+            override suspend fun updateStatus(messageId: String, conversationId: String, status: String) = true
+            override suspend fun delete(id: String, now: Long) = Unit
+            override suspend fun deleteAll() = Unit
+        }
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("local")
+        }, historyRepository = history)
+        val initialGeneration = vm.currentConversationSelectionGeneration()
+
+        advanceUntilIdle()
+        assertEquals("restored-conversation", vm.state.value.conversation.id)
+        assertFalse(vm.state.value.isRestoring)
+        assertTrue(vm.currentConversationSelectionGeneration() > initialGeneration)
+
+        val restoredGeneration = vm.currentConversationSelectionGeneration()
+        vm.newConversation()
+        assertTrue(vm.currentConversationSelectionGeneration() > restoredGeneration)
     }
 
     @Test fun navigationKeepsUnchangedDraftSelectionUntilComposerRegainsFocus() = runTest(dispatcher) {

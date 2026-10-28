@@ -34,9 +34,17 @@ serea_verify_isolated_seed_log() {
 }
 
 serea_verify_package_absent_from_listing() {
-  local package="$1" package_listing="$2"
-  [[ -n "$package" && "$package_listing" == *'package:'* ]] || return 1
-  ! grep -Fqx "package:$package" <<< "$package_listing"
+  local package="$1" package_listing="$2" entry entry_count=0
+  local package_name_pattern='^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$'
+  [[ "$package" =~ $package_name_pattern ]] || return 1
+
+  while IFS= read -r entry; do
+    [[ "$entry" =~ ^package:[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$ ]] || return 1
+    entry_count=$((entry_count + 1))
+    [[ "$entry" != "package:$package" ]] || return 1
+  done <<< "$package_listing"
+
+  ((entry_count > 0))
 }
 
 serea_verify_active_google_apis_avd() {

@@ -19,8 +19,28 @@ if ! serea_verify_package_absent_from_listing 'app.serea.android.r25testime' 'pa
   echo 'FAIL: an absent Test IME package was not recognized in a valid package listing' >&2
   exit 1
 fi
+if ! serea_verify_package_absent_from_listing 'app.serea.android.r25testime' $'package:android\npackage:com.google.android.inputmethod.latin'; then
+  echo 'FAIL: a valid multi-package inventory was rejected' >&2
+  exit 1
+fi
+if ! serea_verify_package_absent_from_listing 'app.serea.android.r25testime' 'package:app.serea.android.r25testime.child'; then
+  echo 'FAIL: a package-name prefix collision was treated as the Test IME package' >&2
+  exit 1
+fi
 if serea_verify_package_absent_from_listing 'app.serea.android.r25testime' ''; then
   echo 'FAIL: an empty package listing was accepted as proof of package absence' >&2
+  exit 1
+fi
+if serea_verify_package_absent_from_listing 'app.serea.android.r25testime' 'package:'; then
+  echo 'FAIL: a malformed empty package entry was accepted' >&2
+  exit 1
+fi
+if serea_verify_package_absent_from_listing 'app.serea.android.r25testime' 'error package:garbage'; then
+  echo 'FAIL: error text containing package syntax was accepted' >&2
+  exit 1
+fi
+if serea_verify_package_absent_from_listing 'app.serea.android.r25testime' $'package:com.example.valid\nmalformed'; then
+  echo 'FAIL: a malformed line in a package inventory was accepted' >&2
   exit 1
 fi
 if serea_verify_package_absent_from_listing 'app.serea.android.r25testime' 'package:app.serea.android.r25testime'; then

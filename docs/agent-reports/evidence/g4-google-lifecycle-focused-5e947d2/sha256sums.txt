@@ -1,6 +1,6 @@
-42b920ab2122eebe8a004e3f1f99600f30aa55a0df9f253153d14d0e29e9be45  ../docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml
-1132145dd7cb904ab38cc2b676e07a6b878065cf6273ef0c7b0c15b8a48e03f4  ../docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml
-e4c329dc983215f73a60b57d4e4f6063838df979a45746269f3c3acb9f58fdac  ../docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml
-b6c531cd5590739756fbb605ba942a9f92835f9f8c2c9ce9f37c6a7bc387beec  ../docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml
-88dc9930e06c80597f708df433a01e4e7fa5cf838979c235157fb7f087d5370d  ../docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml
-848193a118b8963206e36cfafb5762a47b06635c61a5d50c593760868f89d567  ../docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml
+42b920ab2122eebe8a004e3f1f99600f30aa55a0df9f253153d14d0e29e9be45  docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml
+1132145dd7cb904ab38cc2b676e07a6b878065cf6273ef0c7b0c15b8a48e03f4  docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml
+e4c329dc983215f73a60b57d4e4f6063838df979a45746269f3c3acb9f58fdac  docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml
+b6c531cd5590739756fbb605ba942a9f92835f9f8c2c9ce9f37c6a7bc387beec  docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml
+88dc9930e06c80597f708df433a01e4e7fa5cf838979c235157fb7f087d5370d  docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml
+848193a118b8963206e36cfafb5762a47b06635c61a5d50c593760868f89d567  docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml

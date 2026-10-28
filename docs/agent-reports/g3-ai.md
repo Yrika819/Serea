@@ -1,6 +1,31 @@
 # G3 — Real AI / On-device Inference Feasibility
 
-## Latest G3-owned branch repair checkpoint (2026-10-27)
+## Latest G3-owned checkpoint — API 35 generation-start gate failure (2026-10-28)
+
+This follow-up analyzes the earlier API 35 run whose native-start latch assertion failed. It is separate from the API marker repairs below. No product integration, Emulator run, model download, workflow dispatch, push, or live provider access occurred in this follow-up.
+
+**AGENT_ID:** G3 diagnostic recovery — PR #127 owner<br>
+**ACTIVE_PHASE:** root-cause analysis for API 35 run `40515091197` and source-contract regression guard<br>
+**OVERALL_STATUS:** PARTIAL — high-confidence TEST_HARNESS cause identified; existing dispatcher correction is now guarded by a host source-contract test. The fix has not been rerun on an Emulator.<br>
+**BASE_SHA:** `156e3da83cb9c8406fdc8fc6f696cb2a8cf137ae`<br>
+**BASE_TREE_SHA:** `ac9d6c40e76797dde93a849f4d93a4f44c382e24`<br>
+**TESTED_SOURCE_SHA:** `f90b229dd4b0c625b2a41f409ab8036248a2ab55`<br>
+**TESTED_SOURCE_TREE:** `b43239428cc30b756068a28c26353d4ff13dca7c`<br>
+**CURRENT_HEAD:** this checkpoint/evidence-only commit follows the tested source commit; reread the owned branch ref when resuming.<br>
+**WORKTREE:** `/workspace/Serea-g3-diagnostic-recovery`<br>
+**BRANCH:** `codex/serea-g3-diagnostic-recovery`<br>
+**DRAFT_PR:** [#127](https://github.com/Yrika819/Serea/pull/127) — Open/Draft; isolated on-device PoC only<br>
+**FAILED_RUN:** `40515091197`, artifact `12740455266`, source HEAD `8ca55a32096bc4449717c2fd3332b0602381d7d5`<br>
+**FAILURE_RESULT:** API 35 `google_apis` x86_64/ranchu (`google/sdk_gphone64_x86_64/emu64xa:15/AE3A.240806.043/12960925`, boot complete); one test, one failure, zero errors/skips; test duration 17.599 seconds, suite 18.336 seconds. Assertion at `OnDeviceInferenceTest.kt:97`: “the first engine must enter its native generation gate,” after `awaitStartGateForTest(15, SECONDS)`.<br>
+**ROOT_CAUSE:** TEST_HARNESS, high confidence. At failed HEAD `8ca55a3`, `val firstRun = async { port.send(...) }` inherited the `runBlocking` event loop. The test then called a blocking `CountDownLatch.await()` on that same event-loop thread. The child could not execute `port.send`, submit native work, or invoke `onNativeGenerationStart` while its dispatcher was blocked; the latch therefore timed out and the assertion failed. This explains the 15-second wait and failure without increasing a timeout. The failed test process loaded `libserea-g3-llama.so` successfully before the assertion. Targeted logcat has no fatal native exception and no `G3_TEST_PHASE` tags (phase logging was added later).<br>
+**FIX_AND_GUARD:** the actual harness correction already exists in branch ancestor `f96e77a798575c971313599ded8b267a353d5b46`: latch-bound `firstRun` and other blocking async children use `Dispatchers.IO`. This follow-up adds a host source-contract regression in `test-gradle-project-dir.py` requiring `firstRun` to use `Dispatchers.IO` before the blocking native-start wait and requiring all instrumentation `async` children to specify that dispatcher.<br>
+**PRESERVED_FAILURE_EVIDENCE:** `artifacts/g3-ondevice-poc/failure-40515091197-junit.xml` (SHA-256 `0abfb62bb0a8f3fe512b1d8e438631fdb6c2f62f027f652a19a343041e89534d`); `failure-40515091197-logcat-excerpt.txt` (SHA-256 `d628c66ad22c31b028813af27fd8e08bb925af03b12ca82e0206228e37d58aee`); `failure-40515091197-root-cause.txt` (SHA-256 `feabc1d1e5aa159b773c22e7cf94a5a08365ffef0d26616d9208549bf2febccf`). Original complete logcat remains in Artifact `12740455266`.<br>
+**APK_AND_FIXTURE_EVIDENCE:** target APK built/installed SHA `13741ec99951497b1ed4c92c57716ddb241a0c620338277fb8f12d060eb1c52a`; AndroidTest APK built/installed SHA `6dd71875482e73ab2aa4f0427c21d445bc0ee22ada1a8426a0434ccca0cff8d0`; installed hashes matched. The synthetic pinned model revision, size (101,016,128 bytes), and SHA-256 matched before the test. A separate cleanup result recorded `app_private_model_removed=false` after target uninstall; it is not the JUnit failure cause and remains a cleanup evidence issue.<br>
+**FOCUSED_TESTS_ON_TESTED_SOURCE_SHA:** source-contract regression PASS; fake-ADB failure paths PASS; API marker host regression PASS; shell syntax PASS; workflow YAML parse PASS; `git diff --check` PASS; `:app:testDebugUnitTest --rerun-tasks` PASS, 3 tests / 0 failures / 0 errors / 0 skipped. Preserved JVM artifacts: `artifacts/g3-ondevice-poc/gradle-unit-after-f90b229.log`, `host-junit-after-f90b229.xml`, `host-junit-after-f90b229-summary.txt`.<br>
+**NOT_RUN:** no rerun of API 35 or API 26 instrumentation, no new Emulator, no model download, no AndroidTest compile, no APK assemble (pinned llama.cpp checkout is absent in this workspace). The host JVM task compiled `:app:compileDebugKotlin`; it does not compile AndroidTest JNI or prove runtime behavior. Earlier Google Maven resolution attempts failed before AndroidTest compilation because dependencies were unreachable.<br>
+**NEXT_ACTION:** review the failure classification and dispatcher source-contract guard; only after review and explicit Emulator availability may exact-head API validation be scheduled. No push has been made.
+
+## Previous G3-owned branch repair checkpoint — API markers (2026-10-28)
 
 This top section is the current G3-owned PR #127 status and supersedes older cancellation and workflow-marker descriptions below where they differ. No product integration is included. No Emulator, model download, API workflow dispatch, or live provider access has been performed for this repair.
 

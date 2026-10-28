@@ -1,0 +1,23 @@
+Run 40515091197 / Artifact 12740455266
+Source HEAD: 8ca55a32096bc4449717c2fd3332b0602381d7d5
+
+Classification: TEST_HARNESS (high-confidence source-level root cause; the repair has not been re-run on an Emulator).
+Device:
+emulator_api: 35
+emulator_abi: x86_64
+emulator_hardware: ranchu
+emulator_fingerprint: google/sdk_gphone64_x86_64/emu64xa:15/AE3A.240806.043/12960925:userdebug/dev-keys
+boot_completed: 1
+
+JUnit: 1 test, 1 failure, 0 errors, 0 skipped; test case duration 17.599 s, suite duration 18.336 s.
+Failure: OnDeviceInferenceTest.kt:97, assertion "the first engine must enter its native generation gate" after awaiting awaitStartGateForTest(15, SECONDS).
+
+Causal evidence:
+- At the failed source revision, the test starts `val firstRun = async { port.send(...) }` inside `runBlocking`, then blocks that same runBlocking thread in `CountDownLatch.await()` via awaitStartGateForTest.
+- `async {}` inherits the runBlocking event-loop dispatcher. Because that thread is blocked before the child executes, port.send/nativeGenerate/onNativeGenerationStart cannot run, so the generation-start latch cannot be counted down. The 15-second wait times out; the JUnit assertion fails.
+- The test process successfully loads the x86_64 llama JNI library before the assertion. The targeted logcat has no G3_TEST_PHASE tags (that instrumentation was added in the recovery) and shows the TestRunner assertion, not a native fatal exception.
+- The matching target and AndroidTest APK build/install hashes are recorded in the original artifact; the pinned synthetic model downloaded and passed revision/size/SHA validation before the test.
+
+Minimal fix already present in owned branch history: commit f96e77a798575c971313599ded8b267a353d5b46 changes the latch-bound child to async(Dispatchers.IO), and applies the same dispatcher to other blocking-latch async children. This task adds a host source-contract assertion so a future regression to inherited runBlocking dispatch fails before Emulator setup. No timeout was extended.
+
+Separate cleanup observation (not the JUnit root cause): the artifact records app_private_model_removed=false after target uninstall and cleanup status 1; emulator temporary model removal and cleanup state reset succeeded. Keep this cleanup finding distinct from the generation gate failure.

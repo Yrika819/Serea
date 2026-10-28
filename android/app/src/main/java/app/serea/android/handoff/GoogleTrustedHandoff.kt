@@ -364,6 +364,9 @@ class GoogleTrustedHandoffCoordinator(
             return HandoffResult.Rejected(authAfterRead.rejection())
         }
         if (nowMillis() >= preview.expiresAtMillis) return HandoffResult.Rejected(GoogleHandoffRejection.EXPIRED)
+        if (live.sourceItemIdentifier != preview.sourceItemIdentifier) {
+            return HandoffResult.Rejected(GoogleHandoffRejection.INVALID_CONTENT_ID)
+        }
         if (live.sourceRevision != preview.sourceRevision) return HandoffResult.Rejected(GoogleHandoffRejection.SOURCE_REVISION_CHANGED)
         if (live.selectedContent != preview.selectedContent || live.displayTitle != preview.displayTitle) {
             return HandoffResult.Rejected(GoogleHandoffRejection.CONTENT_CHANGED)

@@ -235,13 +235,21 @@ fi
 if [[ ! "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ || "${GITHUB_ACTIONS:-}" != true || "${CI:-}" != true ]]; then
   fail preflight 'This helper is restricted to a GitHub Actions disposable Emulator run.'
 fi
-if [[ "$(git -C "$ROOT" rev-parse HEAD)" != "${GITHUB_SHA:-}" ]]; then
-  fail source 'Checked-out source SHA does not match GITHUB_SHA.'
+EXPECTED_SOURCE_SHA="${EXPECTED_SOURCE_SHA:-${GITHUB_SHA:-}}"
+if [[ ! "$EXPECTED_SOURCE_SHA" =~ ^[[:xdigit:]]{40}$ ]]; then
+  fail source 'Expected source SHA is missing or malformed.'
+fi
+checked_out_source_sha="$(git -C "$ROOT" rev-parse HEAD)"
+provenance_source_sha="$(sed -n 's/^source_commit=//p' "$APKS/provenance.txt" 2>/dev/null)"
+printf 'expected_source_sha=%s\nchecked_out_source_sha=%s\nprovenance_source_sha=%s\n' \
+  "$EXPECTED_SOURCE_SHA" "$checked_out_source_sha" "$provenance_source_sha" > "$OUT/source-verification.txt"
+if [[ "$checked_out_source_sha" != "$EXPECTED_SOURCE_SHA" ]]; then
+  fail source 'Checked-out source SHA does not match the expected source SHA.'
 fi
 if [[ ! -s "$APKS/provenance.txt" || ! -s "$APKS/apk-sha256.txt" ]]; then
   fail apk-provenance 'Built APK provenance or digest manifest is missing.'
 fi
-if [[ "$(sed -n 's/^source_commit=//p' "$APKS/provenance.txt")" != "$GITHUB_SHA" || \
+if [[ "$provenance_source_sha" != "$EXPECTED_SOURCE_SHA" || \
       "$(sed -n 's/^source_tree=//p' "$APKS/provenance.txt")" != "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" ]]; then
   fail apk-provenance 'APK build provenance does not match the checked-out source.'
 fi

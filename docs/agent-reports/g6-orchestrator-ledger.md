@@ -87,7 +87,9 @@ Real Google OAuth/account/data, cloud AI/API key/billing, production signing/dis
 
 ## G6 CI and integration evidence
 
-Pending: Agent A corrected source-specific Android and focused API 26/35 run, Agent B exact-head CI, fixed integrated HEAD, focused JVM, Android build/lint/unit/security/integration, Formal Required, Identity, Process Death, Data Isolation, Sentinel, Full/Fast/Native, SQLite, RustSec, Git Hooks, and Android Contract workflow on the integrated SHA. Existing G5 evidence is retained as historical evidence and will not be relabeled as G6 evidence.
+The integrated source snapshot `db3fbad3cdba73657c38ed0da2812e50f6ccd108` / tree `b42e08af915052dd66bc8a03d6a5d57cdec400aa` was pushed to PR #138 (OPEN/DRAFT, base G5 b84feb3). It contains the accepted A fixture compile correction, accepted isolated B adapter, and exact-source mock-contract workflow trigger. Preliminary exact-head runs created for db3: Android Contract `40684846527` queued; Focused UI `40684846463` queued; Git Hooks `40684846544` queued; Fast `40684846510` queued; Full `40684846472` pending; Native `40684846507` pending; RustSec `40684846595` queued; Android `40684846619` pending; SQLite `40684846536` queued. These are preliminary because the shared ledger is being committed in a following candidate snapshot; none will be transferred to that new SHA.
+
+Pending for the next fixed candidate SHA: exact-head Focused JVM including `LocalModelChatAdapterTest` and Google handoff tests; Android build/lint/unit/security/integration; Formal Required 105/105 on API 26/35, Identity, Process Death, Data Isolation, Sentinel; Focused UI API 26/35 with the 40-case assertion; Android mock contract workflow; Full/Fast/Native, SQLite, RustSec, Git Hooks. Existing G5 and earlier G6 snapshot evidence remains historical and will not be relabeled as final integrated-head evidence.
 
 ## Final status
 

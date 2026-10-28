@@ -2,6 +2,18 @@ name: Serea API 26/35 Real IME B/C (Diagnostic, Non-Required)
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - codex/serea-g4-final-integration-candidate-20261027
+    paths:
+      - .github/workflows/android-api35-real-ime-independent-bc.yml
+      - android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt
+      - android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt
+      - android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java
+      - android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java
+      - tools/run_serea_phase_r3_single_ime_case.sh
+      - tools/serea_real_ime_avd_guards.sh
+      - tools/test_serea_real_ime_avd_guards.sh
 
 permissions:
   contents: read

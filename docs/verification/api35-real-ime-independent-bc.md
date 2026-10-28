@@ -10,8 +10,11 @@ compares only changes after this campaign base against its narrow diagnostic all
 
 ## Scope and execution model
 
-The manual workflow `.github/workflows/android-api35-real-ime-independent-bc.yml` is diagnostic
-and Non-Required. It builds the isolated target APK, instrumentation APK, and separately packaged
+The workflow `.github/workflows/android-api35-real-ime-independent-bc.yml` is diagnostic and
+Non-Required. It supports manual dispatch and a path-scoped `pull_request` trigger for the stacked
+G4 candidate branch. The scoped PR trigger makes a workflow added on this feature branch runnable
+without changing protected `main`; it has read-only repository permissions and uses no secrets. It
+builds the isolated target APK, instrumentation APK, and separately packaged
 Test IME APK once, stores their SHA-256 manifest, and then runs four independent cases:
 
 | API | Case | Instrumentation method | AVD profile |

@@ -28,7 +28,7 @@ serea_make_campaign_token() {
 serea_verify_isolated_seed_log() {
   local log_file="$1"
   [[ -r "$log_file" ]] || return 1
-  grep -Eq '^SEED_OK uid=[0-9]+ dataDir=/data/(user/0|data)/app\.serea\.android\.isolated marker=no_backup/serea-instrumentation-token$' \
+  grep -Eq '^SEED_OK uid=[0-9]+ dataDir=/data/(user/0|data)/app\.serea\.android\.isolated marker=no_backup/serea-instrumentation-token(\\nprofileVerifierMarkerBeforeUtp=ABSENT)?$' \
     "$log_file" &&
     grep -Fq 'PASS: fresh isolated namespace received a one-use host seed without starting the app.' "$log_file"
 }

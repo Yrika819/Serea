@@ -16,11 +16,19 @@ if serea_make_campaign_token 35 40610433596 1 'Invalid method!' > /dev/null 2>&1
 fi
 
 cat > "$tmp/seed.log" <<'EOF'
-SEED_OK uid=10078 dataDir=/data/data/app.serea.android.isolated marker=no_backup/serea-instrumentation-token
+SEED_OK uid=10078 dataDir=/data/data/app.serea.android.isolated marker=no_backup/serea-instrumentation-token\nprofileVerifierMarkerBeforeUtp=ABSENT
 PASS: fresh isolated namespace received a one-use host seed without starting the app.
 EOF
 if ! serea_verify_isolated_seed_log "$tmp/seed.log"; then
-  echo 'FAIL: a valid run-as seed log was rejected' >&2
+  echo 'FAIL: a valid API 26 run-as seed log was rejected' >&2
+  exit 1
+fi
+cat > "$tmp/seed-api35.log" <<'EOF'
+SEED_OK uid=10078 dataDir=/data/user/0/app.serea.android.isolated marker=no_backup/serea-instrumentation-token\nprofileVerifierMarkerBeforeUtp=ABSENT
+PASS: fresh isolated namespace received a one-use host seed without starting the app.
+EOF
+if ! serea_verify_isolated_seed_log "$tmp/seed-api35.log"; then
+  echo 'FAIL: a valid API 35 run-as seed log was rejected' >&2
   exit 1
 fi
 sed '/^PASS:/d' "$tmp/seed.log" > "$tmp/seed-without-pass.log"

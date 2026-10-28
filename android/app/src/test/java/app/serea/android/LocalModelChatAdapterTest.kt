@@ -591,7 +591,7 @@ class LocalModelChatAdapterTest {
             assertEquals(1, backend.generateCalls)
             assertEquals(1, dao.insertedReservationCount)
             assertEquals(1, dao.reservationCount)
-            assertEquals(UsageLedgerState.COMPLETED.name, dao.reservationState(request.sendId))
+            assertEquals(UsageLedgerState.SETTLED.name, dao.reservationState(request.sendId))
         } finally { adapter.close(); file.delete() }
     }
 

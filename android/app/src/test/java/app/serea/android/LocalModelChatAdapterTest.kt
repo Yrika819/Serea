@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
@@ -378,12 +379,14 @@ class LocalModelChatAdapterTest {
         val dao = CountingUsageDao()
         try {
             val request = request("close during model load", sendId = "send-close-load")
-            val send = async {
-                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            supervisorScope {
+                val send = async {
+                    sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+                }
+                backend.loadStarted.await()
+                adapter.close()
+                assertTrue(runCatching { send.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
             }
-            backend.loadStarted.await()
-            adapter.close()
-            assertTrue(runCatching { send.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
             assertEquals(1, dao.insertedReservationCount)
             assertTrue(backend.cancelled)
             assertTrue(backend.closed)
@@ -412,13 +415,15 @@ class LocalModelChatAdapterTest {
         val dao = CountingUsageDao()
         try {
             val request = request("close while factory creates backend", sendId = "send-close-factory")
-            val send = async(Dispatchers.Default) {
-                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            supervisorScope {
+                val send = async(Dispatchers.Default) {
+                    sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+                }
+                withTimeout(10_000) { factoryEntered.await() }
+                adapter.close()
+                releaseFactory.countDown()
+                assertTrue(runCatching { send.await() }.isFailure)
             }
-            withTimeout(10_000) { factoryEntered.await() }
-            adapter.close()
-            releaseFactory.countDown()
-            assertTrue(runCatching { send.await() }.isFailure)
             assertEquals(0, backend.loadCalls)
             assertEquals(0, backend.generateCalls)
             assertTrue(backend.closed)
@@ -440,12 +445,14 @@ class LocalModelChatAdapterTest {
         val dao = CountingUsageDao()
         try {
             val request = request("close before native generation", sendId = "send-close-generate-start")
-            val send = async {
-                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            supervisorScope {
+                val send = async {
+                    sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+                }
+                backend.generateEntry.await()
+                adapter.close()
+                assertTrue(runCatching { send.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
             }
-            backend.generateEntry.await()
-            adapter.close()
-            assertTrue(runCatching { send.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
             assertTrue(backend.cancelled)
             assertTrue(backend.closed)
             assertEquals("Close won before the fake backend's native-generation gate", 0, backend.generateCalls)
@@ -498,14 +505,16 @@ class LocalModelChatAdapterTest {
             val evidence = fakeHandoff(request, expiresAt = now + 30_000, conversationGeneration = 7)
             val proof = registry.approve(request, modelId, evidence, conversationGeneration = 7)
             val egress = composed(adapter, registry, dao) { clock }
-            val sending = async {
-                egress.send(request.copy(selectedModelId = modelId, egressContract = localContract(request, proof, DataOrigin.GMAIL)))
+            supervisorScope {
+                val sending = async {
+                    egress.send(request.copy(selectedModelId = modelId, egressContract = localContract(request, proof, DataOrigin.GMAIL)))
+                }
+                validationStarted.await()
+                generation = 8
+                clock = proof.expiresAtMillis + 1
+                finishValidation.complete(Unit)
+                assertTrue(runCatching { sending.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
             }
-            validationStarted.await()
-            generation = 8
-            clock = proof.expiresAtMillis + 1
-            finishValidation.complete(Unit)
-            assertTrue(runCatching { sending.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
             assertEquals(0, dao.reservationCount)
             assertEquals(0, dao.insertedReservationCount)
             assertEquals(0, backend.generateCalls)

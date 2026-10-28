@@ -72,15 +72,16 @@ credentials, and user data are not used.
 
 ## Request-contract build checkpoint
 
-The separate diagnostic-only request-contract repair was locally built and is awaiting
-independent adversarial review. Its build does not imply instrumentation success.
+The separate diagnostic-only request-contract repair was reviewed for B/C independence and locally
+built at the exact HEAD below. Its build does not imply instrumentation success.
 
 - Source branch: `codex/serea-r3-ime-operation-contract-20261027`
-- Source HEAD: `0463854864d833de1a4f64a57c5578b2636083d7`
-- Source tree: `b27312a1dca8696e06c69c111ffb94ec00570ba8`
+- Source HEAD: `bc31a9a6d1aabb2ff1c2915b508fa7808074ae6a`
+- Source tree: `b486a12a84d2ac51d10396a705cec6812ba778b0`
+- B/C separation review: ACCEPTED by independent adversarial reviewer; runtime remains NOT_RUN
 - Build: `:app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug` — PASS
 - Instrumentation / Emulator: NOT_RUN
 - Target APK SHA-256: `d50d1b7486e5ebd1f4d16750ae73224b9d547979f717ee44028fd5fde0a455dc`
-- Instrumentation APK SHA-256: `cae3cc8fbae900c63118ec9674f243d84559a213ef9a0cb78562fe57b3966806`
+- Instrumentation APK SHA-256: `3ca33abc59924cf66dc5e822cf641eaaf05ff3d7078bb508112f6f94e940d4b4`
 - Test IME APK SHA-256: `9efc2070ed61aba6e154617c457dd33b07ab6e059b03f7d71dbb7e7d3f580a43`
-- Full build log and static-check summary: `/workspace/evidence-r3-contract-0463854.md`
+- Full build log and static-check summary: `/workspace/evidence-r3-contract-0463854.md` (updated for this HEAD)

@@ -254,6 +254,13 @@ internal class ChatViewModel(
 
     init { if (historyRepository != null && initialConversation == null) restoreLatest() }
 
+    /**
+     * Generation used to bind a provider handoff to the selected Chat destination.
+     * It advances whenever conversation selection changes, so a preview opened for
+     * one conversation cannot be consumed after switching to another one.
+     */
+    internal fun currentConversationSelectionGeneration(): Long = selectionGeneration
+
     fun updateInput(value: String) = updateEditorValue(TextFieldValue(value))
 
     /** Provider-prefill entry point. Imported content stays tainted through later user edits. */
@@ -630,6 +637,7 @@ internal class ChatViewModel(
                         message.copy(status = if (message.status == "PENDING") "OUTCOME_UNKNOWN" else message.status).toChatMessage()
                     }
                     if (generation != selectionGeneration) return@launch
+                    if (latest.id != mutableState.value.conversation.id) selectionGeneration += 1
                     mutableState.update {
                         val warnings = it.historyPersistenceWarnings.toMutableMap()
                         persistenceWarningUpdates.forEach { (messageId, warning) ->

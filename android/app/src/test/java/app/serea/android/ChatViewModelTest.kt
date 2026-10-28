@@ -200,6 +200,32 @@ class ChatViewModelTest {
         assertTrue(vm.state.value.editorSourceLineage.isEmpty())
     }
 
+    @Test fun handoffDestinationGenerationChangesWhenConversationSelectionChanges() = runTest(dispatcher) {
+        val saved = StoredConversation("restored-conversation", "Saved", 1L, 1L, "demo-local", emptyList())
+        val history = object : ConversationHistoryPort {
+            override suspend fun list() = listOf(saved)
+            override suspend fun get(id: String) = saved.takeIf { it.id == id }
+            override suspend fun addMessage(message: StoredMessage) = Unit
+            override suspend fun createWithFirstMessage(id: String, title: String, message: StoredMessage, modelId: String) = Unit
+            override suspend fun completeTurn(userMessageId: String, assistant: StoredMessage) = Unit
+            override suspend fun updateStatus(messageId: String, conversationId: String, status: String) = true
+            override suspend fun delete(id: String, now: Long) = Unit
+            override suspend fun deleteAll() = Unit
+        }
+        val vm = ChatViewModel(object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest) = ModelChatResponse("local")
+        }, historyRepository = history)
+        val initialGeneration = vm.currentConversationSelectionGeneration()
+
+        advanceUntilIdle()
+        assertEquals("restored-conversation", vm.state.value.conversation.id)
+        assertTrue(vm.currentConversationSelectionGeneration() > initialGeneration)
+
+        val restoredGeneration = vm.currentConversationSelectionGeneration()
+        vm.newConversation()
+        assertTrue(vm.currentConversationSelectionGeneration() > restoredGeneration)
+    }
+
     @Test fun navigationKeepsUnchangedDraftSelectionUntilComposerRegainsFocus() = runTest(dispatcher) {
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("Demo: ${request.message}")

@@ -181,7 +181,7 @@ internal class LocalModelChatAdapter(
                     runCatching { activeBackend?.cancelActive() }
                     releaseBackendLocked()
                     if (!generationStarted) {
-                        throw PreDispatchModelChatFailure("Local model work was cancelled before inference started.")
+                        throw PreDispatchModelChatCancellation("Local model work was cancelled before inference started.")
                     }
                     throw cancelled
                 } catch (_: LocalModelBackendStartDeniedException) {
@@ -215,7 +215,7 @@ internal class LocalModelChatAdapter(
             // Cancellation while waiting for the adapter mutex happens before this request can
             // enter native inference, so UsageControlledModelChatPort may safely release it.
             if (!generationStarted) {
-                throw PreDispatchModelChatFailure("Local model work was cancelled before inference started.")
+                throw PreDispatchModelChatCancellation("Local model work was cancelled before inference started.")
             }
             throw cancelled
         }

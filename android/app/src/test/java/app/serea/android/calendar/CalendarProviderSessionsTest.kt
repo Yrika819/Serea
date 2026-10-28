@@ -17,6 +17,7 @@ import app.serea.android.googleauth.awaitGoogleIdentityTaskToTerminal
 import app.serea.android.googleauth.invalidateGoogleGrantAtRevokeStart
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -534,6 +535,44 @@ class CalendarProviderSessionsTest {
 
         caller.join()
         assertTrue("provider replacement must not cancel the caller job", caller.isCompleted && !caller.isCancelled)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun responseAlreadyProducedByOldSessionIsDeniedWhenAccountSwitchWinsBeforeDelivery() = runBlocking {
+        val parsedResponse = FakeCalendarProvider.Fixtures.calendars
+        val responseStarted = CompletableDeferred<Unit>()
+        val releaseResponse = CompletableDeferred<Unit>()
+        val delegate = object : CalendarReadPort {
+            override suspend fun listCalendars(): List<CalendarDescriptor> {
+                // Model a parsed response held by an old account session before delivery.
+                responseStarted.complete(Unit)
+                withContext(NonCancellable) { releaseResponse.await() }
+                return parsedResponse
+            }
+            override suspend fun getCalendar(calendarId: CalendarId): CalendarDescriptor = error("not used")
+            override suspend fun getEvent(key: CalendarEventKey): CalendarEvent = error("not used")
+            override suspend fun listEventsPage(
+                calendarId: CalendarId,
+                range: CalendarDateRange,
+                pageToken: String?,
+            ): CalendarEventPage = error("not used")
+        }
+        val session = CalendarProviderSession(
+            id = 12,
+            kind = CalendarProviderKind.GOOGLE_READ_ONLY,
+            delegate = delegate,
+            authorizationDelegate = FakeCalendarProvider(),
+            isCurrent = { true },
+            onClose = {},
+        )
+        val result = async { calendarFailure { session.listCalendars() }.code }
+
+        responseStarted.await()
+        // Session replacement revokes the old account's delivery authority.
+        session.invalidateFromController()
+        releaseResponse.complete(Unit)
+
+        assertEquals(CalendarApiFailureCode.PERMISSION_DENIED, result.await())
         assertEquals(0, server.requestCount)
     }
 

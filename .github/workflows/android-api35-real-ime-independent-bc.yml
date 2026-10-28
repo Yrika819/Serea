@@ -1,0 +1,283 @@
+name: Serea API 26/35 Real IME B/C (Diagnostic, Non-Required)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - codex/serea-g4-final-integration-candidate-20261027
+    paths:
+      - .github/workflows/android-api35-real-ime-independent-bc.yml
+      - android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt
+      - android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt
+      - android/app/src/debug/AndroidManifest.xml
+      - android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java
+      - android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java
+      - tools/run_serea_phase_r3_single_ime_case.sh
+      - tools/serea_real_ime_avd_guards.sh
+      - tools/test_serea_real_ime_avd_guards.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serea-real-ime-independent-bc-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  JAVA_VERSION: '17'
+  TARGET_APK: android/app/build/outputs/apk/isolated/app-isolated.apk
+  TEST_APK: android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk
+  IME_APK: android/r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk
+  DIAGNOSTIC_BASE_SHA: e0643750321a682fdf53b1024b8491ebcb128fa7
+
+jobs:
+  build-diagnostic-apks:
+    name: Build target, instrumentation, and Test IME APKs once
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Initialize build evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/real-ime-independent-bc/apks
+          {
+            printf 'diagnostic_base_sha=%s\n' "$DIAGNOSTIC_BASE_SHA"
+            printf 'source_commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'source_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'runner_os=%s\nrunner_arch=%s\n' "$RUNNER_OS" "$RUNNER_ARCH"
+          } > evidence/real-ime-independent-bc/source.txt
+      - name: Install compile packages
+        run: sdkmanager 'platforms;android-26' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Verify source scope is limited to this diagnostic harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$DIAGNOSTIC_BASE_SHA" HEAD
+          unexpected="$(git diff --name-only "$DIAGNOSTIC_BASE_SHA" HEAD | awk '
+            $0 != ".github/workflows/android-api35-real-ime-independent-bc.yml" &&
+            $0 !~ /^tools\/run_serea_phase_r3_single_ime_case\.sh$/ &&
+            $0 !~ /^tools\/serea_real_ime_avd_guards\.sh$/ &&
+            $0 !~ /^tools\/test_serea_real_ime_avd_guards\.sh$/ &&
+            $0 !~ /^docs\/verification\/api35-real-ime-independent-bc\.md$/ &&
+            $0 != "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt" &&
+            $0 != "android/app/src/debug/AndroidManifest.xml" &&
+            $0 != "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt" &&
+            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java" &&
+            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java" &&
+            $0 != "android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt" &&
+            $0 != "android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt" &&
+            $0 != "docs/agent-reports/g2-google-policy-readiness-2026-10-28.md" &&
+            $0 != "docs/agent-reports/g2-p0-backend-acceptance-review.md" &&
+            $0 != "docs/agent-reports/g4-orchestrator-ledger.md" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/gradle-summary.txt" &&
+            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/sha256sums.txt" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle.log" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle-exact-head-dfc139c.log" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/summary.txt" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/sha256sums.txt" { print }
+          ')"
+          if [[ -n "$unexpected" ]]; then
+            printf 'Unexpected changes since diagnostic base:\n%s\n' "$unexpected" >&2
+            exit 1
+          fi
+      - name: Run real-IME AVD and cleanup guard regressions
+        run: timeout --signal=TERM --kill-after=2s 20s bash tools/test_serea_real_ime_avd_guards.sh
+      - name: Build the three diagnostic APKs once
+        working-directory: android
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug \
+            2>&1 | tee ../evidence/real-ime-independent-bc/gradle-build.log
+      - name: Record exact source and APK provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/real-ime-independent-bc/apks
+          test -s "$TARGET_APK"
+          test -s "$TEST_APK"
+          test -s "$IME_APK"
+          cp "$TARGET_APK" "$TEST_APK" "$IME_APK" evidence/real-ime-independent-bc/apks/
+          (
+            cd evidence/real-ime-independent-bc/apks
+            sha256sum app-isolated.apk app-isolated-androidTest.apk r25-ime-test-debug.apk > apk-sha256.txt
+          )
+          {
+            printf 'diagnostic_base_sha=%s\n' "$DIAGNOSTIC_BASE_SHA"
+            printf 'source_commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'source_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'runner_os=%s\nrunner_arch=%s\n' "$RUNNER_OS" "$RUNNER_ARCH"
+            printf 'created_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf 'apk_manifest_sha256=%s\n' "$(sha256sum evidence/real-ime-independent-bc/apks/apk-sha256.txt | awk '{print $1}')"
+          } > evidence/real-ime-independent-bc/apks/provenance.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: serea-real-ime-bc-apks
+          path: evidence/real-ime-independent-bc/apks/
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: serea-real-ime-bc-build-evidence
+          path: |
+            evidence/real-ime-independent-bc/source.txt
+            evidence/real-ime-independent-bc/gradle-build.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  real-ime-bc:
+    name: API ${{ matrix.api }} fresh AVD / ${{ matrix.label }}
+    needs: build-diagnostic-apks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - api: '26'
+            label: B-continuous
+            profile: pixel_2
+            method: B_realImeCompositionWithoutSynchronizationBoundaries
+          - api: '26'
+            label: C-synchronized
+            profile: pixel_2
+            method: C_realImeCompositionWithSynchronizationBoundaries
+          - api: '35'
+            label: B-continuous
+            profile: pixel_7
+            method: B_realImeCompositionWithoutSynchronizationBoundaries
+          - api: '35'
+            label: C-synchronized
+            profile: pixel_7
+            method: C_realImeCompositionWithSynchronizationBoundaries
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install API ${{ matrix.api }} Google APIs x86_64 image
+        run: sdkmanager 'platforms;android-${{ matrix.api }}' 'build-tools;35.0.0' 'emulator' 'system-images;android-${{ matrix.api }};google_apis;x86_64'
+      - name: Initialize per-case evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/serea-api${{ matrix.api }}-ime-${{ matrix.label }}"
+          mkdir -p "$output/host"
+          printf 'SEREA_R3_OUT=%s\n' "$output" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-real-ime-bc-apks
+          path: ${{ runner.temp }}/serea-real-ime-bc-apks
+      - name: Verify source identity and all APK hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          apks="$RUNNER_TEMP/serea-real-ime-bc-apks"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(sed -n 's/^source_commit=//p' "$apks/provenance.txt")" = "$GITHUB_SHA"
+          test "$(sed -n 's/^diagnostic_base_sha=//p' "$apks/provenance.txt")" = "$DIAGNOSTIC_BASE_SHA"
+          test "$(sed -n 's/^source_tree=//p' "$apks/provenance.txt")" = "$(git rev-parse 'HEAD^{tree}')"
+          test "$(sed -n 's/^apk_manifest_sha256=//p' "$apks/provenance.txt")" = "$(sha256sum "$apks/apk-sha256.txt" | awk '{print $1}')"
+          (cd "$apks" && sha256sum --check apk-sha256.txt)
+          cp "$apks/provenance.txt" "$SEREA_R3_OUT/build-provenance.txt"
+          cp "$apks/apk-sha256.txt" "$SEREA_R3_OUT/apk-sha256.txt"
+      - name: Verify accelerated disposable runner and record host diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="$SEREA_R3_OUT/host"
+          {
+            uname -a
+            id
+            id -nG
+            printf 'runner_os=%s runner_arch=%s vcpus=%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$(nproc)"
+            lscpu
+            grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+            printf 'cpu_cgroup='; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
+            printf 'memory_cgroup='; cat /sys/fs/cgroup/memory.max 2>/dev/null || true
+            free -h
+            cat /proc/pressure/cpu 2>/dev/null || true
+            cat /proc/pressure/memory 2>/dev/null || true
+            ls -l /dev/kvm 2>&1 || true
+            stat -Lc 'kvm_owner=%U kvm_group=%G kvm_mode=%a' /dev/kvm 2>&1 || true
+            "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true
+            "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
+          } > "$host/runner-before-kvm.txt"
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
+          if [[ "$(uname -m)" != x86_64 || ! -e /dev/kvm ]]; then
+            echo 'BLOCKED: expected x86_64 runner with /dev/kvm; software emulation is not accepted.' | tee "$host/kvm-blocked.txt"
+            exit 1
+          fi
+          sudo usermod -a -G kvm "$(id -un)"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          getent group kvm > "$host/kvm-group-after.txt"
+          if ! test -r /dev/kvm || ! test -w /dev/kvm || ! "$ANDROID_HOME/emulator/emulator" -accel-check > "$host/accel-check.txt" 2>&1; then
+            echo 'BLOCKED: KVM is absent, inaccessible, or acceleration check failed; TCG fallback is prohibited.' | tee "$host/kvm-blocked.txt"
+            exit 1
+          fi
+          stat -Lc 'kvm=%n owner=%U group=%G mode=%a' /dev/kvm > "$host/kvm-after-permissions.txt"
+          echo 'kvm=PASS; emulator -accel-check=PASS; disable-linux-hw-accel=false' > "$host/kvm-status.txt"
+      - name: Run exactly one real IME method on this fresh API ${{ matrix.api }} AVD
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+          SEREA_EXPECTED_ANDROID_API: ${{ matrix.api }}
+          EXPECTED_API_LEVEL: ${{ matrix.api }}
+          SEREA_R3_API: ${{ matrix.api }}
+          SEREA_R3_METHOD: ${{ matrix.method }}
+          SEREA_R3_APKS: ${{ runner.temp }}/serea-real-ime-bc-apks
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: ${{ matrix.profile }}
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect
+          disable-animations: true
+          script: bash tools/run_serea_phase_r3_single_ime_case.sh "${{ matrix.method }}"
+      - name: Preserve API ${{ matrix.api }} ${{ matrix.label }} evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-api${{ matrix.api }}-ime-${{ matrix.label }}
+          path: ${{ runner.temp }}/serea-api${{ matrix.api }}-ime-${{ matrix.label }}/
+          if-no-files-found: warn
+          retention-days: 30

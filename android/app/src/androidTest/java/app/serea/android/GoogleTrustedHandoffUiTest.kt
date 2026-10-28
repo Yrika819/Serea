@@ -1,6 +1,5 @@
 package app.serea.android
 
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -21,6 +20,7 @@ import kotlinx.coroutines.CancellationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,14 +55,14 @@ class GoogleTrustedHandoffUiTest {
         }
 
         compose.waitUntil(5_000) {
-            compose.onNodeWithText("Project Finch schedule").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("Project Finch schedule").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Project Finch schedule").performClick()
         compose.onNodeWithText("このメールをChatへ渡す").assertIsDisplayed().performClick()
         compose.onNodeWithText("Chatへ渡す内容を確認").assertIsDisplayed()
         compose.onNodeWithText("送信先: この端末内のローカルChat").assertIsDisplayed()
         compose.onNodeWithText("キャンセル").performClick()
-        compose.onNodeWithText("Chatへ渡す内容を確認").assertDoesNotExist()
+        assertTrue(compose.onAllNodesWithText("Chatへ渡す内容を確認").fetchSemanticsNodes().isEmpty())
         assertNull(delivered)
 
         compose.onNodeWithText("このメールをChatへ渡す").performClick()
@@ -101,14 +101,14 @@ class GoogleTrustedHandoffUiTest {
         }
 
         compose.waitUntil(5_000) {
-            compose.onNodeWithText("Design review").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Design review").performClick()
         compose.onNodeWithText("この予定をChatへ渡す").assertIsDisplayed().performClick()
         compose.onNodeWithText("Chatへ渡す内容を確認").assertIsDisplayed()
         compose.onNodeWithText("送信先: この端末内のローカルChat").assertIsDisplayed()
         compose.onNodeWithText("キャンセル").performClick()
-        compose.onNodeWithText("Chatへ渡す内容を確認").assertDoesNotExist()
+        assertTrue(compose.onAllNodesWithText("Chatへ渡す内容を確認").fetchSemanticsNodes().isEmpty())
         assertNull(delivered)
 
         compose.onNodeWithText("この予定をChatへ渡す").performClick()
@@ -153,7 +153,7 @@ class GoogleTrustedHandoffUiTest {
         }
 
         compose.waitUntil(5_000) {
-            compose.onNodeWithText("Project Finch schedule").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("Project Finch schedule").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("Project Finch schedule").performClick()
         compose.onNodeWithText("このメールをChatへ渡す").performClick()
@@ -169,7 +169,7 @@ class GoogleTrustedHandoffUiTest {
         firstRelease.complete(Unit)
         compose.waitUntil(5_000) { coordinator.pendingPreviewCount() == 1 }
         compose.onNodeWithText("対象: Re: Project Finch schedule").assertIsDisplayed()
-        compose.onNodeWithText("対象: Project Finch schedule").assertDoesNotExist()
+        assertTrue(compose.onAllNodesWithText("対象: Project Finch schedule").fetchSemanticsNodes().isEmpty())
         compose.onNodeWithText("キャンセル").performClick()
         compose.waitUntil(5_000) { coordinator.pendingPreviewCount() == 0 }
         session.close()
@@ -212,7 +212,7 @@ class GoogleTrustedHandoffUiTest {
         compose.onNodeWithText("セッションが失効したか、Chatの送信先が変わりました。Fake Gmailを開き直してください。")
             .assertIsDisplayed()
         compose.onNodeWithText("キャンセル").performClick()
-        compose.onNodeWithText("Chatへ渡す内容を確認").assertDoesNotExist()
+        assertTrue(compose.onAllNodesWithText("Chatへ渡す内容を確認").fetchSemanticsNodes().isEmpty())
         assertEquals(0, coordinator.pendingPreviewCount())
         session.close()
     }

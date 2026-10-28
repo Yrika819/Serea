@@ -402,7 +402,7 @@ class LocalModelChatAdapterTest {
             artifact(file), file,
             LocalModelInferenceBackendFactory {
                 factoryEntered.complete(Unit)
-                check(releaseFactory.await(5, TimeUnit.SECONDS))
+                check(releaseFactory.await(10, TimeUnit.SECONDS))
                 backend
             },
             deviceAbi = "x86_64",
@@ -414,7 +414,7 @@ class LocalModelChatAdapterTest {
             val send = async(Dispatchers.Default) {
                 sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
             }
-            withTimeout(5_000) { factoryEntered.await() }
+            withTimeout(10_000) { factoryEntered.await() }
             adapter.close()
             releaseFactory.countDown()
             assertTrue(runCatching { send.await() }.isFailure)

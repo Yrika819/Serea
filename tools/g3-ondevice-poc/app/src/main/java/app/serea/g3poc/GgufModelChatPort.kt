@@ -253,6 +253,22 @@ internal class NativeLlamaEngine : LocalInferenceEngine, AutoCloseable {
 
     internal fun nativeGenerationStartsForTest(): Int = nativeGenerationStarts.get()
 
+    internal fun armAbortCallbackGateForTest(): Boolean {
+        generationFinished = java.util.concurrent.CountDownLatch(1)
+        return nativeArmAbortCallbackGateForTest(engineId)
+    }
+
+    internal fun awaitAbortCallbackGateForTest(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean =
+        nativeAwaitAbortCallbackGateForTest(unit.toMillis(timeout))
+
+    internal fun releaseAbortCallbackGateForTest() = nativeReleaseAbortCallbackGateForTest()
+
+    internal fun abortCallbackEntriesForTest(): Int = nativeAbortCallbackEntriesForTest()
+
+    internal fun abortCallbackCancellationsForTest(): Int = nativeAbortCallbackCancellationsForTest()
+
+    internal fun roundTripUnicodeForTest(value: String): String = nativeUnicodeRoundTrip(value)
+
     internal fun activeGenerationIdForTest(): Long? = synchronized(lifecycleLock) {
         activeRequests.firstOrNull { it.nativeMayRun && !it.completed }?.id
     }
@@ -360,4 +376,10 @@ internal class NativeLlamaEngine : LocalInferenceEngine, AutoCloseable {
     private external fun nativeForgetCancellation(engineId: Long, generationId: Long)
     private external fun nativeFree(engineId: Long): Boolean
     private external fun nativeHasModel(engineId: Long): Boolean
+    private external fun nativeArmAbortCallbackGateForTest(engineId: Long): Boolean
+    private external fun nativeAwaitAbortCallbackGateForTest(timeoutMs: Long): Boolean
+    private external fun nativeReleaseAbortCallbackGateForTest()
+    private external fun nativeAbortCallbackEntriesForTest(): Int
+    private external fun nativeAbortCallbackCancellationsForTest(): Int
+    private external fun nativeUnicodeRoundTrip(value: String): String
 }

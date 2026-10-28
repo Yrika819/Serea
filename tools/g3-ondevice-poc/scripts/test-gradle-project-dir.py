@@ -7,6 +7,8 @@ import re
 
 SCRIPT = Path(__file__).with_name("run-diagnostic.sh")
 source = SCRIPT.read_text(encoding="utf-8")
+WORKFLOW = SCRIPT.parents[3] / ".github/workflows/g3-ondevice-poc.yml"
+workflow = WORKFLOW.read_text(encoding="utf-8")
 
 
 def function_body(name: str) -> str:
@@ -48,4 +50,157 @@ for variable in ("pssAfterLoadKb", "pssAfterGenerationKb", "pssAfterCloseKb"):
     if not re.search(rf"var {variable} = 0L\b", android_test):
         raise SystemExit(f"{variable} must use Long for Debug.getPss()")
 
-print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test")
+# Regression guard for run 40515091197: a default `async {}` child inherited the
+# runBlocking event loop, which the test then blocked while awaiting this latch.
+first_run = re.search(
+    r"val firstRun = async\(([^)]*)\)\s*\{(.*?)\n\s*\}",
+    android_test,
+    flags=re.DOTALL,
+)
+first_run_start = android_test.find("val firstRun = async(")
+first_gate_wait = android_test.find("nativeEngine.awaitStartGateForTest", first_run_start)
+if (
+    first_run is None
+    or first_run.group(1).strip() != "Dispatchers.IO"
+    or "port.send(ModelChatRequest(\"synthetic\", \"Lease isolation check.\"" not in first_run.group(2)
+    or first_run_start < 0
+    or first_gate_wait <= first_run_start
+):
+    raise SystemExit(
+        "the lease-isolation generation must run on Dispatchers.IO before the blocking native-start latch wait"
+    )
+async_dispatchers = re.findall(r"\basync\(([^)]*)\)", android_test)
+if re.search(r"\basync\s*\{", android_test) or not async_dispatchers or any(
+    dispatcher.strip() != "Dispatchers.IO" for dispatcher in async_dispatchers
+):
+    raise SystemExit("all instrumentation async children must use Dispatchers.IO around blocking latch waits")
+
+if "var racingLoad: kotlinx.coroutines.Deferred<Boolean>? = null" not in android_test:
+    raise SystemExit("load-close race must return an expected result instead of failing its async child")
+racing_load_start = android_test.find("racingLoad = async(Dispatchers.IO) {")
+racing_close_start = android_test.find("racingClose = async(Dispatchers.IO)", racing_load_start)
+if racing_load_start < 0 or racing_close_start < 0:
+    raise SystemExit("load-close race async request boundaries are missing")
+racing_load_body = android_test[racing_load_start:racing_close_start]
+cancel_catch = racing_load_body.find("catch (cancelled: CancellationException)")
+expected_catch = racing_load_body.find("catch (failure: IllegalStateException)")
+if not all(
+    marker in racing_load_body
+    for marker in (
+        "racingEngine.load(model.absolutePath)",
+        "false",
+        'if (failure.message == "Engine closed before model load") true else throw failure',
+        "throw cancelled",
+    )
+) or cancel_catch < 0 or expected_catch < 0 or cancel_catch > expected_catch:
+    raise SystemExit("race test must contain only the expected close rejection, preserve cancellation, and propagate unexpected failures")
+if "val loadRejectedByClose = withTimeout(15_000) { checkNotNull(racingLoad).await() }" not in android_test:
+    raise SystemExit("load-close race must await the successful Boolean result")
+
+if 'EXPECTED_EMULATOR_API_LEVEL="${G3_API_LEVEL:-35}"' not in source:
+    raise SystemExit("diagnostic runner must take its expected API from G3_API_LEVEL")
+if '[[ "$actual_api_level" == "$EXPECTED_EMULATOR_API_LEVEL" ]]' not in source:
+    raise SystemExit("diagnostic runner must reject an Emulator at the wrong selected API")
+if 'echo "emulator_api: $actual_api_level"' not in source:
+    raise SystemExit("diagnostic evidence must record the API actually reported by Android")
+for marker in (
+    "workflow_dispatch:",
+    "api_level:",
+    "inputs.api_level",
+    "[g3-poc-run]",
+    "[g3-api=26]",
+    "[g3-api=35]",
+    'system-images;android-${G3_API_LEVEL};google_apis;x86_64',
+    "api-level: ${{ env.G3_API_LEVEL }}",
+    "arch: x86_64",
+    "disable-linux-hw-accel: false",
+):
+    if marker not in workflow:
+        raise SystemExit(f"workflow must preserve explicit accelerated API selection contract: {marker}")
+if "api-level: 35" in workflow:
+    raise SystemExit("Emulator API level must not be hardcoded after API selection was added")
+
+prepare = function_body("prepare_build")
+for marker in (
+    'dump permissions "$APP_APK"',
+    'dump permissions "$test_apk"',
+    'androidtest-apk-permissions.txt',
+    'scripts/verify-apk-permissions.py',
+):
+    if marker not in prepare and marker not in source:
+        raise SystemExit(f"both generated APK permission surfaces must use the explicit allowlist: {marker}")
+permission_verifier = (SCRIPT.parent / "verify-apk-permissions.py").read_text(encoding="utf-8")
+for marker in (
+    'APP_ALLOWED = frozenset()',
+    'TEST_ALLOWED = frozenset({"android.permission.REORDER_TASKS"})',
+    'if actual != expected:',
+):
+    if marker not in permission_verifier:
+        raise SystemExit(f"generated APK permissions must be constrained by exact allowlists: {marker}")
+
+for marker in (
+    'sdk-packages-installed.txt',
+    'sdk-toolchain-revisions.json',
+    'emulator/package.xml',
+    'ndk/28.2.13676358/package.xml',
+    'cmake/3.31.6/package.xml',
+    'selected-google-apis-x86_64-system-image',
+):
+    if marker not in source:
+        raise SystemExit(f"host metadata must retain installed SDK/NDK/CMake/Emulator revisions: {marker}")
+if "capture-model-license" not in workflow or "capture-model-license.py" not in source or "model-license-evidence.json" not in source:
+    raise SystemExit("workflow must capture immutable pinned model license metadata without weights")
+if "disposable-avd-cleanup-boundary.txt" not in workflow or "app_private_model_removed=not_individually_verified" not in source:
+    raise SystemExit("private model cleanup must be truthful and identify the disposable AVD boundary")
+
+if "python3 tools/g3-ondevice-poc/scripts/test-api-selection.py" not in workflow:
+    raise SystemExit("G3 workflow must execute host API marker regression tests")
+if "python3 tools/g3-ondevice-poc/scripts/api_selection.py \"$GITHUB_EVENT_PATH\" \"$G3_API_LEVEL\"" not in workflow:
+    raise SystemExit("G3 workflow must validate event markers against the selected API before SDK setup")
+if workflow.find("scripts/api_selection.py") > workflow.find("actions/setup-java"):
+    raise SystemExit("API marker validation must happen before SDK setup")
+
+cancellation_start = android_test.find("native abort callback test gate must arm")
+cancellation_end = android_test.find("val recoveryStarted", cancellation_start)
+if cancellation_start < 0 or cancellation_end < 0:
+    raise SystemExit("cancellation test boundaries are missing")
+cancellation_test = android_test[cancellation_start:cancellation_end]
+for marker in (
+    "armAbortCallbackGateForTest()",
+    "awaitAbortCallbackGateForTest(30, TimeUnit.SECONDS)",
+    "longRun.cancel()",
+    "releaseAbortCallbackGateForTest()",
+    "abortCallbackCancellationsForTest() > 0",
+):
+    if marker not in cancellation_test:
+        raise SystemExit(f"in-compute cancellation test must gate and assert the native abort callback: {marker}")
+if "awaitStartGateForTest" in cancellation_test:
+    raise SystemExit("cancellation proof must not use the pre-decode generation-start gate")
+
+source_root = SCRIPT.parents[1] / "app/src"
+native_source = source_root / "main/cpp/llama_jni.cpp"
+native = native_source.read_text(encoding="utf-8")
+abort_start = native.find("bool abort_requested(void * user_data)")
+abort_end = native.find("\n}\n", abort_start)
+if abort_start < 0 or abort_end < 0:
+    raise SystemExit("native llama abort callback implementation is missing")
+abort_body = native[abort_start:abort_end]
+for marker in (
+    "abort_test_gate_changed.wait",
+    "generation_cancelled(request.engine_id, request.generation_id)",
+    "return cancelled;",
+):
+    if marker not in abort_body:
+        raise SystemExit(f"native abort callback must gate and observe cancellation: {marker}")
+callback_install = native.find("llama_set_abort_callback(context, abort_requested, &request)")
+first_decode = native.find("llama_decode(context, prompt_batch)")
+if callback_install < 0 or first_decode < 0 or callback_install > first_decode:
+    raise SystemExit("native cancellation callback must be installed before prompt decode")
+
+network_apis = re.compile(r"java\.net\.|HttpURLConnection|HttpClient|OkHttp|Retrofit|Socket|URL\(")
+for suffix in ("*.kt", "*.java"):
+    for source_file in source_root.rglob(suffix):
+        if network_apis.search(source_file.read_text(encoding="utf-8")):
+            raise SystemExit(f"app source must not add network I/O for this local inference PoC: {source_file}")
+
+print("runner_and_androidtest_source_contract=PASS gradle_callers=prepare_build,run_model_test lease_wait_dispatcher=Dispatchers.IO load_close_async_failure_isolated=true cancellation_asserts_native_abort_callback=true target_and_androidtest_permission_allowlists_exact=true toolchain_revisions_captured=true pinned_model_license_evidence=true disposable_avd_cleanup_boundary=true api_marker_validation_pre_sdk=true explicit_api26_or_35=true x86_64_acceleration_required=true app_network_io=false")

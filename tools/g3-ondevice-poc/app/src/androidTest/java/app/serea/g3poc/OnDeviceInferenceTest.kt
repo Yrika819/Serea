@@ -70,9 +70,24 @@ class OnDeviceInferenceTest {
         var pssAfterGenerationKb = 0L
         var pssAfterCloseKb = 0L
         try {
+            val unicodeFixture = "Serea 日本語 🌱 café"
+            assertEquals(
+                "JNI must round-trip BMP and supplementary Unicode",
+                unicodeFixture,
+                nativeEngine.roundTripUnicodeForTest(unicodeFixture),
+            )
+            try {
+                nativeEngine.roundTripUnicodeForTest(String(charArrayOf('\uD800')))
+                fail("unpaired UTF-16 surrogate must be rejected before llama.cpp input")
+            } catch (_: IllegalArgumentException) {
+                // The JNI boundary accepts valid Unicode scalar values only.
+            }
+            phase("unicode_jni_contract_passed")
+            phase("model_load_started")
             port.load()
             loadElapsedMs = SystemClock.elapsedRealtime() - loadStarted
             pssAfterLoadKb = Debug.getPss()
+            phase("model_load_completed elapsed_ms=$loadElapsedMs")
 
             val secondaryEngine = NativeLlamaEngine()
             val secondaryPort = GgufModelChatPort(model.absolutePath, expectedHash, secondaryEngine)
@@ -88,16 +103,18 @@ class OnDeviceInferenceTest {
                 // Both engine instances start request numbering at 1. The JNI owner ID must
                 // prevent the second instance's cancellation/free calls from touching the first.
                 nativeEngine.armStartGateForTest()
-                val firstRun = async {
+                // The test thread waits on a blocking latch below. Dispatch this coroutine
+                // away from runBlocking's event loop so it can submit the native request.
+                val firstRun = async(Dispatchers.IO) {
                     port.send(ModelChatRequest("synthetic", "Lease isolation check.", maxOutputTokens = 8))
                 }
+                phase("foreign_engine_generation_submitted")
                 var gateReached = false
                 var foreignFree: kotlinx.coroutines.Deferred<Boolean>? = null
                 try {
-                    assertTrue(
-                        "the first engine must enter its native generation gate",
-                        nativeEngine.awaitStartGateForTest(15, TimeUnit.SECONDS),
-                    )
+                    gateReached = nativeEngine.awaitStartGateForTest(15, TimeUnit.SECONDS)
+                    phase("foreign_engine_generation_gate_reached=$gateReached starts=${nativeEngine.nativeGenerationStartsForTest()}")
+                    assertTrue("the first engine must enter its native generation gate", gateReached)
                     gateReached = true
                     val activeRequestId = nativeEngine.activeGenerationIdForTest()
                     assertEquals("first request ID provides a deterministic namespace collision", 1L, activeRequestId)
@@ -148,7 +165,7 @@ class OnDeviceInferenceTest {
                     "test executor blocker must start before queuing the cancelled request",
                     nativeEngine.awaitExecutorBlockedForTest(15, TimeUnit.SECONDS),
                 )
-                val queuedRun = async {
+                val queuedRun = async(Dispatchers.IO) {
                     port.send(ModelChatRequest("synthetic", "This request is cancelled before JNI entry.", maxOutputTokens = 8))
                 }
                 cancelQueuedRun = { queuedRun.cancel() }
@@ -177,33 +194,47 @@ class OnDeviceInferenceTest {
                 nativeEngine.nativeGenerationStartsForTest(),
             )
 
-            nativeEngine.armStartGateForTest()
-            val longRun = async {
+            assertTrue("native abort callback test gate must arm for the owning engine", nativeEngine.armAbortCallbackGateForTest())
+            val longRun = async(Dispatchers.IO) {
                 port.send(ModelChatRequest("synthetic", "Continue this sequence: 1, 2, 3,", maxOutputTokens = 256))
             }
+            phase("cancellation_generation_submitted")
             var cancellationStarted = 0L
+            var abortCallbackGateReached = false
             try {
+                abortCallbackGateReached = nativeEngine.awaitAbortCallbackGateForTest(30, TimeUnit.SECONDS)
+                phase(
+                    "cancellation_abort_callback_gate_reached=$abortCallbackGateReached " +
+                        "callback_entries=${nativeEngine.abortCallbackEntriesForTest()} " +
+                        "starts=${nativeEngine.nativeGenerationStartsForTest()}",
+                )
                 assertTrue(
-                    "native generation must reach the deterministic cancellation gate",
-                    nativeEngine.awaitStartGateForTest(15, TimeUnit.SECONDS),
+                    "llama.cpp must enter its installed abort callback during decode",
+                    abortCallbackGateReached,
                 )
                 cancellationStarted = SystemClock.elapsedRealtime()
             } finally {
-                // Always cancel and release the native test barrier, even when the start assertion fails.
+                // Cancellation is recorded while the llama.cpp abort callback is held at its test-only gate.
                 longRun.cancel()
-                nativeEngine.releaseStartGateForTest()
+                nativeEngine.releaseAbortCallbackGateForTest()
                 nativeEngine.awaitFinishedForTest(5, TimeUnit.SECONDS)
             }
             assertTrue(
-                "native generation must return after cancellation",
+                "native decode must return after abort-callback cancellation",
                 nativeEngine.awaitFinishedForTest(15, TimeUnit.SECONDS),
+            )
+            assertTrue("the abort callback gate must have been reached", abortCallbackGateReached)
+            assertTrue("llama.cpp must invoke the installed abort callback", nativeEngine.abortCallbackEntriesForTest() > 0)
+            assertTrue(
+                "the installed llama.cpp abort callback must observe the cancelled generation",
+                nativeEngine.abortCallbackCancellationsForTest() > 0,
             )
             cancellationElapsedMs = SystemClock.elapsedRealtime() - cancellationStarted
             try {
                 longRun.await()
-                error("cancelling the coroutine must stop native inference")
+                error("cancelling at the llama.cpp abort callback must stop native inference")
             } catch (_: CancellationException) {
-                // Expected cancellation path: JNI abort callback observes cancellation.
+                // Expected only after the test has observed the callback return true for this request.
             }
 
             val recoveryStarted = SystemClock.elapsedRealtime()
@@ -250,14 +281,26 @@ class OnDeviceInferenceTest {
         val racingEngine = NativeLlamaEngine()
         racingEngine.armLoadCloseRaceTest()
         racingEngine.blockExecutorForTest()
-        var racingLoad: kotlinx.coroutines.Deferred<Unit>? = null
+        var racingLoad: kotlinx.coroutines.Deferred<Boolean>? = null
         var racingClose: kotlinx.coroutines.Deferred<Unit>? = null
         try {
             assertTrue(
                 "race test executor blocker must be active before queuing model load",
                 racingEngine.awaitExecutorBlockedForTest(15, TimeUnit.SECONDS),
             )
-            racingLoad = async { racingEngine.load(model.absolutePath) }
+            // An expected exception escaping an async child cancels runBlocking's parent
+            // before the later await/catch can observe it. Convert only this expected close
+            // rejection into a value in the child; cancellation still propagates normally.
+            racingLoad = async(Dispatchers.IO) {
+                try {
+                    racingEngine.load(model.absolutePath)
+                    false
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: IllegalStateException) {
+                    if (failure.message == "Engine closed before model load") true else throw failure
+                }
+            }
             assertTrue("load request must be queued behind the executor blocker", racingEngine.awaitLoadQueuedForTest(15, TimeUnit.SECONDS))
             racingClose = async(Dispatchers.IO) { racingEngine.close() }
             assertTrue("close must mark the engine closed before queue release", racingEngine.awaitCloseStartedForTest(15, TimeUnit.SECONDS))
@@ -265,12 +308,7 @@ class OnDeviceInferenceTest {
             racingEngine.releaseExecutorBlockForTest()
             if (racingClose == null) racingClose = async(Dispatchers.IO) { racingEngine.close() }
         }
-        var loadRejectedByClose = false
-        try {
-            withTimeout(15_000) { checkNotNull(racingLoad).await() }
-        } catch (_: IllegalStateException) {
-            loadRejectedByClose = true
-        }
+        val loadRejectedByClose = withTimeout(15_000) { checkNotNull(racingLoad).await() }
         withTimeout(15_000) { checkNotNull(racingClose).await() }
         assertTrue("queued load must be skipped after close wins admission", racingEngine.awaitLoadSkippedForTest(5, TimeUnit.SECONDS))
         assertTrue("load-vs-close race must reject or cancel load", loadRejectedByClose)
@@ -306,5 +344,9 @@ class OnDeviceInferenceTest {
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun phase(detail: String) {
+        Log.i("G3_TEST_PHASE", "elapsed_realtime_ms=${SystemClock.elapsedRealtime()} $detail")
     }
 }

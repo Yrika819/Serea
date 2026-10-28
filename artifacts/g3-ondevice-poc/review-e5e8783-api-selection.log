@@ -1,0 +1,1 @@
+g3_api_selection_host_regression=PASS valid_push=2 both_markers_rejected=true supported_plus_unsupported_rejected=true unsupported_only_rejected=true malformed_rejected=true multiline_unclosed_rejected=true duplicate_marker_rejected=true dispatch=2

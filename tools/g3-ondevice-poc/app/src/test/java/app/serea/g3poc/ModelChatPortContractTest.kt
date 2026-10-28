@@ -34,6 +34,26 @@ class ModelChatPortContractTest {
     }
 
     @Test
+    fun sendPreservesUnicodeInCurrentAndPriorTurns() = runTest {
+        val engine = RecordingEngine()
+        val port = GgufModelChatPort("not-loaded-in-this-unit-test", "0".repeat(64), engine)
+        val response = port.send(
+            ModelChatRequest(
+                conversationId = "synthetic-unicode-conversation",
+                message = "日本語の予定を確認して 🌱",
+                context = listOf(ContextMessage("assistant", "Résumé déjà reçu.")),
+                maxOutputTokens = 8,
+            ),
+        )
+
+        assertEquals("fixed test response", response.text)
+        assertEquals(
+            "assistant: Résumé déjà reçu.\nuser: 日本語の予定を確認して 🌱\nassistant:",
+            engine.lastPrompt,
+        )
+    }
+
+    @Test
     fun modelHashIsCheckedBeforeCallingTheNativeLoader() = runTest {
         val fixture = File.createTempFile("serea-g3-model-integrity", ".gguf")
         fixture.writeText("synthetic integrity fixture; not a model")

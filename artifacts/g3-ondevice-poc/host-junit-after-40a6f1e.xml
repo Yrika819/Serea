@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.g3poc.ModelChatPortContractTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-28T00:10:10.284Z" hostname="b49fd8b02ed6" time="0.082">
+  <properties/>
+  <testcase name="sendPassesCurrentAndPriorTurnsToTheLocalEngine" classname="app.serea.g3poc.ModelChatPortContractTest" time="0.07"/>
+  <testcase name="modelHashIsCheckedBeforeCallingTheNativeLoader" classname="app.serea.g3poc.ModelChatPortContractTest" time="0.01"/>
+  <testcase name="closedModelPortRejectsFurtherUse" classname="app.serea.g3poc.ModelChatPortContractTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

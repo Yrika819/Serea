@@ -1,0 +1,24 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="app.serea.g3poc.OnDeviceInferenceTest" tests="1" failures="1" errors="0" skipped="0" time="18.336" timestamp="2026-10-27T13:54:41" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 15" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="pinnedModelLoadsGeneratesCancelsReleasesAndRejectsCorruptFile" classname="app.serea.g3poc.OnDeviceInferenceTest" time="17.599">
+    <failure>java.lang.AssertionError: the first engine must enter its native generation gate
+at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.assertTrue(Assert.java:42)
+at app.serea.g3poc.OnDeviceInferenceTest$pinnedModelLoadsGeneratesCancelsReleasesAndRejectsCorruptFile$1.invokeSuspend(OnDeviceInferenceTest.kt:97)
+at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:95)
+at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:69)
+at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:47)
+at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+at app.serea.g3poc.OnDeviceInferenceTest.pinnedModelLoadsGeneratesCancelsReleasesAndRejectsCorruptFile(OnDeviceInferenceTest.kt:33)
+</failure>
+  </testcase>
+</testsuite>

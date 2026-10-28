@@ -1,14 +1,27 @@
 name: G3 On-device Inference PoC (Non-Required)
 
 on:
+  workflow_dispatch:
+    inputs:
+      api_level:
+        description: Disposable Emulator API level for the single pinned lifecycle test
+        type: choice
+        required: true
+        options:
+          - '26'
+          - '35'
   # A push to the owned G3 branch only runs when explicitly marked. Merely
   # adding/updating this diagnostic workflow cannot start an Emulator or fetch weights.
   push:
     branches:
       - codex/serea-g3-real-ai-feasibility
+      - codex/serea-g3-diagnostic-recovery
     paths:
       - '.github/workflows/g3-ondevice-poc.yml'
       - 'tools/g3-ondevice-poc/**'
+
+env:
+  G3_API_LEVEL: ${{ github.event.inputs.api_level || (contains(github.event.head_commit.message, '[g3-api=26]') && '26') || (contains(github.event.head_commit.message, '[g3-api=35]') && '35') || '' }}
 
 permissions:
   contents: read
@@ -19,8 +32,12 @@ concurrency:
 
 jobs:
   ondevice-poc:
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[g3-poc-run]')
-    name: Pinned llama.cpp model lifecycle on disposable API 35 Emulator
+    if: >-
+      (github.event_name == 'push' &&
+       contains(github.event.head_commit.message, '[g3-poc-run]') &&
+       (contains(github.event.head_commit.message, '[g3-api=26]') || contains(github.event.head_commit.message, '[g3-api=35]'))) ||
+      github.event_name == 'workflow_dispatch'
+    name: Pinned llama.cpp model lifecycle on disposable API Emulator
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -29,6 +46,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Reject ambiguous API marker selection and run host regressions
+        run: |
+          set -euo pipefail
+          python3 tools/g3-ondevice-poc/scripts/test-api-selection.py
+          python3 tools/g3-ondevice-poc/scripts/api_selection.py "$GITHUB_EVENT_PATH" "$G3_API_LEVEL"
+
+      - name: Require explicit supported Emulator API selection
+        run: |
+          set -euo pipefail
+          case "$G3_API_LEVEL" in
+            26|35) printf 'selected_emulator_api=%s\n' "$G3_API_LEVEL" ;;
+            *) echo 'Select API 26 or 35 explicitly' >&2; exit 2 ;;
+          esac
 
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
@@ -48,13 +79,18 @@ jobs:
           'ndk;28.2.13676358'
           'cmake;3.31.6'
           'emulator'
-          'system-images;android-35;google_apis;x86_64'
+          "system-images;android-${G3_API_LEVEL};google_apis;x86_64"
 
       - name: Capture runner and SDK metadata
         run: |
           set -euo pipefail
           mkdir -p "$G3_EVIDENCE_DIR"
           bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh host-metadata
+
+      - name: Verify license metadata at the pinned model revision (no weights)
+        run: |
+          set -euo pipefail
+          bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh capture-model-license
 
       - name: Require accessible KVM and verified Emulator acceleration
         run: |
@@ -76,7 +112,10 @@ jobs:
             2>&1 | tee "$G3_EVIDENCE_DIR/bounded-download-test.txt"
 
       - name: Verify Gradle root and AndroidTest source contracts
-        run: python3 tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py
+        run: |
+          python3 tools/g3-ondevice-poc/scripts/test-gradle-project-dir.py
+          python3 tools/g3-ondevice-poc/scripts/test-native-source-contract.py
+          python3 tools/g3-ondevice-poc/scripts/test-poc-metadata-contracts.py
 
       - name: Exercise optional CPU pressure and early-exit cleanup with fake adb
         run: python3 tools/g3-ondevice-poc/scripts/test-runner-failure-paths.py
@@ -86,20 +125,37 @@ jobs:
           set -euo pipefail
           bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh prepare
 
-      - name: Run exactly one pinned model lifecycle test on a disposable Emulator
+      - name: Run exactly one pinned model lifecycle test on API ${{ env.G3_API_LEVEL }} Emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, repository-pinned)
         timeout-minutes: 90
         with:
-          api-level: 35
+          api-level: ${{ env.G3_API_LEVEL }}
           target: google_apis
           arch: x86_64
-          profile: pixel_7
+          profile: ${{ env.G3_API_LEVEL == '26' && 'pixel' || 'pixel_7' }}
           force-avd-creation: true
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -wipe-data
           script: bash tools/g3-ondevice-poc/scripts/run-diagnostic.sh execute
+
+      - name: Record the disposable AVD cleanup boundary
+        if: always()
+        run: |
+          mkdir -p "$G3_EVIDENCE_DIR"
+          {
+            echo 'runner=GitHub-hosted ubuntu-24.04 ephemeral job VM'
+            echo 'avd_force_created=true'
+            echo 'avd_wipe_data=true'
+            echo 'avd_reused=false'
+            echo 'model_weights_uploaded_as_artifact=false'
+            echo 'app_private_model_cleanup=verified by adb when package remains installed; otherwise not individually verified'
+            echo 'final_cleanup_boundary=AVD and job VM are discarded when this GitHub-hosted job ends'
+          } | tee "$G3_EVIDENCE_DIR/disposable-avd-cleanup-boundary.txt"
+          if [ -f "$G3_EVIDENCE_DIR/model-cleanup.txt" ]; then
+            cat "$G3_EVIDENCE_DIR/model-cleanup.txt" >> "$G3_EVIDENCE_DIR/disposable-avd-cleanup-boundary.txt"
+          fi
 
       - name: Capture post-run host resource metadata
         if: always()
@@ -111,7 +167,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: serea-g3-ondevice-poc-${{ github.sha }}
+          name: serea-g3-ondevice-poc-api${{ env.G3_API_LEVEL }}-${{ github.sha }}
           if-no-files-found: warn
           retention-days: 14
           path: evidence/g3-ondevice-poc/

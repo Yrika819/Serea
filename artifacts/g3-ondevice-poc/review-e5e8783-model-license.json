@@ -1,0 +1,13 @@
+{
+  "base_model": "HuggingFaceTB/SmolLM2-135M",
+  "declared_license": "apache-2.0",
+  "metadata_repository": "ggml-org/SmolLM2-135M-GGUF",
+  "metadata_response_sha256": "0706cb4f7d4f54abf49b620da9863532cdacbba289ba403a37533c8e43eebb1f",
+  "metadata_revision": "1076b85d135017971845b19b8d07df1479155988",
+  "model_file": "SmolLM2-135M-Q4_K_M.gguf",
+  "model_file_sha256": "e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5",
+  "model_file_size_bytes": 101016128,
+  "retrieved_utc": "2026-10-28T00:38:27.256645+00:00",
+  "source_url": "https://huggingface.co/api/models/ggml-org/SmolLM2-135M-GGUF/revision/1076b85d135017971845b19b8d07df1479155988",
+  "weights_downloaded_by_this_step": false
+}

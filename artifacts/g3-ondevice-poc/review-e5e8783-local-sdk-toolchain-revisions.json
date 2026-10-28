@@ -1,0 +1,44 @@
+{
+  "build-tools-35.0.0": {
+    "installed": true,
+    "package_path": "build-tools;35.0.0",
+    "package_xml": "/workspace/android-sdk/build-tools/35.0.0/package.xml",
+    "revision": "35.0.0"
+  },
+  "cmake-3.31.6": {
+    "installed": true,
+    "package_path": "cmake;3.31.6",
+    "package_xml": "/workspace/android-sdk/cmake/3.31.6/package.xml",
+    "revision": "3.31.6"
+  },
+  "emulator": {
+    "installed": true,
+    "package_path": "emulator",
+    "package_xml": "/workspace/android-sdk/emulator/package.xml",
+    "revision": "37.2.12"
+  },
+  "ndk-28.2.13676358": {
+    "installed": true,
+    "package_path": "ndk;28.2.13676358",
+    "package_xml": "/workspace/android-sdk/ndk/28.2.13676358/package.xml",
+    "revision": "28.2.13676358"
+  },
+  "platform-35": {
+    "installed": true,
+    "package_path": "platforms;android-35",
+    "package_xml": "/workspace/android-sdk/platforms/android-35/package.xml",
+    "revision": "2"
+  },
+  "platform-tools": {
+    "installed": true,
+    "package_path": "platform-tools",
+    "package_xml": "/workspace/android-sdk/platform-tools/package.xml",
+    "revision": "37.0.1"
+  },
+  "selected-google-apis-x86_64-system-image": {
+    "installed": true,
+    "package_path": "system-images;android-35;google_apis;x86_64",
+    "package_xml": "/workspace/android-sdk/system-images/android-35/google_apis/x86_64/package.xml",
+    "revision": "9"
+  }
+}

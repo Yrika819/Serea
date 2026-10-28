@@ -1,0 +1,3 @@
+10-27 13:54:23.541  3913  3968 D nativeloader: Load /data/app/~~lJwrhSbSogfKCl4eFCaFog==/app.serea.g3poc-TG03H1G5ws704iVTxZy14A==/base.apk!/lib/x86_64/libserea-g3-llama.so using ns clns-7 from class loader (caller=/data/app/~~lJwrhSbSogfKCl4eFCaFog==/app.serea.g3poc-TG03H1G5ws704iVTxZy14A==/base.apk!classes3.dex): ok
+10-27 13:54:40.382  3913  3968 E TestRunner: failed: pinnedModelLoadsGeneratesCancelsReleasesAndRejectsCorruptFile(app.serea.g3poc.OnDeviceInferenceTest)
+10-27 13:54:40.392  3913  3968 E TestRunner: java.lang.AssertionError: the first engine must enter its native generation gate

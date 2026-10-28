@@ -28,6 +28,7 @@ concurrency:
 
 env:
   JAVA_VERSION: '17'
+  EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   TARGET_APK: android/app/build/outputs/apk/isolated/app-isolated.apk
   TEST_APK: android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk
   IME_APK: android/r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk
@@ -42,6 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -67,7 +69,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
           git merge-base --is-ancestor "$DIAGNOSTIC_BASE_SHA" HEAD
           unexpected="$(git diff --name-only "$DIAGNOSTIC_BASE_SHA" HEAD | awk '
             $0 != ".github/workflows/android-api35-real-ime-independent-bc.yml" &&
@@ -123,15 +125,28 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew --no-daemon :app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug \
+          ./gradlew --no-daemon :app:processDebugMainManifest :app:processIsolatedMainManifest \
+            :app:processBetaMainManifest :app:assembleIsolated :app:assembleIsolatedAndroidTest \
+            :r25-ime-test:assembleDebug \
             2>&1 | tee ../evidence/real-ime-independent-bc/gradle-build.log
       - name: Verify Test IME permission and components are isolated
         run: |
+          set -euo pipefail
+          mkdir -p evidence/real-ime-independent-bc/manifests
+          cp android/app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml \
+            evidence/real-ime-independent-bc/manifests/debug.xml
+          cp android/app/build/intermediates/merged_manifest/isolated/processIsolatedMainManifest/AndroidManifest.xml \
+            evidence/real-ime-independent-bc/manifests/isolated.xml
+          cp android/app/build/intermediates/merged_manifest/beta/processBetaMainManifest/AndroidManifest.xml \
+            evidence/real-ime-independent-bc/manifests/beta.xml
+          cp android/r25-ime-test/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml \
+            evidence/real-ime-independent-bc/manifests/test-ime.xml
           python3 tools/verify_serea_real_ime_manifest_scope.py \
             --debug android/app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml \
             --isolated android/app/build/intermediates/merged_manifest/isolated/processIsolatedMainManifest/AndroidManifest.xml \
             --beta android/app/build/intermediates/merged_manifest/beta/processBetaMainManifest/AndroidManifest.xml \
-            --ime android/r25-ime-test/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml
+            --ime android/r25-ime-test/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml \
+            | tee evidence/real-ime-independent-bc/manifest-scope-verification.txt
       - name: Verify signature permission recipient and Test IME share signer
         shell: bash
         run: |
@@ -188,6 +203,8 @@ jobs:
           path: |
             evidence/real-ime-independent-bc/source.txt
             evidence/real-ime-independent-bc/gradle-build.log
+            evidence/real-ime-independent-bc/manifests/
+            evidence/real-ime-independent-bc/manifest-scope-verification.txt
           if-no-files-found: warn
           retention-days: 30
 
@@ -221,6 +238,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -246,8 +264,8 @@ jobs:
         run: |
           set -euo pipefail
           apks="$RUNNER_TEMP/serea-real-ime-bc-apks"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(sed -n 's/^source_commit=//p' "$apks/provenance.txt")" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test "$(sed -n 's/^source_commit=//p' "$apks/provenance.txt")" = "$EXPECTED_SOURCE_SHA"
           test "$(sed -n 's/^diagnostic_base_sha=//p' "$apks/provenance.txt")" = "$DIAGNOSTIC_BASE_SHA"
           test "$(sed -n 's/^source_tree=//p' "$apks/provenance.txt")" = "$(git rev-parse 'HEAD^{tree}')"
           test "$(sed -n 's/^apk_manifest_sha256=//p' "$apks/provenance.txt")" = "$(sha256sum "$apks/apk-sha256.txt" | awk '{print $1}')"

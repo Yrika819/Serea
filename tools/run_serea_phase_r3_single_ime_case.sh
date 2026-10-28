@@ -2,6 +2,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/tools/serea_real_ime_avd_guards.sh"
 OUT="${SEREA_R3_OUT:?Set SEREA_R3_OUT}"
 APKS="${SEREA_R3_APKS:?Set SEREA_R3_APKS}"
 API="${SEREA_R3_API:?Set SEREA_R3_API}"
@@ -110,8 +111,9 @@ cleanup() {
   trap - EXIT INT TERM
   set +e
   if [[ -n "$LOGCAT_PID" ]]; then
-    kill "$LOGCAT_PID" >/dev/null 2>&1
-    wait "$LOGCAT_PID" >/dev/null 2>&1
+    if ! serea_stop_logcat_bounded "$LOGCAT_PID" 2 2 > "$OUT/logcat-stop.txt" 2>&1; then
+      final_status=1
+    fi
     LOGCAT_PID=''
   fi
   if command -v adb >/dev/null 2>&1 && cleanup_adb get-state >/dev/null 2>&1; then
@@ -230,26 +232,24 @@ fi
 hardware="$(adb shell getprop ro.hardware | tr -d '\r')"
 fingerprint="$(adb shell getprop ro.build.fingerprint | tr -d '\r')"
 abi="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
-case "$API" in
-  26)
-    case "$fingerprint" in
-      *sdk_gphone_x86_64*|*generic_x86_64*) ;;
-      *) fail emulator-guard "API 26 fingerprint is not a supported x86_64 Google APIs emulator image: $fingerprint" ;;
-    esac
-    ;;
-  35)
-    case "$fingerprint" in
-      *sdk_gphone64_x86_64*|*sdk_phone64_x86_64*|*generic_x86_64*) ;;
-      *) fail emulator-guard "API 35 fingerprint is not a supported x86_64 Google APIs emulator image: $fingerprint" ;;
-    esac
-    ;;
-esac
+active_avd_reply="$(adb emu avd name | tr -d '\r')"
+active_avd="$(printf '%s\n' "$active_avd_reply" | awk 'NF && $0 != "OK" && $0 !~ /^KO:/ { print; exit }')"
+if [[ ! "$active_avd" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+  fail emulator-guard "Could not identify the active AVD from adb emu avd name: $active_avd_reply"
+fi
+avd_home="${ANDROID_AVD_HOME:-${ANDROID_USER_HOME:-$HOME/.android}/avd}"
+avd_config="$avd_home/$active_avd.avd/config.ini"
+if ! avd_image_metadata="$(serea_verify_active_google_apis_avd "$API" "$fingerprint" "$avd_config")"; then
+  fail emulator-guard "Active AVD image or device fingerprint did not match the requested API $API Google APIs x86_64 image."
+fi
 if [[ ( "$hardware" != ranchu && "$hardware" != goldfish ) || "$abi" != x86_64 ]]; then
   fail emulator-guard "Unexpected API $API emulator identity: hardware=$hardware abi=$abi fingerprint=$fingerprint"
 fi
 {
   printf 'api=%s\nhardware=%s\nabi=%s\nfingerprint=%s\nqemu=%s\nboot_completed=1\n' \
     "$API" "$hardware" "$abi" "$fingerprint" "$SEREA_OBSERVED_ANDROID_QEMU"
+  printf 'active_avd=%s\nactive_avd_config=%s\n' "$active_avd" "$avd_config"
+  printf '%s\n' "$avd_image_metadata"
   printf 'serial=%s\nfont_scale=%s\n' "$(adb get-serialno | tr -d '\r')" \
     "$(adb shell settings get system font_scale | tr -d '\r')"
   adb shell wm size

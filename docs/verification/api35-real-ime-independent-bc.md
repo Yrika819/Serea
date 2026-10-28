@@ -75,12 +75,37 @@ credentials, and user data are not used.
 
 ## Pending evidence
 
-- Local target/test/IME APK build: PASS on the campaign worktree; exact final commit evidence pending
+- Local target/test/IME APK build: PASS at campaign HEAD `d2d31253ad690f6b82839872d524af5bfdfea45f` / tree `2aa78be7fbabf877e587478110579456715621d3`
 - Workflow Run ID / artifact IDs: NOT_RUN
 - API 26 B/C: NOT_RUN
 - API 35 B/C: NOT_RUN
-- Campaign APK SHA-256: pending exact-head build capture
+- Campaign APK SHA-256: recorded below
 - Emulator cleanup and IME restoration: NOT_RUN
+
+### Campaign APK and package boundary evidence
+
+The exact-source local command completed successfully on the campaign source:
+
+```text
+cd android
+./gradlew --no-daemon :app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug
+BUILD SUCCESSFUL
+```
+
+The APK identities and SHA-256 values are:
+
+| Artifact | Package | SHA-256 |
+| --- | --- | --- |
+| Isolated target | `app.serea.android.isolated` | `70e4e8ba3bbbc35c3c3d0ed8d84eb7949ad0ecf4e862a4be8c0ebeaf4cdb0f17` |
+| Instrumentation | `app.serea.android.isolated.test` | `06db42b80fd1e5684073f108c04780bc92f9ee77aaf5788667337e909d2c56d2` |
+| Standalone Test IME | `app.serea.android.r25testime` | `e90b586f412b68bac936ba3b06694565fdd7e6da5d096321f193bcc013eb0d70` |
+
+The Test IME is a separate APK. Its service uses Android's `BIND_INPUT_METHOD` permission; its
+diagnostics provider is signature-permission protected. The isolated debug target requests that
+signature permission for the test, but it does not declare or package the IME service. The beta
+merged manifest was generated with `:app:processBetaMainManifest` and checked: it contains no
+`r25testime`, `RealImeService`, `InputMethod`, or diagnostic-permission entry. No signing inputs or
+production beta APK were used.
 
 ## Request-contract build checkpoint
 

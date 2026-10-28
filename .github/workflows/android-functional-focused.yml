@@ -30,11 +30,24 @@ concurrency:
 
 jobs:
   provider-unit:
-    name: Provider sessions, Chat Egress and source binding (focused unit tests)
+    name: Provider sessions, trusted handoff and local-model adapter (focused unit tests)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact focused test source SHA
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_source_sha=$(git rev-parse HEAD)
+          if [ "$actual_source_sha" != "$EXPECTED_SOURCE_SHA" ]; then
+            echo "Expected $EXPECTED_SOURCE_SHA, checked out $actual_source_sha" >&2
+            exit 1
+          fi
+          echo "PASS: focused tests use exact source SHA $actual_source_sha"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -59,6 +72,8 @@ jobs:
           --tests '*UsageLedgerCostTest'
           --tests '*GoogleOriginEgressAdversarialTest'
           --tests '*LocalFakeRoutingAdversarialTest'
+          --tests '*GoogleTrustedHandoffTest'
+          --tests '*LocalModelChatAdapterTest'
       - name: Verify focused unit JUnit results
         run: python3 tools/verify_android_unit_junit.py android/app/build/test-results/testDebugUnitTest
       - name: Upload focused unit evidence
@@ -77,6 +92,19 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact focused test source SHA
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_source_sha=$(git rev-parse HEAD)
+          if [ "$actual_source_sha" != "$EXPECTED_SOURCE_SHA" ]; then
+            echo "Expected $EXPECTED_SOURCE_SHA, checked out $actual_source_sha" >&2
+            exit 1
+          fi
+          echo "PASS: focused tests use exact source SHA $actual_source_sha"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -172,6 +200,19 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact focused test source SHA
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_source_sha=$(git rev-parse HEAD)
+          if [ "$actual_source_sha" != "$EXPECTED_SOURCE_SHA" ]; then
+            echo "Expected $EXPECTED_SOURCE_SHA, checked out $actual_source_sha" >&2
+            exit 1
+          fi
+          echo "PASS: focused tests use exact source SHA $actual_source_sha"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin

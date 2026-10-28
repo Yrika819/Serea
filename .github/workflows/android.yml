@@ -26,6 +26,11 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - id: scope
         name: Classify changed files
         env:
@@ -67,6 +72,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - name: Test Android update emulator guard with Mock ADB
         run: bash tools/test_android_update_compatibility_guard.sh
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
@@ -131,6 +143,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -163,6 +182,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -189,6 +215,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -219,6 +252,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -560,6 +598,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - name: Validate documentation and links
         run: python3 tools/validate_docs.py docs
 
@@ -571,6 +616,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -644,6 +696,7 @@ jobs:
       - name: Assemble CI result manifest and reacceptance bundle
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BUILD_CHECKOUT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           RUN_ID: ${{ github.run_id }}
           BUILD_RESULT: ${{ needs.android-build.result }}
@@ -655,6 +708,17 @@ jobs:
           INSTRUMENTATION_RESULT: ${{ needs.android-storage-emulator.outputs.instrumentation }}
         run: |
           set -euo pipefail
+          provenance_path="$(find "$RUNNER_TEMP/serea-candidate" -type f -name provenance.txt -print -quit)"
+          test -n "$provenance_path" && test -s "$provenance_path"
+          provenance_source_sha="$(sed -n 's/^source_commit=//p' "$provenance_path")"
+          provenance_checkout_sha="$(sed -n 's/^build_checkout_commit=//p' "$provenance_path")"
+          if [[ "$provenance_source_sha" != "$SOURCE_SHA" || \
+                "$provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA" ]]; then
+            echo "APK provenance source/check-out SHA does not match the exact PR source." >&2
+            echo "Expected source=$SOURCE_SHA checkout=$BUILD_CHECKOUT_SHA" >&2
+            echo "Artifact source=$provenance_source_sha checkout=$provenance_checkout_sha" >&2
+            exit 1
+          fi
           bundle="$RUNNER_TEMP/serea-pixel7a-final-bundle"
           mkdir -p "$bundle/build" "$bundle/android-ci" "$bundle/api-tests-and-process-death"
           cp -R "$RUNNER_TEMP/serea-candidate/." "$bundle/build/"
@@ -668,7 +732,7 @@ jobs:
           done
           {
             echo "source_commit=$SOURCE_SHA"
-            echo "build_checkout_commit=$GITHUB_SHA"
+            echo "build_checkout_commit=$provenance_checkout_sha"
             echo "base_commit=$BASE_SHA"
             echo "github_run_id=$RUN_ID"
             echo "github_run_attempt=$GITHUB_RUN_ATTEMPT"
@@ -704,6 +768,11 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin

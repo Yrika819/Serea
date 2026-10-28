@@ -31,9 +31,15 @@ jobs:
       - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
       - name: Install current stable Rust
         run: rustup toolchain install stable --profile minimal
 
@@ -45,7 +51,7 @@ jobs:
         id: scan
         env:
           CARGO_AUDIT_VERSION: 0.22.2
-          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -56,7 +62,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: rust-security-${{ github.sha }}-${{ github.run_id }}
+          name: rust-security-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: security-results/
           if-no-files-found: error
           retention-days: 90

@@ -526,7 +526,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             scripts,
         )
         self.assertIn('build_checkout_commit=$(git rev-parse HEAD)', workflow)
-        self.assertIn('build_checkout_commit=$GITHUB_SHA', workflow)
+        self.assertIn('build_checkout_commit=$provenance_checkout_sha', workflow)
+        self.assertIn('provenance_source_sha', workflow)
+        self.assertIn('provenance_checkout_sha', workflow)
+        self.assertIn('"$provenance_source_sha" != "$SOURCE_SHA"', workflow)
+        self.assertIn('"$provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA"', workflow)
+        self.assertIn('find "$RUNNER_TEMP/serea-candidate" -type f -name provenance.txt', workflow)
         self.assertIn('base_commit=$BASE_SHA', workflow)
         self.assertIn('github_run_attempt=$GITHUB_RUN_ATTEMPT', workflow)
         self.assertIn(

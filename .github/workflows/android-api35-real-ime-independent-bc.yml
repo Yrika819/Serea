@@ -83,6 +83,7 @@ jobs:
             $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml" &&
             $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml" &&
             $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle.log" &&
+            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle-exact-head-dfc139c.log" &&
             $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/summary.txt" &&
             $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/sha256sums.txt" { print }
           ')"

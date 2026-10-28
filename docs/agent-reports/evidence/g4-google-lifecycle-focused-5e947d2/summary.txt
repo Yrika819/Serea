@@ -2,8 +2,10 @@ Integrated G2 focused JVM rerun
 
 Worktree: /workspace/Serea-g4-real-ime-campaign
 Branch: codex/serea-g4-real-ime-campaign-20261028
-HEAD during run: 5e947d24d5f38ea1b90439e9187ca9a60f41927b
-Tree during run: 95785cdfe08756d4659b1f4bd4e5011053e5c2fc
+First integrated run HEAD: 5e947d24d5f38ea1b90439e9187ca9a60f41927b
+First integrated run tree: 95785cdfe08756d4659b1f4bd4e5011053e5c2fc
+Exact-head rerun HEAD: dfc139c4622d7e7c1b71b2e0d4874cb90ad2b806
+Exact-head rerun tree: c0962d5d385698c42b46d709411fe90c29ba4e3c
 Reviewed G2 source head: 0ca2dbe058309c83dfd8bd3eeefbca1029654c8a
 The two changed JVM test files match the reviewed G2 source blobs exactly. Other
 worktree changes at the time were the Android real-IME test adapter/workflow and docs;
@@ -28,3 +30,8 @@ CalendarProviderSessionsTest 13; GoogleCalendarHttpReadPortTest 20.
 JUnit XML files and their SHA-256 values are preserved in this directory. This run
 uses Fake authorization and synthetic fixtures. Play Services Identity concurrency,
 real OAuth/account access, and live Google API calls remain NOT_RUN.
+
+The exact-head rerun used the same six-class command with `--rerun-tasks` and produced
+`BUILD SUCCESSFUL` with 94/94, 0 failures, 0 errors and 0 skipped at HEAD `dfc139c`.
+Its output is `gradle-exact-head-dfc139c.log`. A later default Gradle invocation that
+reported `UP-TO-DATE` is not counted as a test execution.

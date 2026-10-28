@@ -43,7 +43,11 @@ class CloudEgressBodyLineageAttackMatrixTest {
                 }
             })
 
-            vm.prefillEditorFromProvider("synthetic imported body", providerOrigin)
+            vm.prefillEditorFromProvider(
+                "synthetic imported body",
+                providerOrigin,
+                syntheticLocalDemoAuthorization(providerOrigin, expectedMessage = "typed again"),
+            )
             val generation = vm.state.value.editorInputGeneration
             vm.updateEditorValue(TextFieldValue("synthetic edited body", selection = TextRange(12, 12)), generation)
             assertEquals(setOf(providerOrigin, DataOrigin.USER_AUTHORED), vm.state.value.editorSourceLineage)
@@ -70,7 +74,10 @@ class CloudEgressBodyLineageAttackMatrixTest {
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("synthetic summary")
         })
-        vm.prefillEditorFromProvider("synthetic Gmail source", DataOrigin.GMAIL)
+        vm.prefillEditorFromProvider(
+            "synthetic Gmail source", DataOrigin.GMAIL,
+            syntheticLocalDemoAuthorization(DataOrigin.GMAIL, expectedMessage = "synthetic Gmail source"),
+        )
         vm.sendMessage()
         advanceUntilIdle()
 
@@ -84,7 +91,10 @@ class CloudEgressBodyLineageAttackMatrixTest {
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("synthetic summary")
         })
-        vm.prefillEditorFromProvider("synthetic Calendar source", DataOrigin.CALENDAR)
+        vm.prefillEditorFromProvider(
+            "synthetic Calendar source", DataOrigin.CALENDAR,
+            syntheticLocalDemoAuthorization(DataOrigin.CALENDAR, expectedMessage = "synthetic Calendar source"),
+        )
         vm.sendMessage()
         advanceUntilIdle()
 
@@ -99,7 +109,10 @@ class CloudEgressBodyLineageAttackMatrixTest {
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("synthetic summary")
         })
-        vm.prefillEditorFromProvider("synthetic Gmail source", DataOrigin.GMAIL)
+        vm.prefillEditorFromProvider(
+            "synthetic Gmail source", DataOrigin.GMAIL,
+            syntheticLocalDemoAuthorization(DataOrigin.GMAIL, expectedMessage = "synthetic Gmail source"),
+        )
         vm.sendMessage()
         advanceUntilIdle()
         val assistant = vm.state.value.conversation.messages.last()
@@ -173,7 +186,10 @@ class CloudEgressBodyLineageAttackMatrixTest {
         val vm = ChatViewModel(object : ModelChatPort {
             override suspend fun send(request: ModelChatRequest) = ModelChatResponse("synthetic summary")
         })
-        vm.prefillEditorFromProvider("synthetic Gmail source", DataOrigin.GMAIL)
+        vm.prefillEditorFromProvider(
+            "synthetic Gmail source", DataOrigin.GMAIL,
+            syntheticLocalDemoAuthorization(DataOrigin.GMAIL, expectedMessage = "synthetic Gmail source"),
+        )
         vm.sendMessage()
         advanceUntilIdle()
 
@@ -221,7 +237,10 @@ class CloudEgressBodyLineageAttackMatrixTest {
         }
 
         val beforeRecreation = ViewModelProvider(store, factory)[ChatViewModel::class.java]
-        beforeRecreation.prefillEditorFromProvider("synthetic calendar excerpt", DataOrigin.CALENDAR)
+        beforeRecreation.prefillEditorFromProvider(
+            "synthetic calendar excerpt", DataOrigin.CALENDAR,
+            syntheticLocalDemoAuthorization(DataOrigin.CALENDAR, expectedMessage = "edited calendar excerpt"),
+        )
         beforeRecreation.updateEditorValue(TextFieldValue("edited calendar excerpt"))
         val afterConfigurationRecreation = ViewModelProvider(store, factory)[ChatViewModel::class.java]
 
@@ -256,7 +275,10 @@ class CloudEgressBodyLineageAttackMatrixTest {
             }
         }, historyRepository = history, initialConversation = Conversation("before-switch"))
 
-        vm.prefillEditorFromProvider("synthetic Gmail fixture", DataOrigin.GMAIL)
+        vm.prefillEditorFromProvider(
+            "synthetic Gmail fixture", DataOrigin.GMAIL,
+            syntheticLocalDemoAuthorization(DataOrigin.GMAIL, expectedMessage = "edited after conversation switch"),
+        )
         vm.openConversation(saved.id)
         advanceUntilIdle()
         assertEquals(saved.id, vm.state.value.conversation.id)
@@ -431,6 +453,22 @@ class CloudEgressBodyLineageAttackMatrixTest {
         )
     }
 
+    /**
+     * Gives these legacy local-demo lineage fixtures an exact synthetic handoff.
+     * It authorizes only the expected message with exactly one matching Google
+     * source lineage; the independent Cloud egress assertions remain unchanged.
+     */
+    private fun syntheticLocalDemoAuthorization(
+        selectedOrigin: DataOrigin,
+        expectedMessage: String,
+    ): LocalDemoGoogleHandoffAuthorization = object : LocalDemoGoogleHandoffAuthorization() {
+        override val origin = selectedOrigin
+
+        override suspend fun consume(request: ModelChatRequest): Boolean =
+            request.message == expectedMessage &&
+                request.bodySourceLineage.intersect(GOOGLE_ORIGINS) == setOf(selectedOrigin)
+    }
+
     private fun fixtureCatalog(): FakeModelCatalog {
         val verifiedAt = Instant.parse("2026-10-28T08:00:00Z")
         return FakeModelCatalog(listOf(ModelDescriptor(
@@ -496,5 +534,8 @@ class CloudEgressBodyLineageAttackMatrixTest {
         }.toLong()
     }
 
-    private companion object { const val MODEL_ID = "gemma4:31b" }
+    private companion object {
+        const val MODEL_ID = "gemma4:31b"
+        val GOOGLE_ORIGINS = setOf(DataOrigin.GMAIL, DataOrigin.CALENDAR)
+    }
 }

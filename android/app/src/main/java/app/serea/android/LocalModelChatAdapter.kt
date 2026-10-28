@@ -38,7 +38,7 @@ internal interface LocalModelInferenceBackend : AutoCloseable {
     suspend fun generate(prompt: String, maxOutputTokens: Int): LocalModelInferenceResult
     /** Thread-safe while load or generate is active; cancels work without freeing model state. */
     fun cancelActive()
-    /** Called by the adapter only after active generation has unwound under its lifecycle lock. */
+    /** Called after active load/generation has unwound under the adapter mutex. */
     override fun close()
 }
 

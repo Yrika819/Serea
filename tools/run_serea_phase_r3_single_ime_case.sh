@@ -51,16 +51,22 @@ verify_installed_apk() {
 }
 
 restore_test_ime() {
-  local cleanup_file="$OUT/ime-cleanup.txt" restored enabled package_path status=0
+  local cleanup_file="$OUT/ime-cleanup.txt" restored enabled package_inventory test_ime_absent status=0
   if [[ "$IME_INSTALLED" != true ]]; then
     restored="$(cleanup_adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')" || status=1
     enabled="$(cleanup_adb shell settings get secure enabled_input_methods 2>/dev/null | tr -d '\r')" || status=1
-    package_path="$(cleanup_adb shell pm path "$IME" 2>/dev/null | tr -d '\r')" || status=1
+    package_inventory="$(cleanup_adb shell pm list packages --user 0 2>/dev/null | tr -d '\r')" || status=1
+    if serea_verify_package_absent_from_listing "$IME" "$package_inventory"; then
+      test_ime_absent=true
+    else
+      test_ime_absent=false
+      status=1
+    fi
     {
       printf 'cleanup_action=NOT_REQUIRED\noriginal_default_ime=%s\nrestored_default_ime=%s\n' \
         "$ORIGINAL_IME" "$restored"
-      printf 'enabled_ime_state=%s\ntest_ime_package_path=%s\n' "$enabled" "$package_path"
-      if [[ -z "$ORIGINAL_IME" || "$ORIGINAL_IME" == null || "$restored" != "$ORIGINAL_IME" || -n "$package_path" ]]; then
+      printf 'enabled_ime_state=%s\ntest_ime_package_absent=%s\n' "$enabled" "$test_ime_absent"
+      if [[ -z "$ORIGINAL_IME" || "$ORIGINAL_IME" == null || "$restored" != "$ORIGINAL_IME" ]]; then
         status=1
       fi
       [[ "$enabled" != *"$IME_COMPONENT"* ]] || status=1
@@ -103,12 +109,17 @@ restore_test_ime() {
     fi
     restored="$(cleanup_adb shell settings get secure default_input_method 2>/dev/null | tr -d '\r')" || status=1
     enabled="$(cleanup_adb shell settings get secure enabled_input_methods 2>/dev/null | tr -d '\r')" || status=1
-    package_path="$(cleanup_adb shell pm path "$IME" 2>/dev/null | tr -d '\r')" || status=1
-    printf 'restored_default_ime=%s\nenabled_ime_state=%s\ntest_ime_package_path=%s\n' \
-      "$restored" "$enabled" "$package_path"
+    package_inventory="$(cleanup_adb shell pm list packages --user 0 2>/dev/null | tr -d '\r')" || status=1
+    if serea_verify_package_absent_from_listing "$IME" "$package_inventory"; then
+      test_ime_absent=true
+    else
+      test_ime_absent=false
+      status=1
+    fi
+    printf 'restored_default_ime=%s\nenabled_ime_state=%s\ntest_ime_package_absent=%s\n' \
+      "$restored" "$enabled" "$test_ime_absent"
     [[ "$restored" == "$ORIGINAL_IME" ]] || status=1
     [[ "$enabled" != *"$IME_COMPONENT"* ]] || status=1
-    [[ -z "$package_path" ]] || status=1
     printf 'restore_default_exit=%s\ndisable_test_ime_exit=%s\nuninstall_test_ime_exit=%s\n' \
       "$set_default_exit" "$disable_test_ime_exit" "$uninstall_test_ime_exit"
     printf 'cleanup_finished_at_utc=%s\ncleanup_status=%s\n' \

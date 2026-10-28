@@ -33,6 +33,12 @@ serea_verify_isolated_seed_log() {
     grep -Fq 'PASS: fresh isolated namespace received a one-use host seed without starting the app.' "$log_file"
 }
 
+serea_verify_package_absent_from_listing() {
+  local package="$1" package_listing="$2"
+  [[ -n "$package" && "$package_listing" == *'package:'* ]] || return 1
+  ! grep -Fqx "package:$package" <<< "$package_listing"
+}
+
 serea_verify_active_google_apis_avd() {
   local api="$1" fingerprint="$2" config="$3"
   local expected_package image_sysdir actual_package tag_id abi

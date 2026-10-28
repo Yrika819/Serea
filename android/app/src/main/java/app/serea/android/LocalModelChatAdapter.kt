@@ -36,11 +36,19 @@ data class LocalModelArtifact(
 internal interface LocalModelInferenceBackend : AutoCloseable {
     suspend fun load(modelPath: String, limits: LocalModelRuntimeLimits)
     suspend fun generate(prompt: String, maxOutputTokens: Int): LocalModelInferenceResult
-    /** Thread-safe while load or generate is active; cancels work without freeing model state. */
+    /**
+     * Thread-safe and sticky across the adapter's closed/start race. If this runs before the
+     * backend has entered native load/generate, the backend must refuse that start and throw
+     * [LocalModelBackendStartDeniedException] without entering JNI. If work already started, it
+     * cancels that operation without freeing model state.
+     */
     fun cancelActive()
     /** Called after active load/generation has unwound under the adapter mutex. */
     override fun close()
 }
+
+/** Backend confirmation that cancellation won before a native operation began. */
+internal class LocalModelBackendStartDeniedException : Exception("Local model operation cancelled before native start.")
 
 internal fun interface LocalModelInferenceBackendFactory {
     fun create(): LocalModelInferenceBackend
@@ -176,6 +184,11 @@ internal class LocalModelChatAdapter(
                         throw PreDispatchModelChatFailure("Local model work was cancelled before inference started.")
                     }
                     throw cancelled
+                } catch (_: LocalModelBackendStartDeniedException) {
+                    // The backend start gate confirms that close/cancellation won before JNI.
+                    // Although the adapter granted the dispatch slot, no inference was sent.
+                    releaseBackendLocked()
+                    throw PreDispatchModelChatFailure("Local model operation was cancelled before native start.")
                 } catch (failure: ModelChatFailure) {
                     releaseBackendLocked()
                     if (!generationStarted && failure !is PreDispatchModelChatFailure) {

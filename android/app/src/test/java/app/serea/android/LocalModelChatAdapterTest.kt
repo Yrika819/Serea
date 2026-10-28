@@ -383,10 +383,11 @@ class LocalModelChatAdapterTest {
             }
             backend.loadStarted.await()
             adapter.close()
-            assertTrue(runCatching { send.await() }.isFailure)
+            assertTrue(runCatching { send.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
             assertEquals(1, dao.insertedReservationCount)
             assertTrue(backend.cancelled)
             assertTrue(backend.closed)
+            assertEquals("Close won before the fake backend's native-load gate", 0, backend.loadCalls)
             assertEquals(0, backend.generateCalls)
             assertEquals(0, dao.reservationCount)
             assertEquals(0, dao.unknownCount)
@@ -429,6 +430,29 @@ class LocalModelChatAdapterTest {
             adapter.close()
             file.delete()
         }
+    }
+
+    @Test fun closeBetweenGenerateEntryAndNativeStartReleasesUsageReservation() = runBlocking {
+        val file = tempModel(byteArrayOf(8, 9, 7, 9))
+        val backend = FakeBackend(blockGenerationStart = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        val registry = registry { now }
+        val dao = CountingUsageDao()
+        try {
+            val request = request("close before native generation", sendId = "send-close-generate-start")
+            val send = async {
+                sendWithConsent(composed(adapter, registry, dao) { now }, registry, request)
+            }
+            backend.generateEntry.await()
+            adapter.close()
+            assertTrue(runCatching { send.await() }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertTrue(backend.cancelled)
+            assertTrue(backend.closed)
+            assertEquals("Close won before the fake backend's native-generation gate", 0, backend.generateCalls)
+            assertEquals(1, dao.insertedReservationCount)
+            assertEquals(0, dao.reservationCount)
+            assertEquals(0, dao.unknownCount)
+        } finally { adapter.close(); file.delete() }
     }
 
     @Test fun generationFailureAfterNativeDispatchRemainsOutcomeUnknown() = runBlocking {
@@ -705,6 +729,7 @@ class LocalModelChatAdapterTest {
         private val failGeneration: Boolean = false,
         private val failLoad: Boolean = false,
         private val blockLoad: Boolean = false,
+        private val blockGenerationStart: Boolean = false,
     ) : LocalModelInferenceBackend {
         var loaded = false
         var closed = false
@@ -712,19 +737,25 @@ class LocalModelChatAdapterTest {
         var generateCalls = 0
         var loadCalls = 0
         var lastPrompt: String? = null
+        val generateEntry = CompletableDeferred<Unit>()
         val generationStarted = CompletableDeferred<Unit>()
         private val releaseGeneration = CompletableDeferred<Unit>()
+        private val releaseGenerationStart = CompletableDeferred<Unit>()
         val loadStarted = CompletableDeferred<Unit>()
         private val releaseLoad = CompletableDeferred<Unit>()
 
         override suspend fun load(modelPath: String, limits: LocalModelRuntimeLimits) {
-            loadCalls++
             loadStarted.complete(Unit)
             if (blockLoad) releaseLoad.await()
+            if (cancelled) throw LocalModelBackendStartDeniedException()
+            loadCalls++
             if (failLoad) error("synthetic native load failure")
             loaded = true
         }
         override suspend fun generate(prompt: String, maxOutputTokens: Int): LocalModelInferenceResult {
+            generateEntry.complete(Unit)
+            if (blockGenerationStart) releaseGenerationStart.await()
+            if (cancelled) throw LocalModelBackendStartDeniedException()
             generateCalls++
             lastPrompt = prompt
             generationStarted.complete(Unit)
@@ -736,6 +767,7 @@ class LocalModelChatAdapterTest {
             cancelled = true
             releaseGeneration.complete(Unit)
             releaseLoad.complete(Unit)
+            releaseGenerationStart.complete(Unit)
         }
         override fun close() { closed = true }
     }

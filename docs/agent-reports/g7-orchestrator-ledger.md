@@ -1,16 +1,21 @@
 # G7 Readiness Ledger — Calendar OAuth Mock E2E, Local AI and Release Decisions
 
-**Checkpoint:** 2026-10-28 UTC  
-**Roadmap:** Owner-provided `Serea_Roadmap_v4.md`, read from the supplied attachment  
-**G6 authority:** candidate PR #138, source `23b884cf2815a2f3287652d5ffd2c3913d09df76`, tree `f77fea2f7800dbf8daa1f5f25175c52f951f31a4`  
-**G5 frozen baseline:** PR #134, source `b84feb337cd57918346ab31cb3ea4af4ba880ffb`, tree `9133d4a3ba2ab870d126e56cdd22336b856c94e1`  
-**Protected `main`:** `e0acb0254820c381dd97828824bef86a1db5176c` — unchanged  
-**G7 branch:** `codex/serea-g7-calendar-readiness`, based on the exact G6 candidate above  
-**Status:** PARTIAL — readiness preparation is underway; targeted G7 JVM result and independent review are pending. No live service or production action was performed.
+**Checkpoint:** 2026-10-28 UTC
+
+**Roadmap:** Owner-provided `Serea_Roadmap_v4.md`, read from the supplied attachment
+
+**G6 authority:** candidate PR #138, source `23b884cf2815a2f3287652d5ffd2c3913d09df76`, tree `f77fea2f7800dbf8daa1f5f25175c52f951f31a4`
+
+**G5 frozen baseline:** PR #134, source `b84feb337cd57918346ab31cb3ea4af4ba880ffb`, tree `9133d4a3ba2ab870d126e56cdd22336b856c94e1`
+
+**Protected `main`:** `e0acb0254820c381dd97828824bef86a1db5176c` — unchanged
+
+**G7 branch:** `codex/serea-g7-calendar-readiness`, based on the exact G6 candidate above
+**Status:** PARTIAL — initial independent reviews requested changes; corrections and exact-head G7 CI are pending. No live service or production action was performed.
 
 ## G6 handoff
 
-G6 is recorded as **SUCCESS — Functional Readiness Candidate** on exact candidate SHA `23b884c…`. Its same-SHA Formal Android run `40710445577` passed 11/11 jobs, including API 26 and API 35 Formal Required 105/105 each, Identity, Process Death, Data Isolation, and Sentinel. Focused UI, Android Contract, Full, Fast, Native, SQLite, RustSec, Git Hooks, and Release Security evidence is recorded in PR #138. Personal Beta remains **NO-GO**; this candidate is not merged.
+G6 is recorded as **SUCCESS — Functional Readiness Candidate** on exact candidate SHA `23b884c…`. The latest attempt of same-SHA Formal Android run `40710445577` passed 11/11 jobs, including API 26 and API 35 Formal Required 105/105 each, Identity, Process Death, Data Isolation, and Sentinel. Attempt 1's API 35 single-test UTP diagnostic failed before the Formal suite ran; attempt 2 superseded it and passed, including API 35 artifact `12830474743` (105 tests, zero failures/errors/skips). Attempt 1 artifact `12826779384` is retained as superseded diagnostic history. Focused UI, Android Contract, Full, Fast, Native, SQLite, RustSec, Git Hooks, and Release Security evidence is recorded in PR #138. Personal Beta remains **NO-GO**; this candidate is not merged.
 
 The supplied v4 schedule was read. The next decision gate is 2026-11-10. Its G7 work includes Calendar-first Mock E2E, Owner OAuth setup material, AI adapter acceptance, provider conditions, UI/Usage contracts, and a limited CI efficiency trial. The earlier 2026-11-03 Package ID decision remains Owner-owned and unresolved in this preparation branch.
 
@@ -67,10 +72,10 @@ The Android Cloud adapter is fixed to `https://ollama.com/api/chat`, but Cloud i
 | Candidate | Evidence reviewed | G7 disposition |
 |---|---|---|
 | On-device SmolLM2-135M Q4_K_M | G6 B pinned model metadata declares Apache-2.0; llama.cpp pinned source declares MIT. The complete linked-native dependency notices/SBOM are not closed. ARM64 runtime and Pixel 7a performance are NOT_RUN. | Preferred privacy direction, but redistribution and product acceptance remain blocked. Keep model outside Git and do not display it as runnable product Chat. |
-| Ollama Cloud | [Terms of Service](https://ollama.com/terms) page reports “Last updated: May 2026”; section 2 says users must be at least 18. The page says prompts/outputs are not used to train models and grants a limited license to process content to provide the service. [Privacy Policy](https://ollama.com/privacy) says cloud prompts/responses are processed transiently, with account/basic usage metadata collected; it describes transfer/retention and deletion terms that need Owner/jurisdiction review. | Not approved. Age eligibility, region, account, service tier, current retention, cost, and provider-specific data handling need an Owner decision. No Cloud key/API use. Google-origin content remains blocked regardless of this preliminary provider review. |
+| Ollama Cloud | [Terms of Service](https://ollama.com/terms) page reports “Last updated: May 2026”; section 2 says users must be at least 18. The page says prompts/outputs are not used to train models and grants a limited license to process content to provide the service. [Privacy Policy](https://ollama.com/privacy) says cloud prompts/responses are processed transiently, with account/basic usage metadata collected; it also describes sharing with cloud infrastructure/model inference providers, US processing and international transfers, retention and deletion. | Not approved. Age eligibility, downstream recipients, region, account, service tier, current retention, cost, and provider-specific data handling need an Owner decision. No Cloud key/API use. Google-origin content remains blocked regardless of this preliminary provider review. |
 | Other hosted model providers | No service or current terms were selected for this G7 packet. | Not evaluated and not a candidate. Do not infer eligibility from consumer chat-product terms. |
 
-The Ollama Terms page's 18+ requirement is the conservative gate for its service; a different age statement in privacy material does not override service Terms. The page is a dated snapshot, not a legal determination. Recheck the current provider terms, age, jurisdiction, data-processing, retention, cost, abuse and deletion conditions immediately before any separately authorized activation.
+The Ollama Terms page requires users to be 18 or older. Its Privacy Policy also contains a statement that permits a 13+ user with parent or guardian consent, while elsewhere describing the service as intended for adults. The published materials therefore conflict, and this review does not determine which provision controls. Retain 18+ as a conservative provisional gate and require written Ollama clarification or legal review before activation. The dated pages are not a legal determination. Recheck current age, jurisdiction, downstream recipient, data-processing, retention, cost, abuse and deletion terms before any separately authorized activation.
 
 Google's [API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy) states that use/transfer of Google user data is limited to providing or improving prominent user-facing features with user consent, with additional requirements for sensitive/restricted scopes and applicable verification/security assessments. That policy does not make this app's local-only handoff a Cloud consent, and this packet does not determine legal or Google verification eligibility. Keep Google→Cloud disabled.
 
@@ -85,28 +90,40 @@ The trial does not alter Android Required, branch protection, Formal manifest/as
 ```text
 AGENT_ID: Parent Orchestrator
 ACTIVE_PHASE: G7 Readiness Preparation
-GOAL_STATUS: PARTIAL — Mock E2E and limited workflow drafted; review and exact-head CI pending
+GOAL_STATUS: PARTIAL — initial review requested CHANGES_REQUESTED; corrections and exact-head CI pending
 BASE_SHA: 23b884cf2815a2f3287652d5ffd2c3913d09df76
-CURRENT_HEAD: pending local commit
-TREE_SHA: pending local commit
+CURRENT_HEAD: 047d46f6905d33b6c80cbb6daff9e0f0cb13013e (initial reviewed submission; corrections follow)
+TREE_SHA: 4da3a00c1347b60fc5035e763cb2d834fc051d34
 WORKTREE: /workspace/Serea-g7-calendar-readiness
 BRANCH: codex/serea-g7-calendar-readiness
-DRAFT_PR: not created yet; independent review pending
+DRAFT_PR: #139 OPEN / DRAFT, base codex/serea-g6-integration-candidate at 23b884cf2815a2f3287652d5ffd2c3913d09df76; https://github.com/Yrika819/Serea/pull/139
 COMPLETED_WORK: read supplied roadmap v4; inspected G6 OAuth, Calendar, handoff, local adapter and release readiness evidence; added synthetic Calendar mock E2E and non-required focused CI trial; reviewed current Ollama Terms/Privacy and Google User Data Policy
 CHANGED_FILES: android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt; .github/workflows/android-g7-calendar-oauth-mock-focused.yml; docs/agent-reports/g7-orchestrator-ledger.md
 TEST_COMMANDS: `python3 tools/validate_docs.py docs`; `git diff --check`; targeted Gradle JVM run attempted but wrapper download failed with `ConnectException: Connection refused`
 JUNIT_RESULT: NOT_RUN locally; GitHub CI pending
-CI_RUN_IDS: none for G7 yet
+CI_RUN_IDS: initial reviewed head 047d46f: Android `40727601520`; Fast `40727601444`; Full `40727601497`; Native `40727601493`; Git Hooks `40727601392`; RustSec `40727601256`; SQLite `40727601384`; focused G7 `40727601552` (results pending at this checkpoint)
 ARTIFACT_IDS: none
 SECURITY_IMPACT: no production code, credential, OAuth configuration or live endpoint changed; new test uses a synthetic token and loopback-only MockWebServer
 DEPENDENCIES: independent review; exact-head G7 CI; Owner O-01 Package ID, O-02 OAuth configuration, O-03 AI/provider eligibility decisions
 KNOWN_ISSUES: Google Activity Result/UI composition remains unwired; LocalModelSecurity only accepts MOCK_ONLY handoffs; ARM64 runtime, Pixel 7a speed/thermal acceptance and complete native dependency notices remain open
-CURRENT_BLOCKERS: local Gradle distribution could not be downloaded; no GitHub CI has run for this G7 head
+CURRENT_BLOCKERS: local Gradle distribution could not be downloaded; exact-head GitHub CI is queued/in progress
 INTEGRATION_READY: no — review and CI pending
 REVIEW_REQUEST: independent Source/Test/Security/Integration review of the synthetic OAuth test, non-required workflow and provider/adapter contract
-NEXT_ACTION: run documentation checks, obtain independent review, push reviewed Draft PR, inspect focused and normal exact-head CI
+NEXT_ACTION: apply review corrections on the G7 branch, obtain review acceptance, inspect focused and normal exact-head CI
 OWNER_APPROVAL_REQUIRED: real Google OAuth/account/data; Cloud AI API key/billing/provider activation; production signing/distribution; Pixel 7a operation; main merge; Personal Beta GO
 ```
+
+### Initial independent review findings and correction plan
+
+At initial submission head `047d46f`, Agent B and Agent C independently returned `CHANGES_REQUESTED`.
+
+- **G7-WF-01:** include `tools/assert_exact_source_checkout.sh` in the focused workflow path filter.
+- **G7-LEDGER-01:** replace pending head/tree fields with the reviewed submission's exact SHA/tree and record PR #139.
+- **G7-LEDGER-02:** identify Formal Android run attempt 2 as the successful attempt and retain attempt 1 as superseded UTP failure evidence.
+- **G7-DOC-01:** remove trailing whitespace caught by `git diff --check`.
+- **G7-POLICY-01:** state the conflicting Ollama age language as a conflict, keep 18+ as a provisional conservative gate, and require provider clarification or legal review; include downstream inference/cloud infrastructure recipients and international transfer in Owner review.
+
+Corrections are being applied by the parent-owned ledger/workflow owner. The G7 JVM and exact-head CI status remain pending until the corrected branch head completes its checks.
 
 ## Owner decisions and release status
 

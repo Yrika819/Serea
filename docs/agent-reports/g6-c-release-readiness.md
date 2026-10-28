@@ -11,14 +11,14 @@ AGENT_ID: C — Integration / OAuth / Release Security
 ACTIVE_PHASE: G6-C
 GOAL_STATUS: PARTIAL — Owner-ready preparation is complete; live service and production release acceptance are not authorized
 BASE_SHA: b84feb337cd57918346ab31cb3ea4af4ba880ffb
-CURRENT_HEAD: pending documentation commit
-TREE_SHA: pending documentation commit
+CURRENT_HEAD: 9579675d4466c3db2a9b32eeab0db88f029da999 (reviewed submission head; this remote-status checkpoint is documentation-only)
+TREE_SHA: c886b51c9a2107e8d9fd3548d937ce922a5635df (reviewed submission tree)
 WORKTREE: /workspace/Serea-g6-agent-c
 BRANCH: codex/serea-g6-release-readiness
-DRAFT_PR: pending; targets the frozen G5 candidate branch if opened
+DRAFT_PR: #135 OPEN / DRAFT, base codex/serea-g5-evidence-closure-20261028 at b84feb337cd57918346ab31cb3ea4af4ba880ffb; https://github.com/Yrika819/Serea/pull/135
 COMPLETED_WORK: live PR graph/status audit; PR dependency review; no-merge main integration rehearsal; Google OAuth setup/operation checklist; package/signing/update matrix; SBOM gap inventory; Pixel 7a acceptance checklist; gateway/UI composition gap review
 CHANGED_FILES: docs/agent-reports/g6-c-release-readiness.md
-TEST_COMMANDS: pending focused host release/SBOM contract tests; git merge-tree --write-tree --messages origin/main refs/remotes/origin/pr-134
+TEST_COMMANDS: python3 tests/android_lockfile_sbom_tests.py; python3 tests/android_artifact_sbom_tests.py; python3 tests/android_firebase_distribution_tests.py; git merge-tree --write-tree --messages origin/main refs/remotes/origin/pr-134; git diff --check
 JUNIT_RESULT: NOT_RUN — documentation-only lane; host release/SBOM Python checks PASS (36 tests total)
 CI_RUN_IDS: none started by Agent C
 ARTIFACT_IDS: none
@@ -136,6 +136,7 @@ The exact G5 lockfile is not the input that produced the checked-in G4 inventory
 - Main merge rehearsal: `git merge-tree --write-tree --messages origin/main refs/remotes/origin/pr-134` returned exit 0, no conflicts and G5 tree `9133d4a3...`; no branch/ref/PR/main was moved.
 - Focused host checks: `python3 tests/android_lockfile_sbom_tests.py` — 7 PASS; `python3 tests/android_artifact_sbom_tests.py` — 10 PASS; `python3 tests/android_firebase_distribution_tests.py` — 19 PASS. Total 36 PASS, 0 failures. These exercise existing generator/binding/distribution guard contracts; they do not test real signing or distribution.
 - `git diff --check` — PASS. Python bytecode caches from the checks were removed before commit.
+- Remote result: corrected branch pushed to `origin/codex/serea-g6-release-readiness`; Draft PR #135 created through GitHub integration, OPEN and unmerged, targeting the frozen G5 branch. The standard `gh pr create` attempt returned HTTP 401; the connected GitHub integration successfully created #135. No merge was attempted.
 - No live Google project, OAuth client, account, real API/data, cloud model, production key, physical Pixel or distribution path was activated.
 - G5 formal CI values remain evidence for G5 only; this documentation change has not yet run CI and must not be represented as a G6 tested product integration.
 

@@ -123,7 +123,7 @@ class CalendarOAuthMockE2ETest {
         )
         assertEquals("localhost", request.requestUrl!!.host)
         assertEquals("Bearer synthetic-never-valid-token", request.getHeader("Authorization"))
-        assertFalse(request.requestLine!!.contains("gmail"))
+        assertFalse(request.requestLine.contains("gmail"))
 
         gateway.switchSyntheticAccount()
         val staleAccountRead = runCatching { session.listEventsPage(calendarId, range) }.exceptionOrNull()

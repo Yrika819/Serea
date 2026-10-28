@@ -183,8 +183,10 @@ class ChatHttpE2ETest {
         val now = System.currentTimeMillis()
         suspend fun send(id: String, message: String, context: List<ContextMessage> = emptyList(), classification: DataClassification = DataClassification.PUBLIC) =
             port.send(ModelChatRequest("routed-conversation", message, sendId = id, classification = classification,
-                context = context, egressContract = EgressContract("routed-conversation", id, DataOrigin.USER_AUTHORED,
-                    classification, "https://ollama.com/api/chat", message, context, PayloadPreparation.RAW, now, now + 30_000)))
+                context = context, bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
+                egressContract = EgressContract("routed-conversation", id, DataOrigin.USER_AUTHORED,
+                    classification, "https://ollama.com/api/chat", message, context, PayloadPreparation.RAW, now, now + 30_000,
+                    plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED))))
 
         val first = send("routed-send-1", "first public question")
         assertEquals("${ids.first()} answer", first.text)
@@ -288,10 +290,12 @@ class ChatHttpE2ETest {
         val request = ModelChatRequest(
             conversationId = "inner-gate-conversation", message = "public question", sendId = "inner-gate-denied",
             classification = DataClassification.PUBLIC,
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             egressContract = EgressContract(
                 "inner-gate-conversation", "inner-gate-denied", DataOrigin.USER_AUTHORED, DataClassification.PUBLIC,
                 "https://ollama.com/api/chat", "public question", emptyList(), PayloadPreparation.RAW,
                 explicitSendIntentAtMillis = 900L, expiresAtMillis = 1500L,
+                plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             ),
         )
         runCatching { routed.send(request) }.onSuccess { throw AssertionError("the independent inner egress check must reject the expired intent") }
@@ -317,10 +321,12 @@ class ChatHttpE2ETest {
         val disabledRequest = ModelChatRequest(
             conversationId = "disabled-cloud-conversation", message = "must remain local", sendId = disabledRequestId,
             classification = DataClassification.PUBLIC,
+            bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             egressContract = EgressContract(
                 "disabled-cloud-conversation", disabledRequestId, DataOrigin.USER_AUTHORED, DataClassification.PUBLIC,
                 "https://ollama.com/api/chat", "must remain local", emptyList(), PayloadPreparation.RAW,
                 explicitSendIntentAtMillis = disabledNow, expiresAtMillis = disabledNow + 30_000,
+                plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             ),
         )
         runCatching { disabledPort.send(disabledRequest) }

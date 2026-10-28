@@ -107,3 +107,24 @@ The test log records a non-null Android-managed `android.inputmethodservice.Remo
 The same formal test verifies cursor behavior: selection 5 is restored before Gmail return; Gmail insertion yields `draft! survives navigation`, selection 6; Calendar insertion yields `draft!? survives navigation`, selection 7; after recreation, insertion yields `draft!? !survives navigation`, selection 9. These operations are recorded through the Android-managed Test IME and accepted against the current editor session. The final cleanup records restoring LatinIME and disabling the Test IME. `test-ime-cleanup-status.txt`, `process-death-status.txt`, `process-death-readiness-status.txt`, `data-isolation-status.txt`, `diagnostic-status.txt`, `instrumentation-status.txt`, and `api-result.txt` all say PASS. Process Death and data-isolation logs preserve the demo sentinel.
 
 The shared emulator evidence artifact is `12807019864`, ZIP digest `ea8cf07f983f549ef6d2ae16805e8239cfd7cd2ea3e107fa5e01a9df787242c4`. GitHub reports API 35 artifact creation at `2026-10-28T10:13:55Z` and shared evidence at `10:14:00Z`. The Identity job `122755666193` started its disposable Beta identity/encrypted-data check at approximately `10:14:06Z` and was still `IN_PROGRESS` when this artifact review was completed. The whole Formal Run must remain pending until Identity and the final workflow conclusion are available.
+
+## Final Formal Android Run and Identity result
+
+Run `40664188621` is now completed with conclusion `success` at exact candidate head `b84feb337cd57918346ab31cb3ea4af4ba880ffb`, source tree `9133d4a3ba2ab870d126e56cdd22336b856c94e1`. GitHub reports all 11 jobs completed successfully, including Android Emulator Required Gate and Personal Beta Identity Isolation. This conclusion applies to that exact b84 SHA only.
+
+Formal instrumentation evidence for the same run:
+
+- API 26 artifact `12807200481`, SHA-256 `1ca4464caf0197ce04f5312e0f163f56728739c1719cdd7fc1616d6773cc8993`: 105 JUnit cases, exactly 103 Required + 2 Additional, 0 failures/errors/skips; Required and Additional manifests match the XML identity set exactly. The Formal Real IME acceptance test passed.
+- API 35 artifact `12807019854`, SHA-256 `c8282d542a8e4e24d0d5e93e77f7cd55fb5d9eebd9812c039955e440eb94d8f0`: same 105/105 exact identity contract, 0 failures/errors/skips; the Formal Real IME test passed.
+- Shared emulator evidence artifact `12807019864`, SHA-256 `ea8cf07f983f549ef6d2ae16805e8239cfd7cd2ea3e107fa5e01a9df787242c4`.
+
+Identity artifact `12808134869`, downloaded ZIP SHA-256 `237c6c66770fb2b95f22866488506a959ce8a3ddc8541f06b487816197875d4b`, contains `personal-beta-identity.txt` and records:
+
+- Beta package identity `app.serea.android.beta`; demo and Beta install side-by-side: PASS.
+- Demo package data and signer unchanged: PASS; demo uninstall was not attempted.
+- Encrypted Beta Room data remained after emulator reboot: PASS.
+- Same temporary test key update from versionCode 100 to 101: PASS.
+- Different temporary test key update at versionCode 102: correctly rejected as `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+- Test certificate SHA-256 `9180349DA7DC295A3E07C9764D88E9B60145B56B98960F06202C123C6D2330C9`; owner signing key was not used.
+
+Thus Formal Android Required plus temporary-key Identity evidence is SUCCESS for b84. This is CI verification with temporary test keys; it is not production signing, Firebase distribution, a real Pixel 7a acceptance run, or Personal Beta GO approval.

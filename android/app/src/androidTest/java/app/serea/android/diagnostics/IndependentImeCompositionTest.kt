@@ -1,5 +1,6 @@
 package app.serea.android.diagnostics
 
+import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
@@ -598,7 +599,17 @@ class IndependentImeCompositionTest {
     }
 
     private fun imeCall(method: String, extras: Bundle? = null): Bundle {
-        val resolver = InstrumentationRegistry.getInstrumentation().context.contentResolver
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val targetContext = instrumentation.targetContext
+        val permissionStatus = targetContext.checkSelfPermission(DIAGNOSTICS_PERMISSION)
+        Log.i(TAG, "imeDiagnosticsPermission package=${targetContext.packageName} " +
+            "granted=${permissionStatus == PackageManager.PERMISSION_GRANTED}")
+        assertEquals(
+            "The isolated target must receive the Test IME signature permission at install time",
+            PackageManager.PERMISSION_GRANTED,
+            permissionStatus,
+        )
+        val resolver = instrumentation.context.contentResolver
         val client = requireNotNull(resolver.acquireContentProviderClient(IME_AUTHORITY)) {
             "Could not connect to the test IME diagnostics provider."
         }
@@ -701,6 +712,7 @@ class IndependentImeCompositionTest {
         const val REPLACEMENT = "draft survives navigation"
         const val IME_ID = "app.serea.android.r25testime/app.serea.android.diagnostics.RealImeService"
         const val IME_AUTHORITY = "app.serea.android.r25testime.diagnostics"
+        const val DIAGNOSTICS_PERMISSION = "app.serea.android.r25testime.permission.DIAGNOSTICS"
         const val TARGET_PACKAGE = "app.serea.android.isolated"
         const val TARGET_ACTIVITY = "app.serea.android.MainActivity"
 

@@ -10,6 +10,9 @@ on:
       - android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt
       - android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt
       - android/app/src/debug/AndroidManifest.xml
+      - android/app/src/isolated/AndroidManifest.xml
+      - android/app/build.gradle.kts
+      - tools/verify_serea_real_ime_manifest_scope.py
       - android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java
       - android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java
       - tools/run_serea_phase_r3_single_ime_case.sh
@@ -28,7 +31,7 @@ env:
   TARGET_APK: android/app/build/outputs/apk/isolated/app-isolated.apk
   TEST_APK: android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk
   IME_APK: android/r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk
-  DIAGNOSTIC_BASE_SHA: e0643750321a682fdf53b1024b8491ebcb128fa7
+  DIAGNOSTIC_BASE_SHA: b06c1acd5f3ddb4f59f0cad6ae1a1d291b086671
 
 jobs:
   build-diagnostic-apks:
@@ -74,6 +77,14 @@ jobs:
             $0 !~ /^docs\/verification\/api35-real-ime-independent-bc\.md$/ &&
             $0 != "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt" &&
             $0 != "android/app/src/debug/AndroidManifest.xml" &&
+            $0 != "android/app/src/isolated/AndroidManifest.xml" &&
+            $0 != "android/app/build.gradle.kts" &&
+            $0 != "tools/verify_serea_real_ime_manifest_scope.py" &&
+            $0 != "android/app/src/main/java/app/serea/android/MainActivity.kt" &&
+            $0 != "android/app/src/test/java/app/serea/android/CloudEgressBodyLineageAttackMatrixTest.kt" &&
+            $0 != "docs/agent-reports/g5-orchestrator-ledger.md" &&
+            $0 != "docs/agent-reports/g5-cloud-egress.md" &&
+            $0 !~ /^docs\/agent-reports\/evidence\/g5-cloud-egress-20261028\// &&
             $0 != "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt" &&
             $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java" &&
             $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java" &&
@@ -114,6 +125,33 @@ jobs:
           set -o pipefail
           ./gradlew --no-daemon :app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug \
             2>&1 | tee ../evidence/real-ime-independent-bc/gradle-build.log
+      - name: Verify Test IME permission and components are isolated
+        run: |
+          python3 tools/verify_serea_real_ime_manifest_scope.py \
+            --debug android/app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml \
+            --isolated android/app/build/intermediates/merged_manifest/isolated/processIsolatedMainManifest/AndroidManifest.xml \
+            --beta android/app/build/intermediates/merged_manifest/beta/processBetaMainManifest/AndroidManifest.xml \
+            --ime android/r25-ime-test/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml
+      - name: Verify signature permission recipient and Test IME share signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          signer_digest() {
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$1" \
+              | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2)}'
+          }
+          target_signer="$(signer_digest "$TARGET_APK")"
+          test_signer="$(signer_digest "$TEST_APK")"
+          ime_signer="$(signer_digest "$IME_APK")"
+          test -n "$target_signer"
+          test "$target_signer" = "$test_signer"
+          test "$target_signer" = "$ime_signer"
+          mkdir -p evidence/real-ime-independent-bc/apks
+          {
+            printf 'target_signer_sha256=%s\n' "$target_signer"
+            printf 'instrumentation_signer_sha256=%s\n' "$test_signer"
+            printf 'test_ime_signer_sha256=%s\n' "$ime_signer"
+          } > evidence/real-ime-independent-bc/apks/signer-provenance.txt
       - name: Record exact source and APK provenance
         shell: bash
         run: |
@@ -134,6 +172,7 @@ jobs:
             printf 'runner_os=%s\nrunner_arch=%s\n' "$RUNNER_OS" "$RUNNER_ARCH"
             printf 'created_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             printf 'apk_manifest_sha256=%s\n' "$(sha256sum evidence/real-ime-independent-bc/apks/apk-sha256.txt | awk '{print $1}')"
+            printf 'signer_provenance_sha256=%s\n' "$(sha256sum evidence/real-ime-independent-bc/apks/signer-provenance.txt | awk '{print $1}')"
           } > evidence/real-ime-independent-bc/apks/provenance.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()

@@ -338,7 +338,11 @@ fi
 if ! verify_installed_apk "$IME" r25-ime-test-debug.apk "$OUT/installed-ime-apk.txt"; then
   fail installed-apk-sha 'Installed Test IME APK SHA-256 does not match the build artifact.'
 fi
-adb shell pm grant "$TEST" app.serea.android.r25testime.permission.DIAGNOSTICS > "$OUT/permission-grant.txt" 2>&1 || true
+{
+  printf 'runtime_grant_attempt=NOT_APPLICABLE\n'
+  printf 'reason=diagnostics access uses an install-time signature permission\n'
+  printf 'checked_by=IndependentImeCompositionTest via targetContext.checkSelfPermission\n'
+} > "$OUT/permission-grant.txt"
 
 CURRENT_STAGE=ime-selection
 if ! adb shell ime enable "$IME_COMPONENT" > "$OUT/ime-enable.txt" 2>&1; then

@@ -198,9 +198,9 @@ trap on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [[ "$API" != 35 || ( "$METHOD" != B_realImeCompositionWithoutSynchronizationBoundaries && \
+if [[ ( "$API" != 26 && "$API" != 35 ) || ( "$METHOD" != B_realImeCompositionWithoutSynchronizationBoundaries && \
       "$METHOD" != C_realImeCompositionWithSynchronizationBoundaries ) ]]; then
-  fail preflight 'Only API 35 Test B or Test C is permitted.'
+  fail preflight 'Only API 26 or 35 Test B or Test C is permitted.'
 fi
 if [[ ! "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ || "${GITHUB_ACTIONS:-}" != true || "${CI:-}" != true ]]; then
   fail preflight 'This helper is restricted to a GitHub Actions disposable Emulator run.'
@@ -222,7 +222,7 @@ if [[ "$(sed -n 's/^apk_manifest_sha256=//p' "$APKS/provenance.txt")" != \
 fi
 
 CURRENT_STAGE=emulator-guard
-export EXPECTED_API_LEVEL=35 SEREA_EXPECTED_ANDROID_API=35
+export EXPECTED_API_LEVEL="$API" SEREA_EXPECTED_ANDROID_API="$API"
 source "$ROOT/tools/assert_disposable_android_emulator.sh" || fail emulator-guard 'Disposable Emulator guard rejected the device.'
 if [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" != 1 ]]; then
   fail emulator-guard 'Android boot_completed is not 1.'
@@ -230,10 +230,22 @@ fi
 hardware="$(adb shell getprop ro.hardware | tr -d '\r')"
 fingerprint="$(adb shell getprop ro.build.fingerprint | tr -d '\r')"
 abi="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
-if [[ ( "$hardware" != ranchu && "$hardware" != goldfish ) || \
-      ( "$fingerprint" != *generic* && "$fingerprint" != *sdk_gphone* && "$fingerprint" != *'/sdk_phone64_x86_64/emu64x:'* ) || \
-      "$abi" != x86_64 ]]; then
-  fail emulator-guard "Unexpected API35 emulator identity: hardware=$hardware abi=$abi fingerprint=$fingerprint"
+case "$API" in
+  26)
+    case "$fingerprint" in
+      *sdk_gphone_x86_64*|*generic_x86_64*) ;;
+      *) fail emulator-guard "API 26 fingerprint is not a supported x86_64 Google APIs emulator image: $fingerprint" ;;
+    esac
+    ;;
+  35)
+    case "$fingerprint" in
+      *sdk_gphone64_x86_64*|*sdk_phone64_x86_64*|*generic_x86_64*) ;;
+      *) fail emulator-guard "API 35 fingerprint is not a supported x86_64 Google APIs emulator image: $fingerprint" ;;
+    esac
+    ;;
+esac
+if [[ ( "$hardware" != ranchu && "$hardware" != goldfish ) || "$abi" != x86_64 ]]; then
+  fail emulator-guard "Unexpected API $API emulator identity: hardware=$hardware abi=$abi fingerprint=$fingerprint"
 fi
 {
   printf 'api=%s\nhardware=%s\nabi=%s\nfingerprint=%s\nqemu=%s\nboot_completed=1\n' \
@@ -323,13 +335,13 @@ if ! adb shell pm clear "$TARGET" > "$OUT/target-pm-clear.txt" 2>&1 || \
    ! grep -Fq Success "$OUT/target-pm-clear.txt"; then
   fail fresh-data-seed 'Could not clear the newly installed isolated target before seeding.'
 fi
-TOKEN="serea-api35-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}-${METHOD}"
+TOKEN="serea-api${API}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}-${METHOD}"
 if [[ ! "$TOKEN" =~ ^[A-Za-z0-9-]{1,120}$ ]]; then
   fail fresh-data-seed 'Generated campaign token does not satisfy the isolated runner token contract.'
 fi
 printf 'campaign_token=%s\nmethod=%s\nseed_started_at_utc=%s\n' \
   "$TOKEN" "$METHOD" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$OUT/campaign-marker.txt"
-if ! SEREA_DISPOSABLE_CI_EMULATOR=1 SEREA_EXPECTED_ANDROID_API=35 EXPECTED_API_LEVEL=35 \
+if ! SEREA_DISPOSABLE_CI_EMULATOR=1 SEREA_EXPECTED_ANDROID_API="$API" EXPECTED_API_LEVEL="$API" \
     bash "$ROOT/tools/prepare_isolated_instrumentation_target.sh" "$TOKEN" \
     > "$OUT/campaign-seed.log" 2>&1; then
   fail fresh-data-seed 'The existing run-as based isolated namespace seed guard failed.'

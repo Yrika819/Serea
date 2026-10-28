@@ -1,0 +1,9 @@
+6f6ce7b6ae22422f300ae4b3d180f8f97c532ffddcbd0381bad6d58d33704f9c  android/app/src/test/java/app/serea/android/CloudEgressBodyLineageAttackMatrixTest.kt
+66e37bdec3228d3c27b023484f79d6ce51834f3d5dcd3434df1226475f7023b1  docs/agent-reports/g5-cloud-egress.md
+3e52be226e5c4c0e81a511c055b40c4da06c1c4b6b84014c4c0d6f29489938b7  docs/agent-reports/evidence/g5-cloud-egress-20261028/attack-matrix-before-product-patch.junit.xml
+f8de838ade423118e0785db29a9810afbb49be804ebda1f2093c65e69d1c4332  docs/agent-reports/evidence/g5-cloud-egress-20261028/existing-egress-suite.log
+a7cdd730d7012df380b7dfe1b606fcfaabe44708af555b1a70d616ed0f7267bb  docs/agent-reports/evidence/g5-cloud-egress-20261028/existing-egress-suite-junit/TEST-app.serea.android.ChatViewModelTest.xml
+05a6c2c5e2feeef0752e335dcd9ea6a14ff9eaebe73670dcacbfe87dbf142389  docs/agent-reports/evidence/g5-cloud-egress-20261028/existing-egress-suite-junit/TEST-app.serea.android.GoogleOriginEgressAdversarialTest.xml
+9ab17a6cf5722f3d4884df2514b68944a69d02f89b865a343106138b86cd441a  docs/agent-reports/evidence/g5-cloud-egress-20261028/existing-egress-suite-junit/TEST-app.serea.android.LocalFakeRoutingAdversarialTest.xml
+84335c5b7fb702f9433fb62868e43b50820f49d583606e1cc753a04ebacaf1ac  docs/agent-reports/evidence/g5-cloud-egress-20261028/existing-egress-suite-junit/TEST-app.serea.android.OllamaCloudAdapterTest.xml
+38334fc9299ce8f406475c55294de04bd3121e711ca275e3c8907620063941df  docs/agent-reports/evidence/g5-cloud-egress-20261028/existing-egress-suite-junit/TEST-app.serea.android.SecurityPortsTest.xml

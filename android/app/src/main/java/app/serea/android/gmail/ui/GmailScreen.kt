@@ -34,6 +34,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -51,6 +54,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import app.serea.android.gmail.GmailMessage
+import app.serea.android.gmail.GmailMessageSource
+import app.serea.android.handoff.GoogleHandoffPreview
+import app.serea.android.handoff.GoogleHandoffPreviewDialog
+import app.serea.android.handoff.GoogleHandoffPreviewRequest
+import app.serea.android.handoff.HandoffResult
+import app.serea.android.handoff.gmailHandoffCandidate
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -65,6 +78,11 @@ fun GmailScreen(
     viewModel: GmailViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    conversationId: String? = null,
+    conversationGeneration: Long = 0,
+    onCreateHandoffPreview: (suspend (GoogleHandoffPreviewRequest) -> HandoffResult<GoogleHandoffPreview>)? = null,
+    onHandoffConfirmed: (suspend (GoogleHandoffPreview) -> Boolean)? = null,
+    onCancelHandoffPreview: ((GoogleHandoffPreview) -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsState()
     val configuration = LocalConfiguration.current
@@ -73,8 +91,55 @@ fun GmailScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val searchSubmitFocusRequester = remember { FocusRequester() }
     val route = state.route
+    val scope = rememberCoroutineScope()
+    var handoffPreview by remember { mutableStateOf<GoogleHandoffPreview?>(null) }
+    var handoffError by remember { mutableStateOf<String?>(null) }
+    var handoffBusy by remember { mutableStateOf(false) }
+    var handoffRequestGeneration by remember { mutableStateOf(0L) }
+    val selectForHandoff: (GmailMessage) -> Unit = { message ->
+        val candidate = gmailHandoffCandidate(message)
+        if (candidate == null || conversationId == null || onCreateHandoffPreview == null) {
+            handoffError = "この情報はFakeセッションから選択できません。セッションを確認してください。"
+        } else {
+            val requestGeneration = ++handoffRequestGeneration
+            handoffError = null
+            handoffBusy = true
+            scope.launch {
+                val result = try {
+                    onCreateHandoffPreview(
+                        GoogleHandoffPreviewRequest(candidate, conversationId, conversationGeneration,
+                            "選択したメールの内容を端末内Chatで整理する"),
+                    )
+                } catch (cancelled: CancellationException) {
+                    if (!currentCoroutineContext().isActive) throw cancelled
+                    HandoffResult.Rejected(app.serea.android.handoff.GoogleHandoffRejection.SESSION_EXPIRED)
+                } catch (_: Exception) {
+                    HandoffResult.Rejected(app.serea.android.handoff.GoogleHandoffRejection.SESSION_EXPIRED)
+                }
+                if (!currentCoroutineContext().isActive) {
+                    if (result is HandoffResult.Accepted) onCancelHandoffPreview?.invoke(result.value)
+                    throw CancellationException("Gmail handoff screen left before preview delivery.")
+                }
+                if (requestGeneration != handoffRequestGeneration) {
+                    if (result is HandoffResult.Accepted) onCancelHandoffPreview?.invoke(result.value)
+                    return@launch
+                }
+                when (result) {
+                    is HandoffResult.Accepted -> handoffPreview = result.value
+                    is HandoffResult.Rejected -> handoffError = "セッションが失効したか、選択内容を確認できません。Fake Gmailを開き直してください。"
+                }
+                handoffBusy = false
+            }
+        }
+    }
     val isRoot = route is GmailRoute.List && route.mode == GmailListMode.INBOX && state.backStack.isEmpty()
     BackHandler(enabled = !isRoot) { viewModel.back() }
+    LaunchedEffect(route) {
+        if (handoffBusy && handoffPreview == null) {
+            handoffRequestGeneration++
+            handoffBusy = false
+        }
+    }
     LaunchedEffect(route, state.isLoading) {
         if (route is GmailRoute.List && route.mode == GmailListMode.SEARCH && !state.isLoading) {
             keyboardController?.hide()
@@ -115,6 +180,10 @@ fun GmailScreen(
             )
         }
 
+        if (handoffError != null && handoffPreview == null) {
+            Text(handoffError!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
+        }
+
         when (val route = state.route) {
             is GmailRoute.List -> GmailListContent(
                 state,
@@ -129,10 +198,54 @@ fun GmailScreen(
                 error = state.detailError,
                 onRetry = viewModel::retry,
                 onOpenThread = viewModel::openThread,
+                onHandoff = selectForHandoff,
                 modifier = Modifier.weight(1f),
             )
-            is GmailRoute.Thread -> GmailThreadContent(state, route, viewModel, Modifier.weight(1f))
+            is GmailRoute.Thread -> GmailThreadContent(state, route, viewModel, Modifier.weight(1f), selectForHandoff)
         }
+    }
+    handoffPreview?.let { preview ->
+        GoogleHandoffPreviewDialog(
+            preview = preview,
+            errorMessage = handoffError,
+            confirming = handoffBusy,
+            onCancel = {
+                handoffRequestGeneration++
+                onCancelHandoffPreview?.invoke(preview)
+                handoffPreview = null
+                handoffError = null
+            },
+            onConfirm = {
+                if (conversationId != preview.conversationId || conversationGeneration != preview.conversationGeneration) {
+                    handoffError = "Chatの送信先が変わりました。内容を選び直してください。"
+                } else if (onHandoffConfirmed == null) {
+                    handoffError = "Chatへの受け渡し先が利用できません。"
+                } else {
+                    handoffBusy = true
+                    scope.launch {
+                        val accepted = try {
+                            onHandoffConfirmed(preview)
+                        } catch (cancelled: CancellationException) {
+                            if (!currentCoroutineContext().isActive) throw cancelled
+                            false
+                        } catch (_: Exception) {
+                            false
+                        }
+                        if (!currentCoroutineContext().isActive) {
+                            throw CancellationException("Gmail handoff screen left during confirmation.")
+                        }
+                        if (handoffPreview !== preview) return@launch
+                        if (accepted) {
+                            handoffPreview = null
+                            handoffError = null
+                        } else {
+                            handoffError = "セッションが失効したか、Chatの送信先が変わりました。Fake Gmailを開き直してください。"
+                        }
+                        handoffBusy = false
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -272,6 +385,7 @@ private fun GmailMessageContent(
     error: GmailUiErrorCode?,
     onRetry: () -> Unit,
     onOpenThread: () -> Unit,
+    onHandoff: (GmailMessage) -> Unit = {},
     modifier: Modifier = Modifier,
     threadActionLabel: String = "このスレッドを表示",
     showThreadAction: Boolean = true,
@@ -293,6 +407,11 @@ private fun GmailMessageContent(
                     if (showThreadAction) {
                         TextButton(onClick = onOpenThread, modifier = Modifier.padding(top = 4.dp)) { Text(threadActionLabel) }
                     }
+                    if (message.source == GmailMessageSource.MOCK) {
+                        OutlinedButton(onClick = { onHandoff(message) }, modifier = Modifier.padding(top = 4.dp)) {
+                            Text("このメールをChatへ渡す")
+                        }
+                    }
                     HorizontalDivider()
                     Spacer(Modifier.height(8.dp))
                     Text("本文", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
@@ -310,7 +429,13 @@ private fun GmailMessageContent(
 }
 
 @Composable
-private fun GmailThreadContent(state: GmailUiState, route: GmailRoute.Thread, viewModel: GmailViewModel, modifier: Modifier) {
+private fun GmailThreadContent(
+    state: GmailUiState,
+    route: GmailRoute.Thread,
+    viewModel: GmailViewModel,
+    modifier: Modifier,
+    onHandoff: (GmailMessage) -> Unit = {},
+) {
     val thread = state.thread
     when {
         state.isLoading && thread == null -> Box(modifier.fillMaxSize()) { LoadingBlock("スレッドを読み込み中…") }
@@ -329,6 +454,7 @@ private fun GmailThreadContent(state: GmailUiState, route: GmailRoute.Thread, vi
                         error = null,
                         onRetry = viewModel::retry,
                         onOpenThread = viewModel::showThreadList,
+                        onHandoff = onHandoff,
                         modifier = Modifier.weight(1f),
                         showThreadAction = false,
                     )

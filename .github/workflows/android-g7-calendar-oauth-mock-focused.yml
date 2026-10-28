@@ -1,0 +1,75 @@
+name: G7 Calendar OAuth Mock Focused (Non-Required)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - codex/serea-g6-integration-candidate
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/android-g7-calendar-oauth-mock-focused.yml'
+      - 'android/app/src/main/java/app/serea/android/calendar/**'
+      - 'android/app/src/main/java/app/serea/android/googleauth/**'
+      - 'android/app/src/test/java/app/serea/android/calendar/CalendarOAuthMockE2ETest.kt'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g7-calendar-oauth-mock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  calendar-oauth-mock:
+    name: Synthetic OAuth to Calendar Mock HTTP (JVM only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact source checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: android/app/gradle.lockfile
+      - name: Run only the synthetic Calendar OAuth to Mock HTTP E2E
+        working-directory: android
+        run: >-
+          ./gradlew --no-daemon :app:testDebugUnitTest
+          --tests 'app.serea.android.calendar.CalendarOAuthMockE2ETest'
+      - name: Require the one expected JUnit test and no skipped or failed cases
+        run: |
+          python3 - <<'PY'
+          import glob
+          import pathlib
+          import xml.etree.ElementTree as ET
+
+          files = sorted(glob.glob('android/app/build/test-results/testDebugUnitTest/**/*.xml', recursive=True))
+          cases = []
+          for name in files:
+              root = ET.parse(name).getroot()
+              for case in root.iter('testcase'):
+                  cases.append((name, case))
+          assert len(cases) == 1, f'Expected exactly one focused test, found {len(cases)}'
+          name, case = cases[0]
+          assert case.attrib.get('classname') == 'app.serea.android.calendar.CalendarOAuthMockE2ETest', (name, case.attrib)
+          assert case.attrib.get('name') == 'syntheticConsentAllowsOnlyCalendarReadAndAccountSwitchStopsFurtherDispatch', (name, case.attrib)
+          assert not list(case.findall('failure')) and not list(case.findall('error')) and not list(case.findall('skipped')), (name, ET.tostring(case, encoding='unicode'))
+          print('PASS: exact G7 Calendar OAuth mock E2E JUnit case; failures=0 errors=0 skips=0')
+          PY
+      - name: Upload focused JUnit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-g7-calendar-oauth-mock-junit
+          if-no-files-found: warn
+          retention-days: 14
+          path: android/app/build/test-results/testDebugUnitTest/

@@ -27,6 +27,8 @@ must_reject("G3 run [g3-poc-run] [g3-api=34]")
 must_reject("G3 run [g3-poc-run] [g3-api=26] [g3-api=26]")
 must_reject("G3 run [g3-poc-run] [g3-api=]")
 must_reject("G3 run [g3-poc-run] [g3-api=26")
+must_reject("G3 run [g3-poc-run] [g3-api=26\ncontinuation [g3-api=35]")
+must_reject("G3 run [g3-poc-run] [g3-api=26\r\ncontinuation [g3-api=35]")
 must_reject("G3 run [g3-api=26]")
 
 assert select_api("workflow_dispatch", dispatch_input="26") == "26"
@@ -38,4 +40,4 @@ for invalid_dispatch in (None, "", "34"):
         continue
     raise SystemExit(f"expected unsupported dispatch API to be rejected: {invalid_dispatch!r}")
 
-print("g3_api_selection_host_regression=PASS valid_push=2 both_markers_rejected=true supported_plus_unsupported_rejected=true unsupported_only_rejected=true malformed_rejected=true duplicate_marker_rejected=true dispatch=2")
+print("g3_api_selection_host_regression=PASS valid_push=2 both_markers_rejected=true supported_plus_unsupported_rejected=true unsupported_only_rejected=true malformed_rejected=true multiline_unclosed_rejected=true duplicate_marker_rejected=true dispatch=2")

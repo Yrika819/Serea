@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import sys
 
-API_MARKER_PATTERN = re.compile(r"\[g3-api=[^\]\r\n]*(?:\]|(?=$))")
+API_MARKER_PATTERN = re.compile(r"\[g3-api=[^\]\r\n]*(?:\]|(?=\r?$))", re.MULTILINE)
 SUPPORTED_API_MARKERS = {"[g3-api=26]": "26", "[g3-api=35]": "35"}
 
 

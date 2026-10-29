@@ -10,8 +10,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import app.serea.android.calendar.EventTime
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -249,18 +251,27 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
             val (accountBSession, _) = factory.opened.last().second
             assertEquals(GoogleDemoAccount.ACCOUNT_B to 2, factory.opened.last().first)
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
-            val pendingRead = async(Dispatchers.IO) { accountBSession.listEventsPage(calendarId, range) }
-            val delayedRequest = withContext(Dispatchers.IO) { server.takeRequest(5, TimeUnit.SECONDS) }
-            assertNotNull(delayedRequest)
-            assertEquals("GET", delayedRequest!!.method)
-            assertEquals("localhost", delayedRequest.requestUrl!!.host)
+            supervisorScope {
+                // Supervise the expected failed read so its CalendarReadFailure cannot cancel the
+                // runTest parent before await() observes it. Undispatched startup ensures the
+                // session enters its read path before we wait for MockWebServer's request record.
+                val pendingRead = async(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
+                    accountBSession.listEventsPage(calendarId, range)
+                }
+                val delayedRequest = withContext(Dispatchers.IO) { server.takeRequest(5, TimeUnit.SECONDS) }
+                assertNotNull(delayedRequest)
+                assertEquals("GET", delayedRequest!!.method)
+                assertEquals("localhost", delayedRequest.requestUrl!!.host)
 
-            viewModel.revokeDemoGrant()
-            assertNull(viewModel.calendarDemoSession.value)
-            val delayedResult = runCatching { pendingRead.await() }
-            assertFalse(delayedResult.isSuccess)
-            assertTrue(delayedResult.exceptionOrNull() is CalendarReadFailure)
-            assertEquals(3, server.requestCount)
+                // Revoke only after MockWebServer has parsed the pending request, then observe the
+                // expected fail-closed result before leaving the supervised scope.
+                viewModel.revokeDemoGrant()
+                assertNull(viewModel.calendarDemoSession.value)
+                val delayedResult = runCatching { pendingRead.await() }
+                assertFalse(delayedResult.isSuccess)
+                assertTrue(delayedResult.exceptionOrNull() is CalendarReadFailure)
+                assertEquals(3, server.requestCount)
+            }
         }
 
     private fun viewModelProvider(

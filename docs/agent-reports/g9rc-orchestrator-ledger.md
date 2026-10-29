@@ -147,3 +147,11 @@ Agent C independently reviewed the patch and returned **CHANGES_REQUESTED**: the
 ### Native artifact guard review round 2
 
 At exact patch head `6122751a3e0349d8008237a553495fa402fb0e37` / tree `5e82a922125a864811c1f2e35f61df22110c0cbf`, C confirmed the current workflow uploads explicit safe paths and covers multiline glob negative fixtures, but requested another fix: the validator only parses block-style `path: |`; a second `upload-artifact` step using scalar `path: evidence/native-arm64-guest/*` bypasses the guard. Agent A is extending the contract to cover scalar/folded/all upload-artifact `with.path` styles and adding the scalar regression fixture. No runtime experiment has started.
+
+### Native artifact guard review round 3
+
+Parent independently injected an inline YAML flow-style upload action into patch head `9e0be352ec73aebb2a754188cde9a54592da3f7e` / tree `55b25959353d1bdb1ef12f50ca622f74d81482b8`:
+
+`with: {name: injected, path: evidence/native-arm64-guest/*}`
+
+The current validator returned no errors, bypassing path declarations. Agent C confirmed this finding and superseded its prior acceptance with **CHANGES_REQUESTED**. Agent A is extending flow-style `with.path` detection/rejection and adding a negative fixture. The current actual workflow still uses explicit allowlisted block paths; no artifact was uploaded and no Native run has started.

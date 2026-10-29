@@ -757,10 +757,13 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "case \"${FAKE_ADB_MODE:-}\" in\n"
                 "  fail) echo 'adb: device offline' >&2; exit 73 ;;\n"
-                "  package_not_found) echo 'Error: package not found: app.serea.android.isolated'; exit \"${FAKE_ADB_NOT_FOUND_EXIT:-1}\" ;;\n"
+                "  package_not_found) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi ;;\n"
+                "  listed_package) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi; printf 'package:app.serea.android.isolated\\n'; exit 0 ;;\n"
+                "  list_failure) if [[ \"$*\" == *'pm path '* ]]; then exit 1; fi; echo 'adb: device offline' >&2; exit 73 ;;\n"
                 "  other_pm_error) echo 'Error: transaction failed' >&2; exit 1 ;;\n"
                 "  malformed_output) echo 'Error: transaction failed'; exit 0 ;;\n"
                 "esac\n"
+                "if [[ \"$*\" == *'pm list packages -u '* ]]; then printf '%s' \"${FAKE_ADB_PACKAGE_LIST:-}\"; exit 0; fi\n"
                 "printf '%s' \"${FAKE_ADB_PACKAGE_PATH:-}\"\n"
                 "exit 0\n",
                 encoding="utf-8",
@@ -806,8 +809,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 check=True,
             )
             self.assertEqual("status=0 path=\n", package_not_found.stdout)
-            env["FAKE_ADB_NOT_FOUND_EXIT"] = "0"
-            package_not_found_zero = subprocess.run(
+            env["FAKE_ADB_MODE"] = "listed_package"
+            listed_package = subprocess.run(
                 ["bash", "-c", command, "bash", str(helper)],
                 cwd=ROOT,
                 env=env,
@@ -815,7 +818,19 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 capture_output=True,
                 check=True,
             )
-            self.assertEqual("status=0 path=\n", package_not_found_zero.stdout)
+            self.assertEqual("status=2\n", listed_package.stdout)
+            self.assertIn("lists app.serea.android.isolated", listed_package.stderr)
+            env["FAKE_ADB_MODE"] = "list_failure"
+            list_failure = subprocess.run(
+                ["bash", "-c", command, "bash", str(helper)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual("status=2\n", list_failure.stdout)
+            self.assertIn("Could not independently verify", list_failure.stderr)
             env["FAKE_ADB_MODE"] = "malformed_output"
             malformed = subprocess.run(
                 ["bash", "-c", command, "bash", str(helper)],
@@ -828,7 +843,6 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertEqual("status=2\n", malformed.stdout)
             self.assertIn("unexpected output", malformed.stderr)
             env.pop("FAKE_ADB_MODE")
-            env.pop("FAKE_ADB_NOT_FOUND_EXIT")
             env["FAKE_ADB_PACKAGE_PATH"] = ""
             absent = subprocess.run(
                 ["bash", "-c", command, "bash", str(helper)],

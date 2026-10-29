@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -1014,6 +1015,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("SEREA_ISOLATED_INSTRUMENTATION_FINISHED", harness)
         self.assertIn('test_package="app.serea.android.isolated.test"', harness)
         self.assertIn('package="app.serea.android.isolated"', harness)
+        self.assertIn('android_package_path "$package"', harness)
+        self.assertIn('"${adb_cmd[@]}" install "$target_apk"', harness)
+        self.assertIn('installed_apk_sha256" != "$target_apk_sha256"', harness)
         self.assertIn('query_package_pid "$test_package"', harness)
         self.assertIn('shell sh -c "$pid_query_script"', harness)
         self.assertIn('shell am force-stop "$package"', harness)
@@ -1042,6 +1046,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             bindir = root / "bin"
             bindir.mkdir()
             fake_adb = bindir / "adb"
+            target_apk = root / "isolated.apk"
+            target_apk.write_bytes(b"disposable isolated test target apk")
+            target_apk_sha256 = hashlib.sha256(target_apk.read_bytes()).hexdigest()
             fake_adb.write_text(
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
@@ -1069,9 +1076,19 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "    esac\n"
                 "    ;;\n"
                 "  pm)\n"
-                "    [[ \"$1\" == path ]] || exit 92\n"
-                "    printf 'package:/data/app/app.serea.android.isolated/base.apk\\n'\n"
+                "    case \"$1\" in\n"
+                "      path)\n"
+                "        if [[ \"${2:-}\" == app.serea.android.isolated ]]; then\n"
+                "          printf 'package:/data/app/app.serea.android.isolated/base.apk\\n'\n"
+                "        else\n"
+                "          exit 1\n"
+                "        fi\n"
+                "        ;;\n"
+                "      list) [[ \"${2:-}\" == packages && \"${3:-}\" == -u ]] || exit 92 ;;\n"
+                "      *) exit 92 ;;\n"
+                "    esac\n"
                 "    ;;\n"
+                "  sha256sum) printf '%s  %s\\n' \"$ADB_TARGET_APK_SHA\" \"$1\" ;;\n"
                 "  sh)\n"
                 "    [[ \"$1\" == -c ]] || exit 93\n"
                 "    target=\"${@: -1}\"\n"
@@ -1135,6 +1152,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "SEREA_ISOLATED_INSTRUMENTATION_FINISHED": "1",
                     "SEREA_FAKE_GOOGLE_DEATH_TOKEN": f"{case_name}-token",
                     "SEREA_FAKE_GOOGLE_DEATH_EVIDENCE_DIR": str(case_dir / "evidence"),
+                    "SEREA_ISOLATED_TARGET_APK": str(target_apk),
+                    "ADB_TARGET_APK_SHA": target_apk_sha256,
                     "ADB_PID_QUERIES": str(case_dir / "pid-queries"),
                     "ADB_CALLS": str(case_dir / "adb-calls"),
                     "ADB_FORCE_STOP_COUNT": str(case_dir / "force-stop-count"),
@@ -1160,7 +1179,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             )
             self.assertNotEqual(0, instrumentation_failure.returncode)
             self.assertEqual("0\n", (instrumentation_case / "force-stop-count").read_text(encoding="utf-8"))
-            self.assertEqual("FAIL\n", (instrumentation_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            instrumentation_status = instrumentation_case / "evidence/status.txt"
+            self.assertEqual(
+                "FAIL\n",
+                instrumentation_status.read_text(encoding="utf-8") if instrumentation_status.exists() else "MISSING\n",
+                instrumentation_failure.stdout + instrumentation_failure.stderr,
+            )
             self.assertNotIn("PASS:", instrumentation_failure.stdout + instrumentation_failure.stderr)
 
             target_failure, target_case = run_case("target-query-failure", fail_package=target_package)

@@ -31,14 +31,6 @@ jobs:
         env:
           EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
-      - name: Set shared API 26 and API 35 campaign deadline
-        shell: bash
-        run: |
-          set -euo pipefail
-          # This deadline starts before SDK, KVM, and emulator setup, so that
-          # setup consumes the same 150-minute budget as both API campaigns.
-          # The 180-minute job then retains a 30-minute upload/cleanup margin.
-          echo "SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH=$(($(date +%s) + 150 * 60))" >> "$GITHUB_ENV"
       - id: scope
         name: Classify changed files
         env:
@@ -265,6 +257,14 @@ jobs:
         env:
           EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
+      - name: Set shared API 26 and API 35 campaign deadline
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This job-scoped deadline starts before SDK, KVM, and emulator setup.
+          # Its 170-minute budget is below the 180-minute job cap; the worst-case
+          # test/boot/setup/wrapper budget is 162 minutes, leaving 8 minutes.
+          echo "SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH=$(($(date +%s) + 170 * 60))" >> "$GITHUB_ENV"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin

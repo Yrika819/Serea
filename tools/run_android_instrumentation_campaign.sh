@@ -14,11 +14,11 @@ tool_dir="$(cd "$(dirname "$0")" && pwd)"
 # API 26 and API 35 run sequentially in one Actions job. Share a single wall-clock
 # deadline so the first API cannot consume time needed to save the second API's
 # evidence. The workflow sets this once near job start; local runs receive the
-# same bounded 150-minute default.
+# same bounded 170-minute default.
 if [[ "${SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]]; then
   campaign_deadline_epoch="$SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH"
 else
-  campaign_deadline_epoch=$(( $(date +%s) + 150 * 60 ))
+  campaign_deadline_epoch=$(( $(date +%s) + 170 * 60 ))
 fi
 bounded_command_seconds() {
   local cap="$1" reserve_seconds="${2:-150}" now remaining available
@@ -321,7 +321,7 @@ run_formal_partition() {
   rm -rf "$root/connected"
   local bounded_seconds
   local partition_cap=840
-  if [[ "$partition" == http ]]; then partition_cap=300; fi
+  if [[ "$partition" == http ]]; then partition_cap=240; fi
   bounded_seconds="$(bounded_command_seconds "$partition_cap" 150)" || {
     echo 'NOT_RUN: shared Android campaign deadline leaves no safe formal-partition budget.' > "$log_file"
     printf '124\n' > "$evidence/$partition-gradle-exit-code.txt"
@@ -517,7 +517,7 @@ if [[ "$sdk_ok" == true ]]; then
     http_filter="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["http_filter"])' "$variant_filters")"
     token="serea-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}"
     data_sentinel_token="$token"
-    run_bounded_gradle 300 60 "$evidence/instrumentation-gradle.log" \
+    run_bounded_gradle 240 60 "$evidence/instrumentation-gradle.log" \
       :app:assembleDebug :app:assembleIsolated :r25-ime-test:assembleDebug
     build_debug_result=$?
     ime_apk='r25-ime-test/build/outputs/apk/debug/r25-test-ime-debug.apk'
@@ -570,7 +570,7 @@ if [[ "$sdk_ok" == true ]]; then
           run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 420 19 '' || diagnostics_result=1
         fi
         if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 420 16 '' || diagnostics_result=1
+          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 360 16 '' || diagnostics_result=1
         fi
       else
         run_diagnostic_stage cursor-position-focused \
@@ -580,14 +580,14 @@ if [[ "$sdk_ok" == true ]]; then
           run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 420 19 '' || diagnostics_result=1
         fi
         if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 420 16 '' || diagnostics_result=1
+          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 360 16 '' || diagnostics_result=1
         fi
       fi
       http_target_apk='app/build/outputs/apk/isolatedHttp/app-isolatedHttp.apk'
       http_test_apk='app/build/outputs/apk/androidTest/isolatedHttp/app-isolatedHttp-androidTest.apk'
       http_variant_build_result=1
       if [[ "$diagnostics_result" -eq 0 ]]; then
-        run_bounded_gradle 300 60 "$evidence/http-variant-build.log" \
+        run_bounded_gradle 240 60 "$evidence/http-variant-build.log" \
           -PsereaHttpLoopbackTestVariant=true :app:assembleIsolatedHttp :app:assembleIsolatedHttpAndroidTest
         http_variant_build_result=$?
         if [[ "$http_variant_build_result" -eq 0 && -s "$http_target_apk" && -s "$http_test_apk" ]]; then

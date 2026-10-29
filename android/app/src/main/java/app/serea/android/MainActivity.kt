@@ -1085,6 +1085,11 @@ internal fun ChatScreen(
                     OutlinedTextField(value = monthlyTokensText, onValueChange = { monthlyTokensText = it; settingsMessage = "" },
                         modifier = Modifier.weight(1f), label = { Text("月次tokens") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                 }
+                runCatching { validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText) }
+                    .exceptionOrNull()?.message?.let { validationMessage ->
+                        Text(validationMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
+                    }
                 Button(onClick = {
                     scope.launch {
                         runCatching {
@@ -1105,11 +1110,6 @@ internal fun ChatScreen(
                 }, enabled = usage != null && runCatching {
                     validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText)
                 }.isSuccess) { Text("ソフト上限を保存") }
-                runCatching { validateUsageLimits(dailyRequestsText, dailyTokensText, monthlyRequestsText, monthlyTokensText) }
-                    .exceptionOrNull()?.message?.let { validationMessage ->
-                        Text(validationMessage, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive })
-                    }
             }
             if (!settingsDestination) {
                 if (!compactChat) {

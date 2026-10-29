@@ -129,6 +129,7 @@ cleanup() {
     local package_status app_private_remove_command temp_remove_command
     local host_remove_command host_absence
     local app_private_state=NOT_VERIFIED temp_state=NOT_VERIFIED
+    local app_private_owner_package_state=NOT_CHECKED
     local test_uninstall_command=NOT_ATTEMPTED test_package_state=NOT_VERIFIED
     local app_uninstall_command=NOT_ATTEMPTED app_package_state=NOT_VERIFIED
     local report_path report_tmp report_write_status=PASS cleanup_result output_write_status=NOT_ATTEMPTED
@@ -139,7 +140,13 @@ cleanup() {
     set +e
 
     if [[ "$APP_PRIVATE_MODEL_OWNED" == 1 ]]; then
-        if [[ "$APP_PACKAGE_OWNED" == 1 ]] && package_state "$APP_ID"; then
+        if [[ "$APP_PACKAGE_OWNED" != 1 ]]; then
+            app_private_owner_package_state=NOT_OWNED
+            app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_NOT_OWNED
+            app_private_state=NOT_VERIFIED
+            CLEANUP_FAILED=1
+        elif package_state "$APP_ID"; then
+            app_private_owner_package_state=INSTALLED
             if adb_device shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
                 app_private_remove_command=PASS
             else
@@ -154,12 +161,20 @@ cleanup() {
                 CLEANUP_FAILED=1
             fi
         else
-            app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_ABSENT
+            package_status=$?
+            if [[ "$package_status" == 1 ]]; then
+                app_private_owner_package_state=ABSENT
+                app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_ABSENT
+            else
+                app_private_owner_package_state=QUERY_FAILED
+                app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_QUERY_FAILED
+            fi
             app_private_state=NOT_VERIFIED
             CLEANUP_FAILED=1
         fi
     else
         if [[ "$APP_PACKAGE_OWNED" == 1 ]] && package_state "$APP_ID"; then
+            app_private_owner_package_state=INSTALLED
             if adb_device shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
                 app_private_remove_command=NOT_NEEDED_NOT_STAGED
                 app_private_state=ABSENT_VERIFIED
@@ -169,8 +184,22 @@ cleanup() {
                 CLEANUP_FAILED=1
             fi
         else
-            app_private_remove_command=NOT_APPLICABLE
-            app_private_state=NOT_APPLICABLE
+            if [[ "$APP_PACKAGE_OWNED" != 1 ]]; then
+                app_private_owner_package_state=NOT_OWNED
+                app_private_remove_command=NOT_APPLICABLE
+                app_private_state=NOT_APPLICABLE
+            else
+                package_status=$?
+                if [[ "$package_status" == 1 ]]; then
+                    app_private_owner_package_state=ABSENT
+                    app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_ABSENT
+                else
+                    app_private_owner_package_state=QUERY_FAILED
+                    app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_QUERY_FAILED
+                fi
+                app_private_state=NOT_VERIFIED
+                CLEANUP_FAILED=1
+            fi
         fi
     fi
 
@@ -223,6 +252,7 @@ cleanup() {
         'model_weights_uploaded=false'
         "host_model_rm_command=$host_remove_command"
         "host_model_final_state=$host_absence"
+        "app_private_owner_package_state=$app_private_owner_package_state"
         "app_private_model_rm_command=$app_private_remove_command"
         "app_private_model_final_state=$app_private_state"
         "device_temp_model_rm_command=$temp_remove_command"
@@ -240,6 +270,7 @@ cleanup() {
     elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_tmp" || \
         ! grep -Fxq "original_exit_status=$original_status" "$report_tmp" || \
         ! grep -Fxq "host_model_final_state=$host_absence" "$report_tmp" || \
+        ! grep -Fxq "app_private_owner_package_state=$app_private_owner_package_state" "$report_tmp" || \
         ! grep -Fxq "app_private_model_final_state=$app_private_state" "$report_tmp" || \
         ! grep -Fxq "device_temp_model_final_state=$temp_state" "$report_tmp" || \
         ! grep -Fxq "test_package_final_state=$test_package_state" "$report_tmp" || \
@@ -249,6 +280,7 @@ cleanup() {
         report_write_status=FAIL
     elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_path" || \
         ! grep -Fxq "host_model_final_state=$host_absence" "$report_path" || \
+        ! grep -Fxq "app_private_owner_package_state=$app_private_owner_package_state" "$report_path" || \
         ! grep -Fxq "app_private_model_final_state=$app_private_state" "$report_path" || \
         ! grep -Fxq "device_temp_model_final_state=$temp_state" "$report_path" || \
         ! grep -Fxq "test_package_final_state=$test_package_state" "$report_path" || \
@@ -279,6 +311,7 @@ cleanup() {
             'model_weights_uploaded=false' \
             "host_model_rm_command=$host_remove_command" \
             "host_model_final_state=$host_absence" \
+            "app_private_owner_package_state=$app_private_owner_package_state" \
             "app_private_model_rm_command=$app_private_remove_command" \
             "app_private_model_final_state=$app_private_state" \
             "device_temp_model_rm_command=$temp_remove_command" \
@@ -470,13 +503,9 @@ else
     echo 'instrumentation_timeout=NOT_EXPIRED' >> "$EVIDENCE_DIR/instrumentation-command-status.txt"
 fi
 
-if ((instrumentation_status != 0 || logcat_status != PASS || parser_status != 0)) || \
-    [[ "$timeout_cleanup" == FAIL ]] || \
-    ! grep -Fxq "noop_result=PASS" "$EVIDENCE_DIR/junit-verification.txt" || \
-    ! grep -Fxq "native_result=PASS" "$EVIDENCE_DIR/junit-verification.txt" || \
-    ! grep -Fxq 'failures=0' "$EVIDENCE_DIR/junit-verification.txt" || \
-    ! grep -Fxq 'errors=0' "$EVIDENCE_DIR/junit-verification.txt" || \
-    ! grep -Fxq 'skipped=0' "$EVIDENCE_DIR/junit-verification.txt"; then
+source "$ROOT_DIR/tools/g8-local-model-native/instrumentation-gate.sh"
+if ! instrumentation_gate_passes "$instrumentation_status" "$logcat_status" \
+    "$parser_status" "$timeout_cleanup" "$EVIDENCE_DIR/junit-verification.txt"; then
     echo 'Android instrumentation diagnostic or native inference did not pass; captured output follows.' >&2
     tail -n 240 "$instrumentation_log" >&2 || true
     tail -n 240 "$EVIDENCE_DIR/android-logcat-diagnostic.log" >&2 || true

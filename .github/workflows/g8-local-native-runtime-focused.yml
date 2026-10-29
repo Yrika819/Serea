@@ -79,6 +79,7 @@ jobs:
           python3 tools/g8-local-model-native/test-jni-contract.py
           bash tools/g8-local-model-native/test-preflight.sh
           bash tools/g8-local-model-native/test-cleanup.sh
+          bash tools/g8-local-model-native/test-instrumentation-gate.sh
           python3 tools/g8-local-model-native/test-instrumentation-stream.py
 
       - name: Record source identity and run focused JVM contracts

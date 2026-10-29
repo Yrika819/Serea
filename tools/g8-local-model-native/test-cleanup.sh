@@ -21,6 +21,8 @@ if [[ "${1:-}" == shell && "${2:-}" == pm && "${3:-}" == list && "${4:-}" == pac
     else
         package="${5:-}"
     fi
+    [[ "${FAIL_APP_PRIVATE_PACKAGE_QUERY:-0}" != 1 || "$package" != app.serea.android.isolated || \
+       "$include_uninstalled" == true ]] || exit 28
     [[ "${FAIL_CLEANUP_QUERY:-0}" != 1 || "$include_uninstalled" != true ]] || exit 27
     if [[ "${MALFORMED_CLEANUP_QUERY:-0}" == 1 && "$include_uninstalled" == true ]]; then
         printf 'warning: package query incomplete\n'
@@ -137,6 +139,7 @@ status="$(run_case success)"
 report="$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'host_model_rm_command=PASS' "$report"
 grep -Fxq 'host_model_final_state=ABSENT_VERIFIED' "$report"
+grep -Fxq 'app_private_owner_package_state=INSTALLED' "$report"
 grep -Fxq 'app_private_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'device_temp_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'test_package_final_state=ABSENT_VERIFIED' "$report"
@@ -185,6 +188,27 @@ assert_cleanup_failure preserve_primary_status FAIL_TEST_UNINSTALL=1 42
 assert_cleanup_failure retained_package_data RETAIN_AFTER_UNINSTALL=1
 assert_cleanup_failure retained_package_query_error FAIL_CLEANUP_QUERY=1
 assert_cleanup_failure malformed_retained_package_query MALFORMED_CLEANUP_QUERY=1
+
+prepare_case app_private_package_query_failure
+status="$(run_case app_private_package_query_failure FAIL_APP_PRIVATE_PACKAGE_QUERY=1 0 FAIL_EVIDENCE_RM=1)"
+[[ "$status" != 0 ]]
+grep -Fxq 'app_private_owner_package_state=QUERY_FAILED' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_model_final_state=NOT_VERIFIED' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'cleanup_outcome=FAIL' "$EVIDENCE_DIR/cleanup-boundary.txt"
+! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+
+# An owned app disappearing before app-private cleanup must remain unverified; package uninstall
+# success cannot substitute for direct proof that the staged private file was removed.
+prepare_case missing_owned_app_package
+grep -Fvx 'package:app.serea.android.isolated' "$ADB_STATE/packages" > "$ADB_STATE/packages.next"
+mv "$ADB_STATE/packages.next" "$ADB_STATE/packages"
+status="$(run_case missing_owned_app_package FAIL_EVIDENCE_RM=1)"
+[[ "$status" != 0 ]]
+grep -Fxq 'app_private_owner_package_state=ABSENT' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_model_rm_command=NOT_VERIFIED_OWNER_PACKAGE_ABSENT' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_model_final_state=NOT_VERIFIED' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'cleanup_outcome=FAIL' "$EVIDENCE_DIR/cleanup-boundary.txt"
+! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
 
 # A failed removal of the evidence source must still fail closed at the
 # workflow boundary; a surviving directory is never enough to authorize upload.

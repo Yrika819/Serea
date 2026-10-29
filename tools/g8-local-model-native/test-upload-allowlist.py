@@ -40,15 +40,38 @@ SAFE_UPLOAD_PATHS = {
 
 def validate_workflow(workflow: str) -> list[str]:
     problems: list[str] = []
-    steps = re.findall(
-        r"(?ms)^([ \t]*-\s+(?:name|uses):[^\n]*\n.*?)(?=^[ \t]*-\s+(?:uses|name):|\Z)",
-        workflow,
-    )
+    steps: list[str] = []
+    in_steps = False
+    current_step: list[str] = []
+    for line in workflow.splitlines():
+        if re.fullmatch(r" {4}steps:[ \t]*", line):
+            if current_step:
+                steps.append("\n".join(current_step))
+                current_step = []
+            in_steps = True
+            continue
+        if not in_steps:
+            continue
+        if line.strip() and len(line) - len(line.lstrip(" ")) < 6:
+            if current_step:
+                steps.append("\n".join(current_step))
+                current_step = []
+            in_steps = False
+            continue
+        if re.match(r"^ {6}-[ \t]+", line):
+            if current_step:
+                steps.append("\n".join(current_step))
+            current_step = [line]
+        elif current_step:
+            current_step.append(line)
+    if current_step:
+        steps.append("\n".join(current_step))
+
     artifact_steps = [
         step
         for step in steps
-        if re.search(r"(?m)^[ \t]*-\s+uses:[ \t]*actions/upload-artifact@", step)
-        or re.search(r"(?m)^[ \t]*uses:[ \t]*actions/upload-artifact@", step)
+        if re.search(r"(?m)^ {6}-[ \t]+uses:[ \t]*actions/upload-artifact@", step)
+        or re.search(r"(?m)^ {8}uses:[ \t]*actions/upload-artifact@", step)
     ]
     if not artifact_steps:
         problems.append("no upload-artifact steps were found for allowlist validation")
@@ -140,9 +163,17 @@ def main() -> int:
         workflow
         + "\n      - uses: actions/upload-artifact@v4\n"
         + "        with : {name: injected, path: evidence/native-arm64-guest/*}\n",
+        workflow
+        + "\n      - id: injected\n"
+        + "        uses: actions/upload-artifact@v4\n"
+        + "        with:\n"
+        + "          name: injected\n"
+        + "          path: |\n"
+        + "            evidence/native-arm64-guest/emulator.log\n"
+        + "            evidence/native-arm64-guest/*\n",
     )
     if any(not validate_workflow(fixture) for fixture in bad_fixtures):
-        print("artifact guard accepted a raw path, directory wildcard, or missing JUnit report", file=sys.stderr)
+        print("artifact guard accepted a raw path, directory wildcard, id-first upload, or missing JUnit report", file=sys.stderr)
         return 1
     print("native_artifact_allowlist=PASS raw_logs=EXCLUDED explicit_paths=PASS sanitized_junit=REQUIRED")
     return 0

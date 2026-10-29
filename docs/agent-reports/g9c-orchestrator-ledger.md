@@ -252,6 +252,16 @@ The previously active API35 emulator jobs have now terminated. Their evidence is
 
 Updated Android disposition: PR #168's Google/Gmail UI and 105 Required test suites individually pass on both APIs at exact #168 source, but the API campaign is not accepted until the package-verification harness and unit failure are fixed and repeated on a new source. PR #173 has cumulative ACCEPTED review and the timeout unit locally passes, but its formal API26/API35 run is pending. PR #169 Required is FAIL on both APIs due the four offline loopback tests; its HTTP split remains in progress. G9 Android closure stays PARTIAL.
 
+### PR #173 local JVM rerun — 2026-10-29 17:11 UTC
+
+Parent reran the complete Android Gradle Unit task on exact PR #173 HEAD `540fd754e81c3788a76cc9452f754211e95d8378` / tree `f52c4104297edae8d84db72680de34136752f4a` using the isolated JDK 17 at `/workspace/.tools/temurin17-download/jdk-17.0.21+9`:
+
+```text
+JAVA_HOME=/workspace/.tools/temurin17-download/jdk-17.0.21+9 ./gradlew --no-daemon testDebugUnitTest
+```
+
+JUnit XML aggregate: **408 tests, 0 failures, 0 errors, 0 skips**. The focused `GoogleCalendarHttpReadPortTest#timeoutMapsToTimeout` JUnit test is included (21 tests in the class, all pass). The build completed successfully in 1m07s with `:app:testDebugUnitTest` executed. Earlier first attempt without JDK17 failed because system JDK21 lacked `javac`; an earlier no-rerun focused attempt was UP-TO-DATE and excluded. This is local JVM evidence only, not API26/API35 emulator evidence or hosted CI.
+
 ## PR #169 review and runner update — 2026-10-29 16:03 UTC
 
 Agent C completed the full exact-HEAD review: **ACCEPTED** at `87af6aab9c9db8f65e18ca18456256e03797ffb3` / tree `0fceca72877574acdd3cdbfa67b363dcabfb4dda`. Review confirms the diff from #166 is only Kotlin capability-bound validation, a boundary test, and report text; limits align with existing JNI checks, no silent clamp or lifecycle/security change; Native artifact allowlist stays sanitized; ordinary Chat remains disconnected.

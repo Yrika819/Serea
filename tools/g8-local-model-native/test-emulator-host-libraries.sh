@@ -6,15 +6,22 @@ CHECKER="$SCRIPT_DIR/check-emulator-host-libraries.sh"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/serea-emulator-libs-test.XXXXXX")"
 trap 'rm -rf -- "$TEMP_ROOT"' EXIT
 
-mkdir -p "$TEMP_ROOT/bin" "$TEMP_ROOT/lib"
-qemu="$TEMP_ROOT/qemu-system-x86_64"
+sdk_emulator_root="$TEMP_ROOT/sdk/emulator"
+qemu_directory="$sdk_emulator_root/qemu/linux-x86_64"
+mkdir -p "$TEMP_ROOT/bin" "$TEMP_ROOT/lib" "$sdk_emulator_root/lib64/qt/lib" "$qemu_directory"
+qemu="$qemu_directory/qemu-system-x86_64"
 pulse="$TEMP_ROOT/lib/libpulse.so.0"
+export SEREA_TEST_EXPECTED_LIBRARY_PATH="$sdk_emulator_root/lib64:$sdk_emulator_root/lib64/qt/lib:$qemu_directory"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$qemu"
 printf 'fixture library\n' > "$pulse"
 chmod +x "$qemu"
 
 cat > "$TEMP_ROOT/bin/ldd" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${LD_LIBRARY_PATH:-}" != "$SEREA_TEST_EXPECTED_LIBRARY_PATH" ]]; then
+  printf 'libQt6CoreAndroidEmu.so.6 => not found\n'
+  exit 0
+fi
 case "${SEREA_TEST_LDD_MODE:-ok}" in
   ok)
     printf 'libpulse.so.0 => %s (0x0000000000000000)\n' "$SEREA_TEST_PULSE_PATH"

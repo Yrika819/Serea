@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+RUN_E2E="$ROOT_DIR/tools/g8-local-model-native/run-e2e.sh"
+TEST_ROOT="$(mktemp -d "${RUNNER_TEMP:-/tmp}/serea-g8-cleanup-test.XXXXXX")"
+FAKE_BIN="$TEST_ROOT/bin"
+mkdir -p "$FAKE_BIN"
+trap '/bin/rm -rf "$TEST_ROOT"' EXIT
+
+cat > "$FAKE_BIN/adb" <<'ADB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == shell && "${2:-}" == pm && "${3:-}" == list && "${4:-}" == packages ]]; then
+    package="${5:-}"
+    grep -Fx "package:$package" "$ADB_STATE/packages" || true
+    exit 0
+fi
+if [[ "${1:-}" == shell && "${2:-}" == run-as && "${4:-}" == rm ]]; then
+    [[ "${FAIL_APP_PRIVATE_RM:-0}" != 1 ]] || exit 21
+    /bin/rm -f "$ADB_STATE/app-private-model"
+    exit 0
+fi
+if [[ "${1:-}" == shell && "${2:-}" == run-as && "${4:-}" == test ]]; then
+    [[ ! -e "$ADB_STATE/app-private-model" ]]
+    exit
+fi
+if [[ "${1:-}" == shell && "${2:-}" == rm && "${3:-}" == -f ]]; then
+    [[ "${FAIL_TEMP_RM:-0}" != 1 ]] || exit 22
+    /bin/rm -f "$ADB_STATE/device-temp-model"
+    exit 0
+fi
+if [[ "${1:-}" == shell && "${2:-}" == test ]]; then
+    [[ ! -e "$ADB_STATE/device-temp-model" ]]
+    exit
+fi
+if [[ "${1:-}" == uninstall ]]; then
+    package="${2:-}"
+    if [[ "$package" == app.serea.android.isolated.test && "${FAIL_TEST_UNINSTALL:-0}" == 1 ]]; then exit 23; fi
+    if [[ "$package" == app.serea.android.isolated && "${FAIL_APP_UNINSTALL:-0}" == 1 ]]; then exit 24; fi
+    awk -v line="package:$package" '$0 != line' "$ADB_STATE/packages" > "$ADB_STATE/packages.next"
+    mv "$ADB_STATE/packages.next" "$ADB_STATE/packages"
+    exit 0
+fi
+
+echo "unexpected adb invocation: $*" >&2
+exit 99
+ADB
+
+cat > "$FAKE_BIN/rm" <<'RM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${FAIL_EVIDENCE_RM:-0}" == 1 && "${1:-}" == -rf && "${2:-}" == "$G8_EVIDENCE_DIR" ]]; then
+    exit 26
+fi
+for argument in "$@"; do
+    if [[ "${FAIL_HOST_MODEL_RM:-0}" == 1 && "$argument" == "$RUNNER_TEMP/serea-g8-smollm2.gguf" ]]; then
+        exit 25
+    fi
+done
+exec /bin/rm "$@"
+RM
+chmod +x "$FAKE_BIN/adb" "$FAKE_BIN/rm"
+
+prepare_case() {
+    local case_name="$1"
+    CASE_ROOT="$TEST_ROOT/$case_name"
+    RUNNER_TEMP="$CASE_ROOT/runner"
+    G8_EVIDENCE_DIR="$CASE_ROOT/evidence"
+    ADB_STATE="$CASE_ROOT/adb-state"
+    GITHUB_OUTPUT="$CASE_ROOT/github-output"
+    mkdir -p "$RUNNER_TEMP" "$G8_EVIDENCE_DIR" "$ADB_STATE"
+    : > "$GITHUB_OUTPUT"
+    printf '%s\n' 'package:app.serea.android.isolated' \
+        'package:app.serea.android.isolated.test' > "$ADB_STATE/packages"
+    : > "$ADB_STATE/app-private-model"
+    : > "$ADB_STATE/device-temp-model"
+    : > "$RUNNER_TEMP/serea-g8-smollm2.gguf"
+}
+
+run_case() {
+    local case_name="$1"
+    local failure_assignment="${2:-}"
+    local primary_status="${3:-0}"
+    local secondary_failure_assignment="${4:-}"
+    local status
+    local -a command=(env \
+        PATH="$FAKE_BIN:$PATH" \
+        RUNNER_TEMP="$RUNNER_TEMP" \
+        G8_EVIDENCE_DIR="$G8_EVIDENCE_DIR" \
+        ADB_STATE="$ADB_STATE" \
+        GITHUB_OUTPUT="$GITHUB_OUTPUT" \
+        SEREA_CLEANUP_TEST_MODE=1 \
+        SEREA_CLEANUP_TEST_PRIMARY_STATUS="$primary_status")
+    if [[ -n "$failure_assignment" ]]; then
+        command+=("$failure_assignment")
+    fi
+    if [[ -n "$secondary_failure_assignment" ]]; then
+        command+=("$secondary_failure_assignment")
+    fi
+    command+=("$RUN_E2E")
+    if "${command[@]}" > "$CASE_ROOT/stdout.log" 2> "$CASE_ROOT/stderr.log"; then
+        status=0
+    else
+        status=$?
+    fi
+    printf '%s\n' "$status"
+}
+
+# Normal cleanup must verify every final resource state.
+prepare_case success
+status="$(run_case success)"
+[[ "$status" == 0 ]]
+report="$G8_EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'host_model_rm_command=PASS' "$report"
+grep -Fxq 'host_model_final_state=ABSENT_VERIFIED' "$report"
+grep -Fxq 'app_private_model_final_state=ABSENT_VERIFIED' "$report"
+grep -Fxq 'device_temp_model_final_state=ABSENT_VERIFIED' "$report"
+grep -Fxq 'test_package_final_state=ABSENT_VERIFIED' "$report"
+grep -Fxq 'app_package_final_state=ABSENT_VERIFIED' "$report"
+grep -Fxq 'cleanup_outcome=PASS' "$report"
+grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+[[ ! -e "$RUNNER_TEMP/serea-g8-smollm2.gguf" ]]
+[[ ! -e "$ADB_STATE/app-private-model" && ! -e "$ADB_STATE/device-temp-model" ]]
+[[ ! -s "$ADB_STATE/packages" ]]
+
+assert_cleanup_failure() {
+    local case_name="$1"
+    local failure_assignment="$2"
+    local primary_status="${3:-0}"
+    local status
+    prepare_case "$case_name"
+    status="$(run_case "$case_name" "$failure_assignment" "$primary_status")"
+    if [[ "$primary_status" != 0 ]]; then
+        [[ "$status" == "$primary_status" ]]
+    else
+        [[ "$status" != 0 ]]
+    fi
+    grep -Fq 'cleanup_outcome=FAIL' "$CASE_ROOT/stderr.log"
+    [[ ! -e "$G8_EVIDENCE_DIR" ]]
+    if grep -Eq 'host_model_file_removed=true|app_and_test_packages_uninstalled=true|cleanup_outcome=PASS' \
+        "$CASE_ROOT/stderr.log"; then
+        echo "FAIL: '$case_name' emitted an unconditional success flag" >&2
+        exit 1
+    fi
+    if grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"; then
+        echo "FAIL: '$case_name' exposed cleanup_verified=true" >&2
+        exit 1
+    fi
+}
+
+assert_cleanup_failure app_private_rm FAIL_APP_PRIVATE_RM=1
+assert_cleanup_failure device_temp_rm FAIL_TEMP_RM=1
+assert_cleanup_failure test_package_uninstall FAIL_TEST_UNINSTALL=1
+assert_cleanup_failure app_package_uninstall FAIL_APP_UNINSTALL=1
+assert_cleanup_failure host_model_rm FAIL_HOST_MODEL_RM=1
+assert_cleanup_failure preserve_primary_status FAIL_TEST_UNINSTALL=1 42
+
+# A failed removal of the evidence source must still fail closed at the
+# workflow boundary; a surviving directory is never enough to authorize upload.
+prepare_case evidence_source_rm_failure
+status="$(run_case evidence_source_rm_failure FAIL_TEST_UNINSTALL=1 0 FAIL_EVIDENCE_RM=1)"
+[[ "$status" != 0 ]]
+[[ -d "$G8_EVIDENCE_DIR" ]]
+! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+grep -Fq 'cleanup_evidence_source_removal=NOT_VERIFIED' "$CASE_ROOT/stderr.log"
+grep -Fq "if: always() && steps.native_e2e.outputs.cleanup_verified == 'true'" \
+    "$ROOT_DIR/.github/workflows/g8-local-native-runtime-focused.yml"
+
+# A report write failure cannot publish a success output, even if resource
+# cleanup itself succeeded.
+prepare_case report_write_failure
+mkdir "$G8_EVIDENCE_DIR/cleanup-boundary.txt.tmp"
+status="$(run_case report_write_failure)"
+[[ "$status" != 0 ]]
+! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+grep -Fq 'cleanup_report_write=FAIL' "$CASE_ROOT/stderr.log"
+[[ ! -e "$G8_EVIDENCE_DIR" ]]
+
+echo 'cleanup_harness=PASS normal=verified output_gate=fail_closed report_write=fail_closed failures=nonzero primary_status=preserved'

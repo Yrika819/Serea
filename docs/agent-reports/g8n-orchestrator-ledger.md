@@ -1,6 +1,6 @@
 # G8 Closure → Native AI → G9 → G10 Campaign Ledger
 
-**Checkpoint:** 2026-10-29 UTC 02:41
+**Checkpoint:** 2026-10-29 UTC 02:42
 **Roadmap:** `Serea_Roadmap_v4.md`
 **Repository:** `Yrika819/Serea`
 **Campaign status:** G8 Evidence Closure **PARTIAL**; Native Runtime **PARTIAL**; Bonsai 2 Evaluation **PARTIAL**; G9 Functional Candidate **PARTIAL**; G10 Preflight **PARTIAL**; Personal Beta **NO-GO**.
@@ -58,7 +58,7 @@ Latest exact-head PR checks include Native focused run `40803623345`, attempt 1,
 
 The workflow redirected Gradle output to `evidence/g8-local-native/gradle-native-build.log`, but no artifact was uploaded for the failed run. Therefore the observable category is a **native APK assembly/build failure**; JNI compiler, CMake, NDK/ABI, llama.cpp API, link, packaging and test-harness subcause is **UNCONFIRMED**. The output recovery path is a harness/evidence gap. Do not call this a proven JNI or CMake defect. Lane A is adding recoverable failure diagnostics and will use a new source SHA for any subsequent CI evidence.
 
-Historical failure `40800987367` is separate: source `082d223d9975492b5dab3c70349f0d6e9fc504de` completed CMake Release configuration/build and assembled the isolated target APK for arm64-v8a and x86_64, then failed compiling `LocalModelNativeRuntimeE2ETest.kt:126` because the test referenced `awaitReleased` through an interface where that method was unavailable (it exists only on the concrete backend). Lane A found this in the historical log. This is a **Test Harness compile failure at the older source**, not evidence of the cause at current PR #144 HEAD.
+Historical failure `40800987367`, attempt 1, is separate: source `082d223d9975492b5dab3c70349f0d6e9fc504de`, tree `c25df6797e0b00946afb6ee5c8893521bacc0ca6`, artifact `12867015936` with SHA-256 `d8d4ff9c94c387ad8ca9bcd9d4cc179bb95d1999ef109a16a0820780a55683a3`. Its recovered Gradle log shows CMake Release configuration/build completed and the isolated target APK assembled for arm64-v8a and x86_64, then `:app:compileIsolatedAndroidTestKotlin` failed at `LocalModelNativeRuntimeE2ETest.kt:126:80`: unresolved `awaitReleased` on `LocalModelInferenceBackend`. This is a **Test Harness compile failure at the older source**, not evidence of the cause at current PR #144 HEAD. The artifact contains a separate JVM test `LocalModelNativeRuntimeTest#defaultProductBuildFailsClosedBeforeLoadingNativeLibrary` (1/1 PASS); this does not establish JNI inference.
 
 Run `40803623345` is the G8 Native Runtime Focused non-required workflow, separate from Rust `40804693934`. No x86_64 inference evidence can be inferred from either run's name or build failure.
 

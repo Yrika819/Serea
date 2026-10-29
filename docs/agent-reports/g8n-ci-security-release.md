@@ -298,3 +298,125 @@ CURRENT_BLOCKERS: PR #149 exact-head Required API26/35 and remaining CI; PR #150
 NEXT_ACTION: Re-review Agent A's exact fixed PR #147 SHA/tree and run evidence; capture later #146/#149/#150 exact-head CI outcomes.
 OWNER_APPROVAL_REQUIRED: Package ID/coexistence, certificate/channel, OAuth scopes, provider/audience/region, model choice and device acceptance.
 ```
+
+## Late evidence refresh — 2026-10-29 08:30 UTC
+
+### Current PR identities
+
+GitHub PR metadata and commit tree APIs were refreshed before this update. These four candidates remain distinct and no existing PR was changed by Lane C.
+
+| PR | Exact source / tree | Base | Current state |
+|---|---|---|---|
+| #146 | `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66` / `25e2bb481a0b25bfed89d6ee25f1812316703b8e` | `codex/serea-g7-calendar-readiness` | OPEN; frozen evidence reference |
+| #147 | `1945eafd0fa3be1068ac67972026dcc8b320b339` / `5229b8ea59fc537ba607bde517991328b615e016` | `codex/serea-g7-calendar-readiness` | OPEN Draft; source/harness review accepted, model-license report change requested |
+| #149 | `3a0f0c1897f2115549e7682d6fcc1783c44604f3` / `6a1f4d382907a7deb7d6dbf8147e6490aa054e81` | `codex/serea-g8-integration-candidate-20261029-r1` | OPEN Draft; static campaign patch review accepted; Android formal gate failed |
+| #150 | `50a56acd22fb363cf5354a3d39e67b01d980491a` / `ba32d9b5eb3fdecb42c926e218b16effb096d1c7` | `codex/serea-g8-integration-candidate-20261029-r1` | OPEN Draft; Gmail handoff code/test and docs/evidence review accepted; Android formal gate failed |
+
+### PR #146 completed formal CI evidence
+
+The nine requested runs all identify exact PR #146 source `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66`, attempt 1. GitHub job records now show every requested workflow terminal. Seven workflow families pass; the Android workflow is the sole Required failure. No run was retried.
+
+| Run | Result | Job result / runner summary |
+|---|---|---|
+| Android `40804694025` | **FAIL** | Change Scope, Build/Lint/Instrumentation Compile, Security Tests, Integration, Unit, Documentation, Dependency Audit, and Pixel 7a Reacceptance Bundle PASS. Storage and Emulator and Emulator Required Gate FAIL. Identity Isolation SKIPPED because its dependency gate failed. API 26/35 each start 0/105 Required tests; process-death/data-isolation/sentinel harnesses pass independently. |
+| Full CI `40804693907` | PASS | All five jobs pass: Windows P7 Gate C, Linux stable, Linux MSRV, macOS ARM64, macOS x86_64. |
+| Native `40804693934` | PASS | All twelve platform/compiler jobs pass, including stable/Rust 1.85 across Windows, Linux, and macOS. This is a Rust platform matrix, not Android JNI evidence. |
+| SQLite `40804693978` | PASS | Both database producers and both cross-architecture consumers pass. |
+| RustSec `40804693889` | PASS | Dependency and vendor audit pass. |
+| Fast CI `40804693992` | PASS | Linux fast checks pass. |
+| Git Hooks `40804693919` | PASS | Windows, Ubuntu, and macOS jobs pass. |
+| Release Security `40804722382` | PASS | Mock release contract and artifact-bound SBOM pass; it uses mock/debug signing contract only. |
+| Mock Beta Contract `40804722157` | PASS | Mock Personal Beta signing/Firebase contract tests pass; no Beta was signed or distributed. |
+
+Android run job identities are `123226282050` (Change Scope, runner `1000023202`), `123227924078` (Build/Lint/Instrumentation Compile, `1000023215`), `123227924099` (Security Tests, `1000023207`), `123227924157` (Integration, `1000023225`), `123227924170` (Unit, `1000023233`), `123227924184` (Documentation, `1000023224`), `123227924251` (Dependency Audit, `1000023227`), `123230615644` (Storage and Emulator, `1000023241`), `123232823166` (Pixel 7a Reacceptance Bundle, `1000023246`), `123232824352` (Identity Isolation, skipped/no runner), and `123232881578` (Emulator Required Gate, `1000023247`). All are attempt 1. The non-Android jobs also ran on assigned GitHub runners and completed successfully; none remain queued.
+
+The Android workflow artifacts remain available in GitHub with these IDs and API-reported SHA-256 digests:
+
+| Artifact | ID | SHA-256 |
+|---|---:|---|
+| Emulator evidence | `12869770024` | `fa8426a3e202ad445d4b3a5b00c021e7c2c3888fe74b8d28e05dbbc4d2049fad` |
+| Unit JUnit | `12869510041` | `c727e3421dab84a7b82a26920b2a0502f1938d560777482852e78afabbd35487` |
+| Integration JUnit | `12869310588` | `62d700d4c25ac1ef0c9ddc3645586028a2347465c42370e16a3153ab108a0355` |
+| API 26 instrumentation evidence | `12869216935` | `d08309fde30db9fb67957bb1631ed5aba7c68f0f8d929f332da240a862c37afd` |
+| API 35 instrumentation evidence | `12868798855` | `06ed97683b5d292c2f87c0d47f1eebacddc175f7e4944530f751abe8d10134c3` |
+| Security JUnit | `12868263908` | `6c757e8b54d382fc0e9734cd4fe6be6e892cd8d8408a96fac0dd9f949fe9ef12` |
+| Debug APK candidate | `12869480087` | `d3654dbde4ed96cbcb53c74983d7d8aafa649a9aca3ba02212da1c44b3d8aa17` |
+| Pixel UI reliability bundle | `12868893543` | `95e8ec9c7d5fc46e7e16fb33f8b8703afe8daa5e8d2d2d1a2cc6342002621155` |
+| Dependency audit | `12868532793` | `32e9947f6dc9497a516ae626b14f2d33b8fee341c9e06d8a00e05ca04162ec01` |
+
+Other reported artifacts are SQLite ARM64 producer `12869265751` (`sha256:a24f408ba84461818e3f4bb915977ad699900c54ac5dc18416009e3d305be039`), SQLite Intel producer `12869541631` (`sha256:f11760407eca7777e4685c0b72dc19fc14783c4251e2d11d92458a840ae14f7c`), RustSec `12867589033` (`sha256:0f360ef81a5ab03efc14fecf99197c758df0be54cd48cd058935caa11078bee7`), and Release Security `12868174398` (`sha256:17ad843799fdde28e42a9ea099d1c9d571e8f6d093b958a1ee17a464037c40a7`). Full CI, Fast CI, Git Hooks, and Mock Beta Contract uploaded no artifacts. The #146 instrumentation artifact ZIP download was attempted once at 08:29 UTC from this lane and returned HTTP 403 from the GitHub artifact blob endpoint; artifact IDs/digests are recorded from the Actions artifact API, and the earlier evidence review remains the source for JUnit counts and sanitized logs.
+
+### Current PR #149 CI and UI evidence
+
+All seven formal workflow runs below are attempt 1 and bind to the exact #149 source/tree above. Full CI, Native platform, SQLite, RustSec, Fast CI, and Git Hooks complete successfully; Android `40810824093` fails. Its Pixel 7a-named bundle is CI-generated and is not physical-device acceptance.
+
+| Run | Result | Artifact / evidence |
+|---|---|---|
+| Android `40810824093` | **FAIL** | Required ChatHistoryUxTest on API 26: 105/105 PASS. Subsequent non-required Fake Google/Gmail diagnostic stage ran 16 cases on API 26 and failed 5; observed failure classes include ambiguous Compose selectors, repeated `setContent`, Activity-recreation timeout, and account-switch handoff stale/wrong behavior. API 35 failed earlier in the Required cursor-position stage on `awaitTestImeSession` timeout; therefore API 35 Google/Gmail diagnostics are NOT_RUN. Process Death and Data Isolation pass on both APIs. |
+| Full CI `40810824061` | PASS | All five platform jobs pass. |
+| Native `40810824148` | PASS | All twelve Rust platform/compiler jobs pass; not Native Android inference. |
+| SQLite `40810824022` | PASS | Both database producers and both cross-architecture consumers pass. |
+| RustSec `40810824040` | PASS | Vendor and dependency audit pass. |
+| Fast CI `40810824083` | PASS | Linux fast checks pass. |
+| Git Hooks `40810824150` | PASS | Windows, Ubuntu, macOS pass. |
+
+The Android artifacts are API 26 instrumentation `12872143095` (`sha256:ebdd9e7a9f5343e9dfacba91abed7ba75b4bf56a338fa35cbe3582160ae4f34e`), API 35 instrumentation `12872631908` (`sha256:bd32cb1a21e26a257c429bc74bd0158f41c819072af835204f953232dc4f8978`), aggregate emulator evidence `12872123755` (`sha256:bca7f51ff98bac3fdeaca337ea39244741e10ca66ceff3834ff737d637dfd98d`), unit JUnit `12871522166` (`sha256:845afe4c85c44988d5aac367c45efe01a0fd23f9c8a06934672f3477e686ac1e`), integration JUnit `12870038258` (`sha256:6106c85674cebced09b8e0c20c16cc1c876811615bfe1e93e8c5bd8a5af6cdaf`), security JUnit `12869939481` (`sha256:8669b235060a6af85cd968937287f8ab97862729005d7526f2c8c7ab4432edd8`), dependency audit `12869948133` (`sha256:d27187c8ce4cc9626df94afc7f17ae3c5d4431655c82c8444dc86d5f1f696324`), debug APK candidate `12870217950` (`sha256:c995926cf0fa3301cdba817908da593517478a3350e6dd47b2ff079578c158fd`), and the CI-only Pixel UI reliability bundle `12872890966` (`sha256:bf4939475a65c07ebb55de22cefe4afa6916fb4cc49bd63d0a0b6c276e872d7f`). Native and Full CI runs have no artifacts; SQLite artifacts are `12870847715` (`sha256:6031fd63139d6e0884b276725e94ef2eee88ca288fe69af8c3e02113a1c32e6b`) and `12870854559` (`sha256:de4a54e60bc9fe039ac674ea2b8a4ad51b5ae7b29bdd3df63ae18c4d7d4ceccd`); RustSec artifact is `12870267717` (`sha256:e8fc9236753795159ab41198da5124cd2ed07978d677c86abc7ae6ff6014a735`). Fast and Git Hooks have no artifacts.
+
+This result is **not accepted as Android UI evidence**. The 5/16 API 26 diagnostic failures are executed test failures; selector and duplicate-content errors may be test-harness faults, while the account-switch stale/wrong handoff is a security-relevant product observation requiring Lane B triage against its exact failure trace. API 35 is a required-stage timeout before those diagnostics. The overall Android gate remains failed, not skipped or infrastructure-pending; Lane B owns the fix and exact-head rerun.
+
+The separate `android-personal-beta.yml` push runs `40810819146` and `40811124717` fail the workflow's `main`-only guard. They are not PR CI evidence and do not change the above result.
+
+### PR #147 RET-003 re-review and current runner state
+
+For exact source `1945eafd0fa3be1068ac67972026dcc8b320b339` / tree `5229b8ea59fc537ba607bde517991328b615e016`, Lane C now **ACCEPTS the source/harness fix** for `NATIVE-PREFLIGHT-RET-003`. The preflight query uses `pm list packages -u` for both fixed target and test IDs, accepts only empty output, and rejects the exact package line, malformed nonempty output, or a failed query. Cleanup uses the installed-only result only to decide whether to call `adb uninstall`; it then requires the `-u` query to show no installed or retained record. The tests cover retained-only preflight data, retained records after uninstall, query errors, and malformed output. `bash -n` for the scripts, `bash tools/g8-local-model-native/test-preflight.sh`, `bash tools/g8-local-model-native/test-cleanup.sh`, and `python3 tools/g8-local-model-native/test-jni-contract.py` all pass locally. The static JNI contract reports eight exception-contained exports. No device or model was exercised by these local checks.
+
+The exact-head focused run `40842179056` / attempt 1 is **CANCELLED**, job `123340927331` on runner `1000023549`; the owner agent confirms cancellation occurred before source checkout, fixture download, or inference. This run yields no test/build/runtime evidence. At this snapshot, exact-head Android `40842179113` has Change Scope, Dependency Audit, Security Tests, Unit, Documentation, and Integration PASS; Build/Lint/Instrumentation Compile remains in progress on `1000023556`. Full CI `40842179017` has five jobs in progress. Native `40842179073` has eleven jobs in progress and one queued without a runner. SQLite `40842179031` has two producers PASS and two consumers queued without a runner. Fast `40842179152`, RustSec `40842179048`, Git Hooks `40842179038`, and mock Beta contract `40842179047` PASS. All these exact-source runs are attempt 1. No retry was initiated. The Beta push workflow `40842172786` fails its `main`-only guard and is not PR validation.
+
+### Public model metadata/license review
+
+Lane C independently queried the pinned Hugging Face repository metadata and exact-revision file listings for all five added candidates; no weight files were fetched, no gated terms were accepted, and no runtime or quality claim is promoted from vendor data to a Serea result.
+
+| Model | Metadata cross-check | Independent disposition |
+|---|---|---|
+| LFM3-1.7B | Exact GGUF revision lists Q4_K_M at 1,099,627,808 bytes; card identifies `lfm1.0`; Japanese language tag and llama.cpp instructions are present. | NOT_RUN; Serea compatibility is not established. The cited Liquid AI URL `https://www.liquid.ai/license` returns 404. Current official page is [LFM License](https://www.liquid.ai/lfm-license). It defines a $10,000,000-or-more annual revenue threshold and conditions commercial-use rights on not exceeding it. Lane A report's phrase “above US$10M” misses the exact boundary; docs correction requested. |
+| Bonsai 2 4B | Exact revision lists PTQ1_0 949,549,920 bytes, PQ2_0 1,146,465,120 bytes, Q2_0 1,212,105,520 bytes, Apache-2.0, LICENSE and NOTICE. | Metadata matches Lane A. Keep Serea fixed llama.cpp format constraints and Q2_0 NOT_RUN distinction; no weights/runtime. |
+| Qwen3.5-2B | Exact revision lists 4,548,221,488 bytes safetensors, Apache-2.0, model card claims 201 languages and tool use; no official GGUF in that pinned repo. | Metadata matches; current JNI GGUF route incompatible with this artifact until a separately reviewed conversion/backend exists. |
+| Gemma 4 E2B | Exact official revisions list 2,671,733,574 bytes mobile QAT safetensors and 3,349,516,256 bytes official Q4_0 GGUF, plus the optional 986,833,664-byte projector; repository metadata and model card identify Apache-2.0. | Metadata matches; no execution. The GGUF artifact alone does not prove support in Serea's pinned llama.cpp. |
+| FunctionGemma 270M | Exact gated revision lists 536,223,056 bytes safetensors and 288,440,320 bytes task-specific `tiny_garden.litertlm`; metadata is `license: gemma`, gated manually. Card positions the base model for task-specific function fine-tuning and says it is not a direct-dialogue model. | Metadata matches; no terms accepted and no runtime. Keep only a future isolated router candidate after terms and schema/approval/dispatch tests. |
+
+The source cards and official metadata were checked on 2026-10-29 at the revisions pinned in `docs/agent-reports/g8n-native-bonsai-evaluation.md`. Direct API cross-checks: [LFM3 GGUF revision](https://huggingface.co/api/models/LiquidAI/LFM3-1.7B-GGUF/revision/bad5729bba61d076fff20d2548e62526665af215), [Bonsai 2 4B revision](https://huggingface.co/api/models/prism-ml/Ternary-Bonsai-2-4B-gguf/revision/8d6557168168f91ea6697a4a49ed2ef622b53adb), [Qwen3.5-2B revision](https://huggingface.co/api/models/Qwen/Qwen3.5-2B/revision/15852e8c16360a2fea060d615a32b45270f8a8fc), [Gemma 4 E2B Q4_0 GGUF revision](https://huggingface.co/api/models/google/gemma-4-E2B-it-qat-q4_0-gguf/revision/675cff42a74c774d6cb76f76d8eacb49b48c9b93), and [FunctionGemma revision](https://huggingface.co/api/models/google/functiongemma-270m-it/revision/39eccb091651513a5dfb56892d3714c1b5b8276c). Official [Gemma 4 license page](https://ai.google.dev/gemma/docs/gemma_4_license) and [LFM license text](https://www.liquid.ai/lfm-license) are cited in the model shortlist. These checks do not decide redistribution clearance. The standard model remains UNDECIDED, the Default Chat model remains unchanged, and Pixel 7a model acceptance is still required.
+
+```text
+LANE_C_REVIEW_UPDATE:
+PR147_SOURCE_HARNESS=ACCEPTED at 1945eafd0fa3be1068ac67972026dcc8b320b339 / 5229b8ea59fc537ba607bde517991328b615e016
+PR147_MODEL_LICENSE_REPORT=CHANGES_REQUESTED pending exact LFM threshold/canonical URL correction
+PR146_FORMAL_CI=PARTIAL (all requested CI other than Android pass; Android Required gate fails; Identity skipped)
+PR149_FORMAL_CI=PARTIAL (Android gate fails; six CI workflows pass; UI diagnostics fail/API35 diagnostics NOT_RUN)
+PR149_ANDROID_UI=CHANGES_REQUESTED / NOT_ACCEPTED
+MODEL_DEFAULT=UNDECIDED
+PIXEL7A_ACCEPTANCE=NOT_RUN
+```
+
+## Review refresh — 2026-10-29 08:35 UTC
+
+### PR #147 documentation re-review
+
+Lane A's docs-only correction commit `36700f6c99d15db428c6d434c657ac76593df3f9` / tree `107824f5338ed9ec46d41f6836f5df9c6ad84cf7`, parent `1945eafd0fa3be1068ac67972026dcc8b320b339`, is **ACCEPTED** for report accuracy. The updated source cites Liquid AI's current official [LFM license page](https://www.liquid.ai/lfm-license), accurately states the US$10M-or-more threshold, and classifies the 40811065474 and 40842179056 outcomes without claiming inference. It does not modify code/tests. At the time of this refresh it is a local, accepted successor awaiting Lane A's push; the remote PR #147 head remains the accepted code/harness SHA `1945eafd…` until that push. One bounded inference attempt is still outstanding and no previous run is reused as inference evidence.
+
+### PR #151 combined G9 candidate review and exact-head CI
+
+PR #151 is OPEN Draft, head `d4a36fb5d3613bca2d60151de0991a1baac72fc9` / tree `b78a84b60ef5a2d344eabdda85b1154e62be46d7`, based on PR #149's exact `3a0f0c1897f2115549e7682d6fcc1783c44604f3` / tree `6a1f4d382907a7deb7d6dbf8147e6490aa054e81`. Lane C **ACCEPTS** the scoped Gmail handoff source/test integration and its source-bound local evidence. Product/test code at `GoogleTrustedHandoff.kt` and `GoogleTrustedHandoffTest.kt` is byte-identical to the previously accepted `4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd`; PR #151 introduces no shared Composition Root or `MainActivity` changes. The body-only path excludes message/thread IDs, sender/recipient, subject, timestamps, snippet, HTML raw source, and handoff security metadata from `localChatText()`. Plain body is preferred; parser-produced inert HTML text is the fallback. Existing account/session/generation/content identity/revocation/consent/single-use checks and Google-origin Cloud egress denial remain in force.
+
+Both source-bound evidence manifests verify with `sha256sum -c`. The exact candidate XML at `e2010d64445b136616127448386dd2e9789c227e` / tree `4526fb690b1dc17c41bc156ac7ac24f250042276` contains 22 tests, 0 failures, 0 errors, and 0 skipped; XML SHA-256 is `17d8316ef8b26427cb0b551410f2fc65440f1cc6b50f351c4689801ff2324197`. The test files are unchanged between the accepted product/test source `4e4b8f9…` and the tested evidence commit `e2010d6…`. This is local JVM-only evidence, not GitHub CI or connected Android UI evidence.
+
+At 08:35 UTC, all formal #151 runs identify the exact head above, attempt 1. Fast CI `40842824206` PASS (runner `1000023564`). Git Hooks `40842824356`: Windows and Ubuntu PASS (`1000023568`, `1000023565`); macOS remains QUEUED without runner. Android `40842824215`: Change Scope PASS (`1000023569`); Build/Lint/Instrumentation Compile IN_PROGRESS (`1000023572`); Documentation, Dependency Audit, Unit, Integration, and Security Tests QUEUED without runner. Full CI `40842824328`: Linux stable, Linux MSRV, and Windows synthetic Gate C IN_PROGRESS (`1000023571`, `1000023566`, `1000023574`); both macOS jobs QUEUED. Native `40842824208`: stable Windows x86_64, stable Linux x86_64, stable Windows ARM64, and Rust 1.85 Windows ARM64 IN_PROGRESS (`1000023575`, `1000023567`, `1000023570`, `1000023573`); eight matrix jobs QUEUED. SQLite `40842824221` has both producers QUEUED, RustSec `40842824232` is QUEUED. These are runner waits/in-progress states, not failures or passes. No reruns were triggered. The separate main-only Personal Beta guard `40842785134` fails outside PR validation.
+
+```text
+PR147_REVIEW=ACCEPTED for source/harness 1945eafd0fa3be1068ac67972026dcc8b320b339 / 5229b8ea59fc537ba607bde517991328b615e016
+PR147_REPORT_CORRECTION=ACCEPTED for 36700f6c99d15db428c6d434c657ac76593df3f9 / 107824f5338ed9ec46d41f6836f5df9c6ad84cf7; pending push at snapshot
+PR147_NATIVE_INFERENCE=NOT_RUN
+PR151_SCOPED_GMAIL_SOURCE_TEST_EVIDENCE=ACCEPTED at d4a36fb5d3613bca2d60151de0991a1baac72fc9 / b78a84b60ef5a2d344eabdda85b1154e62be46d7
+PR151_FORMAL_CI=PARTIAL / IN_PROGRESS / QUEUED at exact head; no Android UI result
+PR149_BASE_API26_UI=16 diagnostic cases, 5 failures; PR149_BASE_API35_UI=NOT_RUN after required-stage timeout
+MODEL_DEFAULT=UNDECIDED; PIXEL7A_ACCEPTANCE=NOT_RUN
+```

@@ -10,7 +10,10 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import app.serea.android.calendar.CalendarAuthorizationState
 import app.serea.android.calendar.CalendarProviderKind
+import app.serea.android.calendar.CalendarProviderSessions
 import app.serea.android.calendar.CalendarReadFailure
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
@@ -257,6 +260,69 @@ class GoogleAuthorizationLifecycleTest {
             ScopePermission.NEEDS_CONSENT,
             gateway.status(GoogleFeature.CALENDAR.scopes).permissions[GoogleScope.CALENDAR_EVENTS_READ_ONLY],
         )
+    }
+
+    @Test
+    fun staleCalendarConfirmCannotSubstituteForLaterGmailPreview() = runTest(mainDispatcher.dispatcher) {
+        val server = MockWebServer().apply { start() }
+        try {
+            val authorizationGateway = FakeGoogleAuthorizationGateway()
+            val loopbackGateway = object : GoogleAuthorizationGateway {
+                override val mode = GoogleAuthorizationMode.PLAY_SERVICES
+                override suspend fun acquire(
+                    feature: GoogleFeature,
+                    scopes: Set<GoogleScope>,
+                ): TokenSupplyResult = TokenSupplyResult.Unavailable(AuthorizationFailure.UNAVAILABLE)
+
+                override fun status(scopes: Set<GoogleScope>) = AuthorizationStatus(
+                    service = GoogleServiceState.AVAILABLE,
+                    permissions = scopes.associateWith { ScopePermission.GRANTED },
+                )
+            }
+            var openedSessions = 0
+            val sessionFactory = CalendarDemoSessionFactory { _, _ ->
+                openedSessions++
+                CalendarProviderSessions(googleHttpEnabledByOwner = true).openGoogleReadOnly(
+                    gateway = loopbackGateway,
+                    client = OkHttpClient(),
+                    baseUrl = server.url("/calendar/v3/"),
+                )
+            }
+            val viewModel = GoogleAuthorizationDemoViewModel(authorizationGateway, sessionFactory)
+
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+            runCurrent()
+            val cancelledCalendarPreview = checkNotNull(viewModel.state.value.pendingConsentPreview)
+            assertEquals(GoogleFeature.CALENDAR, cancelledCalendarPreview.feature)
+            viewModel.cancelPendingConsent(cancelledCalendarPreview)
+
+            viewModel.requestConsent(GoogleFeature.GMAIL)
+            runCurrent()
+            val gmailPreview = checkNotNull(viewModel.state.value.pendingConsentPreview)
+            assertEquals(GoogleFeature.GMAIL, gmailPreview.feature)
+            assertEquals(setOf(GoogleScope.GMAIL_READ_ONLY), gmailPreview.requestedScopes)
+            assertEquals(setOf(GoogleScope.GMAIL_READ_ONLY), gmailPreview.consentScopes)
+
+            // A delayed Calendar Confirm from its dismissed dialog cannot approve the Gmail preview.
+            viewModel.grantPendingConsent(cancelledCalendarPreview)
+            runCurrent()
+
+            assertSame(gmailPreview, viewModel.state.value.pendingConsentPreview)
+            assertEquals(null, viewModel.state.value.inFlightFeature)
+            assertEquals(
+                ScopePermission.NEEDS_CONSENT,
+                authorizationGateway.status(setOf(GoogleScope.GMAIL_READ_ONLY)).permissions[GoogleScope.GMAIL_READ_ONLY],
+            )
+            assertEquals(
+                ScopePermission.NEEDS_CONSENT,
+                authorizationGateway.status(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY)).permissions[GoogleScope.CALENDAR_EVENTS_READ_ONLY],
+            )
+            assertEquals(0, openedSessions)
+            assertEquals(null, viewModel.calendarDemoSession.value)
+            assertEquals(0, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
     }
 
     @Test

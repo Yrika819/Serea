@@ -208,3 +208,20 @@ Release Security Focused `40795288341` and mock Personal Beta Contract Tests `40
 The #146 worktree and branch are the active continuation point. Its exact source snapshot `fb47d50…` has 171 JVM PASS plus isolated Android test-source compilation PASS, with JUnit XML under `g8-parent-focused-fb47d50/`. Local `assembleDebug`/`lintDebug`, 70 Gmail + 88 egress/consent/usage JVM tests, and mock release-security/SBOM work are recorded against the earlier identical app/test source tree `d0f32fc…`. Android UI execution, formal API26/35, process-death on the authorization session, Native runtime and ARM64 remain NOT_RUN until exact-source evidence arrives.
 
 No Owner-only action was performed. G8 and G9 remain PARTIAL; Personal Beta is NO-GO.
+
+
+## G7 SQLite evidence closure correction — 2026-10-29
+
+The exact-G7 Intel→macOS ARM64 SQLite gap has now **PASSED**. G7 is **SUCCESS — Evidence Closure**, not PARTIAL. Exact source/test SHA is still `00384eb6468214362435140c9a2d848fa2e0f12e`, tree `10d07a8ec57d7f67fc94663c489347938cccbd58`; the successful CI run was run `40749231272`, attempt 3, overall SUCCESS. Its previously unassigned job `Open Intel DB on macOS arm64` completed SUCCESS as job `123182687879`, runner `1000022879`.
+
+All four exact-source directions passed in that run: Intel produce job `123182727042`; ARM64 produce `123182743251`; ARM64→Intel open `123182690038`; Intel→ARM64 open `123182687879`. The latter executed `closed_serea_database_can_be_produced_or_consumed_cross_architecture`: 1 passed, zero failures/ignored/measured/filtered. Input Intel artifact `12843411146`, output ARM64 validation artifact `12843930249`. Both databases contain 626,688 bytes and the same SQLite SHA-256 `1a248d00016ed601c3c718e48389d3aec64804e0a2e48ab82cb7b33315fe5383`; read-only `PRAGMA integrity_check` returned `ok` for each. ZIP hashes and timestamps are saved in `docs/agent-reports/evidence/g7-sqlite-arm64-20261029.txt`, now present on the updated G7 base branch.
+
+Earlier exact-G7 runner-unassigned cancellations remain intact as historical evidence. The successful attempt 3 is a later exact-source execution and closes that one residual; it does not borrow G6 SQLite results. PR #139 remains OPEN/DRAFT at report-only head `0560e1e7bcd13f0194eab8caca89d70ea5a2f142`, tree `ea12eec70afb172e610fbae4c8cea95c5061aaa7`, based on G6; its code/test source remains `00384eb…`. The G8 replacement branch is now merging this evidence-only G7 checkpoint into its base without rebasing or changing app/test code.
+
+Exact G7 Android API26/35 Required 105/105 and Identity passes remain as recorded. Historical API35 failures on `acde94c…` remain an IME reliability note, not a current G7 gate failure. No Required gate was relaxed. Personal Beta remains NO-GO.
+
+### G8 status after G7 closure
+
+G8 remains **PARTIAL**: OAuth Fake composition and source tests are accepted; 171 focused JVM tests and isolated Android-test-source compilation passed on the replacement source snapshot; Android emulator UI/Required runs are pending; Native remains a separately reviewed, default-off candidate with x86_64 inference, ARM64 build/runtime, memory/performance and complete license/SBOM evidence NOT_RUN. G9 preflight remains PARTIAL with Fake Gmail parser/security JVM coverage and UI test source compile, but focused Android UI execution is pending. Personal Beta remains NO-GO.
+
+The prior exact #146 head `7e6528c512c1e59dd54980aee1850d408a3a9506` had Android `40796423508`, Fast `40796423870`, Native `40796423516`, Full `40796423524`, SQLite `40796423645`, Git Hooks `40796423505`, RustSec `40796423536`, Release Security `40796437695`, and mock Contract `40796441317`; these were all queued/pending before this base-evidence merge and are not evidence for the new merged head. Fresh exact-head checks are required after the merge commit.

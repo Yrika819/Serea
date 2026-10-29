@@ -24,6 +24,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.time.Instant
+import java.time.ZoneId
 
 /** Actual MainActivity path through consent-owned Fake Calendar handoff and Chat send validation. */
 @RunWith(AndroidJUnit4::class)
@@ -42,7 +44,7 @@ class GoogleCalendarHandoffRevocationUiTest {
         compose.onNodeWithTag("google_auth_demo_account_account_b").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_request_calendar").performScrollTo().performClick()
         compose.onNodeWithText("Calendarの認可プレビュー").assertTextContains("Calendar", substring = true)
-        compose.onNodeWithText("選択中: 架空アカウント B").assertTextContains("B")
+        compose.onNodeWithText("選択中: 架空アカウント B").assertTextContains("B", substring = true)
         compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
         compose.waitUntil(5_000) { authViewModel.calendarDemoSession.value != null }
         val authorizedSession = checkNotNull(authViewModel.calendarDemoSession.value)
@@ -58,9 +60,19 @@ class GoogleCalendarHandoffRevocationUiTest {
         compose.onNodeWithText("指定日").performClick()
         compose.onNodeWithTag("calendar_date_input").performScrollTo()
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
-        compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-20")
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
+        val reviewDate = Instant.parse("2026-10-20T00:00:00Z")
+            .atZone(ZoneId.systemDefault()).toLocalDate().toString()
+        compose.onNodeWithTag("calendar_date_input").performTextInput(reviewDate)
+        try {
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (failure: AssertionError) {
+            throw AssertionError(
+                "Design review missing for fixture instant 2026-10-20T00:00:00Z; " +
+                    "deviceZone=${ZoneId.systemDefault().id}, queryDate=$reviewDate, selectedAccount=ACCOUNT_B",
+                failure,
+            )
         }
         compose.onNodeWithText("Design review").performClick()
         compose.onNodeWithText("この予定をChatへ渡す").performClick()

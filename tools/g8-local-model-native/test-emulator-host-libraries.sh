@@ -28,6 +28,14 @@ case "${SEREA_TEST_LDD_MODE:-ok}" in
     printf 'libprivate-host.so.7 => not found\n'
     printf 'host/path/should-not-appear 0xabcdef private-runtime-data\n'
     ;;
+  malformed)
+    printf 'libpulse.so.0 => %s (0x0000000000000000)\n' "$SEREA_TEST_PULSE_PATH"
+    printf 'host/private/path => not found injected-private-value\n'
+    ;;
+  non-so)
+    printf 'libpulse.so.0 => %s (0x0000000000000000)\n' "$SEREA_TEST_PULSE_PATH"
+    printf 'helper-tool => not found\n'
+    ;;
   no-pulse)
     printf 'libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000000000000000)\n'
     ;;
@@ -79,6 +87,24 @@ if grep -Eq 'host/path|abcdef|private-runtime-data|=> not found' "$diagnostic_ou
     echo 'emulator_host_library_contract=FAIL leaked raw ldd diagnostic data' >&2
     exit 1
 fi
+
+for mode in malformed non-so; do
+    diagnostic_output="$TEMP_ROOT/$mode-dependencies.out"
+    if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_LDD_MODE="$mode" \
+        SEREA_TEST_PULSE_PATH="$pulse" "$CHECKER" "$qemu" \
+        >"$diagnostic_output" 2>&1; then
+        echo "emulator_host_library_contract=FAIL accepted $mode unresolved entry" >&2
+        exit 1
+    fi
+    grep -Fxq \
+        'emulator_host_preflight=FAIL reason=QEMU dependency output contains malformed unresolved entries unresolved_details=withheld' \
+        "$diagnostic_output"
+    if grep -Eq 'host/private/path|injected-private-value|helper-tool|=> not found|0x0000000000000000' \
+        "$diagnostic_output"; then
+        echo "emulator_host_library_contract=FAIL leaked $mode unresolved entry" >&2
+        exit 1
+    fi
+done
 
 if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_PACKAGE_MODE=missing \
     SEREA_TEST_PULSE_PATH="$pulse" "$CHECKER" "$qemu" >/dev/null 2>&1; then

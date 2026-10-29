@@ -22,12 +22,26 @@ if [[ "$package_state" != 'install ok installed amd64' ]]; then
 fi
 
 dependencies="$(ldd "$qemu_binary" 2>&1)" || fail 'ldd could not inspect the QEMU binary'
-unresolved_libraries="$(awk '
-    $2 == "=>" && $3 == "not" && $4 == "found" {
-        name = $1
-        if (name ~ /^[A-Za-z0-9_.+-]+$/) print name
-    }
-' <<<"$dependencies" | sort -u)"
+unresolved_names=()
+malformed_unresolved=false
+while IFS= read -r dependency_line; do
+    [[ "$dependency_line" == *'not found'* ]] || continue
+    read -r -a dependency_fields <<<"$dependency_line"
+    if [[ ${#dependency_fields[@]} -ne 4 ||
+        "${dependency_fields[1]:-}" != '=>' ||
+        "${dependency_fields[2]:-}" != 'not' ||
+        "${dependency_fields[3]:-}" != 'found' ||
+        ! "${dependency_fields[0]:-}" =~ ^lib[A-Za-z0-9_+-]+\.so(\.[0-9]+)*$ ]]; then
+        malformed_unresolved=true
+        continue
+    fi
+    unresolved_names+=("${dependency_fields[0]}")
+done <<<"$dependencies"
+if [[ "$malformed_unresolved" == true ]]; then
+    # Malformed unresolved records fail closed, but their contents are never rendered.
+    fail 'QEMU dependency output contains malformed unresolved entries unresolved_details=withheld'
+fi
+unresolved_libraries="$(printf '%s\n' "${unresolved_names[@]}" | sed '/^$/d' | sort -u)"
 if [[ -n "$unresolved_libraries" ]]; then
     unresolved_count="$(wc -l <<<"$unresolved_libraries" | tr -d '[:space:]')"
     unresolved_csv="$(paste -sd, <<<"$unresolved_libraries")"

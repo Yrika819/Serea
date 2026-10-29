@@ -274,6 +274,12 @@ PR #170 exact HEAD `fc9b355fb247bc6cd1eb35cd313379f6ed01a60f` / tree `01d27c4816
 
 At 17:16 UTC the #170 Android Security Tests job `123591635794` also completed SUCCESS (Egress allow/deny JUnit verified). Thus on #170 exact source the Android Change Scope, Build/Lint/Instrumentation Compile, Unit (399/399), Integration, Security, and Dependency Audit jobs all pass. Android Storage/Emulator job `123606101694` remains QUEUED; run `40914655856` and other workflows remain incomplete. No API26/API35 acceptance follows from the completed static/hosted jobs.
 
+### G10 Owner packet refresh — 2026-10-29 17:19 UTC
+
+PR #167 remains OPEN/DRAFT, existing branch `codex/serea-g10-preflight-refresh`, now at head `ca49dc4ab4731b5820732d381a24a225ff5ae0c7` / tree `bf41428b2653dceae0a452cb65ad45e96c2e6c0a`; base is the existing PR #159 Owner/Release packet. The normal commit updates two Markdown files only. O-01..O-10 decisions are unchanged; it explicitly preserves Google-origin Cloud egress NOT_APPROVED, Gmail Restricted scope as a separate later gate, Pixel acceptance NOT_RUN/BLOCKED, model default UNDECIDED, and Personal Beta NO-GO. It refreshes CI evidence through #173 and #170, documents that `versionName` remains `0.1.0-demo` unless Beta overrides it (v4 target is `0.1.0`), and clarifies that Nov 10 may ratify OAuth project/scope plan but actual OAuth certificate binding must wait for the Owner-approved signing identity targeted for Nov 21. Debug/CI certificate fingerprints are not accepted as Beta OAuth identity. No actual OAuth/project, owner certificate, device, distribution, or external provider was touched.
+
+PR #167 documentation validation: `validate_docs.py` passed 205 Markdown files; `git diff --check` passed. Independent review is PENDING. Exact-head CI runs: Android `40919807990`, Fast `40919808153`, Full `40919807655`, Native `40919807653`, SQLite `40919807740`, RustSec `40919807776`, Git Hooks `40919808032` were QUEUED at observation. Their skipped/queued gates are not product evidence.
+
 ## PR #169 review and runner update — 2026-10-29 16:03 UTC
 
 Agent C completed the full exact-HEAD review: **ACCEPTED** at `87af6aab9c9db8f65e18ca18456256e03797ffb3` / tree `0fceca72877574acdd3cdbfa67b363dcabfb4dda`. Review confirms the diff from #166 is only Kotlin capability-bound validation, a boundary test, and report text; limits align with existing JNI checks, no silent clamp or lifecycle/security change; Native artifact allowlist stays sanitized; ordinary Chat remains disconnected.

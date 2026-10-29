@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import subprocess
+import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from tools.verify_android_instrumentation import (
@@ -307,6 +309,192 @@ val apostrophe = '\''
         self.assertEqual(19, _source_test_count(source))
         self.assertEqual(19, len(methods))
         self.assertIn("calendarDetailAndSelectedCalendarSurviveAnotherDestination", methods)
+
+    def test_required_chat_http_identities_are_split_without_changing_the_105_gate(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        helper = repo / "tools/android_instrumentation_variant_filters.py"
+        required = repo / "tools/android-instrumentation-required-tests.txt"
+        additional = repo / "tools/android-instrumentation-additional-tests.txt"
+        http_tests = repo / "tools/android-instrumentation-http-loopback-tests.txt"
+        non_required = repo / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt"
+        source_root = repo / "android/app/src/androidTest/java"
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "filters.json"
+            result = subprocess.run(
+                [
+                    "python3", str(helper), "--required", str(required), "--additional", str(additional),
+                    "--non-required", str(non_required), "--http-tests", str(http_tests),
+                    "--source-root", str(source_root), "--output", str(output),
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            filters = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual((103, 2, 105, 101, 4), (
+                filters["required_count"], filters["additional_count"], filters["formal_total"],
+                filters["offline_count"], filters["http_count"],
+            ))
+            self.assertTrue(filters["all_unique"])
+            self.assertEqual(4, len(set(filters["http_identities"])))
+            self.assertTrue(all(identity.startswith("app.serea.android.ChatHttpE2ETest#")
+                                for identity in filters["http_identities"]))
+            self.assertEqual(105, len(set(filters["offline_identities"] + filters["http_identities"])))
+            self.assertFalse(set(filters["offline_identities"]) & set(filters["http_identities"]))
+
+            reduced = Path(temporary) / "reduced-required.txt"
+            lines = required.read_text(encoding="utf-8").splitlines()
+            reduced.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+            rejected = subprocess.run(
+                [
+                    "python3", str(helper), "--required", str(reduced), "--additional", str(additional),
+                    "--non-required", str(non_required), "--http-tests", str(http_tests), "--source-root", str(source_root),
+                    "--output", str(Path(temporary) / "rejected.json"),
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("Required gate changed", rejected.stderr)
+
+            reduced_http = Path(temporary) / "reduced-http.txt"
+            http_lines = http_tests.read_text(encoding="utf-8").splitlines()
+            reduced_http.write_text("\n".join(http_lines[:-1]) + "\n", encoding="utf-8")
+            rejected_http = subprocess.run(
+                [
+                    "python3", str(helper), "--required", str(required), "--additional", str(additional),
+                    "--non-required", str(non_required), "--http-tests", str(reduced_http),
+                    "--source-root", str(source_root), "--output", str(Path(temporary) / "rejected-http.json"),
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, rejected_http.returncode)
+            self.assertIn("HTTP loopback manifest differs", rejected_http.stderr)
+
+    def test_http_test_apk_permission_verifier_keeps_native_variant_offline(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        verifier = repo / "tools/verify_android_http_test_apk_permissions.py"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            aapt = root / "aapt"
+            aapt.write_text(
+                "#!/usr/bin/env python3\n"
+                "import pathlib, sys\n"
+                "apk = pathlib.Path(sys.argv[-1]).name\n"
+                "package = 'app.serea.android.isolated.test' if 'test' in apk else 'app.serea.android.isolated'\n"
+                "print('package: ' + package)\n"
+                "if apk.startswith('http-'):\n"
+                "    print(\"uses-permission: name='android.permission.INTERNET'\")\n",
+                encoding="utf-8",
+            )
+            aapt.chmod(0o755)
+            apks = {}
+            for name in ("offline-target.apk", "offline-test.apk", "http-target.apk", "http-test.apk"):
+                apk = root / name
+                with zipfile.ZipFile(apk, "w") as archive:
+                    archive.writestr("classes.dex", b"fixture")
+                apks[name] = apk
+            evidence = root / "permissions.txt"
+            result = subprocess.run(
+                [
+                    "python3", str(verifier), "--aapt", str(aapt),
+                    "--offline-target", str(apks["offline-target.apk"]),
+                    "--offline-test", str(apks["offline-test.apk"]),
+                    "--http-target", str(apks["http-target.apk"]),
+                    "--http-test", str(apks["http-test.apk"]), "--evidence", str(evidence),
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            report = evidence.read_text(encoding="utf-8")
+            self.assertIn("offline_target_internet=DENIED", report)
+            self.assertIn("offline_test_internet=DENIED", report)
+            self.assertIn("http_target_internet=GRANTED", report)
+            self.assertIn("http_test_internet=GRANTED", report)
+            self.assertIn("http_test_native_jni=ABSENT", report)
+
+            aapt.write_text(
+                aapt.read_text(encoding="utf-8").replace("if apk.startswith('http-'):", "if not apk.startswith('http-'):"),
+                encoding="utf-8",
+            )
+            denied_fixture = subprocess.run(
+                [
+                    "python3", str(verifier), "--aapt", str(aapt),
+                    "--offline-target", str(apks["offline-target.apk"]),
+                    "--offline-test", str(apks["offline-test.apk"]),
+                    "--http-target", str(apks["http-target.apk"]),
+                    "--http-test", str(apks["http-test.apk"]), "--evidence", str(evidence),
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, denied_fixture.returncode)
+            self.assertIn("Unexpected INTERNET permission", denied_fixture.stderr)
+
+    def test_partition_result_verifier_binds_exact_source_api_and_method_sets(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        filter_helper = repo / "tools/android_instrumentation_variant_filters.py"
+        verifier = repo / "tools/verify_android_instrumentation_partition_results.py"
+        required = repo / "tools/android-instrumentation-required-tests.txt"
+        additional = repo / "tools/android-instrumentation-additional-tests.txt"
+        http_tests = repo / "tools/android-instrumentation-http-loopback-tests.txt"
+        non_required = repo / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt"
+        source_root = repo / "android/app/src/androidTest/java"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            filters = root / "filters.json"
+            generated = subprocess.run(
+                [
+                    "python3", str(filter_helper), "--required", str(required), "--additional", str(additional),
+                    "--non-required", str(non_required), "--http-tests", str(http_tests),
+                    "--source-root", str(source_root), "--output", str(filters),
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, generated.returncode, generated.stdout + generated.stderr)
+            payload = json.loads(filters.read_text(encoding="utf-8"))
+            offline = root / "offline"
+            http = root / "http"
+            offline.mkdir()
+            http.mkdir()
+
+            def write_suite(directory: Path, identities: list[str]) -> None:
+                cases = []
+                for identity in identities:
+                    class_name, method_name = identity.split("#", 1)
+                    cases.append(f'<testcase classname="{class_name}" name="{method_name}"/>')
+                xml = f'<testsuite tests="{len(cases)}" failures="0" errors="0" skipped="0">' + "".join(cases) + "</testsuite>"
+                (directory / "results.xml").write_text(xml, encoding="utf-8")
+
+            write_suite(offline, payload["offline_identities"])
+            write_suite(http, payload["http_identities"])
+            evidence = root / "api-evidence"
+            evidence.mkdir()
+            (evidence / "device-api-level.txt").write_text("26\n", encoding="utf-8")
+            (evidence / "build-provenance.txt").write_text(
+                f"source_checkout_sha={payload['source_sha']}\napi_level=26\n", encoding="utf-8"
+            )
+            command = [
+                "python3", str(verifier), "--filters", str(filters), "--offline-junit", str(offline),
+                "--http-junit", str(http), "--evidence-dir", str(evidence), "--api-level", "26",
+            ]
+            result = subprocess.run(command, cwd=repo, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("offline=101 http=4 total=105", result.stdout)
+
+            (evidence / "device-api-level.txt").write_text("35\n", encoding="utf-8")
+            wrong_api = subprocess.run(command, cwd=repo, capture_output=True, text=True)
+            self.assertNotEqual(0, wrong_api.returncode)
+            self.assertIn("JUnit API binding mismatch", wrong_api.stderr)
 
 
 if __name__ == "__main__":

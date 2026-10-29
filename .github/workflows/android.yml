@@ -54,7 +54,7 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|.github/workflows/android-personal-beta.yml|.github/workflows/android-personal-beta-contract-tests.yml|tools/assert_exact_source_checkout.sh|tools/verify_android_instrumentation.py|tools/android-instrumentation-required-tests.txt|tools/android-instrumentation-additional-tests.txt|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_api35_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tools/test_personal_beta_identity.sh|tools/verify_personal_beta_apk.sh|tools/android_firebase_distribution.py|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py|tests/android_firebase_distribution_tests.py) android_changed=true ;;
+              android/*|.github/workflows/android.yml|.github/workflows/android-personal-beta.yml|.github/workflows/android-personal-beta-contract-tests.yml|tools/assert_exact_source_checkout.sh|tools/verify_android_instrumentation.py|tools/android-instrumentation-required-tests.txt|tools/android-instrumentation-additional-tests.txt|tools/android-instrumentation-http-loopback-tests.txt|tools/android_instrumentation_variant_filters.py|tools/verify_android_http_test_apk_permissions.py|tools/verify_android_instrumentation_partition_results.py|tools/verify_android_installed_apk_sha256.sh|tools/prepare_android_instrumentation_variant_target.sh|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_api35_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tools/test_personal_beta_identity.sh|tools/verify_personal_beta_apk.sh|tools/android_firebase_distribution.py|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py|tests/android_firebase_distribution_tests.py) android_changed=true ;;
             esac
           done <<< "$changed"
           echo "android=$android_changed" >> "$GITHUB_OUTPUT"
@@ -257,6 +257,14 @@ jobs:
         env:
           EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
+      - name: Set shared API 26 and API 35 campaign deadline
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This job-scoped deadline starts before SDK, KVM, and emulator setup.
+          # Its 170-minute budget is below the 180-minute job cap; the worst-case
+          # test/boot/setup/wrapper budget is 162 minutes, leaving 8 minutes.
+          echo "SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH=$(($(date +%s) + 170 * 60))" >> "$GITHUB_ENV"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -335,7 +343,7 @@ jobs:
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         env:
           SEREA_DISPOSABLE_CI_EMULATOR: '1'
-        timeout-minutes: 90
+        timeout-minutes: 75
         with:
           api-level: 26
           target: google_apis
@@ -344,7 +352,15 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           working-directory: android
-          script: bash ../tools/run_android_instrumentation_campaign.sh 26
+          script: |
+            set -euo pipefail
+            remaining=$((SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180))
+            if (( remaining <= 0 )); then
+              echo 'FAIL: shared API 26/API 35 campaign deadline leaves no safe API 26 execution budget.' >&2
+              exit 1
+            fi
+            timeout --signal=INT --kill-after=60s "${remaining}s" \
+              bash ../tools/run_android_instrumentation_campaign.sh 26
       - name: Save API 26 failure semantics and safety logcat
         if: always() && !cancelled()
         run: |
@@ -403,7 +419,7 @@ jobs:
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         env:
           SEREA_DISPOSABLE_CI_EMULATOR: '1'
-        timeout-minutes: 80
+        timeout-minutes: 75
         with:
           api-level: 35
           target: google_apis
@@ -412,7 +428,15 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           working-directory: android
-          script: bash ../tools/run_android_api35_campaign.sh
+          script: |
+            set -euo pipefail
+            remaining=$((SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180))
+            if (( remaining <= 0 )); then
+              echo 'FAIL: shared API 26/API 35 campaign deadline leaves no safe API 35 execution budget.' >&2
+              exit 1
+            fi
+            timeout --signal=INT --kill-after=60s "${remaining}s" \
+              bash ../tools/run_android_api35_campaign.sh
       - name: Save API 35 failure semantics and safety logcat
         if: always() && !cancelled()
         run: |

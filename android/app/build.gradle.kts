@@ -35,7 +35,11 @@ val updateTestSigningInputsReady = listOf(
 // separately reviewed diagnostic build may opt into the pinned llama.cpp JNI
 // library with -PsereaLocalNativeRuntime=true and -PsereaLlamaCppSource=<checkout>.
 val sereaLocalNativeRuntime = providers.gradleProperty("sereaLocalNativeRuntime").orNull == "true"
+val sereaHttpLoopbackTestVariant = providers.gradleProperty("sereaHttpLoopbackTestVariant").orNull == "true"
 val sereaNativeJniTestSeams = providers.gradleProperty("sereaNativeJniTestSeams").orNull == "true"
+if (sereaLocalNativeRuntime && sereaHttpLoopbackTestVariant) {
+    error("The network-enabled HTTP instrumentation fixture cannot be combined with the offline Native runtime.")
+}
 val sereaNativeRuntimeExpectedAbi = if (sereaLocalNativeRuntime) {
     providers.gradleProperty("sereaNativeRuntimeExpectedAbi").orNull ?: "x86_64"
 } else "NOT_RUN"
@@ -64,6 +68,39 @@ if (sereaLocalNativeRuntime) {
         )
     }
 }
+if (sereaHttpLoopbackTestVariant) {
+    val allowedHttpTestTasks = setOf(
+        "assembleIsolatedHttp",
+        "assembleIsolatedHttpAndroidTest",
+        "connectedIsolatedHttpAndroidTest",
+    )
+    val requestedVariantTasks = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
+        .filter { task ->
+            listOf("assemble", "bundle", "install", "uninstall", "package", "test", "connected", "compile", "process")
+                .any { prefix -> task.startsWith(prefix, ignoreCase = true) }
+        }
+    val disallowedTask = requestedVariantTasks.firstOrNull { it !in allowedHttpTestTasks }
+    if (disallowedTask != null || requestedVariantTasks.isEmpty()) {
+        error("sereaHttpLoopbackTestVariant is test-only; request only the isolated HTTP instrumentation tasks.")
+    }
+    if (requestedVariantTasks.any { it.startsWith("connected", ignoreCase = true) }) {
+        val declaredHttpIdentities = rootProject.file("../tools/android-instrumentation-http-loopback-tests.txt")
+            .readLines()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .toSet()
+        val requestedHttpIdentities = providers.gradleProperty("android.testInstrumentationRunnerArguments.class")
+            .orNull
+            .orEmpty()
+            .split(',')
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+        if (declaredHttpIdentities.size != 4 || requestedHttpIdentities.size != 4 ||
+            requestedHttpIdentities.toSet() != declaredHttpIdentities) {
+            error("The INTERNET-enabled isolatedHttp variant may execute only the four declared loopback test identities.")
+        }
+    }
+}
 if (sereaNativeJniTestSeams && !sereaLocalNativeRuntime) {
     error("JNI failure injection is only available with the isolated native runtime diagnostic.")
 }
@@ -87,7 +124,7 @@ android {
     namespace = "app.serea.android"
     compileSdk = 35
     if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) ndkVersion = "28.2.13676358"
-    testBuildType = "isolated"
+    testBuildType = if (sereaHttpLoopbackTestVariant) "isolatedHttp" else "isolated"
 
     defaultConfig {
         applicationId = "app.serea.android"
@@ -173,6 +210,17 @@ android {
             applicationIdSuffix = ".isolated"
             matchingFallbacks += listOf("debug")
         }
+        if (sereaHttpLoopbackTestVariant) {
+            create("isolatedHttp") {
+                initWith(getByName("debug"))
+                buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
+                buildConfigField("String", "LOCAL_NATIVE_RUNTIME_EXPECTED_ABI", "\"NOT_RUN\"")
+                // This package exists only for four synthetic loopback HTTP instrumentation cases.
+                // Keep the same disposable namespace and never combine it with Native JNI.
+                applicationIdSuffix = ".isolated"
+                matchingFallbacks += listOf("debug")
+            }
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -191,6 +239,15 @@ android {
         getByName("isolated") {
             java.srcDir("src/debug/java")
             manifest.srcFile("src/isolated/AndroidManifest.xml")
+        }
+        if (sereaHttpLoopbackTestVariant) {
+            getByName("isolatedHttp") {
+                java.srcDir("src/debug/java")
+                manifest.srcFile("src/isolatedHttp/AndroidManifest.xml")
+            }
+            getByName("androidTestIsolatedHttp") {
+                manifest.srcFile("src/androidTestIsolatedHttp/AndroidManifest.xml")
+            }
         }
         if (betaValidationHarness) {
             // Only the disposable-emulator verifier opts into the debug-only
@@ -219,6 +276,11 @@ androidComponents {
             } else {
                 nativeDisabledBuildTypes += buildType
                 // Do not even create variants that could package or expose diagnostic JNI.
+                variant.enable = false
+            }
+        } else if (sereaHttpLoopbackTestVariant) {
+            val buildType = variant.buildType.orEmpty()
+            if (buildType !in setOf("isolated", "isolatedHttp")) {
                 variant.enable = false
             }
         }

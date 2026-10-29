@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- INTERNET is needed only for MockWebServer's loopback socket in ChatHttpE2ETest. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="app.serea.android.r25testime.permission.DIAGNOSTICS" />
+    <application />
+</manifest>

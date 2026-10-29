@@ -15,13 +15,42 @@ if [[ ! -f "$qemu_binary" || ! -x "$qemu_binary" || -L "$qemu_binary" ]]; then
     fail 'QEMU binary must be a regular executable installed by the Android SDK'
 fi
 
+qemu_directory="$(cd -- "$(dirname -- "$qemu_binary")" && pwd -P)" || \
+    fail 'QEMU SDK directory could not be resolved'
+sdk_emulator_root="$(cd -- "$qemu_directory/../.." && pwd -P)" || \
+    fail 'Android SDK emulator root could not be resolved'
+expected_qemu="$sdk_emulator_root/qemu/linux-x86_64/qemu-system-x86_64"
+[[ "$qemu_directory" == "$sdk_emulator_root/qemu/linux-x86_64" &&
+    "$qemu_directory/qemu-system-x86_64" == "$expected_qemu" ]] || \
+    fail 'QEMU binary is outside the expected Android SDK emulator layout'
+
+# Android's emulator launcher supplies these SDK-owned paths when it starts QEMU.
+# `ldd` is run directly below, so recreate that documented loader context explicitly.
+sdk_library_dirs=(
+    "$sdk_emulator_root/lib64"
+    "$sdk_emulator_root/lib64/qt/lib"
+    "$qemu_directory"
+)
+for directory in "${sdk_library_dirs[@]}"; do
+    [[ -d "$directory" ]] || fail 'required Android SDK emulator library directory is absent'
+    resolved_directory="$(cd -- "$directory" && pwd -P)" || \
+        fail 'Android SDK emulator library directory could not be resolved'
+    sdk_root_prefix="${sdk_emulator_root%/}/"
+    case "$resolved_directory/" in
+        "$sdk_root_prefix"*) ;;
+        *) fail 'Android SDK emulator library directory escaped its install root' ;;
+    esac
+done
+sdk_library_path="$(IFS=:; printf '%s' "${sdk_library_dirs[*]}")"
+
 package_state="$(dpkg-query -W -f='${Status} ${Architecture}' libpulse0:amd64 2>/dev/null)" || \
     fail 'Ubuntu libpulse0:amd64 package is not installed'
 if [[ "$package_state" != 'install ok installed amd64' ]]; then
     fail 'Ubuntu libpulse0:amd64 package is not installed'
 fi
 
-dependencies="$(ldd "$qemu_binary" 2>&1)" || fail 'ldd could not inspect the QEMU binary'
+dependencies="$(LD_LIBRARY_PATH="$sdk_library_path" ldd "$qemu_binary" 2>&1)" || \
+    fail 'ldd could not inspect the QEMU binary'
 unresolved_names=()
 malformed_unresolved=false
 while IFS= read -r dependency_line; do

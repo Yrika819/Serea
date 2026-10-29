@@ -78,7 +78,7 @@ JUNIT_RESULT: PASS — latest focused JVM suite 18/18, 0 failures, 0 errors, 0 s
 ANDROID_UI_COMPILE: PASS — `compileIsolatedKotlin` and `compileIsolatedAndroidTestKotlin` on the same HEAD; compile-only evidence.
 ANDROID_UI_RESULT: NOT_RUN — no emulator or physical-device Compose execution is claimed.
 OS_PROCESS_DEATH: NOT_RUN — host helper and isolated Activity compile; no disposable emulator was operated. Run only after instrumentation exits on a verified CI emulator.
-CI_RUN_IDS: awaiting exact-head PR #145 workflow checks; prior runs target older source and are not reused.
+CI_RUN_IDS: PR #145 exact ref tip `77d317b976d4d1a4e5f5bcad55c4622c9c4e8147`: Android `40802243351` PENDING; Fast `40802243317` PENDING; Full `40802243310` PENDING; RustSec `40802243548` PENDING; SQLite `40802243496` PENDING; Native `40802243307` PENDING; Git Hooks `40802243553` PENDING. No exact-head Android result is available yet; earlier runs target older source and are not reused.
 ARTIFACT_IDS: none.
 
 ## Coverage map (does not claim full A4 completion)

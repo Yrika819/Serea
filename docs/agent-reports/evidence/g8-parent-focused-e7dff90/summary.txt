@@ -1,0 +1,7 @@
+Source HEAD: e7dff90947631d15429d299f28da8dc86b3a42e9
+Source tree: 36df3fa991ce3b06c04f7c450b696cb8aadbd8eb
+Command: :app:testDebugUnitTest --tests app.serea.android.googleauth.GoogleAuthorizationLifecycleTest --tests app.serea.android.calendar.CalendarOAuthMockE2ETest --tests app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest :app:compileIsolatedAndroidTestKotlin
+Environment: checksum-verified Temurin 17; managed proxy/truststore.
+Result: BUILD SUCCESSFUL in 30s; 55 actionable tasks (11 executed, 44 up-to-date).
+JVM JUnit: 13 total, 0 failures, 0 errors, 0 skipped (9 lifecycle, 1 Calendar mock E2E, 3 loopback integration).
+Android instrumentation source compile: PASS. No emulator or connected UI test was run.

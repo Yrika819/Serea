@@ -1,0 +1,182 @@
+# G8 Orchestrator Ledger — G7 Closure, OAuth UI, Native Runtime, G9 Preflight
+
+**Checkpoint:** 2026-10-29 JST (2026-10-28 UTC)
+**Roadmap:** Owner-provided `Serea_Roadmap_v4.md`; campaign 기준일 2026-10-29 JST.
+**Overall:** IN_PROGRESS — G7 is PARTIAL; G8 work is delegated; Personal Beta remains NO-GO.
+
+## Authority and candidate baseline
+
+| Ref | Observed state |
+|---|---|
+| Repository | `Yrika819/Serea`, public; GitHub metadata reports push permission for the connected identity |
+| Protected `main` | `e0acb0254820c381dd97828824bef86a1db5176c` (confirmed with `git ls-remote`; unchanged) |
+| Frozen G5 PR #134 | OPEN/DRAFT, HEAD `b84feb337cd57918346ab31cb3ea4af4ba880ffb`, tree `9133d4a3ba2ab870d126e56cdd22336b856c94e1` |
+| G6 PR #138 | OPEN/DRAFT, HEAD `23b884cf2815a2f3287652d5ffd2c3913d09df76`, tree `f77fea2f7800dbf8daa1f5f25175c52f951f31a4`; SUCCESS — Functional Readiness Candidate |
+| G7 PR #139 | OPEN/DRAFT, branch `codex/serea-g7-calendar-readiness`, HEAD `00384eb6468214362435140c9a2d848fa2e0f12e`, tree `10d07a8ec57d7f67fc94663c489347938cccbd58` |
+| G7 code/test source | `acde94c3c0f81ac2e76d0b0e51e48fd84589ebeb`, tree `f2fa81955f4c8834b83073ef4d239c831ff4f773` |
+| G8 parent PR #141 | OPEN/DRAFT, branch `codex/serea-g8-integration-candidate-20261029`, based on G7 #139; current source before this checkpoint update `b06f20e0dd1870a6eb0db684634603b9da3bb353`, tree `16f18279889c4e2aefea3aa1fb57118048b923fd` |
+| G7 parent | G6 candidate `23b884cf2815a2f3287652d5ffd2c3913d09df76`; G6 depends on frozen G5 PR #134. No candidate PR is merged to `main`. |
+
+PR metadata was refreshed through GitHub on 2026-10-28 UTC. The local G7 candidate ref was fetched from `refs/pull/139/head` and its commit/tree/parent match the GitHub PR metadata. The initial workspace checkout was `main` at the protected SHA and clean; no existing work was overwritten.
+
+**PR #140 identity incident:** the first parent checkpoint used the workspace's default personal author identity and failed the existing Fast CI commit identity guard (Run `40789250204`, failed commit `fca58011119f0374092351401620b16f2565b19d`). No CI rule was changed and no force-push was made. PR #140 was marked **SUPERSEDED / DO NOT MERGE** and remains open; its branch is not used. Corrected parent PR #141 uses GitHub noreply identity; the exact introduced-commit range passes locally and Fast CI Run `40789416642` passes on source `b06f20e…`. Parent commits now use the approved noreply identity.
+
+## G7 closure status
+
+**G7: PARTIAL.** The reviewed mock/readiness source is complete, but one cross-architecture SQLite direction remains NOT_RUN because its macOS ARM64 runner was not assigned. Do not convert G6 SQLite evidence into G7 evidence.
+
+| Exact G7 HEAD `00384eb…` evidence | Result |
+|---|---|
+| Calendar synthetic authorization → loopback MockWebServer focused test | PASS; Run `40749231295`, Artifact `12843121520`, SHA-256 `a198b4746313c27986ab3728f8c7dafc6e060c0a6dd88ad912ef593b689b062e` |
+| Android workflow | Run `40749231249` SUCCESS; Build/Lint, Unit, Integration, Security, Dependency Audit, Docs; API 26 and API 35 Required 105/105, Identity, Process Death, Data Isolation, Sentinel. API 26 Artifact `12845730516` (`40090efe7678d2cea8a8e64902fa50298190fd009363ec3c9c276f029cca0ee`); API 35 Artifact `12847400793` (`c0f40a2e03f9f895e9d5be01731c511cfc661e5757a965bf3df1bf06bc473555`); emulator `12846945714`; temporary-key Identity `12846168567` |
+| Full / Fast / Native / RustSec / Git Hooks | PASS at this SHA: `40749231298`, `40749231228`, `40749231215`, `40749231235`, `40749231318` |
+| SQLite portability | Run `40749231272` incomplete. Intel→Intel, ARM64→ARM64, ARM64→Intel PASS. Intel→ARM64 (`Open Intel DB on macOS arm64`, job `123042883914`) CANCELLED with no runner assignment; G7 ledger/PR records two attempts with runner ID 0. This direction is NOT_RUN, not a product/code failure. No repeated retry is planned absent runner availability. |
+| Historical Android API 35 Chat/IME failure | On code/test SHA `acde94c…`, `SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges` failed twice (initial + same-SHA retry), with a Compose timeout and then `Composer IME state did not settle at R4-B-committed`. Preserve as a reproducibility/reliability risk. |
+| Final G7 HEAD result | On exact final SHA `00384eb…`, later Run `40749231249` passed API 26 and API 35 Required 105/105 and Identity. This does not erase the earlier source-SHA failures. |
+
+Protected `main`, G5/G6 branches, PR #139, and its CI records were not modified. PR #139 remains OPEN/DRAFT. G7 ledger source is `docs/agent-reports/g7-orchestrator-ledger.md` on the candidate.
+
+## New campaign worktrees and delegated lanes
+
+All four branches start from exact G7 final HEAD `00384eb6468214362435140c9a2d848fa2e0f12e`; no same-name local or remote branch existed at setup.
+
+| Owner | Branch / worktree | Scope and ownership |
+|---|---|---|
+| Parent | `codex/serea-g8-integration-candidate-20261029` — `/workspace/Serea-g8-integration-candidate-20261029`, PR #141 | Central ledger, independent reviews, Composition Root, integration, frozen-head verification and owner decisions. |
+| Agent A | `codex/serea-g8-oauth-ui-mock` — `/workspace/Serea-g8-oauth-ui-mock` | Fake Google connection/consent lifecycle and Calendar UI/E2E in dedicated UI/domain/test files. No live OAuth or endpoint. `MainActivity`, `SereaAppShell`, `AppProviderComposition`, and this central ledger are excluded. |
+| Agent B | `codex/serea-g8-native-local-runtime` — `/workspace/Serea-g8-native-local-runtime` | Audit G3/G6, native runtime/adapter candidate, JVM/runtime evidence, model integrity and license proposal. No model weights in Git; no normal Chat wiring. Composition Root and central ledger excluded. |
+| Agent C | `codex/serea-g8-release-preflight` — `/workspace/Serea-g8-release-preflight`, PR #142 OPEN/DRAFT; HEAD `bb9ee1fd8bc92323c068b2edba3be3f94ba76169`, tree `e16911da53b5ef0c831d175e8b3d15b9bb606a82` | G7 SQLite/IME evidence, official OAuth policy checklist, release/SBOM/license gaps, dependency matrix and G9 preflight. Product files and central ledger excluded. |
+
+Agents are running as actual subagents in this chat. Their commits/branches are not accepted merely because they exist. Parent reviews Source, Architecture, Tests, Security, Integration, Provenance and License/Distribution before integrating any change.
+
+### Parent review disposition — Agent C
+
+**ACCEPTED (documentation only).** Agent C's report changes only `docs/agent-reports/g8-agent-c-release-preflight.md`; it claims JUnit NOT_RUN and contains no product code. Parent independently verified its exact base/head provenance, G7 run/artifact IDs, `runner_id=0` for the missing SQLite direction, and that the historical `acde94c…` API 35 failures are separate from the final `00384eb…` Required/Identity pass. Parent fetched the cited Google API Services User Data Policy, Calendar scopes, Gmail scopes, OAuth verification exception and Android OAuth setup pages directly; current displayed dates and scope descriptions match the report's 2026-10-29 JST check. Local source diff is documentation-only and `git diff --check` passes. The report preserves unresolved Owner and redistribution decisions; no owner-only action is suggested.
+
+Integrated documentation came from Agent C branch head `bb9ee1fd8bc92323c068b2edba3be3f94ba76169` after review. Parent cherry-picked the report commits without rewriting Agent C's branch. Report PR #142 remains OPEN/DRAFT and is a report-only checkpoint, not an accepted product implementation.
+
+## Parent integration plan
+
+1. Keep the default provider Fake and keep Play Services authorization dormant. The UI should consume the existing authorization gateway, consent registry, leases, provider sessions and Calendar authorization adapter.
+2. Keep Google connection consent, Google-to-Chat local handoff consent, and Cloud Egress consent as independent operations. A successful connection must not imply handoff or Cloud consent.
+3. Calendar HTTP in tests must be loopback-only. Each rendered/read result remains bound to synthetic account, provider session and generation. Stale callbacks and responses must be suppressed after switch, revoke, expiry, cancellation or recreation.
+4. Native code remains a separately identified `LOCAL_MODEL` candidate with integrity, offline, resource and lifecycle gates. The product Chat default remains unchanged until independent review and adapter/runtime gates pass.
+5. The parent owns `MainActivity`, `SereaAppShell`, `AppProviderComposition`, and any final product-mode selector. Agent work that needs those files is submitted as an integration patch proposal, not an uncoordinated edit.
+6. Integrate only reviewed commits. Run focused tests on each lane, then freeze one exact integration HEAD before any formal workflow. CI evidence from a different SHA is not inherited.
+
+## CI plan
+
+Required scope and checks are not weakened. At a stable integration SHA, plan Android Build/Lint, JVM/Integration/Security, API 26 and API 35 Required, Identity, Process Death, Data Isolation, Sentinel, Full, Fast, Native, SQLite, RustSec, Git Hooks, Android Contract, and Release Security. Run the new focused OAuth/Calendar tests and native adapter/runtime tests separately and identify them as non-Required where appropriate. Do not launch heavy Emulator jobs speculatively or retry the G7 runner-unassigned SQLite direction without an assigned runner.
+
+The first corrected parent source `b06f20e…` contains only the initial Orchestrator Ledger. On this exact SHA, Fast CI Run `40789416642` and RustSec Run `40789416463` PASS. The Android workflow `40789416724`, SQLite `40789416511`, Native `40789416519`, Git Hooks `40789416551`, and Full CI `40789416711` were still queued at last observation. Android change-scope classified the source as documentation-only; the API 26/35, Identity, Unit and emulator implementation tests were skipped, so the gate summary is not G8 Android test evidence. The earlier superseded PR #140 failure is a commit-identity failure, not source behavior. All G7 run IDs above remain exact-G7 evidence only. Formal G8 CI has not run on an integrated product-code HEAD.
+
+Focused G8 lane tests are not yet available. Agent A and Agent B independently report the installed Java 21 runtime lacks `javac`; the host is x86_64 with no `/dev/kvm`, Android emulator binary, or attached device. Their focused test results must be recorded NOT_RUN if no usable compiler/runner is found; exact-source GitHub CI remains the next viable path. ARM64 runtime and Pixel 7a remain NOT_RUN.
+
+## Owner decision ledger
+
+| Decision | Status | Required before |
+|---|---|---|
+| Stable Android package ID and app/demo coexistence | OWNER DECISION REQUIRED | Google Android OAuth client, release manifest and Beta identity |
+| Production certificate SHA-1/SHA-256 and signing/temporary-key transition | OWNER DECISION REQUIRED | Real OAuth client and production Beta signing; no Owner key used here |
+| Google Cloud project, Calendar API, consent disclosures and tester/verification settings | OWNER DECISION REQUIRED | Any real OAuth activation; not performed |
+| Real Google account/Calendar/Gmail access | OWNER APPROVAL REQUIRED | Any real data acquisition; NOT_RUN |
+| Restricted Gmail scope / Google verification assessment | OWNER DECISION REQUIRED | Any live Gmail activation; no Gmail OAuth enabled |
+| Cloud model provider eligibility, terms, credentials, cost and data policy | OWNER DECISION REQUIRED | Any Cloud provider/API or billing; Cloud remains disabled |
+| Pixel 7a physical use | OWNER APPROVAL REQUIRED | Device acceptance; NOT_RUN |
+| Production signing, release distribution, merge to protected `main` | OWNER APPROVAL REQUIRED | Release/merge; none performed |
+| Personal Beta GO | OWNER DECISION REQUIRED | Final 2026-12-31 release judgment; current status NO-GO |
+
+## G9 preflight independent work
+
+If G8 is incomplete, safe independent preparation continues: Gmail synthetic MIME/HTML and remote-image/size tests, data-minimization contract, model license/native SBOM improvements, token/usage mock UI, and a non-destructive Pixel 7a checklist. No real Gmail, OAuth, Cloud AI, device, production key, or user data is allowed. Agent C's accepted report contains the release/policy and checklist checkpoint; parent will add only work that is independent of G8 acceptance.
+
+## Status and resume contract
+
+- **G7:** PARTIAL — SQLite Intel→ARM64 open direction NOT_RUN due runner assignment; IME history retained separately from final-head PASS.
+- **G8:** IN_PROGRESS — Agent C documentation accepted; Agents A/B are implementing. No G8 product implementation is yet accepted.
+- **G9 Preflight:** PARTIAL — Agent C wrote an accepted preparation checklist; no G9 product test or feature is yet recorded.
+- **Personal Beta:** NO-GO.
+- **Parent branch / Draft PR:** `codex/serea-g8-integration-candidate-20261029` / [PR #141](https://github.com/Yrika819/Serea/pull/141), OPEN/DRAFT.
+- **Current integration HEAD at checkpoint start:** `b06f20e0dd1870a6eb0db684634603b9da3bb353` / tree `16f18279889c4e2aefea3aa1fb57118048b923fd`; the report and ledger update are being added on top. No G8 code is integrated.
+- **Report branch:** Agent C PR #142 OPEN/DRAFT, report independently accepted and cherry-picked; A/B remain in progress.
+- **Superseded PR:** #140 OPEN/DRAFT, title `[SUPERSEDED / DO NOT MERGE]`; no source rewrite or close was performed.
+- **Next:** collect each agent's reviewable commit and exact evidence; independently review/revise; wire only accepted OAuth UI in parent Composition Root; make the Native product-integration decision from actual runtime/resource/license evidence; integrate accepted changes and revalidate one frozen HEAD; continue safe G9 preparation.
+
+No asynchronous future resumption is assumed. This file and branch are the resume record.
+
+## Current campaign checkpoint — 2026-10-29
+
+This addendum supersedes the earlier “work is delegated / no G8 code is integrated” status above. Historical G7 failures and exact-head results remain unchanged.
+
+### Current parent candidate
+
+| Item | Current evidence |
+|---|---|
+| Parent branch/worktree | `codex/serea-g8-integration-candidate-20261029` — `/workspace/Serea-g8-integration-candidate-20261029` |
+| Reviewed product/test/tooling source HEAD before this ledger update | `d45d7eb` (`ac4b7c0618f416aa195ca02aa13c7278b02248df` tree); based on G7 final `00384eb…`. This exact source is ready for a normal push to PR #141. |
+| PR #141 remote state before this push | OPEN/DRAFT; remote head `3b20faac13907146858f7aa8ce5c2832f47175c4`. The local accepted source commits have not yet been pushed at checkpoint creation. |
+| Changed scope | Fake OAuth/Calendar UI composition, Activity recreation/account-switch UI test, G9 adversarial Gmail UI test, API35 exact focused UI stage and fail-closed package cleanup helper. No production OAuth activation or Native Chat wiring. |
+| Required manifests | Required 103 and Additional 2 remain untouched (105 formal identities total). Non-required 19; source identities 124; overlap 0, missing 0, unclassified 0. |
+
+### Lane dispositions
+
+| Lane | Disposition and evidence |
+|---|---|
+| Agent A — Fake OAuth/Calendar | **ACCEPTED** after independent review and test correction. PR #145 OPEN/DRAFT, tip `37cf3a799263de94fd527079befa471cc26d034e`, tree `003d6ac45f6cdc0cb748b2510f6ff0bb1bbdc4bc`. Parent cherry-picked the accepted source/test commits (`aa878ea`, `ed0bf40`) and added the Composition Root (`348da9c`). The exact session is Activity-scoped and Fake-backed; opening requires the current session object. The Calendar route closes on invalidation and is keyed by session. The app shell composes distinct connection consent, one-use local Trusted Handoff consent, and existing Cloud consent; no live OAuth or provider URL is enabled. |
+| Agent A — focused JVM/compile | Parent ran on app/test source HEAD `e7dff90947631d15429d299f28da8dc86b3a42e9`, tree `36df3fa991ce3b06c04f7c450b696cb8aadbd8eb`: JVM 13/13 PASS (9 lifecycle, 1 Calendar mock E2E, 3 loopback integration), plus `:app:compileIsolatedAndroidTestKotlin` PASS. JUnit XML and SHA-256 are saved under `docs/agent-reports/evidence/g8-parent-focused-e7dff90/`. No Android emulator execution is included in this result. |
+| Agent A — UI/lifecycle limits | The parent API35 stage contains 6 Fake Google/Calendar UI methods, the app-shell recreation/account-switch integration test, and the Fake Gmail inert-HTML test (7 exact identities total). It has not run yet. Activity recreation is covered by source test; OS process-death for the OAuth ViewModel remains NOT_RUN. |
+| Agent B — Native Runtime | **NOT ACCEPTED for product integration; quarantined candidate only.** PR #144 OPEN/DRAFT, report tip `3e8644338599bee5c0b0554a7b3de8a9234c8095`, tree `48e43dddfe3ce64b36f0a6735b2587106af88fe5`; implementation source `ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8`, tree `5b4f19c66bbb6f922f4e19f3d184e2bfe87aff83`. It remains default-off and disconnected from normal Chat. Focused JVM PASS 22/22. Product JNI x86_64 inference is NOT_RUN; focused run `40792192393`, job `123179857937`, was QUEUED with no artifact. ARM64_BUILD=NOT_RUN, ARM64_RUNTIME=NOT_RUN, PIXEL7A_PHYSICAL=NOT_RUN. The CMake dirty-checkout fix is pushed; its independent re-review is pending. Complete native NOTICE/SBOM/attribution and redistribution review, actual memory/latency/power evidence, and runtime remain open. |
+| Agent C — Release/Security | Report-only PR #142 remains OPEN/DRAFT and its report was independently accepted. OAuth policy checklist is documentation only; no Cloud project/client/service was configured. C reviewed the parent Composition Root and API35 UI-stage design, requested fail-closed ADB package-query handling, then **ACCEPTED** the fix after re-review. |
+| Agent C / G9 Fake Gmail | PR #143 OPEN/DRAFT, tip `d93674154ee0a5297a3a55e9ad25edabcfdf914b`; test source `b07f91612b28a1f9338f04dd081ef3a94180c84f`. Parent cherry-picked the synthetic adversarial HTML UI test and report (`3641eaa`, `e7dff90`). Parent-run isolated Android test-source compilation passed on G9 source `6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a`, tree `923aeaf2868ce886b433fcf8e1094722f746f398`; no UI JUnit was produced. This test remains non-required and will run only in the focused API35 stage. |
+
+### Parent integration and verification
+
+- Parent source commit `348da9c` wires the current Fake authorization ViewModel through Settings and the app shell, opens the loopback agenda from the current consent session, and carries the existing local-only Handoff flow. `GoogleAuthorizationAppIntegrationTest` exercises consent, agenda opening, Activity recreation, and account switch. Independent review by Agent C found the session/account and consent boundaries consistent with the existing egress checks.
+- Parent commit `d45d7eb` adds the API35 post-Required focused stage with these seven exact non-required test identities: four `GoogleAuthorizationDemoUiTest` methods, `GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt`, `GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel`, and `GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests`.
+- The focused stage is only eligible after API35 formal Required JUnit, Process Death, and Data Isolation all PASS. It uses exact test identity verification and runs after the Required set; API26 records NOT_REQUIRED. Required IDs, assertions, thresholds, skip conditions, and Additional manifest are unchanged.
+- Independent review found that failed `adb shell pm path` could previously appear to mean “absent.” `tools/android_package_path.sh` now distinguishes an ADB error from a successful empty result. The diagnostic precheck and every focused-stage pre/post query fail closed; any uninstall or query error prevents cleanup/API35 PASS. Agent C accepted the fix. Python regression tests exercise transport failure (exit status 2), a successful absence, and an installed path.
+- On the final committed test-stage source `d45d7eb`, `python3 -m unittest tests.android_emulator_workflow_tests` passed 32/32; Bash syntax and `git diff --check` passed; source/manifest identity accounting is 124/103/2/19 with zero mismatch. These are host/static tests, not Android UI execution.
+- The seven focused UI methods, Android API26/35 formal gates, Identity, Process Death, Sentinel, Full, Fast, Native, SQLite, RustSec, Git Hooks, Android Contract and Release Security have no run IDs yet for `d45d7eb`; they are awaiting the parent branch push. Runs at the older parent source `3b20faac…` are stale and cannot be used as evidence for this candidate.
+
+### G7, G9, Owner gates, and status
+
+- G7 remains **PARTIAL**. A narrowly scoped exact-G7 SQLite job rerun was attempted after the ARM64 runner appeared on a different candidate: run `40749231272`, attempt 3, job `123182687879`, source `00384eb6468214362435140c9a2d848fa2e0f12e`. At the latest check it remained QUEUED with `runner_id=0`, no steps or logs. Do not rerun again. The Intel→ARM64 direction remains NOT_RUN; other G7 directions and exact-final-SHA Required/Identity passes stay as recorded above.
+- G9 Preflight is **PARTIAL**: the Fake Gmail adversarial HTML UI source and release checklist are saved; isolated Android source compilation passed; focused JUnit/UI execution is NOT_RUN. Gmail parsing, size boundaries and data minimization not yet covered by this current Gmail UI test remain future G9 work.
+- G8 is **PARTIAL** pending exact-HEAD Android/UI CI, Native JNI inference and ARM64/resource/license evidence. Personal Beta remains **NO-GO**.
+- Existing Owner decisions remain required for live OAuth/Google data, Cloud provider/billing/credentials, package/signing, production distribution, physical Pixel 7a acceptance, `main` merge and Beta GO. None was performed.
+- No future asynchronous resume is assumed. The next actions are: push the reviewed parent branch to PR #141; collect exact-source workflows and artifacts; record any runner failures as NOT_RUN/cancelled rather than product failures; independently re-review Agent B’s provenance fix when its re-review arrives; continue independent G9 mock/preflight work while Native runtime is queued or unavailable.
+
+
+## Identity-guard remediation and exact d0 verification checkpoint — 2026-10-29
+
+The source snapshot above was pushed to PR #141 as exact head `d0f32fcf845208f065e8edbdb498ec00448a1b65` / tree `f5a5f8d977638ab08ec3b3c1719e43d737fb425c`. Fast CI run `40794667396` failed only at its commit identity guard (job `123188095512`). The guard passed checkout, Rust setup/fetch, workspace smoke guard, and smoke regression, then rejected committers on `aa878eae952e3e5ce668d0f192f47d48d611d6df`, `ed0bf401b859cfa2aac43b1695a17af80d9d9c9c`, `348da9c18722e526ebab3ee580e4db97c7f882b5`, `3641eaace85a03fbc98be8bf53470fc11e21af7c`, and `e7dff90947631d15429d299f28da8dc86b3a42e9`. The first two and `3641eaa`/`e7dff90` kept an accepted author but inherited the local personal committer; `348da9c` had the personal author and committer. No source tests ran after this guard failure. No identity policy was changed.
+
+To preserve history, no commit was amended or rebased and no branch was force-pushed. Existing PR #141 remains open and will be marked **SUPERSEDED / DO NOT MERGE**. The identical reviewed source tree is being snapshotted from G7 final onto the separate branch `codex/serea-g8-integration-candidate-20261029-r1`; that branch will contain one ordinary G8 integration commit with approved GitHub noreply author and committer. This is an identity-safe replacement candidate, not an overwrite of PR #141. The local identity guard must pass before it is pushed/opened as a new Draft PR.
+
+### Local exact-source verification at d0f32fc
+
+- `:app:assembleDebug :app:lintDebug`: **PASS**, BUILD SUCCESSFUL in 3m19s (44 tasks; 24 executed, 20 up-to-date).
+- Gmail Fake/MIME/session/read-port/ViewModel JVM group: **70/70 PASS** (Gmail parser and security ports 16, provider sessions 13, HTTP read port 11, Gmail ViewModel 30).
+- Google-origin egress, body lineage, usage, Calendar security/session, OAuth, and trusted-handoff JVM group: **88/88 PASS**.
+- Mock release/security tests: lockfile SBOM **7/7 PASS**, artifact-bound SBOM **10/10 PASS**, Firebase signing/distribution contract **19/19 PASS**. Release/emulator guard shell syntax passed.
+- Local CycloneDX 1.5 inventory contains 317 locked components and is bound to the CI-only debug APK hash. APK SHA-256: `b9189b8331bc94f58b703924eb1104b555dd71e49f97c513c9f4c8a35aaf192d`; bound SBOM SHA-256: `5de2529e71b6c1e33b41e74b7834ec7d1bb142eede3a84e8df16f5fe47a76a6c`. Evidence is saved under `docs/agent-reports/evidence/g8-release-security-d0f32fc/`. The APK itself is not committed. This lockfile inventory does not represent dependency graph edges, independently establish packaged membership, publisher authenticity or APK-to-source attestation.
+- Focused JUnit XMLs for the 158 Gmail/egress/consent/usage tests are saved with SHA-256 under `docs/agent-reports/evidence/g8-parent-focused-d0f32fc/`. Earlier G8 OAuth/Calendar tests and instrumentation source compile are saved under `g8-parent-focused-e7dff90`.
+
+### Exact d0 GitHub run states at the latest check
+
+| Run | State/result |
+|---|---|
+| Android | `40794667213` PENDING at check-suite level; no job/runner assigned yet. |
+| Full CI | `40794667223` QUEUED. |
+| Native platform validation | `40794667224` QUEUED. |
+| Cross-architecture SQLite portability | `40794667256` QUEUED. |
+| Git hooks Windows compatibility | `40794667202` QUEUED. |
+| Rust Dependency Security | `40794667240` QUEUED. |
+| Fast CI | `40794667396` FAIL at the identity guard described above; code tests were skipped. |
+| Release Security Focused | `40795288341` QUEUED on exact d0 via workflow_dispatch. |
+| Mock Personal Beta Contract Tests | `40795297504` QUEUED on exact d0 via workflow_dispatch input `head_sha=d0f32fc…`. |
+| Feature-branch Android Personal Beta workflow | Run `40794660333` showed event `push`, conclusion `failure`, and zero jobs/logs/artifacts. The feature branch's workflow file has only `workflow_dispatch` and its job is guarded to `refs/heads/main`; no manual dispatch was issued. No Beta APK build, Owner signing, or distribution occurred. This zero-job workflow event is not product or release test evidence. |
+
+All of these run IDs are tied to exact SHA `d0f32fc…`; do not attribute any to the replacement branch SHA. The exact-G7 SQLite job remains queued/unassigned as recorded above. Agent C has now independently **ACCEPTED** Agent B's CMake provenance fix at source `ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8`; the native candidate is accepted only as a quarantined, default-off candidate. B's focused JNI workflow remains queued without runtime evidence.
+
+G8 and G9 remain **PARTIAL**; Personal Beta remains **NO-GO**. The next candidate push must pass the exact-source identity guard first, then run formal CI on its own SHA. No successful test evidence from d0f32fc may be reused as a different replacement SHA's result without documenting unchanged source scope and obtaining that SHA's required CI.

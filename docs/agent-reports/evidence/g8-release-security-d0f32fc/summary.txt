@@ -1,0 +1,6 @@
+Source HEAD: d0f32fcf845208f065e8edbdb498ec00448a1b65; source tree f5a5f8d977638ab08ec3b3c1719e43d737fb425c.
+Local :app:assembleDebug and :app:lintDebug: PASS, BUILD SUCCESSFUL in 3m19s (44 tasks; 24 executed, 20 up-to-date). This is a CI-only debug APK; no Beta variant, Owner key, or distribution was used.
+
+Mock security contract results: android_lockfile_sbom_tests.py PASS 7/7; android_artifact_sbom_tests.py PASS 10/10; android_firebase_distribution_tests.py PASS 19/19; release/emulator shell syntax PASS.
+
+CycloneDX 1.5 lockfile inventory: 317 locked components; package ID app.serea.android.demo; debug APK SHA-256 b9189b8331bc94f58b703924eb1104b555dd71e49f97c513c9f4c8a35aaf192d; artifact-bound SBOM SHA-256 5de2529e71b6c1e33b41e74b7834ec7d1bb142eede3a84e8df16f5fe47a76a6c. The lockfile does not represent dependency graph edges or establish packaged-component membership; publisher authenticity and APK-to-source provenance are not established by this local inventory. Debug APK itself is not included in this evidence directory.

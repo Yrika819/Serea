@@ -7,11 +7,11 @@ AGENT_ID: A — Google OAuth Product UI / Trusted Calendar Integration
 ACTIVE_PHASE: G8-A / Fake Calendar consent and read-only session integration
 GOAL_STATUS: PARTIAL — implementation, source/manifest identity accounting, and integration tests authored; runtime execution blocked by missing JDK compiler; parent composition wiring pending
 BASE_SHA: 00384eb6468214362435140c9a2d848fa2e0f12e
-CURRENT_HEAD: 93691c28c6776d935928f233144d1a193dff94b1 (source implementation commit; report metadata follow-up may advance branch HEAD)
-TREE_SHA: ec3b4db0fdbacea3b32c319c67311d64971eec9f (source implementation tree)
+CURRENT_HEAD: 93691c28c6776d935928f233144d1a193dff94b1 (source implementation commit; latest PR branch also has report-only metadata commit 3321635023b5f6450272bae2d7f6bbdd285ad30e)
+TREE_SHA: ec3b4db0fdbacea3b32c319c67311d64971eec9f (source implementation tree; PR branch tree additionally contains the report-only metadata update)
 WORKTREE: /workspace/Serea-g8-oauth-ui-mock
 BRANCH: codex/serea-g8-oauth-ui-mock
-DRAFT_PR: pending push and creation against codex/serea-g8-integration-candidate; GitHub authentication is available
+DRAFT_PR: https://github.com/Yrika819/Serea/pull/145 (Draft; base `codex/serea-g7-calendar-readiness`, whose head is the declared BASE_SHA)
 ```
 
 ## Completed work
@@ -60,7 +60,7 @@ Commands attempted:
 
 JUNIT_RESULT: NOT_RUN — no JUnit totals are available for this worktree.
 ANDROID_UI_RESULT: NOT_RUN — the new Compose loopback test is authored but not executed.
-CI_RUN_IDS: none for this worktree.
+CI_RUN_IDS: none for this worktree; parent is running focused JVM verification against source commit `93691c2`.
 ARTIFACT_IDS: none.
 
 ## Coverage map (does not claim full A4 completion)
@@ -94,6 +94,6 @@ CURRENT_BLOCKERS: JDK compiler/CI runtime required for execution evidence.
 DEPENDENCIES: Parent integration in `SereaAppShell`/`MainActivity`, then focused JVM + Android UI verification at the integration SHA.
 INTEGRATION_READY: READY_FOR_PARENT_REVIEW; parent composition wiring is a separate integration patch.
 REVIEW_REQUEST: Review `CalendarDemoSessionFactory`, account reconnect confirmation lifecycle, new JVM/Compose loopback tests, and the route invalidation integration note.
-NEXT_ACTION: Push the committed branch, open a Draft PR against `codex/serea-g8-integration-candidate`, record PR and final branch object IDs, and hand over for independent parent review; composition wiring and runtime test evidence remain follow-up dependencies.
+NEXT_ACTION: Record the parent's focused JVM result when received, then hand over for independent review and parent composition wiring; Android UI execution remains pending an Android test runner.
 OWNER_APPROVAL_REQUIRED: None for Fake/loopback work. Real OAuth/account/data, Pixel 7a, production signing/distribution, main merge, and Personal Beta GO remain owner-controlled.
 ```

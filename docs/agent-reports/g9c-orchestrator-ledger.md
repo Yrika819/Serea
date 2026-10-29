@@ -307,3 +307,11 @@ Latest exact CI state:
 PR #169 x86_64 evidence remains exact-source SUCCESS with artifacts and metrics already detailed above; ARM64 remains NOT_RUN until PR #171's bounded retry completes. PR #171 branch patch is statically accepted but hosted checks are pending.
 
 No new Owner decision or external-service authorization. Personal Beta remains NO-GO.
+
+## PR #172 UI/harness follow-up checkpoint — 2026-10-29 16:52 UTC
+
+Agent B created Draft PR #172 at HEAD `28f52c2999795ab6d1c83aa456d5186205c8307a` / tree `e2c735be01ef14e22cd4736a04798c21a1d413f1`, based on exact #168 head `272f68ecf7f8072b812b13e46064a108bab5ef2b`. It changes Android unit test behavior plus the Fake Google process-death harness/regression test: when UTP removed the isolated APK after instrumentation, the harness revalidates the same APK SHA before reinstallation; timeout classification is exercised by deterministic SocketTimeoutException injection without widening the 100 ms network timeout or removing TIMEOUT assertions. Agent-reported local focused unit and harness regression checks pass, but independent C review is pending and no new-head Android/runtime evidence exists.
+
+PR #172 workflow run set (`40915643093`, `40915642839`, `40915642806`, `40915643044`, `40915642846`, `40915642950`, `40915642857`) is QUEUED at this observation. PR #168 API35 job `123577163290` and PR #169 API35 job `123582802971` remain IN_PROGRESS in the API35 instrumentation step; no API35 JUnit artifact or result is available yet. #168 API26's Google/Gmail UI 16/16 pass remains exact-source evidence; the overall API26 result still fails the separate package-state harness. #169 API26 remains Required 4 EACCES failures as classified above.
+
+PR #170 remains Draft exact head `fc9b355…`; Fast and RustSec PASS, Android and full cross-platform evidence pending. PR #171 remains Draft exact head `8d4d3cd…`; all new hosted jobs are queued. Agent A's Native fix has independent ACCEPTED review; it has not reached an emulator run yet. Agent C is preparing a separate strict solution for #169's Required `ChatHttpE2ETest` variant/permission mismatch; Agent A will independently review that branch.

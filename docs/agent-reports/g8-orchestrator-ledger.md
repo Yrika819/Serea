@@ -103,3 +103,45 @@ If G8 is incomplete, safe independent preparation continues: Gmail synthetic MIM
 - **Next:** collect each agent's reviewable commit and exact evidence; independently review/revise; wire only accepted OAuth UI in parent Composition Root; make the Native product-integration decision from actual runtime/resource/license evidence; integrate accepted changes and revalidate one frozen HEAD; continue safe G9 preparation.
 
 No asynchronous future resumption is assumed. This file and branch are the resume record.
+
+## Current campaign checkpoint — 2026-10-29
+
+This addendum supersedes the earlier “work is delegated / no G8 code is integrated” status above. Historical G7 failures and exact-head results remain unchanged.
+
+### Current parent candidate
+
+| Item | Current evidence |
+|---|---|
+| Parent branch/worktree | `codex/serea-g8-integration-candidate-20261029` — `/workspace/Serea-g8-integration-candidate-20261029` |
+| Reviewed product/test/tooling source HEAD before this ledger update | `d45d7eb` (`ac4b7c0618f416aa195ca02aa13c7278b02248df` tree); based on G7 final `00384eb…`. This exact source is ready for a normal push to PR #141. |
+| PR #141 remote state before this push | OPEN/DRAFT; remote head `3b20faac13907146858f7aa8ce5c2832f47175c4`. The local accepted source commits have not yet been pushed at checkpoint creation. |
+| Changed scope | Fake OAuth/Calendar UI composition, Activity recreation/account-switch UI test, G9 adversarial Gmail UI test, API35 exact focused UI stage and fail-closed package cleanup helper. No production OAuth activation or Native Chat wiring. |
+| Required manifests | Required 103 and Additional 2 remain untouched (105 formal identities total). Non-required 19; source identities 124; overlap 0, missing 0, unclassified 0. |
+
+### Lane dispositions
+
+| Lane | Disposition and evidence |
+|---|---|
+| Agent A — Fake OAuth/Calendar | **ACCEPTED** after independent review and test correction. PR #145 OPEN/DRAFT, tip `37cf3a799263de94fd527079befa471cc26d034e`, tree `003d6ac45f6cdc0cb748b2510f6ff0bb1bbdc4bc`. Parent cherry-picked the accepted source/test commits (`aa878ea`, `ed0bf40`) and added the Composition Root (`348da9c`). The exact session is Activity-scoped and Fake-backed; opening requires the current session object. The Calendar route closes on invalidation and is keyed by session. The app shell composes distinct connection consent, one-use local Trusted Handoff consent, and existing Cloud consent; no live OAuth or provider URL is enabled. |
+| Agent A — focused JVM/compile | Parent ran on app/test source HEAD `e7dff90947631d15429d299f28da8dc86b3a42e9`, tree `36df3fa991ce3b06c04f7c450b696cb8aadbd8eb`: JVM 13/13 PASS (9 lifecycle, 1 Calendar mock E2E, 3 loopback integration), plus `:app:compileIsolatedAndroidTestKotlin` PASS. JUnit XML and SHA-256 are saved under `docs/agent-reports/evidence/g8-parent-focused-e7dff90/`. No Android emulator execution is included in this result. |
+| Agent A — UI/lifecycle limits | The parent API35 stage contains 6 Fake Google/Calendar UI methods, the app-shell recreation/account-switch integration test, and the Fake Gmail inert-HTML test (7 exact identities total). It has not run yet. Activity recreation is covered by source test; OS process-death for the OAuth ViewModel remains NOT_RUN. |
+| Agent B — Native Runtime | **NOT ACCEPTED for product integration; quarantined candidate only.** PR #144 OPEN/DRAFT, report tip `3e8644338599bee5c0b0554a7b3de8a9234c8095`, tree `48e43dddfe3ce64b36f0a6735b2587106af88fe5`; implementation source `ee5c25c9ca7139db9d4fb387c87e5d3922b0c4d8`, tree `5b4f19c66bbb6f922f4e19f3d184e2bfe87aff83`. It remains default-off and disconnected from normal Chat. Focused JVM PASS 22/22. Product JNI x86_64 inference is NOT_RUN; focused run `40792192393`, job `123179857937`, was QUEUED with no artifact. ARM64_BUILD=NOT_RUN, ARM64_RUNTIME=NOT_RUN, PIXEL7A_PHYSICAL=NOT_RUN. The CMake dirty-checkout fix is pushed; its independent re-review is pending. Complete native NOTICE/SBOM/attribution and redistribution review, actual memory/latency/power evidence, and runtime remain open. |
+| Agent C — Release/Security | Report-only PR #142 remains OPEN/DRAFT and its report was independently accepted. OAuth policy checklist is documentation only; no Cloud project/client/service was configured. C reviewed the parent Composition Root and API35 UI-stage design, requested fail-closed ADB package-query handling, then **ACCEPTED** the fix after re-review. |
+| Agent C / G9 Fake Gmail | PR #143 OPEN/DRAFT, tip `d93674154ee0a5297a3a55e9ad25edabcfdf914b`; test source `b07f91612b28a1f9338f04dd081ef3a94180c84f`. Parent cherry-picked the synthetic adversarial HTML UI test and report (`3641eaa`, `e7dff90`). Parent-run isolated Android test-source compilation passed on G9 source `6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a`, tree `923aeaf2868ce886b433fcf8e1094722f746f398`; no UI JUnit was produced. This test remains non-required and will run only in the focused API35 stage. |
+
+### Parent integration and verification
+
+- Parent source commit `348da9c` wires the current Fake authorization ViewModel through Settings and the app shell, opens the loopback agenda from the current consent session, and carries the existing local-only Handoff flow. `GoogleAuthorizationAppIntegrationTest` exercises consent, agenda opening, Activity recreation, and account switch. Independent review by Agent C found the session/account and consent boundaries consistent with the existing egress checks.
+- Parent commit `d45d7eb` adds the API35 post-Required focused stage with these seven exact non-required test identities: four `GoogleAuthorizationDemoUiTest` methods, `GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt`, `GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel`, and `GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests`.
+- The focused stage is only eligible after API35 formal Required JUnit, Process Death, and Data Isolation all PASS. It uses exact test identity verification and runs after the Required set; API26 records NOT_REQUIRED. Required IDs, assertions, thresholds, skip conditions, and Additional manifest are unchanged.
+- Independent review found that failed `adb shell pm path` could previously appear to mean “absent.” `tools/android_package_path.sh` now distinguishes an ADB error from a successful empty result. The diagnostic precheck and every focused-stage pre/post query fail closed; any uninstall or query error prevents cleanup/API35 PASS. Agent C accepted the fix. Python regression tests exercise transport failure (exit status 2), a successful absence, and an installed path.
+- On the final committed test-stage source `d45d7eb`, `python3 -m unittest tests.android_emulator_workflow_tests` passed 32/32; Bash syntax and `git diff --check` passed; source/manifest identity accounting is 124/103/2/19 with zero mismatch. These are host/static tests, not Android UI execution.
+- The seven focused UI methods, Android API26/35 formal gates, Identity, Process Death, Sentinel, Full, Fast, Native, SQLite, RustSec, Git Hooks, Android Contract and Release Security have no run IDs yet for `d45d7eb`; they are awaiting the parent branch push. Runs at the older parent source `3b20faac…` are stale and cannot be used as evidence for this candidate.
+
+### G7, G9, Owner gates, and status
+
+- G7 remains **PARTIAL**. A narrowly scoped exact-G7 SQLite job rerun was attempted after the ARM64 runner appeared on a different candidate: run `40749231272`, attempt 3, job `123182687879`, source `00384eb6468214362435140c9a2d848fa2e0f12e`. At the latest check it remained QUEUED with `runner_id=0`, no steps or logs. Do not rerun again. The Intel→ARM64 direction remains NOT_RUN; other G7 directions and exact-final-SHA Required/Identity passes stay as recorded above.
+- G9 Preflight is **PARTIAL**: the Fake Gmail adversarial HTML UI source and release checklist are saved; isolated Android source compilation passed; focused JUnit/UI execution is NOT_RUN. Gmail parsing, size boundaries and data minimization not yet covered by this current Gmail UI test remain future G9 work.
+- G8 is **PARTIAL** pending exact-HEAD Android/UI CI, Native JNI inference and ARM64/resource/license evidence. Personal Beta remains **NO-GO**.
+- Existing Owner decisions remain required for live OAuth/Google data, Cloud provider/billing/credentials, package/signing, production distribution, physical Pixel 7a acceptance, `main` merge and Beta GO. None was performed.
+- No future asynchronous resume is assumed. The next actions are: push the reviewed parent branch to PR #141; collect exact-source workflows and artifacts; record any runner failures as NOT_RUN/cancelled rather than product failures; independently re-review Agent B’s provenance fix when its re-review arrives; continue independent G9 mock/preflight work while Native runtime is queued or unavailable.

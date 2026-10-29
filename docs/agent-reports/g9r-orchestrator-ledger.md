@@ -41,7 +41,7 @@ Focused Native run `40843204437` failed on PR #147 exact HEAD, attempt 1. x86_64
 
 | Source | Workflow | Run | Last observed state | Evidence |
 |---|---|---:|---|---|
-| #149 `3a0f0c1…` | Android | `40810824093` | FAILURE | Instrumentation did start. API26 Required ran 105/105 and separate Process Death passed; the API26 Google/Gmail UI suite ran 16 tests with 5 failures. API35 failed `SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges`; exact API35 Required/UI counts and artifact bindings are being extracted. This is distinct from PR #146's 0/105 API26 and 0/105 API35. |
+| #149 `3a0f0c1…` | Android | `40810824093` | FAILURE | API26 Required: 105 tests, 0 fail/error/skip (103 Required + 2 Additional). Process Death passed. Google/Gmail Additional UI: 16 tests, 5 failures. API35 ran only a 1-test diagnostic (`chatDraftSurvivesGmailAndCalendarDestinationChanges`), which failed; API35 Required and Google/Gmail UI were NOT_RUN. API35 Data Isolation and actual Process Death passed separately. This is distinct from PR #146's 0/105 API26 and 0/105 API35. |
 | #151 `d4a36fb…` | Android | `40842824215` | QUEUED | Change Scope, Build/Lint/Instrumentation Compile, Unit, Integration, Security, Docs and Dependency Audit PASS; Storage/Emulator remained queued. No API JUnit artifact yet. |
 | #151 | Full / Fast / RustSec / Git Hooks | `40842824328` / `40842824206` / `40842824232` / `40842824356` | PASS | Exact-head auxiliary CI. Native and SQLite were still incomplete/queued. |
 | #152 `a9da3b7…` | Android | `40844297910` | QUEUED | Only Change Scope PASS; remaining Android jobs queued. No emulator or UI JUnit evidence. |
@@ -49,6 +49,8 @@ Focused Native run `40843204437` failed on PR #147 exact HEAD, attempt 1. x86_64
 | #154 `90913b4…` | Android | `40845836065` | QUEUED | Docs-only patch: product Android jobs were skipped. Not product-test evidence. Several non-Android jobs were queued. |
 
 The main-only Personal Beta workflow runs `40845818357` and earlier related runs failed with `jobs=[]`; these are not product validation. No runner inventory was inferred from a 403 response.
+
+PR #149 JUnit artifact binding: API26 artifact `12872143095`, 867,807 bytes, SHA-256 `ebdd9e7a9f5343e9dfacba91abed7ba75b4bf56a338fa35cbe3582160ae4f34e`; API35 diagnostic artifact `12872631908`, 255,398 bytes, SHA-256 `bd32cb1a21e26a257c429bc74bd0158f41c819072af835204f953232dc4f8978`. Both artifact hashes were verified against the Actions digest. API26 failing UI identities: `GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization` (ambiguous account text selector); `GoogleAuthorizationDemoUiTest#expiredCalendarReconnectShowsFreshPreviewAndWaitsForConfirm` (ambiguous reconnect text); `GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt` (existing MainActivity Compose content); `GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel` (5-second Design review timeout, cause unconfirmed); `GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` (exact `B` assertion against full account label). API35's diagnostic failure is at `SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges`; instrumentation status reported NOT_RUN for its broader suites. Android Storage/Emulator job was `123243058373`.
 
 ## Work assignments and boundaries
 
@@ -72,6 +74,19 @@ SmolLM2 JNI is the active baseline task; model comparison must not block it or G
 ## Owner boundary and gates
 
 No protected-main merge, PR rebase/force-push/merge/close, real OAuth/account/data, Cloud AI credential or billing use, production key/signing, beta distribution, Pixel 7a physical operation, personal-data deletion, Required Gate reduction, or Personal Beta GO declaration. Cloud AI and Google-origin Cloud egress remain disabled. Read-only scopes, explicit consent, account/session/generation binding, revocation, single-use handoff, content identity, native integrity/offline enforcement, usage/egress checks, and fail-closed cleanup remain required.
+
+Current decision matrix (pending; IDs here are local to this campaign and do not replace IDs in older planning documents):
+
+| Decision | Owner input needed |
+|---|---|
+| Package / coexistence | Beta package ID and Demo/Beta coexistence/update identity. |
+| Signing | Certificate/channel policy and production key custody. |
+| Google | Cloud project, OAuth activation, Calendar read-only and Gmail restricted scope eligibility. |
+| AI provider | Provider age/region/terms eligibility and cloud-provider choice, if any. |
+| Local model | Final model only after Pixel 7a measurements and independent review. |
+| Device | Pixel 7a physical acceptance session. |
+| Integration | Protected-main merge approval. |
+| Release | Personal Beta GO after all P0 acceptance gates. |
 
 | Milestone | Status at this checkpoint | Exit evidence still needed |
 |---|---|---|

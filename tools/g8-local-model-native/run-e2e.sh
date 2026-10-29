@@ -90,6 +90,23 @@ adb_device() {
     adb -s "$DEVICE_SERIAL" "$@"
 }
 
+print_sanitized_instrumentation_summary() {
+    local status_file="$EVIDENCE_DIR/instrumentation-command-status.txt"
+    local junit_file="$EVIDENCE_DIR/junit-verification.txt"
+    if [[ -s "$status_file" ]]; then
+        echo 'instrumentation_command_summary_begin' >&2
+        grep -E '^(adb_instrumentation_exit|logcat_capture|stream_parse_exit|timeout_cleanup|instrumentation_timeout)=' \
+            "$status_file" >&2 || true
+        echo 'instrumentation_command_summary_end' >&2
+    fi
+    if [[ -s "$junit_file" ]]; then
+        echo 'instrumentation_junit_summary_begin' >&2
+        grep -E '^(evidence_kind|stream_outcome|instrumentation_code|reported_numtests|tests|failures|errors|skipped|noop_result|native_result|native_initialization_error|noop_initialization_error|unexpected_identity_count|terminal_status)=' \
+            "$junit_file" >&2 || true
+        echo 'instrumentation_junit_summary_end' >&2
+    fi
+}
+
 package_state() {
     local package="$1"
     local include_uninstalled="${2:-0}"
@@ -466,17 +483,11 @@ cleanup() {
             "cleanup_verified_output=$output_write_status" \
             'cleanup_outcome=FAIL' \
             "original_exit_status=$original_status" >&2
-        if [[ -s "$EVIDENCE_DIR/instrumentation-command-status.txt" ]]; then
+        if [[ -s "$EVIDENCE_DIR/instrumentation-command-status.txt" || \
+              -s "$EVIDENCE_DIR/junit-verification.txt" ]]; then
             echo 'failure_instrumentation_command_status_begin' >&2
-            grep -E '^(adb_instrumentation_exit|logcat_capture|stream_parse_exit|timeout_cleanup|instrumentation_timeout)=' \
-                "$EVIDENCE_DIR/instrumentation-command-status.txt" >&2 || true
+            print_sanitized_instrumentation_summary
             echo 'failure_instrumentation_command_status_end' >&2
-        fi
-        if [[ -s "$EVIDENCE_DIR/junit-verification.txt" ]]; then
-            echo 'failure_junit_summary_begin' >&2
-            grep -E '^(evidence_kind|stream_outcome|instrumentation_code|reported_numtests|tests|failures|errors|skipped|noop_result|native_result|native_initialization_error|noop_initialization_error|unexpected_identity_count|terminal_status)=' \
-                "$EVIDENCE_DIR/junit-verification.txt" >&2 || true
-            echo 'failure_junit_summary_end' >&2
         fi
         # The workflow uploader is configured with `always()`. Remove its
         # evidence source on cleanup failure so it cannot publish success evidence.
@@ -515,7 +526,8 @@ if [[ "${SEREA_CLEANUP_TEST_MODE:-0}" == 1 ]]; then
     HOST_MODEL_OWNED=1
     trap 'cleanup "$?"' EXIT
     CURRENT_STAGE=CLEANUP_TEST_MODE
-    if [[ "${SEREA_CLEANUP_TEST_DIAGNOSTICS:-0}" == 1 ]]; then
+    if [[ "${SEREA_CLEANUP_TEST_DIAGNOSTICS:-0}" == 1 || \
+          "${SEREA_CLEANUP_TEST_GATE_FAILURE:-0}" == 1 ]]; then
         printf '%s\n' \
             'adb_instrumentation_exit=1' \
             'logcat_capture=PASS' \
@@ -540,6 +552,15 @@ if [[ "${SEREA_CLEANUP_TEST_MODE:-0}" == 1 ]]; then
             'terminal_status=synthetic#diagnostic:-2' \
             'generated_content=DO_NOT_PRINT' \
             > "$EVIDENCE_DIR/junit-verification.txt"
+    fi
+    if [[ "${SEREA_CLEANUP_TEST_GATE_FAILURE:-0}" == 1 ]]; then
+        printf '%s\n' 'raw_generated_output_marker=DO_NOT_PRINT' > "$EVIDENCE_DIR/android-instrumentation.txt"
+        printf '%s\n' 'raw_logcat_output_marker=DO_NOT_PRINT' > "$EVIDENCE_DIR/android-logcat-diagnostic.log"
+        CURRENT_STAGE=INSTRUMENTATION_GATE
+        echo 'Android instrumentation diagnostic or native inference did not pass; sanitized summary follows.' >&2
+        print_sanitized_instrumentation_summary
+        record_primary_failure 1 "$LINENO"
+        exit 1
     fi
     if [[ "${SEREA_CLEANUP_TEST_FAIL_COMMAND:-0}" == 1 ]]; then
         CURRENT_STAGE=TEST_PRIMARY_COMMAND_FAILURE
@@ -709,9 +730,8 @@ source "$ROOT_DIR/tools/g8-local-model-native/instrumentation-gate.sh"
 CURRENT_STAGE=INSTRUMENTATION_GATE
 if ! instrumentation_gate_passes "$instrumentation_status" "$logcat_status" \
     "$parser_status" "$timeout_cleanup" "$EVIDENCE_DIR/junit-verification.txt"; then
-    echo 'Android instrumentation diagnostic or native inference did not pass; captured output follows.' >&2
-    tail -n 240 "$instrumentation_log" >&2 || true
-    tail -n 240 "$EVIDENCE_DIR/android-logcat-diagnostic.log" >&2 || true
+    echo 'Android instrumentation diagnostic or native inference did not pass; sanitized summary follows.' >&2
+    print_sanitized_instrumentation_summary
     record_primary_failure 1 "$LINENO"
     exit 1
 fi

@@ -236,6 +236,20 @@ fi
 [[ ! -e "$EVIDENCE_DIR" ]]
 ! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
 
+prepare_case instrumentation_gate_and_cleanup_failure
+status="$(run_case instrumentation_gate_and_cleanup_failure SEREA_CLEANUP_TEST_GATE_FAILURE=1 1 FAIL_TEMP_RM=1)"
+[[ "$status" == 1 ]]
+grep -Fxq 'tests=2' "$CASE_ROOT/stderr.log"
+grep -Fxq 'native_result=FAIL_OR_NOT_REACHED' "$CASE_ROOT/stderr.log"
+if grep -E 'raw_generated_output_marker=DO_NOT_PRINT|raw_logcat_output_marker=DO_NOT_PRINT|generated_content=DO_NOT_PRINT' \
+    "$CASE_ROOT/stderr.log"; then
+    echo 'FAIL: gate failure emitted raw instrumentation or model output before cleanup' >&2
+    exit 1
+fi
+[[ ! -e "$EVIDENCE_DIR" ]]
+grep -Fxq 'cleanup_outcome=FAIL' "$CASE_ROOT/stderr.log"
+! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+
 # `-u` must detect uninstalled records that retain app data, and failed `-u`
 # cleanup probes must never publish success evidence.
 assert_cleanup_failure retained_package_data RETAIN_AFTER_UNINSTALL=1

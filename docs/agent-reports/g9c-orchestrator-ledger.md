@@ -623,3 +623,5 @@ Agent A completed exact-source verification for #177 run `40927164825`, attempt 
 - ARM guest artifact `12921901164` (337 bytes, SHA-256 `996cdce3eeb07d63d15d70c7e244d04fef6ca572c102152772da04a893386934`, directly downloaded and matched) contains only sanitized adb/emulator NOT_AVAILABLE flags. Host preflight found 23 unresolved Android SDK Qt/emulator libraries despite successful `libpulse0` installation; guest build/model/emulator/inference steps were skipped.
 
 PR #178 at `a7f5b407d400b611df2c5f9260eede9b62f41b59` / tree `9bb6f18000d841fc436b3caa6b20c92a329ed5ae` has final independent ACCEPTED from Agents B and C. Its exact-source run set is queued/pending as listed above; no hosted ARM64 preflight result yet.
+
+- Exact #177 runtime evidence reports target APK SHA-256 `7b7bd92b2807d3384e2f62bef9dc4df0c84a03ec260fc709c09b4f0b5015fed3` and instrumentation APK SHA-256 `5f1a4c5eb508af0e2529652cf465fe6d8e2dcefc69b4012eb1e99886e2e1c6cd`. APK files/signing certificate identity are not included in the sanitized evidence artifact; signer verification remains NOT_REPORTED.

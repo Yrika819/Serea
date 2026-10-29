@@ -31,6 +31,48 @@ val updateTestSigningInputsReady = listOf(
     updateTestStorePath, updateTestStorePassword, updateTestKeyAlias, updateTestKeyPassword,
 ).all { !it.isNullOrBlank() }
 
+// The product APK does not include a runnable local-model backend by default. A
+// separately reviewed diagnostic build may opt into the pinned llama.cpp JNI
+// library with -PsereaLocalNativeRuntime=true and -PsereaLlamaCppSource=<checkout>.
+val sereaLocalNativeRuntime = providers.gradleProperty("sereaLocalNativeRuntime").orNull == "true"
+val sereaNativeJniTestSeams = providers.gradleProperty("sereaNativeJniTestSeams").orNull == "true"
+val sereaNativeRuntimeExpectedAbi = if (sereaLocalNativeRuntime) {
+    providers.gradleProperty("sereaNativeRuntimeExpectedAbi").orNull ?: "x86_64"
+} else "NOT_RUN"
+if (sereaLocalNativeRuntime && sereaNativeRuntimeExpectedAbi !in setOf("x86_64", "arm64-v8a")) {
+    error("sereaNativeRuntimeExpectedAbi must be x86_64 or arm64-v8a for the isolated diagnostic.")
+}
+val nativeIsolationVerifierOnly = gradle.startParameter.taskNames.isNotEmpty() &&
+    gradle.startParameter.taskNames.all {
+        it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation"
+    }
+if (sereaLocalNativeRuntime) {
+    val variantTaskPrefixes = listOf(
+        "assemble", "bundle", "install", "uninstall", "package", "test", "connected",
+        "compile", "process", "merge", "externalNativeBuild",
+    )
+    val requestedVariantTasks = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
+        .filter { task -> variantTaskPrefixes.any { prefix -> task.startsWith(prefix, ignoreCase = true) } }
+    val nonIsolatedTask = requestedVariantTasks.firstOrNull { !it.contains("isolated", ignoreCase = true) }
+    val isolationVerifierRequested = gradle.startParameter.taskNames.any {
+        it.substringAfterLast(':') == "verifyLocalNativeRuntimeVariantIsolation"
+    }
+    if (nonIsolatedTask != null || (requestedVariantTasks.isEmpty() && !isolationVerifierRequested)) {
+        error(
+            "sereaLocalNativeRuntime is diagnostic-only: request explicit isolated variant tasks; " +
+                "release, beta, debug, and aggregate packaging are denied.",
+        )
+    }
+}
+if (sereaNativeJniTestSeams && !sereaLocalNativeRuntime) {
+    error("JNI failure injection is only available with the isolated native runtime diagnostic.")
+}
+val sereaLlamaCppSource = if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) {
+    providers.gradleProperty("sereaLlamaCppSource").orNull
+        ?: providers.environmentVariable("SEREA_LLAMA_CPP_SOURCE").orNull
+        ?: error("Set -PsereaLlamaCppSource or SEREA_LLAMA_CPP_SOURCE for the opt-in native runtime build.")
+} else null
+
 if (updateCompatibilityTest && !updateTestSigningInputsReady) {
     error("The isolated update compatibility variant requires its disposable test keystore inputs.")
 }
@@ -38,9 +80,13 @@ if (updateCompatibilityTest && (updateTestVersionCode == null || updateTestVersi
     error("The isolated update compatibility variant requires a positive -PsereaVersionCode.")
 }
 
+val nativeEnabledBuildTypes = mutableSetOf<String>()
+val nativeDisabledBuildTypes = mutableSetOf<String>()
+
 android {
     namespace = "app.serea.android"
     compileSdk = 35
+    if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) ndkVersion = "28.2.13676358"
     testBuildType = "isolated"
 
     defaultConfig {
@@ -49,7 +95,47 @@ android {
         targetSdk = 35
         versionCode = updateTestVersionCode ?: 1
         versionName = "0.1.0-demo"
+        buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", "false")
+        buildConfigField("String", "LOCAL_NATIVE_RUNTIME_EXPECTED_ABI", "\"NOT_RUN\"")
         testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
+        if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) {
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+            externalNativeBuild {
+                cmake {
+                    arguments += listOf(
+                        "-DLLAMA_SRC=$sereaLlamaCppSource",
+                        "-DCMAKE_BUILD_TYPE=Release",
+                        "-DBUILD_SHARED_LIBS=OFF",
+                        "-DLLAMA_BUILD_TESTS=OFF",
+                        "-DLLAMA_BUILD_TOOLS=OFF",
+                        "-DLLAMA_BUILD_EXAMPLES=OFF",
+                        "-DLLAMA_BUILD_SERVER=OFF",
+                        "-DLLAMA_BUILD_COMMON=OFF",
+                        "-DLLAMA_BUILD_APP=OFF",
+                        "-DLLAMA_OPENSSL=OFF",
+                        "-DGGML_NATIVE=OFF",
+                        "-DGGML_OPENMP=OFF",
+                        "-DGGML_LLAMAFILE=OFF",
+                        "-DGGML_BACKEND_DL=OFF",
+                        "-DGGML_CPU_KLEIDIAI=OFF",
+                    )
+                    if (sereaNativeJniTestSeams) {
+                        arguments += "-DSEREA_NATIVE_JNI_TEST_SEAMS=ON"
+                    }
+                }
+            }
+        }
+    }
+
+    buildFeatures { buildConfig = true }
+
+    if (sereaLocalNativeRuntime && !nativeIsolationVerifierOnly) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.31.6"
+            }
+        }
     }
 
     signingConfigs {
@@ -80,6 +166,8 @@ android {
         }
         create("isolated") {
             initWith(getByName("debug"))
+            buildConfigField("boolean", "LOCAL_NATIVE_RUNTIME_ENABLED", sereaLocalNativeRuntime.toString())
+            buildConfigField("String", "LOCAL_NATIVE_RUNTIME_EXPECTED_ABI", "\"$sereaNativeRuntimeExpectedAbi\"")
             // Instrumentation's process-death harness uses `run-as` to inspect this app's
             // private database, so the disposable isolated target must remain debuggable.
             applicationIdSuffix = ".isolated"
@@ -120,6 +208,35 @@ android {
     }
     lint { abortOnError = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
+}
+
+androidComponents {
+    beforeVariants(selector().all()) { variant ->
+        if (sereaLocalNativeRuntime) {
+            val buildType = variant.buildType.orEmpty()
+            if (buildType == "isolated") {
+                nativeEnabledBuildTypes += buildType
+            } else {
+                nativeDisabledBuildTypes += buildType
+                // Do not even create variants that could package or expose diagnostic JNI.
+                variant.enable = false
+            }
+        }
+    }
+}
+
+tasks.register("verifyLocalNativeRuntimeVariantIsolation") {
+    group = "verification"
+    description = "Verifies diagnostic JNI opt-in enables only the isolated build type."
+    doLast {
+        check(sereaLocalNativeRuntime) { "Run this check with -PsereaLocalNativeRuntime=true." }
+        check(nativeEnabledBuildTypes == setOf("isolated")) {
+            "Expected only isolated JNI variant; enabled=$nativeEnabledBuildTypes"
+        }
+        check(nativeDisabledBuildTypes.containsAll(setOf("debug", "release", "beta"))) {
+            "Expected debug/release/beta JNI variants to be disabled; disabled=$nativeDisabledBuildTypes"
+        }
+    }
 }
 
 // AGP omits dependency baseline profiles from debuggable APKs. The isolated target stays

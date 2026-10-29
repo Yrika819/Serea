@@ -1,4 +1,7 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- The native runtime acceptance APK must be unable to open network sockets. -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
     <!-- This signature permission is declared by the disposable Test IME APK. Keep the
          request isolated to this instrumentation target; debug and beta variants do not use it. -->
     <uses-permission android:name="app.serea.android.r25testime.permission.DIAGNOSTICS" />

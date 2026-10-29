@@ -35,8 +35,11 @@ for directory in "${sdk_library_dirs[@]}"; do
     [[ -d "$directory" ]] || fail 'required Android SDK emulator library directory is absent'
     resolved_directory="$(cd -- "$directory" && pwd -P)" || \
         fail 'Android SDK emulator library directory could not be resolved'
-    [[ "$resolved_directory" == "$sdk_emulator_root"/* ]] || \
-        fail 'Android SDK emulator library directory escaped its install root'
+    sdk_root_prefix="${sdk_emulator_root%/}/"
+    case "$resolved_directory/" in
+        "$sdk_root_prefix"*) ;;
+        *) fail 'Android SDK emulator library directory escaped its install root' ;;
+    esac
 done
 sdk_library_path="$(IFS=:; printf '%s' "${sdk_library_dirs[*]}")"
 

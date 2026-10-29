@@ -126,4 +126,26 @@ if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_PULSE_PATH="$pulse" \
     exit 1
 fi
 
+metachar_root="$TEMP_ROOT/sdk/[unsafe]/emulator"
+metachar_qemu_dir="$metachar_root/qemu/linux-x86_64"
+outside_lib64="$TEMP_ROOT/outside-lib64"
+mkdir -p "$metachar_qemu_dir" "$outside_lib64/qt/lib"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$metachar_qemu_dir/qemu-system-x86_64"
+chmod +x "$metachar_qemu_dir/qemu-system-x86_64"
+ln -s "$outside_lib64" "$metachar_root/lib64"
+escape_output="$TEMP_ROOT/path-escape.out"
+if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_PULSE_PATH="$pulse" \
+    "$CHECKER" "$metachar_qemu_dir/qemu-system-x86_64" \
+    >"$escape_output" 2>&1; then
+    echo 'emulator_host_library_contract=FAIL accepted SDK library path escaping a metacharacter root' >&2
+    exit 1
+fi
+grep -Fxq \
+    'emulator_host_preflight=FAIL reason=Android SDK emulator library directory escaped its install root' \
+    "$escape_output"
+if grep -Fq "$outside_lib64" "$escape_output"; then
+    echo 'emulator_host_library_contract=FAIL leaked escaped directory path' >&2
+    exit 1
+fi
+
 echo 'emulator_host_library_contract=PASS resolved_shared_libraries=REQUIRED unresolved_names_sanitized=REQUIRED libpulse_package=REQUIRED symlink_alias=REJECTED'

@@ -457,10 +457,23 @@ jobs:
         shell: bash
         run: |
           mkdir -p evidence/native-arm64-guest
-          adb devices -l > evidence/native-arm64-guest/adb-devices.txt 2>&1 || true
-          if [ -s "$RUNNER_TEMP/emulator.log" ]; then
-            tail -c 65536 "$RUNNER_TEMP/emulator.log" > evidence/native-arm64-guest/emulator.log
+          adb_state=NOT_AVAILABLE
+          if adb get-state >/dev/null 2>&1; then
+            adb_state=DEVICE_READY
           fi
+          emulator_log_state=NOT_AVAILABLE
+          if [ -s "$RUNNER_TEMP/emulator.log" ]; then
+            emulator_log_state=PRESENT_EPHEMERAL_ONLY
+          fi
+          {
+            echo "adb_state=$adb_state"
+            echo "emulator_log_state=$emulator_log_state"
+            echo 'raw_diagnostics_retained=false'
+          } > evidence/native-arm64-guest/startup-summary.txt
+          # Device listings and emulator logs are ephemeral diagnostics. Never retain or
+          # upload their raw contents, which can include volatile host/runtime details.
+          rm -f evidence/native-arm64-guest/adb-devices.txt \
+            evidence/native-arm64-guest/emulator.log "$RUNNER_TEMP/emulator.log"
 
       - name: Upload ARM64 experiment evidence
         if: always()
@@ -470,9 +483,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: |
-            evidence/native-arm64-guest/
+            evidence/native-arm64-guest/host-and-image.txt
+            evidence/native-arm64-guest/startup-summary.txt
             ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt
             ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/source-and-runtime.txt
+            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml
             ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit-verification.txt
             ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt
 

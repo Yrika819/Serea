@@ -108,6 +108,15 @@ The GitHub Actions API was queried again after the initial table. All nine reque
 
 Queued jobs have no runner assignment and are infrastructure waits. Assigned in-progress macOS jobs are not failures and are not passes. Do not treat the overall workflow API's `queued` status as a completed result while its job list contains active work.
 
+### Latest Actions refresh — 2026-10-29 03:05 UTC
+
+All observations remain tied to PR #146 source `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66`, attempt 1. Android run `40804694025` remains completed FAILURE with the same API 26/35 preflight result; no rerun was initiated. Progress since 02:57:
+
+- Full CI macOS arm64 `123220796736` is now PASS on runner `1000023279`; macOS Intel x86_64 `123220796743` remains QUEUED with no runner.
+- Native stable macOS x86_64 `123220813816` is now PASS on runner `1000023237`; Rust 1.85 macOS x86_64 `123220813861` and ARM64 `123220814009` remain QUEUED with no runner.
+- SQLite's arm64-DB-on-Intel consumer `123230198552` is assigned to `1000023305` and IN_PROGRESS. The Intel-DB-on-arm64 consumer `123235254022` remains QUEUED with no runner. Both producer jobs PASS and their artifact identities remain those listed above.
+- These runs' API-level workflow status remains `queued` because at least one job is still queued/in progress; no terminal overall PASS exists yet.
+
 ### Successor package-query fix review
 
 Parent's successor integration PR [#149](https://github.com/Yrika819/Serea/pull/149) is OPEN Draft, based on PR #146's exact `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66` / tree `25e2bb481a0b25bfed89d6ee25f1812316703b8e`. At review, PR #149 head is `dd8c5b661c1f4be6c4a171c68246cbd1fb343d50`, tree `c049cfd8b2849e738932e4c4844219c815034740`.
@@ -155,6 +164,37 @@ Run [40800987367](https://github.com/Yrika819/Serea/actions/runs/40800987367), a
 That log confirms CMake x86_64 configuration/build and `:app:assembleIsolated` succeeded, then `:app:compileIsolatedAndroidTestKotlin` failed at `LocalModelNativeRuntimeE2ETest.kt:126:80`: unresolved reference `awaitReleased` on `LocalModelInferenceBackend`. This historical failure is an Android instrumentation Kotlin test/API mismatch, not a CMake/JNI compile failure or an APK target packaging failure. The artifact contains 21 passing `LocalModelChatAdapterTest` cases and one passing `LocalModelNativeRuntimeTest` case (`defaultProductBuildFailsClosedBeforeLoadingNativeLibrary`); it contains no successful real inference result. Recorded model identity: llama.cpp commit `276378515ceebee5d14bcc8536603dd5c87491a2`, model revision `1076b85d135017971845b19b8d07df1479155988`, SHA-256 `e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5`, size 101,016,128 bytes. Its status file records Android build, ARM64 build/runtime, and Pixel 7a physical runtime as NOT_RUN.
 
 The earlier failure gives a concrete fixed defect for `082d…`; it does not prove that `07ea…` has the same defect. Lane A owns retrieval/diagnostics and the next native attempt.
+
+## PR #147 Lane A source review and focused runtime attempt
+
+PR #147 is OPEN / Draft. Reviewed candidate identity: Source `49e14da2b5dc06579ff88d0adbc10d41f5040dd9`, Tree `bcc5ce1f837d2904f608c60db26569469340e695`, based on G7 SHA `0560e1e7bcd13f0194eab8caca89d70ea5a2f142`. This contains the isolated JNI/runtime candidate and the updated AndroidTest contract; it is not accepted for native runtime or product integration.
+
+Run [40808797590](https://github.com/Yrika819/Serea/actions/runs/40808797590), attempt 1, exact source `49e14da…`, failed on runner `1000023273` in job `123233966301` (Product adapter on pinned API 35 x86_64 Emulator). Evidence confirms JNI/CMake configuration, both x86_64 and ARM64 APK builds, license metadata check, exact model fixture revision/size/hash, disposable API 35 emulator boot, and temporary model staging completed. `connectedIsolatedAndroidTest` then **started 0 tests**. The target process crashed in `SereaIsolatedAndroidJUnitRunner.onStart` with:
+
+```text
+Refusing instrumentation without a fresh isolated namespace ...
+filesEmpty=false, filesDirEntries=[g8-smollm2-135m-q4_k_m.gguf],
+campaignTokenPresent=false, markerMatches=false
+```
+
+The fixture had been staged in the isolated app `filesDir` before instrumentation, which violates the runner's fresh-namespace invariant; the direct Gradle invocation also omitted its required one-use `sereaCampaignToken`. This is a **harness setup failure before test execution**, not a native inference result. No JUnit evidence exists for this run. The workflow's bounded cleanup steps passed and the API lists two artifacts: sanitized runtime artifact `12870076223`, 15,855 bytes, digest `sha256:9f6c7a7fe20657522aa8e4b86b9d58b2e55102cb96a75dd16d9d2f06013748cc`; build diagnostics `12869074919`, 5,958 bytes, digest `sha256:658e850e779214c1e8b2189e6d7778f148cc128b7624ede3e5833c3b49fbe040`. Artifact download returned `Forbidden` from the GitHub artifact endpoint during this review, so the action log is the available failure detail and the zip contents were not independently inspected.
+
+Independent Lane C source review: **CHANGES_REQUESTED** at that exact source/tree.
+
+- **NATIVE-JNI-EXC-001 (high):** `llama_jni.cpp` catches `std::bad_alloc` only in `nativeGenerate`; other `extern "C"` JNI exports have no exception barrier. `nativeLoad` can throw after acquiring JNI string chars or claiming the process-wide owner, leaving partial model/context state unless cleanup is made exception-safe. Required fix: contain all C++ exceptions at every exported JNI boundary, translate to Java failures without overwriting pending exceptions, use RAII for path chars, and free partial state/release ownership on failed loads. Require focused failure-path coverage.
+- **NATIVE-CLEANUP-002 (high):** `run-e2e.sh` checks API 35 and x86_64 but does not prove emulator hardware or that the fixed isolated package IDs were absent before install. Its EXIT cleanup uninstalls packages if present; direct use on a matching physical/reused device could remove pre-existing app data. The cleanup failure branch also recursively deletes environment-provided `G8_EVIDENCE_DIR` without constraining its canonical target. Required fix: verify one disposable emulator before mutation, refuse existing target/test packages, constrain evidence cleanup to a dedicated safe workspace, and test the rejected paths.
+
+Lane A is implementing these source changes on a new head. After the run failure, Lane A identified that a corrected attempt must both stage the verified fixture outside `filesDir` (such as cacheDir) and follow the existing fresh-namespace token seed protocol, including passing `-Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken=<token>`. No model inference, 2-turn generation, native cancellation/release, crash recovery, ARM64 runtime, or Pixel 7a result is established yet. The Native Runtime gate remains **PARTIAL**.
+
+## PR #150 Lane B handoff review
+
+PR #150 is OPEN / Draft, based on PR #146. The current PR head is `31efa59eed6a7da7f058b7d17be31c7944190ab5`, Tree `0168cd5d100383a564f5a2609fe369a423ff9c94`; its current tip adds only the report link. The reviewed code/test commit is `4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd`, Tree `b19a6c52a8e8d4ff1c8365d435c047d0aceb300b`.
+
+Independent Lane C decision: **ACCEPTED** for the scoped Gmail handoff minimization code and its tests. Gmail Chat content now takes nonblank plain text then the parser-produced inert HTML text; subject, sender, date, API snippet and Gmail/handoff metadata are excluded. The handoff remains Fake-only, short-lived, account/session/generation bound, source/revision/content bound, revalidated at preview/confirm/send, single-use, and explicitly local-only. GMAIL lineage is retained; cloud egress denial despite local handoff consent and non-dispatch before confirmation are covered by the existing security tests. New tests cover metadata exclusion and parser-produced HTML fallback with script, event-handler and remote-image sentinels. Lane B reported the exact-code focused JVM test at 22/22 and isolated AndroidTest source compilation as successful. No API 26/35 Gmail UI execution or exact-current-head formal CI is evidenced; those remain NOT_RUN, so this review does not accept the broader G9 UI milestone or real Gmail OAuth.
+
+## PR #149 Google/Gmail UI diagnostic expansion review
+
+Parent's read-only working-tree diff on integration candidate base `dd8c5b661c1f4be6c4a171c68246cbd1fb343d50` / Tree `c049cfd8b2849e738932e4c4844219c815034740` was independently **ACCEPTED** for the scoped diagnostic expansion. It keeps the existing nine non-required tests, adds seven exact UI/handoff/lifecycle identities already in the non-required manifest, checks they do not overlap Required or Additional tests, requires exact 16/16 JUnit, preserves the preconditions (Required JUnit, actual process death, data isolation), retains package cleanup and Fake-only local Chat tests, and now requires the UI result to PASS before either API campaign can be marked PASS. This is review of an uncommitted diff, not a new immutable source SHA; recheck the exact committed patch head before treating it as formal evidence. No Android UI execution was performed here.
 
 ## Release readiness and Owner decision packet
 
@@ -215,16 +255,16 @@ TREE_SHA: tree of the report branch head recorded by GitHub
 WORKTREE: /workspace/Serea-C
 BRANCH: codex/serea-g8n-security-release
 DRAFT_PR: https://github.com/Yrika819/Serea/pull/148
-COMPLETED_WORK: Exact PR #146 CI/API evidence snapshot plus 02:57 runner refresh; CI artifact hashing and JUnit counts; PR #144 current and historical native-build failure classification; Owner decision and release readiness packet; independent ACCEPTED review of PR #149 package-query fix.
+COMPLETED_WORK: Exact PR #146 CI/API evidence snapshot plus 02:57 and 03:05 runner refreshes; CI artifact hashing and JUnit counts; PR #144 current and historical native-build failure classification; PR #147 exact-head failure classification and independent source review; PR #150 scoped Gmail handoff security review; PR #149 package-query and uncommitted Google/Gmail UI expansion reviews; Owner decision and release readiness packet.
 CHANGED_FILES: docs/agent-reports/g8n-ci-security-release.md
 TEST_COMMANDS: none (evidence/report lane; no code tests were requested or needed)
 JUNIT_RESULT: PR #146 Android unit 405/405, integration 22/22, security 26/26; API 26/35 instrumentation NOT_RUN (preflight FAIL, 0/105 each); Process Death/Data Isolation/Sentinel PASS on both
-CI_RUN_IDS: 40804694025, 40804693907, 40804693934, 40804693978, 40804693889, 40804693992, 40804693919, 40804722382, 40804722157; native PR #144 40803623345 and historical 40800987367
-ARTIFACT_IDS: 12869510041, 12869310588, 12868263908, 12869480087, 12868174398, 12869265751, 12867589033, 12867015936
+CI_RUN_IDS: 40804694025, 40804693907, 40804693934, 40804693978, 40804693889, 40804693992, 40804693919, 40804722382, 40804722157; native PR #144 40803623345 and historical 40800987367; PR #147 focused native attempt 40808797590
+ARTIFACT_IDS: 12869510041, 12869310588, 12868263908, 12869480087, 12868174398, 12869265751, 12869541631, 12867589033, 12867015936, 12870076223, 12869074919
 SECURITY_IMPACT: Documentation only; preserves Google-origin egress prohibition, debug-only release boundary, and no production signing.
-REVIEW_STATUS: PR #149 package-query patch ACCEPTED; PR #144 remains BLOCKED on current-head failure diagnostics; Lane A/B source review pending their exact candidate SHAs.
-KNOWN_ISSUES: PR #146 API26/35 instrumentation did not start because the harness preflight package-state query failed; Process Death/Data Isolation/Sentinel passed separately. Identity was skipped. Full CI, Native and SQLite consumer jobs remain unfinished/unassigned as of 02:57. Current PR #144 native build failure lacks an uploaded diagnostic artifact and root cause is unknown.
-CURRENT_BLOCKERS: Remaining macOS runner jobs; current-head PR #144 Native failure log; new successor candidate formal CI; Owner decisions on package/signing/OAuth/providers/age-region eligibility.
-NEXT_ACTION: Capture later exact-head CI outcomes; independently review Lane A Native changes and Lane B security/product changes when exact SHAs are published.
+REVIEW_STATUS: PR #149 package-query patch ACCEPTED; PR #149 uncommitted UI expansion ACCEPTED pending exact committed head; PR #150 Gmail handoff code/test ACCEPTED at exact code/test commit; PR #147 CHANGES_REQUESTED on exception safety and disposable cleanup; PR #144 remains BLOCKED on current-head failure diagnostics.
+KNOWN_ISSUES: PR #146 API26/35 instrumentation did not start because the harness preflight package-state query failed; Process Death/Data Isolation/Sentinel passed separately. Identity was skipped. At 03:05 Full CI Intel, Native Rust/macOS MSRV and one SQLite consumer remain queued; other jobs are either passing or in progress. PR #147 run 40808797590 started 0 native tests and crashed at runner fresh-namespace/token guard; no inference evidence. PR #144 current-head failure remains without uploaded diagnostic artifact and with root cause unknown.
+CURRENT_BLOCKERS: Remaining macOS runner jobs; successor #149 formal CI; Lane A JNI exception boundary and destructive diagnostic script guard; Lane A's corrected model-stage/one-use instrumentation marker harness; Owner decisions on package/signing/OAuth/providers/age-region eligibility.
+NEXT_ACTION: Re-review Agent A's exact fixed PR #147 SHA/tree and run evidence; recheck parent UI-stage expansion at immutable committed SHA; capture later #146/#149 exact-head CI outcomes.
 OWNER_APPROVAL_REQUIRED: Package ID/coexistence, certificate/channel, OAuth scopes, provider/audience/region, model choice and device acceptance.
 ```

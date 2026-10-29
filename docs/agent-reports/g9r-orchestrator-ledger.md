@@ -1,6 +1,6 @@
 # Serea G9R Orchestrator Ledger
 
-**Checkpoint:** 2026-10-29 09:32 UTC
+**Checkpoint:** 2026-10-29 09:44 UTC
 **Campaign:** Android Instrumentation Recovery → Native Runtime Inference → G9 Product Acceptance → G10 Preflight
 **Roadmap:** Serea 2026 Personal Beta Roadmap v4
 **Repository:** `Yrika819/Serea`
@@ -22,7 +22,10 @@ GitHub was queried at campaign resume. Protected `main` is still `e0acb0254820c3
 | 152 | Open, Draft | `a9da3b71fff786fc93d3365249ea8087477b31b2` | `cbf688e4438794437b02bc7bd0fcc9bba975264f` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Google/Gmail Android UI test fixes |
 | 153 | Open, Draft | `6f4c8c5b4caf8f48619234fee5a9c864cb25766b` | `8a17da2ba3003d8663a3c6734d444682609abe05` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | API 35 IME Activity recreation test fix |
 | 154 | Open, Draft | `90913b4d4e3d834ae96d4f7e842bddfbd2b61ff6` | `3f88b0800971de9474a63c0286959aa94074613a` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Prior checkpoint/report |
-| 155 | Open, Draft | `f7cde2eec5b7ad6de38ab6d328905ee05a8e33ee` | `1ca79b7324817f508ff4a99cee51f50252a820cd` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Parent G9R checkpoint (docs-only so far) |
+| 155 | Open, Draft | `a82ecc8edc19d3bed0b95a4c89a111c68729d434` | `71222ef5b9e7aa31eb8ca12a6b6c8eda1721f9f2` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Remote checkpoint is docs-only. Local parent worktree has selected PR #157 patch at `8e14755c4783beb6ee56a6b2e4071b5cb6bf76be` / tree `ccd0e86efaa192e8b67ee6a05f13aaf75aee78ad`, not yet pushed. |
+| 156 | Open, Draft | `f7f40629048788f440edea39145afd9e823c4b47` | `5181e7aafbd2919af97b68e8774ed56f0419d655` | PR #151 | CI/security/release report checkpoint |
+| 157 | Open, Draft | `e19a592611112ac2d9ea52bf337c4a4507400e59` | `c32444191c43e7f40af941cee1000f4e5ab711f5` | PR #151 | Google/Gmail and IME AndroidTest fixes |
+| 158 | Open, Draft | `07f0671e801236a1e110295186c5dcc01888fbae` | `2b826a2e881b6f50da241557d5f813ff9db9d46f` | G7; based on PR #147 `36700f6c99d15db428c6d434c657ac76593df3f9` | Native runner diagnostics; independent review requested a fix |
 
 Dependency graph: `#146 → #149 → #151 → (#152, #153, #154)`. PRs #147 and #148 are independent G7-based lanes. Existing PRs remain unmodified. The new integration branch starts from PR #151; only independently accepted patches may be selected into it.
 
@@ -43,11 +46,13 @@ Focused Native run `40843204437` failed on PR #147 exact HEAD, attempt 1. x86_64
 | Source | Workflow | Run | Last observed state | Evidence |
 |---|---|---:|---|---|
 | #149 `3a0f0c1…` | Android | `40810824093` | FAILURE | API26 Required: 105 tests, 0 fail/error/skip (103 Required + 2 Additional). Process Death passed. Google/Gmail Additional UI: 16 tests, 5 failures. API35 ran only a 1-test diagnostic (`chatDraftSurvivesGmailAndCalendarDestinationChanges`), which failed; API35 Required and Google/Gmail UI were NOT_RUN. API35 Data Isolation and actual Process Death passed separately. This is distinct from PR #146's 0/105 API26 and 0/105 API35. |
-| #151 `d4a36fb…` | Android | `40842824215` | QUEUED | Change Scope, Build/Lint/Instrumentation Compile, Unit, Integration, Security, Docs and Dependency Audit PASS; Storage/Emulator remained queued. No API JUnit artifact yet. |
-| #151 | Full / Fast / RustSec / Git Hooks | `40842824328` / `40842824206` / `40842824232` / `40842824356` | PASS | Exact-head auxiliary CI. Native and SQLite were still incomplete/queued. |
-| #152 `a9da3b7…` | Android | `40844297910` | QUEUED | Only Change Scope PASS; remaining Android jobs queued. No emulator or UI JUnit evidence. |
+| #151 `d4a36fb…` | Android | `40842824215` | IN_PROGRESS | Change Scope, Build/Lint/Instrumentation Compile, Unit, Integration, Security, Docs and Dependency Audit PASS; Storage/Emulator job `123346917078` is in progress on runner `1000023744`. No API JUnit artifact yet. |
+| #151 | Full / Fast / RustSec / Git Hooks / SQLite | `40842824328` / `40842824206` / `40842824232` / `40842824356` / `40842824221` | PASS | Exact-head auxiliary CI. Native platform matrix `40842824208` remains in progress; it is not JNI runtime evidence. |
+| #152 `a9da3b7…` | Android | `40844297910` | QUEUED | Change Scope, Security and Unit PASS; Dependency Audit, Docs, Build/Lint/Instrumentation Compile and Integration remain queued. No emulator/UI JUnit evidence. |
 | #153 `6f4c8c5…` | Android | `40844961565` | QUEUED | Change Scope PASS; Docs skipped. Required/UI/IME execution NOT_RUN. |
-| #154 `90913b4…` | Android | `40845836065` | QUEUED | Docs-only patch: product Android jobs were skipped. Not product-test evidence. Several non-Android jobs were queued. |
+| #154 `90913b4…` | Android | `40845836065` | COMPLETED SUCCESS, PRODUCT TESTS SKIPPED | Change Scope, Docs and downstream Required Gate job succeeded. Unit, Integration, Dependency Audit, Security, Build/Lint/Instrumentation Compile, Identity, Storage/Emulator and Pixel bundle were skipped under docs-only scope. No Android product JUnit evidence. |
+| #157 `e19a592…` | Android / Full / Native / SQLite / RustSec / Fast / Git Hooks | `40850921385` / `40850921503` / `40850921304` / `40850921299` / `40850921203` / `40850921367` / `40850921057` | QUEUED | Exact-head jobs had no assigned runner in the 09:44 query; Android Change Scope remained queued. No JUnit/artifact. |
+| #158 `07f0671…` | G8 Local Native Runtime Focused | `40851453193` | QUEUED | One API35 x86_64 emulator job, no runner assignment/artifact. Native inference NOT_RUN. |
 
 The main-only Personal Beta workflow runs `40845818357` and earlier related runs failed with `jobs=[]`; these are not product validation. No runner inventory was inferred from a 403 response.
 
@@ -55,7 +60,7 @@ PR #149 JUnit artifact binding: API26 artifact `12872143095`, 867,807 bytes, SHA
 
 Lane C and B verified those API26/35 counts against the exact JUnit artifacts; API26 Required and UI are separate stages. PR #152/#153 fresh-branch patch selection is underway. Lane B found `/workspace/.tools/temurin17/bin/javac` and is using that JDK for local instrumentation-source compilation; the earlier PATH-only `javac` check was incomplete.
 
-This parent checkpoint PR #155 has its own docs-only workflow set on `f7cde2eec5b7ad6de38ab6d328905ee05a8e33ee`: Android `40850068164` pending, Fast `40850068140` in progress, Full `40850068231` queued, Native `40850068147` queued, SQLite `40850068199` pending, RustSec `40850068210` pending, Git Hooks `40850068257` queued. These workflows are not product-test evidence; the Android product jobs are expected to skip the report-only change. Main-only Beta run `40850061261` failed and is not PR/product evidence.
+Parent PR #155's last pushed docs-only head `a82ecc8…` has workflows on previous checkpoint head `f7cde2eec5b7ad6de38ab6d328905ee05a8e33ee`: Android `40850068164` pending, Fast `40850068140` in progress, Full `40850068231` queued, Native `40850068147` queued, SQLite `40850068199` pending, RustSec `40850068210` pending, Git Hooks `40850068257` queued. These do not validate later local code patch `8e14755…`. Main-only Beta run `40850061261` failed and is not PR/product evidence.
 
 ## Work assignments and boundaries
 
@@ -66,7 +71,7 @@ This parent checkpoint PR #155 has its own docs-only workflow set on `f7cde2eec5
 | Agent B — Android/G9 | `/workspace/serea-g9r-android-ui-recovery` / `codex/serea-g9r-android-ui-recovery` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Instrumentation/device-query harness and Android UI test files only; preserve all Required identities and assertions. |
 | Agent C — CI/Security | `/workspace/serea-g9r-security-evidence` / `codex/serea-g9r-security-evidence` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Read-only review and separate `docs/agent-reports/g9r-ci-security-release.md`; independent evidence and release review. |
 
-Three subagents are active. Each lane reports exact base/head/tree, tests and counts, failures/skips, run/job/artifact IDs and hashes, review status, blockers, next action, and any required Owner decision. The owner decision source includes `docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md` and the prior PR #148 security/release report.
+Three subagents were launched in independent worktrees. Agent B has completed its report; Agents A and C continue their review/fix work. Each lane reports exact base/head/tree, tests and counts, failures/skips, run/job/artifact IDs and hashes, review status, blockers, next action, and any required Owner decision. The owner decision source includes `docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md` and the prior PR #148 security/release report.
 
 ## Environment and scope limits
 
@@ -111,6 +116,11 @@ Current decision matrix (pending; IDs here are local to this campaign and do not
 3. Agent C: update exact queued/completed statuses without retry loops; independently review each new code head; audit cleanup/ownership/egress/usage, test identity, provenance, license and release packet.
 4. Parent: accept only reviewed patches; create a frozen new integration SHA/tree; run formal CI on that same source; record any failure and preserve the failed attempt before a source fix.
 
-**Lane progress at 09:32 UTC:** Agent A is preparing a no-op `AndroidJUnit4` test and raw instrumentation/logcat diagnostics on its fresh branch; no inference has run. Agent B has selected the reviewed PR #152/#153 AndroidTest-only fixes on its fresh branch and is compiling with Temurin 17; its work is not yet committed or runtime-verified. Agent C has independently verified PR #149's per-API artifacts and is updating the security/release report; no successor patch is yet ACCEPTED for integration.
+**Lane progress at 09:44 UTC:**
+
+- **Agent A — Native:** PR #158 exact source `07f0671e801236a1e110295186c5dcc01888fbae`, tree `2b826a2e881b6f50da241557d5f813ff9db9d46f`; focused run `40851453193` remains queued with no runner. Source checks passed on this head: parser 6/6, preflight/cleanup/JNI contract checks, and identity scanner 103 Required + 2 Additional + 17 non-required = 122. Independent review is **CHANGES_REQUESTED** (`NATIVE-RUNNER-RESULT-001`): parser must reject a non-success `INSTRUMENTATION_CODE` even if both expected tests report PASS, and validate `numtests` if emitted. Agent A is fixing this on a new commit. No JNI inference ran.
+- **Agent B — Android/G9:** PR #157 is OPEN/Draft at exact source `e19a592611112ac2d9ea52bf337c4a4507400e59`, tree `c32444191c43e7f40af941cee1000f4e5ab711f5`. Independent source review **ACCEPTED**; scope is five AndroidTest files only, with no Required manifest or assertions removed. On the exact tree, Temurin 17 `:app:compileIsolatedAndroidTestKotlin` BUILD SUCCESSFUL (26 tasks), and `PYTHONPATH=. python3 tests/android_emulator_workflow_tests.py` passed 34/34 (log SHA-256 `6701848a3a17941aed8496f8ad448bbcf5401eaae550183ac9765cb60f45ad04`). Hosted UI/runtime JUnit is NOT_RUN; seven #157 formal runs are queued.
+- **Agent C — CI/Security/Release:** PR #156 is OPEN/Draft at `f7f40629048788f440edea39145afd9e823c4b47`, tree `5181e7aafbd2919af97b68e8774ed56f0419d655`. Its exact-source report binds #149 artifacts, accepts #157 source, requests the #158 terminal-result fix, and records current runner states. No product code changes.
+- **Parent:** locally cherry-picked only reviewed PR #157 commit `e19a592…` into PR #155's worktree. Exact local source `8e14755c4783beb6ee56a6b2e4071b5cb6bf76be`, tree `ccd0e86efaa192e8b67ee6a05f13aaf75aee78ad`; `:app:compileIsolatedAndroidTestKotlin` BUILD SUCCESSFUL, 26 actionable tasks, after 4m15s. This is compile-only evidence for this exact local head. The candidate is not yet pushed and has no emulator result.
 
 **Resume point:** refresh GitHub runs for the exact SHAs above, receive the three lane reports, review failures and runner assignment, and update this ledger with a new timestamp. No evidence from a different HEAD may be reused.

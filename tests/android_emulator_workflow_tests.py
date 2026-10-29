@@ -826,6 +826,34 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("phase='process-death-seed'", target_helper)
         self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
 
+    def test_fake_google_process_death_harness_is_host_driven_and_isolated(self) -> None:
+        harness = (ROOT / "tools/run_android_fake_google_process_death.sh").read_text(encoding="utf-8")
+        activity = (ROOT / "android/app/src/isolated/java/app/serea/android/FakeGoogleProcessDeathHarnessActivity.kt").read_text(
+            encoding="utf-8"
+        )
+        manifest = (ROOT / "android/app/src/isolated/AndroidManifest.xml").read_text(encoding="utf-8")
+
+        self.assertIn("SEREA_ISOLATED_INSTRUMENTATION_FINISHED", harness)
+        self.assertIn('test_package="app.serea.android.isolated.test"', harness)
+        self.assertIn('package="app.serea.android.isolated"', harness)
+        self.assertIn('shell pidof "$test_package"', harness)
+        self.assertIn('shell am force-stop "$package"', harness)
+        self.assertNotIn("pm clear", harness.lower())
+        self.assertNotIn("app.serea.android.demo", harness)
+        self.assertIn("wait_target_stopped", harness)
+        self.assertIn("PASS:$token:$phase:pid=", harness)
+        self.assertIn('android:name=".FakeGoogleProcessDeathHarnessActivity"', manifest)
+        self.assertIn('android:permission="android.permission.DUMP"', manifest)
+        self.assertIn("ViewModelProvider(this@FakeGoogleProcessDeathHarnessActivity)", activity)
+        self.assertIn("requestConsent(GoogleFeature.CALENDAR)", activity)
+        self.assertIn("grantPendingConsent(preview)", activity)
+        self.assertIn("CalendarProviderKind.FAKE", activity)
+        self.assertIn("CalendarAuthorizationState.MOCK_ONLY", activity)
+        self.assertIn("GoogleDemoFeatureState.DISCONNECTED", activity)
+        self.assertNotIn("OkHttpClient", activity)
+        self.assertNotIn("MockWebServer", activity)
+        subprocess.run(["bash", "-n", str(ROOT / "tools/run_android_fake_google_process_death.sh")], check=True)
+
     def test_personal_beta_campaign_seeds_and_claims_marker_before_single_use_consume(self) -> None:
         script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")
         receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(

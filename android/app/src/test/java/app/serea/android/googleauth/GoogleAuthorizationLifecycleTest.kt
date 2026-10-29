@@ -146,6 +146,58 @@ class GoogleAuthorizationLifecycleTest {
         }
 
     @Test
+    fun expiredCalendarReconnectOpensFreshPreviewAndKeepsOldSessionClosedUntilConfirm() =
+        runTest(mainDispatcher.dispatcher) {
+            val gateway = FakeGoogleAuthorizationGateway()
+            val openedSessions = mutableListOf<app.serea.android.calendar.CalendarProviderSession>()
+            val sessionFactory = CalendarDemoSessionFactory { _, _ ->
+                app.serea.android.calendar.CalendarProviderSessions().openFake().also(openedSessions::add)
+            }
+            val viewModel = GoogleAuthorizationDemoViewModel(gateway, sessionFactory)
+
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+            runCurrent()
+            confirmCurrentPreview(viewModel)
+            runCurrent()
+            val expiredSession = checkNotNull(viewModel.calendarDemoSession.value)
+            assertEquals(1, openedSessions.size)
+
+            viewModel.simulateTokenExpiry()
+            assertEquals(GoogleDemoFeatureState.EXPIRED, viewModel.state.value.calendar)
+            assertEquals(null, viewModel.calendarDemoSession.value)
+            assertTrue(runCatching { expiredSession.listCalendars() }.isFailure)
+
+            // The ordinary in-app reconnect action must recover directly, but first it destroys
+            // the stale shared grant and shows the exact Calendar scopes for a fresh confirmation.
+            viewModel.requestConsent(GoogleFeature.CALENDAR)
+            val preview = checkNotNull(viewModel.state.value.pendingConsentPreview)
+            assertEquals(GoogleFeature.CALENDAR, preview.feature)
+            assertEquals(GoogleFeature.CALENDAR.scopes, preview.consentScopes)
+            assertEquals(GoogleDemoAccount.ACCOUNT_A, preview.selectedAccount)
+            assertEquals(1, preview.accountGeneration)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.calendar)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZATION_REQUIRED, viewModel.state.value.gmail)
+            assertEquals(null, viewModel.state.value.inFlightFeature)
+            assertEquals(null, viewModel.calendarDemoSession.value)
+            assertEquals(1, openedSessions.size)
+            assertEquals(
+                ScopePermission.NEEDS_CONSENT,
+                gateway.status(GoogleFeature.CALENDAR.scopes).permissions[GoogleScope.CALENDAR_EVENTS_READ_ONLY],
+            )
+
+            viewModel.grantPendingConsent(preview)
+            assertEquals(null, viewModel.calendarDemoSession.value)
+            assertEquals(1, openedSessions.size)
+            runCurrent()
+            val reauthorizedSession = checkNotNull(viewModel.calendarDemoSession.value)
+            assertEquals(GoogleDemoFeatureState.AUTHORIZED, viewModel.state.value.calendar)
+            assertEquals(2, openedSessions.size)
+            assertNotSame(expiredSession, reauthorizedSession)
+            assertTrue(runCatching { expiredSession.listCalendars() }.isFailure)
+            assertEquals(CalendarProviderKind.FAKE, reauthorizedSession.kind)
+        }
+
+    @Test
     fun selectingAnotherSyntheticAccountClosesItsCalendarSessionBeforeReauthorization() =
         runTest(mainDispatcher.dispatcher) {
             val viewModel = GoogleAuthorizationDemoViewModel(FakeGoogleAuthorizationGateway())

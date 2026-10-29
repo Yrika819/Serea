@@ -69,6 +69,32 @@ internal class GoogleAuthorizationDemoViewModel(
     private val explicitConfirmationRequired = mutableSetOf<GoogleFeature>()
 
     fun requestConsent(feature: GoogleFeature) {
+        val currentBeforeRequest = mutableState.value
+        if (feature in currentBeforeRequest.disabledInAppFeatures) {
+            mutableState.value = currentBeforeRequest.copy(
+                message = "${feature.label()}はアプリ内で切断されています。再接続してからデモ承認を要求してください。",
+            )
+            return
+        }
+        if (currentBeforeRequest.featureState(feature) == GoogleDemoFeatureState.EXPIRED) {
+            // Expiry affects the synthetic shared grant. Discard it before opening a fresh
+            // preview so no old grant can be silently reused by the reconnect path.
+            requestGeneration++
+            invalidateCalendarDemoSession()
+            gateway.revokeGoogleGrant()
+            gateway.setExpired(false)
+            explicitConfirmationRequired += feature
+            val current = mutableState.value
+            mutableState.value = current.copy(
+                gmail = current.gmail.takeUnless { it == GoogleDemoFeatureState.EXPIRED }
+                    ?: GoogleDemoFeatureState.AUTHORIZATION_REQUIRED,
+                calendar = current.calendar.takeUnless { it == GoogleDemoFeatureState.EXPIRED }
+                    ?: GoogleDemoFeatureState.AUTHORIZATION_REQUIRED,
+                inFlightFeature = null,
+                pendingConsentPreview = null,
+                message = "期限切れの架空Grantを破棄しました。新しい読み取り専用範囲を確認してから再接続してください。",
+            )
+        }
         if (feature in explicitConfirmationRequired) {
             val current = mutableState.value
             if (feature in current.disabledInAppFeatures) {
@@ -401,6 +427,11 @@ private fun GoogleAuthorizationDemoState.withFeatureState(
 ): GoogleAuthorizationDemoState = when (feature) {
     GoogleFeature.GMAIL -> copy(gmail = featureState)
     GoogleFeature.CALENDAR -> copy(calendar = featureState)
+}
+
+private fun GoogleAuthorizationDemoState.featureState(feature: GoogleFeature): GoogleDemoFeatureState = when (feature) {
+    GoogleFeature.GMAIL -> gmail
+    GoogleFeature.CALENDAR -> calendar
 }
 
 internal fun AuthorizationOutcome.toDemoFeatureState(): GoogleDemoFeatureState = when (this) {

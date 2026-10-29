@@ -52,6 +52,7 @@ def main() -> int:
     noop_class, native_class = sys.argv[4:6]
     stream = input_path.read_text(encoding="utf-8", errors="replace")
     cases, result = parse_stream(stream)
+    code = result.get("instrumentation_code", "NOT_REPORTED")
 
     identities: dict[str, dict[str, str]] = {}
     invalid: list[str] = []
@@ -92,12 +93,26 @@ def main() -> int:
     }
     if frozenset(identities) not in expected_pairs:
         invalid.append("terminal test identities do not match one no-op/native outcome pair")
+    reported_numtests = {
+        case["numtests"].strip()
+        for case in cases
+        if case.get("numtests", "").strip()
+    }
+    if result.get("numtests", "").strip():
+        reported_numtests.add(result["numtests"].strip())
+    if reported_numtests and reported_numtests != {"2"}:
+        invalid.append(
+            "AndroidJUnitRunner numtests does not match the two expected terminal identities: "
+            + ",".join(sorted(reported_numtests))
+        )
     noop_status_present = noop_result is not None or noop_initialization is not None
     native_status_present = native_result is not None or native_initialization is not None
     if not noop_status_present:
         invalid.append("no-op identity or initializationError was not reported")
     if not native_status_present:
         invalid.append("native identity or initializationError was not reported")
+    if code != "-1":
+        invalid.append("Android instrumentation completion code must be -1 for success")
 
     failures = sum(case["status_code"] == "-2" for case in identities.values())
     skipped = sum(case["status_code"] in {"-3", "-4"} for case in identities.values())
@@ -128,11 +143,12 @@ def main() -> int:
             ET.SubElement(testcase, "skipped", {"message": "AndroidJUnitRunner ignored/assumption-failed test"})
     ET.ElementTree(suites).write(xml_path, encoding="utf-8", xml_declaration=True)
 
-    code = result.get("instrumentation_code", "NOT_REPORTED")
     summary = [
         "evidence_kind=raw_android_instrumentation_status",
         f"stream_outcome={'NO_TEST_CASES' if not cases else 'TEST_STATUSES_PRESENT'}",
         f"instrumentation_code={code}",
+        f"reported_numtests={','.join(sorted(reported_numtests)) if reported_numtests else 'NOT_REPORTED'}",
+        "identity_count_basis=exact_noop_and_native_terminal_identity_pair",
         f"tests={test_count}",
         f"failures={failures}",
         f"errors={errors}",
@@ -161,11 +177,8 @@ def main() -> int:
     if not cases:
         print("No terminal AndroidJUnitRunner test status was emitted.", file=sys.stderr)
         return 1
-    if code == "NOT_REPORTED":
-        print("Android instrumentation completion code was not emitted.", file=sys.stderr)
-        return 1
     if invalid:
-        print("One or more terminal status records lacked a test identity.", file=sys.stderr)
+        print("AndroidJUnitRunner output was incomplete or inconsistent with the expected diagnostic run.", file=sys.stderr)
         return 1
     return 0
 

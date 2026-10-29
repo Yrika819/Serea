@@ -33,13 +33,14 @@ The new invocation is a non-Required diagnostic, not Android API26/35 Required e
 
 | Command | Result |
 |---|---|
-| `python3 tools/g8-local-model-native/test-instrumentation-stream.py` | PASS, 6 tests |
+| `python3 tools/g8-local-model-native/test-instrumentation-stream.py` | PASS, 8 tests |
 | `bash tools/g8-local-model-native/test-preflight.sh` | PASS; rejects physical/multiple devices, reused namespaces, malformed package query, and unsafe evidence override |
 | `bash tools/g8-local-model-native/test-cleanup.sh` | PASS; cleanup remains fail-closed and preserves primary failures |
 | `python3 tools/g8-local-model-native/test-jni-contract.py` | PASS; 8 exported JNI boundaries and failure seam checked |
 | `bash -n tools/g8-local-model-native/run-e2e.sh` | PASS |
 | `git diff --check` | PASS |
-| AndroidTest compile / Emulator inference | NOT_RUN; local environment has no `javac`, emulator binary, ADB device, or `/dev/kvm` |
+| AndroidTest compile / focused JVM tests | NOT_RUN for this source checkpoint; Temurin 17 is available. Parent's AndroidTest compile was on a different source SHA/tree and is not evidence for this branch. |
+| Emulator inference | NOT_RUN; local environment has no emulator binary, ADB device, or `/dev/kvm` |
 
 ## Gates and next action
 

@@ -43,10 +43,10 @@ class InstrumentationStreamParserTest(unittest.TestCase):
 
     def test_noop_and_native_pass_with_exact_identities(self) -> None:
         stream = (
-            status(NOOP, NOOP_METHOD, 1)
-            + status(NOOP, NOOP_METHOD, 0)
-            + status(NATIVE, NATIVE_METHOD, 1)
-            + status(NATIVE, NATIVE_METHOD, 0)
+            status(NOOP, NOOP_METHOD, 1, "INSTRUMENTATION_STATUS: numtests=2\n")
+            + status(NOOP, NOOP_METHOD, 0, "INSTRUMENTATION_STATUS: numtests=2\n")
+            + status(NATIVE, NATIVE_METHOD, 1, "INSTRUMENTATION_STATUS: numtests=2\n")
+            + status(NATIVE, NATIVE_METHOD, 0, "INSTRUMENTATION_STATUS: numtests=2\n")
             + "INSTRUMENTATION_CODE: -1\n"
         )
         code, summary, report = self.run_parser(stream)
@@ -54,6 +54,7 @@ class InstrumentationStreamParserTest(unittest.TestCase):
         self.assertIn("tests=2\n", summary)
         self.assertIn("noop_result=PASS\n", summary)
         self.assertIn("native_result=PASS\n", summary)
+        self.assertIn("reported_numtests=2\n", summary)
         self.assertIn(f'classname="{NOOP}" name="{NOOP_METHOD}"', report)
         self.assertIn(f'classname="{NATIVE}" name="{NATIVE_METHOD}"', report)
 
@@ -130,6 +131,31 @@ class InstrumentationStreamParserTest(unittest.TestCase):
         code, summary, _ = self.run_parser(stream)
         self.assertEqual(1, code)
         self.assertIn("unexpected_identity_count=1\n", summary)
+
+    def test_passing_test_statuses_with_non_success_completion_code_are_rejected(self) -> None:
+        stream = (
+            status(NOOP, NOOP_METHOD, 0)
+            + status(NATIVE, NATIVE_METHOD, 0)
+            + "INSTRUMENTATION_CODE: 0\n"
+        )
+        code, summary, report = self.run_parser(stream)
+        self.assertEqual(1, code)
+        self.assertIn("instrumentation_code=0\n", summary)
+        self.assertIn("noop_result=PASS\n", summary)
+        self.assertIn("native_result=PASS\n", summary)
+        self.assertIn("instrumentation completion code must be -1", summary)
+        self.assertIn("<testsuite", report)
+
+    def test_reported_numtests_must_match_expected_identity_pair(self) -> None:
+        stream = (
+            status(NOOP, NOOP_METHOD, 0, "INSTRUMENTATION_STATUS: numtests=3\n")
+            + status(NATIVE, NATIVE_METHOD, 0, "INSTRUMENTATION_STATUS: numtests=3\n")
+            + "INSTRUMENTATION_CODE: -1\n"
+        )
+        code, summary, _ = self.run_parser(stream)
+        self.assertEqual(1, code)
+        self.assertIn("reported_numtests=3\n", summary)
+        self.assertIn("numtests does not match", summary)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Protect Native CI artifacts from raw instrumentation and logcat uploads."""
+
+import re
+import sys
+from pathlib import Path
+
+
+RAW_DIAGNOSTIC_NAMES = (
+    "android-instrumentation.txt",
+    "android-logcat-diagnostic.log",
+    "native-runtime-metrics.log",
+    "emulator.log",
+    "adb-devices.txt",
+)
+
+SAFE_UPLOAD_PATHS = {
+    "evidence/g8-local-native/source.txt",
+    "evidence/g8-local-native/gradle-native-build.log",
+    "evidence/g8-local-native/gradle-jvm-focused.log",
+    "evidence/g8-local-native/junit/TEST-app.serea.android.LocalModelChatAdapterTest.xml",
+    "evidence/g8-local-native/junit/TEST-app.serea.android.LocalModelNativeRuntimeTest.xml",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/preflight.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/source-and-runtime.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/model-stage.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/junit-verification.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/instrumentation-command-status.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt",
+    "evidence/native-arm64-guest/host-and-image.txt",
+    "evidence/native-arm64-guest/startup-summary.txt",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/source-and-runtime.txt",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit-verification.txt",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt",
+}
+
+
+def validate_workflow(workflow: str) -> list[str]:
+    problems: list[str] = []
+    steps: list[str] = []
+    in_steps = False
+    current_step: list[str] = []
+    for line in workflow.splitlines():
+        if re.fullmatch(r" {4}steps:[ \t]*", line):
+            if current_step:
+                steps.append("\n".join(current_step))
+                current_step = []
+            in_steps = True
+            continue
+        if not in_steps:
+            continue
+        if line.strip() and len(line) - len(line.lstrip(" ")) < 6:
+            if current_step:
+                steps.append("\n".join(current_step))
+                current_step = []
+            in_steps = False
+            continue
+        if re.match(r"^ {6}-[ \t]+", line):
+            if current_step:
+                steps.append("\n".join(current_step))
+            current_step = [line]
+        elif current_step:
+            current_step.append(line)
+    if current_step:
+        steps.append("\n".join(current_step))
+
+    artifact_steps = [
+        step
+        for step in steps
+        if re.search(r"(?m)^ {6}-[ \t]+uses:[ \t]*actions/upload-artifact@", step)
+        or re.search(r"(?m)^ {8}uses:[ \t]*actions/upload-artifact@", step)
+    ]
+    if not artifact_steps:
+        problems.append("no upload-artifact steps were found for allowlist validation")
+    path_declarations = [
+        value
+        for step in artifact_steps
+        for value in re.findall(r"(?m)^[ \t]*path:[ \t]*(.*)$", step)
+    ]
+    has_flow_mapping = any(
+        re.search(r"(?m)^[ \t]*with\s*:\s*\{", step)
+        for step in artifact_steps
+    )
+    if has_flow_mapping or not path_declarations or any(value.strip() != "|" for value in path_declarations):
+        problems.append("artifact path declarations must use the exact-file block allowlist")
+    path_blocks = [
+        block
+        for step in artifact_steps
+        for block in re.findall(
+            r"(?m)^[ \t]*path:[ \t]*\|[ \t]*\n((?:[ \t]+[^\n]*\n)+)", step
+        )
+    ]
+    uploaded_paths = "\n".join(path_blocks)
+    if any(name in uploaded_paths for name in RAW_DIAGNOSTIC_NAMES):
+        problems.append("workflow must not retain or upload raw runtime diagnostics")
+    path_entries = {line.strip() for line in uploaded_paths.splitlines() if line.strip()}
+    unexpected_paths = path_entries - SAFE_UPLOAD_PATHS
+    if unexpected_paths:
+        problems.append("artifact upload contains paths outside the exact-file allowlist")
+    if any(re.search(r"[*?\[\]]", path) for path in path_entries):
+        problems.append("artifact upload must not use glob metacharacters")
+    missing = SAFE_UPLOAD_PATHS - path_entries
+    if missing:
+        problems.append("safe Native evidence upload allowlist is incomplete")
+    return problems
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: test-upload-allowlist.py WORKFLOW", file=sys.stderr)
+        return 2
+    workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+    problems = validate_workflow(workflow)
+    if problems:
+        print("; ".join(problems), file=sys.stderr)
+        return 1
+
+    # Prove that the guard rejects raw diagnostics, guest/evidence directory globs,
+    # and omission of the sanitized JUnit test report.
+    safe_arm_file = "            evidence/native-arm64-guest/host-and-image.txt\n"
+    bad_fixtures = (
+        workflow.replace(
+            safe_arm_file,
+            "            evidence/native-arm64-guest/emulator.log\n",
+            1,
+        ),
+        workflow.replace(
+            safe_arm_file,
+            "            evidence/native-arm64-guest/\n",
+            1,
+        ),
+        workflow.replace(
+            safe_arm_file,
+            "            evidence/native-arm64-guest/*\n",
+            1,
+        ),
+        workflow.replace(
+            safe_arm_file,
+            "            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/**\n",
+            1,
+        ),
+        workflow.replace(
+            safe_arm_file,
+            "            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}\n",
+            1,
+        ),
+        workflow.replace(
+            "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml\n",
+            "",
+            1,
+        ),
+        workflow
+        + "\n      - uses: actions/upload-artifact@v4\n"
+        + "        with:\n"
+        + "          name: injected\n"
+        + "          path: evidence/native-arm64-guest/*\n",
+        workflow
+        + "\n      - uses: actions/upload-artifact@v4\n"
+        + "        with: {name: injected, path: evidence/native-arm64-guest/*}\n",
+        workflow
+        + "\n      - uses: actions/upload-artifact@v4\n"
+        + "        with : {name: injected, path: evidence/native-arm64-guest/*}\n",
+        workflow
+        + "\n      - id: injected\n"
+        + "        uses: actions/upload-artifact@v4\n"
+        + "        with:\n"
+        + "          name: injected\n"
+        + "          path: |\n"
+        + "            evidence/native-arm64-guest/emulator.log\n"
+        + "            evidence/native-arm64-guest/*\n",
+    )
+    if any(not validate_workflow(fixture) for fixture in bad_fixtures):
+        print("artifact guard accepted a raw path, directory wildcard, id-first upload, or missing JUnit report", file=sys.stderr)
+        return 1
+    print("native_artifact_allowlist=PASS raw_logs=EXCLUDED explicit_paths=PASS sanitized_junit=REQUIRED")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

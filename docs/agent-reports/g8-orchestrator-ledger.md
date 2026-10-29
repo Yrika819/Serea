@@ -2,7 +2,7 @@
 
 **Checkpoint:** 2026-10-29 JST (2026-10-28 UTC)
 **Roadmap:** Owner-provided `Serea_Roadmap_v4.md`; campaign 기준일 2026-10-29 JST.
-**Overall:** IN_PROGRESS — G7 is PARTIAL; G8 work is delegated; Personal Beta remains NO-GO.
+**Overall (latest checkpoint):** G7 **SUCCESS** — evidence closure; G8 **PARTIAL**; G9 Preflight **PARTIAL**; Personal Beta **NO-GO**. Active integration candidate: Draft PR #146, HEAD `4cd887af09f81d3a2d9401986ae27d2bd2ea3210`, tree `8082586e899df9d9900ea00f50baabc16ae4589c`. The historical startup statuses below are retained only as dated history and are superseded by the later correction/checkpoint sections.
 
 ## Authority and candidate baseline
 
@@ -23,14 +23,15 @@ PR metadata was refreshed through GitHub on 2026-10-28 UTC. The local G7 candida
 
 ## G7 closure status
 
-**G7: PARTIAL.** The reviewed mock/readiness source is complete, but one cross-architecture SQLite direction remains NOT_RUN because its macOS ARM64 runner was not assigned. Do not convert G6 SQLite evidence into G7 evidence.
+**G7: SUCCESS — Evidence Closure.** Exact final source SHA `00384eb6468214362435140c9a2d848fa2e0f12e` passed all four SQLite portability directions on run `40749231272`, attempt 3. The earlier attempt cancellations remain historical; they are superseded by the successful Intel→ARM64 run recorded below. No G6 SQLite evidence is reused.
 
 | Exact G7 HEAD `00384eb…` evidence | Result |
 |---|---|
 | Calendar synthetic authorization → loopback MockWebServer focused test | PASS; Run `40749231295`, Artifact `12843121520`, SHA-256 `a198b4746313c27986ab3728f8c7dafc6e060c0a6dd88ad912ef593b689b062e` |
 | Android workflow | Run `40749231249` SUCCESS; Build/Lint, Unit, Integration, Security, Dependency Audit, Docs; API 26 and API 35 Required 105/105, Identity, Process Death, Data Isolation, Sentinel. API 26 Artifact `12845730516` (`40090efe7678d2cea8a8e64902fa50298190fd009363ec3c9c276f029cca0ee`); API 35 Artifact `12847400793` (`c0f40a2e03f9f895e9d5be01731c511cfc661e5757a965bf3df1bf06bc473555`); emulator `12846945714`; temporary-key Identity `12846168567` |
 | Full / Fast / Native / RustSec / Git Hooks | PASS at this SHA: `40749231298`, `40749231228`, `40749231215`, `40749231235`, `40749231318` |
-| SQLite portability | Run `40749231272` incomplete. Intel→Intel, ARM64→ARM64, ARM64→Intel PASS. Intel→ARM64 (`Open Intel DB on macOS arm64`, job `123042883914`) CANCELLED with no runner assignment; G7 ledger/PR records two attempts with runner ID 0. This direction is NOT_RUN, not a product/code failure. No repeated retry is planned absent runner availability. |
+| SQLite portability, attempt 2 (historical) | Run `40749231272`, attempt 2: Intel→Intel, ARM64→ARM64, ARM64→Intel PASS; Intel→ARM64 (`Open Intel DB on macOS arm64`, job `123042883914`) CANCELLED with `runner_id=0`. This earlier attempt was NOT_RUN for that direction; it was superseded by attempt 3. |
+| SQLite portability, attempt 3 (latest) | Run `40749231272`, attempt 3 SUCCESS. All four directions passed; Intel→ARM64 job `123182687879` ran on macOS ARM64 runner `1000022879`. Artifact, JUnit and database integrity evidence is in `docs/agent-reports/evidence/g7-sqlite-arm64-20261029.txt`. |
 | Historical Android API 35 Chat/IME failure | On code/test SHA `acde94c…`, `SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges` failed twice (initial + same-SHA retry), with a Compose timeout and then `Composer IME state did not settle at R4-B-committed`. Preserve as a reproducibility/reliability risk. |
 | Final G7 HEAD result | On exact final SHA `00384eb…`, later Run `40749231249` passed API 26 and API 35 Required 105/105 and Identity. This does not erase the earlier source-SHA failures. |
 
@@ -90,13 +91,13 @@ Focused G8 lane tests are not yet available. Agent A and Agent B independently r
 
 If G8 is incomplete, safe independent preparation continues: Gmail synthetic MIME/HTML and remote-image/size tests, data-minimization contract, model license/native SBOM improvements, token/usage mock UI, and a non-destructive Pixel 7a checklist. No real Gmail, OAuth, Cloud AI, device, production key, or user data is allowed. Agent C's accepted report contains the release/policy and checklist checkpoint; parent will add only work that is independent of G8 acceptance.
 
-## Status and resume contract
+## Initial status and resume record — historical, superseded below
 
-- **G7:** PARTIAL — SQLite Intel→ARM64 open direction NOT_RUN due runner assignment; IME history retained separately from final-head PASS.
-- **G8:** IN_PROGRESS — Agent C documentation accepted; Agents A/B are implementing. No G8 product implementation is yet accepted.
+- **At initial startup, G7:** PARTIAL — the Intel→ARM64 direction had not yet run. This was later closed by run `40749231272`, attempt 3; see current G7 status above and the evidence closure section below. IME history remains separate from final-head PASS.
+- **At initial startup, G8:** IN_PROGRESS — Agent C documentation accepted; Agents A/B were implementing. The later integration checkpoint supersedes this state.
 - **G9 Preflight:** PARTIAL — Agent C wrote an accepted preparation checklist; no G9 product test or feature is yet recorded.
 - **Personal Beta:** NO-GO.
-- **Parent branch / Draft PR:** `codex/serea-g8-integration-candidate-20261029` / [PR #141](https://github.com/Yrika819/Serea/pull/141), OPEN/DRAFT.
+- **Initial parent branch / Draft PR:** `codex/serea-g8-integration-candidate-20261029` / [PR #141](https://github.com/Yrika819/Serea/pull/141), OPEN/DRAFT; later marked SUPERSEDED / DO NOT MERGE. Active replacement is PR #146.
 - **Current integration HEAD at checkpoint start:** `b06f20e0dd1870a6eb0db684634603b9da3bb353` / tree `16f18279889c4e2aefea3aa1fb57118048b923fd`; the report and ledger update are being added on top. No G8 code is integrated.
 - **Report branch:** Agent C PR #142 OPEN/DRAFT, report independently accepted and cherry-picked; A/B remain in progress.
 - **Superseded PR:** #140 OPEN/DRAFT, title `[SUPERSEDED / DO NOT MERGE]`; no source rewrite or close was performed.
@@ -140,7 +141,7 @@ This addendum supersedes the earlier “work is delegated / no G8 code is integr
 
 ### G7, G9, Owner gates, and status
 
-- G7 remains **PARTIAL**. A narrowly scoped exact-G7 SQLite job rerun was attempted after the ARM64 runner appeared on a different candidate: run `40749231272`, attempt 3, job `123182687879`, source `00384eb6468214362435140c9a2d848fa2e0f12e`. At the latest check it remained QUEUED with `runner_id=0`, no steps or logs. Do not rerun again. The Intel→ARM64 direction remains NOT_RUN; other G7 directions and exact-final-SHA Required/Identity passes stay as recorded above.
+- G7 is **SUCCESS — Evidence Closure**. The statement in the earlier checkpoint that attempt 3 was queued with `runner_id=0` was accurate only before its later completion and is superseded: job `123182687879` passed on runner `1000022879`; all four directions passed on exact G7 source SHA `00384eb6468214362435140c9a2d848fa2e0f12e`. See the SQLite evidence closure correction below.
 - G9 Preflight is **PARTIAL**: the Fake Gmail adversarial HTML UI source and release checklist are saved; isolated Android source compilation passed; focused JUnit/UI execution is NOT_RUN. Gmail parsing, size boundaries and data minimization not yet covered by this current Gmail UI test remain future G9 work.
 - G8 is **PARTIAL** pending exact-HEAD Android/UI CI, Native JNI inference and ARM64/resource/license evidence. Personal Beta remains **NO-GO**.
 - Existing Owner decisions remain required for live OAuth/Google data, Cloud provider/billing/credentials, package/signing, production distribution, physical Pixel 7a acceptance, `main` merge and Beta GO. None was performed.
@@ -197,13 +198,13 @@ The identity-safe replacement branch is now pushed and opened as **Draft PR #146
 
 PR #141 was not closed, rebased, or force-pushed. Its title/body now mark it **SUPERSEDED / DO NOT MERGE** and point to #146. PR #141 remains OPEN/DRAFT at failed-identity head `d0f32fc…` for audit. G7 PR #139, G5 #134, G6 #138, and lane PRs #142–#145 remain open; none was closed or merged.
 
-### Exact checks for the active replacement
+### Exact checks for the preceding active replacement head (historical)
 
 For the preceding exact PR #146 head `a1f22f2…`, GitHub created Android `40796324758`, Native `40796324946`, Full `40796325050`, Git Hooks `40796324553`, RustSec `40796324505`, Fast `40796324508`, and SQLite `40796324477`. At last check all were QUEUED; no run had yet produced a job result. These are distinct from #141’s d0 runs and will be superseded by the latest exact-head workflows once this ledger update is pushed.
 
 The feature-branch-only Android Personal Beta workflow again appeared as push run `40796293362` on `a1f22f2…`, conclusion FAILURE with zero jobs/logs/artifacts. It was not manually dispatched. Its branch file remains `workflow_dispatch`-only with `if: github.ref == 'refs/heads/main'`; no Beta build/sign/distribution occurred. This is not release evidence.
 
-Release Security Focused `40795288341` and mock Personal Beta Contract Tests `40795297504` remain QUEUED on old exact SHA `d0f32fc…`; do not reuse those runs as evidence for #146. Dispatch or rerun them only on the final active PR head after the ledger commit, which contains no source-code change. G7 SQLite exact job `123182687879` remains QUEUED with runner ID 0.
+Release Security Focused `40795288341` and mock Personal Beta Contract Tests `40795297504` remain QUEUED on old exact SHA `d0f32fc…`; do not reuse them as evidence for #146. The SQLite queued status in the older checkpoint was superseded by G7 run `40749231272`, attempt 3, which passed job `123182687879` on ARM64 runner `1000022879`.
 
 The #146 worktree and branch are the active continuation point. Its exact source snapshot `fb47d50…` has 171 JVM PASS plus isolated Android test-source compilation PASS, with JUnit XML under `g8-parent-focused-fb47d50/`. Local `assembleDebug`/`lintDebug`, 70 Gmail + 88 egress/consent/usage JVM tests, and mock release-security/SBOM work are recorded against the earlier identical app/test source tree `d0f32fc…`. Android UI execution, formal API26/35, process-death on the authorization session, Native runtime and ARM64 remain NOT_RUN until exact-source evidence arrives.
 
@@ -224,4 +225,9 @@ Exact G7 Android API26/35 Required 105/105 and Identity passes remain as recorde
 
 G8 remains **PARTIAL**: OAuth Fake composition and source tests are accepted; 171 focused JVM tests and isolated Android-test-source compilation passed on the replacement source snapshot; Android emulator UI/Required runs are pending; Native remains a separately reviewed, default-off candidate with x86_64 inference, ARM64 build/runtime, memory/performance and complete license/SBOM evidence NOT_RUN. G9 preflight remains PARTIAL with Fake Gmail parser/security JVM coverage and UI test source compile, but focused Android UI execution is pending. Personal Beta remains NO-GO.
 
-The prior exact #146 head `7e6528c512c1e59dd54980aee1850d408a3a9506` had Android `40796423508`, Fast `40796423870`, Native `40796423516`, Full `40796423524`, SQLite `40796423645`, Git Hooks `40796423505`, RustSec `40796423536`, Release Security `40796437695`, and mock Contract `40796441317`; these were all queued/pending before this base-evidence merge and are not evidence for the new merged head. Fresh exact-head checks are required after the merge commit.
+
+### Exact checks at the pre-correction #146 head `4cd887a`
+
+The base-evidence merge head was `4cd887af09f81d3a2d9401986ae27d2bd2ea3210` / tree `8082586e899df9d9900ea00f50baabc16ae4589c`. GitHub reported 26 check runs tied to that exact SHA: 25 queued/pending and one Native-platform job in progress; none had completed PASS or a test failure when reviewed at 2026-10-29 00:55 UTC. Runs: Android `40796897532` (pending, no job record yet); Native platform `40796897670` (job `123195523147` in progress, 11 queued); Full `40796897674` (5 queued); Fast `40796897677` (queued); SQLite `40796897607` (2 queued); Git Hooks `40796897563` (3 queued); RustSec `40796897555` (queued); Release Security `40796900490` (queued); mock Personal Beta Contract `40796905335` (queued). A correction-only ledger commit follows this recorded head, so these runs are historical for `4cd887a`; do not attribute them to the later HEAD.
+
+The push-triggered Personal Beta workflow run `40796891332` on `4cd887a` concluded FAILURE with zero jobs or artifacts. The workflow is main-only and its feature-branch event did not execute a build, signing or distribution step. This is not a product test failure or release evidence. No Beta workflow was manually dispatched.

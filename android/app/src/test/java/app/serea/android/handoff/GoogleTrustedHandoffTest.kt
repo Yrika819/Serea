@@ -162,7 +162,7 @@ class GoogleTrustedHandoffTest {
             val chatText = handoff.localChatText()
 
             assertTrue(chatText.contains(body))
-            listOf(
+            val messageMetadata = listOf(
                 message.id.value,
                 message.threadId.value,
                 requireNotNull(message.from),
@@ -171,8 +171,28 @@ class GoogleTrustedHandoffTest {
                 requireNotNull(message.internalDateMillis).toString(),
                 requireNotNull(message.snippet),
                 requireNotNull(message.htmlTextBody),
-                candidate.sourceRevision,
-            ).forEach { metadata ->
+            )
+            val handoffMetadata = listOf(
+                handoff.id,
+                handoff.service.name,
+                handoff.origin.name,
+                handoff.syntheticAccountIdentifier,
+                handoff.sessionIdentifier,
+                handoff.sessionGeneration.toString(),
+                handoff.scope,
+                handoff.sourceItemIdentifier,
+                handoff.sourceRevision,
+                handoff.contentIdentity,
+                handoff.expiresAtMillis.toString(),
+                handoff.authorizationState.name,
+                handoff.destination.name,
+                handoff.conversationId,
+                handoff.conversationGeneration.toString(),
+                handoff.selectionState.name,
+                handoff.consentState.name,
+                handoff.displayTitle,
+            )
+            (messageMetadata + handoffMetadata).forEach { metadata ->
                 assertFalse("Chat handoff leaked Gmail metadata: $metadata", chatText.contains(metadata))
             }
             assertEquals(setOf(DataOrigin.GMAIL), handoff.sourceLineage())

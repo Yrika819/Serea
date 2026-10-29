@@ -14,6 +14,35 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AndroidEmulatorWorkflowTests(unittest.TestCase):
+    def test_api26_api35_campaign_uses_shared_deadline_with_budget_margin(self) -> None:
+        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        self.assertIn("timeout-minutes: 180", workflow)
+        self.assertIn("SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH=$(($(date +%s) + 150 * 60))", workflow)
+        self.assertEqual(2, workflow.count("timeout-minutes: 75"))
+        self.assertEqual(2, workflow.count("SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180"))
+        self.assertIn("timeout --signal=INT --kill-after=60s \"${remaining}s\"", workflow)
+        self.assertIn("campaign_deadline_epoch=", campaign)
+        self.assertIn("bounded_command_seconds", campaign)
+        self.assertIn("local partition_cap=840", campaign)
+        self.assertIn("partition_cap=300", campaign)
+        self.assertIn("120 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges", campaign)
+        self.assertIn("app.serea.android.SereaAppShellTest 420 19", campaign)
+        self.assertIn("app.serea.android.ChatScreenTest 420 16", campaign)
+        self.assertIn('timeout --signal=INT --kill-after=30s "${process_death_timeout}s" bash', campaign)
+        api35 = (ROOT / "tools/run_android_api35_campaign.sh").read_text(encoding="utf-8")
+        self.assertIn("if (( remaining > 360 )); then remaining=360; fi", api35)
+        self.assertIn("timeout --signal=INT --kill-after=60s", api35)
+        # Per-API bounded command budgets: build 5m, diagnostics 2+7+7m,
+        # HTTP build 5m, formal offline/HTTP 14+5m, and process death 2m.
+        api26_stages = 5 + 2 + 7 + 7 + 5 + 14 + 5 + 2
+        api35_stages = api26_stages + 6  # Update compatibility.
+        emulator_boots = 15 * 2
+        setup_reserve = 20
+        self.assertEqual((47, 53, 30, 20), (api26_stages, api35_stages, emulator_boots, setup_reserve))
+        self.assertLessEqual(api26_stages + api35_stages + emulator_boots + setup_reserve, 150)
+        self.assertLess(150, 180)  # Shared campaign deadline leaves 30m in the job cap.
+
     def test_exact_source_helper_changes_trigger_android_and_focused_checks(self) -> None:
         android_workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
         focused_workflow = (ROOT / ".github/workflows/android-functional-focused.yml").read_text(encoding="utf-8")
@@ -515,7 +544,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('[[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_target_ready" == true ]]', campaign)
         self.assertIn('"$data_isolation_result" == PASS', campaign)
         self.assertIn('--minimum 105', campaign)
-        self.assertIn('timeout --signal=INT --kill-after=120s 40m ./gradlew', campaign)
+        self.assertIn('bounded_command_seconds "$partition_cap" 150', campaign)
 
     def test_api_instrumentation_evidence_has_distinct_artifact_names(self) -> None:
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
@@ -538,13 +567,11 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
         scripts = re.findall(r"^[ \t]+script: (.+)$", workflow, flags=re.MULTILINE)
         self.assertEqual(
-            [
-                "bash ../tools/run_android_instrumentation_campaign.sh 26",
-                "bash ../tools/run_android_api35_campaign.sh",
-                "bash tools/test_personal_beta_identity.sh",
-            ],
+            ["|", "|", "bash tools/test_personal_beta_identity.sh"],
             scripts,
         )
+        self.assertIn("bash ../tools/run_android_instrumentation_campaign.sh 26", workflow)
+        self.assertIn("bash ../tools/run_android_api35_campaign.sh", workflow)
         self.assertIn('build_checkout_commit=$(git rev-parse HEAD)', workflow)
         self.assertIn('build_checkout_commit=$provenance_checkout_sha', workflow)
         self.assertIn('provenance_source_sha', workflow)
@@ -675,9 +702,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('if [[ "$mode" == process-death ]]', target_helper)
         self.assertIn('am broadcast -f 0x20 -n "$receiver"', target_helper)
         self.assertIn('calendar-class', campaign)
-        self.assertIn('app.serea.android.SereaAppShellTest 900 19', campaign)
+        self.assertIn('app.serea.android.SereaAppShellTest 420 19', campaign)
         self.assertIn('chat-screen-class', campaign)
-        self.assertIn('app.serea.android.ChatScreenTest 900 16', campaign)
+        self.assertIn('app.serea.android.ChatScreenTest 420 16', campaign)
         self.assertNotIn('runner-smoke', campaign)
         self.assertNotIn('chat-http-e2e', campaign)
         self.assertNotIn('activity-recreation', campaign)
@@ -697,7 +724,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('PROFILE_MARKER_CHECK', runner)
         self.assertIn('SereaInstrumentationLifecycleListener', campaign)
         self.assertIn('logcat-live.txt', campaign)
-        self.assertIn('timeout --signal=INT --kill-after=120s 40m ./gradlew', campaign)
+        self.assertIn('local partition_cap=840', campaign)
+        self.assertIn('partition_cap=300', campaign)
+        self.assertIn('run_bounded_gradle 300 60', campaign)
         self.assertIn('test-device-state.txt', campaign)
         verifier_test = (ROOT / "android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt").read_text(encoding="utf-8")
         self.assertIn("ProfileVerifier.writeProfileVerification(target)", verifier_test)

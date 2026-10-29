@@ -11,6 +11,36 @@ if [[ "$api_level" != 26 && "$api_level" != 35 ]]; then
 fi
 tool_dir="$(cd "$(dirname "$0")" && pwd)"
 
+# API 26 and API 35 run sequentially in one Actions job. Share a single wall-clock
+# deadline so the first API cannot consume time needed to save the second API's
+# evidence. The workflow sets this once near job start; local runs receive the
+# same bounded 150-minute default.
+if [[ "${SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+  campaign_deadline_epoch="$SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH"
+else
+  campaign_deadline_epoch=$(( $(date +%s) + 150 * 60 ))
+fi
+bounded_command_seconds() {
+  local cap="$1" reserve_seconds="${2:-150}" now remaining available
+  now="$(date +%s)" || return 1
+  remaining=$((campaign_deadline_epoch - now))
+  available=$((remaining - reserve_seconds))
+  if (( available <= 0 )); then return 1; fi
+  if (( available < cap )); then cap="$available"; fi
+  printf '%s\n' "$cap"
+}
+
+run_bounded_gradle() {
+  local cap_seconds="$1" kill_after_seconds="$2" log_file="$3"
+  shift 3
+  local timeout_seconds
+  timeout_seconds="$(bounded_command_seconds "$cap_seconds" "$((kill_after_seconds + 30))")" || {
+    echo 'NOT_RUN: shared Android campaign deadline leaves no safe Gradle command budget.' > "$log_file"
+    return 124
+  }
+  timeout --signal=INT --kill-after="${kill_after_seconds}s" "${timeout_seconds}s" ./gradlew --no-daemon "$@" > "$log_file" 2>&1
+}
+
 root='app/build/outputs/androidTest-results'
 evidence="$root/api$api_level"
 mkdir -p "$evidence" || exit 1
@@ -186,7 +216,14 @@ run_diagnostic_stage() {
     }
   printf 'stage=%s\ntest_filter=%s\nstage_started_at_utc=%s\n' \
     "$name" "$filter" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" > "$stage_dir/host-lifecycle.txt"
-  timeout --signal=INT --kill-after=30s "${timeout_seconds}s" ./gradlew --no-daemon \
+  local bounded_seconds
+  bounded_seconds="$(bounded_command_seconds "$timeout_seconds" 60)" || {
+    echo 'NOT_RUN: shared Android campaign deadline leaves no safe diagnostic-stage budget.' > "$stage_dir/gradle.log"
+    printf 'NOT_RUN\n' > "$stage_dir/gradle-status.txt"
+    printf 'NOT_RUN\n' > "$stage_dir/status.txt"
+    return 1
+  }
+  timeout --signal=INT --kill-after=30s "${bounded_seconds}s" ./gradlew --no-daemon \
     -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$stage_token" \
     -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
     -Pandroid.testInstrumentationRunnerArguments.class="$filter" connectedIsolatedAndroidTest \
@@ -282,7 +319,19 @@ run_formal_partition() {
   mkdir -p "$partition_dir" || return 1
   rm -rf "$partition_dir"/*
   rm -rf "$root/connected"
-  timeout --signal=INT --kill-after=120s 40m ./gradlew --no-daemon "${variant_gradle_args[@]}" \
+  local bounded_seconds
+  local partition_cap=840
+  if [[ "$partition" == http ]]; then partition_cap=300; fi
+  bounded_seconds="$(bounded_command_seconds "$partition_cap" 150)" || {
+    echo 'NOT_RUN: shared Android campaign deadline leaves no safe formal-partition budget.' > "$log_file"
+    printf '124\n' > "$evidence/$partition-gradle-exit-code.txt"
+    printf 'NOT_RUN\n' > "$evidence/$partition-status.txt"
+    printf 'TIMEOUT\n' > "$evidence/instrumentation-timeout.txt"
+    echo 'Formal partition did not start because the shared API 26/API 35 deadline had no safe command budget.' \
+      > "$evidence/instrumentation-timeout-detail.txt"
+    return 1
+  }
+  timeout --signal=INT --kill-after=120s "${bounded_seconds}s" ./gradlew --no-daemon "${variant_gradle_args[@]}" \
     -Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken="$token" \
     -Pandroid.testInstrumentationRunnerArguments.listener=app.serea.android.SereaInstrumentationLifecycleListener \
     -Pandroid.testInstrumentationRunnerArguments.class="$filter" "$task" > "$log_file" 2>&1 &
@@ -468,7 +517,8 @@ if [[ "$sdk_ok" == true ]]; then
     http_filter="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["http_filter"])' "$variant_filters")"
     token="serea-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}"
     data_sentinel_token="$token"
-    ./gradlew --no-daemon :app:assembleDebug :app:assembleIsolated :r25-ime-test:assembleDebug
+    run_bounded_gradle 300 60 "$evidence/instrumentation-gradle.log" \
+      :app:assembleDebug :app:assembleIsolated :r25-ime-test:assembleDebug
     build_debug_result=$?
     ime_apk='r25-ime-test/build/outputs/apk/debug/r25-test-ime-debug.apk'
     if [[ ! -s "$ime_apk" ]]; then ime_apk='r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk'; fi
@@ -515,31 +565,30 @@ if [[ "$sdk_ok" == true ]]; then
         # Focused companion run preserves the full suite and captures complete window/IME diagnostics.
         run_diagnostic_stage cursor-position-focused \
           app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
-          900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
+          120 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
         if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
+          run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 420 19 '' || diagnostics_result=1
         fi
         if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 900 16 '' || diagnostics_result=1
+          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 420 16 '' || diagnostics_result=1
         fi
       else
         run_diagnostic_stage cursor-position-focused \
           app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges \
-          900 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
+          120 1 app.serea.android.SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges || diagnostics_result=1
         if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 900 19 '' || diagnostics_result=1
+          run_diagnostic_stage calendar-class app.serea.android.SereaAppShellTest 420 19 '' || diagnostics_result=1
         fi
         if [[ "$diagnostics_result" -eq 0 ]]; then
-          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 900 16 '' || diagnostics_result=1
+          run_diagnostic_stage chat-screen-class app.serea.android.ChatScreenTest 420 16 '' || diagnostics_result=1
         fi
       fi
       http_target_apk='app/build/outputs/apk/isolatedHttp/app-isolatedHttp.apk'
       http_test_apk='app/build/outputs/apk/androidTest/isolatedHttp/app-isolatedHttp-androidTest.apk'
       http_variant_build_result=1
       if [[ "$diagnostics_result" -eq 0 ]]; then
-        ./gradlew --no-daemon -PsereaHttpLoopbackTestVariant=true \
-          :app:assembleIsolatedHttp :app:assembleIsolatedHttpAndroidTest \
-          > "$evidence/http-variant-build.log" 2>&1
+        run_bounded_gradle 300 60 "$evidence/http-variant-build.log" \
+          -PsereaHttpLoopbackTestVariant=true :app:assembleIsolatedHttp :app:assembleIsolatedHttpAndroidTest
         http_variant_build_result=$?
         if [[ "$http_variant_build_result" -eq 0 && -s "$http_target_apk" && -s "$http_test_apk" ]]; then
           if [[ -z "${ANDROID_HOME:-}" || ! -x "$ANDROID_HOME/build-tools/35.0.0/aapt" ]]; then
@@ -636,7 +685,7 @@ if [[ "$sdk_ok" == true ]]; then
           "$(cat "$evidence/http-status.txt" 2>/dev/null || echo NOT_RUN)" > "$evidence/partition-results.txt"
         if grep -Eq '^(124|137)$' "$evidence/offline-gradle-exit-code.txt" "$evidence/http-gradle-exit-code.txt" 2>/dev/null; then
           printf 'TIMEOUT\n' > "$evidence/instrumentation-timeout.txt"
-          echo 'At least one bounded instrumentation partition reached the 40-minute timeout.' \
+          echo 'At least one bounded instrumentation partition reached its per-partition or shared campaign deadline.' \
             > "$evidence/instrumentation-timeout-detail.txt"
         elif [[ -f "$evidence/offline-gradle-exit-code.txt" && -f "$evidence/http-gradle-exit-code.txt" ]]; then
           printf 'NOT_TIMED_OUT\n' > "$evidence/instrumentation-timeout.txt"
@@ -815,11 +864,17 @@ printf '%s\n' "$junit_result" > "$evidence/instrumentation-status.txt"
 
 death_result=NOT_RUN
 if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_target_ready" == true ]]; then
+  process_death_timeout="$(bounded_command_seconds 120 60)"
+  if [[ -z "$process_death_timeout" ]]; then
+    printf 'NOT_RUN\n' > "$evidence/process-death-status.txt"
+    echo 'NOT_RUN: shared campaign deadline leaves no safe Process Death budget.' > "$evidence/process-death.log"
+    process_death_target_ready=false
+  else
   printf 'process_death_started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
     > "$evidence/process-death-host-lifecycle.txt"
   EXPECTED_API_LEVEL="$api_level" SEREA_SENTINEL_TOKEN="$data_sentinel_token" \
     SEREA_CAMPAIGN_TOKEN="serea-isolated-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" \
-    bash "$tool_dir/run_android_process_death_harness.sh" \
+    timeout --signal=INT --kill-after=30s "${process_death_timeout}s" bash "$tool_dir/run_android_process_death_harness.sh" \
     > "$evidence/process-death.log" 2>&1
   death_exit=$?
   printf 'process_death_finished_at_utc=%s\nprocess_death_exit_code=%s\n' \
@@ -830,6 +885,7 @@ if [[ "$sdk_ok" == true && "$data_isolation_result" == PASS && "$process_death_t
     death_result=PASS
   else
     death_result=FAIL
+  fi
   fi
 elif [[ "$sdk_ok" == true ]]; then
   printf 'NOT_RUN\n' > "$evidence/process-death-host-lifecycle.txt"

@@ -31,6 +31,14 @@ jobs:
         env:
           EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: bash tools/assert_exact_source_checkout.sh "$EXPECTED_SOURCE_SHA"
+      - name: Set shared API 26 and API 35 campaign deadline
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This deadline starts before SDK, KVM, and emulator setup, so that
+          # setup consumes the same 150-minute budget as both API campaigns.
+          # The 180-minute job then retains a 30-minute upload/cleanup margin.
+          echo "SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH=$(($(date +%s) + 150 * 60))" >> "$GITHUB_ENV"
       - id: scope
         name: Classify changed files
         env:
@@ -335,7 +343,7 @@ jobs:
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         env:
           SEREA_DISPOSABLE_CI_EMULATOR: '1'
-        timeout-minutes: 90
+        timeout-minutes: 75
         with:
           api-level: 26
           target: google_apis
@@ -344,7 +352,15 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           working-directory: android
-          script: bash ../tools/run_android_instrumentation_campaign.sh 26
+          script: |
+            set -euo pipefail
+            remaining=$((SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180))
+            if (( remaining <= 0 )); then
+              echo 'FAIL: shared API 26/API 35 campaign deadline leaves no safe API 26 execution budget.' >&2
+              exit 1
+            fi
+            timeout --signal=INT --kill-after=60s "${remaining}s" \
+              bash ../tools/run_android_instrumentation_campaign.sh 26
       - name: Save API 26 failure semantics and safety logcat
         if: always() && !cancelled()
         run: |
@@ -403,7 +419,7 @@ jobs:
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0, audited source at pinned commit)
         env:
           SEREA_DISPOSABLE_CI_EMULATOR: '1'
-        timeout-minutes: 80
+        timeout-minutes: 75
         with:
           api-level: 35
           target: google_apis
@@ -412,7 +428,15 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           working-directory: android
-          script: bash ../tools/run_android_api35_campaign.sh
+          script: |
+            set -euo pipefail
+            remaining=$((SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180))
+            if (( remaining <= 0 )); then
+              echo 'FAIL: shared API 26/API 35 campaign deadline leaves no safe API 35 execution budget.' >&2
+              exit 1
+            fi
+            timeout --signal=INT --kill-after=60s "${remaining}s" \
+              bash ../tools/run_android_api35_campaign.sh
       - name: Save API 35 failure semantics and safety logcat
         if: always() && !cancelled()
         run: |

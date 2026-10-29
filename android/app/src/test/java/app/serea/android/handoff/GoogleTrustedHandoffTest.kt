@@ -13,6 +13,7 @@ import app.serea.android.gmail.FakeGmailProvider
 import app.serea.android.gmail.GmailMessage
 import app.serea.android.gmail.GmailMessageId
 import app.serea.android.gmail.GmailMessageSource
+import app.serea.android.gmail.GmailMimeParser
 import app.serea.android.gmail.GmailProviderSessions
 import app.serea.android.gmail.GmailThreadId
 import kotlinx.coroutines.CompletableDeferred
@@ -23,6 +24,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 class GoogleTrustedHandoffTest {
     private class Source(
@@ -171,6 +174,9 @@ class GoogleTrustedHandoffTest {
                 requireNotNull(message.internalDateMillis).toString(),
                 requireNotNull(message.snippet),
                 requireNotNull(message.htmlTextBody),
+                message.source.name,
+                message.classification.name,
+                message.dataOrigin.name,
             )
             val handoffMetadata = listOf(
                 handoff.id,
@@ -196,6 +202,60 @@ class GoogleTrustedHandoffTest {
                 assertFalse("Chat handoff leaked Gmail metadata: $metadata", chatText.contains(metadata))
             }
             assertEquals(setOf(DataOrigin.GMAIL), handoff.sourceLineage())
+        } finally {
+            session.close()
+        }
+    }
+
+    @Test fun gmailHtmlOnlyParserFallbackHandsOffOnlyInertText() = runBlocking {
+        val html = """
+            <html><body>
+              <p>SAFE_HTML_ONLY 日本語の合成本文</p>
+              <script>script_metadata_marker()</script>
+              <img src="https://outside.invalid/pixel" onerror="remote_metadata_marker()">
+              <p>SAFE_HTML_TAIL</p>
+            </body></html>
+        """.trimIndent()
+        val bytes = html.toByteArray(StandardCharsets.UTF_8)
+        val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+        val rawMessage = """
+            {"id":"html_only_message_001","threadId":"html_only_thread_001","snippet":"api_snippet_metadata_marker",
+             "payload":{"mimeType":"text/html","body":{"size":${bytes.size},"data":"$encoded"}}}
+        """.trimIndent()
+        val message = GmailMimeParser.parseMessage(rawMessage, GmailMessageSource.MOCK)
+        assertEquals(null, message.plainTextBody)
+        val inertBody = requireNotNull(message.htmlTextBody)
+        assertTrue(inertBody.contains("SAFE_HTML_ONLY 日本語の合成本文"))
+        assertTrue(inertBody.contains("SAFE_HTML_TAIL"))
+        assertFalse(inertBody.contains("outside.invalid"))
+        assertFalse(inertBody.contains("script_metadata_marker"))
+        assertFalse(inertBody.contains("remote_metadata_marker"))
+        assertFalse(inertBody.contains("<"))
+
+        val session = GmailProviderSessions(
+            fakeProvider = { FakeGmailProvider(messages = listOf(message), inboxIds = setOf(message.id)) },
+        ).openFake()
+        try {
+            val candidate = checkNotNull(gmailHandoffCandidate(message))
+            assertEquals(inertBody, candidate.selectedContent)
+            val coordinator = GoogleTrustedHandoffCoordinator(session.trustedHandoffSource()) { 100L }
+            val preview = accepted(coordinator.preparePreview(request(candidate)))
+            val handoff = accepted(coordinator.confirmLocalOnly(preview, "conversation-1", 7))
+            val chatText = handoff.localChatText()
+
+            assertTrue(chatText.contains(inertBody))
+            listOf(
+                message.id.value,
+                message.threadId.value,
+                requireNotNull(message.snippet),
+                candidate.sourceRevision,
+                candidate.contentIdentity,
+            ).forEach { metadata ->
+                assertFalse("Chat handoff leaked Gmail HTML-source metadata: $metadata", chatText.contains(metadata))
+            }
+            assertFalse(chatText.contains("outside.invalid"))
+            assertFalse(chatText.contains("script_metadata_marker"))
+            assertFalse(chatText.contains("remote_metadata_marker"))
         } finally {
             session.close()
         }

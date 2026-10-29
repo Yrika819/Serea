@@ -83,21 +83,26 @@ fi
   printf 'installed_apk_sha256=%s\n' "$installed_apk_sha256"
 } > "$evidence/target-apk-provenance.txt"
 
-# Normalize pidof's documented no-match status to a sentinel on-device. The host still sees
-# nonzero for adb transport failures, pidof errors, malformed output, and other query failures.
-pid_query_script='
-pids=$(pidof "$1" 2>/dev/null)
-pidof_status=$?
-case "$pidof_status" in
-  0) [ -n "$pids" ] || exit 2; printf "%s\\n" "$pids" ;;
-  1) [ -z "$pids" ] || exit 2; printf "__SEREA_PID_ABSENT__\\n" ;;
-  *) exit 2 ;;
-esac
-'
-
 query_package_pid() {
-  local target_package="$1" query_result
-  if ! query_result="$("${adb_cmd[@]}" shell sh -c "$pid_query_script" serea-pid-query "$target_package")"; then
+  local target_package="$1" query_result pid_query_script
+  case "$target_package" in
+    "$package"|"$test_package") ;;
+    *) printf 'Refusing an unexpected process package query.\n' >&2; return 1 ;;
+  esac
+  # adb shell reconstructs remote argv. Passing a multiline script to `sh -c`
+  # together with a synthetic $0 caused API 26 to execute `serea-pid-query` as
+  # a command while leaving `-c` without its script. Pipe the script to plain
+  # remote sh instead; only the two fixed package names above are interpolated.
+  # pidof's no-match status is normalized to a sentinel; tool/transport errors
+  # remain nonzero and are treated as inability to prove absence.
+  pid_query_script="pids=\$(pidof '$target_package' 2>/dev/null)
+pidof_status=\$?
+case \"\$pidof_status\" in
+  0) [ -n \"\$pids\" ] || exit 2; printf '%s\\n' \"\$pids\" ;;
+  1) [ -z \"\$pids\" ] || exit 2; printf '__SEREA_PID_ABSENT__\\n' ;;
+  *) exit 2 ;;
+esac"
+  if ! query_result="$(printf '%s\n' "$pid_query_script" | "${adb_cmd[@]}" shell sh)"; then
     printf 'PID query failed for %s.\n' "$target_package" >&2
     return 1
   fi

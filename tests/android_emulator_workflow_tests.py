@@ -1019,7 +1019,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('"${adb_cmd[@]}" install "$target_apk"', harness)
         self.assertIn('installed_apk_sha256" != "$target_apk_sha256"', harness)
         self.assertIn('query_package_pid "$test_package"', harness)
-        self.assertIn('shell sh -c "$pid_query_script"', harness)
+        self.assertIn('"${adb_cmd[@]}" shell sh)', harness)
+        self.assertIn("Refusing an unexpected process package query", harness)
+        self.assertNotIn('shell sh -c "$pid_query_script"', harness)
         self.assertIn('shell am force-stop "$package"', harness)
         self.assertNotIn("pm clear", harness.lower())
         self.assertNotIn("app.serea.android.demo", harness)
@@ -1103,8 +1105,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "    esac\n"
                 "    ;;\n"
                 "  sh)\n"
-                "    [[ \"$1\" == -c ]] || exit 93\n"
-                "    target=\"${@: -1}\"\n"
+                "    [[ $# -eq 0 ]] || exit 93\n"
+                "    query_script=\"$(cat)\"\n"
+                "    printf '%s\\n' \"$query_script\" >> \"$ADB_PID_QUERY_SCRIPTS\"\n"
+                "    if [[ \"$query_script\" == *\"pidof 'app.serea.android.isolated.test'\"* ]]; then target=app.serea.android.isolated.test;\n"
+                "    elif [[ \"$query_script\" == *\"pidof 'app.serea.android.isolated'\"* ]]; then target=app.serea.android.isolated;\n"
+                "    else exit 93; fi\n"
                 "    printf '%s\\n' \"$target\" >> \"$ADB_PID_QUERIES\"\n"
                 "    stopped=\"$(cat \"$ADB_FORCE_STOPPED\")\"\n"
                 "    if [[ \"$target\" == \"${PID_FAIL_PACKAGE:-}\" && ( -z \"${PID_FAIL_AFTER_FORCE_STOP:-}\" || \"$stopped\" == 1 ) ]]; then\n"
@@ -1187,6 +1193,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "ADB_TARGET_APK": str(target_apk),
                     "ADB_TARGET_INSTALLED": str(case_dir / "target-installed"),
                     "ADB_PID_QUERIES": str(case_dir / "pid-queries"),
+                    "ADB_PID_QUERY_SCRIPTS": str(case_dir / "pid-query-scripts"),
                     "ADB_CALLS": str(case_dir / "adb-calls"),
                     "ADB_FORCE_STOP_COUNT": str(case_dir / "force-stop-count"),
                     "ADB_FORCE_STOPPED": str(case_dir / "force-stopped"),

@@ -803,3 +803,23 @@ G9 Android remains **PARTIAL** until API26 and API35 Required/UI, helper proof, 
 - Windows Host timeout root cause: **UNKNOWN/PENDING**; #181's Stable Windows x86_64 diagnostic job remains queued with no logs/artifact. Console-control race is only a hypothesis.
 - Product Chat Native: **NOT_RUN**, disconnected, Default OFF. PR #185 consent wording is independently accepted but docs-only. Model Selection remains **UNDECIDED**.
 - G10 Preflight **PARTIAL**; Personal Beta **NO-GO**.
+
+## Updated Native x86_64 exact-run evidence — PR #179 / PR #178 source
+
+PR #179 focused run `40967241879` is terminal overall **FAILURE** because ARM guest job `123774725655` fails its pinned Emulator package guard before AVD creation. Separate x86 product job `123774726124` is **SUCCESS**, including `Run exact product adapter and real x86_64 inference case` (step 16). This is a new exact-source x86 runtime result at PR #178 source `a7f5b407d400b611df2c5f9260eede9b62f41b59`, tree `9bb6f18000d841fc436b3caa6b20c92a329ed5ae`; it does not claim ARM64.
+
+Direct artifact retrieval via the GitHub Actions artifact API succeeded; ZIP byte counts and SHA-256 match Actions artifact metadata:
+
+- Native runtime artifact `12938203599`: 3,134 bytes, SHA-256 `575646ac41bb0a03b0871488cb643144852da4a9b16cf910b493eff889399eab`.
+- Native build/JVM artifact `12939132026`: 6,321 bytes, SHA-256 `c09c28a845e1180d9de94117ab1c5ce750fba5d122b8fe166b8102306219599b`.
+
+The sanitized runtime JUnit is 2/2 PASS, zero failures/errors/skips:
+
+- `app.serea.android.SereaNativeRunnerNoOpTest#androidJUnit4RunnerInstantiatesAndTargetsIsolatedApp`
+- `app.serea.android.LocalModelNativeRuntimeE2ETest#pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend`
+
+Model identity: `ggml-org/SmolLM2-135M-GGUF`, revision `1076b85d135017971845b19b8d07df1479155988`, 101,016,128 bytes, SHA-256 `e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5`; llama.cpp `276378515ceebee5d14bcc8536603dd5c87491a2`. Runtime used API35 x86_64 KVM emulator. The instrumentation asserts two sequential generations through LOCAL_MODEL Egress → UsageControlledModelChatPort → LocalModelChatAdapter → JNI; each reservation settles, local-device attribution is applied, token usage exists, and cost status is UNKNOWN. It also asserts hash-verified app-private staging, C++ failure/load cleanup, idempotent double close, fresh backend regeneration, matching cancellation identity/sequence, post-dispatch cancellation OUTCOME_UNKNOWN, and release.
+
+Observed PSS metrics (not a cap): load 105,031→216,743 KiB; inference samples 216,747→214,283 and 214,835→212,897 KiB; main release 102,997 KiB; cancellation-to-release 33 ms; cancelled release 104,897 KiB. Model/temp files and installed isolated packages are verified absent after cleanup; artifact states model weights uploaded=false. Model load time, TTFT, decode tokens/s, and output text are not recorded in this artifact and remain NOT_REPORTED. Target APK SHA-256 `1640e51bee45d10e748dce07528b471357894d6f87d536f400a0531f2a461b71`; instrumentation APK SHA-256 `166fffcc3cad36b273cc7e45fe38dfb12d716ac6db2ea77a824ed26444cb06ab`; signer identity NOT_REPORTED.
+
+For the same run, ARM job `123774725655` failed before AVD boot because the old workflow expected emulator `37.3.6` while SDK channel 0 resolved stable `37.2.13.0` / build `16740729`; the SDK library preflight had zero unresolved libraries. Guest image verification did not pass, so ARM64 build/run step was SKIPPED and boot/ABI/JNI/model/inference remain **NOT_RUN**. Startup artifact `12939225225` is 337 bytes, SHA-256 `16ac75a9cd396bdae0a4a60d7bd824160fbe18ee7cf36a389182c59888a50e83`, containing only sanitized NOT_AVAILABLE flags. The accepted PR #182 verifier/pin is intended to correct the package mismatch, but its focused run `40967790559` remains QUEUED with ARM job `123776591261` and x86 job `123776591543`.

@@ -7,11 +7,11 @@ AGENT_ID: A — Google OAuth Product UI / Trusted Calendar Integration
 ACTIVE_PHASE: G8-A / Fake Calendar consent and read-only session integration
 GOAL_STATUS: PARTIAL — implementation, source/manifest identity accounting, and integration tests authored; runtime execution blocked by missing JDK compiler; parent composition wiring pending
 BASE_SHA: 00384eb6468214362435140c9a2d848fa2e0f12e
-CURRENT_HEAD: 00384eb6468214362435140c9a2d848fa2e0f12e (uncommitted changes are in the named worktree)
-TREE_SHA: base tree 10d07a8ec57d7f67fc94663c489347938cccbd58; changed-tree SHA will be recorded after source commit
+CURRENT_HEAD: 93691c28c6776d935928f233144d1a193dff94b1 (source implementation commit; report metadata follow-up may advance branch HEAD)
+TREE_SHA: ec3b4db0fdbacea3b32c319c67311d64971eec9f (source implementation tree)
 WORKTREE: /workspace/Serea-g8-oauth-ui-mock
 BRANCH: codex/serea-g8-oauth-ui-mock
-DRAFT_PR: none yet — waiting for parent diff review before commit/push
+DRAFT_PR: pending push and creation against codex/serea-g8-integration-candidate; GitHub authentication is available
 ```
 
 ## Completed work
@@ -92,8 +92,8 @@ SECURITY_IMPACT: Fake-only product composition; test-only synthetic token and lo
 KNOWN_ISSUES: Parent composition callback not wired yet. New tests cannot run in the current environment because Java compiler is missing.
 CURRENT_BLOCKERS: JDK compiler/CI runtime required for execution evidence.
 DEPENDENCIES: Parent integration in `SereaAppShell`/`MainActivity`, then focused JVM + Android UI verification at the integration SHA.
-INTEGRATION_READY: PENDING parent review and composition patch.
+INTEGRATION_READY: READY_FOR_PARENT_REVIEW; parent composition wiring is a separate integration patch.
 REVIEW_REQUEST: Review `CalendarDemoSessionFactory`, account reconnect confirmation lifecycle, new JVM/Compose loopback tests, and the route invalidation integration note.
-NEXT_ACTION: Commit with approved noreply identity, push isolated branch, open Draft PR if GitHub authorization permits, and record exact PR/CI state; parent composition wiring and runtime test evidence remain follow-up dependencies.
+NEXT_ACTION: Push the committed branch, open a Draft PR against `codex/serea-g8-integration-candidate`, record PR and final branch object IDs, and hand over for independent parent review; composition wiring and runtime test evidence remain follow-up dependencies.
 OWNER_APPROVAL_REQUIRED: None for Fake/loopback work. Real OAuth/account/data, Pixel 7a, production signing/distribution, main merge, and Personal Beta GO remain owner-controlled.
 ```

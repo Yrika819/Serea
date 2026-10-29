@@ -14,6 +14,7 @@ on:
       - android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt
       - android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt
       - android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt
+      - docs/agent-reports/g8n-native-bonsai-evaluation.md
       - tools/g8-local-model-native/**
 
 permissions:

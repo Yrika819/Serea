@@ -69,3 +69,10 @@ On that exact candidate source, JDK17 `./gradlew :app:testDebugUnitTest :app:com
 Exact-head PR #162 checks started at run IDs: Android `40887554119` (Change Scope job `123495223453` QUEUED), Fast `40887553700`, Full `40887553860`, Native platform `40887553695`, SQLite `40887553607`, RustSec `40887553982`, Git Hooks `40887554005`; these were QUEUED at the latest query. They are bound to `6a37e09…` and are not yet Required/UI evidence.
 
 PR #160 focused Native run `40884851425`, attempt 1/job `123485695046`, has advanced from QUEUED and started at `2026-10-29T14:01:15Z`. Exact source remains `025aff71effb03e0fe3bd540079530369e9beaf7`; at last query it was installing pinned Android build/Emulator packages. The inference step has not run yet; no result or artifact is claimed.
+
+## Final resume head checkpoint
+
+- Latest PR #162 source after the Ledger-only checkpoint: `df3dc8233897c29e6945377d4d8681b808aeea55`, tree `07e5e3a39d29370f7f44dad6fe6b32fb2ac35578`; PR remains OPEN/DRAFT. The local 408/408 + compile evidence above is bound to predecessor `6a37e09…` and is not relabeled as a test of `df3dc82…`.
+- Exact `df3dc82…` PR workflows: Android `40887650949` PENDING/no jobs; Fast `40887651018` PENDING; RustSec `40887650761` PENDING; Full `40887650975`, Native platform `40887651037`, SQLite `40887650946`, Git Hooks `40887650864` QUEUED. No exact-head product artifact was present at this checkpoint.
+- PR #160 exact Native run `40884851425`, attempt 1, source `025aff71effb03e0fe3bd540079530369e9beaf7`, job `123485695046`: setup, Android package install, clean-source guard, and source identity/focused JVM-contract stage completed; current step is the two-ABI JNI APK build. Model license/fixture verification, KVM/Emulator, inference, Usage/Egress, cancellation runtime, artifact upload and cleanup are not yet completed. No JUnit/artifact is available. No retry was issued.
+- Stop/restart boundary: continue polling these exact runs on next resume; do not apply old artifacts to new sources. Keep G8/G9 PARTIAL, Native inference NOT_VERIFIED, G10 PARTIAL, and Personal Beta NO-GO until the named gates have executed.

@@ -6,6 +6,7 @@ import okhttp3.Dns
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
+import java.net.InetAddress
 import java.net.UnknownHostException
 
 /** Trust anchor lives in the instrumentation APK/test process and is never shipped with Serea. */
@@ -31,9 +32,13 @@ internal object CalendarMockWebServerTls {
             .followRedirects(false)
             .followSslRedirects(false)
             .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
-            .dns(Dns { hostname ->
-                if (hostname != "localhost") throw UnknownHostException("Calendar fixture DNS refuses $hostname")
-                Dns.SYSTEM.lookup(hostname)
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    if (hostname != "localhost") {
+                        throw UnknownHostException("Calendar fixture DNS refuses $hostname")
+                    }
+                    return Dns.SYSTEM.lookup(hostname)
+                }
             })
             .addInterceptor(Interceptor { chain ->
                 val request = chain.request()

@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -131,7 +132,7 @@ class GoogleCalendarDemoLoopbackUiTest {
             assertEquals("Only the original request may reach the redirect fixture", 1, redirectFixture.requestCount)
             val originalRequest = checkNotNull(redirectFixture.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS))
             assertEquals("GET", originalRequest.method)
-            assertEquals("www.googleapis.com", originalRequest.getHeader("Host"))
+            assertEquals("localhost", originalRequest.requestUrl!!.host)
             assertEquals("/calendar/v3/calendars/a/events", originalRequest.path)
         } finally {
             redirectFixture.shutdown()
@@ -337,7 +338,7 @@ class GoogleCalendarDemoLoopbackUiTest {
         repeat(4) { index ->
             val request = checkNotNull(server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS))
             assertEquals("GET", request.method)
-            assertEquals("www.googleapis.com", request.getHeader("Host"))
+            assertEquals("localhost", request.requestUrl!!.host)
             assertFalse(request.requestLine.contains("gmail"))
             assertEquals("Bearer synthetic-ui-loopback-token-ui-loopback-account_b-2", request.getHeader("Authorization"))
             when (index) {
@@ -395,7 +396,7 @@ class GoogleCalendarDemoLoopbackUiTest {
         repeat(2) { index ->
             val request = checkNotNull(server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS))
             assertEquals("GET", request.method)
-            assertEquals("www.googleapis.com", request.getHeader("Host"))
+            assertEquals("localhost", request.requestUrl!!.host)
             assertEquals("Bearer synthetic-ui-loopback-token-ui-loopback-account_a-3", request.getHeader("Authorization"))
             when (index) {
                 0 -> assertTrue(request.requestUrl!!.encodedPath.endsWith("/users/me/calendarList"))

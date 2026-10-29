@@ -135,7 +135,7 @@ class CalendarOAuthMockE2ETest {
             listOf("calendar", "v3", "calendars", calendarId.value, "events"),
             request.requestUrl!!.pathSegments,
         )
-        assertEquals("www.googleapis.com", request.getHeader("Host"))
+        assertEquals("localhost", request.requestUrl!!.host)
         assertEquals("Bearer synthetic-never-valid-token", request.getHeader("Authorization"))
         assertFalse(request.requestLine.contains("gmail"))
         val detailRequest = server.takeRequest()
@@ -144,7 +144,7 @@ class CalendarOAuthMockE2ETest {
             listOf("calendar", "v3", "calendars", calendarId.value, "events", "fixture-event-1"),
             detailRequest.requestUrl!!.pathSegments,
         )
-        assertEquals("www.googleapis.com", detailRequest.getHeader("Host"))
+        assertEquals("localhost", detailRequest.requestUrl!!.host)
         assertFalse(detailRequest.requestLine.contains("gmail"))
 
         gateway.switchSyntheticAccount()

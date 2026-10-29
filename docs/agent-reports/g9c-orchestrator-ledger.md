@@ -200,6 +200,36 @@ PR #162 remains bound to its own exact-source artifacts: API26 and API35 each pa
 
 Next resume: monitor only existing run attempts above; once terminal, retrieve and hash artifacts, inspect API-specific JUnit and Native sanitized evidence, classify failures, and review the exact tested HEAD before any further integration. Do not retry queued jobs without a source-backed infrastructure diagnosis.
 
+## V4 continuation checkpoint — 2026-10-29 16:57 UTC
+
+### New candidate heads and review state
+
+| PR | Exact source / tree | Base / review | Current CI state |
+|---|---|---|---|
+| #170 Identity validator | `fc9b355fb247bc6cd1eb35cd313379f6ed01a60f` / `01d27c481655c7b13c3ebda27190805b8aae22c3` | Based on #169 exact `87af6aab9c9db8f65e18ca18456256e03797ffb3`; Agent A ACCEPTED the strict set/membership validator; local focused Python tests 13/13 pass | Fast `40914655659` and RustSec `40914655648` PASS. Android `40914655856` remains pending/queued after Integration and Dependency Audit pass; no exact-head Android Unit result yet. |
+| #171 ARM64 host dependency | `8d4d3cdb44f44d31dc06299579f53427886c35c8` / `c88db8907fa7774bf1027a326bf9ddf7f6a09a36` | Based on G7. Agent C ACCEPTED static review of `libpulse0` install plus QEMU `ldd`/package-owned-library preflight; no alias/symlink workaround | Focused run `40915105551`: x86_64 and ARM64-guest jobs `123593126707` / `123593126899` still QUEUED, no steps or artifacts; ARM64 runtime NOT_RUN. |
+| #172 package recovery / timeout-test follow-up | `28f52c2999795ab6d1c83aa456d5186205c8307a` / `e2c735be01ef14e22cd4736a04798c21a1d413f1` | Based on #168. Agent A CHANGES_REQUESTED for absent-package reinstall provenance and fail-closed hash/SHA command regression coverage | No conclusion to carry forward to a later head. |
+| #173 package recovery review fix | `540fd754e81c3788a76cc9452f754211e95d8378` / `f52c4104297edae8d84db72680de34136752f4a6` | Draft, stacked on #172 (which is based on #168). Agent C's review of its prior head requested a regression for `adb install` failure; B added it as a normal commit, with no history rewrite. Independent review of this new exact head is pending. | Exact-head PR runs: Android `40916731468` PENDING; Fast `40916731448`, Git Hooks `40916731516`, Native `40916731604`, Full `40916731515`, RustSec `40916731566`, and SQLite `40916731473` QUEUED. Local focused package-state test PASS, `android_emulator_workflow_tests.py` 34/34 PASS, `bash -n` and `git diff --check` PASS; no hosted emulator evidence. Push-triggered run `40916718371` failed without applicable product jobs; not test evidence. |
+
+### Refreshed run evidence and unresolved blockers
+
+- PR #168 Android run `40902585691`, exact source `272f68ecf7f8072b812b13e46064a108bab5ef2b`, remains IN_PROGRESS. API26 Required 105/105 and Google/Gmail UI 16/16 passed on its exact artifact, but the separate Fake Google process-death package-path harness failed after uninstalling the disposable target. Android Unit remains 1/408 failure at `GoogleCalendarHttpReadPortTest#timeoutMapsToTimeout` (expected TIMEOUT, observed PERMISSION_DENIED). The API35 campaign job `123577163290` is still IN_PROGRESS at API35 instrumentation; its artifact/result is NOT_RUN until the job terminates. PR #168 cannot be accepted yet.
+- PR #169 Android run `40907496673`, exact source `87af6aab9c9db8f65e18ca18456256e03797ffb3`, API26 Required ran 105 tests with four `ChatHttpE2ETest` failures: `MockWebServer.start` hit `SocketException: EACCES`; this is a test/runtime permission issue, not a failure of the other 101 tests. API35 job `123582802971` is IN_PROGRESS; no result yet. The Native isolation permission boundary remains offline and must not be weakened.
+- PR #169 Native run `40907496496`: x86_64 job `123566146405` is SUCCESS at the exact #169 source, including verified fixture and two-turn API35 x86_64 inference through local Egress/Usage, cancellation/release and cleanup. ARM64 guest `123566148073` failed before boot at QEMU startup due to missing `libpulse.so.0`; it did not run Native inference. This is host dependency failure, not ARM64 model incompatibility. Separate fix #171 is queued and has no new runtime evidence.
+- Agent C is implementing a restricted `isolatedHttp` build/test variant in worktree `/workspace/serea-api26-http-split`, currently on base #169 source with uncommitted edits to `android/app/build.gradle.kts` and two variant manifests. No committed head, build, tests, PR, or review exists yet. Required follow-up: prove the 4 loopback HTTP test identities run only in the network-enabled isolated test variant, the other 101 Required identities remain in the offline isolated Native-compatible variant, and the unchanged strict manifest still aggregates exactly 105 unique Required results per API. Agent A is assigned independent review after a concrete committed source exists.
+- Model evidence remains exact-source only: Native x86_64 inference PASS is limited to #169 source and the previously recorded #160/#169 sources; ARM64 Runtime NOT_RUN; physical ARM64/Pixel 7a NOT_RUN. Standard model undecided and ordinary Chat remains disconnected/default-off.
+
+### Current dispositions
+
+- G8 Evidence Closure: PARTIAL.
+- Android/G9 UI acceptance: PARTIAL; #168 API26 UI JUnit passed, but harness/package state and unit timeout test remain unresolved; API35 is in progress.
+- Required on #162: 105/105 passed on each API on #162 only. #169 API26 has 4 failures; #168 new-head API35 is still in progress. Do not transfer older results.
+- Native x86_64: SUCCESS only on exact #169 source. ARM64 Native Runtime: NOT_RUN.
+- G9 Integration Candidate / G10 Preflight: PARTIAL. No new integrated frozen HEAD or final formal CI yet.
+- Personal Beta: NO-GO. Owner decisions O-01..O-10 and all security/consent boundaries remain unchanged.
+
+Next resume: obtain the final independent review of #173 head `540fd754…`; inspect exact #168/#169 API35 artifacts after their active jobs terminate; finish and review the isolated HTTP test split before opening/accepting its PR; then select only ACCEPTED changes into a new integration candidate and run formal CI on that exact frozen head. Do not treat queued jobs, skipped jobs, software-emulated ARM64, or old-source evidence as success for a new head.
+
 ## PR #169 review and runner update — 2026-10-29 16:03 UTC
 
 Agent C completed the full exact-HEAD review: **ACCEPTED** at `87af6aab9c9db8f65e18ca18456256e03797ffb3` / tree `0fceca72877574acdd3cdbfa67b363dcabfb4dda`. Review confirms the diff from #166 is only Kotlin capability-bound validation, a boundary test, and report text; limits align with existing JNI checks, no silent clamp or lifecycle/security change; Native artifact allowlist stays sanitized; ordinary Chat remains disconnected.

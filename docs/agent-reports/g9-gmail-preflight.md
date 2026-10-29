@@ -2,13 +2,17 @@
 
 **AGENT_ID:** C — G9 Fake Gmail UI security preflight
 **ACTIVE_PHASE:** G9 preflight
-**GOAL_STATUS:** PARTIAL — the focused instrumentation test is authored, but this environment cannot compile Android tests because its Java 21 install lacks a Java compiler.
+**GOAL_STATUS:** PARTIAL — the focused instrumentation source compiles on the exact G9 source head, but JUnit/UI execution remains NOT_RUN.
 **BASE_SHA:** `3b20faac13907146858f7aa8ce5c2832f47175c4`
 **BASE_TREE_SHA:** `8398b17aeaf4c4e3dd699b75ca9d26394de9808b`
 **WORKTREE:** `/workspace/Serea-g9-gmail-preflight`
 **BRANCH:** `codex/serea-g9-gmail-preflight`
 **DRAFT_PR:** [#143](https://github.com/Yrika819/Serea/pull/143), OPEN / DRAFT, based on `codex/serea-g8-integration-candidate-20261029`.
-**JUNIT_RESULT:** NOT_RUN locally; Gradle stopped before Java test compilation.
+**VERIFIED_COMPILE_HEAD:** `6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a`
+**VERIFIED_COMPILE_TREE_SHA:** `923aeaf2868ce886b433fcf8e1094722f746f398`
+**COMPILE_RESULT:** Parent-run `:app:compileIsolatedAndroidTestKotlin` PASS, BUILD SUCCESSFUL, 26 tasks, on the exact source HEAD/tree above.
+**JUNIT_RESULT:** NOT_RUN — compile success is not test execution; zero JUnit records were produced by this compile.
+**ANDROID_UI_RESULT:** NOT_RUN — no emulator test was executed.
 **OWNER_APPROVAL_REQUIRED:** None for this synthetic loopback test. Real Gmail, OAuth, Google data, Cloud AI, production signing, Pixel 7a and main merge remain Owner-controlled and were not used.
 
 ## Scope and design
@@ -58,24 +62,43 @@ BUILD FAILED
 
 `javac` is absent from the Java 21 installation and `adb devices -l` lists no emulator. The test was therefore **NOT_RUN**, with zero JUnit records. This is an environment limitation, not a test failure or pass. No system packages were installed and no emulator was launched.
 
+### Parent-run instrumentation source compilation
+
+The parent later compiled the instrumentation source on the exact G9 branch head `6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a`, tree `923aeaf2868ce886b433fcf8e1094722f746f398`, using checksum-verified Temurin 17 with the managed proxy and truststore:
+
+```text
+cd /workspace/Serea-g9-gmail-preflight/android
+JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH ./gradlew --no-daemon --console=plain \
+  -Dhttp.proxyHost=proxy -Dhttp.proxyPort=8080 \
+  -Dhttps.proxyHost=proxy -Dhttps.proxyPort=8080 \
+  -Djavax.net.ssl.trustStore=/workspace/.tools/temurin17/codex-cacerts \
+  -Djavax.net.ssl.trustStorePassword=changeit \
+  :app:compileIsolatedAndroidTestKotlin
+```
+
+Result: **PASS**, BUILD SUCCESSFUL, 26 tasks. This verifies Android instrumentation source compilation only. It did not run `connectedIsolatedAndroidTest`, launch an emulator, execute `GmailHtmlInertUiSecurityTest`, or produce JUnit results. JUnit and UI execution therefore remain **NOT_RUN**, with zero tests executed.
+
 ### Exact-SHA CI
 
-At initial PR head `b07f91612b28a1f9338f04dd081ef3a94180c84f`, GitHub queued Android `40790767803`, SQLite `40790767806`, RustSec `40790767711`, Full `40790767733`, Fast `40790767660`, Native `40790767676`, and Git Hooks `40790767715`. All were still QUEUED with no jobs started at the last check; there is no JUnit or artifact result yet. A report-metadata commit will produce a new HEAD, so these initial-head runs must not be carried forward as evidence for it. The formal Android Required workflow filters this test through the explicit non-required identity file, so a Required PASS would validate source compilation and manifest accounting but would not prove the focused UI test ran. Do not report the test as PASS without a focused JUnit result on the current HEAD.
+At the PR head before this report update (`6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a`, tree `923aeaf2868ce886b433fcf8e1094722f746f398`), GitHub queued Android `40790972547`, Full `40790972589`, SQLite `40790972540`, Fast `40790972554`, Native `40790972615`, RustSec `40790972663`, and Git Hooks `40790972567`. There is no JUnit result or artifact for these runs. The parent-run compile PASS above is local compile evidence, not a CI result. The earlier initial-head runs on `b07f91612b28a1f9338f04dd081ef3a94180c84f` are historical only. The formal Android Required workflow filters this test through the explicit non-required identity file, so a Required PASS would not prove the focused UI test ran. Do not report this test as PASS without a focused JUnit result.
 
 ## Checkpoint contract
 
-**CURRENT_HEAD:** `3b20faac13907146858f7aa8ce5c2832f47175c4` before G9 test/report changes
-**TREE_SHA:** `8398b17aeaf4c4e3dd699b75ca9d26394de9808b` before G9 test/report changes
+**VERIFIED_SOURCE_HEAD:** `6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a` (exact parent-run instrumentation compile source; this checkpoint update adds documentation only)
+**VERIFIED_SOURCE_TREE_SHA:** `923aeaf2868ce886b433fcf8e1094722f746f398`
+**CURRENT_REPORT_BRANCH_HEAD_BEFORE_THIS_UPDATE:** `6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a`
+**TREE_SHA_BEFORE_THIS_UPDATE:** `923aeaf2868ce886b433fcf8e1094722f746f398`
 **CHANGED_FILES:** `android/app/src/androidTest/java/app/serea/android/GmailHtmlInertUiSecurityTest.kt`; `android/app/src/androidTest/assets/serea-non-required-test-identities.txt`; `docs/agent-reports/g9-gmail-preflight.md`
-**TEST_COMMANDS:** Focused command above — blocked before compilation by missing Java compiler; `git diff --check` PASS; source/manifest identity comparison PASS.
-**JUNIT_RESULT:** NOT_RUN, 0 tests executed.
-**CI_RUN_IDS:** Initial PR head `b07f91612b28a1f9338f04dd081ef3a94180c84f`: Android `40790767803`, SQLite `40790767806`, RustSec `40790767711`, Full `40790767733`, Fast `40790767660`, Native `40790767676`, Git Hooks `40790767715` — all QUEUED with no job started at last check. These runs are not evidence for any later report-metadata commit.
+**TEST_COMMANDS:** Focused connected UI command above — execution NOT_RUN because no emulator is attached; parent-run `:app:compileIsolatedAndroidTestKotlin` with Temurin 17/proxy/truststore PASS, BUILD SUCCESSFUL (26 tasks) on `6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a` / tree `923aeaf2868ce886b433fcf8e1094722f746f398`; `git diff --check` PASS; source/manifest identity comparison PASS.
+**JUNIT_RESULT:** NOT_RUN, 0 tests executed. Compile success is not a JUnit result.
+**ANDROID_UI_RESULT:** NOT_RUN; no emulator test was run.
+**CI_RUN_IDS:** Pre-report PR head `6afd718e8e2e3882f7f07ebc3e8d3b97ed67032a`: Android `40790972547`, Full `40790972589`, SQLite `40790972540`, Fast `40790972554`, Native `40790972615`, RustSec `40790972663`, Git Hooks `40790972567` — queued at last check, no JUnit/artifact evidence. These IDs do not prove focused UI execution.
 **ARTIFACT_IDS:** None.
 **SECURITY_IMPACT:** Test and classification only; no production code, OAuth, HTTP provider or Cloud route changed. Mock HTTP is loopback-only.
-**KNOWN_ISSUES:** Focused UI assertion has no execution evidence until a JDK-backed emulator CI run or equivalent test environment executes the exact class on the resulting HEAD.
-**CURRENT_BLOCKERS:** No `javac` and no local Android emulator; initial PR-head GitHub workflows were queued and had not started at last check.
+**KNOWN_ISSUES:** The focused UI assertion has no execution evidence; exact-source compilation is confirmed, but a JDK-backed emulator run must execute the exact class for JUnit/UI evidence.
+**CURRENT_BLOCKERS:** No local Android emulator; exact-head focused JUnit/UI execution is still pending.
 **DEPENDENCIES:** Parent G8 integration candidate `3b20faac13907146858f7aa8ce5c2832f47175c4`; exact-SHA GitHub CI.
 **INTEGRATION_READY:** PARTIAL pending independent source review and a focused JUnit result.
 **REVIEW_REQUEST:** Inspect the loopback-only adversarial HTML, Fake provider path, parser/text boundary, and Required/non-required manifest accounting.
-**NEXT_ACTION:** Parent review; inspect newly triggered exact-SHA CI after the report update. The focused UI JUnit remains NOT_RUN unless that exact class has a focused JUnit result.
+**NEXT_ACTION:** Parent review; inspect exact-SHA CI after the report update. Keep focused UI JUnit as NOT_RUN unless that exact class has a focused JUnit result.
 **OWNER_APPROVAL_REQUIRED:** None for mock work; real service/device/release decisions remain pending separately.

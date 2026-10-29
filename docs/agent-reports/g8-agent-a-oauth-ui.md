@@ -5,10 +5,10 @@ Checkpoint: 2026-10-29 UTC
 ```text
 AGENT_ID: A — Google OAuth Product UI / Trusted Calendar Integration
 ACTIVE_PHASE: G8-A / Fake Calendar consent and read-only session integration
-GOAL_STATUS: PARTIAL — implementation, source/manifest identity accounting, and integration tests authored; runtime execution blocked by missing JDK compiler; parent composition wiring pending
+GOAL_STATUS: PARTIAL — focused JVM tests pass and Android UI test sources compile; device UI execution and parent composition wiring remain pending
 BASE_SHA: 00384eb6468214362435140c9a2d848fa2e0f12e
-CURRENT_HEAD: 93691c28c6776d935928f233144d1a193dff94b1 (source implementation commit; latest PR branch also has report-only metadata commit 3321635023b5f6450272bae2d7f6bbdd285ad30e)
-TREE_SHA: ec3b4db0fdbacea3b32c319c67311d64971eec9f (source implementation tree; PR branch tree additionally contains the report-only metadata update)
+CURRENT_HEAD: 87310554d3c7ec635fb0745d62c620aeeae172a6 (source/test HEAD for the passing focused JVM run; PR branch may later advance for report-only metadata)
+TREE_SHA: 65a897794d035c94b994b3d53f683f7e5c166682 (source/test tree for the passing focused JVM run)
 WORKTREE: /workspace/Serea-g8-oauth-ui-mock
 BRANCH: codex/serea-g8-oauth-ui-mock
 DRAFT_PR: https://github.com/Yrika819/Serea/pull/145 (Draft; base `codex/serea-g7-calendar-readiness`, whose head is the declared BASE_SHA)
@@ -33,6 +33,7 @@ DRAFT_PR: https://github.com/Yrika819/Serea/pull/145 (Draft; base `codex/serea-g
 - Added a test-only loopback factory and Compose harness for the UI → preview/confirm → session → `CalendarAgendaScreen` list/detail path. The harness uses synthetic gateways and `MockWebServer.server.url("/calendar/v3/")`. Account B's hostile description includes a same-server `server.url("/exfil")` and literal `<script>` text; the UI assertion requires plain non-clickable Compose text and exactly four expected localhost Calendar `GET`s, making an accidental resource fetch observable. After switching, Account A receives generation 3 and a distinct session ID, reads an Account A-only agenda marker, and does not see Account B's marker. The total allowlist is six localhost Calendar `GET`s across both accounts. Cancel/deny create no session and make no requests; switching and revoke invalidate the old session.
 - Extended the JVM Calendar mock E2E to fetch both an event list and an event detail, then verify account switch prevents another dispatch.
 - Added ViewModelStore tests for configuration-store retention, `onCleared()` teardown, and a fresh-store relaunch with no retained grant or session. This is a ViewModel lifecycle contract test, not a physical Android process-death test.
+- Fixed the delayed-revocation JVM test by running the expected failed request inside `supervisorScope`, starting its child undispatched, and waiting for MockWebServer to parse the request before revocation. `await()` now captures the expected `CalendarReadFailure` without cancelling the `runTest` parent; production authorization/session behavior is unchanged.
 
 ## Changed files
 
@@ -55,12 +56,16 @@ Commands attempted:
 - `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest --tests app.serea.android.googleauth.GoogleAuthorizationLifecycleTest --tests app.serea.android.calendar.CalendarOAuthMockE2ETest` — could not resolve an Android Gradle plugin dependency because the Java process did not use the managed HTTP proxy.
 - `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew --no-daemon -Dhttp.proxyHost=proxy -Dhttp.proxyPort=8080 -Dhttps.proxyHost=proxy -Dhttps.proxyPort=8080 :app:testDebugUnitTest --tests app.serea.android.googleauth.GoogleAuthorizationLifecycleTest --tests app.serea.android.calendar.CalendarOAuthMockE2ETest` — dependency resolution progressed, then Gradle stopped before compilation because `/usr/lib/jvm/java-21-openjdk-amd64` is a JRE without `javac`; error: `Toolchain installation ... does not provide the required capabilities: [JAVA_COMPILER]`.
 - `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew --no-daemon -Dhttp.proxyHost=proxy -Dhttp.proxyPort=8080 -Dhttps.proxyHost=proxy -Dhttps.proxyPort=8080 :app:compileDebugKotlin` — Android resources and KSP ran, then `:app:compileDebugKotlin` stopped while configuring its associated Java compile target for the same missing `javac` capability. No Kotlin source compile or JUnit execution is claimed.
+- `JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH ./gradlew --no-daemon --console=plain -Dhttp.proxyHost=proxy -Dhttp.proxyPort=8080 -Dhttps.proxyHost=proxy -Dhttps.proxyPort=8080 -Djavax.net.ssl.trustStore=/workspace/.tools/temurin17/codex-cacerts -Djavax.net.ssl.trustStorePassword=changeit :app:testDebugUnitTest --tests app.serea.android.googleauth.GoogleAuthorizationLifecycleTest --tests app.serea.android.calendar.CalendarOAuthMockE2ETest --tests app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest` (run from `android/`) — PASS. `GoogleAuthorizationLifecycleTest`: 9/9; `CalendarOAuthMockE2ETest`: 1/1; `GoogleCalendarDemoLoopbackIntegrationTest`: 3/3; total 13 tests, 0 failures, 0 errors, 0 skipped.
+- `JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH ./gradlew --no-daemon --console=plain -Dhttp.proxyHost=proxy -Dhttp.proxyPort=8080 -Dhttps.proxyHost=proxy -Dhttps.proxyPort=8080 -Djavax.net.ssl.trustStore=/workspace/.tools/temurin17/codex-cacerts -Djavax.net.ssl.trustStorePassword=changeit --rerun-tasks :app:compileIsolatedAndroidTestKotlin` (run from `android/`) — PASS. The isolated Android instrumentation Kotlin sources compiled; no UI/device test execution was performed. Reported Kotlin warnings were in existing unrelated files; the new loopback UI test compiled without an error.
+- JUnit XML SHA-256: `GoogleAuthorizationLifecycleTest` `582cf4a2c8b5a8a650d3881f0786a13ac69566dfd2f7d38c7dfc9728d72c97c0`; `CalendarOAuthMockE2ETest` `e00a633c0daec392f8369abc57db0784f8e2cc26014a96bd6e82d8f0938f9e26`; `GoogleCalendarDemoLoopbackIntegrationTest` `a699fe37355f25c4d0759dcf6e3a5d78aa8852d347a8fbbd2e80100134833644`.
 - Static source-to-manifest accounting using `verify_android_instrumentation.collect_source_test_identities` and `read_test_manifest`: `Original Required Set=103`, `Additional Tests=2`, `explicit non-required=17`, `source_total=122`, `formal overlap=0`, `unclassified=0`, `missing_from_source=0`. This validates identity accounting only; it does not execute instrumentation tests or alter either formal manifest.
 - `git diff --check` — PASS.
 
-JUNIT_RESULT: NOT_RUN — no JUnit totals are available for this worktree.
-ANDROID_UI_RESULT: NOT_RUN — the new Compose loopback test is authored but not executed.
-CI_RUN_IDS: none for this worktree; parent is running focused JVM verification against source commit `93691c2`.
+JUNIT_RESULT: PASS — focused JVM suite 13/13, 0 failures, 0 errors, 0 skipped on source/test HEAD `87310554d3c7ec635fb0745d62c620aeeae172a6`, tree `65a897794d035c94b994b3d53f683f7e5c166682`.
+ANDROID_UI_COMPILE: PASS — `compileIsolatedAndroidTestKotlin --rerun-tasks` on source/test HEAD `87310554d3c7ec635fb0745d62c620aeeae172a6`; compile-only evidence.
+ANDROID_UI_RESULT: NOT_RUN — no emulator or physical-device Compose execution is claimed.
+CI_RUN_IDS: awaiting PR #145 workflow checks on the new source/test HEAD; earlier queued runs were for the previous PR head and do not transfer.
 ARTIFACT_IDS: none.
 
 ## Coverage map (does not claim full A4 completion)
@@ -73,14 +78,12 @@ Existing exact-G7-source coverage inherited from base `00384eb` (the G7 runs do 
 - Existing G7 one-event synthetic loopback E2E: `CalendarOAuthMockE2ETest.syntheticConsentAllowsOnlyCalendarReadAndAccountSwitchStopsFurtherDispatch`. It had one list GET in the G7 base; this branch adds detail GET coverage, which has not run.
 - Existing Settings UI walked consent cancel/deny/confirm, account switch, expiry/shared revoke, and app-local disconnect/reconnect in `GoogleAuthorizationDemoUiTest`. This branch updates its reconnect expectation to include a new confirmation preview.
 
-New coverage authored in this worktree, all NOT_RUN:
+New coverage authored in this worktree; runtime status is listed per suite:
 
-- `GoogleAuthorizationDemoUiTest.selectedSyntheticAccountIsBoundToTheConsentPreviewAndRevokedOnSwitch`.
-- `GoogleAuthorizationLifecycleTest.selectingAnotherSyntheticAccountClosesItsCalendarSessionBeforeReauthorization` and `reconnectAfterAppLocalDisconnectRequiresConfirmationAndReplacesTheOldCalendarSession`.
-- `GoogleCalendarDemoLoopbackIntegrationTest.defaultProductDemoSessionIsFakeAndHasNoHttpDispatchCapability`, `viewModelStoreRetainsDemoSessionForRecreationAndClearsOnOwnerTeardown`, and `consentConfirmOpensLoopbackListAndDetailThenAccountSwitchAndRevokeSuppressOldSession`.
-- `GoogleCalendarDemoLoopbackUiTest.consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt`, including a synthetic Calendar description with prompt-injection instructions and `<script>` text. It asserts the payload is rendered as a literal Compose `Text` node with no click action and embeds an observable same-server `/exfil` URL; it expects exactly four localhost read-only `GET`s for Account B list/detail and two for Account A's separate generation 3 session. Account A's marker appears while Account B's marker is absent. This test is authored but NOT_RUN.
+- JVM PASS: `GoogleAuthorizationLifecycleTest.selectingAnotherSyntheticAccountClosesItsCalendarSessionBeforeReauthorization`, `reconnectAfterAppLocalDisconnectRequiresConfirmationAndReplacesTheOldCalendarSession`; `GoogleCalendarDemoLoopbackIntegrationTest.defaultProductDemoSessionIsFakeAndHasNoHttpDispatchCapability`, `viewModelStoreRetainsDemoSessionForRecreationAndClearsOnOwnerTeardown`, and `consentConfirmOpensLoopbackListAndDetailThenAccountSwitchAndRevokeSuppressOldSession`.
+- Android source compile PASS, runtime NOT_RUN: `GoogleAuthorizationDemoUiTest.selectedSyntheticAccountIsBoundToTheConsentPreviewAndRevokedOnSwitch` and `GoogleCalendarDemoLoopbackUiTest.consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt`. The latter includes a synthetic Calendar description with prompt-injection instructions and `<script>` text. It asserts literal non-clickable Compose `Text` and embeds a same-server `/exfil` URL; it expects four localhost read-only `GET`s for Account B list/detail and two for Account A's separate generation 3 session. Account A's marker appears while Account B's marker is absent.
 
-Remaining unverified by Agent A: a physical Activity recreation / process death run, execution of the UI-to-session, account-isolation, and hostile-description assertions, real OAuth, and any live service. These Compose assertions are authored but NOT_RUN because this environment lacks `javac`; they are not runtime-verified evidence. Cloud stays disabled; this lane does not enable or route Google content to Cloud.
+Remaining unverified by Agent A: a physical Activity recreation / process death run, Android Compose UI execution, real OAuth, and any live service. The passing JVM lifecycle test models ViewModelStore recreation and owner teardown, not physical process death. Cloud stays disabled; this lane does not enable or route Google content to Cloud.
 
 ## Security impact and integration patch
 
@@ -89,11 +92,11 @@ Remaining unverified by Agent A: a physical Activity recreation / process death 
 - **Parent Integration Patch:** when displaying the existing Settings panel, supply `onOpenCalendar = { session -> navigateToCalendar(session) }`; in the Calendar destination pass `session` as both read and authorization ports. Return to the connection screen on Back. Also observe `calendarDemoSession` invalidation and clear the destination/session so an old account's visible event state cannot remain after account switch or revoke. Keep `AppProviderComposition`'s ordinary default Fake; do not wire a real Play Services gateway from Settings.
 
 SECURITY_IMPACT: Fake-only product composition; test-only synthetic token and localhost MockWebServer. Cloud remains disabled. Old sessions close on all account/revoke/disconnect/expiry/owner teardown paths.
-KNOWN_ISSUES: Parent composition callback not wired yet. New tests cannot run in the current environment because Java compiler is missing.
-CURRENT_BLOCKERS: JDK compiler/CI runtime required for execution evidence.
+KNOWN_ISSUES: Parent composition callback is not wired yet; Android Compose instrumentation has not run.
+CURRENT_BLOCKERS: Parent composition patch and an Android instrumentation runtime are required for end-to-end release acceptance.
 DEPENDENCIES: Parent integration in `SereaAppShell`/`MainActivity`, then focused JVM + Android UI verification at the integration SHA.
 INTEGRATION_READY: READY_FOR_PARENT_REVIEW; parent composition wiring is a separate integration patch.
 REVIEW_REQUEST: Review `CalendarDemoSessionFactory`, account reconnect confirmation lifecycle, new JVM/Compose loopback tests, and the route invalidation integration note.
-NEXT_ACTION: Record the parent's focused JVM result when received, then hand over for independent review and parent composition wiring; Android UI execution remains pending an Android test runner.
+NEXT_ACTION: Push the supervised-coroutine test fix and this evidence update to PR #145, record checks for the new PR head, then hand over for independent review and parent composition wiring; Android UI execution remains pending an Android test runner.
 OWNER_APPROVAL_REQUIRED: None for Fake/loopback work. Real OAuth/account/data, Pixel 7a, production signing/distribution, main merge, and Personal Beta GO remain owner-controlled.
 ```

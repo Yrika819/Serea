@@ -829,3 +829,12 @@ For the same run, ARM job `123774725655` failed before AVD boot because the old 
 Agent C independently **ACCEPTED** PR #179's x86_64 Native runtime evidence only, at exact #178 source/tree and run/job above. Review verified the 2/2 sanitized JUnit identities, APK INTERNET-deny checks, fixture identity, Egress/Usage accounting including `OUTCOME_UNKNOWN` on post-dispatch cancel, release and cleanup semantics, and that PSS is clearly observational rather than a hard cap. ARM64 guest and Pixel 7a remain NOT_RUN; the review explicitly excludes them.
 
 On exact #187 source, a parent local Gradle `--offline --no-daemon :app:testDebugUnitTest` attempt reached Kotlin compilation but stopped producing output with no visible Gradle process; the parent interrupted it (exit 130). No JUnit result was produced and this attempt is NOT_COMPLETE, not a test failure or PASS. The earlier exact #187 Gradle combined Unit/Android-test compile attempt was likewise interrupted and has no result. The separately completed exact #183 build remains 408/408 Unit PASS plus isolated Android-test compile BUILD SUCCESSFUL, but does not substitute for #187 exact-source hosted CI.
+
+## Final bounded runner poll — 2026-10-29 23:12 UTC
+
+- PR #187 Android run `40970247739`, Change Scope job `123784903345`: QUEUED; no API26/API35 jobs or artifacts assigned.
+- PR #182 Native focused run `40967790559`: ARM64 guest `123776591261` QUEUED and x86_64 `123776591543` QUEUED; zero completed jobs, no artifacts, no ARM preflight/boot/inference.
+- PR #181 Native diagnostic run `40967593381`: Stable Windows x86_64 `123775922557` IN_PROGRESS at `Test all workspace features`, no conclusion/artifact; the target timeout scenario has not been reported as complete. Windows root cause remains unknown.
+- PR #184 Android run `40968489932`: Change Scope `123786432814` QUEUED. PR #183 Android `40967821758`: Change Scope `123776695242` QUEUED. PR #186 Android `40969023965`: pending/no jobs assigned. No retries issued.
+
+Resource blocker is current hosted Runner availability, not a product or harness conclusion. Keep G9 Android and ARM64 PARTIAL/NOT_RUN while these exact runs wait.

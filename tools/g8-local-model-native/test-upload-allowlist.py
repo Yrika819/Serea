@@ -58,7 +58,7 @@ def validate_workflow(workflow: str) -> list[str]:
         for value in re.findall(r"(?m)^[ \t]*path:[ \t]*(.*)$", step)
     ]
     has_flow_mapping = any(
-        re.search(r"(?m)^[ \t]*with:[ \t]*\{", step)
+        re.search(r"(?m)^[ \t]*with\s*:\s*\{", step)
         for step in artifact_steps
     )
     if has_flow_mapping or not path_declarations or any(value.strip() != "|" for value in path_declarations):
@@ -137,6 +137,9 @@ def main() -> int:
         workflow
         + "\n      - uses: actions/upload-artifact@v4\n"
         + "        with: {name: injected, path: evidence/native-arm64-guest/*}\n",
+        workflow
+        + "\n      - uses: actions/upload-artifact@v4\n"
+        + "        with : {name: injected, path: evidence/native-arm64-guest/*}\n",
     )
     if any(not validate_workflow(fixture) for fixture in bad_fixtures):
         print("artifact guard accepted a raw path, directory wildcard, or missing JUnit report", file=sys.stderr)

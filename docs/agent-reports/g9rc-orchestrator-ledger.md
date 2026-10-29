@@ -143,3 +143,7 @@ New PR #168 results are not credited with PR #162 API26/35 passes; those older s
 Agent A's separate ARM artifact fix is on branch `codex/serea-native-artifact-boundary`, source `5f9cc22c4140d061253537e908533e6b141d901d`, tree `b43e79c9f634fcdfacbad1d534a74bc4df9dae5b`, based on PR #166 exact source `8dde330…`. It changes only the Native workflow and allowlist contract test; the ARM upload paths are currently explicit and raw emulator/ADB outputs are removed before upload; sanitized JUnit is included.
 
 Agent C independently reviewed the patch and returned **CHANGES_REQUESTED**: the contract test rejects bare evidence-directory paths but still accepts wildcard variants such as `evidence/native-arm64-guest/*` and `${{ steps.arm64_native_e2e.outputs.evidence_dir }}/**`. Required exact-file validation/wildcard-negative fixtures are being added. This patch is not yet integrated into #166; Native runtime jobs remain queued/NOT_RUN.
+
+### Native artifact guard review round 2
+
+At exact patch head `6122751a3e0349d8008237a553495fa402fb0e37` / tree `5e82a922125a864811c1f2e35f61df22110c0cbf`, C confirmed the current workflow uploads explicit safe paths and covers multiline glob negative fixtures, but requested another fix: the validator only parses block-style `path: |`; a second `upload-artifact` step using scalar `path: evidence/native-arm64-guest/*` bypasses the guard. Agent A is extending the contract to cover scalar/folded/all upload-artifact `with.path` styles and adding the scalar regression fixture. No runtime experiment has started.

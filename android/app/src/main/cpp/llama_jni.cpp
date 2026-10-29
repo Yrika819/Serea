@@ -41,6 +41,24 @@ std::unordered_map<RequestIdentity, std::pair<jint, jint>, RequestIdentityHash> 
 std::once_flag backend_once;
 #if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
 std::atomic<bool> fail_next_load_after_model{false};
+std::atomic<jint> test_generation_progress{-1};
+std::atomic<jint> test_generation_sequence{0};
+std::atomic<jint> test_native_cancel_count{0};
+
+class test_generation_progress_scope {
+public:
+    test_generation_progress_scope() noexcept {
+        test_generation_progress.store(0, std::memory_order_release);
+        test_generation_sequence.fetch_add(1, std::memory_order_acq_rel);
+    }
+    ~test_generation_progress_scope() noexcept {
+        // -2 means the last entered native generation has terminated. The test can distinguish
+        // an idle backend from a generation that completed between progress polls.
+        test_generation_progress.store(-2, std::memory_order_release);
+    }
+    test_generation_progress_scope(const test_generation_progress_scope &) = delete;
+    test_generation_progress_scope & operator=(const test_generation_progress_scope &) = delete;
+};
 #endif
 llama_model * model = nullptr;
 llama_context * context = nullptr;
@@ -460,6 +478,9 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeGenerate(
             return nullptr;
         }
 
+#if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+        test_generation_progress_scope test_progress_scope;
+#endif
         RequestIdentity request{engine_id, generation_id};
         if (generation_cancelled(engine_id, generation_id)) {
             throw_cancelled(env);
@@ -533,6 +554,9 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeGenerate(
             }
             result.append(piece, static_cast<size_t>(piece_length));
             ++output_token_count;
+#if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+            test_generation_progress.store(output_token_count, std::memory_order_release);
+#endif
             std::vector<llama_token> next_token{token};
             llama_batch batch{};
             if (!make_batch(next_token, position++, batch)) {
@@ -560,6 +584,11 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeCancel(JNIEnv * 
     return jni_boundary<jboolean>(env, JNI_FALSE, [&]() -> jboolean {
         std::lock_guard<std::mutex> lock(cancellation_mutex);
         if (active_engine_id.load(std::memory_order_acquire) != engine_id) return JNI_FALSE;
+#if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+        if (test_generation_progress.load(std::memory_order_acquire) >= 0) {
+            test_native_cancel_count.fetch_add(1, std::memory_order_acq_rel);
+        }
+#endif
         cancelled_requests.insert({engine_id, generation_id});
         return JNI_TRUE;
     });
@@ -611,5 +640,26 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeFree(JNIEnv * en
 extern "C" JNIEXPORT void JNICALL
 Java_app_serea_android_NativeJniFailureSeam_failNextLoadAfterModel(JNIEnv * env, jobject) {
     jni_boundary_void(env, [&] { fail_next_load_after_model.store(true, std::memory_order_release); });
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_app_serea_android_NativeJniFailureSeam_generationProgress(JNIEnv * env, jobject) {
+    return jni_boundary<jint>(env, -1, [&] {
+        return test_generation_progress.load(std::memory_order_acquire);
+    });
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_app_serea_android_NativeJniFailureSeam_generationSequence(JNIEnv * env, jobject) {
+    return jni_boundary<jint>(env, -1, [&] {
+        return test_generation_sequence.load(std::memory_order_acquire);
+    });
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_app_serea_android_NativeJniFailureSeam_nativeCancelCount(JNIEnv * env, jobject) {
+    return jni_boundary<jint>(env, -1, [&] {
+        return test_native_cancel_count.load(std::memory_order_acquire);
+    });
 }
 #endif

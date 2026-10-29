@@ -6,6 +6,7 @@
 **Repository:** `Yrika819/Serea`
 **Current disposition:** G8 PARTIAL; Native Runtime PARTIAL; G9 PARTIAL; G10 PARTIAL; Personal Beta NO-GO.
 
+
 This ledger is tied to the sources and workflow runs listed below. It records a checkpoint, not a claim that queued jobs have completed. No protected-main merge, OAuth activation, real Google data, Cloud AI credentials/billing, production signing, Pixel 7a operation, or beta distribution occurred.
 
 ## Authority and verified source identity
@@ -189,3 +190,75 @@ This update supersedes the 10:08 PR #157 and #158 head/review rows above.
 - PR #151 Android `40842824215` remains in progress on API35 instrumentation after the API26 artifact and six UI failures documented above. No API35 result had appeared at this update. This run remains bound to #151 and is not transferred to #155/#157.
 
 Next: receive Lane C’s #155 integration-tree and #158 document review, update PR #155 description and Ledger, push this frozen parent tree as a new source, then monitor formal CI for that exact SHA. No main merge, live Google/Cloud access, production signing, Pixel operation, distribution or Personal Beta GO occurred.
+
+## Campaign resume checkpoint — 2026-10-29 11:40 UTC
+
+This section supersedes earlier PR-head and run-state rows above where they conflict. Historical artifacts remain bound to their original source; no result is transferred between SHAs. GitHub PRs #146–#158 were re-queried after resuming. All remain open Drafts. Protected `main` is still `e0acb0254820c381dd97828824bef86a1db5176c`; it was not changed.
+
+### Current exact candidate sources
+
+| PR | Base SHA | Source SHA | Tree SHA | Current disposition |
+|---:|---|---|---|---|
+| #146 | `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` | `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66` | `25e2bb481a0b25bfed89d6ee25f1812316703b8e` | Frozen G8 baseline; PARTIAL. |
+| #147 | `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` | `36700f6c99d15db428c6d434c657ac76593df3f9` | `107824f5338ed9ec46d41f6836f5df9c6ad84cf7` | Original Native candidate; runner initialization failure remains historical. |
+| #149 | `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66` | `3a0f0c1897f2115549e7682d6fcc1783c44604f3` | `6a1f4d382907a7deb7d6dbf8147e6490aa054e81` | Emulator harness recovery ancestor. |
+| #151 | `3a0f0c1897f2115549e7682d6fcc1783c44604f3` | `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | `b78a84b60ef5a2d344eabdda85b1154e62be46d7` | G9 Gmail body-only handoff base. |
+| #155 | `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | `683854ba94cb3a1e1972b73d0f1f60392f2271d6` | `e6228614a6acf7d3ac440c66b7038bc8728f05ee` | Parent integration candidate; exact Android run ended failure below. |
+| #156 | `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | `bd281b1781eb1ab822c4266bfd6c54162b1538d2` | `a5da857b2c47f03cb88225c8c9d6b07a3b3ee723` | CI/Security/Release docs; exact Fast and docs checks pass; product tests skipped by docs-only scope. |
+| #157 | `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | `4075ce2de11df3cee05b1b64d2aa6b8899376064` | `6fd63236729cf2ac1ba1e48b3a4cd97681f9577c` | AndroidTest patch source ACCEPTED; exact Android run still in progress, no UI JUnit yet. |
+| #158 | `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` | `80e9990625b000e9d56a78743a7460ac120d4979` | `a07d653dd7a6a03323f81fa2332ae14a91eaceaf` | Native exact-head run in progress; independent review CHANGES_REQUESTED for cancellation observation. |
+
+PR #152 (`a9da3b71fff786fc93d3365249ea8087477b31b2` / `cbf688e4438794437b02bc7bd0fcc9bba975264f`), #153 (`6f4c8c5b4caf8f48619234fee5a9c864cb25766b` / `8a17da2ba3003d8663a3c6734d444682609abe05`), and #154 (`90913b4d4e3d834ae96d4f7e842bddfbd2b61ff6` / `3f88b0800971de9474a63c0286959aa94074613a`) remain open Drafts based on #151. Existing branches were not rewritten.
+
+### PR #155 exact Android result
+
+Android workflow `40856235701`, attempt 1, is bound to source `683854ba94cb3a1e1972b73d0f1f60392f2271d6` / tree `e6228614a6acf7d3ac440c66b7038bc8728f05ee`. Storage and Emulator job `123412988359` failed; Required Gate job `123422742095` failed from the emulator result. The API 26/API 35 Required manifest remains 103 Required + 2 Additional = 105; no identity, assertion, threshold, or skip rule changed.
+
+- API26 artifact `12892919797`, 796,432 bytes, verified ZIP SHA-256 `60e0c71a02c64016b29f7191052a2a71798191ec7454a323fd698cdfc0b2c08f`.
+- API26 Required JUnit: 105/105, 0 failures, 0 errors, 0 skips (103 Required + 2 Additional); XML SHA-256 `3396bfe35cffb24b47bb4af51e21d26b69f20a3f37deceed0cd872ff611bc946`.
+- API26 Process Death and Data Isolation independently PASS. Google/Gmail UI is a separate suite: 16 tests, 3 failures, 0 errors, 0 skips; XML SHA-256 `bf6355f69e14f1fb2b9d2714c7ba06001d0cd0f8452e2c9fa81ffe36080167ab`. The three failures are `GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt`, `GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel`, and `GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch`. Compared with #151's six API26 UI failures, three were fixed and no new failure identity appeared.
+- API35 artifact `12893128722`, 278,210 bytes, verified ZIP SHA-256 `7be37491d953f8725e689aeb65ea2caccdbd5d3eec4a7a1843cd5f7de8559109`. The bounded `SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges` diagnostic failed after recreation with Activity RESUMED, decor attached/visible, `windowFocus=false`. Its diagnostic result is 1 failure, 0 errors/skips. API35 Required and Google/Gmail UI suites are **NOT_RUN**, not 105 failed tests. Process Death and Data Isolation harness checks passed independently.
+- The same Android run's Build/Lint/Instrumentation Compile, Unit, Integration, Security, Dependency Audit, Documentation, and Change Scope jobs passed. Pixel 7a Reacceptance Bundle was an evidence-bundle CI job only; no physical device operation occurred. Personal Beta Identity Isolation was SKIPPED. Required Gate failure is not a gate contract change.
+- Exact-source Full `40856235656`, Fast `40856235640`, RustSec `40856235844`, Git Hooks `40856235773`, and Native platform validation `40856235700` succeeded. Cross-architecture SQLite `40856235774` has three producer/open jobs passed and its final Intel-open job `123405030473` remains queued. Native platform validation is not Android JNI inference.
+- Debug candidate artifact `12892208109`; APK package `app.serea.android.demo`, APK SHA-256 `9d0aa158c9d8d56b9574dbaca9f73b326d35359e8868b5a38998f058dfb1e199`; CI debug signer certificate SHA-256 `43f6d84b9241df72cb2434588a64077ea259a26520efb81a09b514f224876b2a`. These are CI debug artifacts, not production signing or device acceptance.
+
+Agent B is correcting only the remaining UI/IME issues on a separate successor branch. API26 loopback, lifecycle, handoff, account/session and authorization checks must remain intact; API35 focus/InputConnection assertions remain required. No changes will be pushed to the tested #155 source while its formal results are being checkpointed.
+
+### PR #158 Native runtime result and review
+
+Focused Native run `40866167732`, attempt 1, is bound to #158 source `80e9990625b000e9d56a78743a7460ac120d4979` / tree `a07d653dd7a6a03323f81fa2332ae14a91eaceaf`, job `123421381275`, and completed FAILURE. The x86_64/ARM64 APK builds, pinned model license/fixture checks (101,016,128 bytes; SHA-256 `e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5`), KVM requirement, and API35 emulator boot completed. The step `run-e2e.sh` then exited 1. Cleanup failed closed because the app-package query returned exit 1 / `QUERY_FAILED`, device-temp model removal failed, and package/model absence could not be verified; host fixture removal was verified. No JUnit or runtime artifact was uploaded, so the test identity, model load/inference stage, and cancellation outcome are **NOT_VERIFIED**. The only artifact is build diagnostic `12893797798`, 6,063 bytes, SHA-256 `24290d738c99e5e9f150716af73adf5b61eee5a667367ff22847dc126dce10b7`. Public workflow logs do not retain the primary failure/JUnit output because the cleanup gate suppressed runtime evidence; no root cause is inferred from the ADB query error alone. Companion Fast CI `40866167926`, beta contract `40866167760`, and RustSec `40866167855` passed; Android `40866167864`, SQLite `40866167796`, Full `40866167965`, Git Hooks `40866172038`, and Native platform `40866167791` remain queued/pending at the latest query.
+
+Local exact code commit `0f9926b9995b06c0651eb2dadc698064676d74bc` / tree `e1a9d625da149c3b3db4649dc26d0014067f8950` passed the isolated Android manifest/AndroidTest compile and focused JVM suite: 22 tests, 0 failures/errors/skips. Gradle log SHA-256 `b646fa2944af7d8061c9385d46c4193ae99e3da4360d75b3ea20e06a06659adf`; `LocalModelChatAdapterTest` XML SHA-256 `2ac66f3c1702ca169e3ceecaf6c5ef624bb913d3f24d591fa9ac06dc35b6044d`; `LocalModelNativeRuntimeTest` XML SHA-256 `3d171942af5980ac065a2f9e02f873531004f155ecfb889401e46c802ce0c4c6`. Static JNI/preflight/cleanup/parser/gate checks passed. These local JVM/compile checks are not Native inference evidence.
+
+The previous exact-source run on `848fe67e4d8dd2de21ffb05793c4945127edcb06` / tree `57ab7cd83ef100cb5122dd39463186234cafc0d0`, run `40860331937`, ended FAILURE after the Native test body started: `TimeoutCancellationException` at the 15-second send bound; no successful model output or Usage settlement. Its bounded runtime artifact was `12891353567`, 24,280 bytes, digest `e4b829dc964697164ffb1a7844018a030b487819e9f745e0ece1d1fb8805acde`; the separate build artifact was `12891333258`, digest `708ab18a0cac841b73785cf8dbe4aa543a2efd62d1c90766ee9f27872317d2d8`. Fixture revision `1076b85d135017971845b19b8d07df1479155988`, size 101,016,128, SHA-256 `e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5`; model weights were not uploaded.
+
+Independent Lane C review of #158 `80e9990…` returned **CHANGES_REQUESTED** (`NATIVE-CANCEL-OBSERVATION-001`): the test counter proves a JNI cancel call occurred during nonterminal progress but does not prove the same active generation observed cancellation and aborted. Agent A is implementing a generation-bound cancellation-observed/terminal signal and bounded join before release, preserving existing timeout, release, double-close/reload, Usage unknown, offline, and failure-seam checks. The tested #158 source is not modified in place. Native source remains not accepted until the successor is re-reviewed and exact-head inference is evidenced.
+
+### Remaining gates and next action
+
+API26 Required on #155 is PASS; API35 Required remains NOT_RUN. Google/Gmail UI acceptance is PARTIAL, Native inference is unverified, and the standard local model remains UNDECIDED. Bonsai/LFM3/Qwen3.5/Gemma/FunctionGemma evidence is static specification/license/compatibility only; Serea runtime quality/performance, heat and Pixel 7a measurements remain NOT_RUN. G10 preflight can continue with release documentation and CI-only rehearsal; Personal Beta remains NO-GO. Next: review exact successor heads from Agents A/B, run focused checks, request fixes if needed, then selectively integrate accepted AndroidTest changes plus this Ledger into a new frozen Draft candidate and run CI against that exact source/tree. Do not reuse #155 or #158 results for successor heads.
+
+## Independent Android artifact review — 2026-10-29 11:46 UTC
+
+Lane C independently inspected both API artifacts from #155 run `40856235701` (attempt 1; source `683854ba94cb3a1e1972b73d0f1f60392f2271d6`, tree `e6228614a6acf7d3ac440c66b7038bc8728f05ee`, Android job `123412988359`, runner `1000024076`). Its counts and hashes match the previous section. Additional details:
+
+- The loopback Calendar case proceeds through consent/session setup, then waits for an agenda event from its local MockWebServer. Request count, session state, and agenda state were not captured at failure; root cause is still unresolved. Cleartext policy/TLS is a candidate to test, not a confirmed cause.
+- The Design review/date test's intended zone/query-date diagnostics are inside `catch (AssertionError)`, but the observed Compose timeout exception bypasses that handler. Root cause remains unresolved among date fixture/query/apply behavior.
+- The handoff test's `performScrollTo()` failure is confirmed as a Compose action/layout semantics mismatch: the field has no scrollable ancestor. Preserve its stale-account handoff and no-send assertions.
+- API35 diagnostic XML `d590f93c101ab34f1c912b0f7cc170d288034db82bb508c02afc7aa1ae1f8c35` confirms the focus-ready failure; logcat reports Activity RESUMED, attached and visible, but `windowFocus=false` through recovery. Product re-acquisition versus ActivityScenario/emulator focus scheduling remains unresolved. API35 Required 105 and Google/Gmail UI remain NOT_RUN.
+
+On the unchanged #157 source `4075ce2de11df3cee05b1b64d2aa6b8899376064` / tree `6fd63236729cf2ac1ba1e48b3a4cd97681f9577c`, Android run `40854847034` remains in progress at API26 Storage/Emulator job `123417035471`; no artifact/JUnit is yet available. Its companion Full `40854846881`, Fast `40854847203`, RustSec `40854847020`, and Git Hooks `40854846876` are PASS; Native platform `40854846982` and SQLite `40854847149` remain queued. No result from #157 is used as #155 evidence.
+
+## Independent model/decision review — 2026-10-29 11:50 UTC
+
+Lane C's independent official-source review **ACCEPTED** the expanded model shortlist for static metadata, format, license, and compatibility claims in Agent A's report at SHA-256 `aa56693d53c0741a59d674449df909ddd5f030fc57308c45839369c5f019d095`. Pinned Hugging Face revision/access/file-tree values, sizes and listed hashes matched; official Bonsai format/Hadamard, Gemma license/mobile guidance, FunctionGemma gate/usage, and LFM license threshold were checked. No model weights were downloaded. Gemma's >140-language statement remains a model-card claim; its details distinguish 35+ out-of-box support from 140+ training languages, not demonstrated uniform quality.
+
+The expanded model section is accepted, but Agent A's full current campaign report is **CHANGES_REQUESTED** as a checkpoint: it still names #147 as its current draft and describes the runner cause as unresolved. The cause established on the subsequent line was a non-void AndroidJUnit4 test method (`InvalidTestClassError`, inferred `Int` from a final `Log.i` expression); the explicit `Unit` fix plus later no-op test resolved that initialization blocker. Agent A is updating the report on its next normal #158 successor commit with exact-head status and the 40866167732 cleanup/ADB failure. This request does not alter the accepted model matrix or trigger model selection.
+
+Lane C also classified the #156 Owner decision packet as **CHANGES_REQUESTED** for decision readiness. The release checklist covers the required topics, but decision IDs conflict between the canonical Owner Decision Ledger and older G8 report; 11/03 omits certificate/signing custody policy, and 11/10 does not put Gmail Restricted scope explicitly in the dated matrix. Lane C is preparing a separate docs-only successor from #156 exact head `bd281b1781eb1ab822c4266bfd6c54162b1538d2` / tree `a5da857b2c47f03cb88225c8c9d6b07a3b3ee723`, with a consolidated canonical O-ID matrix. Requested coverage: 11/03 package/coexistence/certificate policy; 11/10 OAuth/project, Calendar read-only, separate Gmail Restricted gate, provider eligibility/terms/cost/data handling, undecided local-model choice, and Pixel acceptance criteria. Owner-only activation, credentials, signing key, real data, and physical-device steps remain blocked.
+
+## Owner decision packet successor — 2026-10-29
+
+Lane C reconciled the canonical Owner decision IDs and dated checkpoints in PR #159, an open Draft docs-only successor to #156. Source `982c8271698c5ea323e7a4d19f4dd662087db2c5`, tree `11e3c0ca61577bb435e0f69b1fcd24313857ff1f`, base #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9`. Focused docs validation passed for 205 files; Python suites: workspace smoke 82/82, commit identity 24/24, git preflight 28/28, hook launcher 4/4. Exact PR CI is pending. No owner-only operation occurred.
+
+Agent B's successor remains local/uncommitted at base #155 `683854ba94cb3a1e1972b73d0f1f60392f2271d6`; its JVM tests were in progress when the agent hit the usage limit. It has not been accepted or integrated. Agent A's cancellation/diagnostic changes also remain local/uncommitted at #158 base `80e9990625b000e9d56a78743a7460ac120d4979`; no new Native inference run is authorized until review and focused tests complete.

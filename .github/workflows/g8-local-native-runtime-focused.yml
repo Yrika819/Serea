@@ -72,6 +72,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
+      - name: Verify CMake rejects tracked and untracked source changes
+        shell: bash
+        run: bash tools/g8-local-model-native/verify-cmake-clean-checkout.sh "$ANDROID_HOME/cmake/3.31.6/bin/cmake"
+
       - name: Record source identity and run focused JVM contracts
         shell: bash
         run: |

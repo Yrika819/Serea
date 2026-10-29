@@ -41,7 +41,7 @@ Focused Native run `40843204437` failed on PR #147 exact HEAD, attempt 1. x86_64
 
 | Source | Workflow | Run | Last observed state | Evidence |
 |---|---|---:|---|---|
-| #149 `3a0f0c1…` | Android | `40810824093` | FAILURE | Build/Lint/Instrumentation Compile, Unit, Integration, Security, Docs and Dependency Audit PASS; Storage/Emulator and downstream Required Gate FAIL. The inherited 0/105 API26 and 0/105 API35 counts mean tests did not start. |
+| #149 `3a0f0c1…` | Android | `40810824093` | FAILURE | Instrumentation did start. API26 Required ran 105/105 and separate Process Death passed; the API26 Google/Gmail UI suite ran 16 tests with 5 failures. API35 failed `SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges`; exact API35 Required/UI counts and artifact bindings are being extracted. This is distinct from PR #146's 0/105 API26 and 0/105 API35. |
 | #151 `d4a36fb…` | Android | `40842824215` | QUEUED | Change Scope, Build/Lint/Instrumentation Compile, Unit, Integration, Security, Docs and Dependency Audit PASS; Storage/Emulator remained queued. No API JUnit artifact yet. |
 | #151 | Full / Fast / RustSec / Git Hooks | `40842824328` / `40842824206` / `40842824232` / `40842824356` | PASS | Exact-head auxiliary CI. Native and SQLite were still incomplete/queued. |
 | #152 `a9da3b7…` | Android | `40844297910` | QUEUED | Only Change Scope PASS; remaining Android jobs queued. No emulator or UI JUnit evidence. |

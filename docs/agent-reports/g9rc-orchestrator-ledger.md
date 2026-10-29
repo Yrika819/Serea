@@ -155,3 +155,7 @@ Parent independently injected an inline YAML flow-style upload action into patch
 `with: {name: injected, path: evidence/native-arm64-guest/*}`
 
 The current validator returned no errors, bypassing path declarations. Agent C confirmed this finding and superseded its prior acceptance with **CHANGES_REQUESTED**. Agent A is extending flow-style `with.path` detection/rejection and adding a negative fixture. The current actual workflow still uses explicit allowlisted block paths; no artifact was uploaded and no Native run has started.
+
+### Native artifact guard parent fix — 2026-10-29 15:42 UTC
+
+Parent addressed the flow-mapping escape in isolated branch `codex/serea-native-artifact-inline-guard`, based on the reviewed A branch head `9e0be352ec73aebb2a754188cde9a54592da3f7e`. New exact head/tree: `24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9` / `3956f4f444ed51014f7ab03c4ebcb65eb69ed604`. The one-file diff rejects flow-style `with: {}` on every `upload-artifact` step and adds the inline wildcard regression fixture. Artifact allowlist contract and `git diff --check` pass. C independent review is pending. No PR #166 change or Native run yet.

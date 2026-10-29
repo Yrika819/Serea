@@ -739,6 +739,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('google-demo-ui-cleanup-status.txt', campaign)
         self.assertIn('google_demo_ui_result" == PASS', campaign)
         self.assertIn('&& "$google_demo_ui_result" == PASS ]]; then', campaign)
+        self.assertNotIn('google_demo_ui_result=NOT_REQUIRED', campaign)
+        self.assertNotIn('google_demo_ui_cleanup_result=NOT_REQUIRED', campaign)
         build = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")', build)
         self.assertNotIn('androidTestImplementation("androidx.compose.ui:ui-test-manifest")', build)

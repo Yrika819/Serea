@@ -796,11 +796,6 @@ TESTS
   else
     google_demo_ui_result=FAIL
   fi
-elif [[ "$api_level" == 26 ]]; then
-  google_demo_ui_result=NOT_REQUIRED
-  google_demo_ui_cleanup_result=NOT_REQUIRED
-  printf 'NOT_REQUIRED\n' > "$evidence/google-demo-ui-status.txt"
-  printf 'NOT_REQUIRED\n' > "$evidence/google-demo-ui-cleanup-status.txt"
 fi
 printf '%s\n' "$google_demo_ui_result" > "$evidence/google-demo-ui-status.txt"
 printf '%s\n' "$google_demo_ui_cleanup_result" > "$evidence/google-demo-ui-cleanup-status.txt"

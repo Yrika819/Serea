@@ -460,3 +460,45 @@ Agent A rechecked PR #169 Native run `40907496496`, attempt 1, exact source `87a
 The source-bound test exercises two generated turns through local Egress and Usage adapters, local authorization, denied INTERNET, Usage settlement/token attribution with unknown monetary cost, cancellation/release, reload/recovery, repeated close, and model/temp/package cleanup. Observed PSS (not an enforced cap): load 105460→218184 KiB, turns 218184→210861 and 211576→214098 KiB, normal release 103742 KiB, cancellation release 110958 KiB, cancellation-to-release 18 ms. Build artifact `12911929532` confirms ABI packaging, not ARM64 runtime. ARM startup artifact `12913138579` and skipped inference steps keep ARM64 Runtime **NOT_RUN**.
 
 The artifact's `instrumentation_code=-1` is **not a failure**: Android SDK platform-35 defines `Activity.RESULT_OK=-1` and `RESULT_CANCELED=0` (verified with `javap`). This agrees with `adb_instrumentation_exit=0`, terminal per-test codes 0, and sanitized JUnit 2/2. This interpretation applies only to the listed #169 x86_64 run, not #176 or ARM64.
+## Campaign V4 authority refresh — 2026-10-29 17:48 UTC
+
+Protected `main` remains unchanged at `e0acb0254820c381dd97828824bef86a1db5176c` / tree `4955555be75c5742796740a3283d1a521e0d4806`.
+
+### PR #168 exact-head Android result
+
+PR #168 remains OPEN/DRAFT at `272f68ecf7f8072b812b13e46064a108bab5ef2b` / tree `010eca037f28f5d5dd5818ed99a2601852a719e9`. Android run `40902585691`, attempt 1, is terminal failure. Artifacts were downloaded and their ZIP hashes matched GitHub artifact digests:
+
+- API26 artifact `12914558157`, 841,465 bytes, SHA-256 `a90dff71bef97f2675f5d3d0c1843b0f693c0474a1abf9a433d6b94bb8b23697`.
+- API35 artifact `12916742164`, 3,849,637 bytes, SHA-256 `e4e77ba4b5327b2bed8d2ad033146f54f7573a66d9517bc1b47435891d3302b7`.
+
+Both artifacts bind to the exact #168 source/tree above. On each API, the 105 Required+Additional identities started and finished (103 Required + 2 Additional); Required JUnit reports 0 failures/errors/skips. The separate Google/Gmail UI JUnit stage ran 16 tests with 0 failures/errors/skips on both APIs, including the two previously failing calendar identities. However, the API aggregate remains FAIL because the separate Fake Google process-death harness could not verify the isolated target package path (`Could not verify the isolated target package path`; `device-state-status=NOT_RUN`). Do not collapse this into a UI JUnit failure or claim aggregate Android acceptance. The process-death harness successor is PR #173 at `540fd754e81c3788a76cc9452f754211e95d8378` / tree `f52c4104297edae8d84db72680de34136752f4a`; its Android run `40916731468` has only Change Scope complete and executable Android jobs queued.
+
+The same #168 run's Android Unit job `123567679297` failed. The separately identified `GoogleCalendarHttpReadPortTest#timeoutMapsToTimeout` remains a test/product classification issue under review; this does not invalidate the emulator JUnit counts. `api-result.txt` is FAIL on both APIs for the process-death aggregate described above.
+
+### Identity, loopback isolation, and current Android candidate
+
+PR #170 exact source `fc9b355fb247bc6cd1eb35cd313379f6ed01a60f` / tree `01d27c481655c7b13c3ebda27190805b8aae22c3` fixes the 15-vs-17 verifier expectation by validating the exact identity sets: 103 Required, 2 Additional, 17 non-required, 122 source tests, with no overlap. Android Unit job `123591635633` in run `40914655856` passed (399/399, 0 failures/errors/skips); the four separate loopback Chat HTTP identities failed when run under the intentionally offline APK (API26 artifact `12919376899`, digest `59656f37709dde9ea2a643b4deaf2280191283bbf4c3f01a37e3abc462d01483`). API35 in that run was still in progress at this checkpoint. Do not infer API35 or full 105 acceptance from the Android Unit result.
+
+PR #176 (`isolatedHttp` variant split) is OPEN/DRAFT at `1523cddd7616873a465875c632bd11012689b50e` / tree `296c15faa83db059b6d6365eee7c7ba0b2163ef5`, based on #170. Agent B accepted static security review; Agent C review is pending. It keeps 101 identities offline and permits only the four canonical loopback identities on a distinct HTTP test variant, without Native JNI. Exact-head local contract/APK permission checks passed as previously recorded. Hosted Android run `40922393033` and Fast `40922393018`, Full `40922393299`, SQLite `40922392970`, RustSec `40922393302`, Git Hooks `40922393053`, Native `40922393055`, and Mock Beta Contract `40922393277` are queued; API26/35 runtime is NOT_RUN.
+
+### ARM64 diagnostics and current Native evidence
+
+PR #171's prior ARM64 guest attempt `40915105551`, ARM job `123593126899`, failed before guest startup at QEMU dependency preflight on Ubuntu 24.04 after `libpulse0` installation. The old checker emitted only a generic unresolved dependency failure, so missing package identity remains unconfirmed. No ARM64 inference ran.
+
+PR #177 was independently reviewed and received CHANGES_REQUESTED at `84586731d29f36e86b5dd05098e382a734fb4b76` / tree `1605d1dc9074d2ad9c65e5a633605bc5af1d000c`: malformed unresolved `ldd` records could be silently ignored, and non-library tokens could be surfaced. Agent A fixed this normally on the same PR. Current PR #177 head is `e604f8fd1bd619f7996f329e5f2135630dc541aa` / tree `48ee16590ce997ac49b717bd0a485332b39899a7`. It accepts only validated `lib*.so[.N...]` basenames, fails closed on malformed unresolved lines with a generic sanitized message, and has regression fixtures proving no false pass or raw leakage. Focused shell/contract/allowlist/diff checks pass. Independent re-review is pending. Exact-head Native run `40924654435`, attempt 1: ARM guest job `123626806488` and x86_64 job `123626806729` are QUEUED; no new dependency names, emulator boot, ARM JNI, or ARM inference evidence is available.
+
+The older PR #169 exact head `87af6aab9c9db8f65e18ca18456256e03797ffb3` has a verified x86_64 SmolLM2 two-turn result only on that source. Its ARM job failed before inference due the host QEMU dependency issue. Do not transfer x86_64 evidence to new source heads or ARM64.
+
+### CI queue and disposition
+
+Run `40915105551` x86_64 job `123593126707` is still in progress at Native APK build while its ARM64 guest job is terminal preflight failure. PR #170 run `40914655856` API35 emulator job `123606101694` is in progress; its current step is the API35 campaign, so no terminal API35 outcome is recorded here. Run `40916731468` Android jobs and #176 formal jobs remain queued. PR #177 exact-head general workflows `40924032792`, `40924033018`, `40924033024`, `40924032872`, `40924032724`, `40924033185`, and `40924032874` were queued on the preceding head; do not attribute them to the updated #177 source. The updated #177 Native run `40924654435` is the relevant source-bound run and remains queued.
+
+- G8 Evidence Closure: PARTIAL.
+- G9 Android/Product Acceptance: PARTIAL. #168 UI tests themselves pass 16/16 on both APIs, but process-death aggregate and successor formal acceptance are incomplete.
+- Identity verifier: PR #170 Android Unit PASS at its exact source; its API26/35 product campaign is not closed.
+- Native x86_64 inference: SUCCESS only on exact prior sources (#160/#169 as separately recorded); current integrated candidate remains unaccepted.
+- Native ARM64 build/runtime: NOT_RUN; guest startup has not passed. Pixel 7a physical: NOT_RUN and prohibited without Owner authorization.
+- Native Product Chat integration: NOT_RUN; approved documentation proposal only, feature flag default OFF, no normal Chat connection.
+- Model selection: UNDECIDED. G10 Preflight: PARTIAL. Personal Beta: NO-GO.
+
+Next checkpoint: obtain independent re-review and exact-head diagnostics for #177; finish inspecting #170 API35; wait for existing queued Android and Native runs without retry loops; review #173 and #176 terminal artifacts; then integrate only accepted source-bound changes into a new draft candidate and run its full formal CI. Preserve all Required gates and Owner boundaries.

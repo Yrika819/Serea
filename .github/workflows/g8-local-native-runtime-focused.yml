@@ -210,6 +210,7 @@ jobs:
           "$ANDROID_HOME/emulator/emulator" -accel-check
 
       - name: Run exact product adapter and real x86_64 inference case
+        id: native_e2e
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
         timeout-minutes: 90
         with:
@@ -225,7 +226,7 @@ jobs:
           script: bash tools/g8-local-model-native/run-e2e.sh
 
       - name: Upload sanitized native runtime evidence (never model weights)
-        if: always()
+        if: always() && steps.native_e2e.outputs.cleanup_verified == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: serea-g8-local-native-${{ github.event.pull_request.head.sha }}

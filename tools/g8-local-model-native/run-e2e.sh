@@ -88,7 +88,7 @@ cleanup() {
     local app_private_state=NOT_VERIFIED temp_state=NOT_VERIFIED
     local test_uninstall_command=NOT_ATTEMPTED test_package_state=NOT_VERIFIED
     local app_uninstall_command=NOT_ATTEMPTED app_package_state=NOT_VERIFIED
-    local report_path report_write_status=PASS cleanup_result
+    local report_path report_tmp report_write_status=PASS cleanup_result output_write_status=NOT_ATTEMPTED
     local -a cleanup_report
     CLEANUP_FAILED=0
 
@@ -169,6 +169,7 @@ cleanup() {
         cleanup_result=FAIL
     fi
     report_path="$EVIDENCE_DIR/cleanup-boundary.txt"
+    report_tmp="$report_path.tmp"
     cleanup_report=(
         'model_weights_uploaded=false'
         "host_model_rm_command=$host_remove_command"
@@ -185,12 +186,42 @@ cleanup() {
         "original_exit_status=$original_status"
         'runner_vm_and_disposable_avd=ephemeral'
     )
-    if ! printf '%s\n' "${cleanup_report[@]}" > "$report_path"; then
+    if ! printf '%s\n' "${cleanup_report[@]}" > "$report_tmp"; then
+        report_write_status=FAIL
+    elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_tmp" || \
+        ! grep -Fxq "original_exit_status=$original_status" "$report_tmp" || \
+        ! grep -Fxq "host_model_final_state=$host_absence" "$report_tmp" || \
+        ! grep -Fxq "app_private_model_final_state=$app_private_state" "$report_tmp" || \
+        ! grep -Fxq "device_temp_model_final_state=$temp_state" "$report_tmp" || \
+        ! grep -Fxq "test_package_final_state=$test_package_state" "$report_tmp" || \
+        ! grep -Fxq "app_package_final_state=$app_package_state" "$report_tmp"; then
+        report_write_status=FAIL
+    elif ! mv "$report_tmp" "$report_path"; then
+        report_write_status=FAIL
+    elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_path" || \
+        ! grep -Fxq "host_model_final_state=$host_absence" "$report_path" || \
+        ! grep -Fxq "app_private_model_final_state=$app_private_state" "$report_path" || \
+        ! grep -Fxq "device_temp_model_final_state=$temp_state" "$report_path" || \
+        ! grep -Fxq "test_package_final_state=$test_package_state" "$report_path" || \
+        ! grep -Fxq "app_package_final_state=$app_package_state" "$report_path"; then
         report_write_status=FAIL
     fi
     if [[ "$report_write_status" != PASS ]]; then
         cleanup_result=FAIL
         CLEANUP_FAILED=1
+    fi
+
+    if ((CLEANUP_FAILED == 0)) && [[ "$cleanup_result" == PASS && "$report_write_status" == PASS ]]; then
+        if [[ -z "${GITHUB_OUTPUT:-}" ]]; then
+            output_write_status=FAIL_NO_GITHUB_OUTPUT
+            CLEANUP_FAILED=1
+        elif printf '%s\n' 'cleanup_verified=true' >> "$GITHUB_OUTPUT" && \
+            grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"; then
+            output_write_status=PASS
+        else
+            output_write_status=FAIL
+            CLEANUP_FAILED=1
+        fi
     fi
 
     if ((CLEANUP_FAILED != 0)); then
@@ -207,6 +238,8 @@ cleanup() {
             "test_package_final_state=$test_package_state" \
             "app_package_uninstall_command=$app_uninstall_command" \
             "app_package_final_state=$app_package_state" \
+            "cleanup_report_write=$report_write_status" \
+            "cleanup_verified_output=$output_write_status" \
             'cleanup_outcome=FAIL' \
             "original_exit_status=$original_status" >&2
         # The workflow uploader is configured with `always()`. Remove its

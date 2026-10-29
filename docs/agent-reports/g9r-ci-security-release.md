@@ -271,3 +271,65 @@ The predecessor focused run `40855571172`, attempt 1, bound to `943fb4e…` / `2
 The new focused run `40858521185`, attempt 1, is bound to `212a677…` / `b35e4f6…`. At 10:36 UTC, job `123395513745` (“Product adapter on pinned API 35 x86_64 Emulator”) is IN_PROGRESS on runner `1000023943`, at step 8 (“Record source identity and run focused JVM contracts”); the JNI build, model fixture, KVM, and instrumented inference steps are pending. It has no artifact or inference/JUnit result yet. Keep Native runtime readiness **PARTIAL** until a later exact-head run verifies generated JUnit, usage/egress, release, app-private cleanup, and artifact provenance.
 
 **RESUME_POINT:** refresh exact #155 run IDs above; review the current #158 focused run only when it reaches a terminal state; preserve NOT_RUN/NOT_VERIFIED distinctions and the unresolved app-package disappearance. Do not retry either prior run or change source/gates in this checkpoint.
+
+## Checkpoint — 2026-10-29 10:44 UTC
+
+This checkpoint records the terminal result of the exact #158 follow-up run and refreshes existing PR #155 workflows. It changes no product source and does not treat diagnostic setup as model inference.
+
+### PR #158 follow-up — test class validation failure
+
+Run `40858521185`, attempt 1, is bound to #158 source `212a6773fd7038529526b18f51c20f9043e0f86f` / tree `b35e4f6a5006cfc0504b6c197c62cd0cb57d27c8`; job `123395513745` ran on `GitHub Actions 1000023943` and completed **FAILURE**. The same-runner no-op JUnit identity `app.serea.android.SereaNativeRunnerNoOpTest#androidJUnit4RunnerInstantiatesAndTargetsIsolatedApp` passed with status code 0. JUnit then reported `initializationError` for `app.serea.android.LocalModelNativeRuntimeE2ETest`, status 1, because `pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend()` “should be void.” The stream summary was 2 tests / 1 failure and `INSTRUMENTATION_CODE: -1`. The native test body never ran; real inference, Usage/Egress, two-turn generation, and runtime metrics are **NOT_RUN**.
+
+The source test-file blob at #158 `212a677…` is `d05042e61f318bb79471f61941871c679dda40a3`, byte-identical to the same test file at PR #147 exact source `36700f6c99d15db428c6d434c657ac76593df3f9`. The cause is the Kotlin expression-bodied `@Test` method `= runBlocking { … }`: its final `Log.i` expression returns `Int`, while JUnit 4 requires a `void`/Unit return. This confirms the earlier PR #147 “runner instantiation” failure came from invalid test-method validation, not AndroidX runner/classpath instantiation. Agent A's explicit Unit-return correction is **PENDING** and is not accepted in this checkpoint.
+
+Cleanup from this run reported `app_private_owner_package_state=QUERY_FAILED`, `app_private_model_final_state=NOT_VERIFIED`, and `cleanup_outcome=FAIL`. Host model and device-temp files were `ABSENT_VERIFIED`; test and app package uninstall commands passed and both package final states were `ABSENT_VERIFIED`. The package-query failure cause remains unresolved. Cleanup withheld `cleanup_verified=true`; sanitized runtime artifact upload was therefore skipped. The only run artifact is build diagnostic artifact `12890592275`, 5,961 bytes, digest `sha256:a4573faa65ad50f38743d372ee565f5516b6795227a5d8644af5db53fe154d8b`; it is not inference/JUnit evidence and contains no model weights.
+
+### PR #155 — current exact-head workflows
+
+All rows are attempt 1 on exact PR #155 source `683854ba94cb3a1e1972b73d0f1f60392f2271d6` / tree `e6228614a6acf7d3ac440c66b7038bc8728f05ee`.
+
+| Run | State at 10:44 UTC | Job details |
+|---|---|---|
+| Android `40856235701` | `queued` | Change Scope `123390851811` PASS on runner `1000023930`; Dependency Audit `123393341260` PASS on `1000023951`; Documentation `123393341276` PASS on `1000023958`. Security `123393341235`, Unit `123393341427`, Integration `123393341455`, and Build/Lint/Instrumentation Compile `123393341829` queued/unassigned. No API26/35 Required or UI JUnit has run on this head. Dependency artifact `12890073308`, 99,202 bytes, digest `sha256:f78abd0b1ffb41932390928d938ac09eb20832dcf60fd400bfd0e1bac827af5c`. |
+| Full CI `40856235656` | `queued` | Windows P7 Gate C synthetic validation `123387921868` PASS on `1000023914`; Linux MSRV `123387921332` in progress on `1000023968`; macOS Intel `123387921752`, macOS ARM64 `123387921806`, Linux stable `123387921850` queued/unassigned. |
+| Native platform `40856235700` | `queued` | PASS: Rust 1.85 Linux ARM64 `123387805101` on `1000023936`; Rust 1.85 macOS ARM64 `123387805477` on `1000023929`; stable Linux ARM64 `123387805693` on `1000023940`. In progress: stable Linux x86_64 `123387805544` on `1000023962`; Rust 1.85 Windows x86_64 `123387805547` on `1000023911`; stable Windows ARM64 `123387805662` on `1000023955`; stable Windows x86_64 `123387805666` on `1000023947`. Queued/unassigned: `123387805606`, `123387805615`, `123387805682`, `123387805984`, `123387805996`. This is a Rust matrix, not JNI inference. |
+| SQLite `40856235774` | `queued` | macOS ARM64 producer `123387804085` PASS on `1000023945`; Intel producer `123387804213` and cross-architecture consumer `123396151142` queued/unassigned. Artifact `12889749396`, 36,954 bytes, digest `sha256:101524c6cf3664b728636d6843b053c5d03ef0b1e9ae4148cda68820179dfaa8`. |
+| RustSec `40856235844` | **SUCCESS** | Job `123387799236` PASS on `1000023937`. Artifact `12890446656`, 3,189 bytes, digest `sha256:57ad6fd7e75770d73ba8505d12fd83d6a7d38a31e847b00f5f35875d8d9903f3`. |
+| Fast CI `40856235640` | `pending` | Linux fast checks `123387803732` queued/unassigned. |
+| Git Hooks `40856235773` | `queued` | Windows `123387799004` PASS on `1000023894`; macOS `123387800216` PASS on `1000023919`; Ubuntu `123387799460` queued/unassigned. |
+| Personal Beta push workflow `40856224552` | **FAILURE** | `jobs=[]`; no artifact or product evidence, cause not established. |
+
+PR #155 still has no exact-head Android Required/UI JUnit. Its current SQLite/RustSec/dependency-audit artifacts are source-bound but are not Android product acceptance evidence.
+
+**NEXT_ACTION:** Agent A's JUnit Unit-return fix and query-diagnostic change await a new exact SHA/tree and independent review. Keep #158 inference **NOT_RUN**, app-private cleanup **NOT_VERIFIED**, and #155 API26/35 JUnit **NOT_RUN** until new source-bound evidence exists.
+
+## Checkpoint — 2026-10-29 10:46 UTC
+
+This checkpoint refreshes existing CI status only; it does not dispatch workflows, rerun jobs, or alter PR #155/#158 source.
+
+### PR #158 exact native diagnostic
+
+Run `40858521185`, attempt 1, is bound to `212a6773fd7038529526b18f51c20f9043e0f86f` / tree `b35e4f6a5006cfc0504b6c197c62cd0cb57d27c8`; job `123395513745` ran on runner `1000023943` and concluded **FAILURE**. `app.serea.android.SereaNativeRunnerNoOpTest#androidJUnit4RunnerInstantiatesAndTargetsIsolatedApp` passed (JUnit status 0). `app.serea.android.LocalModelNativeRuntimeE2ETest#pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend` was reported as `initializationError`; the root cause is `org.junit.runners.model.InvalidTestClassError`, because the JUnit 4 test method must return void/Unit. Its Kotlin expression body `= runBlocking { … }` returns the final `Log.i` `Int`. JUnit reports 2 tests / 1 failure; the Native initialization error status is `-2` and `INSTRUMENTATION_CODE` is `-1`. The test body did not execute: inference, Usage/Egress, two-turn generation, cancellation/release behavior, and performance remain **NOT_RUN**. The same test-file blob (`d05042e61f318bb79471f61941871c679dda40a3`) exists at PR #147 source `36700f6c99d15db428c6d434c657ac76593df3f9`, so this also explains the earlier runner-instantiation symptom without evidence of a runner/classpath defect.
+
+The run used SmolLM2 fixture revision `1076b85d135017971845b19b8d07df1479155988`, size 101,016,128 bytes, SHA-256 `e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5`; the workflow reports `model_weights_uploaded=false`. Cleanup recorded `app_private_owner_package_state=QUERY_FAILED`, `app_private_model_rm_command=NOT_VERIFIED_OWNER_PACKAGE_QUERY_FAILED`, `app_private_model_final_state=NOT_VERIFIED`, `cleanup_outcome=FAIL`, and `cleanup_verified_output=NOT_ATTEMPTED`. Host fixture and device-temp files were `ABSENT_VERIFIED`; test and app package uninstall commands passed and their package states were `ABSENT_VERIFIED`. The package-query failure cause remains unresolved. Runtime artifact upload was skipped. The only artifact is build diagnostic `12890592275`, 5,961 bytes, digest `sha256:a4573faa65ad50f38743d372ee565f5516b6795227a5d8644af5db53fe154d8b`; it is not inference/JUnit evidence and contains no model weights. Agent A's explicit Unit-signature fix and query-diagnostic update are pending a new source SHA and independent review.
+
+### PR #155 current exact-head CI refresh
+
+All runs below are attempt 1 on PR #155 source `683854ba94cb3a1e1972b73d0f1f60392f2271d6` / tree `e6228614a6acf7d3ac440c66b7038bc8728f05ee`. Status was refreshed at 10:45 UTC from run and job APIs.
+
+| Run | Refreshed state | Job results / artifacts |
+|---|---|---|
+| Android `40856235701` | queued | Change Scope `123390851811` PASS (runner `1000023930`); Dependency Audit `123393341260` PASS (`1000023951`); Documentation `123393341276` PASS (`1000023958`). Security `123393341235`, Unit `123393341427`, Integration `123393341455`, and Build/Lint/Instrumentation Compile `123393341829` remain queued/unassigned. Artifact `12890073308`, 99,202 bytes, digest `sha256:f78abd0b1ffb41932390928d938ac09eb20832dcf60fd400bfd0e1bac827af5c`. No API26/35 Required or UI JUnit. |
+| Full CI `40856235656` | queued | Windows synthetic `123387921868` PASS (`1000023914`); Linux MSRV `123387921332` in progress (`1000023968`); macOS Intel `123387921752`, macOS ARM64 `123387921806`, and Linux stable `123387921850` queued/unassigned. |
+| Native platform `40856235700` | queued | Rust 1.85 Linux ARM64 `123387805101` PASS (`1000023936`); Rust 1.85 macOS ARM64 `123387805477` PASS (`1000023929`); stable Linux ARM64 `123387805693` PASS (`1000023940`). In progress: stable Linux x86_64 `123387805544` (`1000023962`), Rust 1.85 Windows x86_64 `123387805547` (`1000023911`), stable Windows ARM64 `123387805662` (`1000023955`), stable Windows x86_64 `123387805666` (`1000023947`). Queued/unassigned: `123387805606`, `123387805615`, `123387805682`, `123387805984`, `123387805996`. This Rust matrix is not Android JNI inference. |
+| SQLite `40856235774` | queued | macOS ARM64 producer `123387804085` PASS (`1000023945`); Intel producer `123387804213` and cross-architecture consumer `123396151142` queued/unassigned. Artifact `12889749396`, 36,954 bytes, digest `sha256:101524c6cf3664b728636d6843b053c5d03ef0b1e9ae4148cda68820179dfaa8`. |
+| RustSec `40856235844` | **SUCCESS** | Job `123387799236` PASS (`1000023937`). Artifact `12890446656`, 3,189 bytes, digest `sha256:57ad6fd7e75770d73ba8505d12fd83d6a7d38a31e847b00f5f35875d8d9903f3`. |
+| Fast CI `40856235640` | **SUCCESS** | Linux fast checks `123387803732` PASS (`1000023970`). |
+| Git Hooks `40856235773` | queued | Windows `123387799004` PASS (`1000023894`); macOS `123387800216` PASS (`1000023919`); Ubuntu `123387799460` queued/unassigned. |
+| Beta push workflow `40856224552` | **FAILURE** | `jobs=[]`; no artifact or product test evidence; cause unknown. |
+
+### PR #157 current exact-head status
+
+PR #157 source is `4075ce2de11df3cee05b1b64d2aa6b8899376064` / tree `6fd63236729cf2ac1ba1e48b3a4cd97681f9577c`. Android run `40854847034` is queued: Change Scope `123387660362` PASS on runner `1000023952`, Documentation `123396859106` skipped as docs-only, and Security `123396856170`, Dependency Audit `123396856198`, Unit `123396856211`, Integration `123396856232`, Build/Lint/Instrumentation Compile `123396856254` queued/unassigned. No API26/35 emulator JUnit. Full `40854846881` queued (Windows synthetic `123383140168` PASS; other four jobs queued/unassigned); Native platform `40854846982` queued (seven Rust jobs PASS and five queued/unassigned); SQLite `40854847149` queued (both producers queued); RustSec `40854847020` SUCCESS (`123383139174` PASS); Fast `40854847203` SUCCESS (`123383138757` PASS); Git Hooks `40854846876` SUCCESS (all three jobs PASS); Beta `40854835334` FAILURE with `jobs=[]`. Existing local compile/harness evidence remains bound to #157 exact source, but does not substitute for hosted emulator JUnit.
+
+**RESUME_POINT:** The #158 root cause is test-method return validation, not native inference; await Agent A's new exact head and independently review it. Keep app-private cleanup **NOT_VERIFIED** while the package query cause is unresolved. PR #155 Required JUnit remains **NOT_RUN**. Do not treat queued/unassigned jobs as product failure or success, and do not rerun or merge.

@@ -684,7 +684,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("ProfileVerifier.writeProfileVerification(target)", verifier_test)
         self.assertIn("RESULT_CODE_ERROR_UNSUPPORTED_API_VERSION", verifier_test)
 
-    def test_g8_fake_google_and_gmail_ui_runs_as_exact_non_required_api35_stage(self) -> None:
+    def test_g8_fake_google_gmail_and_handoff_ui_runs_on_api26_and_api35(self) -> None:
         campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
         manifest = (ROOT / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt").read_text(encoding="utf-8")
         required = (ROOT / "tools/android-instrumentation-required-tests.txt").read_text(encoding="utf-8")
@@ -699,18 +699,27 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch",
             "app.serea.android.GoogleAuthorizationDemoUiTest#expiredCalendarReconnectShowsFreshPreviewAndWaitsForConfirm",
             "app.serea.android.GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests",
+            "app.serea.android.GoogleTrustedHandoffUiTest#fakeGmailPreviewCanBeCancelledOrConfirmedForLocalChat",
+            "app.serea.android.GoogleTrustedHandoffUiTest#fakeCalendarPreviewCanBeCancelledOrConfirmedForLocalChat",
+            "app.serea.android.GoogleTrustedHandoffUiTest#gmailOutOfOrderPreviewCallbackCannotReplaceNewestSelection",
+            "app.serea.android.GoogleTrustedHandoffUiTest#gmailProviderCancellationFailsClosedAndDialogRemainsCancellable",
+            "app.serea.android.GoogleTrustedHandoffShellTest#gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend",
+            "app.serea.android.GoogleTrustedHandoffShellTest#calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend",
+            "app.serea.android.GoogleTrustedHandoffShellTest#activityRecreationDropsUnconfirmedPreview",
         }
         focused = campaign.split("google_demo_ui_tests=$(cat <<'TESTS'", 1)[1].split("\nTESTS\n)", 1)[0]
         actual = {line.strip() for line in focused.splitlines() if line.strip()}
         self.assertEqual(expected, actual)
-        self.assertEqual(9, len(actual))
+        self.assertEqual(16, len(actual))
         self.assertTrue(expected.issubset(set(manifest.splitlines())))
         self.assertFalse(expected.intersection(required.splitlines()))
         self.assertFalse(expected.intersection(additional.splitlines()))
-        self.assertIn("if [[ \"$api_level\" == 35 && \"$junit_result\" == PASS", campaign)
-        self.assertIn("run_diagnostic_stage google-calendar-and-gmail-ui \"$google_demo_ui_filter\" 1200 9 ''", campaign)
+        self.assertIn('if [[ ( "$api_level" == 26 || "$api_level" == 35 ) && "$junit_result" == PASS', campaign)
+        self.assertIn("run_diagnostic_stage google-calendar-and-gmail-ui \"$google_demo_ui_filter\" 1200 16 ''", campaign)
         helper = 'bash "$tool_dir/run_android_fake_google_process_death.sh"'
         self.assertIn("GoogleCalendarHandoffRevocationUiTest", campaign.split("google_demo_ui_filter=", 1)[1].split("\n", 1)[0])
+        self.assertIn("GoogleTrustedHandoffUiTest", campaign.split("google_demo_ui_filter=", 1)[1].split("\n", 1)[0])
+        self.assertIn("GoogleTrustedHandoffShellTest", campaign.split("google_demo_ui_filter=", 1)[1].split("\n", 1)[0])
         self.assertIn('SEREA_ISOLATED_INSTRUMENTATION_FINISHED=1', campaign)
         self.assertIn('fake_google_process_death_status" != PASS', campaign)
         self.assertEqual(1, campaign.count(helper))
@@ -729,6 +738,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('google-demo-ui-status.txt', campaign)
         self.assertIn('google-demo-ui-cleanup-status.txt', campaign)
         self.assertIn('google_demo_ui_result" == PASS', campaign)
+        self.assertIn('&& "$google_demo_ui_result" == PASS ]]; then', campaign)
         build = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")', build)
         self.assertNotIn('androidTestImplementation("androidx.compose.ui:ui-test-manifest")', build)

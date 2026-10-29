@@ -679,8 +679,8 @@ printf '%s\n' "$death_result" > "$evidence/process-death-status.txt"
 
 google_demo_ui_result=NOT_RUN
 google_demo_ui_cleanup_result=NOT_RUN
-if [[ "$api_level" == 35 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS ]]; then
-  google_demo_ui_filter='app.serea.android.GoogleAuthorizationDemoUiTest,app.serea.android.GoogleCalendarDemoLoopbackUiTest,app.serea.android.GoogleAuthorizationAppIntegrationTest,app.serea.android.GoogleCalendarHandoffRevocationUiTest,app.serea.android.GmailHtmlInertUiSecurityTest'
+if [[ ( "$api_level" == 26 || "$api_level" == 35 ) && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS ]]; then
+  google_demo_ui_filter='app.serea.android.GoogleAuthorizationDemoUiTest,app.serea.android.GoogleCalendarDemoLoopbackUiTest,app.serea.android.GoogleAuthorizationAppIntegrationTest,app.serea.android.GoogleCalendarHandoffRevocationUiTest,app.serea.android.GmailHtmlInertUiSecurityTest,app.serea.android.GoogleTrustedHandoffUiTest,app.serea.android.GoogleTrustedHandoffShellTest'
   google_demo_ui_tests=$(cat <<'TESTS'
 app.serea.android.GoogleAuthorizationDemoUiTest#selectedSyntheticAccountIsBoundToTheConsentPreviewAndRevokedOnSwitch
 app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection
@@ -691,6 +691,13 @@ app.serea.android.GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCale
 app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch
 app.serea.android.GoogleAuthorizationDemoUiTest#expiredCalendarReconnectShowsFreshPreviewAndWaitsForConfirm
 app.serea.android.GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests
+app.serea.android.GoogleTrustedHandoffUiTest#fakeGmailPreviewCanBeCancelledOrConfirmedForLocalChat
+app.serea.android.GoogleTrustedHandoffUiTest#fakeCalendarPreviewCanBeCancelledOrConfirmedForLocalChat
+app.serea.android.GoogleTrustedHandoffUiTest#gmailOutOfOrderPreviewCallbackCannotReplaceNewestSelection
+app.serea.android.GoogleTrustedHandoffUiTest#gmailProviderCancellationFailsClosedAndDialogRemainsCancellable
+app.serea.android.GoogleTrustedHandoffShellTest#gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend
+app.serea.android.GoogleTrustedHandoffShellTest#calendarHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend
+app.serea.android.GoogleTrustedHandoffShellTest#activityRecreationDropsUnconfirmedPreview
 TESTS
 )
   google_demo_ui_cleanup_log="$evidence/google-demo-ui-cleanup.log"
@@ -723,7 +730,7 @@ TESTS
   done
 
   if [[ "$google_demo_ui_cleanup_result" -eq 0 ]]; then
-    run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 9 '' "$google_demo_ui_tests" \
+    run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 16 '' "$google_demo_ui_tests" \
       || google_demo_ui_stage_result=1
   else
     google_demo_ui_stage_result=1
@@ -800,7 +807,7 @@ printf '%s\n' "$google_demo_ui_cleanup_result" > "$evidence/google-demo-ui-clean
 
 if [[ "$test_ime_installed" == true ]]; then cleanup_test_ime; fi
 
-if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS && ( "$api_level" != 35 || "$google_demo_ui_result" == PASS ) ]]; then
+if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS && "$google_demo_ui_result" == PASS ]]; then
   result=PASS
 else
   result=FAIL

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/assert_disposable_android_emulator.sh"
+source "$(dirname "$0")/android_package_path.sh"
 
 : "${EXPECTED_API_LEVEL:=${SEREA_EXPECTED_ANDROID_API:-}}"
 : "${SEREA_ISOLATED_INSTRUMENTATION_FINISHED:?Set to 1 only after the isolated instrumentation command has exited.}"
@@ -15,21 +16,65 @@ activity="$package/.FakeGoogleProcessDeathHarnessActivity"
 tag="SereaFakeGoogleDeath"
 token="$SEREA_FAKE_GOOGLE_DEATH_TOKEN"
 evidence="${SEREA_FAKE_GOOGLE_DEATH_EVIDENCE_DIR:-$(dirname "$0")/../android/app/build/outputs/androidTest-results/api${EXPECTED_API_LEVEL}/fake-google-process-death}"
+target_apk="${SEREA_ISOLATED_TARGET_APK:-app/build/outputs/apk/isolated/app-isolated.apk}"
 mkdir -p "$evidence"
 printf 'NOT_RUN\n' > "$evidence/status.txt"
 
 adb_cmd=(adb -s "$ANDROID_SERIAL")
-if ! package_path="$("${adb_cmd[@]}" shell pm path "$package")"; then
+if [[ ! -f "$target_apk" ]]; then
   printf 'FAIL\n' > "$evidence/status.txt"
-  echo 'Could not verify the isolated target package path.' >&2
+  echo "The isolated target APK is missing: $target_apk" >&2
   exit 1
 fi
-package_path="${package_path//$'\r'/}"
-if [[ -z "$package_path" ]]; then
+target_apk_sha256="$(sha256sum "$target_apk" | awk '{print $1}')"
+if ! test_package_paths="$(ANDROID_SERIAL="$ANDROID_SERIAL" android_package_path "$test_package")"; then
   printf 'FAIL\n' > "$evidence/status.txt"
-  echo 'The isolated target package is not installed.' >&2
+  echo 'Could not verify the isolated instrumentation package state.' >&2
   exit 1
 fi
+if [[ -n "$test_package_paths" ]]; then
+  printf 'FAIL\n' > "$evidence/status.txt"
+  echo 'The isolated instrumentation package remains installed after the test stage.' >&2
+  exit 1
+fi
+if ! package_paths="$(ANDROID_SERIAL="$ANDROID_SERIAL" android_package_path "$package")"; then
+  printf 'FAIL\n' > "$evidence/status.txt"
+  echo 'Could not verify the isolated target package state.' >&2
+  exit 1
+fi
+if [[ -z "$package_paths" ]]; then
+  if ! "${adb_cmd[@]}" install "$target_apk" > "$evidence/target-install.log" 2>&1; then
+    printf 'FAIL\n' > "$evidence/status.txt"
+    echo 'Could not install the isolated target APK for the Fake Google process-death harness.' >&2
+    cat "$evidence/target-install.log" >&2
+    exit 1
+  fi
+  if ! package_paths="$(ANDROID_SERIAL="$ANDROID_SERIAL" android_package_path "$package")" || [[ -z "$package_paths" ]]; then
+    printf 'FAIL\n' > "$evidence/status.txt"
+    echo 'The isolated target package was not visible after APK installation.' >&2
+    exit 1
+  fi
+fi
+package_paths="${package_paths//$'\r'/}"
+if [[ "$package_paths" == *$'\n'* || "$package_paths" != package:* ]]; then
+  printf 'FAIL\n' > "$evidence/status.txt"
+  echo 'The isolated target APK install returned multiple or malformed package paths.' >&2
+  exit 1
+fi
+package_path="${package_paths#package:}"
+installed_apk_sha256="$("${adb_cmd[@]}" shell sha256sum "$package_path" 2>/dev/null | awk 'NR == 1 { print $1 }' | tr -d '\r')"
+if [[ "$installed_apk_sha256" != "$target_apk_sha256" ]]; then
+  printf 'FAIL\n' > "$evidence/status.txt"
+  echo 'The installed isolated target APK did not match the campaign-built APK.' >&2
+  exit 1
+fi
+{
+  printf 'target_package=%s\n' "$package"
+  printf 'target_apk=%s\n' "$target_apk"
+  printf 'target_apk_sha256=%s\n' "$target_apk_sha256"
+  printf 'installed_apk_path=%s\n' "$package_path"
+  printf 'installed_apk_sha256=%s\n' "$installed_apk_sha256"
+} > "$evidence/target-apk-provenance.txt"
 
 # Normalize pidof's documented no-match status to a sentinel on-device. The host still sees
 # nonzero for adb transport failures, pidof errors, malformed output, and other query failures.

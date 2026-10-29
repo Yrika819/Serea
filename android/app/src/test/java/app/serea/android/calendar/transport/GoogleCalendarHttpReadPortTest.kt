@@ -38,6 +38,7 @@ import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.net.SocketTimeoutException
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
@@ -340,11 +341,15 @@ class GoogleCalendarHttpReadPortTest {
     }
 
     @Test fun timeoutMapsToTimeout() = runBlocking {
-        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
-        val client = OkHttpClient.Builder().callTimeout(100, TimeUnit.MILLISECONDS).connectTimeout(100, TimeUnit.MILLISECONDS)
-            .readTimeout(100, TimeUnit.MILLISECONDS).build()
+        // Deliver a real socket-timeout exception through OkHttp's asynchronous failure callback.
+        // This tests the transport's timeout mapping without racing a 100 ms TLS/network timer.
+        val client = CalendarMockWebServerTls.client(server).newBuilder()
+            .addInterceptor { throw SocketTimeoutException("synthetic read timeout") }
+            .build()
         try { port(client = client).getEvent(CalendarEventKey(calendarId, EventId("x"))); fail("Expected timeout") }
         catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.TIMEOUT, e.code) }
+        assertEquals(1, tokenRequests)
+        assertEquals(0, server.requestCount)
     }
 
     @Test fun coroutineCancellationCancelsHttpCall() = runBlocking {

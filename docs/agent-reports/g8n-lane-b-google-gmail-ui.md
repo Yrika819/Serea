@@ -30,6 +30,8 @@ JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH
 
 Result: **BUILD SUCCESSFUL**; JUnit `GoogleTrustedHandoffTest`: **22 tests, 0 failures, 0 errors, 0 skipped**. The executed code/test tree matches commit `4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd` / tree `b19a6c52a8e8d4ff1c8365d435c047d0aceb300b`. `git diff --check` passed.
 
+The raw XML and command/runtime metadata are preserved under [`evidence/g8n-gmail-body-only-4e4b8f9`](evidence/g8n-gmail-body-only-4e4b8f9/). `GoogleTrustedHandoffTest.xml` SHA-256 is `214269dd60cd0119e31c199b403096f939522ccb2629cf877e169a3d726e6305`; the folder `SHA256SUMS` covers both evidence files. This is local JUnit evidence bound to source/test tree `b19a6c52a8e8d4ff1c8365d435c047d0aceb300b`, not a GitHub Actions artifact and not an Android UI run. PR #150's later documentation-only heads do not change or rebind the tested source tree.
+
 The isolated AndroidTest sources were also checked on that exact source HEAD/tree with:
 
 ```text
@@ -62,7 +64,7 @@ Before implementing a real mode switch, keep the active conversation's model ide
 
 **CHANGED_FILES:** `android/app/src/main/java/app/serea/android/handoff/GoogleTrustedHandoff.kt`; `android/app/src/test/java/app/serea/android/handoff/GoogleTrustedHandoffTest.kt`; this report.
 **CI_RUN_IDS:** PR #146 run IDs listed above are comparison evidence only; exact Lane B branch CI pending.
-**ARTIFACT_IDS:** None for this lane.
+**ARTIFACT_IDS:** No GitHub artifact IDs for this local run; preserved local JUnit evidence is under `docs/agent-reports/evidence/g8n-gmail-body-only-4e4b8f9/`.
 **SECURITY_IMPACT:** Reduces Gmail metadata transferred to local Chat text. Google origin, local-only consent and fail-closed Cloud egress remain intact. No OAuth, live Google data, Cloud request, Composition Root, or `MainActivity` change.
 **REVIEW_STATUS:** ACCEPTED by Lane A for this scoped source change at `4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd` / tree `b19a6c52a8e8d4ff1c8365d435c047d0aceb300b`; Lane A explicitly did not accept the unrun API 26/35 UI path or all of G9.
 **KNOWN_ISSUES:** Focused Gmail UI and API 26/35 instrumentation have not run on this branch.

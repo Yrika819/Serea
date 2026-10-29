@@ -1,0 +1,29 @@
+G8 parent integration focused verification
+Checked: 2026-10-29 UTC
+Branch: codex/serea-g8-integration-candidate-20261029-r1
+Source tree: eba68ebff6f1be05a1cc16c5043edc1c086f62cc
+Source commit: f1a616a0aa40d98387034c73f62f5c37bad4bb15; its tree is the exact source used for these checks.
+
+Gradle command:
+JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:lintDebug :app:compileIsolatedAndroidTestKotlin --rerun-tasks
+Result: BUILD SUCCESSFUL; 79 actionable tasks executed.
+Android JVM JUnit: 405 tests, 34 suites, 0 failures, 0 errors, 0 skipped; verify_android_unit_junit.py passed with source/JUnit discovery.
+Android build: assembleDebug PASS; lintDebug PASS; isolated Android test Kotlin compilation PASS.
+Android instrumentation/UI runtime: NOT_RUN. Disposable emulator not used locally. Formal API 26/35 gates and Fake Google process-death runtime remain subject to exact pushed-head CI.
+
+Host checks:
+python3 -m unittest tests.android_emulator_workflow_tests — 34/34 PASS.
+python3 -m unittest tests.android_instrumentation_results_tests — 13/13 PASS.
+bash -n tools/run_android_instrumentation_campaign.sh — PASS.
+bash -n tools/run_android_fake_google_process_death.sh — PASS.
+git diff --check — PASS.
+
+Built debug/demo APK (not a Beta artifact):
+package=app.serea.android.demo
+versionName=0.1.0-demo
+versionCode=1
+minSdk=26
+targetSdk=35
+size_bytes=12368206
+sha256=c38fd5a190703cdac81fb5b262ab7fcd176b8a4c4dc0fc5db3e36fdc13e2e205
+The APK is not included in this evidence directory or committed to Git. It is not Owner-signed and is not for distribution.

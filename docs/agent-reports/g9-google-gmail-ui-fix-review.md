@@ -8,7 +8,7 @@
 **VERIFIED_TEST_SOURCE_SHA:** `b553d68325b7c18dfbecaea2a9e92ebd15adad27`
 **VERIFIED_TEST_SOURCE_TREE:** `c494e20d34a961d16d67c4c882bc2eeb7b3b70f0`
 **BRANCH:** `codex/serea-g9-google-gmail-ui-fixes-r2`
-**DRAFT_PR:** Not opened; waiting for independent Lane C review before push.
+**DRAFT_PR:** [#152](https://github.com/Yrika819/Serea/pull/152), OPEN / DRAFT, stacked on PR #151 head `d4a36fb5d3613bca2d60151de0991a1baac72fc9`.
 **WORKTREE:** `/workspace/serea-gmail-fix-r2`
 **OWNER_APPROVAL_REQUIRED:** None for Fake-only UI tests. No real Google accounts/data, OAuth, Cloud AI, production signing or device actions were used.
 
@@ -63,7 +63,7 @@ JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH
 
 ## Review and next action
 
-**REVIEW_STATUS:** Pending independent Lane C source review.
+**REVIEW_STATUS:** ACCEPTED by Lane C for the test-only source at `b553d68325b7c18dfbecaea2a9e92ebd15adad27` / tree `c494e20d34a961d16d67c4c882bc2eeb7b3b70f0`.
 **SECURITY_IMPACT:** Test-only selector/determinism changes; Fake providers and the existing explicit consent/handoff boundaries remain unchanged.
 **KNOWN_ISSUES:** Date-timeout root cause remains uncertain until the new exact-head API 26 UI run reports emulator timezone/date and result. API 35 UI remains blocked by its shared IME diagnostic.
-**NEXT_ACTION:** Lane C reviews exact source/tree above. After acceptance, push normally and open a Draft successor PR targeting PR #151; inspect new exact-head API 26/35 CI evidence. Keep UI status `NOT_RUN` until a focused emulator JUnit result exists.
+**NEXT_ACTION:** Inspect #152 exact-head API 26/35 CI evidence. Keep UI status `NOT_RUN` until a focused emulator JUnit result exists; update the date-timeout assessment only from the new artifact.

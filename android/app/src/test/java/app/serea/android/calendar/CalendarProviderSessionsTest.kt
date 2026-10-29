@@ -28,7 +28,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
-import okhttp3.OkHttpClient
 import okhttp3.Call
 import okhttp3.EventListener
 import okhttp3.mockwebserver.Dispatcher
@@ -47,7 +46,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 class CalendarProviderSessionsTest {
-    private val server = MockWebServer().apply { start() }
+    private val server = MockWebServer().apply { CalendarMockWebServerTls.start(this) }
 
     private enum class RevokeOutcome { SUCCESS, FAILURE, CANCELLATION }
 
@@ -192,7 +191,7 @@ class CalendarProviderSessionsTest {
 
         val mockGateway = FakeGoogleAuthorizationGateway(setOf(GoogleScope.CALENDAR_EVENTS_READ_ONLY))
         val alsoFake = CalendarProviderSessions(googleHttpEnabledByOwner = true)
-            .openGoogleReadOnly(mockGateway, baseUrl = server.url("/calendar/v3/"))
+            .openGoogleReadOnly(mockGateway)
         assertEquals(CalendarProviderKind.FAKE, alsoFake.kind)
         assertEquals(0, server.requestCount)
         assertTrue(alsoFake.listCalendars().isNotEmpty())
@@ -202,9 +201,8 @@ class CalendarProviderSessionsTest {
         server.enqueue(MockResponse().setBody("""{"items":[{"id":"fixture@example.test","timeZone":"UTC","accessRole":"reader"}]}"""))
         val sessions = CalendarProviderSessions(googleHttpEnabledByOwner = true)
         val first = sessions.openGoogleReadOnly(
-            PlayServicesFixture(),
-            OkHttpClient(),
-            server.url("/calendar/v3/"),
+            gateway = PlayServicesFixture(),
+            client = CalendarMockWebServerTls.client(server),
         )
         assertEquals(CalendarProviderKind.GOOGLE_READ_ONLY, first.kind)
         assertEquals("fixture@example.test", first.listCalendars().single().id.value)
@@ -235,7 +233,7 @@ class CalendarProviderSessionsTest {
                 )
             },
         )) {
-            val session = sessions.openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
+            val session = sessions.openGoogleReadOnly(gateway, CalendarMockWebServerTls.client(server))
             try {
                 session.getEvent(CalendarEventKey(CalendarId("fixture@example.test"), EventId("fixture")))
                 throw AssertionError("authorization must fail closed")
@@ -249,7 +247,7 @@ class CalendarProviderSessionsTest {
     @Test fun accountSwitchDuringTokenLeaseAcquisitionCannotDispatchACalendarRequest() = runBlocking {
         val gateway = PlayServicesFixture().apply { rotateAfterNextToken = true }
         val session = CalendarProviderSessions(googleHttpEnabledByOwner = true)
-            .openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
+            .openGoogleReadOnly(gateway, CalendarMockWebServerTls.client(server))
 
         val failure = runCatching { session.listCalendars() }.exceptionOrNull()
         assertTrue(failure is CalendarReadFailure)
@@ -265,7 +263,7 @@ class CalendarProviderSessionsTest {
             val response = GatedResponseDispatcher("""{"id":"fixture@example.test","timeZone":"UTC","accessRole":"reader"}""")
             server.dispatcher = response
             val session = CalendarProviderSessions(googleHttpEnabledByOwner = true)
-                .openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
+                .openGoogleReadOnly(gateway, CalendarMockWebServerTls.client(server))
             val read = async { runCatching { session.getCalendar(CalendarId("fixture@example.test")) } }
 
             assertTrue(withContext(Dispatchers.IO) { response.requestArrived.await(5, TimeUnit.SECONDS) })
@@ -373,8 +371,7 @@ class CalendarProviderSessionsTest {
         val gateway = PlayServicesFixture()
         val session = CalendarProviderSessions(googleHttpEnabledByOwner = true).openGoogleReadOnly(
             gateway,
-            OkHttpClient.Builder().eventListenerFactory { cancellationProbe }.build(),
-            server.url("/calendar/v3/"),
+            CalendarMockWebServerTls.client(server).newBuilder().eventListenerFactory { cancellationProbe }.build(),
         )
         val read = async { runCatching { session.getCalendar(CalendarId("fixture@example.test")) } }
         val remoteRevokeStarted = CompletableDeferred<Unit>()
@@ -412,7 +409,7 @@ class CalendarProviderSessionsTest {
         val response = GatedResponseDispatcher("""{"id":"fixture@example.test","timeZone":"UTC","accessRole":"reader"}""")
         server.dispatcher = response
         val session = CalendarProviderSessions(googleHttpEnabledByOwner = true)
-            .openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
+            .openGoogleReadOnly(gateway, CalendarMockWebServerTls.client(server))
         val read = async { calendarFailure { session.getCalendar(CalendarId("fixture@example.test")) } }
         assertTrue(withContext(Dispatchers.IO) { response.requestArrived.await(5, TimeUnit.SECONDS) })
         assertFalse("the dispatcher is holding the response before app-local disable", read.isCompleted)
@@ -457,7 +454,7 @@ class CalendarProviderSessionsTest {
             }
         }
         sessions = CalendarProviderSessions(googleHttpEnabledByOwner = true)
-        val oldSession = sessions.openGoogleReadOnly(gateway, baseUrl = server.url("/calendar/v3/"))
+        val oldSession = sessions.openGoogleReadOnly(gateway, CalendarMockWebServerTls.client(server))
 
         val failure = runCatching { oldSession.getCalendar(CalendarId("fixture@example.test")) }.exceptionOrNull()
         assertTrue(failure is CalendarReadFailure)
@@ -481,7 +478,7 @@ class CalendarProviderSessionsTest {
             )
         }
         val session = CalendarProviderSessions(googleHttpEnabledByOwner = true)
-            .openGoogleReadOnly(unboundGateway, baseUrl = server.url("/calendar/v3/"))
+            .openGoogleReadOnly(unboundGateway, CalendarMockWebServerTls.client(server))
 
         assertEquals(CalendarAuthorizationState.NOT_CONNECTED, session.status().state)
         val failure = runCatching {

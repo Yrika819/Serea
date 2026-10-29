@@ -1,6 +1,7 @@
 package app.serea.android
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -8,14 +9,18 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.serea.android.calendar.CalendarProviderKind
+import app.serea.android.calendar.ui.CalendarAgendaItemsKey
 import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
 import app.serea.android.gmail.GmailProviderKind
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,6 +38,26 @@ class GoogleAuthorizationAppIntegrationTest {
 
     private fun authorizationViewModel() = ViewModelProvider(compose.activity)
         .get(GoogleAuthorizationDemoViewModel::class.java)
+
+    private fun agendaEventIndex(eventId: String): Int? = runCatching {
+        compose.waitForIdle()
+        val nodes = compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes()
+        if (nodes.size != 1) return@runCatching null
+        nodes.single().config.getOrElseNullable(CalendarAgendaItemsKey) { null }
+            ?.eventItemIndices?.get(eventId)
+    }.getOrNull()
+
+    private fun agendaStateForFailure(): String = runCatching {
+        compose.waitForIdle()
+        val nodes = compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes()
+        if (nodes.size != 1) return@runCatching "calendar_agenda_list_nodes=${nodes.size}"
+        val node = nodes.single()
+        val items = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }
+        val loadedCount = node.config.getOrElseNullable(
+            app.serea.android.calendar.ui.CalendarAgendaLoadedEventCountKey,
+        ) { null }
+        "loadedEventCount=$loadedCount,eventCount=${items?.eventCount},eventItemIndices=${items?.eventItemIndices}"
+    }.getOrElse { "agendaSnapshotUnavailable=${it.javaClass.simpleName}:${it.message}" }
 
     @After fun revokeDemoState() {
         runCatching { authorizationViewModel().revokeDemoGrant() }
@@ -54,6 +79,7 @@ class GoogleAuthorizationAppIntegrationTest {
 
         val grantedSession = checkNotNull(viewModel.calendarDemoSession.value)
         assertEquals(CalendarProviderKind.FAKE, grantedSession.kind)
+        assertEquals("demo-primary", runBlocking { grantedSession.listCalendars().first().id.value })
         compose.onNodeWithTag("google_auth_demo_open_calendar").performScrollTo().performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("google_auth_demo_calendar_destination").fetchSemanticsNodes().isNotEmpty()
@@ -62,10 +88,32 @@ class GoogleAuthorizationAppIntegrationTest {
 
         compose.onNodeWithText("指定日").performClick()
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
-        compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-20")
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
-        }
+        val reviewDate = Instant.parse("2026-10-20T00:00:00Z")
+            .atZone(ZoneId.systemDefault()).toLocalDate().toString()
+        compose.onNodeWithTag("calendar_date_input").performTextInput(reviewDate)
+        compose.onNodeWithTag("calendar_date_input").assertTextContains(reviewDate, substring = true)
+        compose.onNodeWithText("Demo Personal").assertIsSelected()
+        var designReviewIndex: Int? = null
+        val eventLoaded = runCatching {
+            compose.waitUntil(10_000) {
+                designReviewIndex = agendaEventIndex("evt-meeting")
+                designReviewIndex != null
+            }
+        }.isSuccess
+        assertTrue(
+            "Design review fixture event was not loaded for instant 2026-10-20T00:00:00Z; " +
+                "deviceZone=${ZoneId.systemDefault().id}, queryDate=$reviewDate, " +
+                "selectedCalendar=demo-primary, selectedCalendarName=Demo Personal, " +
+                "calendarState=${viewModel.state.value.calendar}, " +
+                "sessionStillBound=${viewModel.calendarDemoSession.value === grantedSession}, " +
+                "agenda=${agendaStateForFailure()}",
+            eventLoaded,
+        )
+        compose.onNodeWithTag("calendar_agenda_list")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollToIndex) { scrollToIndex ->
+                scrollToIndex(checkNotNull(designReviewIndex))
+            }
+        compose.waitForIdle()
         compose.onNodeWithText("Design review").assertIsDisplayed()
 
         // The nested route is transient across configuration recreation. The Activity ViewModel

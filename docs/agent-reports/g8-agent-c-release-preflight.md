@@ -3,13 +3,13 @@
 **Checkpoint:** 2026-10-29 JST
 **AGENT_ID:** C — G7 closure / Release Security
 **ACTIVE_PHASE:** G7 evidence reconciliation; G8 and G9 release preflight
-**GOAL_STATUS:** PARTIAL — the G7 SQLite matrix remains incomplete; release and OAuth preparation is documentary only.
+**GOAL_STATUS:** PARTIAL — G7 Evidence Closure is SUCCESS; release and OAuth preparation remains documentary only, with release and Owner gates open.
 **BASE_SHA:** `00384eb6468214362435140c9a2d848fa2e0f12e`
 **BASE_TREE_SHA:** `10d07a8ec57d7f67fc94663c489347938cccbd58`
 **WORKTREE:** `/workspace/Serea-g8-release-preflight`
 **BRANCH:** `codex/serea-g8-release-preflight`
 **DRAFT_PR:** [#142](https://github.com/Yrika819/Serea/pull/142), OPEN / DRAFT, based on G7 #139.
-**JUNIT_RESULT:** NOT_RUN — documentation-only work.
+**JUNIT_RESULT:** Local JUnit NOT_RUN — documentation-only change. Exact-G7 SQLite CI JUnit/test result is 1 passed, 0 failed/ignored/measured/filtered on run `40749231272` attempt 3.
 **OWNER_APPROVAL_REQUIRED:** Real OAuth/project activation, real Google account/data, Owner package/signing decisions, production signing/distribution, Pixel 7a operation, protected-main merge, and Personal Beta GO.
 
 ## Authority and scope
@@ -21,13 +21,13 @@ GitHub was checked on 2026-10-29 JST. `main` remains `e0acb0254820c381dd97828824
 | [#132](https://github.com/Yrika819/Serea/pull/132) | `373b8be15f407d951157d2a80a632e86d979acdf` | `main` at `e0acb02…` | OPEN / DRAFT; Android run `40599571275` failed Storage/Emulator and Required; Identity was SKIPPED. Not green for merge. |
 | [#134](https://github.com/Yrika819/Serea/pull/134) | `b84feb337cd57918346ab31cb3ea4af4ba880ffb` | #132 head | OPEN / DRAFT; frozen G5 candidate, Android run `40664188621` PASS on its exact head. |
 | [#138](https://github.com/Yrika819/Serea/pull/138) | `23b884cf2815a2f3287652d5ffd2c3913d09df76` | #134 head | OPEN / DRAFT; G6 candidate, Android run `40710445577` PASS on its exact head (attempt 2). |
-| [#139](https://github.com/Yrika819/Serea/pull/139) | `00384eb6468214362435140c9a2d848fa2e0f12e` | #138 head | OPEN / DRAFT; G7 candidate, Android run `40749231249` PASS; SQLite run `40749231272` has one direction NOT_RUN. |
+| [#139](https://github.com/Yrika819/Serea/pull/139) | report-only HEAD `0560e1e7bcd13f0194eab8caca89d70ea5a2f142`; code/test SHA `00384eb6468214362435140c9a2d848fa2e0f12e` | #138 HEAD `23b884cf2815a2f3287652d5ffd2c3913d09df76` | OPEN / DRAFT; G7 Evidence Closure SUCCESS; Android run `40749231249` PASS; SQLite run `40749231272` attempt 3 PASS, all four directions. |
 
 No existing PR or protected ref was modified. This lane adds only this report; no live OAuth, Google data, signing key, release, or physical-device work was done.
 
 ## G7 SQLite portability closure
 
-Run [40749231272](https://github.com/Yrika819/Serea/actions/runs/40749231272) is attached to exact PR #139 source SHA `00384eb6468214362435140c9a2d848fa2e0f12e` (run attempt 2; run number 780). The two attempts agree on the material result:
+At the initial checkpoint, the latest available run state was attempt 2 of [40749231272](https://github.com/Yrika819/Serea/actions/runs/40749231272), attached to exact PR #139 source SHA `00384eb6468214362435140c9a2d848fa2e0f12e` (run number 780). The attempt 1 and 2 records remain historical:
 
 | Direction / job | Attempt 1 | Attempt 2 | Assessment |
 |---|---|---|---|
@@ -36,11 +36,19 @@ Run [40749231272](https://github.com/Yrika819/Serea/actions/runs/40749231272) is
 | ARM64-produced DB opens on Intel x86_64 | PASS | PASS | Complete |
 | Intel-produced DB opens on macOS ARM64 | CANCELLED, `runner_id=0` | CANCELLED, `runner_id=0` | **NOT_RUN**; no runner was assigned |
 
-GitHub's latest-attempt job records show the missing direction requested label `macos-15` with `runner_id=0` in both attempts. This is runner unavailability, not an SQLite assertion or application-code failure. Repeating the workflow without a runner-capacity change is not useful. No new rerun was started.
+GitHub's attempt 1 and 2 job records showed the missing direction requested label `macos-15` with `runner_id=0`. This was runner unavailability, not an SQLite assertion or application-code failure. The earlier instruction not to rerun without runner-capacity change applied only at that checkpoint; attempt 3 later obtained a runner and closed the residual.
 
-Attempt 2 uploaded the Intel producer artifact `portable-db-intel` (artifact `12843411146`, digest `sha256:a949aec7af20dcceb46e83f702b36fed2ac6194e43f8bb066b6d250ece73600b`) and the ARM64 producer artifact `portable-db-arm64` (artifact `12843930249`, digest `sha256:d37cdb542c0543cacf197d84711f5a03f7dff33bb0ce17108c347f2be90b91f0`). They are source-bound to `00384eb…`; their GitHub artifact expiry is 2026-10-29 18:54 UTC. These producer artifacts do not prove the missing Intel→ARM64 open direction. No JUnit result exists for that cancelled job.
+The producer artifacts present on run `40749231272` are the Intel database `portable-db-intel` (artifact `12843411146`, ZIP SHA-256 `a949aec7af20dcceb46e83f702b36fed2ac6194e43f8bb066b6d250ece73600b`) and the ARM64 database `portable-db-arm64` (artifact `12843930249`, ZIP SHA-256 `d37cdb542c0543cacf197d84711f5a03f7dff33bb0ce17108c347f2be90b91f0`). They are bound to exact source SHA `00384eb…`; GitHub listed expiry as 2026-10-29 18:54 UTC. At the attempt 2 checkpoint these producer artifacts alone did not prove the missing Intel→ARM64 open direction; the later attempt 3 test evidence below does.
 
-**G7 SQLite status: PARTIAL.** Preserve the three successful directions and the missing fourth direction separately. G6 SQLite success is not substituted for G7 evidence.
+### Later exact-G7 SQLite closure correction — 2026-10-29
+
+G7 SQLite portability is now **SUCCESS — Evidence Closure**. Run `40749231272`, attempt 3, completed successfully against the exact G7 source SHA `00384eb6468214362435140c9a2d848fa2e0f12e` and tree `10d07a8ec57d7f67fc94663c489347938cccbd58`. The formerly unassigned Intel→ARM64 job `123182687879` completed successfully on macOS ARM64 runner `1000022879`.
+
+All four directions passed in the successful attempt: produce Intel DB (job `123182727042`); produce ARM64 DB (job `123182743251`); open ARM64 DB on Intel (job `123182690038`); and open Intel DB on ARM64 (job `123182687879`). The last job asserted `closed_serea_database_can_be_produced_or_consumed_cross_architecture`: 1 passed, 0 failed, ignored, measured, or filtered out. It downloaded Intel artifact `12843411146` as its input. The ARM64-produced database artifact is `12843930249` and supports the complementary ARM64→Intel direction.
+
+Saved checkpoint `docs/agent-reports/evidence/g7-sqlite-arm64-20261029.txt` records both artifact SHA-256 values above and the shared `portable.sqlite` content: 626,688 bytes, SHA-256 `1a248d00016ed601c3c718e48389d3aec64804e0a2e48ab82cb7b33315fe5383`; read-only SQLite `PRAGMA integrity_check` returned `ok` for both. Earlier runner-unassigned attempt 1 and 2 cancellations remain historical and are not erased. G6 results were not substituted.
+
+**Current G7 SQLite status: SUCCESS — Evidence Closure.** The separate historical API 35 Chat/IME failures below remain a reproducibility risk; they are not erased or conflated with the final-head Required/Identity passes.
 
 ## G7 exact-head Android evidence and historical IME risk
 
@@ -58,7 +66,7 @@ Other verified final-head signals are:
 | Native platform validation | `40749231215` | PASS, 12/12 jobs |
 | Rust Dependency Security | `40749231235` | PASS |
 | Git Hooks Windows compatibility | `40749231318` | PASS |
-| Cross-architecture SQLite | `40749231272` | PARTIAL; one direction NOT_RUN as above |
+| Cross-architecture SQLite | `40749231272`, attempt 3 | PASS; all four directions; attempt 1/2 runner cancellations are historical |
 
 All these runs are tied to `00384eb…`; no result from `acde94c…` is used as proof of final-head success. The CI-produced Pixel 7a bundle is a report/fixture only, not physical-device acceptance. The main-only Beta workflow remains protected and was not forced on the feature branch.
 
@@ -129,14 +137,14 @@ This is a G9 preparation list, not a completed G9 E2E. Real Gmail, OAuth, Cloud 
 
 ## Agent C checkpoint contract
 
-**CURRENT_HEAD:** `00384eb6468214362435140c9a2d848fa2e0f12e` before this report commit
-**TREE_SHA:** `10d07a8ec57d7f67fc94663c489347938cccbd58` before this report commit
+**CURRENT_HEAD:** `bb9ee1fd8bc92323c068b2edba3be3f94ba76169` before this report update
+**TREE_SHA:** `e16911da53b5ef0c831d175e8b3d15b9bb606a82` before this report update
 **CHANGED_FILES:** `docs/agent-reports/g8-agent-c-release-preflight.md` only
-**TEST_COMMANDS:** `git diff --cached --check`; Python documentation sanity assertions for final newline, balanced code fences, authority SHA, runner-unassigned evidence, and NO-GO status. JUnit NOT_RUN because this is documentation-only.
-**CI_RUN_IDS:** G7 exact final head: `40749231249`, `40749231295`, `40749231298`, `40749231228`, `40749231215`, `40749231235`, `40749231318`; SQLite `40749231272`; historical G7 code/test Android `40740591530` at `acde94c…`.
+**TEST_COMMANDS:** `git diff --check`; Python documentation sanity assertions for final newline, balanced code fences, authority SHA, attempt 3 G7 closure, historical attempt 1/2 runner-unassigned records, and NO-GO status. JUnit NOT_RUN locally because this is documentation-only; CI JUnit evidence is the exact-source SQLite test result recorded above.
+**CI_RUN_IDS:** G7 exact final head: `40749231249`, `40749231295`, `40749231298`, `40749231228`, `40749231215`, `40749231235`, `40749231318`; SQLite `40749231272` attempt 3 PASS (all four directions); historical G7 code/test Android `40740591530` at `acde94c…`.
 **ARTIFACT_IDS:** SQLite producer DBs `12843411146`, `12843930249` (expire 2026-10-29 18:54 UTC); focused test `12843121520`; API26 `12845730516`; API35 `12847400793`; Identity `12846168567`.
 **SECURITY_IMPACT:** Documentation only; records scope breadth, consent separation, restricted Gmail implications, release provenance gaps and owner blockers.
-**KNOWN_ISSUES:** G7 SQLite Intel→ARM64 Open NOT_RUN due no runner; historical API35 IME flake risk; Owner OAuth, package, signing, physical-device and AI decisions remain unresolved.
+**KNOWN_ISSUES:** Historical API35 IME reproducibility risk on `acde94c…`; Owner OAuth, package, signing, physical-device and AI decisions remain unresolved. G7 SQLite evidence is closed on attempt 3.
 **DEPENDENCIES:** Parent independent review; G8 OAuth UI and native runtime reports for consolidated release checklist.
 **INTEGRATION_READY:** Documentation candidate ready for independent review; no product code integration.
 **REVIEW_REQUEST:** Verify G7 source/attempt/artifact bindings, Google policy interpretation and the distinction between mock/debug/temporary-key and Owner release evidence.

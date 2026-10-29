@@ -362,6 +362,10 @@ jobs:
           test "$(uname -m)" = x86_64
           grep -Fx 'Pkg.Revision=9' \
             "$ANDROID_HOME/system-images/android-35/google_apis/arm64-v8a/source.properties"
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
+          bash tools/g8-local-model-native/check-emulator-host-libraries.sh \
+            "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64"
           "$ANDROID_HOME/emulator/emulator" -version | tee "$RUNNER_TEMP/native-arm64-emulator-version.txt"
           grep -F '37.3.6' "$RUNNER_TEMP/native-arm64-emulator-version.txt"
           mkdir -p evidence/native-arm64-guest
@@ -394,6 +398,7 @@ jobs:
           python3 tools/g8-local-model-native/test-summarize-runtime-metrics.py
           bash tools/g8-local-model-native/test-cleanup.sh
           bash tools/g8-local-model-native/test-preflight.sh
+          bash tools/g8-local-model-native/test-emulator-host-libraries.sh
           cd android
           ./gradlew --no-daemon --console=plain \
             -PsereaLocalNativeRuntime=true \

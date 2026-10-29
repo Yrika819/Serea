@@ -57,7 +57,11 @@ def validate_workflow(workflow: str) -> list[str]:
         for step in artifact_steps
         for value in re.findall(r"(?m)^[ \t]*path:[ \t]*(.*)$", step)
     ]
-    if not path_declarations or any(value.strip() != "|" for value in path_declarations):
+    has_flow_mapping = any(
+        re.search(r"(?m)^[ \t]*with:[ \t]*\{", step)
+        for step in artifact_steps
+    )
+    if has_flow_mapping or not path_declarations or any(value.strip() != "|" for value in path_declarations):
         problems.append("artifact path declarations must use the exact-file block allowlist")
     path_blocks = [
         block
@@ -130,6 +134,9 @@ def main() -> int:
         + "        with:\n"
         + "          name: injected\n"
         + "          path: evidence/native-arm64-guest/*\n",
+        workflow
+        + "\n      - uses: actions/upload-artifact@v4\n"
+        + "        with: {name: injected, path: evidence/native-arm64-guest/*}\n",
     )
     if any(not validate_workflow(fixture) for fixture in bad_fixtures):
         print("artifact guard accepted a raw path, directory wildcard, or missing JUnit report", file=sys.stderr)

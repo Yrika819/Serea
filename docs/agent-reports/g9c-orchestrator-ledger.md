@@ -525,3 +525,11 @@ PR #171 exact source `8d4d3cdb44f44d31dc06299579f53427886c35c8` / tree `c88db890
 This newly validates the x86_64 runtime only at PR #171's exact source. It does not establish ARM64 runtime, Pixel 7a acceptance, or native Chat integration. x86_64 Runtime: SUCCESS at this source; ARM64 Runtime: NOT_RUN; Product Chat remains disconnected/default-off.
 
 The #176 Android runtime budget remains CHANGES_REQUESTED until a shared worst-case budget safely accounts for two serial API campaigns, emulator startup, and job/step limits. Agent C's patch and rerun are in progress.
+
+## PR #176 bounded campaign successor — 2026-10-29 18:05 UTC
+
+Agent C updated PR #176 normally. Current source `0810b877c772b51b32a41de27c4034af22d9158f` / tree `01bd708b795c26b784b42a29bfd25d25b113b9dc`, still based on #170 exact `fc9b355fb247bc6cd1eb35cd313379f6ed01a60f`. The offline/HTTP variant security split is retained. API26 has 47 minutes of inner command budget; API35 has 53 minutes including Update Compatibility. Two 15-minute emulator boot allowances and a 20-minute setup reserve fit inside a shared 150-minute deadline; each API step caps at 75 minutes and the job at 180 minutes, reserving 30 minutes after the shared deadline for artifact/cleanup work. All stage timeouts remain bounded; insufficient budget writes NOT_RUN and the aggregate gate fails closed.
+
+Exact local validation reported by Agent C: Bash syntax for both API scripts and workflow YAML parse PASS; `git diff --check` PASS; `python3 -m unittest tests.android_emulator_workflow_tests tests.android_instrumentation_results_tests` 49/49 PASS. The previously identified stale process-death assertion was corrected. Independent Agent B re-review is PENDING. New source-bound runs: Android `40926772754`, Fast `40926772716`, Full `40926772550`, SQLite `40926772756`, RustSec `40926772697`, Git Hooks `40926772499`, Native `40926772773`, and Mock Beta Contract `40926773346`; all were QUEUED/PENDING at observation. API26/API35 runtime remains NOT_RUN. No model or APK artifact from this hosted revision is available.
+
+The #176 formal `isolatedHttp` partition is still a candidate only; its added variant has not been exercised on an Android emulator. Keep G9 Android and Personal Beta gates PARTIAL/NO-GO until exact-source hosted artifacts and independent review are complete.

@@ -451,3 +451,26 @@ LANE_B_G9_UI_JUNIT=NOT_RUN
 PR149_API26_DIAGNOSTIC=5/16 FAIL; date-timeout cause UNCONFIRMED
 PR149_API35_GOOGLE_UI=NOT_RUN after required IME diagnostic failure
 ```
+
+## Native exact-run closure and PR #153 IME test review — 2026-10-29 08:50 UTC
+
+### PR #147 exact Native run result
+
+GitHub still reports PR #147 OPEN/Draft at exact head `36700f6c99d15db428c6d434c657ac76593df3f9`, tree `107824f5338ed9ec46d41f6836f5df9c6ad84cf7`, based on G7 `0560e1e7bcd13f0194eab8caca89d70ea5a2f142`. The single bounded exact-head run `40843204437`, attempt 1, completed **FAILURE** at 08:46:32 UTC. Job `123344314662` ran on assigned runner `1000023588`. The focused JVM contracts, both ABI APK builds, license metadata check (without model weights), pinned fixture size/hash check, and disposable API 35 x86_64 Emulator setup all passed. The product adapter/inference step started one Android test and failed before reaching model inference with `initializationError`: `RuntimeException: Failed to instantiate test runner class androidx.test.internal.runner.junit4.AndroidJUnit4ClassRunner`. The available log does not include a cause, so dependency/classloader, harness arguments, and emulator image remain unconfirmed possibilities; no specific build or JNI root cause is established. No inference, generation, lifecycle, cancellation, or runtime evidence was produced.
+
+The exact run exposed cleanup behavior: the target package was absent while an app-private model file was still classified as owned (`NOT_VERIFIED_OWNER_PACKAGE_ABSENT`), so app-private final state remained NOT_VERIFIED and cleanup failed closed. The host model and temporary fixture were verified absent; target/test packages were verified absent with retained-package checks. Evidence upload was skipped after the failed test. Diagnostic artifact `12883594935` is 5,881 bytes, digest `sha256:e4ed10a1ec5d14a38bbf2e861b30b196d7e3b8e0e325dc1869df3c3c63760cb1`; its download endpoint returned HTTP 403 in the attempted retrieval. This is a pre-inference test-runner initialization failure with root cause unconfirmed, not a Native Runtime pass. No retry was launched.
+
+### PR #153 independent review and CI snapshot
+
+Lane C **ACCEPTS** the test-only PR #153 change at exact source `6f4c8c5b4caf8f48619234fee5a9c864cb25766`, tree `8a17da2ba3003d8663a3c6734d444682609abe05`, parent/base exact PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` / tree `b78a84b60ef5a2d344eabdda85b1154e62be46d7`. PR #153 is OPEN/Draft and its remote head matches that SHA. The only file change is AndroidTest `SereaAppShellTest.kt` (+23 lines). After the existing Activity-recreation/draft-restoration wait, the helper waits up to 10 seconds for the Activity to be RESUMED and its decor to be attached, shown, and window-focused. It fails closed on timeout and logs the observed lifecycle/window state. The existing not-focused and selection-preservation assertions remain, followed by explicit RequestFocus, focused assertion, a fresh real Test IME session, commitText, and insertion/content/selection assertions. The helper reads lifecycle and window state on the ActivityScenario UI thread and does not mutate app state. No Required test identity, assertions, gate, production code, or owner boundary is weakened. `git diff --check` passes. Local compile/UI execution is **NOT_RUN** because the available Java installation lacks `javac`; this source review is not Android runtime evidence.
+
+At 08:50 UTC, exact PR #153 Android run `40844961565` attempt 1 is queued with all its jobs queued and no runner assigned: Change Scope, Documentation, Dependency Audit, Build/Lint/Instrumentation Compile, Unit, Integration, Security, and Storage/Emulator. Full CI `40844961537`, Native `40844961372`, SQLite `40844961545`, RustSec `40844961783`, Fast `40844961637`, and Git Hooks `40844961944` are also queued without runner assignment; no artifact IDs exist yet. These are runner waits, not test failures or passes. No retry was initiated. The separate PR #151 predecessor CI remains bound to exact `d4a36fb…`: Android run `40842824215` has Change Scope, Docs, Dependency Audit, Build/Lint/Instrumentation Compile PASS, while Unit, Integration, Security, and Storage/Emulator are queued; Native `40842824208` has Linux x86_64, Linux ARM64, and Rust Linux x86_64/ARM64 PASS, four Windows/macOS jobs in progress and two macOS jobs queued; SQLite `40842824221` has the Intel producer PASS and three jobs queued; Full CI `40842824328`, RustSec `40842824232`, and Fast `40842824206` PASS; Git Hooks `40842824356` has Windows and Ubuntu PASS with macOS queued. The Android UI/Required runtime evidence has not run on either exact PR #151 or #153 candidate. The separate beta main-only guard is not PR validation.
+
+```text
+PR147_EXACT_NATIVE_RUN=40843204437 attempt 1 FAILURE before inference; root cause UNCONFIRMED; no retry
+PR147_NATIVE_RUNTIME=NOT_RUN
+PR153_TEST_SOURCE_REVIEW=ACCEPTED at 6f4c8c5b4caf8f48619234fee5a9c864cb25766 / 8a17da2ba3003d8663a3c6734d444682609abe05
+PR153_ANDROID_CI=QUEUED without runner at snapshot; all exact-head Android tests NOT_RUN
+PR151_ANDROID_UI=NOT_RUN; PR151_FORMAL_ANDROID=PARTIAL / runner-queued
+MODEL_DEFAULT=UNDECIDED; PIXEL7A_ACCEPTANCE=NOT_RUN
+```

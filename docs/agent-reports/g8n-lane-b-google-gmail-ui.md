@@ -8,15 +8,15 @@
 **TESTED_SOURCE_TREE_SHA:** `b19a6c52a8e8d4ff1c8365d435c047d0aceb300b`
 **WORKTREE:** `/workspace/Serea-gmail`
 **BRANCH:** `codex/serea-g8n-google-gmail-ui`
-**CURRENT_HEAD:** `4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd`
-**TREE_SHA:** `b19a6c52a8e8d4ff1c8365d435c047d0aceb300b`
-**DRAFT_PR:** pending exact-head CI launch
+**VERIFIED_CODE_HEAD:** `4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd`
+**VERIFIED_CODE_TREE_SHA:** `b19a6c52a8e8d4ff1c8365d435c047d0aceb300b`
+**DRAFT_PR:** [#150 OPEN / DRAFT](https://github.com/Yrika819/Serea/pull/150), based on PR #146's frozen candidate branch at `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66`
 
 ## Completed change
 
 The Gmail-to-Chat content formatter now passes only the selected body text: plain text takes precedence, followed by the parser-produced inert text from an HTML part. It no longer appends subject, sender, timestamp, or Gmail API snippet. An empty body no longer falls back to the API snippet. The subject remains available as the local preview title. Handoff still binds the source item, body revision, body identity, preview expiry, account/session generation, and confirmation state; title changes are checked at prepare, confirm, and consume.
 
-Added `GoogleTrustedHandoffTest#gmailChatHandoffContainsOnlySelectedBodyAndExcludesMessageMetadata`. Its synthetic message gives distinct sentinel values to message ID, thread ID, sender, recipient, subject, date, snippet and the unused alternate HTML body, then confirms that only the plain body appears in `localChatText()`. The oversized-title test also asserts that subject text is not placed into Gmail Chat content. Calendar handoff behavior is unchanged.
+Added `GoogleTrustedHandoffTest#gmailChatHandoffContainsOnlySelectedBodyAndExcludesMessageMetadata`. Its synthetic message gives distinct sentinel values to message ID, thread ID, sender, recipient, subject, date, snippet, source, classification, origin, and the unused alternate HTML body; it also checks that account/session IDs, generation, scope, source ID/revision, content identity, service/origin, consent, destination, expiry, conversation and selection metadata stay out of `localChatText()`. The oversized-title test also asserts that subject text is not placed into Gmail Chat content. A separate HTML-only test passes encoded hostile HTML through `GmailMimeParser`, a Fake provider, and handoff, then checks that only inert text reaches Chat and the script, event handler and remote URL do not. Calendar handoff behavior is unchanged.
 
 The `GmailMessage` product model has no arbitrary raw-header, label, attachment, provider-response or full-payload field. Those values are not copied into the handoff text. `DataOrigin.GMAIL` is preserved separately as lineage for the existing egress gate.
 

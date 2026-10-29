@@ -1,7 +1,7 @@
 # G8-B — Local Native Runtime Candidate
 
-**Checkpoint:** 2026-10-28 UTC  
-**Status:** PARTIAL — product JNI candidate and isolated diagnostic path are committed locally; exact-source JVM/native CI and Emulator execution are pending. The default product build and Chat route remain unchanged.
+**Checkpoint:** 2026-10-29 UTC
+**Status:** PARTIAL — product JNI candidate and isolated diagnostic path are committed and pushed in Draft PR #144. Exact-source JVM/native CI and Emulator execution are queued; the default product build and Chat route remain unchanged.
 
 ## Agent report
 
@@ -10,24 +10,24 @@ AGENT_ID: B — Local AI / Native Runtime
 ACTIVE_PHASE: G8-B native ModelChatPort backend candidate
 GOAL_STATUS: PARTIAL
 BASE_SHA: 00384eb6468214362435140c9a2d848fa2e0f12e
-CURRENT_HEAD: 090b1e0b719b219765a9125dc93bf2afcb68781f
-TREE_SHA: 61166b5365ade770effb3fbb1346a671eb3bce9b
+CURRENT_HEAD: 2f04e5b1953741d150456dc0780dabb91d3fbf51 (source implementation HEAD; this checkpoint update is documentation-only)
+TREE_SHA: efb1c8e5f51deb34a1d3a6686964e0a18083a533
 WORKTREE: /workspace/Serea-g8-native-local-runtime
 BRANCH: codex/serea-g8-native-local-runtime
-DRAFT_PR: NOT_CREATED_YET
+DRAFT_PR: #144 — https://github.com/Yrika819/Serea/pull/144 (open, draft)
 COMPLETED_WORK: added an opt-in product LocalModelInferenceBackend JNI implementation derived from reviewed G3 source; pins llama.cpp source at 276378515ceebee5d14bcc8536603dd5c87491a2; supports bounded context/output/thread settings, per-process model lease, serialized generation, cancel/release, and native prompt/output token counts; added an API 35 x86_64 E2E that drives LocalModelChatAdapter through Egress and Usage using only synthetic user text; added an exact-head Non-Required JVM + native build + Emulator workflow; default build flag remains false
-CHANGED_FILES: .github/workflows/g8-local-native-runtime-focused.yml; android/app/build.gradle.kts; android/app/src/main/cpp/CMakeLists.txt; android/app/src/main/cpp/llama_jni.cpp; android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt; android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt; android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt; tools/g8-local-model-native/run-e2e.sh
+CHANGED_FILES: docs/agent-reports/g8-agent-b-native-runtime.md; .github/workflows/g8-local-native-runtime-focused.yml; android/app/build.gradle.kts; android/app/src/main/cpp/CMakeLists.txt; android/app/src/main/cpp/llama_jni.cpp; android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt; android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt; android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt; tools/g8-local-model-native/run-e2e.sh
 TEST_COMMANDS: `cd android && ./gradlew --no-daemon --console=plain :app:testDebugUnitTest --tests 'app.serea.android.LocalModelChatAdapterTest'`; `cd android && ./gradlew --no-daemon --console=plain :app:generateDebugBuildConfig`; `git diff --check`; `bash -n tools/g8-local-model-native/run-e2e.sh`; Python source/JNI declaration contract check; Python YAML parse for the new workflow
 JUNIT_RESULT: Local focused JVM NOT_RUN. Gradle wrapper download succeeded after routing Java through the configured proxy, but task creation stopped because the only installed Java 21 runtime lacks `JAVA_COMPILER`/`javac`. No test case ran. `:app:generateDebugBuildConfig` PASS validates Android Gradle DSL only, not Kotlin/JNI compilation.
-CI_RUN_IDS: G8 new workflow not run yet; it triggers on an Agent B Draft PR against `codex/serea-g7-calendar-readiness`. Historic standalone G3 x86_64 diagnostic: run `40657508541` on PR #127 source `a2bafeea77160e8e2746bdfdd0d309348ac04aa7`.
-ARTIFACT_IDS: Historic G3 PoC artifact `12802681672` (not evidence for this product JNI implementation). No G8 artifact yet.
+CI_RUN_IDS: As of 2026-10-29 UTC, exact-head G8 focused workflow `40791074769` (run 1) is QUEUED; the job `Product adapter on pinned API 35 x86_64 Emulator` is QUEUED. Automatically triggered standard PR runs are also QUEUED: Android `40791074797`, Android Personal Beta Contract `40791074744`, RustSec `40791074755`, Full CI `40791074714`, SQLite portability `40791074831`, Git hooks `40791074710`, Fast CI `40791074737`, and Native `40791074809`. Historic standalone G3 x86_64 diagnostic: run `40657508541` on PR #127 source `a2bafeea77160e8e2746bdfdd0d309348ac04aa7`.
+ARTIFACT_IDS: Historic G3 PoC artifact `12802681672` (not evidence for this product JNI implementation). No G8 artifact yet; run `40791074769` is queued.
 SECURITY_IMPACT: `LOCAL_NATIVE_RUNTIME_ENABLED=false` by default; CMake/native libraries are built only with explicit diagnostic property `-PsereaLocalNativeRuntime=true`; no AppProviderComposition, MainActivity, SereaAppShell, normal Chat route, Google scope, Cloud route, or secret configuration was changed. The backend has no HTTP/credential API and the E2E passes a typed LOCAL_MODEL consent through Egress before Usage. Test data are synthetic user-authored strings; model weights are downloaded only by the isolated CI diagnostic and are not committed or uploaded.
 KNOWN_ISSUES: no exact-head Kotlin/JNI build or runtime result yet; new product-runtime active-JNI cancellation/recovery and Process Death paths are not Emulator-verified; `LocalModelRuntimeLimits` default context 2048 is above this reviewed backend's supported maximum 512, so any future composition must select an explicit 512-token configuration; the file-size guard is not an OS-enforced resident-memory ceiling; model quality, native peak memory, thermal/power, and Pixel 7a performance are unverified; complete linked-native dependency notices/SBOM and redistribution review are open.
-CURRENT_BLOCKERS: local environment has Java 21 runtime without javac, no Android NDK, no CMake installation, no `/dev/kvm`, no Emulator binary, and no attached device. Focused/native verification must run on the isolated GitHub Actions workflow after Draft PR creation.
+CURRENT_BLOCKERS: local environment has Java 21 runtime without javac, no Android NDK, no CMake installation, no `/dev/kvm`, no Emulator binary, and no attached device. Exact-head verification is queued on GitHub Actions; results are not available yet.
 DEPENDENCIES: independent parent review; exact-head JVM and API 35 x86_64 diagnostic; ARM64 build evidence; a future parent-owned composition proposal must provide the explicit model artifact/catalog, app-private model path, lifecycle owner, user-visible Demo/Local/Cloud identity, local consent UI, `RoutedModelChatPort → EgressCheckedModelChatPort(LOCAL_MODEL) → UsageControlledModelChatPort → LocalModelChatAdapter → LlamaCppLocalModelInferenceBackendFactory`, and must keep Google-origin lineage/account/session validation intact.
 INTEGRATION_READY: NO — source candidate only; do not wire into regular Chat until review, exact-head Android build, x86_64 runtime, cancel/release, usage, integrity, and distribution evidence pass.
 REVIEW_REQUEST: Parent independent review pending for source/CMake/JNI lifecycle, test coverage, memory claims, and license/provenance.
-NEXT_ACTION: push this branch and create a Draft PR against `codex/serea-g7-calendar-readiness`; verify exact-head focused JVM and new native workflow runs; fix failures on a new source HEAD; keep ARM64 runtime and Pixel 7a separately NOT_RUN unless a suitable runner/device exists.
+NEXT_ACTION: poll run `40791074769` and the triggered PR CI runs at the exact head; fix failures on a new source HEAD; keep ARM64 runtime and Pixel 7a separately NOT_RUN unless a suitable runner/device exists.
 OWNER_APPROVAL_REQUIRED: Pixel 7a physical operation; production signing/distribution; main merge; Personal Beta GO. No real Google or Cloud provider approval is required for this Fake/Local diagnostic candidate, and none was used.
 ```
 

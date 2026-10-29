@@ -1,6 +1,7 @@
 package app.serea.android
 
 import java.io.File
+import android.os.Debug
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -31,7 +32,10 @@ internal class LlamaCppLocalModelInferenceBackendFactory(
  * The native library owns one process-wide llama.cpp model lease and serializes every operation.
  * `close()` only signals cancellation and queues release; it never waits on the Android caller.
  */
-internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
+internal class LlamaCppLocalModelInferenceBackend(
+    /** Optional bounded diagnostic hook; values are PSS KiB and never contain model output. */
+    private val diagnosticMetric: ((String, Long) -> Unit)? = null,
+) : LocalModelInferenceBackend {
     private data class Generation(
         val id: Long,
         var mayRunInNative: Boolean = false,
@@ -53,13 +57,14 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
     private val activeGenerations = linkedSetOf<Generation>()
     private val releaseComplete = CountDownLatch(1)
     private var nextGenerationId = 1L
+    private var diagnosticInferenceIndex = 0
     @Volatile private var closed = false
     @Volatile private var loaded = false
 
     override suspend fun load(modelPath: String, limits: LocalModelRuntimeLimits) {
         val model = File(modelPath)
-        if (!model.isFile || !model.canRead() || model.length() > limits.maxResidentMemoryBytes) {
-            throw PreDispatchModelChatFailure("The model file exceeds the native runtime's input bound.")
+        if (!model.isFile || !model.canRead() || model.length() > limits.maxModelFileBytes) {
+            throw PreDispatchModelChatFailure("The model file exceeds the native runtime's file-size bound.")
         }
         // The reviewed PoC ABI supports 128–512 context tokens, two CPU threads, and at most
         // 256 output tokens. Reject unsupported configurations before native allocation.
@@ -76,12 +81,14 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
                             return@execute
                         }
                         try {
+                            reportPss("load_before_kb")
                             val success = nativeLoad(
                                 engineId,
                                 model.canonicalPath,
                                 limits.contextTokens,
                                 limits.workerThreads,
                             )
+                            reportPss("load_after_kb")
                             val publish = synchronized(lifecycleLock) {
                                 if (success && !closed && continuation.isActive) loaded = true
                                 success && !closed && continuation.isActive
@@ -142,7 +149,10 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
                         return@execute
                     }
                     try {
+                        val measurementIndex = synchronized(lifecycleLock) { ++diagnosticInferenceIndex }
+                        reportPss("inference_${measurementIndex}_before_kb")
                         val output = nativeGenerate(engineId, prompt, maxOutputTokens, generation.id)
+                        reportPss("inference_${measurementIndex}_after_kb")
                         val usage = nativeUsageCounts(engineId, generation.id)
                         val inputTokens = usage?.getOrNull(0)?.takeIf { it >= 0 }
                         val outputTokens = usage?.getOrNull(1)?.takeIf { it >= 0 }
@@ -152,6 +162,10 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
                     } catch (failure: Throwable) {
                         continuation.failIfActive(failure)
                     } finally {
+                        // Record a terminal sample even when generation throws or is cancelled.
+                        // The callback is optional and its failures cannot affect inference.
+                        val measurementIndex = synchronized(lifecycleLock) { diagnosticInferenceIndex }
+                        reportPss("inference_${measurementIndex}_terminal_kb")
                         synchronized(lifecycleLock) {
                             generation.completed = true
                             activeGenerations.remove(generation)
@@ -212,6 +226,11 @@ internal class LlamaCppLocalModelInferenceBackend : LocalModelInferenceBackend {
 
     private fun <T> CancellableContinuation<T>.failIfActive(failure: Throwable) {
         if (isActive) resumeWithException(failure)
+    }
+
+    private fun reportPss(name: String) {
+        val sink = diagnosticMetric ?: return
+        runCatching { sink(name, Debug.getPss().toLong()) }
     }
 
     private external fun nativeLoad(engineId: Long, path: String, contextTokens: Int, workerThreads: Int): Boolean

@@ -172,11 +172,20 @@ grep -Fxq 'device_temp_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'test_package_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'app_package_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'cleanup_outcome=PASS' "$report"
+grep -Fxq 'raw_diagnostics_removed=true' "$report"
 grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
 [[ ! -e "$RUNNER_TEMP/serea-g8-smollm2.gguf" ]]
 [[ ! -e "$ADB_STATE/app-private-model" && ! -e "$ADB_STATE/device-temp-model" ]]
 [[ ! -s "$ADB_STATE/packages" ]]
 [[ ! -s "$ADB_STATE/retained-packages" ]]
+
+prepare_case raw_diagnostics_removed
+status="$(run_case raw_diagnostics_removed SEREA_CLEANUP_TEST_CREATE_RAW_DIAGNOSTICS=1)"
+[[ "$status" == 0 ]]
+grep -Fxq 'raw_diagnostics_removed=true' "$EVIDENCE_DIR/cleanup-boundary.txt"
+[[ ! -e "$EVIDENCE_DIR/android-instrumentation.txt" ]]
+[[ ! -e "$EVIDENCE_DIR/android-logcat-diagnostic.log" ]]
+[[ ! -e "$EVIDENCE_DIR/android-logcat-diagnostic.log.bounded" ]]
 
 assert_cleanup_failure() {
     local case_name="$1"

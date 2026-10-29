@@ -24,9 +24,9 @@ if [[ "${1:-}" == shell && "${2:-}" == getprop ]]; then
         ro.build.version.sdk) printf '35\n' ;;
         ro.kernel.qemu) printf '1\n' ;;
         sys.boot_completed) printf '1\n' ;;
-        ro.product.cpu.abi) printf 'x86_64\n' ;;
+        ro.product.cpu.abi) printf '%s\n' "${FAKE_NATIVE_ABI:-x86_64}" ;;
         ro.hardware) printf 'ranchu\n' ;;
-        ro.build.fingerprint) printf 'generic/sdk_phone64_x86_64/emu64x:35\n' ;;
+        ro.build.fingerprint) printf 'generic/sdk_phone_%s/emu64x:35\n' "${FAKE_NATIVE_ABI:-x86_64}" ;;
         *) exit 8 ;;
     esac
     exit 0
@@ -59,13 +59,17 @@ chmod +x "$FAKE_BIN/adb"
 
 run_preflight() {
     local mode="$1"
-    env PATH="$FAKE_BIN:$PATH" FAKE_ADB_MODE="$mode" CI=true GITHUB_ACTIONS=true \
-        GITHUB_RUN_ID=123 SEREA_EXPECTED_ANDROID_API=35 SEREA_DISPOSABLE_CI_EMULATOR=1 \
+    local expected_abi=x86_64 fake_mode="$mode"
+    if [[ "$mode" == arm64-safe ]]; then expected_abi=arm64-v8a; fake_mode=safe; fi
+    env PATH="$FAKE_BIN:$PATH" FAKE_ADB_MODE="$fake_mode" FAKE_NATIVE_ABI="$expected_abi" CI=true GITHUB_ACTIONS=true \
+        GITHUB_RUN_ID=123 SEREA_EXPECTED_ANDROID_API=35 SEREA_EXPECTED_NATIVE_ABI="$expected_abi" SEREA_DISPOSABLE_CI_EMULATOR=1 \
         bash "$ROOT_DIR/tools/g8-local-model-native/preflight.sh"
 }
 
 safe_output="$(run_preflight safe)"
 grep -Fxq 'package_ids=ABSENT' <<< "$safe_output"
+arm64_output="$(run_preflight arm64-safe)"
+grep -Fxq 'abi=arm64-v8a' <<< "$arm64_output"
 if run_preflight physical >"$TEST_ROOT/physical.out" 2>"$TEST_ROOT/physical.err"; then
     echo 'physical target unexpectedly passed preflight' >&2
     exit 1

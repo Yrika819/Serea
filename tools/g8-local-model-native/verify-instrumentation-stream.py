@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -39,6 +40,16 @@ def parse_stream(text: str) -> tuple[list[dict[str, str]], dict[str, str]]:
                 cases.append(case)
                 fields = {}
     return cases, result
+
+
+def safe_exception_types(case: dict[str, str]) -> list[str]:
+    """Keep exception class names while discarding messages, paths, and raw stack text."""
+    trace = case.get("stack", "") + "\n" + case.get("Error", "")
+    matches = re.findall(
+        r"(?:Caused by:\s*)?([A-Za-z_$][A-Za-z0-9_.$]*(?:Exception|Error))(?=[:\s]|$)",
+        trace,
+    )
+    return list(dict.fromkeys(matches))[:8]
 
 
 def main() -> int:
@@ -133,12 +144,13 @@ def main() -> int:
         class_name, method = key.rsplit("#", 1)
         testcase = ET.SubElement(suites, "testcase", {"classname": class_name, "name": method})
         if case["status_code"] == "-2":
-            trace = case.get("stack", case.get("Error", "AndroidJUnitRunner reported a failure."))
+            exception_types = safe_exception_types(case)
+            safe_type = exception_types[0] if exception_types else "UnknownFailure"
             ET.SubElement(
                 testcase,
                 "failure",
-                {"message": case.get("Error", "AndroidJUnitRunner failure"), "type": "InstrumentationFailure"},
-            ).text = trace
+                {"message": f"AndroidJUnitRunner failure ({safe_type}).", "type": safe_type},
+            ).text = "Raw failure message and stack were suppressed; see sanitized identity/status summary."
         elif case["status_code"] in {"-3", "-4"}:
             ET.SubElement(testcase, "skipped", {"message": "AndroidJUnitRunner ignored/assumption-failed test"})
     ET.ElementTree(suites).write(xml_path, encoding="utf-8", xml_declaration=True)
@@ -167,8 +179,18 @@ def main() -> int:
     )
     if native_initialization:
         summary.append("native_initialization_status_code=" + native_initialization["status_code"])
-        summary.append("native_initialization_error_text=" + native_initialization.get("Error", "NOT_REPORTED"))
+        summary.append(
+            "native_initialization_exception_types="
+            + (",".join(safe_exception_types(native_initialization)) or "NOT_CLASSIFIED")
+        )
         summary.append("native_initialization_stack_present=" + str(bool(native_initialization.get("stack"))).lower())
+    failure_types = sorted({
+        exception_type
+        for case in identities.values()
+        if case["status_code"] == "-2"
+        for exception_type in safe_exception_types(case)
+    })
+    summary.append("failure_exception_types=" + (",".join(failure_types) or "NONE"))
     summary.extend(f"parse_error={error}" for error in invalid)
     summary_path.write_text("\n".join(summary) + "\n", encoding="utf-8")
 

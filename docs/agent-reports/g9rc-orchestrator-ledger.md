@@ -53,3 +53,9 @@
 - G10 Preflight: PARTIAL; decision packet accepted, product release rehearsals and evidence remain.
 - Personal Beta: NO-GO.
 - Next: finish the exact integrated-source JDK checks, push this branch as a Draft PR, monitor its API26/35 Required/UI jobs without retries while runner-unassigned, and continue #160 exact-head Native build/inference when the focused runner starts. Re-review any changed source SHA before accepting. No main merge or owner-only action.
+
+## Integrated candidate focused verification
+
+Before this Ledger update, the new candidate source was `8ea137642ef6a0c7ef0e2a78905569ea7d598b58`, tree `779c2e05a9d2bd3c62b71566c5c2e049a3aed0f9`. On that exact source, Java 17 command `./gradlew :app:testDebugUnitTest :app:compileIsolatedAndroidTestKotlin --rerun-tasks` completed SUCCESS: JVM 408 tests, 0 failures, 0 errors, 0 skips, 34 JUnit XML files; AndroidTest Kotlin compile passed. Aggregate per-file JUnit digest: `3c4283818089c7c52f3ca531eae80e98bee3c93fe16d4fd75ecaa3490d46190e`. No emulator was run. This result is local focused verification and does not replace API26/35 Required/UI CI.
+
+The new integration branch is being kept separate from PR #155. It contains the reviewed test-only UI transport fixes and this ledger. A new Draft PR and exact-head hosted CI are the next steps; Native diagnostic code remains only in PR #160 because Native inference has not been established.

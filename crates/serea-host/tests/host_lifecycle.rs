@@ -749,7 +749,11 @@ fn actual_host_model_policy_and_accounting_scenarios_survive_database_reopen() {
             .expect("run compiled synthetic Host scenario");
         assert!(
             output.status.success(),
-            "Host {scenario} scenario failed: stdout={} stderr={}",
+            "Host {scenario} scenario failed: status={:?} exit_code={:?} stdout_bytes={} stderr_bytes={} stdout={} stderr={}",
+            output.status,
+            output.status.code(),
+            output.stdout.len(),
+            output.stderr.len(),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );

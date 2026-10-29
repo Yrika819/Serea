@@ -24,6 +24,16 @@ class FakeGoogleAuthorizationGateway(
     fun setGooglePlayServices(state: GoogleServiceState) { service = state }
     fun setEnabled(value: Boolean) { enabled = value }
     fun setExpired(value: Boolean) { expired = value }
+    /** Explicit in-demo account choice starts a clean session without simulating a stale callback. */
+    fun selectSyntheticAccount() {
+        accountChanged = false
+        nextFailure = null
+        expired = false
+        grantedScopes.clear()
+        authorizationSessionId = java.util.UUID.randomUUID().toString()
+    }
+
+    /** Adversarial fixture: models an account changing underneath an in-flight operation. */
     fun switchAccount() {
         accountChanged = true
         grantedScopes.clear()

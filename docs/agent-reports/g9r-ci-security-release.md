@@ -180,9 +180,9 @@ No acceptance here authorizes merging a PR, moving the G9 integration candidate,
 - **Models:** existing SmolLM2 fixture is Apache-2.0 and llama.cpp MIT per prior pinned-candidate review; distribution is not cleared by metadata alone. Do not add model weights to Git. Agent A's pinned official metadata/license screening is summarized below; exact artifact loads, redistribution review, Japanese/tool-use evaluation and Pixel measurements remain outstanding. Vendor benchmarks must be separate from Serea measurements; standard model remains undecided.
 - **Hardware/release:** Android Emulator/API evidence is not Pixel 7a acceptance. No owner device, production signing, main merge, OAuth activation or Beta distribution was used. Personal Beta remains NO-GO.
 
-### Owner decision ledger discrepancy
+### Canonical Owner decision packet
 
-The current source file `docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md` assigns O-01 OAuth, O-02 AI provider, O-03 production signing, O-04 Pixel 7a, O-05 main merge, O-06 GO. The newer `docs/agent-reports/g8-agent-c-release-preflight.md` assigns O-01 package/coexistence, O-02 Google project/scopes, O-03 provider/model, O-05 signing, O-06 Pixel, O-07 main merge, O-08 GO. These are inconsistent identifiers, not changed permissions. All listed actions remain unapproved; preserve both source records until the Parent publishes one reconciled current matrix. No live service, key, device, merge, or GO action was performed.
+The dated Owner matrix and O-ID definitions are maintained only in [`docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md`](../plans/2026-10-26-personal-beta-owner-decision-ledger.md). It consolidates the 2026-11-03 Beta package/coexistence and signing-custody policy review; the 2026-11-10 Google project and Calendar read-only plan, provider eligibility, Gmail Restricted-scope later gate, local-model review with the default **UNDECIDED** pending Pixel evidence, and Pixel acceptance criteria; and later signing, merge, and final GO decisions. The historical O-ID table in `g8-agent-c-release-preflight.md` has been replaced by a reference to this canonical ledger. O-IDs in all agent reports refer to the canonical ledger. No live service, key, device, merge, or GO action was performed.
 
 ### G10 release-preflight checklist
 

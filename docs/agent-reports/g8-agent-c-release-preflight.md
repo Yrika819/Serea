@@ -103,17 +103,9 @@ Google→Chat handoff consent and Cloud-send consent remain separate from Google
 | Pixel 7a | CI reacceptance bundle is not physical acceptance. Pixel 7a Android 17, non-destructive installation/update, actual encrypted data continuity, temperature/performance, and final APK identity remain NOT_RUN pending Owner device authorization. |
 | Required/branch protection | Required manifests and checks were not weakened. Main-only Beta workflow protection was not changed or bypassed. Future G8 formal CI must run on the frozen G8 integration SHA; G7 evidence does not transfer to it. |
 
-### Owner Decision Matrix
+### Owner decision source
 
-| Decision | Target in roadmap v4 | Current state |
-|---|---|---|
-| O-01 — Stable Beta Package ID and Demo/Beta coexistence | 2026-11-03 | Pending Owner; code expects `app.serea.android.beta` |
-| O-02 — Google project, Calendar Android client, account and scopes | 2026-11-10 | Pending Owner; no project/client/account was used |
-| O-03 — Model/provider eligibility, license and cost/retention conditions | 2026-11-10 | Pending; no provider key/API or billing used |
-| O-05 — Owner signing-key custody and distribution | 2026-11-21 | Pending; no production key/signature/distribution |
-| O-06 — Pixel 7a access and non-destructive acceptance | November / final G13 gate | Pending; no device operation |
-| O-07 — main integration/merge | RC review | Pending; main unchanged |
-| O-08 — GO / Conditional Preview / NO-GO | 2026-12-31 | Owner decision; Personal Beta remains NO-GO |
+The canonical decision IDs, dated 2026-11-03 and 2026-11-10 checkpoints, later Gmail Restricted-scope gate, and current approval states live in [`docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md`](../plans/2026-10-26-personal-beta-owner-decision-ledger.md). This historical release-preflight report does not define a parallel O-ID matrix. All real OAuth, key, account, device, merge, and distribution actions remain Owner-gated.
 
 ## G9 preflight checkpoint
 

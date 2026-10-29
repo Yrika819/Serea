@@ -1,14 +1,15 @@
 # G9R Android UI Recovery
 
-Status: PARTIAL — test changes saved for CI; Android UI acceptance and independent review pending.
+Status: PARTIAL — reviewed test changes are integrated in PR #162; Android API26/API35 UI and Required acceptance remain NOT_RUN.
 
 - Base candidate source: `683854ba94cb3a1e1972b73d0f1f60392f2271d6` (PR #155 before the parent documentation checkpoint).
 - Scope: Android and JVM test sources only. No production composition, manifest, URL policy, required identity, or Required Gate changes.
 - Changes: isolated test-only HTTPS Calendar fixture with exact Google Calendar GET origin/path/query checks and redirects disabled; agenda failure diagnostics and semantics-based scrolling; API35 focus recovery diagnostics; removed only a nonfunctional scroll-to action while retaining stale-account and no-send assertions.
-- Local verification: `git diff --check` PASS. Gradle JVM tests and AndroidTest compile are NOT_RUN because the configured Java 17 path is missing and the available Java 21 runtime lacks `javac`.
+- Local verification at integration source `333e11a25e15ccf3efc923f3ac66b0f245ad306b` / tree `94d3122f4908a2f892dc37b9b3a42adf3453701e`: with isolated Temurin JDK 17.0.21+9, `:app:testDebugUnitTest :app:compileIsolatedAndroidTestKotlin --rerun-tasks` PASS; 408 JVM tests, 0 failures/errors/skips across 34 XML files, and isolated AndroidTest Kotlin compilation PASS (55 tasks). This updates the earlier missing-JDK snapshot below. The source itself was clean and `git diff --check` passed.
 - API26/35 UI acceptance: NOT_RUN for this source. Earlier artifacts are bound to their original #155 source and are not reused.
 - Google OAuth, real Google accounts/data, Cloud Egress, and production transport behavior were not activated.
-- Required next steps: exact-head Android CI, review of fixture transport and test assertions, API26/35 UI JUnit evidence, then update the parent candidate with a reviewed change.
+- Independent review accepted the fixture boundary and assertions; PR #162 includes the same UI test sources as PR #161 follow-up `ff42d9bcd08010dd7100d708d17fc676bcd5e739`.
+- Exact-head PR #162 Android run `40888081858` is PENDING with only Change Scope job `123497539347` queued. API26/35 Required and focused UI JUnit are NOT_RUN at the current source.
 
 No UI pass is claimed by this report.
 

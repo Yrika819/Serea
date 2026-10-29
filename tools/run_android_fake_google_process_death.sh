@@ -20,13 +20,19 @@ target_apk="${SEREA_ISOLATED_TARGET_APK:-app/build/outputs/apk/isolated/app-isol
 mkdir -p "$evidence"
 printf 'NOT_RUN\n' > "$evidence/status.txt"
 
+fail_campaign() {
+  printf 'FAIL\n' > "$evidence/status.txt"
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
 adb_cmd=(adb -s "$ANDROID_SERIAL")
 if [[ ! -f "$target_apk" ]]; then
-  printf 'FAIL\n' > "$evidence/status.txt"
-  echo "The isolated target APK is missing: $target_apk" >&2
-  exit 1
+  fail_campaign "the isolated target APK is missing: $target_apk"
 fi
-target_apk_sha256="$(sha256sum "$target_apk" | awk '{print $1}')"
+if ! target_apk_sha256="$(sha256sum "$target_apk" | awk '{print $1}')" || [[ ! "$target_apk_sha256" =~ ^[[:xdigit:]]{64}$ ]]; then
+  fail_campaign 'could not calculate a valid SHA-256 for the isolated target APK.'
+fi
 if ! test_package_paths="$(ANDROID_SERIAL="$ANDROID_SERIAL" android_package_path "$test_package")"; then
   printf 'FAIL\n' > "$evidence/status.txt"
   echo 'Could not verify the isolated instrumentation package state.' >&2
@@ -62,11 +68,12 @@ if [[ "$package_paths" == *$'\n'* || "$package_paths" != package:* ]]; then
   exit 1
 fi
 package_path="${package_paths#package:}"
-installed_apk_sha256="$("${adb_cmd[@]}" shell sha256sum "$package_path" 2>/dev/null | awk 'NR == 1 { print $1 }' | tr -d '\r')"
+if ! installed_apk_sha256="$("${adb_cmd[@]}" shell sha256sum "$package_path" 2>/dev/null | awk 'NR == 1 { print $1 }' | tr -d '\r')" ||
+  [[ ! "$installed_apk_sha256" =~ ^[[:xdigit:]]{64}$ ]]; then
+  fail_campaign 'could not calculate a valid SHA-256 for the installed isolated target APK.'
+fi
 if [[ "$installed_apk_sha256" != "$target_apk_sha256" ]]; then
-  printf 'FAIL\n' > "$evidence/status.txt"
-  echo 'The installed isolated target APK did not match the campaign-built APK.' >&2
-  exit 1
+  fail_campaign 'the installed isolated target APK did not match the campaign-built APK.'
 fi
 {
   printf 'target_package=%s\n' "$package"
@@ -104,12 +111,6 @@ query_package_pid() {
   fi
   printf 'PID query returned malformed output for %s.\n' "$target_package" >&2
   return 1
-}
-
-fail_campaign() {
-  printf 'FAIL\n' > "$evidence/status.txt"
-  printf 'FAIL: %s\n' "$*" >&2
-  exit 1
 }
 
 # The app process also hosts the AndroidJUnitRunner in this variant. Refuse to stop it while a

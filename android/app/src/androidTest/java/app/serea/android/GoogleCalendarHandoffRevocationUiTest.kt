@@ -1,6 +1,7 @@
 package app.serea.android
 
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -8,12 +9,15 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.serea.android.calendar.CalendarProviderKind
+import app.serea.android.calendar.ui.CalendarAgendaItemsKey
+import app.serea.android.calendar.ui.CalendarAgendaLoadedEventCountKey
 import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
 import app.serea.android.googleauth.GoogleDemoAccount
 import kotlinx.coroutines.runBlocking
@@ -31,6 +35,24 @@ import java.time.ZoneId
 @RunWith(AndroidJUnit4::class)
 class GoogleCalendarHandoffRevocationUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    private fun agendaEventIndex(eventId: String): Int? = runCatching {
+        compose.waitForIdle()
+        val nodes = compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes()
+        if (nodes.size != 1) return@runCatching null
+        nodes.single().config.getOrElseNullable(CalendarAgendaItemsKey) { null }
+            ?.eventItemIndices?.get(eventId)
+    }.getOrNull()
+
+    private fun agendaStateForFailure(): String = runCatching {
+        compose.waitForIdle()
+        val nodes = compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes()
+        if (nodes.size != 1) return@runCatching "calendar_agenda_list_nodes=${nodes.size}"
+        val node = nodes.single()
+        val items = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }
+        val loadedCount = node.config.getOrElseNullable(CalendarAgendaLoadedEventCountKey) { null }
+        "loadedEventCount=$loadedCount,eventCount=${items?.eventCount},eventItemIndices=${items?.eventItemIndices}"
+    }.getOrElse { "agendaSnapshotUnavailable=${it.javaClass.simpleName}:${it.message}" }
 
     @Test
     fun confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch() {
@@ -62,17 +84,32 @@ class GoogleCalendarHandoffRevocationUiTest {
         val reviewDate = Instant.parse("2026-10-20T00:00:00Z")
             .atZone(ZoneId.systemDefault()).toLocalDate().toString()
         compose.onNodeWithTag("calendar_date_input").performTextInput(reviewDate)
+        compose.onNodeWithTag("calendar_date_input").assertTextContains(reviewDate, substring = true)
+        compose.onNodeWithText("Demo Personal").assertIsSelected()
+        var designReviewIndex: Int? = null
         try {
-            compose.waitUntil(5_000) {
-                compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
+            compose.waitUntil(10_000) {
+                designReviewIndex = agendaEventIndex("evt-meeting")
+                designReviewIndex != null
             }
-        } catch (failure: AssertionError) {
+        } catch (failure: Exception) {
             throw AssertionError(
                 "Design review missing for fixture instant 2026-10-20T00:00:00Z; " +
-                    "deviceZone=${ZoneId.systemDefault().id}, queryDate=$reviewDate, selectedAccount=ACCOUNT_B",
+                    "deviceZone=${ZoneId.systemDefault().id}, queryDate=$reviewDate, " +
+                    "selectedCalendar=demo-primary, selectedCalendarName=Demo Personal, " +
+                    "selectedAccount=${authViewModel.state.value.selectedAccount}, " +
+                    "calendarState=${authViewModel.state.value.calendar}, " +
+                    "sessionStillBound=${authViewModel.calendarDemoSession.value === authorizedSession}, " +
+                    "sessionStatus=${runCatching { runBlocking { authorizedSession.status().state } }.getOrNull()}, " +
+                    "agenda=${agendaStateForFailure()}",
                 failure,
             )
         }
+        compose.onNodeWithTag("calendar_agenda_list")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollToIndex) { scrollToIndex ->
+                scrollToIndex(checkNotNull(designReviewIndex))
+            }
+        compose.waitForIdle()
         compose.onNodeWithText("Design review").performClick()
         compose.onNodeWithText("この予定をChatへ渡す").performClick()
         compose.waitUntil(5_000) {

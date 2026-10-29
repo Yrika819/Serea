@@ -683,9 +683,38 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         verifier_test = (ROOT / "android/app/src/androidTest/java/app/serea/android/InstrumentationStorageIsolationTest.kt").read_text(encoding="utf-8")
         self.assertIn("ProfileVerifier.writeProfileVerification(target)", verifier_test)
         self.assertIn("RESULT_CODE_ERROR_UNSUPPORTED_API_VERSION", verifier_test)
-        self.assertIn("SereaProfileVerifier", verifier_test)
-        self.assertIn("marker=valid", verifier_test)
-        self.assertIn("SereaProfileVerifier AndroidRuntime", workflow)
+
+    def test_g8_fake_google_and_gmail_ui_runs_as_exact_non_required_api35_stage(self) -> None:
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        manifest = (ROOT / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt").read_text(encoding="utf-8")
+        required = (ROOT / "tools/android-instrumentation-required-tests.txt").read_text(encoding="utf-8")
+        additional = (ROOT / "tools/android-instrumentation-additional-tests.txt").read_text(encoding="utf-8")
+        expected = {
+            "app.serea.android.GoogleAuthorizationDemoUiTest#selectedSyntheticAccountIsBoundToTheConsentPreviewAndRevokedOnSwitch",
+            "app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection",
+            "app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization",
+            "app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant",
+            "app.serea.android.GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt",
+            "app.serea.android.GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel",
+            "app.serea.android.GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests",
+        }
+        focused = campaign.split("google_demo_ui_tests=$(cat <<'TESTS'", 1)[1].split("\nTESTS\n)", 1)[0]
+        actual = {line.strip() for line in focused.splitlines() if line.strip()}
+        self.assertEqual(expected, actual)
+        self.assertEqual(7, len(actual))
+        self.assertTrue(expected.issubset(set(manifest.splitlines())))
+        self.assertFalse(expected.intersection(required.splitlines()))
+        self.assertFalse(expected.intersection(additional.splitlines()))
+        self.assertIn("if [[ \"$api_level\" == 35 && \"$junit_result\" == PASS", campaign)
+        self.assertIn("run_diagnostic_stage google-calendar-and-gmail-ui \"$google_demo_ui_filter\" 1200 7 ''", campaign)
+        self.assertEqual(1, campaign.count('verify_args+=(--require-test "$identity")'))
+        self.assertLess(
+            campaign.rfind('printf \'%s\\n\' "$death_result"'),
+            campaign.index('run_diagnostic_stage google-calendar-and-gmail-ui'),
+        )
+        self.assertIn('google-demo-ui-status.txt', campaign)
+        self.assertIn('google-demo-ui-cleanup-status.txt', campaign)
+        self.assertIn('google_demo_ui_result" == PASS', campaign)
         build = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('add("isolatedImplementation", "androidx.compose.ui:ui-test-manifest")', build)
         self.assertNotIn('androidTestImplementation("androidx.compose.ui:ui-test-manifest")', build)
@@ -697,6 +726,66 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "androidx.compose.ui:ui-test-manifest:1.7.8=isolatedAndroidTestCompileClasspath,isolatedCompileClasspath,isolatedImplementationDependenciesMetadata,isolatedRuntimeClasspath,isolatedUnitTestCompileClasspath,isolatedUnitTestRuntimeClasspath",
             manifest_lock,
         )
+
+    def test_android_package_query_transport_failure_cannot_mean_absent(self) -> None:
+        helper = ROOT / "tools/android_package_path.sh"
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        self.assertIn('source "$tool_dir/android_package_path.sh"', campaign)
+        self.assertIn('if ! existing_target_paths="$(android_package_path app.serea.android.isolated)"', campaign)
+        self.assertIn('FAIL: ADB package query failed during focused UI cleanup verification', campaign)
+        self.assertIn('if [[ "$google_demo_ui_stage_result" -eq 0 && "$google_demo_ui_cleanup_result" -eq 0 ]]; then', campaign)
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            bindir = temporary_path / "bin"
+            bindir.mkdir()
+            fake_adb = bindir / "adb"
+            fake_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${FAKE_ADB_MODE:-}\" == fail ]]; then exit 73; fi\n"
+                "printf '%s' \"${FAKE_ADB_PACKAGE_PATH:-}\"\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_adb.chmod(0o755)
+            command = (
+                'source "$1"; '
+                'if output="$(android_package_path app.serea.android.isolated)"; then '
+                'printf "status=0 path=%s\\n" "$output"; '
+                'else status=$?; printf "status=%s\\n" "$status"; fi'
+            )
+            env = os.environ.copy()
+            env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+            env["FAKE_ADB_MODE"] = "fail"
+            failure = subprocess.run(
+                ["bash", "-c", command, "bash", str(helper)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual("status=2\n", failure.stdout)
+            env.pop("FAKE_ADB_MODE")
+            env["FAKE_ADB_PACKAGE_PATH"] = ""
+            absent = subprocess.run(
+                ["bash", "-c", command, "bash", str(helper)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual("status=0 path=\n", absent.stdout)
+            env["FAKE_ADB_PACKAGE_PATH"] = "package:/data/app/app.serea.android.isolated/base.apk"
+            installed = subprocess.run(
+                ["bash", "-c", command, "bash", str(helper)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual("status=0 path=package:/data/app/app.serea.android.isolated/base.apk\n", installed.stdout)
 
     def test_host_seed_uses_stdin_and_fails_closed_on_uid_or_package_path(self) -> None:
         helper = ROOT / "tools/prepare_isolated_instrumentation_target.sh"

@@ -1,0 +1,10 @@
+{
+  "base_model": "HuggingFaceTB/SmolLM2-135M",
+  "declared_license": "apache-2.0",
+  "metadata_response_sha256": "72da4f3a73f84d025b9dbe8acedfc145c77634cb4748f0657223197699f90357",
+  "repository": "ggml-org/SmolLM2-135M-GGUF",
+  "retrieved_utc": "2026-10-29T02:59:54.495763+00:00",
+  "revision": "1076b85d135017971845b19b8d07df1479155988",
+  "source_url": "https://huggingface.co/api/models/ggml-org/SmolLM2-135M-GGUF/revision/1076b85d135017971845b19b8d07df1479155988",
+  "weights_downloaded": false
+}

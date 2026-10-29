@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.assistant.taskproposal.TaskProposalTest" tests="30" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:39:48.734Z" hostname="runnervm48cm3" time="0.055">
+  <properties/>
+  <testcase name="expiryRejectsApproval" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.007"/>
+  <testcase name="invalidProposalShapesAreRejectedBeforeRepositoryMutation" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.003"/>
+  <testcase name="oldProposalIdDoesNotShareApprovalStateWithNewSession" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.003"/>
+  <testcase name="ambiguousFailureAfterWriteCannotReuseOldApproval" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="revisionMismatchIsRejectedBeforeReview" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="taskRevisionChangedAfterReviewIsRejectedWithoutApplyingProposal" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="approvalAndDeclineRaceCannotCreateSecondRepositoryCall" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="cancellationDuringSaveLeavesSessionTerminalAndCannotRetry" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.003"/>
+  <testcase name="allOperationReviewsRemainReadOnlyBeforeExplicitApproval" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.0"/>
+  <testcase name="sameSessionDoubleApprovalAllowsAtMostOneRepositoryCall" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="cancellationAfterFakeWriteCannotRetryAmbiguousMutation" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.002"/>
+  <testcase name="createProposalIsIdempotentAcrossConcurrentReviewSessions" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="configRecreationRequiresFreshApprovalAndStaleRevisionConflicts" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="cancellationDuringExecutionRetiresSessionAndForbidsRetry" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.003"/>
+  <testcase name="taskRevisionChangedAfterReviewConflictsWithoutApplyingProposal" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="updateAndCompleteApplyOnlyAfterApprovalUsingCapturedRevision" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="expiryRejectsApprovalAtExactBoundaryAndClockRollbackCannotReviveSession" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.002"/>
+  <testcase name="simultaneousApprovalAndDeclineHaveOneWinner" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.002"/>
+  <testcase name="targetSelectionMismatchAndDangerousDeleteNeedExplicitAcknowledgement" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="invalidProposalShapesAreRejectedBeforeRepositoryAccess" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.003"/>
+  <testcase name="mismatchedTaskReturnedDuringReviewPreparationIsRejected" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.003"/>
+  <testcase name="revisionMismatchIsRejectedBeforeReviewWithoutWrites" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="deleteNeedsMatchingTargetAndSeparateDangerousAcknowledgement" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.002"/>
+  <testcase name="approvalAndDeclineRaceCannotExecuteAfterDeclineWinsOrDuplicateAnApproval" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="expiredSessionPublishesUiStateAndRequiresFreshApproval" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.002"/>
+  <testcase name="preparingReviewDoesNotWriteAndDisplaysCapturedRevision" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="expiredSessionPublishesUiStateAndFreshReviewStillNeedsApproval" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="changingSelectedTaskCannotUseEarlierApproval" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="processRecreationRequiresASeparateExplicitApproval" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.001"/>
+  <testcase name="declineAndNonApprovalNeverWriteAndCannotBeReused" classname="app.serea.android.assistant.taskproposal.TaskProposalTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

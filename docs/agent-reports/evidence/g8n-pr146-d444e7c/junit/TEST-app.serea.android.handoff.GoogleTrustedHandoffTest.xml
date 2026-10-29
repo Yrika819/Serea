@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.handoff.GoogleTrustedHandoffTest" tests="20" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:39:52.163Z" hostname="runnervm48cm3" time="0.059">
+  <properties/>
+  <testcase name="accountSessionAndGenerationSwitchesRejectBeforeAnyDispatch" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.007"/>
+  <testcase name="gmailFakeHandoffBindsOriginAndConsumesOneUsePreview" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.005"/>
+  <testcase name="consumeForLocalChatSendIsOneUseAndRequiresExactPayloadAndDestination" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.007"/>
+  <testcase name="malformedItemAndIdentityAndCancelledReadFailClosed" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.001"/>
+  <testcase name="conversationSwitchExpiryAndCancelledPreviewAreRejected" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.003"/>
+  <testcase name="processRestartDropsUnconsentedPreviewRegistry" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.001"/>
+  <testcase name="consumeForLocalChatSendRejectsRevokedAuthorizationAndChangedBindings" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.005"/>
+  <testcase name="consumeForLocalChatSendPropagatesCancellationAfterConsumingProof" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.001"/>
+  <testcase name="googleLineageCannotUseCloudEgressEvenAfterLocalConsent" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.002"/>
+  <testcase name="delayedCallbacksCannotIssueOrAcceptAcrossBindingChanges" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.005"/>
+  <testcase name="acceptedProofCanBeRevalidatedForLocalModelAndCancellationPropagates" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.001"/>
+  <testcase name="oversizedProviderTitlesAreClampedForUiAndPreservedInSelectedContent" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.007"/>
+  <testcase name="revokedAuthorizationAndNonSyntheticProviderFailClosedBeforeReading" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.001"/>
+  <testcase name="delayedSourceChangeAndContentSubstitutionRejectPreviewAndConfirm" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.002"/>
+  <testcase name="confirmationRejectsProviderResponseForDifferentSourceItem" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.001"/>
+  <testcase name="selectedBodyIdentityIsContentBoundAndPromptInjectionRemainsTainted" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.001"/>
+  <testcase name="revokedAuthorizationAfterPreviewIsRejectedBeforeAnyDispatch" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.001"/>
+  <testcase name="consumeForLocalChatSendRejectsChangedSourceAndExpiredProof" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.004"/>
+  <testcase name="providerSessionReplacementInvalidatesOldHandoff" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.002"/>
+  <testcase name="calendarFakeHandoffUsesCalendarOriginAndScope" classname="app.serea.android.handoff.GoogleTrustedHandoffTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

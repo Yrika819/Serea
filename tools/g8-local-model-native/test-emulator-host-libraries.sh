@@ -126,18 +126,18 @@ if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_PULSE_PATH="$pulse" \
     exit 1
 fi
 
-metachar_root="$TEMP_ROOT/sdk/[unsafe]/emulator"
+metachar_root="$TEMP_ROOT/sdk/*/emulator"
 metachar_qemu_dir="$metachar_root/qemu/linux-x86_64"
 outside_lib64="$TEMP_ROOT/sdk/u/emulator/lib64"
 mkdir -p "$metachar_qemu_dir" "$outside_lib64/qt/lib"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$metachar_qemu_dir/qemu-system-x86_64"
 chmod +x "$metachar_qemu_dir/qemu-system-x86_64"
 ln -s "$outside_lib64" "$metachar_root/lib64"
-if ! case "$outside_lib64/" in
-    $metachar_root/*) true ;;
-    *) false ;;
-esac; then
-    echo 'emulator_host_library_contract=FAIL glob-escape fixture does not match the vulnerable prefix' >&2
+old_glob_would_admit() {
+    [[ "$1" == $metachar_root/* ]]
+}
+if ! old_glob_would_admit "$metachar_qemu_dir" || ! old_glob_would_admit "$outside_lib64"; then
+    echo 'emulator_host_library_contract=FAIL glob-escape fixture does not match the vulnerable prefix for both SDK and escaped directories' >&2
     exit 1
 fi
 escape_output="$TEMP_ROOT/path-escape.out"

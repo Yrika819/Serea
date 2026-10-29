@@ -11,6 +11,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.serea.android.gmail.FakeGmailProvider
+import app.serea.android.gmail.GmailMessage
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -21,11 +25,14 @@ class GoogleTrustedHandoffShellTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun gmailHandoffReachesChatComposerAndUsesLocalDemoOnlyAfterSend() {
+        val selectedMessage = FakeGmailProvider.fixtures.messages.single { it.id.value == "fake-msg-001" }
         assertChatHandoff(
             destinationTag = "destination_gmail",
-            selectedTitle = "Project Finch schedule",
+            selectedTitle = checkNotNull(selectedMessage.subject),
             handoffAction = "このメールをChatへ渡す",
             expectedOrigin = DataOrigin.GMAIL,
+            expectedComposerText = checkNotNull(selectedMessage.plainTextBody),
+            excludedGmailMetadata = selectedMessage.handoffExcludedMetadataValues(),
         )
     }
 
@@ -65,6 +72,8 @@ class GoogleTrustedHandoffShellTest {
         handoffAction: String,
         expectedOrigin: DataOrigin,
         selectedCalendarName: String? = null,
+        expectedComposerText: String? = null,
+        excludedGmailMetadata: List<String> = emptyList(),
     ) {
         waitForChatReady()
         compose.onNodeWithTag(destinationTag).performClick()
@@ -96,7 +105,13 @@ class GoogleTrustedHandoffShellTest {
             compose.onAllNodesWithTag("chat-composer").fetchSemanticsNodes().isNotEmpty()
         }
         val composer = compose.onNodeWithTag("chat-composer")
-        composer.assertTextContains(selectedTitle, substring = true)
+        if (expectedComposerText != null) {
+            val draft = compose.activity.chatViewModel.state.value.input
+            assertGmailBodyOnly(draft, expectedComposerText, excludedGmailMetadata, "Chat composer")
+            composer.assertTextContains(expectedComposerText, substring = true)
+        } else {
+            composer.assertTextContains(selectedTitle, substring = true)
+        }
         compose.onAllNodesWithText("Demo response:", substring = true).assertCountEquals(0)
         val imported = compose.activity.chatViewModel.state.value.editorSourceLineage
         assertTrue(imported.contains(expectedOrigin))
@@ -108,7 +123,35 @@ class GoogleTrustedHandoffShellTest {
         val userMessage = compose.activity.chatViewModel.state.value.conversation.messages
             .first { it.role == MessageRole.USER }
         assertTrue(userMessage.sourceLineage.contains(expectedOrigin))
+        if (expectedComposerText != null) {
+            assertGmailBodyOnly(userMessage.text, expectedComposerText, excludedGmailMetadata, "submitted Chat message")
+        }
     }
+
+    private fun assertGmailBodyOnly(
+        text: String,
+        expectedBody: String,
+        excludedMetadata: List<String>,
+        surface: String,
+    ) {
+        assertEquals("$surface should contain only the selected Gmail body.", expectedBody, text)
+        excludedMetadata.forEach { value ->
+            assertFalse("$surface leaked excluded Gmail metadata: $value", text.contains(value))
+        }
+    }
+
+    private fun GmailMessage.handoffExcludedMetadataValues(): List<String> = buildList {
+        add(id.value)
+        add(threadId.value)
+        from?.let { add(it) }
+        addAll(to)
+        subject?.let { add(it) }
+        internalDateMillis?.let { add(it.toString()) }
+        snippet?.let { add(it) }
+        add(source.name)
+        add(dataOrigin.name)
+        add(classification.name)
+    }.filter(String::isNotBlank).distinct()
 
     private fun waitForChatReady() {
         compose.waitUntil(10_000) {

@@ -27,6 +27,8 @@ TEST_PACKAGE_OWNED=0
 APP_PRIVATE_MODEL_OWNED=0
 DEVICE_TEMP_MODEL_OWNED=0
 HOST_MODEL_OWNED=0
+PACKAGE_QUERY_EXIT_CODE=NOT_RUN
+PACKAGE_QUERY_MATCHES=NOT_RUN
 
 adb_device() {
     adb -s "$DEVICE_SERIAL" "$@"
@@ -35,21 +37,46 @@ adb_device() {
 package_state() {
     local package="$1"
     local include_uninstalled="${2:-0}"
-    local packages
+    local packages line exact_count line_count unique_count invalid_output=0
     local -a query=(shell pm list packages)
+    # Android's package filter is substring-based; the isolated app ID is a prefix of the
+    # isolated test ID. Validate rows and match the exact package record instead of requiring
+    # the whole filtered output to contain only one row.
     if [[ "$include_uninstalled" == 1 ]]; then query+=(-u); fi
     query+=("$package")
-    if ! packages="$(adb_device "${query[@]}" 2>/dev/null)"; then
+    if packages="$(adb_device "${query[@]}" 2>/dev/null)"; then
+        PACKAGE_QUERY_EXIT_CODE=0
+    else
+        PACKAGE_QUERY_EXIT_CODE=$?
+        PACKAGE_QUERY_MATCHES=QUERY_COMMAND_FAILED
         return 2
     fi
     packages="$(printf '%s' "$packages" | tr -d '\r')"
-    if [[ "$packages" == "package:$package" ]]; then
-        return 0
-    fi
     if [[ -z "$packages" ]]; then
+        PACKAGE_QUERY_MATCHES=EMPTY
         return 1
     fi
-    return 2
+
+    while IFS= read -r line; do
+        if [[ ! "$line" =~ ^package:[A-Za-z0-9_.]+$ ]]; then
+            invalid_output=1
+        fi
+    done <<< "$packages"
+    if [[ "$invalid_output" == 1 ]]; then
+        PACKAGE_QUERY_MATCHES=INVALID_OUTPUT
+        return 2
+    fi
+    PACKAGE_QUERY_MATCHES="$(printf '%s\n' "$packages" | LC_ALL=C sort -u | paste -sd ';' -)"
+    line_count="$(printf '%s\n' "$packages" | wc -l | tr -d ' ')"
+    unique_count="$(printf '%s\n' "$packages" | LC_ALL=C sort -u | wc -l | tr -d ' ')"
+    exact_count="$(grep -Fxc "package:$package" <<< "$packages" || true)"
+    if [[ "$line_count" != "$unique_count" || "$exact_count" -gt 1 ]]; then
+        return 2
+    fi
+    if [[ "$exact_count" == 1 ]]; then
+        return 0
+    fi
+    return 1
 }
 
 uninstall_and_verify() {
@@ -130,6 +157,8 @@ cleanup() {
     local host_remove_command host_absence
     local app_private_state=NOT_VERIFIED temp_state=NOT_VERIFIED
     local app_private_owner_package_state=NOT_CHECKED
+    local app_private_owner_package_query_exit_code=NOT_RUN
+    local app_private_owner_package_query_matches=NOT_RUN
     local test_uninstall_command=NOT_ATTEMPTED test_package_state=NOT_VERIFIED
     local app_uninstall_command=NOT_ATTEMPTED app_package_state=NOT_VERIFIED
     local report_path report_tmp report_write_status=PASS cleanup_result output_write_status=NOT_ATTEMPTED
@@ -147,6 +176,8 @@ cleanup() {
             CLEANUP_FAILED=1
         elif package_state "$APP_ID"; then
             app_private_owner_package_state=INSTALLED
+            app_private_owner_package_query_exit_code=$PACKAGE_QUERY_EXIT_CODE
+            app_private_owner_package_query_matches=$PACKAGE_QUERY_MATCHES
             if adb_device shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
                 app_private_remove_command=PASS
             else
@@ -162,6 +193,8 @@ cleanup() {
             fi
         else
             package_status=$?
+            app_private_owner_package_query_exit_code=$PACKAGE_QUERY_EXIT_CODE
+            app_private_owner_package_query_matches=$PACKAGE_QUERY_MATCHES
             if [[ "$package_status" == 1 ]]; then
                 app_private_owner_package_state=ABSENT
                 app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_ABSENT
@@ -175,6 +208,8 @@ cleanup() {
     else
         if [[ "$APP_PACKAGE_OWNED" == 1 ]] && package_state "$APP_ID"; then
             app_private_owner_package_state=INSTALLED
+            app_private_owner_package_query_exit_code=$PACKAGE_QUERY_EXIT_CODE
+            app_private_owner_package_query_matches=$PACKAGE_QUERY_MATCHES
             if adb_device shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
                 app_private_remove_command=NOT_NEEDED_NOT_STAGED
                 app_private_state=ABSENT_VERIFIED
@@ -190,6 +225,8 @@ cleanup() {
                 app_private_state=NOT_APPLICABLE
             else
                 package_status=$?
+                app_private_owner_package_query_exit_code=$PACKAGE_QUERY_EXIT_CODE
+                app_private_owner_package_query_matches=$PACKAGE_QUERY_MATCHES
                 if [[ "$package_status" == 1 ]]; then
                     app_private_owner_package_state=ABSENT
                     app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_ABSENT
@@ -253,6 +290,8 @@ cleanup() {
         "host_model_rm_command=$host_remove_command"
         "host_model_final_state=$host_absence"
         "app_private_owner_package_state=$app_private_owner_package_state"
+        "app_private_owner_package_query_exit_code=$app_private_owner_package_query_exit_code"
+        "app_private_owner_package_query_matches=$app_private_owner_package_query_matches"
         "app_private_model_rm_command=$app_private_remove_command"
         "app_private_model_final_state=$app_private_state"
         "device_temp_model_rm_command=$temp_remove_command"
@@ -271,6 +310,8 @@ cleanup() {
         ! grep -Fxq "original_exit_status=$original_status" "$report_tmp" || \
         ! grep -Fxq "host_model_final_state=$host_absence" "$report_tmp" || \
         ! grep -Fxq "app_private_owner_package_state=$app_private_owner_package_state" "$report_tmp" || \
+        ! grep -Fxq "app_private_owner_package_query_exit_code=$app_private_owner_package_query_exit_code" "$report_tmp" || \
+        ! grep -Fxq "app_private_owner_package_query_matches=$app_private_owner_package_query_matches" "$report_tmp" || \
         ! grep -Fxq "app_private_model_final_state=$app_private_state" "$report_tmp" || \
         ! grep -Fxq "device_temp_model_final_state=$temp_state" "$report_tmp" || \
         ! grep -Fxq "test_package_final_state=$test_package_state" "$report_tmp" || \
@@ -281,6 +322,8 @@ cleanup() {
     elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_path" || \
         ! grep -Fxq "host_model_final_state=$host_absence" "$report_path" || \
         ! grep -Fxq "app_private_owner_package_state=$app_private_owner_package_state" "$report_path" || \
+        ! grep -Fxq "app_private_owner_package_query_exit_code=$app_private_owner_package_query_exit_code" "$report_path" || \
+        ! grep -Fxq "app_private_owner_package_query_matches=$app_private_owner_package_query_matches" "$report_path" || \
         ! grep -Fxq "app_private_model_final_state=$app_private_state" "$report_path" || \
         ! grep -Fxq "device_temp_model_final_state=$temp_state" "$report_path" || \
         ! grep -Fxq "test_package_final_state=$test_package_state" "$report_path" || \
@@ -312,6 +355,8 @@ cleanup() {
             "host_model_rm_command=$host_remove_command" \
             "host_model_final_state=$host_absence" \
             "app_private_owner_package_state=$app_private_owner_package_state" \
+            "app_private_owner_package_query_exit_code=$app_private_owner_package_query_exit_code" \
+            "app_private_owner_package_query_matches=$app_private_owner_package_query_matches" \
             "app_private_model_rm_command=$app_private_remove_command" \
             "app_private_model_final_state=$app_private_state" \
             "device_temp_model_rm_command=$temp_remove_command" \

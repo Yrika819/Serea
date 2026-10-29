@@ -30,7 +30,7 @@ class LocalModelNativeRuntimeE2ETest {
     }
 
     @Test
-    fun pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend() = runBlocking {
+    fun pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend(): Unit = runBlocking<Unit> {
         assertTrue("diagnostic build must opt into the native library", BuildConfig.LOCAL_NATIVE_RUNTIME_ENABLED)
         assertTrue(
             "runtime diagnostic must use a disposable Emulator",

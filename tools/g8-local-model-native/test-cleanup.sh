@@ -28,9 +28,19 @@ if [[ "${1:-}" == shell && "${2:-}" == pm && "${3:-}" == list && "${4:-}" == pac
         printf 'warning: package query incomplete\n'
         exit 0
     fi
-    grep -Fx "package:$package" "$ADB_STATE/packages" || true
+    emit_matches() {
+        local state_file="$1" package_line package_name
+        [[ -f "$state_file" ]] || return 0
+        while IFS= read -r package_line; do
+            [[ "$package_line" == package:* ]] || continue
+            package_name="${package_line#package:}"
+            [[ "$package_name" == *"$package"* ]] && printf '%s\n' "$package_line"
+        done < "$state_file"
+        return 0
+    }
+    emit_matches "$ADB_STATE/packages"
     if [[ "$include_uninstalled" == true ]]; then
-        grep -Fx "package:$package" "$ADB_STATE/retained-packages" || true
+        emit_matches "$ADB_STATE/retained-packages"
     fi
     exit 0
 fi
@@ -140,6 +150,8 @@ report="$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'host_model_rm_command=PASS' "$report"
 grep -Fxq 'host_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'app_private_owner_package_state=INSTALLED' "$report"
+grep -Fxq 'app_private_owner_package_query_exit_code=0' "$report"
+grep -Fxq 'app_private_owner_package_query_matches=package:app.serea.android.isolated;package:app.serea.android.isolated.test' "$report"
 grep -Fxq 'app_private_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'device_temp_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'test_package_final_state=ABSENT_VERIFIED' "$report"
@@ -193,6 +205,8 @@ prepare_case app_private_package_query_failure
 status="$(run_case app_private_package_query_failure FAIL_APP_PRIVATE_PACKAGE_QUERY=1 0 FAIL_EVIDENCE_RM=1)"
 [[ "$status" != 0 ]]
 grep -Fxq 'app_private_owner_package_state=QUERY_FAILED' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_owner_package_query_exit_code=28' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_owner_package_query_matches=QUERY_COMMAND_FAILED' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'app_private_model_final_state=NOT_VERIFIED' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'cleanup_outcome=FAIL' "$EVIDENCE_DIR/cleanup-boundary.txt"
 ! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
@@ -205,6 +219,8 @@ mv "$ADB_STATE/packages.next" "$ADB_STATE/packages"
 status="$(run_case missing_owned_app_package FAIL_EVIDENCE_RM=1)"
 [[ "$status" != 0 ]]
 grep -Fxq 'app_private_owner_package_state=ABSENT' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_owner_package_query_exit_code=0' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_owner_package_query_matches=package:app.serea.android.isolated.test' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'app_private_model_rm_command=NOT_VERIFIED_OWNER_PACKAGE_ABSENT' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'app_private_model_final_state=NOT_VERIFIED' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'cleanup_outcome=FAIL' "$EVIDENCE_DIR/cleanup-boundary.txt"

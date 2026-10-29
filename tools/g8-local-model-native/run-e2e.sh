@@ -15,6 +15,9 @@ MODEL_SIZE_BYTES='101016128'
 LLAMA_COMMIT='276378515ceebee5d14bcc8536603dd5c87491a2'
 TEST_CLASS='app.serea.android.LocalModelNativeRuntimeE2ETest'
 TEST_METHOD='pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend'
+NOOP_TEST_CLASS='app.serea.android.SereaNativeRunnerNoOpTest'
+NOOP_TEST_METHOD='androidJUnit4RunnerInstantiatesAndTargetsIsolatedApp'
+TEST_RUNNER='app.serea.android.SereaIsolatedAndroidJUnitRunner'
 EVIDENCE_DIR=''
 CANONICAL_RUNNER_TEMP=''
 DEVICE_SERIAL=''
@@ -403,38 +406,81 @@ staged_hash="$(adb_device exec-out run-as "$APP_ID" cat "$DEVICE_MODEL_RELATIVE"
 [[ "$staged_hash" == "$MODEL_SHA256" ]]
 echo "app_private_model_sha256=$staged_hash" > "$EVIDENCE_DIR/model-stage.txt"
 
-gradle_log="$EVIDENCE_DIR/gradle-instrumentation.log"
-if ! (
-    cd "$ANDROID_DIR"
-    ./gradlew --no-daemon --console=plain \
-        -PsereaLocalNativeRuntime=true \
-        -PsereaNativeJniTestSeams=true \
-        -PsereaLlamaCppSource="$ROOT_DIR/llama.cpp" \
-        "-Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken=$campaign_token" \
-        "-Pandroid.testInstrumentationRunnerArguments.class=$TEST_CLASS#$TEST_METHOD" \
-        :app:connectedIsolatedAndroidTest
-) > "$gradle_log" 2>&1; then
-    tail -n 160 "$gradle_log" >&2
+# Invoke the already-installed instrumentation component directly. The previous connected-test
+# attempt ended with both APKs absent, so the script could not verify app-private fixture cleanup or
+# retain JUnit/logcat cause details. This direct invocation keeps the disposable target under this
+# script's ownership until cleanup and evidence verification complete.
+instrumentation_listing="$(adb_device shell pm list instrumentation | tr -d '\r')"
+instrumentation_component="$TEST_ID/$TEST_RUNNER"
+if ! grep -Fq "instrumentation:$instrumentation_component (target=$APP_ID)" <<< "$instrumentation_listing"; then
+    printf '%s\n' "$instrumentation_listing" > "$EVIDENCE_DIR/instrumentation-manifest.txt"
+    echo 'Expected isolated instrumentation component is absent from Package Manager.' >&2
     exit 1
 fi
+printf '%s\n' "$instrumentation_listing" > "$EVIDENCE_DIR/instrumentation-manifest.txt"
 
-results_root="$ANDROID_DIR/app/build/outputs/androidTest-results/connected"
-mapfile -t reports < <(find "$results_root" -type f -name 'TEST-*.xml' -print)
-[[ "${#reports[@]}" -eq 1 ]]
-cp "${reports[0]}" "$EVIDENCE_DIR/junit/$(basename "${reports[0]}")"
-python3 - "${reports[0]}" "$TEST_CLASS" "$TEST_METHOD" <<'PY'
-import sys
-import xml.etree.ElementTree as ET
-root = ET.parse(sys.argv[1]).getroot()
-cases = root.findall("testcase")
-if root.attrib.get("tests") != "1" or len(cases) != 1:
-    raise SystemExit("expected exactly one instrumented test case")
-if cases[0].attrib.get("classname") != sys.argv[2] or cases[0].attrib.get("name") != sys.argv[3]:
-    raise SystemExit("unexpected JUnit identity")
-for key in ("failures", "errors", "skipped"):
-    if int(root.attrib.get(key, "0")) != 0:
-        raise SystemExit(f"JUnit {key} must be zero")
-PY
-echo 'exact_junit=PASS tests=1 failures=0 errors=0 skipped=0' > "$EVIDENCE_DIR/junit-verification.txt"
+adb_device logcat -c
+instrumentation_log="$EVIDENCE_DIR/android-instrumentation.txt"
+class_filter="$NOOP_TEST_CLASS#$NOOP_TEST_METHOD,$TEST_CLASS#$TEST_METHOD"
+set +e
+timeout --signal=TERM --kill-after=20s 30m \
+    adb -s "$DEVICE_SERIAL" shell am instrument -w -r \
+    -e sereaCampaignToken "$campaign_token" \
+    -e class "$class_filter" \
+    "$instrumentation_component" > "$instrumentation_log" 2>&1
+instrumentation_status=$?
+set -e
+
+timeout_cleanup=NOT_NEEDED
+if [[ "$instrumentation_status" == 124 || "$instrumentation_status" == 137 ]]; then
+    if [[ "$TEST_PACKAGE_OWNED" == 1 && "$APP_PACKAGE_OWNED" == 1 ]] && \
+        adb_device shell am force-stop "$TEST_ID" >/dev/null 2>&1 && \
+        adb_device shell am force-stop "$APP_ID" >/dev/null 2>&1; then
+        timeout_cleanup=PASS
+    else
+        timeout_cleanup=FAIL
+    fi
+fi
+
+logcat_status=PASS
+if ! adb_device logcat -d -v threadtime '*:E' \
+    'SereaIsolatedRunner:I' 'SereaTestLifecycle:I' 'SereaLocalNativeRuntime:I' \
+    > "$EVIDENCE_DIR/android-logcat-diagnostic.log"; then
+    logcat_status=FAIL
+fi
+if [[ -s "$EVIDENCE_DIR/android-logcat-diagnostic.log" ]]; then
+    tail -c 1048576 "$EVIDENCE_DIR/android-logcat-diagnostic.log" \
+        > "$EVIDENCE_DIR/android-logcat-diagnostic.log.bounded"
+    mv "$EVIDENCE_DIR/android-logcat-diagnostic.log.bounded" \
+        "$EVIDENCE_DIR/android-logcat-diagnostic.log"
+fi
+
+parser_status=0
+python3 "$ROOT_DIR/tools/g8-local-model-native/verify-instrumentation-stream.py" \
+    "$instrumentation_log" \
+    "$EVIDENCE_DIR/junit/native-runtime-instrumentation.xml" \
+    "$EVIDENCE_DIR/junit-verification.txt" \
+    "$NOOP_TEST_CLASS" "$TEST_CLASS" || parser_status=$?
+printf 'adb_instrumentation_exit=%s\nlogcat_capture=%s\nstream_parse_exit=%s\ntimeout_cleanup=%s\n' \
+    "$instrumentation_status" "$logcat_status" "$parser_status" "$timeout_cleanup" \
+    > "$EVIDENCE_DIR/instrumentation-command-status.txt"
+if [[ "$instrumentation_status" == 124 || "$instrumentation_status" == 137 ]]; then
+    echo 'instrumentation_timeout=EXPIRED' >> "$EVIDENCE_DIR/instrumentation-command-status.txt"
+else
+    echo 'instrumentation_timeout=NOT_EXPIRED' >> "$EVIDENCE_DIR/instrumentation-command-status.txt"
+fi
+
+if ((instrumentation_status != 0 || logcat_status != PASS || parser_status != 0)) || \
+    [[ "$timeout_cleanup" == FAIL ]] || \
+    ! grep -Fxq "noop_result=PASS" "$EVIDENCE_DIR/junit-verification.txt" || \
+    ! grep -Fxq "native_result=PASS" "$EVIDENCE_DIR/junit-verification.txt" || \
+    ! grep -Fxq 'failures=0' "$EVIDENCE_DIR/junit-verification.txt" || \
+    ! grep -Fxq 'errors=0' "$EVIDENCE_DIR/junit-verification.txt" || \
+    ! grep -Fxq 'skipped=0' "$EVIDENCE_DIR/junit-verification.txt"; then
+    echo 'Android instrumentation diagnostic or native inference did not pass; captured output follows.' >&2
+    tail -n 240 "$instrumentation_log" >&2 || true
+    tail -n 240 "$EVIDENCE_DIR/android-logcat-diagnostic.log" >&2 || true
+    exit 1
+fi
 
 adb_device logcat -d -v threadtime -s SereaLocalNativeRuntime:I > "$EVIDENCE_DIR/native-runtime-metrics.log"

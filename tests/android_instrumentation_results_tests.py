@@ -11,7 +11,9 @@ from tools.verify_android_instrumentation import (
     collect_class_counts,
     collect_failure_details,
     collect_results,
+    collect_source_test_identities,
     collect_source_test_counts,
+    read_test_manifest,
     verify_profile_verifier_evidence,
 )
 
@@ -122,27 +124,24 @@ class InstrumentationResultTests(unittest.TestCase):
         required_manifest = repo / "tools/android-instrumentation-required-tests.txt"
         additional_manifest = repo / "tools/android-instrumentation-additional-tests.txt"
         non_required_manifest = repo / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt"
-        required_tests = {
-            tuple(line.split("#", 1))
-            for line in required_manifest.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
-        additional_tests = {
-            tuple(line.split("#", 1))
-            for line in additional_manifest.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
-        non_required_tests = {
-            tuple(line.split("#", 1))
-            for line in non_required_manifest.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.startswith("#")
-        }
+        required_tests = read_test_manifest(required_manifest)
+        additional_tests = read_test_manifest(additional_manifest)
+        non_required_tests = read_test_manifest(non_required_manifest)
         self.assertEqual(103, len(required_tests))
         self.assertEqual(2, len(additional_tests))
         self.assertFalse(required_tests & additional_tests)
-        # Eight existing exploratory identities plus seven focused handoff UI cases.
-        self.assertEqual(15, len(non_required_tests))
+        self.assertEqual(105, len(required_tests | additional_tests))
+        self.assertEqual(17, len(non_required_tests))
         self.assertFalse(non_required_tests & (required_tests | additional_tests))
+        expected_source_identities = required_tests | additional_tests | non_required_tests
+        actual_source_root = repo / "android/app/src/androidTest/java"
+        actual_source_identities = collect_source_test_identities(actual_source_root)
+        self.assertEqual(expected_source_identities, actual_source_identities)
+        actual_source_test_count = sum(
+            _source_test_count(source.read_text(encoding="utf-8"))
+            for source in actual_source_root.rglob("*.kt")
+        )
+        self.assertEqual(122, actual_source_test_count)
         required: dict[str, int] = {}
         for class_name, _ in required_tests:
             required[class_name] = required.get(class_name, 0) + 1

@@ -59,3 +59,13 @@
 Before this Ledger update, the new candidate source was `8ea137642ef6a0c7ef0e2a78905569ea7d598b58`, tree `779c2e05a9d2bd3c62b71566c5c2e049a3aed0f9`. On that exact source, Java 17 command `./gradlew :app:testDebugUnitTest :app:compileIsolatedAndroidTestKotlin --rerun-tasks` completed SUCCESS: JVM 408 tests, 0 failures, 0 errors, 0 skips, 34 JUnit XML files; AndroidTest Kotlin compile passed. Aggregate per-file JUnit digest: `3c4283818089c7c52f3ca531eae80e98bee3c93fe16d4fd75ecaa3490d46190e`. No emulator was run. This result is local focused verification and does not replace API26/35 Required/UI CI.
 
 The new integration branch is being kept separate from PR #155. It contains the reviewed test-only UI transport fixes and this ledger. A new Draft PR and exact-head hosted CI are the next steps; Native diagnostic code remains only in PR #160 because Native inference has not been established.
+
+## #162 current-source checkpoint — 2026-10-29
+
+PR #162 is OPEN/DRAFT on `codex/serea-g9rc-ui-accepted`, based on PR #155's branch `codex/serea-g9r-integration-candidate`. Before this checkpoint the exact candidate HEAD was `6a37e090a228633faf319fd6c8fa1596e7ae9c9f`, tree `b697ce9f197cf826d343dfa6e60ecef8f2e1542d`. This source contains only the reviewed PR #161 test-only changes plus the new ledger atop PR #155; no Native Runtime source was integrated.
+
+On that exact candidate source, JDK17 `./gradlew :app:testDebugUnitTest :app:compileIsolatedAndroidTestKotlin --rerun-tasks` completed SUCCESS: 408 tests, 0 failures/errors/skips, 34 JUnit XML files, isolated AndroidTest Kotlin compile PASS. Aggregate JUnit digest: `95c50242b30e61e08d11dec9a1c67b2e48cc473b3cd8a9791658aa9b553c7b59`. No Emulator was run locally.
+
+Exact-head PR #162 checks started at run IDs: Android `40887554119` (Change Scope job `123495223453` QUEUED), Fast `40887553700`, Full `40887553860`, Native platform `40887553695`, SQLite `40887553607`, RustSec `40887553982`, Git Hooks `40887554005`; these were QUEUED at the latest query. They are bound to `6a37e09…` and are not yet Required/UI evidence.
+
+PR #160 focused Native run `40884851425`, attempt 1/job `123485695046`, has advanced from QUEUED and started at `2026-10-29T14:01:15Z`. Exact source remains `025aff71effb03e0fe3bd540079530369e9beaf7`; at last query it was installing pinned Android build/Emulator packages. The inference step has not run yet; no result or artifact is claimed.

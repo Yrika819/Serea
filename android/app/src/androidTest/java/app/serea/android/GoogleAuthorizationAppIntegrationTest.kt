@@ -9,12 +9,14 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.serea.android.calendar.CalendarProviderKind
+import app.serea.android.calendar.ui.CalendarAgendaItemsKey
 import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
 import app.serea.android.gmail.GmailProviderKind
 import java.time.Instant
@@ -36,6 +38,26 @@ class GoogleAuthorizationAppIntegrationTest {
 
     private fun authorizationViewModel() = ViewModelProvider(compose.activity)
         .get(GoogleAuthorizationDemoViewModel::class.java)
+
+    private fun agendaEventIndex(eventId: String): Int? = runCatching {
+        compose.waitForIdle()
+        val nodes = compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes()
+        if (nodes.size != 1) return@runCatching null
+        nodes.single().config.getOrElseNullable(CalendarAgendaItemsKey) { null }
+            ?.eventItemIndices?.get(eventId)
+    }.getOrNull()
+
+    private fun agendaStateForFailure(): String = runCatching {
+        compose.waitForIdle()
+        val nodes = compose.onAllNodesWithTag("calendar_agenda_list").fetchSemanticsNodes()
+        if (nodes.size != 1) return@runCatching "calendar_agenda_list_nodes=${nodes.size}"
+        val node = nodes.single()
+        val items = node.config.getOrElseNullable(CalendarAgendaItemsKey) { null }
+        val loadedCount = node.config.getOrElseNullable(
+            app.serea.android.calendar.ui.CalendarAgendaLoadedEventCountKey,
+        ) { null }
+        "loadedEventCount=$loadedCount,eventCount=${items?.eventCount},eventItemIndices=${items?.eventItemIndices}"
+    }.getOrElse { "agendaSnapshotUnavailable=${it.javaClass.simpleName}:${it.message}" }
 
     @After fun revokeDemoState() {
         runCatching { authorizationViewModel().revokeDemoGrant() }
@@ -71,17 +93,27 @@ class GoogleAuthorizationAppIntegrationTest {
         compose.onNodeWithTag("calendar_date_input").performTextInput(reviewDate)
         compose.onNodeWithTag("calendar_date_input").assertTextContains(reviewDate, substring = true)
         compose.onNodeWithText("Demo Personal").assertIsSelected()
-        try {
+        var designReviewIndex: Int? = null
+        val eventLoaded = runCatching {
             compose.waitUntil(10_000) {
-                compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
+                designReviewIndex = agendaEventIndex("evt-meeting")
+                designReviewIndex != null
             }
-        } catch (failure: AssertionError) {
-            throw AssertionError(
-                "Design review missing for fixture instant 2026-10-20T00:00:00Z; " +
-                    "deviceZone=${ZoneId.systemDefault().id}, queryDate=$reviewDate, selectedCalendar=demo-primary",
-                failure,
-            )
-        }
+        }.isSuccess
+        assertTrue(
+            "Design review fixture event was not loaded for instant 2026-10-20T00:00:00Z; " +
+                "deviceZone=${ZoneId.systemDefault().id}, queryDate=$reviewDate, " +
+                "selectedCalendar=demo-primary, selectedCalendarName=Demo Personal, " +
+                "calendarState=${viewModel.state.value.calendar}, " +
+                "sessionStillBound=${viewModel.calendarDemoSession.value === grantedSession}, " +
+                "agenda=${agendaStateForFailure()}",
+            eventLoaded,
+        )
+        compose.onNodeWithTag("calendar_agenda_list")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.ScrollToIndex) { scrollToIndex ->
+                scrollToIndex(checkNotNull(designReviewIndex))
+            }
+        compose.waitForIdle()
         compose.onNodeWithText("Design review").assertIsDisplayed()
 
         // The nested route is transient across configuration recreation. The Activity ViewModel

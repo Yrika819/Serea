@@ -58,7 +58,6 @@ class GoogleCalendarHandoffRevocationUiTest {
             compose.onAllNodesWithTag("google_auth_demo_calendar_destination").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("指定日").performClick()
-        compose.onNodeWithTag("calendar_date_input").performScrollTo()
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
         val reviewDate = Instant.parse("2026-10-20T00:00:00Z")
             .atZone(ZoneId.systemDefault()).toLocalDate().toString()

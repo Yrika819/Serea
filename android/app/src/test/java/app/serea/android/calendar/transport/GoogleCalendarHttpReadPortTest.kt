@@ -10,6 +10,7 @@ import app.serea.android.calendar.CalendarReadFailure
 import app.serea.android.calendar.CalendarReadLimits
 import app.serea.android.calendar.CalendarAgendaService
 import app.serea.android.calendar.CalendarEventKey
+import app.serea.android.calendar.CalendarMockWebServerTls
 import app.serea.android.calendar.EventId
 import app.serea.android.calendar.CalendarPermissionPolicy
 import app.serea.android.googleauth.AccessTokenLease
@@ -26,6 +27,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
@@ -53,7 +55,7 @@ class GoogleCalendarHttpReadPortTest {
 
     @Before fun setUp() {
         server = MockWebServer()
-        server.start()
+        CalendarMockWebServerTls.start(server)
         status = CalendarAuthorizationStatus(CalendarAuthorizationState.AUTHORIZED)
         tokenRequests = 0
     }
@@ -62,12 +64,12 @@ class GoogleCalendarHttpReadPortTest {
 
     private fun port(
         tokenProvider: () -> CalendarAccessToken? = { freshToken() },
-        client: OkHttpClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
-            .retryOnConnectionFailure(false).build(),
+        client: OkHttpClient = CalendarMockWebServerTls.client(server).newBuilder()
+            .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build(),
     ) = GoogleCalendarHttpReadPort(authorization, CalendarAccessTokenPort { _ ->
         tokenRequests++
         tokenProvider()
-    }, client, server.url("/calendar/v3/"))
+    }, client)
 
     @Test fun listCalendarsPaginatesEncodesTokensAndParsesMultipleTimezones() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"items":[{"id":"a@example.test","summary":"Fixture","timeZone":"Asia/Tokyo","accessRole":"reader","backgroundColor":"#123456"}],"nextPageToken":"next +/="}"""))
@@ -144,7 +146,7 @@ class GoogleCalendarHttpReadPortTest {
             }
         }
         val bridge = GoogleCalendarAuthorizationAdapter(gateway)
-        val realHttp = GoogleCalendarHttpReadPort(bridge, bridge, OkHttpClient(), server.url("/calendar/v3/"))
+        val realHttp = GoogleCalendarHttpReadPort(bridge, bridge, CalendarMockWebServerTls.client(server))
 
         try {
             realHttp.getCalendar(calendarId)
@@ -198,16 +200,49 @@ class GoogleCalendarHttpReadPortTest {
     }
 
     @Test fun injectedClientCannotForwardBearerTokenThroughRedirect() = runBlocking {
-        val destination = MockWebServer().apply { start() }
+        val destination = MockWebServer().apply { CalendarMockWebServerTls.start(this) }
         try {
             server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", destination.url("/steal").toString()))
-            val redirectingClient = OkHttpClient.Builder().followRedirects(true).followSslRedirects(true).build()
+            val redirectingClient = CalendarMockWebServerTls.client(server)
+                .newBuilder().followRedirects(true).followSslRedirects(true).build()
             try { port(client = redirectingClient).getEvent(CalendarEventKey(calendarId, EventId("x"))); fail("Expected redirect rejection") }
             catch (e: CalendarReadFailure) { assertEquals(CalendarApiFailureCode.INVALID_RESPONSE, e.code) }
             assertEquals(1, server.requestCount)
             assertEquals(0, destination.requestCount)
             assertEquals("Bearer fixture-token-never-valid", server.takeRequest().getHeader("Authorization"))
         } finally { destination.shutdown() }
+    }
+
+    @Test fun fixtureClientRejectsAlternateOriginsSchemesAndDnsAliasesBeforeDispatch() {
+        val client = CalendarMockWebServerTls.client(server)
+        val rejectedUrls = listOf(
+            "http://www.googleapis.com/calendar/v3/events",
+            "https://www.googleapis.com.evil.test/calendar/v3/events",
+            "https://www.googleapis.com./calendar/v3/events",
+            "https://googleapis.com/calendar/v3/events",
+            "https://localhost/calendar/v3/events",
+            "https://127.0.0.1/calendar/v3/events",
+            "https://www.googleapis.com/gmail/v1/users/me/messages",
+            "https://www.googleapis.com/calendar/v3/arbitrary/endpoint",
+            "https://www.googleapis.com/calendar/v3/calendars/a/events?redirect=https://example.test/",
+        )
+
+        rejectedUrls.forEach { url ->
+            val failure = runCatching {
+                client.newCall(Request.Builder().url(url).build()).execute().close()
+            }.exceptionOrNull()
+            assertTrue("Fixture client must fail closed for $url", failure != null)
+        }
+        val nonGetFailure = runCatching {
+            client.newCall(
+                Request.Builder()
+                    .url("https://www.googleapis.com/calendar/v3/calendars/a/events")
+                    .delete()
+                    .build(),
+            ).execute().close()
+        }.exceptionOrNull()
+        assertTrue("Fixture client must refuse non-GET provider dispatch", nonGetFailure != null)
+        assertEquals("No rejected origin may reach the local fixture", 0, server.requestCount)
     }
 
     @Test fun malformedOrOversizedJsonIsRejected() = runBlocking {

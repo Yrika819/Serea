@@ -1,6 +1,6 @@
 # Serea G9R Orchestrator Ledger
 
-**Checkpoint:** 2026-10-29 09:27 UTC
+**Checkpoint:** 2026-10-29 09:32 UTC
 **Campaign:** Android Instrumentation Recovery → Native Runtime Inference → G9 Product Acceptance → G10 Preflight
 **Roadmap:** Serea 2026 Personal Beta Roadmap v4
 **Repository:** `Yrika819/Serea`
@@ -22,6 +22,7 @@ GitHub was queried at campaign resume. Protected `main` is still `e0acb0254820c3
 | 152 | Open, Draft | `a9da3b71fff786fc93d3365249ea8087477b31b2` | `cbf688e4438794437b02bc7bd0fcc9bba975264f` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Google/Gmail Android UI test fixes |
 | 153 | Open, Draft | `6f4c8c5b4caf8f48619234fee5a9c864cb25766b` | `8a17da2ba3003d8663a3c6734d444682609abe05` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | API 35 IME Activity recreation test fix |
 | 154 | Open, Draft | `90913b4d4e3d834ae96d4f7e842bddfbd2b61ff6` | `3f88b0800971de9474a63c0286959aa94074613a` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Prior checkpoint/report |
+| 155 | Open, Draft | `f7cde2eec5b7ad6de38ab6d328905ee05a8e33ee` | `1ca79b7324817f508ff4a99cee51f50252a820cd` | PR #151 `d4a36fb5d3613bca2d60151de0991a1baac72fc9` | Parent G9R checkpoint (docs-only so far) |
 
 Dependency graph: `#146 → #149 → #151 → (#152, #153, #154)`. PRs #147 and #148 are independent G7-based lanes. Existing PRs remain unmodified. The new integration branch starts from PR #151; only independently accepted patches may be selected into it.
 
@@ -52,6 +53,10 @@ The main-only Personal Beta workflow runs `40845818357` and earlier related runs
 
 PR #149 JUnit artifact binding: API26 artifact `12872143095`, 867,807 bytes, SHA-256 `ebdd9e7a9f5343e9dfacba91abed7ba75b4bf56a338fa35cbe3582160ae4f34e`; API35 diagnostic artifact `12872631908`, 255,398 bytes, SHA-256 `bd32cb1a21e26a257c429bc74bd0158f41c819072af835204f953232dc4f8978`. Both artifact hashes were verified against the Actions digest. API26 failing UI identities: `GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevocationInvalidateDemoAuthorization` (ambiguous account text selector); `GoogleAuthorizationDemoUiTest#expiredCalendarReconnectShowsFreshPreviewAndWaitsForConfirm` (ambiguous reconnect text); `GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt` (existing MainActivity Compose content); `GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel` (5-second Design review timeout, cause unconfirmed); `GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` (exact `B` assertion against full account label). API35's diagnostic failure is at `SereaAppShellTest#chatDraftSurvivesGmailAndCalendarDestinationChanges`; instrumentation status reported NOT_RUN for its broader suites. Android Storage/Emulator job was `123243058373`.
 
+Lane C and B verified those API26/35 counts against the exact JUnit artifacts; API26 Required and UI are separate stages. PR #152/#153 fresh-branch patch selection is underway. Lane B found `/workspace/.tools/temurin17/bin/javac` and is using that JDK for local instrumentation-source compilation; the earlier PATH-only `javac` check was incomplete.
+
+This parent checkpoint PR #155 has its own docs-only workflow set on `f7cde2eec5b7ad6de38ab6d328905ee05a8e33ee`: Android `40850068164` pending, Fast `40850068140` in progress, Full `40850068231` queued, Native `40850068147` queued, SQLite `40850068199` pending, RustSec `40850068210` pending, Git Hooks `40850068257` queued. These workflows are not product-test evidence; the Android product jobs are expected to skip the report-only change. Main-only Beta run `40850061261` failed and is not PR/product evidence.
+
 ## Work assignments and boundaries
 
 | Owner | Worktree / branch | Base | Files and mission |
@@ -65,7 +70,7 @@ Three subagents are active. Each lane reports exact base/head/tree, tests and co
 
 ## Environment and scope limits
 
-The managed workspace reports current enforced unrestricted HTTP networking and ready Android SDK/JDK selectors. Local SDK inventory contains platform-tools and command-line tools but no emulator binary or system image; `adb devices -l` returns no device. Java is OpenJDK 21, but `javac` is unavailable. Thus local connected API26/API35 or Native Emulator runtime is NOT_RUN unless the lane provisions a valid toolchain without bypassing policy. GitHub Actions jobs remain the primary emulator route. No model weights beyond the existing bounded SmolLM2 fixture were downloaded. No credentials, personal data, or production keys are used.
+The managed workspace reports current enforced unrestricted HTTP networking and ready Android SDK/JDK selectors. Local SDK inventory contains platform-tools and command-line tools but no emulator binary or system image; `/dev/kvm` is absent and `adb devices -l` returns no device. Java 21 is on PATH; a Temurin 17 JDK with `javac` is present at `/workspace/.tools/temurin17` and Agent B is using it for compile checks. Local connected API26/API35 or Native Emulator runtime is NOT_RUN; GitHub Actions is the emulator execution route. No model weights beyond the existing bounded SmolLM2 fixture were downloaded. No credentials, personal data, or production keys are used.
 
 ## Model selection policy
 
@@ -105,5 +110,7 @@ Current decision matrix (pending; IDs here are local to this campaign and do not
 2. Agent B: inspect and reuse PR #149 package-query recovery; classify its exact harness failure; test #152/#153 patches on a fresh candidate; preserve all Required identities and obtain API26/35 JUnit artifacts when runners execute.
 3. Agent C: update exact queued/completed statuses without retry loops; independently review each new code head; audit cleanup/ownership/egress/usage, test identity, provenance, license and release packet.
 4. Parent: accept only reviewed patches; create a frozen new integration SHA/tree; run formal CI on that same source; record any failure and preserve the failed attempt before a source fix.
+
+**Lane progress at 09:32 UTC:** Agent A is preparing a no-op `AndroidJUnit4` test and raw instrumentation/logcat diagnostics on its fresh branch; no inference has run. Agent B has selected the reviewed PR #152/#153 AndroidTest-only fixes on its fresh branch and is compiling with Temurin 17; its work is not yet committed or runtime-verified. Agent C has independently verified PR #149's per-API artifacts and is updating the security/release report; no successor patch is yet ACCEPTED for integration.
 
 **Resume point:** refresh GitHub runs for the exact SHAs above, receive the three lane reports, review failures and runner assignment, and update this ledger with a new timestamp. No evidence from a different HEAD may be reused.

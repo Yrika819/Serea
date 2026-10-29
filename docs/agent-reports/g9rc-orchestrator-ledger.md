@@ -209,3 +209,7 @@ Run `40907496496`, attempt 1, advanced: x86_64 job `123566146405` is IN_PROGRESS
 ## PR #169 active-job checkpoint — 2026-10-29 16:05 UTC
 
 The exact-source Native x86_64 job `123566146405` on PR #169 has passed Android SDK/Emulator installation (step 5) and source checkout/CMake dirty-tree checks (steps 6–7), and remains IN_PROGRESS at focused JVM contracts (step 8). API35 emulator boot and inference steps have not run. ARM64 guest job `123566148073` and Android Change Scope job `123566146896` remain QUEUED. The active job-log endpoint returned HTTP 404 while the job was running; this is unavailable live log evidence, not a workflow failure. No retry or runner workaround was attempted.
+
+## PR #169 focused JVM completion — 2026-10-29 16:06 UTC
+
+On exact PR #169 source `87af6aab9c9db8f65e18ca18456256e03797ffb3` / tree `0fceca72877574acdd3cdbfa67b363dcabfb4dda`, Native x86_64 job `123566146405` completed the source-identity and focused JVM-contract step successfully. It is now running “Build opt-in product JNI APKs for both supported ABIs” (step 9). This is not a runtime result. ARM64 guest `123566148073` and Android Change Scope `123566146896` remain queued at this observation.

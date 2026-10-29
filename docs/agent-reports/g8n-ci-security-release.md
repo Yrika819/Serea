@@ -1,8 +1,8 @@
 # G8N CI, Security, and Release Evidence
 
 **Agent:** C — CI / Security / Release
-**Captured:** 2026-10-29 02:49 UTC
-**Status:** G8 Formal CI is **PARTIAL**. Android Required is **FAILURE** on the emulator harness; Full CI, Native, and SQLite still have queued macOS jobs. Release/Owner decisions are prepared, not approved.
+**Captured:** Initial capture 2026-10-29 02:49 UTC; Actions refresh 02:57 UTC
+**Status:** G8 Formal CI is **PARTIAL**. Android Required is **FAILURE** on the emulator harness; Full CI, Native, and SQLite have assigned in-progress jobs and remaining unassigned macOS jobs. Release/Owner decisions are prepared, not approved.
 **Worktree:** `/workspace/Serea-C`
 **Branch:** `codex/serea-g8n-security-release`
 **Base SHA / Tree:** `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` / `ea12eec70afb172e610fbae4c8cea95c5061aaa7`
@@ -96,6 +96,26 @@ The separate non-required Release Security run also produced a source-bound debu
 | 40804722382 | 123220819493 Mock Release Contract and Artifact-Bound SBOM | PASS | 1000023201 |
 | 40804722157 | 123220818918 Mock Personal Beta Signing and Firebase Contract | PASS | 1000023185 |
 
+### Latest Actions refresh — 2026-10-29 02:57 UTC
+
+The GitHub Actions API was queried again after the initial table. All nine requested runs still identify PR #146 source `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66`, attempt 1. No PR #146 run was manually rerun.
+
+- **Android 40804694025:** remains completed FAILURE; API 26/35 emulator preflight stopped before instrumentation. The job results and artifacts listed above are unchanged.
+- **Full CI 40804693907:** Linux, MSRV and Windows synthetic jobs PASS. macOS arm64 is now assigned to runner `1000023279` and IN_PROGRESS; macOS Intel x86_64 remains QUEUED with runner ID 0.
+- **Native platform 40804693934:** existing Linux, Windows and macOS arm64 jobs PASS. Stable macOS x86_64 is now assigned to runner `1000023237` and IN_PROGRESS. Rust 1.85 macOS x86_64 and ARM64 remain QUEUED with runner ID 0. This is still the Rust platform matrix, not Android JNI validation.
+- **SQLite 40804693978:** both macOS producers now PASS. The Intel producer ran on `1000023274` and uploaded `portable-db-intel`, artifact `12869541631`, 36,954 bytes, digest `sha256:f11760407eca7777e4685c0b72dc19fc14783c4251e2d11d92458a840ae14f7c`. The ARM64 producer artifact remains `12869265751`, digest `sha256:a24f408ba84461818e3f4bb915977ad699900c54ac5dc18416009e3d305be039`. Both cross-architecture open/consumer jobs remain QUEUED with runner ID 0.
+- **Terminal runs:** RustSec `40804693889`, Fast `40804693992`, Git Hooks `40804693919`, Release Security `40804722382`, and Mock Beta Contract `40804722157` remain SUCCESS at the same exact source.
+
+Queued jobs have no runner assignment and are infrastructure waits. Assigned in-progress macOS jobs are not failures and are not passes. Do not treat the overall workflow API's `queued` status as a completed result while its job list contains active work.
+
+### Successor package-query fix review
+
+Parent's successor integration PR [#149](https://github.com/Yrika819/Serea/pull/149) is OPEN Draft, based on PR #146's exact `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66` / tree `25e2bb481a0b25bfed89d6ee25f1812316703b8e`. At review, PR #149 head is `dd8c5b661c1f4be6c4a171c68246cbd1fb343d50`, tree `c049cfd8b2849e738932e4c4844219c815034740`.
+
+Independent static review decision: **ACCEPTED** for the `tools/android_package_path.sh` fix and its regression. AOSP Android 8.0 and Android 15 `pm path` implementations return exit 1 with no output when the package lookup has no path; `pm list packages -u` supports the uninstalled-package flag on both and provides a second Package Manager query. The helper now accepts absence only when that query exits successfully with empty output. A listed package, failed list query, unexpected content, transport error, malformed path, or other `pm path` failure remains closed. AOSP references: [Android 8.0 Pm.java](https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r1/cmds/pm/src/com/android/commands/pm/Pm.java) and [Android 15 PackageManagerShellCommand.java](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/services/core/java/com/android/server/pm/PackageManagerShellCommand.java).
+
+The legacy `Error: package not found` strings are not emitted by the AOSP `pm path` implementations above (the Android 15 occurrence is in a different PM command). Their residual matching cases are safe because they still require the independent successful-empty query. Parent's focused evidence for PR #149: `PYTHONPATH=. python3 tests/android_emulator_workflow_tests.py` — 34 tests PASS, 0 failures; `bash -n tools/android_package_path.sh` PASS; `git diff --check` PASS. PR #149's formal workflows are separate from the frozen #146 runs and are not evidence for its exact head.
+
 ### API 26/35 instrumentation and lifecycle evidence
 
 Both emulator campaigns recorded their device API level and completed the isolated Process Death/data-isolation harness, but the bounded `cursor-position-focused` diagnostic stage stopped before any instrumentation test started:
@@ -107,7 +127,7 @@ Both emulator campaigns recorded their device API level and completed the isolat
 
 The aggregate `serea-android-emulator-evidence` artifact is `12869770024` (11,853,573 bytes; digest `sha256:fa8426a3e202ad445d4b3a5b00c021e7c2c3888fe74b8d28e05dbbc4d2049fad`). The CI-only Pixel 7a reacceptance bundle artifact is `12868893543` (45,057,882 bytes; digest `sha256:95e8ec9c7d5fc46e7e16fb33f8b8703afe8daa5e8d2d2d1a2cc6342002621155`); its workflow job passes, but physical Pixel 7a acceptance remains NOT_RUN.
 
-The script's `android_package_path()` treats any nonzero `adb shell pm path` result as a query failure, while stderr is suppressed. The failure happened before instrumentation and before the Gradle instrumentation diagnostic command, for the not-yet-installed isolated target/test packages. The artifact does not preserve the original package-manager stderr/exit details, so the exact `pm`/ADB subcause is unconfirmed; do not claim that 105 product tests failed or that artifact upload omission caused this. Evidence classifies the Required failure as an emulator test-harness preflight failure. A fix and regression coverage are being handled separately from PR #146 by the parent on a successor branch.
+At the #146 head, `android_package_path()` treated any nonzero `adb shell pm path` result as a query failure, while stderr was suppressed. The failure happened before instrumentation and before the Gradle instrumentation diagnostic command, for the not-yet-installed isolated target/test packages. The artifact does not preserve the original package-manager stderr/exit details, so the exact original `pm`/ADB subcause is unconfirmed; do not claim that 105 product tests failed or that artifact upload omission caused this. Evidence classifies the Required failure as an emulator test-harness preflight failure. A separately reviewed successor fix exists on PR #149; #146 remains unchanged, and this review does not convert its failed formal run into a pass.
 
 No API26/35 JUnit ID exists because no JUnit XML was produced. The expected manifest is 103 Original Required + 2 Additional = 105 per API, but neither suite ran. Fake Google/Gmail Android UI tests are also NOT_RUN because they are gated on successful required instrumentation. The temporary-key Personal Beta Identity job was SKIPPED on this run because its `if` condition requires the emulator job to succeed; Identity is therefore unproven at this candidate.
 
@@ -195,16 +215,16 @@ TREE_SHA: tree of the report branch head recorded by GitHub
 WORKTREE: /workspace/Serea-C
 BRANCH: codex/serea-g8n-security-release
 DRAFT_PR: https://github.com/Yrika819/Serea/pull/148
-COMPLETED_WORK: Exact PR #146 CI/API evidence snapshot; CI artifact hashing and JUnit counts; PR #144 current and historical native-build failure classification; Owner decision and release readiness packet.
+COMPLETED_WORK: Exact PR #146 CI/API evidence snapshot plus 02:57 runner refresh; CI artifact hashing and JUnit counts; PR #144 current and historical native-build failure classification; Owner decision and release readiness packet; independent ACCEPTED review of PR #149 package-query fix.
 CHANGED_FILES: docs/agent-reports/g8n-ci-security-release.md
 TEST_COMMANDS: none (evidence/report lane; no code tests were requested or needed)
 JUNIT_RESULT: PR #146 Android unit 405/405, integration 22/22, security 26/26; API 26/35 instrumentation NOT_RUN (preflight FAIL, 0/105 each); Process Death/Data Isolation/Sentinel PASS on both
 CI_RUN_IDS: 40804694025, 40804693907, 40804693934, 40804693978, 40804693889, 40804693992, 40804693919, 40804722382, 40804722157; native PR #144 40803623345 and historical 40800987367
 ARTIFACT_IDS: 12869510041, 12869310588, 12868263908, 12869480087, 12868174398, 12869265751, 12867589033, 12867015936
 SECURITY_IMPACT: Documentation only; preserves Google-origin egress prohibition, debug-only release boundary, and no production signing.
-REVIEW_STATUS: Pending parent review
-KNOWN_ISSUES: PR #146 API26/35 instrumentation did not start because the harness preflight package-state query failed; Process Death/Data Isolation/Sentinel passed separately. Identity was skipped. Full CI/Native/SQLite macOS jobs still queued. Current PR #144 native build failure lacks an uploaded diagnostic artifact and root cause is unknown.
-CURRENT_BLOCKERS: macOS runner availability; current-head PR #144 Native failure log; parent-owned Android package-query harness fix; Owner decisions on package/signing/OAuth/providers/age-region eligibility.
-NEXT_ACTION: Independently review the parent-owned Android emulator harness fix and Lane A/B implementation when ready; update evidence if the fixed candidate produces new exact-head results.
+REVIEW_STATUS: PR #149 package-query patch ACCEPTED; PR #144 remains BLOCKED on current-head failure diagnostics; Lane A/B source review pending their exact candidate SHAs.
+KNOWN_ISSUES: PR #146 API26/35 instrumentation did not start because the harness preflight package-state query failed; Process Death/Data Isolation/Sentinel passed separately. Identity was skipped. Full CI, Native and SQLite consumer jobs remain unfinished/unassigned as of 02:57. Current PR #144 native build failure lacks an uploaded diagnostic artifact and root cause is unknown.
+CURRENT_BLOCKERS: Remaining macOS runner jobs; current-head PR #144 Native failure log; new successor candidate formal CI; Owner decisions on package/signing/OAuth/providers/age-region eligibility.
+NEXT_ACTION: Capture later exact-head CI outcomes; independently review Lane A Native changes and Lane B security/product changes when exact SHAs are published.
 OWNER_APPROVAL_REQUIRED: Package ID/coexistence, certificate/channel, OAuth scopes, provider/audience/region, model choice and device acceptance.
 ```

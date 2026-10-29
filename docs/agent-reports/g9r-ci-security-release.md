@@ -1,6 +1,6 @@
 # G9R CI, Security, and Release Evidence
 
-**Captured:** 2026-10-29 09:48 UTC
+**Captured:** 2026-10-29 09:50 UTC
 **Agent:** C — CI / Security / Release  
 **ACTIVE_PHASE:** G8/G9 evidence recovery; independent security and release review  
 **GOAL_STATUS:** PARTIAL — source and exact-run evidence recovered; API26 Required passes on PR #149, while Google/Gmail UI and API35 IME diagnostic failures remain; current successor UI runs are queued. Native inference remains unproven.  
@@ -124,11 +124,11 @@ Agent B's local compile was bound to the same staged contents, with no changes b
 cd /workspace/serea-g9r-android-ui-recovery/android && JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH ./gradlew --no-daemon --console=plain -Dhttp.proxyHost=proxy -Dhttp.proxyPort=8080 -Dhttps.proxyHost=proxy -Dhttps.proxyPort=8080 -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStorePassword=changeit :app:compileIsolatedAndroidTestKotlin
 ```
 
-The local harness test `PYTHONPATH=. python3 tests/android_emulator_workflow_tests.py` passed 34/34 on this exact HEAD/tree. Output file SHA-256 is `6701848a3a17941aed8496f8ad448bbcf5401eaae550183ac9765cb60f45ad04`; it is a local log, not a GitHub artifact. The harness uses mocked ADB and does not run an emulator. Exact-head hosted Actions runs remain queued: Android `40850921385` job `123369868355` (Change Scope), Full `40850921503`, Native `40850921304`, SQLite `40850921299`, RustSec `40850921203`, Fast `40850921367`, Git Hooks `40850921057`; no artifacts or API26/35 JUnit exist yet. The Android run's queued Change Scope job has no assigned runner, so there is no product failure or pass to record.
+The local harness test `PYTHONPATH=. python3 tests/android_emulator_workflow_tests.py` passed 34/34 on this exact HEAD/tree. Output file SHA-256 is `6701848a3a17941aed8496f8ad448bbcf5401eaae550183ac9765cb60f45ad04`; it is a local log, not a GitHub artifact. The harness uses mocked ADB and does not run an emulator. On Android run `40850921385`, Change Scope `123369868355` PASS, Documentation `123374675864` SKIPPED, and Security `123374673160`, Dependency Audit `123374673268`, Integration `123374673271`, Unit `123374673389`, and Build/Lint/Instrumentation Compile `123374673498` are queued. Thus no API26/35 JUnit exists yet. Full `40850921503`, Native `40850921304`, SQLite `40850921299`, RustSec `40850921203`, Fast `40850921367`, and Git Hooks `40850921057` remain queued or in progress; no artifact is available.
 
 ### PR #155 — Parent integration candidate, source `b53651a…`, tree `7cfca07…`
 
-PR #155 is an open Draft based on PR #151. Exact-head CI is pending/queued at capture: Android `40852318331` (pending with `jobs=[]`), Full CI `40852318252`, Native `40852318251`, SQLite `40852318241`, RustSec `40852318286`, Fast `40852318237`, and Git Hooks `40852318290`. Native run `40852318251` has one Windows ARM64 job queued and the stable Windows ARM64 job `123374640755` in progress; other matrix jobs remain queued. Android `jobs=[]` is no job evidence and cannot be treated as skipped product success. The Beta workflow `40852309768` failed with `jobs=[]`; its cause is not established here and it provides no Android product evidence. No artifact/JUnit is available for this exact integration SHA at capture.
+PR #155 is an open Draft based on PR #151. Exact-head CI is pending/queued at capture: Android `40852318331` (pending with `jobs=[]`), Full CI `40852318252`, Native `40852318251`, SQLite `40852318241`, RustSec `40852318286`, Fast `40852318237`, and Git Hooks `40852318290`. Native run `40852318251` has Rust 1.85 Windows ARM64 job `123374640569`, Stable Windows ARM64 job `123374640755`, Stable Linux ARM64 job `123374640810`, and Stable Windows x86_64 job `123374640825` in progress; other matrix jobs remain queued. Android `jobs=[]` is no job evidence and cannot be treated as skipped product success. The Beta workflow `40852309768` failed with `jobs=[]`; its cause is not established here and it provides no Android product evidence. No artifact/JUnit is available for this exact integration SHA at capture.
 
 ### PR #158 — Native recovery, source `26645df…`, tree `4a31346…`
 

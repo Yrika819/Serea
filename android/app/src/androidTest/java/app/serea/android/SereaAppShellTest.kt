@@ -1641,6 +1641,10 @@ class SereaAppShellTest {
                 compose.activity.chatViewModel.state.value.input == "draft!? survives navigation" &&
                     runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
             }
+            // ActivityScenario recreation while the real Test IME is bound can leave the target
+            // Activity resumed and visible without Android Window focus. Foreground recovery is
+            // bounded and records the task/window state before the focus assertions continue.
+            ensureChatWindowFocus("R4-activity-recreation")
             awaitComposerActivityReadyForIme("R4-activity-recreation")
             val recreatedComposer = compose.onNodeWithTag("chat-composer")
             recreatedComposer.assertIsNotFocused()

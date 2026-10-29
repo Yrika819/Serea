@@ -24,6 +24,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
 
 /** Non-Required diagnostic: exercises the product ModelChatPort and native backend offline. */
 @RunWith(AndroidJUnit4::class)
@@ -46,7 +47,9 @@ class LocalModelNativeRuntimeE2ETest {
                 Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
                 Build.HARDWARE.contains("goldfish", ignoreCase = true),
         )
-        assertEquals("diagnostic runner must execute x86_64 JNI", "x86_64", Build.SUPPORTED_ABIS.firstOrNull())
+        val runtimeAbi = Build.SUPPORTED_ABIS.firstOrNull()
+        assertTrue("runtime ABI must be one of the built native targets", runtimeAbi in setOf("x86_64", "arm64-v8a"))
+        assertEquals("emulator ABI must match this diagnostic build", BuildConfig.LOCAL_NATIVE_RUNTIME_EXPECTED_ABI, runtimeAbi)
 
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
         val testContext = InstrumentationRegistry.getInstrumentation().context
@@ -81,20 +84,27 @@ class LocalModelNativeRuntimeE2ETest {
             expectedSizeBytes = MODEL_SIZE,
             runtimeName = "llama.cpp",
             runtimeRevision = LLAMA_REVISION,
-            supportedAbis = setOf("x86_64"),
+            supportedAbis = setOf("x86_64", "arm64-v8a"),
         )
         val jniSeam = NativeJniFailureSeam()
+        val nativeMeasurements = ConcurrentHashMap<String, Long>()
         // Keep the concrete diagnostic handle so the test can await the backend's asynchronous
         // native release after the product adapter performs its interface-level close().
-        val backend = LlamaCppLocalModelInferenceBackend()
+        val backend = LlamaCppLocalModelInferenceBackend { name, pssKb ->
+            // Store only whitelisted metric keys and integer PSS values, never prompt/model text.
+            if (name.matches(Regex("(?:load_(?:before|after)_kb|inference_[0-9]+_(?:before|after|terminal)_kb)")) && pssKb >= 0) {
+                nativeMeasurements[name] = pssKb
+            }
+        }
         val adapter = LocalModelChatAdapter(
             artifact = artifact,
             modelFile = modelFile,
             backendFactory = LocalModelInferenceBackendFactory { backend },
-            deviceAbi = "x86_64",
+            deviceAbi = checkNotNull(runtimeAbi),
             runtimeLimits = LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 32, workerThreads = 2),
         )
         val usageDao = NativeRuntimeUsageDao()
+        var cancellationLatencyForSummaryMs = -1L
         val now = { SystemClock.elapsedRealtime() }
         val authorization = LocalModelAuthorizationRegistry(
             clock = now,
@@ -180,6 +190,7 @@ class LocalModelNativeRuntimeE2ETest {
             adapter.close()
             backend.close()
             assertTrue("JNI model resources must release after repeated close", backend.awaitReleased(30, TimeUnit.SECONDS))
+            nativeMeasurements["main_release_pss_kb"] = Debug.getPss().toLong()
             Log.i("SereaLocalNativeRuntime", "stage=backend_double_close_release_pass pss_kb=${Debug.getPss()}")
         }
 
@@ -190,7 +201,7 @@ class LocalModelNativeRuntimeE2ETest {
             artifact = artifact,
             modelFile = modelFile,
             backendFactory = LocalModelInferenceBackendFactory { regeneratedBackend },
-            deviceAbi = "x86_64",
+            deviceAbi = checkNotNull(runtimeAbi),
             runtimeLimits = LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 32, workerThreads = 2),
         )
         val regeneratedDao = NativeRuntimeUsageDao()
@@ -230,7 +241,7 @@ class LocalModelNativeRuntimeE2ETest {
             artifact = artifact,
             modelFile = modelFile,
             backendFactory = LocalModelInferenceBackendFactory { cancellationBackend },
-            deviceAbi = "x86_64",
+            deviceAbi = checkNotNull(runtimeAbi),
             runtimeLimits = LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 256, workerThreads = 2),
         )
         val cancellationDao = NativeRuntimeUsageDao()
@@ -344,6 +355,7 @@ class LocalModelNativeRuntimeE2ETest {
                 cancellationBackend.awaitReleased(15, TimeUnit.SECONDS),
             )
             val cancellationLatencyMs = SystemClock.elapsedRealtime() - cancellationStarted
+            cancellationLatencyForSummaryMs = cancellationLatencyMs
             assertTrue("JNI cancel must reach an active native generation", jniSeam.nativeCancelCount() > cancelCountBefore)
             assertEquals(
                 "nativeFree must observe the same generation's cancellation result before release",
@@ -376,6 +388,26 @@ class LocalModelNativeRuntimeE2ETest {
         }
 
         assertTrue("app-private fixture cleanup must succeed", modelFile.delete() || !modelFile.exists())
+        nativeMeasurements["cancelled_release_pss_kb"] = Debug.getPss().toLong()
+        val metricKeys = listOf(
+            "load_before_kb", "load_after_kb",
+            "inference_1_before_kb", "inference_1_after_kb",
+            "inference_2_before_kb", "inference_2_after_kb",
+            "main_release_pss_kb", "cancelled_release_pss_kb",
+        )
+        val requiredPssKeys = setOf(
+            "load_before_kb", "load_after_kb",
+            "inference_1_before_kb", "inference_1_after_kb",
+            "inference_2_before_kb", "inference_2_after_kb",
+            "main_release_pss_kb", "cancelled_release_pss_kb",
+        )
+        val pssMeasurementStatus = if (requiredPssKeys.all(nativeMeasurements::containsKey)) "PASS" else "NOT_AVAILABLE"
+        val boundedMeasurements = metricKeys.map { key -> "$key=${nativeMeasurements[key] ?: "NOT_AVAILABLE"}" }
+        Log.i(
+            "SereaLocalNativeRuntime",
+            "metric_summary=pss_measurement_status=$pssMeasurementStatus," +
+                "${boundedMeasurements.joinToString(",")},cancel_to_release_ms=$cancellationLatencyForSummaryMs",
+        )
         Log.i("SereaLocalNativeRuntime", "stage=all_native_checks_pass pss_after_release_kb=${Debug.getPss()}")
     }
 

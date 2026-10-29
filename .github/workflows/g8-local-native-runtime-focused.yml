@@ -81,6 +81,8 @@ jobs:
           bash tools/g8-local-model-native/test-cleanup.sh
           bash tools/g8-local-model-native/test-instrumentation-gate.sh
           python3 tools/g8-local-model-native/test-instrumentation-stream.py
+          python3 tools/g8-local-model-native/test-summarize-runtime-metrics.py
+          python3 tools/g8-local-model-native/test-upload-allowlist.py .github/workflows/g8-local-native-runtime-focused.yml
 
       - name: Record source identity and run focused JVM contracts
         shell: bash
@@ -151,6 +153,34 @@ jobs:
           sha256sum "$target" "$test_apk" > "$build_evidence_dir/apk-sha256.txt"
           sed -i 's/^ANDROID_BUILD=NOT_RUN$/ANDROID_BUILD=PASS/' "$build_evidence_dir/source.txt"
           sed -i 's/^ARM64_BUILD=NOT_RUN$/ARM64_BUILD=PASS (APK ABI compile and packaging only)/' "$build_evidence_dir/source.txt"
+
+      - name: Assert diagnostic JNI opt-in fails closed for Beta packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd android
+          guard_log="$RUNNER_TEMP/serea-native-beta-guard.log"
+          if ./gradlew --no-daemon --console=plain \
+            -PsereaLocalNativeRuntime=true \
+            -PsereaNativeJniTestSeams=true \
+            -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
+            :app:assembleBeta >"$guard_log" 2>&1; then
+            echo 'Unexpectedly configured a Beta package with diagnostic JNI enabled.' >&2
+            exit 1
+          fi
+          grep -F 'sereaLocalNativeRuntime is diagnostic-only' "$guard_log"
+          test ! -e app/build/outputs/apk/beta/app-beta.apk
+
+      - name: Verify only isolated Native build type is enabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd android
+          ./gradlew --no-daemon --console=plain \
+            -PsereaLocalNativeRuntime=true \
+            -PsereaNativeJniTestSeams=true \
+            -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
+            :app:verifyLocalNativeRuntimeVariantIsolation
 
       - name: Upload bounded JNI build diagnostics
         if: always()
@@ -279,7 +309,172 @@ jobs:
           name: serea-g8-local-native-${{ github.event.pull_request.head.sha }}
           if-no-files-found: warn
           retention-days: 14
-          path: ${{ steps.native_e2e.outputs.evidence_dir }}
+          path: |
+            ${{ steps.native_e2e.outputs.evidence_dir }}/preflight.txt
+            ${{ steps.native_e2e.outputs.evidence_dir }}/source-and-runtime.txt
+            ${{ steps.native_e2e.outputs.evidence_dir }}/model-stage.txt
+            ${{ steps.native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml
+            ${{ steps.native_e2e.outputs.evidence_dir }}/junit-verification.txt
+            ${{ steps.native_e2e.outputs.evidence_dir }}/instrumentation-command-status.txt
+            ${{ steps.native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt
+            ${{ steps.native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt
+
+      - name: Remove temporary model fixture
+        if: always()
+        run: rm -f "$RUNNER_TEMP/serea-g8-smollm2.gguf"
+
+  native-runtime-arm64-guest-experiment:
+    name: Bounded API 35 ARM64 guest experiment (x86_64 host, software emulation)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install and verify pinned API 35 ARM64 guest packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager \
+            'platforms;android-35' \
+            'build-tools;35.0.0' \
+            'ndk;28.2.13676358' \
+            'cmake;3.31.6' \
+            'emulator' \
+            'system-images;android-35;google_apis;arm64-v8a'
+          test "$(uname -m)" = x86_64
+          grep -Fx 'Pkg.Revision=9' \
+            "$ANDROID_HOME/system-images/android-35/google_apis/arm64-v8a/source.properties"
+          "$ANDROID_HOME/emulator/emulator" -version | tee "$RUNNER_TEMP/native-arm64-emulator-version.txt"
+          grep -F '37.3.6' "$RUNNER_TEMP/native-arm64-emulator-version.txt"
+          mkdir -p evidence/native-arm64-guest
+          {
+            echo 'host_arch=x86_64'
+            echo 'guest_abi=arm64-v8a'
+            echo 'android_api=35'
+            echo 'system_image_revision=9'
+            echo 'emulator_version=37.3.6'
+            echo 'acceleration=disabled_software_emulation'
+            echo 'runtime_classification=ARM64_GUEST_SOFTWARE_EMULATED'
+            echo "source_sha=$(git rev-parse HEAD)"
+            echo "source_tree=$(git rev-parse 'HEAD^{tree}')"
+          } > evidence/native-arm64-guest/host-and-image.txt
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ggml-org/llama.cpp
+          ref: 276378515ceebee5d14bcc8536603dd5c87491a2
+          path: llama.cpp
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify source contracts and build isolated ARM64 JNI APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/g8-local-model-native/verify-cmake-clean-checkout.sh "$ANDROID_HOME/cmake/3.31.6/bin/cmake"
+          python3 tools/g8-local-model-native/test-jni-contract.py
+          python3 tools/g8-local-model-native/test-summarize-runtime-metrics.py
+          bash tools/g8-local-model-native/test-cleanup.sh
+          bash tools/g8-local-model-native/test-preflight.sh
+          cd android
+          ./gradlew --no-daemon --console=plain \
+            -PsereaLocalNativeRuntime=true \
+            -PsereaNativeJniTestSeams=true \
+            -PsereaNativeRuntimeExpectedAbi=arm64-v8a \
+            -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
+            :app:assembleIsolated :app:assembleIsolatedAndroidTest
+          test -s app/build/outputs/apk/isolated/app-isolated.apk
+          test -s app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk
+          unzip -Z1 app/build/outputs/apk/isolated/app-isolated.apk | grep -Fx 'lib/arm64-v8a/libserea_local_llama.so'
+
+      - name: Download and verify one pinned model fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          size_limit = 101_016_128
+          expected = 'e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5'
+          url = ('https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/'
+                 '1076b85d135017971845b19b8d07df1479155988/SmolLM2-135M-Q4_K_M.gguf')
+          destination = Path(os.environ['RUNNER_TEMP']) / 'serea-g8-smollm2.gguf'
+          digest = hashlib.sha256()
+          total = 0
+          with urlopen(Request(url, headers={'User-Agent': 'Serea-G8-ARM64-guest/1'}), timeout=30) as response:
+              with destination.open('wb') as output:
+                  while chunk := response.read(1024 * 1024):
+                      total += len(chunk)
+                      if total > size_limit:
+                          raise SystemExit('pinned model fixture exceeded its byte bound')
+                      digest.update(chunk)
+                      output.write(chunk)
+          if total != size_limit or digest.hexdigest() != expected:
+              destination.unlink(missing_ok=True)
+              raise SystemExit('pinned model size/hash mismatch')
+          print(f'model_fixture_size={total} sha256={digest.hexdigest()} weights_not_committed=true')
+          PY
+
+      - name: Run bounded API 35 ARM64 guest inference without acceleration
+        id: arm64_native_e2e
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
+        timeout-minutes: 25
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+          SEREA_EXPECTED_ANDROID_API: '35'
+          SEREA_EXPECTED_NATIVE_ABI: arm64-v8a
+        with:
+          api-level: 35
+          target: google_apis
+          arch: arm64-v8a
+          profile: pixel_7
+          force-avd-creation: true
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: true
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -wipe-data
+          script: bash tools/g8-local-model-native/run-e2e.sh
+
+      - name: Capture bounded ARM64 guest startup diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence/native-arm64-guest
+          adb devices -l > evidence/native-arm64-guest/adb-devices.txt 2>&1 || true
+          if [ -s "$RUNNER_TEMP/emulator.log" ]; then
+            tail -c 65536 "$RUNNER_TEMP/emulator.log" > evidence/native-arm64-guest/emulator.log
+          fi
+
+      - name: Upload ARM64 experiment evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-native-arm64-guest-${{ github.event.pull_request.head.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            evidence/native-arm64-guest/
+            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt
+            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/source-and-runtime.txt
+            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit-verification.txt
+            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt
 
       - name: Remove temporary model fixture
         if: always()

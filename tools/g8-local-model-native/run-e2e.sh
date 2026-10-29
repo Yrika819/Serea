@@ -18,6 +18,9 @@ TEST_METHOD='pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend'
 NOOP_TEST_CLASS='app.serea.android.SereaNativeRunnerNoOpTest'
 NOOP_TEST_METHOD='androidJUnit4RunnerInstantiatesAndTargetsIsolatedApp'
 TEST_RUNNER='app.serea.android.SereaIsolatedAndroidJUnitRunner'
+EXPECTED_NATIVE_ABI="${SEREA_EXPECTED_NATIVE_ABI:-x86_64}"
+[[ "$EXPECTED_NATIVE_ABI" == 'x86_64' || "$EXPECTED_NATIVE_ABI" == 'arm64-v8a' ]]
+export SEREA_EXPECTED_NATIVE_ABI="$EXPECTED_NATIVE_ABI"
 EVIDENCE_DIR=''
 CANONICAL_RUNNER_TEMP=''
 DEVICE_SERIAL=''
@@ -101,7 +104,7 @@ print_sanitized_instrumentation_summary() {
     fi
     if [[ -s "$junit_file" ]]; then
         echo 'instrumentation_junit_summary_begin' >&2
-        grep -E '^(evidence_kind|stream_outcome|instrumentation_code|reported_numtests|tests|failures|errors|skipped|noop_result|native_result|native_initialization_error|noop_initialization_error|unexpected_identity_count|terminal_status)=' \
+        grep -E '^(evidence_kind|stream_outcome|instrumentation_code|reported_numtests|tests|failures|errors|skipped|noop_result|native_result|native_initialization_error|noop_initialization_error|unexpected_identity_count|terminal_status|native_initialization_exception_types|native_initialization_stack_present|failure_exception_types)=' \
             "$junit_file" >&2 || true
         echo 'instrumentation_junit_summary_end' >&2
     fi
@@ -241,6 +244,7 @@ cleanup() {
     local test_uninstall_command=NOT_ATTEMPTED test_package_state=NOT_VERIFIED
     local app_uninstall_command=NOT_ATTEMPTED app_package_state=NOT_VERIFIED
     local report_path report_tmp report_write_status=PASS cleanup_result output_write_status=NOT_ATTEMPTED
+    local raw_diagnostics_removed=true raw_diagnostic
     local -a cleanup_report
     CLEANUP_FAILED=0
 
@@ -253,6 +257,17 @@ cleanup() {
         PRIMARY_FAILURE_STAGE=UNCLASSIFIED_EXIT
     fi
     capture_device_connectivity
+    for raw_diagnostic in \
+        "$EVIDENCE_DIR/android-instrumentation.txt" \
+        "$EVIDENCE_DIR/android-logcat-diagnostic.log" \
+        "$EVIDENCE_DIR/android-logcat-diagnostic.log.bounded"; do
+        if [[ -e "$raw_diagnostic" || -L "$raw_diagnostic" ]]; then
+            if ! rm -f -- "$raw_diagnostic" || [[ -e "$raw_diagnostic" || -L "$raw_diagnostic" ]]; then
+                raw_diagnostics_removed=false
+                CLEANUP_FAILED=1
+            fi
+        fi
+    done
 
     if [[ "$APP_PRIVATE_MODEL_OWNED" == 1 ]]; then
         if [[ "$APP_PACKAGE_OWNED" != 1 ]]; then
@@ -397,12 +412,14 @@ cleanup() {
         "app_package_uninstall_command=$app_uninstall_command"
         "app_package_final_state=$app_package_state"
         "cleanup_outcome=$cleanup_result"
+        "raw_diagnostics_removed=$raw_diagnostics_removed"
         "original_exit_status=$original_status"
         'runner_vm_and_disposable_avd=ephemeral'
     )
     if ! printf '%s\n' "${cleanup_report[@]}" > "$report_tmp"; then
         report_write_status=FAIL
     elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_tmp" || \
+        ! grep -Fxq "raw_diagnostics_removed=$raw_diagnostics_removed" "$report_tmp" || \
         ! grep -Fxq "original_exit_status=$original_status" "$report_tmp" || \
         ! grep -Fxq "host_model_final_state=$host_absence" "$report_tmp" || \
         ! grep -Fxq "app_private_owner_package_state=$app_private_owner_package_state" "$report_tmp" || \
@@ -422,6 +439,7 @@ cleanup() {
     elif ! mv "$report_tmp" "$report_path"; then
         report_write_status=FAIL
     elif ! grep -Fxq "cleanup_outcome=$cleanup_result" "$report_path" || \
+        ! grep -Fxq "raw_diagnostics_removed=$raw_diagnostics_removed" "$report_path" || \
         ! grep -Fxq "host_model_final_state=$host_absence" "$report_path" || \
         ! grep -Fxq "app_private_owner_package_state=$app_private_owner_package_state" "$report_path" || \
         ! grep -Fxq "app_private_owner_package_query_exit_code=$app_private_owner_package_query_exit_code" "$report_path" || \
@@ -553,6 +571,10 @@ if [[ "${SEREA_CLEANUP_TEST_MODE:-0}" == 1 ]]; then
             'generated_content=DO_NOT_PRINT' \
             > "$EVIDENCE_DIR/junit-verification.txt"
     fi
+    if [[ "${SEREA_CLEANUP_TEST_CREATE_RAW_DIAGNOSTICS:-0}" == 1 ]]; then
+        printf '%s\n' 'synthetic prompt output must not be retained' > "$EVIDENCE_DIR/android-instrumentation.txt"
+        printf '%s\n' 'synthetic raw log line must not be retained' > "$EVIDENCE_DIR/android-logcat-diagnostic.log"
+    fi
     if [[ "${SEREA_CLEANUP_TEST_GATE_FAILURE:-0}" == 1 ]]; then
         printf '%s\n' 'raw_generated_output_marker=DO_NOT_PRINT' > "$EVIDENCE_DIR/android-instrumentation.txt"
         printf '%s\n' 'raw_logcat_output_marker=DO_NOT_PRINT' > "$EVIDENCE_DIR/android-logcat-diagnostic.log"
@@ -604,6 +626,11 @@ trap 'cleanup "$?"' EXIT
 CURRENT_STAGE=SOURCE_IDENTITY
 printf '%s\n' "$preflight_output" > "$EVIDENCE_DIR/preflight.txt"
 {
+    if [[ "$EXPECTED_NATIVE_ABI" == 'arm64-v8a' ]]; then
+        echo 'runtime_execution_mode=ARM64_GUEST_SOFTWARE_EMULATED'
+    else
+        echo 'runtime_execution_mode=X86_64_GUEST_KVM_ACCELERATED'
+    fi
     echo "source_sha=$(git -C "$ROOT_DIR" rev-parse HEAD)"
     echo "source_tree=$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
     echo "llama_cpp_sha=$LLAMA_COMMIT"
@@ -726,6 +753,14 @@ else
     echo 'instrumentation_timeout=NOT_EXPIRED' >> "$EVIDENCE_DIR/instrumentation-command-status.txt"
 fi
 
+rm -f -- "$instrumentation_log" "$EVIDENCE_DIR/android-logcat-diagnostic.log"
+if [[ -e "$instrumentation_log" || -L "$instrumentation_log" || \
+      -e "$EVIDENCE_DIR/android-logcat-diagnostic.log" || -L "$EVIDENCE_DIR/android-logcat-diagnostic.log" ]]; then
+    echo 'Raw Android instrumentation diagnostics could not be removed.' >&2
+    record_primary_failure 1 "$LINENO"
+    exit 1
+fi
+
 source "$ROOT_DIR/tools/g8-local-model-native/instrumentation-gate.sh"
 CURRENT_STAGE=INSTRUMENTATION_GATE
 if ! instrumentation_gate_passes "$instrumentation_status" "$logcat_status" \
@@ -737,5 +772,8 @@ if ! instrumentation_gate_passes "$instrumentation_status" "$logcat_status" \
 fi
 
 CURRENT_STAGE=NATIVE_METRICS_CAPTURE
-adb_device logcat -d -v threadtime -s SereaLocalNativeRuntime:I > "$EVIDENCE_DIR/native-runtime-metrics.log"
+adb_device logcat -d -v threadtime -s SereaLocalNativeRuntime:I \
+    | tail -c 262144 \
+    | python3 "$ROOT_DIR/tools/g8-local-model-native/summarize-runtime-metrics.py" \
+    > "$EVIDENCE_DIR/native-runtime-metrics-summary.txt"
 CURRENT_STAGE=RUNTIME_EVIDENCE_COMPLETE

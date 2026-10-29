@@ -78,7 +78,14 @@ class InstrumentationStreamParserTest(unittest.TestCase):
         self.assertIn(f"terminal_status={NATIVE}#initializationError:-2\n", summary)
         self.assertIn("native_initialization_error=PRESENT\n", summary)
         self.assertIn("native_initialization_stack_present=true\n", summary)
-        self.assertIn("Caused by: java.lang.NoSuchMethodException", report)
+        self.assertIn("java.lang.IllegalStateException", report)
+        self.assertIn("Raw failure message and stack were suppressed", report)
+        self.assertIn(
+            "native_initialization_exception_types=java.lang.IllegalStateException,java.lang.NoSuchMethodException\n",
+            summary,
+        )
+        self.assertNotIn("NoSuchMethodException", report)
+        self.assertNotIn("Caused by:", report)
 
     def test_noop_pass_with_native_initialization_error_discriminates_test_class(self) -> None:
         stream = (
@@ -110,6 +117,7 @@ class InstrumentationStreamParserTest(unittest.TestCase):
         self.assertIn("skipped=1\n", summary)
         self.assertIn("<failure", report)
         self.assertIn("<skipped", report)
+        self.assertNotIn("JNI load failed", report)
 
     def test_runner_failure_without_testcase_is_incomplete(self) -> None:
         stream = (

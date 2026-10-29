@@ -10,6 +10,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
@@ -18,6 +19,38 @@ import java.util.concurrent.TimeUnit
 class LocalModelChatAdapterTest {
     private val now = 1_800_000_000_000L
     private val modelId = "serea-local/SmolLM2-135M-Q4_K_M"
+
+    @Test fun defaultRuntimeLimitsMatchCurrentNativeBackendAndNameFileBoundAccurately() {
+        val defaults = LocalModelRuntimeLimits()
+        assertEquals(512, defaults.contextTokens)
+        assertEquals(768L * 1024 * 1024, defaults.maxModelFileBytes)
+        assertEquals(256, defaults.maxOutputTokens)
+        assertEquals(2, defaults.workerThreads)
+    }
+
+    @Test fun modelFileLimitRejectsOversizeBeforeHashingOrNativeLoad() = runBlocking {
+        val file = File.createTempFile("serea-model-oversize", ".gguf")
+        RandomAccessFile(file, "rw").use { it.setLength(64L * 1024 * 1024 + 1) }
+        val backend = FakeBackend()
+        val artifact = artifact(file, sha256 = "0".repeat(64))
+        val adapter = LocalModelChatAdapter(
+            artifact = artifact,
+            modelFile = file,
+            backendFactory = LocalModelInferenceBackendFactory { backend },
+            deviceAbi = "x86_64",
+            runtimeLimits = LocalModelRuntimeLimits(maxModelFileBytes = 64L * 1024 * 1024),
+        )
+        try {
+            val request = request("too large", sendId = "send-file-limit")
+            assertTrue(runCatching {
+                gated(adapter, registry { now }, request).send(request)
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals("Oversized model must not enter backend loading", 0, backend.loadCalls)
+        } finally {
+            adapter.close()
+            file.delete()
+        }
+    }
 
     @Test fun adapterMatchesModelChatPortAndCarriesMeasuredUsageAcrossTurns() = runBlocking {
         val file = tempModel(byteArrayOf(1, 2, 3, 4))
@@ -30,6 +63,8 @@ class LocalModelChatAdapterTest {
             assertEquals("local answer", response.text)
             assertEquals(ProviderUsage(4, 2), response.usage)
             assertTrue(backend.loaded)
+            assertEquals("default context must fit the current JNI backend", 512, backend.lastLimits?.contextTokens)
+            assertEquals(768L * 1024 * 1024, backend.lastLimits?.maxModelFileBytes)
             assertEquals(1, backend.generateCalls)
 
             val context = listOf(ContextMessage(
@@ -769,6 +804,7 @@ class LocalModelChatAdapterTest {
         var cancelled = false
         var generateCalls = 0
         var loadCalls = 0
+        var lastLimits: LocalModelRuntimeLimits? = null
         var lastPrompt: String? = null
         val generateEntry = CompletableDeferred<Unit>()
         val generationStarted = CompletableDeferred<Unit>()
@@ -781,6 +817,7 @@ class LocalModelChatAdapterTest {
             loadStarted.complete(Unit)
             if (blockLoad) releaseLoad.await()
             if (cancelled) throw LocalModelBackendStartDeniedException()
+            lastLimits = limits
             loadCalls++
             if (failLoad) error("synthetic native load failure")
             loaded = true

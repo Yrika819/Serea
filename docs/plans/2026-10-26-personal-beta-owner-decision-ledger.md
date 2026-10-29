@@ -29,3 +29,47 @@ The 2026-11-10 checkpoint may decide to defer or keep a capability disabled; it 
 - Lane C PR #121's adversarial test changes remain independently reviewable; selected JVM tests are present on Lane A. Neither lane PR has been merged.
 - PR #117 Required evidence applies only to its frozen SHA. The functional integration candidate still needs its own formal Required and cross-platform runs after the Draft PR is opened.
 - Personal Beta remains NO-GO. Real service use, production signing/distribution, physical device acceptance, main merge and final GO stay Owner-controlled.
+
+## Recovery campaign checkpoint — 2026-10-29 15:19 UTC
+
+This status refresh does not grant any approval and does not change O-01 through O-10.
+
+- G8 Evidence Closure, Android Recovery, Native Runtime, G9, and G10 remain **PARTIAL**; Personal Beta remains **NO-GO**.
+- PR #162 is `6b7a741362b58b6bbc7728e69de90d929391dcaf` / tree `e61db67fcdf0ce7c5c5ab7e93efaef3bac4c1b5d`. Android build, lint, unit, integration, and security jobs passed exact source. API26 instrumentation step failed; artifact `12907539920`, SHA-256 `d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`. Failing identities remain unknown because artifact download returned 403 and job-log API 503 while the job remained active. API35 instrumentation is still running; no API26 evidence is reused for API35.
+- PR #163 model matrix source/tree: `2c109276bcbdd4e14fb2b6e9558962516f2df32c` / `b04164da95bf66f43fd08e5537e4d0e242d6a566`; static review only. Standard model remains UNDECIDED; runtime quality/performance and Pixel results remain NOT_RUN.
+- PR #165/#166 Native source/tree: `8dde33024b76efc3d32812e7d580f8a33db94c9f` / `4fca4c7fea82bd8c3bf59481fc8341d8165f9c54`. Static Native security review ACCEPTED; focused x86_64 and ARM64 software-emulated Android jobs are queued, with no new inference artifact. Ordinary Chat remains disconnected.
+- No real OAuth/account data, Cloud credentials/billing, production signing, Pixel device use, main merge, or Beta distribution occurred. Google-origin Cloud egress remains unauthorized.
+
+Refresh the decision packet with terminal exact-source CI and PR #163 model evidence before the 2026-11-03/10 Owner checkpoints. Decisions remain Owner-controlled.
+
+### Android evidence update — 2026-10-29 15:29 UTC
+
+PR #162 `6b7a741362b58b6bbc7728e69de90d929391dcaf` / tree `e61db67fcdf0ce7c5c5ab7e93efaef3bac4c1b5d` now has inspectable API26/API35 artifacts. Each API independently passed Required **105/105**, Calendar 19/19, Chat 16/16, cursor 1/1, Process Death and Data Isolation. Each API's separate 16-test Google/Gmail UI stage failed the same two tests:
+
+- `GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt` — the account-A semantics tag was absent after returning from Calendar.
+- `GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` — timed out waiting for the `Design review` event; diagnostic handler did not catch `ComposeTimeoutException`.
+
+API26 artifact `12907539920`, digest `sha256:d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`; API35 artifact `12909203169`, digest `sha256:a265911ad3c8e6aa5d6f231d7fc2d88591e46fa4163f77f9b73cd79059bc2c77`. The UI failures remain unresolved; no gate was weakened. Personal Beta stays NO-GO. No Owner approvals changed.
+
+## G10 preflight evidence refresh — 2026-10-29 17:16 UTC
+
+This refresh records current exact-source evidence only. It does not alter, approve, or request any O-01 through O-10 decision. The latest canonical orchestrator evidence at capture is commit `e514a96aeaf8defb4a02ebd7301648a15d70c91b` / tree `26ba0d052ed8f09a2ff373f1526aeec07c07df83`.
+
+- PR #168 `272f68ecf7f8072b812b13e46064a108bab5ef2b` / `010eca037f28f5d5dd5818ed99a2601852a719e9`: API26 and API35 each passed Required 105/105 and Google/Gmail UI 16/16 on their own artifacts. Both API campaigns nevertheless failed in the separate Fake Google process-death host harness after UTP uninstalled the isolated target. Android Unit had one failure in 408 at `GoogleCalendarHttpReadPortTest#timeoutMapsToTimeout`.
+- PR #169 `87af6aab9c9db8f65e18ca18456256e03797ffb3` / `0fceca72877574acdd3cdbfa67b363dcabfb4dda`: API26 and API35 each have four Required `ChatHttpE2ETest` failures from MockWebServer bind permission errors (`EACCES` / `EPERM`). Its separate Native run `40907496496` ended FAILURE: x86_64 job `123566146405` passed exact-source two-turn SmolLM2 inference, while software ARM64 guest job `123566148073` failed before boot because QEMU lacked `libpulse.so.0` (ARM64 inference NOT_RUN). Android run `40907496673` also recorded an obsolete Unit identity-verifier expectation failure (fixed on #170) and the four API26/35 Required MockWebServer bind failures; its Pixel evidence job remains queued.
+- PR #170 identity verifier fix `fc9b355fb247bc6cd1eb35cd313379f6ed01a60f` / `01d27c481655c7b13c3ebda27190805b8aae22c3`: strict inventory patch accepted; Android Unit and Security pass, emulator job remains queued.
+- PR #171 ARM64 host dependency fix `8d4d3cdb44f44d31dc06299579f53427886c35c8` / `c88db8907fa7774bf1027a326bf9ddf7f6a09a36`: independent review accepted; Fast/RustSec/Mock Beta Contract and all Git Hooks jobs pass, but focused Native and Android runs remain queued; no ARM64 hardware/runtime result exists. Runner inventory API 403 means capacity is unknown, not that runners are absent.
+- PR #173 Fake process-death/timeout remediation `540fd754e81c3788a76cc9452f754211e95d8378` / `f52c4104297edae8d84db72680de34136752f4a`: independent review accepted; local Android Gradle Unit 408/408 and harness regression suite 34/34 pass. Its Android, Fast, Full, SQLite, Git Hooks and Native workflows remain queued/in progress except RustSec PASS; latest Native query showed only a Stable Linux ARM64 subjob passed, with the remaining ARM64 jobs in progress/queued. API26/35 acceptance remains NOT_RUN on this SHA.
+
+### Package/version and OAuth sequence clarification
+
+The current build configuration uses base ID `app.serea.android`, Demo/debug suffix `.demo`, and Beta suffix `.beta`, matching the candidate `app.serea.android.beta`. This does not ratify the package or prove side-by-side install/update and encrypted-data continuity. The configured default version name is `0.1.0-demo`; Beta does not override it. A future Beta build must explicitly set and verify version name `0.1.0` and a valid monotonic version code before release acceptance.
+
+The 2026-11-10 O-02 checkpoint may decide the project, audience/test-user plan, Calendar read-only scope, and OAuth readiness while deferring certificate binding. Actual Android OAuth-client identity must use the Owner-approved Beta package and Owner-controlled release certificate after O-01/O-05 are settled and a separate setup authorization exists. Never substitute a debug/CI temporary certificate fingerprint. The O-01 through O-10 states above remain unchanged; real OAuth, Gmail/Calendar data, Cloud, Owner signing, main merge, Pixel use and distribution are still not authorized.
+
+### Remaining NOT_RUN gates
+
+- O-01/O-02/O-03/O-05/O-07/O-09 decisions remain pending; O-04 remains NOT_APPROVED; O-06 remains BLOCKED/NOT_RUN; O-08 remains NO-GO; O-10 remains UNDECIDED.
+- Actual OAuth, Calendar/Gmail reads, Cloud provider eligibility/connection and billing, Owner signing, main merge, Beta distribution, and physical Pixel 7a acceptance remain NOT_RUN.
+- Native product Chat integration, ARM64 hardware/runtime, Pixel performance/thermals, Japanese/tool-calling evaluation, standard model selection, signed APK provenance, complete packaged SBOM/native notices, and Owner-signed migration/update/rollback remain NOT_RUN or open.
+- Overall G8/G9/G10 remain PARTIAL and Personal Beta remains NO-GO. No evidence in this refresh is transferred across source SHAs.

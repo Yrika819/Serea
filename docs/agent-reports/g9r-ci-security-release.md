@@ -373,3 +373,96 @@ PR #155 remains exact source `683854ba94cb3a1e1972b73d0f1f60392f2271d6` / tree `
 PR #157 remains exact source `4075ce2de11df3cee05b1b64d2aa6b8899376064` / tree `6fd63236729cf2ac1ba1e48b3a4cd97681f9577c`; Android run `40854847034` is queued. Change Scope `123387660362`, Security `123396856170`, Dependency Audit `123396856198`, and Unit `123396856211` PASS on runners `1000023952`, `1000023987`, `1000024026`, and `1000024022`. Integration `123396856232` and Build/Lint/Instrumentation Compile `123396856254` remain queued/unassigned; Documentation `123396859106` is skipped for docs-only scope. Artifacts: Dependency Audit `12892156354`, 99,117 bytes, digest `sha256:89315ca47de06931bdd0e1d2a54d8443b8afb7ab10be3c50d61d9a26ad8481f2`; Unit JUnit `12892001556`, 29,493 bytes, digest `sha256:0f6af0b83eb761ba5fc45e444cb4f5336358641fe092e6e78349b327ab4ab5e9`; Security JUnit `12891865632`, 1,836 bytes, digest `sha256:6605662b7d06d499cd7d0deb75ddceb73d5e82902e6082d6dbe275b16e0ec814`. No API26/35 Required, UI, or emulator JUnit has run on this head.
 
 **RESUME_POINT:** preserve the #158 timeout result and cleanup PASS against exact `848fe67…`; Native inference/usage remains unverified. Wait for Agent A's normal follow-up commit and review only that exact new source/tree. Keep #155/#157 API26/35 emulator acceptance NOT_RUN while their Integration and instrumentation-compile jobs are queued.
+
+## Checkpoint — 2026-10-29 15:19 UTC — G9R Recovery V3
+
+This checkpoint supplements the earlier 10:21/10:36 snapshot. It does not rewrite prior history or reuse evidence across SHAs. Latest exact campaign refs:
+
+| PR | Head / tree | Status |
+|---|---|---|
+| #162 Android recovery | `6b7a741362b58b6bbc7728e69de90d929391dcaf` / `e61db67fcdf0ce7c5c5ab7e93efaef3bac4c1b5d` | OPEN/DRAFT; Android run `40889965195` attempt 1 active |
+| #165 Native limits follow-up | `8dde33024b76efc3d32812e7d580f8a33db94c9f` / `4fca4c7fea82bd8c3bf59481fc8341d8165f9c54` | OPEN/DRAFT, based on #160; static security review ACCEPTED |
+| #166 Native integration candidate | same head/tree as #165; base G7 `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` | OPEN/DRAFT; same-source focused workflow registered |
+| #159 Release packet | `982c8271698c5ea323e7a4d19f4dd662087db2c5` / `11e3c0ca61577bb435e0f69b1fcd24313857ff1f` | OPEN/DRAFT; decision states unchanged |
+| #163 Model matrix | `2c109276bcbdd4e14fb2b6e9558962516f2df32c` / `b04164da95bf66f43fd08e5537e4d0e242d6a566` | OPEN/DRAFT; static metadata/license review ACCEPTED |
+
+### PR #162 exact-source Android update
+
+Android run `40889965195`, attempt 1, is bound to `6b7a741…` / `e61db67…`. Change Scope, Security, Build/Lint/Instrumentation Compile, Integration, Documentation, Dependency Audit, and Unit are SUCCESS. Fast `40889965202`, Full `40889964943`, and RustSec `40889965176` are SUCCESS. Git Hooks `40889964753`, SQLite `40889964716`, and Native platform `40889965376` remain queued/partial.
+
+Storage/Emulator job `123526283372` is active. API26 instrumentation step 12 failed (14:57:19–15:11:44 UTC); API35 instrumentation step 16 started at 15:11:46 UTC and remains IN_PROGRESS at this checkpoint. API26 artifact `12907539920` is 769,248 bytes, digest `sha256:d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`. The exact JUnit identities and failure count could not yet be inspected: artifact fetch returned HTTP 403 and a job-log request returned HTTP 503 while the job was still active. Root cause is UNKNOWN; do not infer from earlier PRs. API35 evidence is NOT_RUN until its step completes. No API result is copied across API levels.
+
+Other exact run artifacts: Unit `12907406561` (29,786 bytes; `sha256:4e26754de49c05b9016d4f9ba37c2252e03fae4a47863138bb2a49aa1604726e`), Integration `12907331313` (1,214 bytes; `sha256:2762381fbdfe6cdd82bc58dc83fdc36c6f3df094f34c5d671dce8d21cbe2a838`), debug APK candidate `12906433639` (33,174,181 bytes; `sha256:80edf95c7452ec2116084c31c75527fd95c9c5490b976186906d81a55020e13f`). APK internal SHA-256 and signer remain unverified because provenance artifact contents are unavailable.
+
+### Native limits follow-up and runtime evidence
+
+Agent C accepted PR #165 static review at exact `8dde330…` / `4fca4c7…`. Context default 512 matches the pinned JNI backend; `maxModelFileBytes` bounds model-file bytes, not RSS/PSS. PSS is observational; a complete-sample PASS requires load, both inference turns, and both release samples. Diagnostic JNI is default-off and isolated-build-only. Raw instrumentation/logcat are removed before successful artifact publication; uploaded paths are allowlisted. `LOCAL_MODEL_CHAT_ENABLED` is only a deferred proposal, default off, distinct from `LOCAL_NATIVE_RUNTIME_ENABLED`; ordinary Chat remains DEMO/disconnected.
+
+Agent-reported local focused checks on this code: 24 JVM tests; isolated AndroidTest Kotlin compile; variant-isolation and Beta-rejection checks; metrics parser 4/4; instrumentation parser 8/8; upload allowlist, JNI, preflight, cleanup, shell syntax, YAML and diff checks PASS. These are local results, not hosted exact-source Android inference.
+
+PR #166 was opened against G7 to satisfy the base-branch filter of the Native focused workflow without changing PR #160 or #165. Focused run `40899129986`, attempt 1, exact head `8dde330…`, tree `4fca4c7…`: x86_64/API35 job `123536283262` and ARM64 software-emulated guest job `123536283414` remain QUEUED at 15:19 UTC. No job steps, JUnit, native inference, model/hash validation, or artifacts have occurred on this head. The ARM64 experiment is explicitly `ARM64_GUEST_SOFTWARE_EMULATED`, not ARM hardware or Pixel acceptance.
+
+The deferred Product Chat proposal requires ARM64 runtime and independent security acceptance first; keeps `DEMO` as normal mode; proposes separate `LOCAL_MODEL_CHAT_ENABLED=false`; preserves Router/ModelChatPort, Egress/Usage, local consent and cancellation; and forbids Cloud fallback. No production wiring is present.
+
+### Model and G10 review refresh
+
+PR #163 remains a static model/license/format matrix with no weights or Serea quality claims. Standard model remains UNDECIDED. The current default model-file limit is 768 MiB (maximum 2 GiB): LFM3 Q4_K_M and Bonsai 2 4B Q2_0 exceed the default; Gemma 4 E2B GGUF exceeds the maximum; Qwen3.5 safetensors is incompatible with the GGUF adapter. Bonsai PTQ1_0/PQ2_0 are incompatible with the pinned backend; Q2_0 is NOT_RUN. These file-size facts are not RAM/PSS measurements.
+
+Agent C's read-only #159 audit confirms G10 PARTIAL: O-01 package/coexistence, O-02 OAuth/Calendar, O-03 provider eligibility, O-05 signing, O-07 main merge, O-09 Gmail Restricted, and O-10 model choice remain pending; O-04 Google-origin Cloud egress is NOT_APPROVED; O-06 Pixel is BLOCKED/NOT_RUN; O-08 remains NO-GO. No Owner key, OAuth, real account/data, Pixel, merge or distribution occurred. #159's previous CI snapshot predates #162/#165. The next release-packet refresh should link #163 exact source/tree and current #162/#166 evidence once terminal.
+
+### Current disposition
+
+- G8 Evidence Closure: PARTIAL.
+- Android Recovery / Google-Gmail UI: PARTIAL; API26 step failed but exact failed test identities are not yet available; API35 active.
+- Native Runtime: PARTIAL; previous #160 x86_64 inference PASS only applies to that exact old SHA. New #165/#166 runtime is queued/NOT_RUN.
+- ARM64 runtime: NOT_RUN; ARM64 software guest trial itself is queued.
+- G9 Functional Candidate: PARTIAL; no current-source API26/35 acceptance yet.
+- G10 Preflight: PARTIAL.
+- Personal Beta: NO-GO.
+
+No runner retry was triggered. Continue with existing jobs; once terminal, inspect exact artifacts/logs, classify the API26 failure, and refresh this checkpoint on a new commit without modifying the active test heads.
+
+## Follow-up checkpoint — 2026-10-29 15:29 UTC — Android artifacts retrieved
+
+The API26 and API35 evidence artifacts for PR #162 `6b7a741362b58b6bbc7728e69de90d929391dcaf` / tree `e61db67fcdf0ce7c5c5ab7e93efaef3bac4c1b5d` were downloaded via the GitHub artifact connector and their ZIP SHA-256 values match the Actions digests.
+
+| API | Required | Calendar / Chat / Cursor | Google/Gmail UI | Process Death / Data Isolation |
+|---|---|---|---|---|
+| 26 | 105/105 PASS, 0 failures/errors/skips | 19/19, 16/16, 1/1 PASS | 16 tests, 2 failures, 0 errors/skips | PASS / PASS |
+| 35 | 105/105 PASS, 0 failures/errors/skips | 19/19, 16/16, 1/1 PASS | 16 tests, 2 failures, 0 errors/skips | PASS / PASS |
+
+Artifacts: API26 `12907539920`, 769,248 bytes, `sha256:d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`; API35 `12909203169`, 3,479,526 bytes, `sha256:a265911ad3c8e6aa5d6f231d7fc2d88591e46fa4163f77f9b73cd79059bc2c77`.
+
+The same two UI identities fail on both APIs:
+
+1. `app.serea.android.GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt` — after returning from Calendar view, `performScrollTo()` cannot find `google_auth_demo_account_account_a`.
+2. `app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` — `ComposeTimeoutException` at line 66 while waiting for `Design review`; the test's `AssertionError` diagnostic handler does not catch this timeout type.
+
+These failures are additional Google/Gmail UI acceptance failures; neither API's 105 Required tests failed. They block the campaign acceptance verdict. Test-vs-product root cause is being investigated by Agent B; no assertion is being relaxed. API26/API35 Process Death artifacts record 10 successful lifecycle events each, and Data Isolation is PASS. Temporary-signing Identity Isolation was skipped; no package/signing identity isolation claim is made.
+
+The overall Android workflow remains queued behind the Pixel evidence bundle job. That is an automation queue, not physical Pixel acceptance. Native focused jobs on #166 remain queued and their inference status is NOT_RUN.
+
+## G10 preflight refresh — 2026-10-29 17:16 UTC
+
+This checkpoint supersedes the 15:29 status snapshot below for current campaign state. It preserves the older source-bound evidence as history and does not change O-01 through O-10. Canonical Owner decisions remain in `docs/plans/2026-10-26-personal-beta-owner-decision-ledger.md`; the latest orchestrator evidence source at capture is ledger commit `e514a96aeaf8defb4a02ebd7301648a15d70c91b` / tree `26ba0d052ed8f09a2ff373f1526aeec07c07df83`.
+
+| PR | Exact head / tree | Current interpretation |
+|---|---|---|
+| #168 UI follow-up | `272f68ecf7f8072b812b13e46064a108bab5ef2b` / `010eca037f28f5d5dd5818ed99a2601852a719e9` | API26 and API35 each ran Required 105/105 and Google/Gmail UI 16/16 successfully. The overall API campaigns still FAIL: after UTP uninstalled the isolated target APK, the separate Fake Google process-death host harness could not verify/reinstall it. Android Unit has 1 failure in 408: `GoogleCalendarHttpReadPortTest#timeoutMapsToTimeout` mapped the test's 100 ms TLS timeout to `PERMISSION_DENIED` rather than `TIMEOUT`. API26 artifact `12914558157`, `sha256:a90dff71bef97f2675f5d3d0c1843b0f693c0474a1abf9a433d6b94bb8b23697`; API35 artifact `12916742164`, `sha256:e4e77ba4b5327b2bed8d2ad033146f54f7573a66d9517bc1b47435891d3302b7`; companion emulator evidence `12915274982`, `sha256:b7b3226b501ad5b7febd837ba92de73ec5c9fba2916c83177596c896b1ebe355`. Run `40902585691` remains QUEUED only because the non-product Pixel reacceptance bundle job `123602103206` is queued; Identity Isolation job `123602103963` was SKIPPED. These results apply only to #168.
+| #169 Native integration | `87af6aab9c9db8f65e18ca18456256e03797ffb3` / `0fceca72877574acdd3cdbfa67b363dcabfb4dda` | API26 Required: 4 of 105 failed when `MockWebServer.start()` was denied with `EACCES`; API35: the same four failed with `EPERM`. The separate Native focused run `40907496496` ended FAILURE: x86_64 job `123566146405` passed the exact product adapter and real two-turn SmolLM2 inference case, while ARM64 software-guest job `123566148073` failed package setup before boot because QEMU lacked `libpulse.so.0`; ARM64 inference was NOT_RUN. Android run `40907496673` ended with Unit verifier regression failure at job `123571936579` (the obsolete identity-count expectation was corrected in #170), emulator job `123582802971` failed on the two API Required MockWebServer permission errors, and Pixel evidence bundle `123600981205` remains queued; temporary-signing Identity Isolation was skipped. Identities: `ChatHttpE2ETest#twoTurnsIncludePersistedHistoryAndUsageThroughLoopbackHttp`, `#manualRouterSelectionIsPassedToMockHttpRequestAndNeverFallsBack`, `#directCompositionRoutesCatalogModelAndDenialPrecedesUsageReservation`, and `#innerEgressExpiryReleasesReservationBeforeAnyHttpOrCredentialAccess`. Do not skip/move these Required identities or add INTERNET to the offline isolated Native variant. API26 artifact `12916130202`, `sha256:37bd4ede3df170742a39305ac1b0f2d19b7bc65606149b64fa34d97b2b2784e1`; API35 artifact `12915723538`, `sha256:b21bd251ad68b1d6d3877f569c1bdbc185666b73d175c24c015712b526751bfa`. Separately, Native x86_64 job `123566146405` in run `40907496496` is exact-source SUCCESS: SmolLM2 fixture hash validation, two-turn inference through local Egress/Usage, cancellation/release and cleanup passed. This does not repair Android Required or imply ARM64 runtime. ARM64 guest job `123566148073` failed before boot because QEMU could not load `libpulse.so.0`; inference was NOT_RUN.
+| #170 Identity validator | `fc9b355fb247bc6cd1eb35cd313379f6ed01a60f` / `01d27c481655c7b13c3ebda27190805b8aae22c3` | Strict manifest/source identity fix is independently accepted. Android run `40914655856`: Change Scope, Dependency Audit, Integration, Build/Lint/Instrumentation Compile, Unit, and Android Security job `123591635794` pass; Storage/Emulator `123606101694` remains queued. Fast `40914655659` and RustSec `40914655648` pass. API26/35 instrumentation remains NOT_RUN on this head.
+| #171 ARM64 host dependency fix | `8d4d3cdb44f44d31dc06299579f53427886c35c8` / `c88db8907fa7774bf1027a326bf9ddf7f6a09a36` | Agent C review ACCEPTED. Fast `40915105468`, RustSec `40915105436`, Mock Beta Contract `40915105451`, and all three Git Hooks jobs in run `40915105479` pass. Focused Native run `40915105551` and Android run `40915105462` remain queued. Other cross-platform runs are queued or in progress. Workflow uses an x86_64 Ubuntu host for a software-emulated ARM64 guest; this is not ARM hardware. ARM64 runtime remains NOT_RUN. Runner inventory API returned 403 (`Resource not accessible by integration`); this establishes neither runner presence nor absence. Do not attempt permission workarounds.
+| #173 Fake process-death/timeout remediation | `540fd754e81c3788a76cc9452f754211e95d8378` / `f52c4104297edae8d84db72680de34136752f4a` | Cumulative independent review ACCEPTED. Local exact-head Gradle unit run: 408/408, 0 failures/errors/skips. Local workflow harness suite: 34/34; focused case 1/1; shell syntax and diff checks pass. The fix handles post-UTP APK removal by revalidating and reinstalling the exact isolated APK; tests cover install/hash/checksum failures. Android run `40916731468` is QUEUED at Change Scope job `123603984767`; Fast `40916731448`, Full `40916731515`, SQLite `40916731473`, Git Hooks `40916731516`, and Native `40916731604` remain queued/in progress (one Stable Linux ARM64 subjob passed while Rust 1.85 Linux ARM64 and Stable Windows ARM64 were in progress at the latest query); RustSec `40916731566` PASS. API26/35 emulator, UI, IME, Identity, Process Death, and Data Isolation evidence on this exact head remain NOT_RUN. API26/35 instrumentation on #173 remains NOT_RUN. The 408/408 result is local JVM evidence, not emulator acceptance.
+
+### Package, version, and OAuth binding
+
+The #167 source's `android/app/build.gradle.kts` has base application ID `app.serea.android`, Demo/debug suffix `.demo`, and Beta suffix `.beta`; therefore `app.serea.android.beta` is a consistent Beta package candidate and Demo/Beta use distinct package IDs. This proves only the configured IDs, not Owner ratification, actual side-by-side installation, encrypted database continuity, or update compatibility. The same file sets `defaultConfig.versionName = "0.1.0-demo"` and does not override `versionName` for the Beta build type. Before producing a Beta candidate, configure and verify the explicit `0.1.0` version name and a valid monotonic Beta version code; no Beta release artifact or Owner-signed update has been accepted.
+
+O-02's 2026-11-10 checkpoint may settle the project, test-user/audience, Calendar scope, and OAuth readiness plan while deferring actual Android OAuth-client certificate binding. The Owner certificate fingerprint must be bound only after O-01/O-05 settle the package/signing identity and the Owner separately authorizes setup. Never substitute a debug or CI temporary-key SHA-1 for the Beta OAuth identity. Calendar connection, Google-to-Chat handoff, Gmail Restricted scope, and Cloud egress remain separate consent/approval gates.
+
+### G10 evidence still outstanding
+
+- O-01 package/coexistence/certificate-custody selection; O-02 Google project/client and Calendar readiness decision; O-03 provider age/region/terms/retention/budget eligibility; O-05 production key custody/update/distribution plan; O-07 main merge decision; O-09 separate Gmail Restricted decision; and O-10 model/redistribution choice remain Owner-pending. O-04 remains NOT_APPROVED. O-06 remains BLOCKED/NOT_RUN. O-08 and Personal Beta remain NO-GO.
+- Real OAuth, Calendar/Gmail account data, Cloud credentials/billing or Google-origin Cloud egress, Owner production signing, main merge, distribution, and Pixel 7a operation remain NOT_RUN/prohibited absent their explicit approvals.
+- Product Chat with a real model remains NOT_RUN; Native x86_64 inference only exists on exact #169. ARM64 hardware/runtime, Pixel performance, Japanese/tool-calling quality, and model selection remain NOT_RUN/UNDECIDED. Packaged APK provenance with Owner signer, complete packaged SBOM/native NOTICE/model redistribution inventory, encrypted migration/update/rollback under the Owner identity, and Pixel Android 17 acceptance remain open.
+- Latest canonical ledger records overall G8/G9/G10 as PARTIAL and Personal Beta NO-GO. The queued Pixel evidence-bundle jobs on #168/#169 are automation jobs, not physical-device acceptance. API26/35 results above do not establish #173 or a future integration HEAD.

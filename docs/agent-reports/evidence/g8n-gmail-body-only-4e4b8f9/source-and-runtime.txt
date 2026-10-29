@@ -1,0 +1,19 @@
+evidence_type=local_focused_gradle_junit
+source_sha=4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd
+source_tree_sha=b19a6c52a8e8d4ff1c8365d435c047d0aceb300b
+test_class=app.serea.android.handoff.GoogleTrustedHandoffTest
+junit_xml=GoogleTrustedHandoffTest.xml
+junit_tests=22
+junit_failures=0
+junit_errors=0
+junit_skipped=0
+junit_result=BUILD_SUCCESSFUL
+junit_xml_sha256=214269dd60cd0119e31c199b403096f939522ccb2629cf877e169a3d726e6305
+run_id=NONE_LOCAL_RUN
+artifact_id=NONE_LOCAL_RUN
+apk_or_native_artifacts=NOT_INCLUDED
+runtime=Eclipse Temurin JDK 17.0.21+9
+java_home=/workspace/.tools/temurin17
+java_version=openjdk version "17.0.21" 2026-10-20; OpenJDK Runtime Environment Temurin-17.0.21+9
+command=JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH ./gradlew --no-daemon --console=plain -Dhttp.proxyHost=proxy -Dhttp.proxyPort=8080 -Dhttps.proxyHost=proxy -Dhttps.proxyPort=8080 -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStorePassword=changeit :app:testDebugUnitTest --tests app.serea.android.handoff.GoogleTrustedHandoffTest
+source_checkout_note=The XML was collected from the existing Gradle result for the exact source/test tree above; this preservation commit did not rerun tests.

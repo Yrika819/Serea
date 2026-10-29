@@ -10,12 +10,17 @@ import app.serea.android.PayloadPreparation
 import app.serea.android.calendar.CalendarProviderSessions
 import app.serea.android.calendar.FakeCalendarProvider
 import app.serea.android.gmail.FakeGmailProvider
+import app.serea.android.gmail.GmailMessage
+import app.serea.android.gmail.GmailMessageId
+import app.serea.android.gmail.GmailMessageSource
 import app.serea.android.gmail.GmailProviderSessions
+import app.serea.android.gmail.GmailThreadId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -94,7 +99,7 @@ class GoogleTrustedHandoffTest {
         provider.close()
     }
 
-    @Test fun oversizedProviderTitlesAreClampedForUiAndPreservedInSelectedContent() = runBlocking {
+    @Test fun oversizedProviderTitlesAreClampedForUiWithoutAddingThemToGmailChatContent() = runBlocking {
         val longTitle = "Long synthetic title ".repeat(30)
         val gmailMessage = FakeGmailProvider.fixtures.messages.first().copy(subject = longTitle)
         val gmailSession = GmailProviderSessions(
@@ -102,7 +107,8 @@ class GoogleTrustedHandoffTest {
         ).openFake()
         val gmailCandidate = checkNotNull(gmailHandoffCandidate(gmailMessage))
         assertEquals(GoogleHandoffCandidate.MAX_DISPLAY_TITLE_CHARS, gmailCandidate.displayTitle.length)
-        assertTrue(gmailCandidate.selectedContent.contains(longTitle))
+        assertEquals(gmailMessage.plainTextBody, gmailCandidate.selectedContent)
+        assertFalse(gmailCandidate.selectedContent.contains(longTitle))
         val gmailPreview = accepted(
             GoogleTrustedHandoffCoordinator(gmailSession.trustedHandoffSource()) { 100L }
                 .preparePreview(request(gmailCandidate)),
@@ -123,6 +129,56 @@ class GoogleTrustedHandoffTest {
         )
         assertEquals(calendarCandidate.displayTitle, calendarPreview.displayTitle)
         calendarSession.close()
+    }
+
+    @Test fun gmailChatHandoffContainsOnlySelectedBodyAndExcludesMessageMetadata() = runBlocking {
+        val body = "本文のみをChatへ渡す synthetic 日本語 body"
+        val message = GmailMessage(
+            id = GmailMessageId("message_metadata_001"),
+            threadId = GmailThreadId("thread_metadata_001"),
+            from = "sender_metadata@example.invalid",
+            to = listOf("recipient_metadata@example.invalid"),
+            subject = "subject_metadata_marker",
+            internalDateMillis = 1_730_000_000_000L,
+            snippet = "snippet_metadata_marker",
+            plainTextBody = body,
+            htmlTextBody = "html_alternative_metadata_marker",
+            source = GmailMessageSource.MOCK,
+        )
+        val session = GmailProviderSessions(
+            fakeProvider = {
+                FakeGmailProvider(messages = listOf(message), inboxIds = setOf(message.id))
+            },
+        ).openFake()
+        try {
+            val candidate = checkNotNull(gmailHandoffCandidate(message))
+            assertEquals(body, candidate.selectedContent)
+            assertEquals(message.subject, candidate.displayTitle)
+
+            val coordinator = GoogleTrustedHandoffCoordinator(session.trustedHandoffSource()) { 100L }
+            val preview = accepted(coordinator.preparePreview(request(candidate)))
+            assertEquals(body, preview.selectedContent)
+            val handoff = accepted(coordinator.confirmLocalOnly(preview, "conversation-1", 7))
+            val chatText = handoff.localChatText()
+
+            assertTrue(chatText.contains(body))
+            listOf(
+                message.id.value,
+                message.threadId.value,
+                requireNotNull(message.from),
+                message.to.single(),
+                requireNotNull(message.subject),
+                requireNotNull(message.internalDateMillis).toString(),
+                requireNotNull(message.snippet),
+                requireNotNull(message.htmlTextBody),
+                candidate.sourceRevision,
+            ).forEach { metadata ->
+                assertFalse("Chat handoff leaked Gmail metadata: $metadata", chatText.contains(metadata))
+            }
+            assertEquals(setOf(DataOrigin.GMAIL), handoff.sourceLineage())
+        } finally {
+            session.close()
+        }
     }
 
     @Test fun accountSessionAndGenerationSwitchesRejectBeforeAnyDispatch() = runBlocking {

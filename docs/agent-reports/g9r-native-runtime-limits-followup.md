@@ -16,6 +16,10 @@
 - Native opt-in is false by default and confined to the `isolated` build type. Build configuration rejects Native opt-in for debug, release, Beta, and aggregate packaging tasks, disables all non-isolated variants, and provides a focused variant-isolation task.
 - Added a single 30-minute API 35 ARM64 guest experiment on an `ubuntu-24.04` x86_64 host, using software CPU emulation, pinned API image revision, bounded model fixture, explicit ABI identity, and an arm64 JNI package assertion. Its result must be reported as `ARM64_GUEST_SOFTWARE_EMULATED`; it cannot establish ARM device performance or Pixel acceptance.
 
+## Deferred Product Chat Integration Proposal
+
+No production wiring is included in this patch. Once ARM64 runtime evidence and independent security review are accepted, a follow-up may add an explicit local-model choice to the existing `ModelChatPort`/Model Router boundary behind a separate default-off product feature flag. Until both gates pass, normal Chat remains on its existing DEMO route and the flag must be forced off for Beta/release builds. Any future route must preserve the existing Egress and Usage wrappers, require the local-model consent contract, retain cancellation and model identity checks, surface local-runtime errors, and fail closed with no silent Cloud fallback. Google-origin data remains blocked from Cloud Egress; Google connection/Handoff consent never implies local-model or Cloud consent. The proposal requires product UI and lifecycle tests before it can be considered for integration.
+
 ## ARM64 execution feasibility sources
 
 Checked 2026-10-29 UTC:
@@ -44,4 +48,5 @@ Thus the experiment uses the x86_64 runner to host the published x86_64 emulator
 - ARM64 guest inference: NOT_RUN pending the bounded workflow.
 - Native RSS/PSS cap: NOT_IMPLEMENTED; PSS is observational evidence only.
 - Pixel 7a physical runtime: NOT_RUN; owner authorization remains required.
-- Ordinary Chat integration and model selection: unchanged; no integration or model recommendation is made here.
+- Ordinary Chat integration: NOT_CONNECTED pending ARM64 runtime evidence and independent review.
+- Standard model selection: UNDECIDED; no model recommendation is made here.

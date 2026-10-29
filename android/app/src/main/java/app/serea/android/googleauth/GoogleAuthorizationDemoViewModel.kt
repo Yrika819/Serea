@@ -2,6 +2,7 @@ package app.serea.android.googleauth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.serea.android.calendar.CalendarProviderSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +20,12 @@ internal enum class GoogleDemoFeatureState {
     ERROR,
 }
 
+/** Synthetic account choices contain no real account names, email addresses, or identifiers. */
+internal enum class GoogleDemoAccount(val displayName: String) {
+    ACCOUNT_A("架空アカウント A"),
+    ACCOUNT_B("架空アカウント B"),
+}
+
 internal data class GoogleAuthorizationDemoState(
     val gmail: GoogleDemoFeatureState = GoogleDemoFeatureState.DISCONNECTED,
     val calendar: GoogleDemoFeatureState = GoogleDemoFeatureState.DISCONNECTED,
@@ -27,6 +34,7 @@ internal data class GoogleAuthorizationDemoState(
     val pendingFeature: GoogleFeature? = null,
     val pendingScopes: Set<GoogleScope> = emptySet(),
     val message: String = "この画面は架空の認可フローを表示します。実アカウントと通信しません。",
+    val selectedAccount: GoogleDemoAccount = GoogleDemoAccount.ACCOUNT_A,
     val accountGeneration: Int = 1,
 )
 
@@ -36,12 +44,38 @@ internal data class GoogleAuthorizationDemoState(
  */
 internal class GoogleAuthorizationDemoViewModel(
     private val gateway: FakeGoogleAuthorizationGateway = FakeGoogleAuthorizationGateway(),
+    private val calendarSessionFactory: CalendarDemoSessionFactory = FakeCalendarDemoSessionFactory(),
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(GoogleAuthorizationDemoState())
     val state: StateFlow<GoogleAuthorizationDemoState> = mutableState.asStateFlow()
+    private var activeCalendarSession: CalendarProviderSession? = null
+    private val mutableCalendarDemoSession = MutableStateFlow<CalendarProviderSession?>(null)
+    /** Exposed only after synthetic Calendar consent; every account/revoke/disconnect closes it. */
+    val calendarDemoSession: StateFlow<CalendarProviderSession?> = mutableCalendarDemoSession.asStateFlow()
     private var requestGeneration = 0L
+    private val explicitConfirmationRequired = mutableSetOf<GoogleFeature>()
 
     fun requestConsent(feature: GoogleFeature) {
+        if (feature in explicitConfirmationRequired) {
+            val current = mutableState.value
+            if (feature in current.disabledInAppFeatures) {
+                mutableState.value = current.copy(
+                    message = "${feature.label()}はアプリ内で切断されています。再接続してからデモ承認を要求してください。",
+                )
+                return
+            }
+            if (current.inFlightFeature != null || current.pendingFeature != null) {
+                mutableState.value = current.copy(message = "先に表示中のデモ認可操作を完了または取り消してください。")
+                return
+            }
+            requestGeneration++
+            mutableState.value = current.withFeatureState(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED).copy(
+                pendingFeature = feature,
+                pendingScopes = feature.scopes,
+                message = "再接続のため、共有デモ権限をこの画面で確認してください。",
+            )
+            return
+        }
         runAuthorization(feature, allowPendingConsent = false) { gateway.authorize(feature.scopes) }
     }
 
@@ -77,6 +111,7 @@ internal class GoogleAuthorizationDemoViewModel(
 
     fun simulateTokenExpiry() {
         requestGeneration++
+        invalidateCalendarDemoSession()
         gateway.setExpired(true)
         mutableState.value = mutableState.value.copy(
             gmail = GoogleDemoFeatureState.EXPIRED,
@@ -88,25 +123,38 @@ internal class GoogleAuthorizationDemoViewModel(
         )
     }
 
-    fun switchDemoAccount() {
-        requestGeneration++
-        gateway.switchAccount()
+    fun selectDemoAccount(account: GoogleDemoAccount) {
         val current = mutableState.value
+        if (current.selectedAccount == account) return
+        requestGeneration++
+        invalidateCalendarDemoSession()
+        gateway.selectSyntheticAccount()
+        explicitConfirmationRequired.clear()
         mutableState.value = current.copy(
             gmail = if (current.gmail == GoogleDemoFeatureState.DISCONNECTED) current.gmail else GoogleDemoFeatureState.REVOKED,
             calendar = if (current.calendar == GoogleDemoFeatureState.DISCONNECTED) current.calendar else GoogleDemoFeatureState.REVOKED,
             inFlightFeature = null,
             pendingFeature = null,
             pendingScopes = emptySet(),
+            selectedAccount = account,
             accountGeneration = current.accountGeneration + 1,
-            message = "架空アカウントを切り替えました。以前の承認結果は失効しました。",
+            message = "${account.displayName}を選択しました。以前の承認結果は失効し、引き継がれていません。",
         )
     }
+
+    fun switchDemoAccount() = selectDemoAccount(
+        if (mutableState.value.selectedAccount == GoogleDemoAccount.ACCOUNT_A) {
+            GoogleDemoAccount.ACCOUNT_B
+        } else {
+            GoogleDemoAccount.ACCOUNT_A
+        },
+    )
 
     /** Disables this feature in the demo while leaving the synthetic shared grant untouched. */
     fun disconnectInApp(feature: GoogleFeature) {
         val current = mutableState.value
         if (current.inFlightFeature == feature || current.pendingFeature == feature) requestGeneration++
+        if (feature == GoogleFeature.CALENDAR) invalidateCalendarDemoSession()
         gateway.disableInApp(feature)
         updateFeature(feature, GoogleDemoFeatureState.DISCONNECTED) { state ->
             state.copy(
@@ -123,6 +171,7 @@ internal class GoogleAuthorizationDemoViewModel(
         val current = mutableState.value
         if (current.inFlightFeature == feature || current.pendingFeature == feature) requestGeneration++
         gateway.enableInApp(feature)
+        explicitConfirmationRequired += feature
         updateFeature(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) { state ->
             state.copy(
                 disabledInAppFeatures = state.disabledInAppFeatures - feature,
@@ -136,7 +185,9 @@ internal class GoogleAuthorizationDemoViewModel(
 
     fun revokeDemoGrant() {
         requestGeneration++
+        invalidateCalendarDemoSession()
         gateway.revokeGoogleGrant()
+        explicitConfirmationRequired.clear()
         mutableState.value = mutableState.value.copy(
             gmail = GoogleDemoFeatureState.REVOKED,
             calendar = GoogleDemoFeatureState.REVOKED,
@@ -164,6 +215,28 @@ internal class GoogleAuthorizationDemoViewModel(
             is AuthorizationOutcome.Authorized -> {
                 // The UI needs only a status. Do not retain even the synthetic token lease.
                 outcome.lease.close()
+                if (feature == GoogleFeature.CALENDAR) {
+                    invalidateCalendarDemoSession()
+                    activeCalendarSession = runCatching {
+                        calendarSessionFactory.openAfterSyntheticConsent(
+                            account = mutableState.value.selectedAccount,
+                            accountGeneration = mutableState.value.accountGeneration,
+                        )
+                    }.getOrNull()
+                    if (activeCalendarSession == null) {
+                        updateFeature(feature, GoogleDemoFeatureState.ERROR) { state ->
+                            state.copy(
+                                inFlightFeature = null,
+                                pendingFeature = null,
+                                pendingScopes = emptySet(),
+                                message = "Calendarの架空セッションを作成できませんでした。読み取りは無効です。",
+                            )
+                        }
+                        return
+                    }
+                    mutableCalendarDemoSession.value = activeCalendarSession
+                }
+                explicitConfirmationRequired -= feature
                 updateFeature(feature, GoogleDemoFeatureState.AUTHORIZED) { state ->
                     state.copy(
                         inFlightFeature = null,
@@ -262,6 +335,17 @@ internal class GoogleAuthorizationDemoViewModel(
     private fun failure(error: Throwable): AuthorizationOutcome {
         if (error is CancellationException) throw error
         return AuthorizationOutcome.Rejected(AuthorizationFailure.UNAVAILABLE)
+    }
+
+    private fun invalidateCalendarDemoSession() {
+        activeCalendarSession?.close()
+        activeCalendarSession = null
+        mutableCalendarDemoSession.value = null
+    }
+
+    override fun onCleared() {
+        invalidateCalendarDemoSession()
+        super.onCleared()
     }
 }
 

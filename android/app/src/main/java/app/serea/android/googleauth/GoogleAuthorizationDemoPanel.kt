@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -21,13 +22,16 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.serea.android.calendar.CalendarProviderSession
 
 /** Local walkthrough for consent UX; every action uses a fake gateway and synthetic scope data. */
 @Composable
 internal fun GoogleAuthorizationDemoPanel(
     viewModel: GoogleAuthorizationDemoViewModel = viewModel(),
+    onOpenCalendar: ((CalendarProviderSession) -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsState()
+    val calendarSession by viewModel.calendarDemoSession.collectAsState()
     val pending = state.pendingFeature
     val authorizationBusy = state.inFlightFeature != null || pending != null
 
@@ -40,7 +44,25 @@ internal fun GoogleAuthorizationDemoPanel(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.semantics { heading() }.testTag("google_auth_demo_heading"),
         )
-        Text("架空アカウント ${if (state.accountGeneration % 2 == 1) "A" else "B"} · 実Googleアカウント、OAuth画面、ネットワーク、メールや予定データは使用しません。")
+        Text("${state.selectedAccount.displayName} · 実Googleアカウント、OAuth画面、ネットワーク、メールや予定データは使用しません。")
+        Text("Calendarの利用目的: 架空の予定一覧と詳細を表示するだけです。予定の作成・変更・削除は行いません。")
+        Text(
+            "Calendar scope: ${GoogleScope.CALENDAR_EVENTS_READ_ONLY.value}\n" +
+                "Calendar一覧を表示する場合: ${GoogleScope.CALENDAR_LIST_READ_ONLY.value}",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.testTag("google_auth_demo_calendar_scope"),
+        )
+        Text("合成アカウントを選択", style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GoogleDemoAccount.entries.forEach { account ->
+                FilterChip(
+                    selected = state.selectedAccount == account,
+                    onClick = { viewModel.selectDemoAccount(account) },
+                    label = { Text(account.displayName) },
+                    modifier = Modifier.testTag("google_auth_demo_account_${account.name.lowercase()}"),
+                )
+            }
+        }
         Text(
             "Gmail: ${state.gmail.label(GoogleFeature.GMAIL !in state.disabledInAppFeatures)} · " +
                 "Calendar: ${state.calendar.label(GoogleFeature.CALENDAR !in state.disabledInAppFeatures)}",
@@ -61,6 +83,12 @@ internal fun GoogleAuthorizationDemoPanel(
             onDisconnect = viewModel::disconnectInApp,
             onReconnect = viewModel::reconnectInApp,
         )
+        if (state.calendar == GoogleDemoFeatureState.AUTHORIZED && calendarSession != null && onOpenCalendar != null) {
+            OutlinedButton(
+                onClick = { calendarSession?.let { onOpenCalendar(it) } },
+                modifier = Modifier.testTag("google_auth_demo_open_calendar"),
+            ) { Text("架空の予定を表示") }
+        }
         FeatureActions(
             title = "Calendar読み取りデモ",
             feature = GoogleFeature.CALENDAR,
@@ -98,12 +126,22 @@ internal fun GoogleAuthorizationDemoPanel(
     if (pending != null) {
         AlertDialog(
             onDismissRequest = viewModel::cancelPendingConsent,
-            title = { Text("${pending.label()}のデモ承認") },
+            title = { Text("${pending.label()}の認可プレビュー") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("選択中: ${state.selectedAccount.displayName}")
+                    if (pending == GoogleFeature.CALENDAR) {
+                        Text("目的: Calendarの予定一覧・詳細を表示する")
+                        Text("許可する操作: 読み取り専用。予定の作成、変更、削除はしません。")
+                        Text("Chatへ渡す場合は別途明示確認が必要です。Cloud送信はこの許可に含まれません。")
+                    } else {
+                        Text("目的: 合成メールの一覧と詳細を表示する")
+                        Text("許可する操作: 読み取り専用。メールの送信、変更、削除はしません。")
+                        Text("Chatへ渡す場合は別途明示確認が必要です。Cloud送信はこの許可に含まれません。")
+                    }
                     Text("この合成画面で確認する読み取り専用範囲:")
                     state.pendingScopes.sortedBy { it.value }.forEach { scope ->
-                        Text(scope.value, style = MaterialTheme.typography.bodySmall)
+                        Text("${scope.label()}: ${scope.value}", style = MaterialTheme.typography.bodySmall)
                     }
                     Text("実Googleには要求されず、実際のメールや予定も読み取りません。")
                 }
@@ -112,7 +150,7 @@ internal fun GoogleAuthorizationDemoPanel(
                 TextButton(
                     onClick = viewModel::grantPendingConsent,
                     modifier = Modifier.testTag("google_auth_demo_consent_grant"),
-                ) { Text("デモで許可") }
+                ) { Text("合成データで許可") }
             },
             dismissButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -149,7 +187,7 @@ private fun FeatureActions(
                 onClick = { onRequest(feature) },
                 enabled = isEnabledInApp && !isAuthorizationBusy,
                 modifier = Modifier.weight(1f).testTag("google_auth_demo_request_${feature.name.lowercase()}"),
-            ) { Text("デモ承認を要求") }
+            ) { Text("認可内容を確認") }
             if (!isEnabledInApp) {
                 TextButton(
                     onClick = { onReconnect(feature) },
@@ -181,4 +219,10 @@ internal fun GoogleDemoFeatureState.label(isEnabledInApp: Boolean): String {
 private fun GoogleFeature.label(): String = when (this) {
     GoogleFeature.GMAIL -> "Gmail"
     GoogleFeature.CALENDAR -> "Calendar"
+}
+
+private fun GoogleScope.label(): String = when (this) {
+    GoogleScope.GMAIL_READ_ONLY -> "Gmail 読み取り専用"
+    GoogleScope.CALENDAR_EVENTS_READ_ONLY -> "Calendar 予定読み取り専用"
+    GoogleScope.CALENDAR_LIST_READ_ONLY -> "Calendar 一覧読み取り専用"
 }

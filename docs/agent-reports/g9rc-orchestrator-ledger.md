@@ -213,3 +213,7 @@ The exact-source Native x86_64 job `123566146405` on PR #169 has passed Android 
 ## PR #169 focused JVM completion — 2026-10-29 16:06 UTC
 
 On exact PR #169 source `87af6aab9c9db8f65e18ca18456256e03797ffb3` / tree `0fceca72877574acdd3cdbfa67b363dcabfb4dda`, Native x86_64 job `123566146405` completed the source-identity and focused JVM-contract step successfully. It is now running “Build opt-in product JNI APKs for both supported ABIs” (step 9). This is not a runtime result. ARM64 guest `123566148073` and Android Change Scope `123566146896` remain queued at this observation.
+
+## Queue/build wait checkpoint — 2026-10-29 16:09 UTC
+
+PR #169 native x86_64 job `123566146405` remains IN_PROGRESS at APK build step 9; the job-log download endpoint continues returning 404 while active. The workflow has not emitted a failure or artifact. ARM64 guest `123566148073` and Android Change Scope `123566146896` remain QUEUED. This is recorded as in-progress/queued infrastructure state, not as code failure or success. No retry was triggered.

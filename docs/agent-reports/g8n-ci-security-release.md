@@ -420,3 +420,18 @@ PR151_FORMAL_CI=PARTIAL / IN_PROGRESS / QUEUED at exact head; no Android UI resu
 PR149_BASE_API26_UI=16 diagnostic cases, 5 failures; PR149_BASE_API35_UI=NOT_RUN after required-stage timeout
 MODEL_DEFAULT=UNDECIDED; PIXEL7A_ACCEPTANCE=NOT_RUN
 ```
+
+## Runner follow-up — 2026-10-29 08:36 UTC
+
+Agent A pushed the accepted PR #147 report correction. The exact remote head is now `36700f6c99d15db428c6d434c657ac76593df3f9` / tree `107824f5338ed9ec46d41f6836f5df9c6ad84cf7`; it has the already-reviewed code/harness parent `1945eafd0fa3be1068ac67972026dcc8b320b339` / tree `5229b8ea59fc537ba607bde517991328b615e016` and changes only the report.
+
+The single authorized bounded exact-head focused Native run is `40843204437`, attempt 1, job `123344314662` on assigned runner `1000023588`, currently IN_PROGRESS. No inference result is available yet. On the same source, Personal Beta Contract `40843204470` passes; Fast `40843204610` and Git Hooks `40843204431` are queued; Android `40843204488` is pending; RustSec `40843204440` is in progress; Full CI `40843204630` is queued; Native platform `40843204674` is queued; SQLite `40843204485` has both macOS producers in progress on runners `1000023581` and `1000023589`. The separate main-only Beta guard `40843196451` fails outside PR validation.
+
+PR #151 remains on exact head `d4a36fb5d3613bca2d60151de0991a1baac72fc9`. Since the prior snapshot, Full CI `40842824328` and RustSec `40842824232` have started; both remain in progress. Android `40842824215` has only Change Scope complete, Build/Lint/Instrumentation Compile in progress; other Android jobs remain queued. Native `40842824208` has four assigned jobs in progress and eight queued. SQLite `40842824221` has both producers queued. Fast `40842824206` passed; Windows and Ubuntu Git Hooks jobs passed while macOS remains queued. No failed required PR #151 job is present yet; queued jobs have no runner assignment and remain NOT_RUN.
+
+```text
+PR147_CURRENT_HEAD=36700f6c99d15db428c6d434c657ac76593df3f9 / 107824f5338ed9ec46d41f6836f5df9c6ad84cf7
+PR147_EXACT_NATIVE_RUN=40843204437 attempt 1 IN_PROGRESS runner 1000023588
+PR147_NATIVE_INFERENCE=NOT_RUN_PENDING_RUN
+PR151_FORMAL_CI=IN_PROGRESS_AND_QUEUED; no exact-head Android UI evidence
+```

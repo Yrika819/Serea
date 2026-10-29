@@ -83,6 +83,7 @@ jobs:
           python3 tools/g8-local-model-native/test-instrumentation-stream.py
           python3 tools/g8-local-model-native/test-summarize-runtime-metrics.py
           python3 tools/g8-local-model-native/test-upload-allowlist.py .github/workflows/g8-local-native-runtime-focused.yml
+          bash tools/g8-local-model-native/test-emulator-package-version.sh
 
       - name: Record source identity and run focused JVM contracts
         shell: bash
@@ -352,7 +353,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager \
+          # Android's official repo2-1.xml stable package maps emulator revision
+          # 37.2.13 to emulator-linux_x64-16740729.zip (SHA-1 f41f9e31eb5ca64926603c03265c50bbc0ff4172).
+          sdkmanager --channel=0 \
             'platforms;android-35' \
             'build-tools;35.0.0' \
             'ndk;28.2.13676358' \
@@ -366,20 +369,29 @@ jobs:
           sudo apt-get install --no-install-recommends -y libpulse0
           bash tools/g8-local-model-native/check-emulator-host-libraries.sh \
             "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64"
-          "$ANDROID_HOME/emulator/emulator" -version | tee "$RUNNER_TEMP/native-arm64-emulator-version.txt"
-          grep -F '37.3.6' "$RUNNER_TEMP/native-arm64-emulator-version.txt"
           mkdir -p evidence/native-arm64-guest
           {
             echo 'host_arch=x86_64'
             echo 'guest_abi=arm64-v8a'
             echo 'android_api=35'
             echo 'system_image_revision=9'
-            echo 'emulator_version=37.3.6'
+            echo 'sdk_channel=stable'
             echo 'acceleration=disabled_software_emulation'
             echo 'runtime_classification=ARM64_GUEST_SOFTWARE_EMULATED'
             echo "source_sha=$(git rev-parse HEAD)"
             echo "source_tree=$(git rev-parse 'HEAD^{tree}')"
           } > evidence/native-arm64-guest/host-and-image.txt
+          set +e
+          bash tools/g8-local-model-native/verify-emulator-package.sh \
+            "$ANDROID_HOME/emulator" 37.2.13 37.2.13.0 16740729 \
+            >> evidence/native-arm64-guest/host-and-image.txt \
+            2> "$RUNNER_TEMP/native-arm64-emulator-version-check.stderr"
+          version_status=$?
+          set -e
+          cat evidence/native-arm64-guest/host-and-image.txt
+          if [ "$version_status" -ne 0 ]; then
+            exit "$version_status"
+          fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

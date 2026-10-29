@@ -32,7 +32,8 @@ internal fun GoogleAuthorizationDemoPanel(
 ) {
     val state by viewModel.state.collectAsState()
     val calendarSession by viewModel.calendarDemoSession.collectAsState()
-    val pending = state.pendingFeature
+    val pendingPreview = state.pendingConsentPreview
+    val pending = pendingPreview?.feature
     val authorizationBusy = state.inFlightFeature != null || pending != null
 
     Column(
@@ -111,7 +112,7 @@ internal fun GoogleAuthorizationDemoPanel(
         }
         if (state.inFlightFeature != null) {
             OutlinedButton(
-                onClick = viewModel::cancelPendingConsent,
+                onClick = viewModel::cancelAuthorization,
                 modifier = Modifier.testTag("google_auth_demo_cancel_authorization"),
             ) { Text("認可操作を取り消す") }
         }
@@ -123,14 +124,15 @@ internal fun GoogleAuthorizationDemoPanel(
         ) { Text("架空の認可状態を期限切れにする") }
     }
 
-    if (pending != null) {
+    if (pendingPreview != null) {
+        val previewFeature = pendingPreview.feature
         AlertDialog(
-            onDismissRequest = viewModel::cancelPendingConsent,
-            title = { Text("${pending.label()}の認可プレビュー") },
+            onDismissRequest = { viewModel.cancelPendingConsent(pendingPreview) },
+            title = { Text("${previewFeature.label()}の認可プレビュー") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("選択中: ${state.selectedAccount.displayName}")
-                    if (pending == GoogleFeature.CALENDAR) {
+                    Text("選択中: ${pendingPreview.selectedAccount.displayName}")
+                    if (previewFeature == GoogleFeature.CALENDAR) {
                         Text("目的: Calendarの予定一覧・詳細を表示する")
                         Text("許可する操作: 読み取り専用。予定の作成、変更、削除はしません。")
                         Text("Chatへ渡す場合は別途明示確認が必要です。Cloud送信はこの許可に含まれません。")
@@ -140,7 +142,7 @@ internal fun GoogleAuthorizationDemoPanel(
                         Text("Chatへ渡す場合は別途明示確認が必要です。Cloud送信はこの許可に含まれません。")
                     }
                     Text("この合成画面で確認する読み取り専用範囲:")
-                    state.pendingScopes.sortedBy { it.value }.forEach { scope ->
+                    pendingPreview.consentScopes.sortedBy { it.value }.forEach { scope ->
                         Text("${scope.label()}: ${scope.value}", style = MaterialTheme.typography.bodySmall)
                     }
                     Text("実Googleには要求されず、実際のメールや予定も読み取りません。")
@@ -148,18 +150,18 @@ internal fun GoogleAuthorizationDemoPanel(
             },
             confirmButton = {
                 TextButton(
-                    onClick = viewModel::grantPendingConsent,
+                    onClick = { viewModel.grantPendingConsent(pendingPreview) },
                     modifier = Modifier.testTag("google_auth_demo_consent_grant"),
                 ) { Text("合成データで許可") }
             },
             dismissButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(
-                        onClick = viewModel::denyPendingConsent,
+                        onClick = { viewModel.denyPendingConsent(pendingPreview) },
                         modifier = Modifier.testTag("google_auth_demo_consent_deny"),
                     ) { Text("拒否") }
                     TextButton(
-                        onClick = viewModel::cancelPendingConsent,
+                        onClick = { viewModel.cancelPendingConsent(pendingPreview) },
                         modifier = Modifier.testTag("google_auth_demo_consent_cancel"),
                     ) { Text("取消") }
                 }

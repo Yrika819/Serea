@@ -165,3 +165,43 @@ Parent addressed the flow-mapping escape in isolated branch `codex/serea-native-
 Agent C **ACCEPTED** the final artifact-guard fix at `7c8bfb05db14e8fbab17db75f4027ae13fc3b87e` / tree `eb3559263d679facf5afaf8bcc16a8b7d6244520`. The guard validates every upload-artifact `with.path` declaration, requires safe block lists, exact allowed file paths and rejects globs/flow mappings, including `with : {…}`. Raw emulator/ADB diagnostics are ephemeral and removed; the sanitized Native JUnit XML is uploaded. Contract, YAML, shell, Python compile and diff checks pass. This accepts artifact-boundary code statically only.
 
 Parent integrated that accepted descendant by normal fast-forward into PR #166's branch `codex/serea-g9rc-native-accepted`; PR #160 and #165 remain unchanged. PR #166 is now OPEN/DRAFT at source `7c8bfb05db14e8fbab17db75f4027ae13fc3b87e`, tree `eb3559263d679facf5afaf8bcc16a8b7d6244520`, base G7. New focused run `40904857394`, attempt 1, source-bound to that exact SHA: x86_64/API35 Native job `123556718172` and ARM64 software-emulated guest job `123556718597` are QUEUED; no artifacts, boot, model hash, JNI load, inference, or JUnit result yet. Earlier #166 run `40899129986` at `8dde330…` is historical and not evidence for this updated head.
+
+## Native context-bound integration checkpoint — 2026-10-29 16:02 UTC
+
+The existing PRs #162, #165, #166, #168, and #167 remain unchanged. A fresh Native candidate was created from the G7 base after Agent C accepted the capability-bound diff on PR #165's source; no inference evidence has been transferred.
+
+| PR | Source / tree | Current exact CI |
+|---|---|---|
+| #166 Native reference | `7c8bfb05db14e8fbab17db75f4027ae13fc3b87e` / `eb3559263d679facf5afaf8bcc16a8b7d6244520` | Focus run `40904857394` attempt 1; x86_64 job `123556718172` and ARM64 software-guest job `123556718597` QUEUED |
+| #168 Android UI fix | `272f68ecf7f8072b812b13e46064a108bab5ef2b` / `010eca037f28f5d5dd5818ed99a2601852a719e9` | Android run `40902585691`, Change Scope `123548599390` QUEUED; Fast `40902585494` PASS |
+| #169 Native capability integration | `87af6aab9c9db8f65e18ca18456256e03797ffb3` / `0fceca72877574acdd3cdbfa67b363dcabfb4dda` | Focused Native `40907496496`: x86_64 `123566146405` and ARM64 guest `123566148073` QUEUED. Android `40907496673`, Change Scope `123566146896` QUEUED. Full `40907496594` all 5 jobs QUEUED; Fast, RustSec, SQLite, Git Hooks, Beta Contract also QUEUED. |
+
+PR #169 is OPEN/DRAFT at `codex/serea-g9rc-native-context-integration`, base `codex/serea-g7-calendar-readiness` SHA `0560e1e7bcd13f0194eab8caca89d70ea5a2f142`. Its one follow-up commit `87af6aa` integrates the reviewed context/output/thread bounds into a new candidate; #165 and #166 are preserved. Agent C accepted the three-file diff on source #165 and is reviewing the full new candidate exact head; that review status is PENDING at this checkpoint.
+
+### Context and memory boundary
+
+`LocalModelRuntimeLimits` default context is 512, matching the pinned llama.cpp JNI maximum. The new candidate rejects context >512, output >256, and threads >2 in Kotlin construction as well as retaining the Native pre-allocation checks. The boundary test covers context 513, output 257, and threads 3. Widening limits requires backend capability evidence. The focused local command on the candidate tree content was `./gradlew --no-daemon testDebugUnitTest --tests app.serea.android.LocalModelChatAdapterTest --tests app.serea.android.LocalModelNativeRuntimeTest`: 25 tests, 0 failures/errors/skips. The test ran before the commit was made but against identical file contents; the resulting committed tree is `0fceca7…`.
+
+`maxModelFileBytes` constrains input file length, not resident memory. PSS/RSS observations are diagnostic only; there is no OS-enforced hard RAM cap. Native model ownership is single-lease and context/thread/output/file bounds reduce exposure but do not establish device memory acceptance. x86_64/ARM64 runtime on #169 is NOT_RUN while CI is queued. Ordinary Chat remains disconnected; Product Chat flag stays off.
+
+### Environment and Android status
+
+The local workspace has JDK 17 and Android SDK build/platform tools, but no Emulator binary/images and no `/dev/kvm`. Android CI also remains queued without runner assignment. The hosted Required gates, API26/35 UI, IME, Identity, Process Death, and Data Isolation on #168/#169 are NOT_RUN. No local substitute was counted as formal acceptance. The SDK manager initially could not validate the injected proxy certificate; using the system CA trust store allowed package-list inspection, but no Emulator package was installed. No credential or OAuth was used.
+
+PR #162 remains bound to its own exact-source artifacts: API26 and API35 each passed Required 105/105 and Process Death/Data Isolation, while their separate 16-test Google/Gmail UI stage had 2 failures. PR #168's proposed test-only repair has no runtime evidence yet. Keep Android/G9 acceptance PARTIAL.
+
+### Current disposition
+
+- Android Instrumentation Recovery: PARTIAL; #168/#169 runner jobs queued, new-head tests NOT_RUN.
+- Native Runtime: PARTIAL; #160's x86_64 two-turn pass remains exact-source historical evidence only. #166/#169 x86_64 and ARM64 guest runtime NOT_RUN.
+- ARM64 physical/runtime and Pixel 7a: NOT_RUN; software guest result cannot imply hardware acceptance.
+- G8/G9 closure: PARTIAL. G10: PARTIAL. Personal Beta: NO-GO.
+- Owner decisions O-01..O-10 unchanged; no main merge, OAuth, real Google data, Cloud key/billing, production signing, Pixel use, Beta distribution, or GO declaration.
+
+Next resume: monitor only existing run attempts above; once terminal, retrieve and hash artifacts, inspect API-specific JUnit and Native sanitized evidence, classify failures, and review the exact tested HEAD before any further integration. Do not retry queued jobs without a source-backed infrastructure diagnosis.
+
+## PR #169 review and runner update — 2026-10-29 16:03 UTC
+
+Agent C completed the full exact-HEAD review: **ACCEPTED** at `87af6aab9c9db8f65e18ca18456256e03797ffb3` / tree `0fceca72877574acdd3cdbfa67b363dcabfb4dda`. Review confirms the diff from #166 is only Kotlin capability-bound validation, a boundary test, and report text; limits align with existing JNI checks, no silent clamp or lifecycle/security change; Native artifact allowlist stays sanitized; ordinary Chat remains disconnected.
+
+Run `40907496496`, attempt 1, advanced: x86_64 job `123566146405` is IN_PROGRESS on runner `1000024660` at “Install pinned Android build and Emulator packages”; ARM64 software-guest job `123566148073` remains QUEUED. No APK, JUnit, model hash, JNI load, inference or runtime artifact exists yet. Android run `40907496673` Change Scope job `123566146896` remains QUEUED; other exact-head full/security/hooks/SQLite/contract jobs remain queued. PR #169 stays PARTIAL with x86_64 and ARM64 inference NOT_RUN.

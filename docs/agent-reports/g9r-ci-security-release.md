@@ -1,6 +1,6 @@
 # G9R CI, Security, and Release Evidence
 
-**Captured:** 2026-10-29 09:28 UTC  
+**Captured:** 2026-10-29 09:32 UTC
 **Agent:** C — CI / Security / Release  
 **ACTIVE_PHASE:** G8/G9 evidence recovery; independent security and release review  
 **GOAL_STATUS:** PARTIAL — source and exact-run evidence recovered; API26 Required passes on PR #149, while Google/Gmail UI and API35 IME diagnostic failures remain; current successor UI runs are queued. Native inference remains unproven.  
@@ -9,6 +9,8 @@
 **CHANGED_FILES:** this report only. Product code, required manifests, gates, existing PR branches, and protected `main` were not modified.
 
 This snapshot separates a test failure from a test that did not start. It does not reuse evidence across source SHAs. All test data was synthetic/Fake. No live OAuth, Google account, Cloud provider, production key, physical Pixel 7a, main merge, or Beta distribution was used.
+
+**Local environment:** `/workspace/.tools/temurin17/bin/javac` and Android `adb` are available. No emulator/system image, connected device, or `/dev/kvm` is available in this workspace. AndroidTest compilation is locally possible; this review lane did not execute it, and Agent B owns the current compile attempt.
 
 ## Authority and dependency graph
 
@@ -95,7 +97,7 @@ Other exact-head runs: Full CI `40842824328` PASS; RustSec `40842824232` PASS; F
 
 ### PR #152 — source `a9da3b7…`
 
-Android run `40844297910`: Change Scope job `123348731256` PASS; Dependency Audit `123350450336`, Security `123350450350`, Unit `123350450370`, Documentation `123350450382`, Build/Lint/Instrumentation Compile `123350450402`, and Integration `123350450465` remain queued without runners. Therefore no API26/35 UI result exists on #152. Fast CI `40844297989` PASS. Full CI `40844298004` is in progress (four jobs complete, macOS ARM64 `123347958495` active). Native `40844297921` and SQLite `40844297913` are partial/in progress with other jobs queued. RustSec `40844298116` and Git Hooks `40844297907` are queued.
+Android run `40844297910`: Change Scope job `123348731256` PASS; Security `123350450350` is in progress on runner `1000023736`; Dependency Audit `123350450336`, Unit `123350450370`, Documentation `123350450382`, Build/Lint/Instrumentation Compile `123350450402`, and Integration `123350450465` remain queued without runners. Therefore no API26/35 UI result exists on #152. Fast CI `40844297989` PASS. Full CI `40844298004` is in progress (four jobs complete, macOS ARM64 `123347958495` active). Native `40844297921` and SQLite `40844297913` are partial/in progress with other jobs queued. RustSec `40844298116` and Git Hooks `40844297907` are queued.
 
 Independent source review of the four AndroidTest-only changes is **ACCEPTED** at the exact tested code precursor `b553d68325b7c18dfbecaea2a9e92ebd15adad27` / tree `c494e20d34a961d16d67c4c882bc2eeb7b3b70f0`: unique semantics tags for ambiguous labels, test-owned Compose content via `createComposeRule`, substring account assertion, and timezone-aware query date derived from the fixed fixture instant. Required test identities and assertions remain. The current PR head adds the report file; UI/JUnit CI remains pending. Local AndroidTest compilation at the precursor passed; that compile is not a runtime result and is not promoted to exact-head CI evidence.
 
@@ -103,7 +105,7 @@ Independent source review of the four AndroidTest-only changes is **ACCEPTED** a
 
 Android run `40844961565`: Change Scope `123350084172` PASS; Unit `123357717576`, Dependency Audit `123357717636`, Integration `123357717676`, Security `123357717680`, and Build/Lint/Instrumentation Compile `123357717711` remain queued. Documentation job `123357719925` was skipped. No API26/35 UI JUnit is present. Full CI `40844961537` has four jobs PASS and macOS ARM64 `123350084499` queued; Native `40844961372` has completed passes, in-progress, and queued jobs; SQLite `40844961545` has both producer jobs PASS, one consumer in progress and one queued. RustSec `40844961783`, Fast `40844961637`, Git Hooks `40844961944` PASS.
 
-The test-only source patch is **ACCEPTED** by independent review: after Activity recreation, a bounded 10-second wait checks `RESUMED`, decor attached/shown/window-focused before the existing focus, selection, real Test IME, `commitText`, content and cleanup assertions. On timeout it records lifecycle/window state. It adds no unconditional sleep and removes no assertion. Exact-head local compile and emulator execution remain NOT_RUN; the PR's CI instrumentation jobs remain queued. Acceptance is limited to source safety/intent, not to runtime behavior.
+The test-only source patch is **ACCEPTED** by independent review: after Activity recreation, a bounded 10-second wait checks `RESUMED`, decor attached/shown/window-focused before the existing focus, selection, real Test IME, `commitText`, content and cleanup assertions. On timeout it records lifecycle/window state. It adds no unconditional sleep and removes no assertion. JDK17 compilation is locally possible, but exact-head local compile and emulator execution were NOT_RUN in this lane; Agent B owns the current compile attempt. The PR's CI instrumentation jobs remain queued. Acceptance is limited to source safety/intent, not to runtime behavior.
 
 ### PR #154 — source `90913b4…`
 
@@ -150,6 +152,6 @@ The current source file `docs/plans/2026-10-26-personal-beta-owner-decision-ledg
 **ARTIFACT_IDS:** PR #149 API26 `12872143095` (`sha256:ebdd9e7a9f5343e9dfacba91abed7ba75b4bf56a338fa35cbe3582160ae4f34e`); API35 `12872631908` (`sha256:bd32cb1a21e26a257c429bc74bd0158f41c819072af835204f953232dc4f8978`); PR #147 native diagnostic `12883594935` (`sha256:e4ed10a1ec5d14a38bbf2e861b30b196d7e3b8e0e325dc1869df3c3c63760cb1`). PR #151 Android artifact IDs/digests are listed above.  
 **SECURITY_IMPACT:** Documentation-only; records fail-closed review boundaries, current product evidence, artifact/provenance limitations and Owner approval boundary.  
 **REVIEW_STATUS:** Pending Parent review of this evidence report. Native runtime remains BLOCKED; Android/G9 product acceptance remains PARTIAL.  
-**KNOWN_ISSUES:** current Android runners are unassigned; #149 API26 UI and API35 IME diagnostic failed; #152/#153 Android UI runs are queued; native runner exception cause is unresolved; APK inner hash/signer is unverified; Owner decision ID sources conflict.  
+**KNOWN_ISSUES:** #151 API26/35 Storage and Emulator runner is unassigned; #152 Security is active but other Android jobs are queued; #153 Android UI jobs are queued; #149 API26 UI and API35 IME diagnostic failed; native runner exception cause is unresolved; APK inner hash/signer is unverified; Owner decision ID sources conflict.
 **NEXT_ACTION:** Parent review; append new Native/Android candidate review and CI evidence after delivery; do not merge.  
 **OWNER_APPROVAL_REQUIRED:** Beta package and coexistence; OAuth/project/scopes; Gmail Restricted scope; cloud provider/eligibility/cost; model redistribution/default; production signing and distribution; Pixel 7a access; main merge; Personal Beta GO.

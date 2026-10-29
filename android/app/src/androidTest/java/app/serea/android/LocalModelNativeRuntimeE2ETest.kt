@@ -264,28 +264,36 @@ class LocalModelNativeRuntimeE2ETest {
         }
         try {
             Log.i("SereaLocalNativeRuntime", "stage=wait_for_active_native_generation")
-            val generatedTokensBeforeCancel = withTimeoutOrNull(45_000) {
+            val cancellationTarget = withTimeoutOrNull(45_000) {
                 while (true) {
                     val sequence = jniSeam.generationSequence()
                     val progress = jniSeam.generationProgress()
+                    val generationId = jniSeam.generationId()
+                    val outcome = jniSeam.generationOutcome()
                     if (sequence > generationSequenceBefore && progress == -2) {
                         Log.e(
                             "SereaLocalNativeRuntime",
-                            "stage=cancel_progress_terminal_before_cancel sequence=$sequence",
+                            "stage=cancel_progress_terminal_before_cancel sequence=$sequence " +
+                                "generation_id=$generationId outcome=$outcome",
                         )
                         throw IllegalStateException("Native generation completed before cancellation could be issued.")
                     }
-                    if (sequence > generationSequenceBefore && progress > 0) return@withTimeoutOrNull progress
+                    if (sequence > generationSequenceBefore && progress > 0 &&
+                        generationId > 0L && outcome == NativeJniFailureSeam.GENERATION_OUTCOME_ACTIVE
+                    ) {
+                        return@withTimeoutOrNull Triple(sequence, generationId, progress)
+                    }
                     delay(5)
                 }
                 @Suppress("UNREACHABLE_CODE")
-                0
+                Triple(0, 0L, 0)
             }
-            assertNotNull(
+            val activeTarget = cancellationTarget ?: throw AssertionError(
                 "timed out waiting for active native generation; " +
-                    "sequence=${jniSeam.generationSequence()} progress=${jniSeam.generationProgress()}",
-                generatedTokensBeforeCancel,
+                    "sequence=${jniSeam.generationSequence()} progress=${jniSeam.generationProgress()} " +
+                    "generation_id=${jniSeam.generationId()} outcome=${jniSeam.generationOutcome()}",
             )
+            val (generationSequenceAtCancel, generationIdAtCancel, generatedTokensBeforeCancel) = activeTarget
             val cancellationStarted = SystemClock.elapsedRealtime()
             cancellationJob.cancel()
             val cancelJoinCompleted = withTimeoutOrNull(15_000) {
@@ -293,6 +301,43 @@ class LocalModelNativeRuntimeE2ETest {
                 true
             } == true
             assertTrue("cancellation coroutine did not join within 15 seconds", cancelJoinCompleted)
+            assertTrue("cancelled request must not return normally", cancellationJob.isCancelled)
+            val nativeCancellationTerminal = withTimeoutOrNull(15_000) {
+                while (true) {
+                    val sequence = jniSeam.generationSequence()
+                    val generationId = jniSeam.generationId()
+                    val outcome = jniSeam.generationOutcome()
+                    val progress = jniSeam.generationProgress()
+                    if (sequence == generationSequenceAtCancel && generationId == generationIdAtCancel &&
+                        outcome == NativeJniFailureSeam.GENERATION_OUTCOME_CANCELLED && progress == -2
+                    ) {
+                        return@withTimeoutOrNull true
+                    }
+                    delay(5)
+                }
+                @Suppress("UNREACHABLE_CODE")
+                false
+            } == true
+            assertTrue(
+                "timed out waiting for matching native cancellation terminal state; " +
+                    "expected_sequence=$generationSequenceAtCancel expected_generation_id=$generationIdAtCancel " +
+                    "sequence=${jniSeam.generationSequence()} generation_id=${jniSeam.generationId()} " +
+                    "outcome=${jniSeam.generationOutcome()} progress=${jniSeam.generationProgress()} " +
+                    "cancel_observed_generation_id=${jniSeam.cancelObservedGenerationId()}",
+                nativeCancellationTerminal,
+            )
+            assertEquals("JNI must retain the requested generation identity", generationIdAtCancel, jniSeam.generationId())
+            assertEquals("native generation sequence must still identify the cancelled request", generationSequenceAtCancel, jniSeam.generationSequence())
+            assertEquals(
+                "the matching native generation must observe cancellation before returning",
+                generationIdAtCancel,
+                jniSeam.cancelObservedGenerationId(),
+            )
+            assertEquals(
+                "normal completion must not satisfy the cancellation test",
+                NativeJniFailureSeam.GENERATION_OUTCOME_CANCELLED,
+                jniSeam.generationOutcome(),
+            )
             cancellationAdapter.close()
             assertTrue(
                 "JNI generation must unwind and release within 15 seconds of cancellation",
@@ -300,6 +345,16 @@ class LocalModelNativeRuntimeE2ETest {
             )
             val cancellationLatencyMs = SystemClock.elapsedRealtime() - cancellationStarted
             assertTrue("JNI cancel must reach an active native generation", jniSeam.nativeCancelCount() > cancelCountBefore)
+            assertEquals(
+                "nativeFree must observe the same generation's cancellation result before release",
+                generationIdAtCancel,
+                jniSeam.cancelledReleaseGenerationId(),
+            )
+            assertEquals(
+                "nativeFree must observe the cancellation result for the same generation sequence",
+                generationSequenceAtCancel,
+                jniSeam.cancelledReleaseSequence(),
+            )
             assertTrue("native cancellation latency exceeded 15 seconds", cancellationLatencyMs <= 15_000)
             assertEquals(
                 "post-dispatch cancellation must keep usage outcome unknown",
@@ -309,7 +364,8 @@ class LocalModelNativeRuntimeE2ETest {
             assertEquals("native generation progress must be terminal after release", -2, jniSeam.generationProgress())
             Log.i(
                 "SereaLocalNativeRuntime",
-                "stage=jni_cancellation_pass tokens_before_cancel=$generatedTokensBeforeCancel " +
+                "stage=jni_cancellation_pass generation_sequence=$generationSequenceAtCancel " +
+                    "generation_id=$generationIdAtCancel tokens_before_cancel=$generatedTokensBeforeCancel " +
                     "cancel_to_release_ms=$cancellationLatencyMs",
             )
         } finally {
@@ -426,8 +482,20 @@ class LocalModelNativeRuntimeE2ETest {
 
 /** JNI failure injection exists only in the focused isolated native-runtime build. */
 class NativeJniFailureSeam {
+    companion object {
+        const val GENERATION_OUTCOME_ACTIVE = 1
+        const val GENERATION_OUTCOME_COMPLETED = 2
+        const val GENERATION_OUTCOME_CANCELLED = 3
+        const val GENERATION_OUTCOME_FAILED = 4
+    }
+
     external fun failNextLoadAfterModel()
     external fun generationProgress(): Int
     external fun generationSequence(): Int
     external fun nativeCancelCount(): Int
+    external fun generationId(): Long
+    external fun generationOutcome(): Int
+    external fun cancelObservedGenerationId(): Long
+    external fun cancelledReleaseGenerationId(): Long
+    external fun cancelledReleaseSequence(): Int
 }

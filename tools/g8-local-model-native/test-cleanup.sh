@@ -13,6 +13,14 @@ cat > "$TEMPLATE_BIN/adb" <<'ADB'
 set -euo pipefail
 
 if [[ "${1:-}" == -s ]]; then shift 2; fi
+if [[ "${1:-}" == get-state ]]; then
+    if [[ "${FAKE_ADB_OFFLINE:-0}" == 1 ]]; then
+        echo 'error: device offline' >&2
+        exit 1
+    fi
+    echo 'device'
+    exit 0
+fi
 if [[ "${1:-}" == shell && "${2:-}" == pm && "${3:-}" == list && "${4:-}" == packages ]]; then
     include_uninstalled=false
     if [[ "${5:-}" == -u ]]; then
@@ -20,6 +28,10 @@ if [[ "${1:-}" == shell && "${2:-}" == pm && "${3:-}" == list && "${4:-}" == pac
         package="${6:-}"
     else
         package="${5:-}"
+    fi
+    if [[ "${FAKE_ADB_OFFLINE:-0}" == 1 ]]; then
+        echo 'adb: device offline' >&2
+        exit 1
     fi
     [[ "${FAIL_APP_PRIVATE_PACKAGE_QUERY:-0}" != 1 || "$package" != app.serea.android.isolated || \
        "$include_uninstalled" == true ]] || exit 28
@@ -152,6 +164,9 @@ grep -Fxq 'host_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'app_private_owner_package_state=INSTALLED' "$report"
 grep -Fxq 'app_private_owner_package_query_exit_code=0' "$report"
 grep -Fxq 'app_private_owner_package_query_matches=package:app.serea.android.isolated;package:app.serea.android.isolated.test' "$report"
+grep -Fxq 'app_private_owner_package_query_diagnostic=NONE' "$report"
+grep -Fxq 'device_connectivity_state=DEVICE' "$report"
+grep -Fxq 'device_connectivity_exit_code=0' "$report"
 grep -Fxq 'app_private_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'device_temp_model_final_state=ABSENT_VERIFIED' "$report"
 grep -Fxq 'test_package_final_state=ABSENT_VERIFIED' "$report"
@@ -195,6 +210,32 @@ assert_cleanup_failure app_package_uninstall FAIL_APP_UNINSTALL=1
 assert_cleanup_failure host_model_rm FAIL_HOST_MODEL_RM=1
 assert_cleanup_failure preserve_primary_status FAIL_TEST_UNINSTALL=1 42
 
+prepare_case retain_primary_failure_context
+status="$(run_case retain_primary_failure_context SEREA_CLEANUP_TEST_FAIL_COMMAND=1 1 FAIL_TEMP_RM=1)"
+[[ "$status" == 1 ]]
+grep -Fxq 'primary_failure_status=1' "$CASE_ROOT/stderr.log"
+grep -Fxq 'primary_failure_stage=TEST_PRIMARY_COMMAND_FAILURE' "$CASE_ROOT/stderr.log"
+grep -Eq '^primary_failure_line=[0-9]+$' "$CASE_ROOT/stderr.log"
+grep -Fxq 'cleanup_outcome=FAIL' "$CASE_ROOT/stderr.log"
+! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+
+prepare_case sanitized_failure_summary
+status="$(run_case sanitized_failure_summary SEREA_CLEANUP_TEST_DIAGNOSTICS=1 42 FAIL_TEMP_RM=1)"
+[[ "$status" == 42 ]]
+grep -Fxq 'primary_failure_status=42' "$CASE_ROOT/stderr.log"
+grep -Fxq 'primary_failure_stage=UNCLASSIFIED_EXIT' "$CASE_ROOT/stderr.log"
+grep -Fxq 'adb_instrumentation_exit=1' "$CASE_ROOT/stderr.log"
+grep -Fxq 'instrumentation_code=0' "$CASE_ROOT/stderr.log"
+grep -Fxq 'tests=2' "$CASE_ROOT/stderr.log"
+grep -Fxq 'failures=1' "$CASE_ROOT/stderr.log"
+grep -Fxq 'native_result=FAIL_OR_NOT_REACHED' "$CASE_ROOT/stderr.log"
+if grep -Fq 'generated_content=DO_NOT_PRINT' "$CASE_ROOT/stderr.log"; then
+    echo 'FAIL: cleanup failure diagnostics printed raw generated content' >&2
+    exit 1
+fi
+[[ ! -e "$EVIDENCE_DIR" ]]
+! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+
 # `-u` must detect uninstalled records that retain app data, and failed `-u`
 # cleanup probes must never publish success evidence.
 assert_cleanup_failure retained_package_data RETAIN_AFTER_UNINSTALL=1
@@ -207,7 +248,17 @@ status="$(run_case app_private_package_query_failure FAIL_APP_PRIVATE_PACKAGE_QU
 grep -Fxq 'app_private_owner_package_state=QUERY_FAILED' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'app_private_owner_package_query_exit_code=28' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'app_private_owner_package_query_matches=QUERY_COMMAND_FAILED' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_owner_package_query_diagnostic=ADB_COMMAND_FAILED' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'app_private_model_final_state=NOT_VERIFIED' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'cleanup_outcome=FAIL' "$EVIDENCE_DIR/cleanup-boundary.txt"
+! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
+
+prepare_case adb_device_offline
+status="$(run_case adb_device_offline FAKE_ADB_OFFLINE=1 0 FAIL_EVIDENCE_RM=1)"
+[[ "$status" != 0 ]]
+grep -Fxq 'app_private_owner_package_state=QUERY_FAILED' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'app_private_owner_package_query_diagnostic=DEVICE_OFFLINE' "$EVIDENCE_DIR/cleanup-boundary.txt"
+grep -Fxq 'device_connectivity_state=DEVICE_OFFLINE' "$EVIDENCE_DIR/cleanup-boundary.txt"
 grep -Fxq 'cleanup_outcome=FAIL' "$EVIDENCE_DIR/cleanup-boundary.txt"
 ! grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
 

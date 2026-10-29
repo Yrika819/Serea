@@ -134,7 +134,8 @@ class GoogleTrustedHandoffShellTest {
         excludedMetadata: List<String>,
         surface: String,
     ) {
-        assertEquals("$surface should contain only the selected Gmail body.", expectedBody, text)
+        val bodyOccurrences = text.windowed(expectedBody.length).count { it == expectedBody }
+        assertEquals("$surface should contain the selected Gmail body exactly once.", 1, bodyOccurrences)
         excludedMetadata.forEach { value ->
             assertFalse("$surface leaked excluded Gmail metadata: $value", text.contains(value))
         }

@@ -625,3 +625,7 @@ Agent A completed exact-source verification for #177 run `40927164825`, attempt 
 PR #178 at `a7f5b407d400b611df2c5f9260eede9b62f41b59` / tree `9bb6f18000d841fc436b3caa6b20c92a329ed5ae` has final independent ACCEPTED from Agents B and C. Its exact-source run set is queued/pending as listed above; no hosted ARM64 preflight result yet.
 
 - Exact #177 runtime evidence reports target APK SHA-256 `7b7bd92b2807d3384e2f62bef9dc4df0c84a03ec260fc709c09b4f0b5015fed3` and instrumentation APK SHA-256 `5f1a4c5eb508af0e2529652cf465fe6d8e2dcefc69b4012eb1e99886e2e1c6cd`. APK files/signing certificate identity are not included in the sanitized evidence artifact; signer verification remains NOT_REPORTED.
+
+### Independent Native security review
+
+Agent C independently **ACCEPTED** PR #177's isolated Native diagnostic and exact x86 E2E contract at `08335a0a21f08a3f5061e84a1fb85cea435d18ae` / tree `6d31abef3a1b9dc559d054e4be163217b8a0b904`, with no findings requiring changes. Review covered serialized process lease/generation, JNI exception containment and RAII, cancellation identity and deferred release, pinned model/llama identity plus size/hash checks, context/output/thread limits, distinction between file-size bounds and observed PSS, Egress/Usage composition and local accounting, offline APK permissions, cleanup and artifact sanitization. The finding is scoped to this isolated diagnostic and x86 evidence; ARM64 remains NOT_RUN and is not accepted by this review.

@@ -435,3 +435,19 @@ PR147_EXACT_NATIVE_RUN=40843204437 attempt 1 IN_PROGRESS runner 1000023588
 PR147_NATIVE_INFERENCE=NOT_RUN_PENDING_RUN
 PR151_FORMAL_CI=IN_PROGRESS_AND_QUEUED; no exact-head Android UI evidence
 ```
+
+## Lane B test-only successor review — 2026-10-29 08:43 UTC
+
+Lane C **ACCEPTS** the unpushed PR #151 successor's test changes at `b553d68325b7c18dfbecaea2a9e92ebd15adad27` / tree `c494e20d34a961d16d67c4c882bc2eeb7b3b70f0`, base exact #151 head `d4a36fb5d3613bca2d60151de0991a1baac72fc9` / tree `b78a84b60ef5a2d344eabdda85b1154e62be46d7`. Its report-only commit is `5df5b9b48a94e52cfafafd4c34dfbba06811b2f2` / tree `08a7d7341ad5208564f6dcec128fc0a74b0a68a1`. Lane C independently verified the commit parents, changed file list and `git diff --check`.
+
+The patch touches only four AndroidTest files: it replaces ambiguous consent/account text selectors with stable tags, uses `createComposeRule()` in the test that owns `setContent`, changes an account-label assertion to substring matching, and queries the fixture event's local date by converting its fixed instant through the device `ZoneId`. The app-shell integration test asserts the expected `demo-primary` calendar is selected, and timeout messages include the device zone/date. No app source, Composition Root, MainActivity, required test identity/count, or gate predicate changes. The Loopback UI remains synthetic and bound to MockWebServer; no real OAuth or provider data is used.
+
+The recorded exact-source instrumentation compile passes on code SHA `b553d68…` / tree `c494e20…`. API26/35 UI JUnit remains **NOT_RUN** for this successor because no local device is available. The report correctly says the PR #149 API26 date timeout's root cause remains uncertain; the timezone-based query is a bounded test hypothesis, not a confirmed product fix. API35 remains blocked by the separate IME diagnostic failure from base evidence. The exact successor needs new emulator CI before the affected UI tests can be called passing; no PR #149 artifact or outcome transfers to it. The successor is unpushed as of this checkpoint; remote PR #151 remains at `d4a36fb…`.
+
+```text
+LANE_B_GMAIL_SOURCE_TEST=ACCEPTED at 4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd / b19a6c52a8e8d4ff1c8365d435c047d0aceb300b
+LANE_B_G9_UI_TEST_PATCH=ACCEPTED at b553d68325b7c18dfbecaea2a9e92ebd15adad27 / c494e20d34a961d16d67c4c882bc2eeb7b3b70f0
+LANE_B_G9_UI_JUNIT=NOT_RUN
+PR149_API26_DIAGNOSTIC=5/16 FAIL; date-timeout cause UNCONFIRMED
+PR149_API35_GOOGLE_UI=NOT_RUN after required IME diagnostic failure
+```

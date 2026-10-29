@@ -21,3 +21,13 @@ This ledger collects approvals that must come from the Owner. Until approved, af
 - Lane C PR #121's adversarial test changes remain independently reviewable; selected JVM tests are present on Lane A. Neither lane PR has been merged.
 - PR #117 Required evidence applies only to its frozen SHA. The functional integration candidate still needs its own formal Required and cross-platform runs after the Draft PR is opened.
 - Personal Beta remains NO-GO. Real service use, production signing/distribution, physical device acceptance, main merge and final GO stay Owner-controlled.
+
+## G9R campaign update — 2026-10-29 11:40 UTC
+
+This update supersedes the dated technical snapshot above for current progress. Owner decisions O-01 through O-06 remain outstanding or blocked as stated; no approval is requested or implied by this update.
+
+- Current parent G9R candidate: PR #155, source `683854ba94cb3a1e1972b73d0f1f60392f2271d6`, tree `e6228614a6acf7d3ac440c66b7038bc8728f05ee`. API26 Required is 105/105 (103 Required + 2 Additional), 0 failures/errors/skips. Separate API26 Google/Gmail UI is 16 tests with 3 failures. API35's bounded Chat/IME diagnostic failed with `windowFocus=false`; API35 Required and Google/Gmail UI are NOT_RUN. The exact-source Required Gate is failed because the emulator result was not accepted. No gate was altered.
+- Process Death and Data Isolation have independent passing evidence on that #155 run. No Pixel 7a device was used; the CI reacceptance bundle is not physical-device acceptance.
+- Native PR #158, source `80e9990625b000e9d56a78743a7460ac120d4979` / tree `a07d653dd7a6a03323f81fa2332ae14a91eaceaf`, has local focused JVM/compile evidence but no successful real model inference. Its current hosted run was in progress at 11:40 UTC. Independent review requested generation-bound cancellation evidence; this remains open pending a successor source and review.
+- The standard local model is UNDECIDED. LFM3, Bonsai 2, Qwen3.5, Gemma 4 and FunctionGemma remain candidates at static metadata/license/format screening only. No Serea model comparison or Pixel 7a measurement has been completed.
+- Google access remains Fake-only, Cloud AI remains disabled, and no credentials, account data, production signing key, device, or distribution were used. Personal Beta remains NO-GO.

@@ -1,6 +1,7 @@
 package app.serea.android
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -16,6 +17,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
 import app.serea.android.gmail.GmailProviderKind
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -54,6 +57,7 @@ class GoogleAuthorizationAppIntegrationTest {
 
         val grantedSession = checkNotNull(viewModel.calendarDemoSession.value)
         assertEquals(CalendarProviderKind.FAKE, grantedSession.kind)
+        assertEquals("demo-primary", runBlocking { grantedSession.listCalendars().first().id.value })
         compose.onNodeWithTag("google_auth_demo_open_calendar").performScrollTo().performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("google_auth_demo_calendar_destination").fetchSemanticsNodes().isNotEmpty()
@@ -62,9 +66,21 @@ class GoogleAuthorizationAppIntegrationTest {
 
         compose.onNodeWithText("指定日").performClick()
         compose.onNodeWithTag("calendar_date_input").performTextClearance()
-        compose.onNodeWithTag("calendar_date_input").performTextInput("2026-10-20")
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
+        val reviewDate = Instant.parse("2026-10-20T00:00:00Z")
+            .atZone(ZoneId.systemDefault()).toLocalDate().toString()
+        compose.onNodeWithTag("calendar_date_input").performTextInput(reviewDate)
+        compose.onNodeWithTag("calendar_date_input").assertTextContains(reviewDate, substring = true)
+        compose.onNodeWithText("Demo Personal").assertIsSelected()
+        try {
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithText("Design review").fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (failure: AssertionError) {
+            throw AssertionError(
+                "Design review missing for fixture instant 2026-10-20T00:00:00Z; " +
+                    "deviceZone=${ZoneId.systemDefault().id}, queryDate=$reviewDate, selectedCalendar=demo-primary",
+                failure,
+            )
         }
         compose.onNodeWithText("Design review").assertIsDisplayed()
 

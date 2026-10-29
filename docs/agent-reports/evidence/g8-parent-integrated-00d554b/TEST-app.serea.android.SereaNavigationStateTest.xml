@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.SereaNavigationStateTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-29T01:16:09.704Z" hostname="3b4a6afe349d" time="0.002">
+  <properties/>
+  <testcase name="invalidCurrentDestinationFallsBackToChat" classname="app.serea.android.SereaNavigationStateTest" time="0.001"/>
+  <testcase name="allSixDestinationsAreRegisteredExactlyOnce" classname="app.serea.android.SereaNavigationStateTest" time="0.0"/>
+  <testcase name="navigationBuildsAndPopsBackStackInOrder" classname="app.serea.android.SereaNavigationStateTest" time="0.001"/>
+  <testcase name="restorationDropsUnknownRoutesAndBoundsBackStack" classname="app.serea.android.SereaNavigationStateTest" time="0.0"/>
+  <testcase name="selectingCurrentDestinationDoesNotCreateDuplicateRoute" classname="app.serea.android.SereaNavigationStateTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

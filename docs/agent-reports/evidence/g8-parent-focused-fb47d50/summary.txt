@@ -1,0 +1,7 @@
+Source HEAD: fb47d5027cb1f27988c3b40c56688540ae7d969f
+Source tree: 55a17e762bf21d98a629fd182ce1d6259bb5916a
+Environment: checksum-verified Temurin 17 with managed proxy and truststore.
+Command ran the 14 focused OAuth, Calendar mock, Gmail parser/session/read-port/ViewModel, Google-origin egress, body-lineage, Usage, and Trusted Handoff test classes, followed by :app:compileIsolatedAndroidTestKotlin.
+Result: BUILD SUCCESSFUL in 1m41s; 55 tasks executed.
+JVM JUnit: 171 tests, zero failures/errors/skips.
+Android instrumentation source compilation: PASS. No emulator or connected Android UI execution was run.

@@ -1,0 +1,39 @@
+Parent independent focused verification — 2026-10-29 UTC
+
+Source: Agent A PR #145 HEAD f857b29a9b2c12e61b347eed595a5dfa51d3aba9
+Tree:   a7b713ec89c39167250017d5fa86f5745d3d0f42
+Review worktree: /workspace/Serea-g8-oauth-review-20261029
+Host: Linux x86_64
+
+Command:
+JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH \
+  ./gradlew --no-daemon :app:testDebugUnitTest \
+    --tests app.serea.android.googleauth.GoogleAuthorizationLifecycleTest \
+    --tests app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest \
+    --tests app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest
+
+Result: BUILD SUCCESSFUL in 1m11s. Selected JUnit total: 36 tests, 0 failures,
+0 errors, 0 skipped (Lifecycle 13, Calendar loopback integration 3, Calendar
+HTTP read port 20). This includes stale Account A callback after switching to
+Account B, stale Calendar Confirm after cancellation and a later Gmail preview,
+same-feature preview replacement, double Confirm, no unauthorized scope grant,
+no session creation, and no MockWebServer request.
+
+JUnit files and SHA-256:
+* TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml
+  f300901c10bcd31606275d1c41e99103c3e76182c007def3b2322238854bcdbd
+* TEST-app.serea.android.googleauth.GoogleCalendarDemoLoopbackIntegrationTest.xml
+  de143fa466b8a29d57b23f9b99fbaf194bd8853db999d7886b6ae76fd8848467
+* TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml
+  3cc2a4c6e012f71389f78fa4df9184ee936a8159ae4b0ed2a9396322070e5a1b
+
+Android test-source compilation passed on Agent A's preceding code HEAD
+63b459d1ac1b2a177ad752aa57a19a8bc9a8decd. The follow-up f857b29 changes only
+the JVM lifecycle test file; Android source and instrumented-test source are
+unchanged. Android UI runtime execution remains NOT_RUN.
+
+The full-suite JUnit verifier was not applicable to this focused subset: it
+reported the other, intentionally unselected source test classes as missing.
+The three selected XML files were parsed directly and all totals were zero-fail.
+The first local attempt selected Java 21 runtime without javac and stopped
+before test execution; rerunning with the installed Temurin 17 JDK succeeded.

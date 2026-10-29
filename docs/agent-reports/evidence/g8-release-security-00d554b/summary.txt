@@ -1,0 +1,34 @@
+Parent integrated candidate release/security preflight — 2026-10-29 UTC
+
+Source HEAD: 00d554b56c93a27704748fa2923b0c0a180588ed
+Tree:       fbd019ed91b7dc9f5e776f0873ff8e895b76ab9f
+Host:       Linux x86_64, Temurin 17 JDK
+
+Build command:
+JAVA_HOME=/workspace/.tools/temurin17 PATH=/workspace/.tools/temurin17/bin:$PATH \
+  ./gradlew --no-daemon :app:assembleDebug :app:lintDebug \
+    :app:compileIsolatedAndroidTestKotlin
+Result: BUILD SUCCESSFUL in 2m01s (70 tasks; 29 executed, 41 up-to-date).
+
+Artifact:
+* Path: android/app/build/outputs/apk/debug/app-debug.apk (not committed)
+* Size: 12,368,206 bytes
+* SHA-256: e0c67ece2cad3833e5d84d88c31b0d918a853091d76230438480696d5392d14d
+* aapt package: app.serea.android.demo
+* Version: 0.1.0-demo (versionCode 1), min SDK 26, target SDK 35
+* This is a debug/demo APK, not a Beta release or Owner-signed artifact.
+
+SBOM:
+* CycloneDX 1.5 lockfile inventory: 317 locked components, SHA-256
+  37fd0170d1f4cc40fcc739cf557ef08d2015e2804b74d4e6b683550164f1f5b1
+* APK-bound CycloneDX, source-bound to the HEAD above, SHA-256
+  3109bc085df1cfd5fadbe486a503a41247e8236878389072db401eccbfbfd093
+* APK SHA-256 is embedded as the BOM subject property.
+
+Scope limits: this inventory does not include dependency graph edges, prove
+which locked Maven artifacts are packaged, verify publishers or artifact
+hashes, include build plugins/wrapper/Android SDK, or attest APK-to-source
+reproducibility. It is not a complete release SBOM. No Owner signing key,
+Beta package, OAuth, Cloud key/billing, production distribution, or physical
+device was used. Native model/JNI dependencies and redistribution review remain
+open.

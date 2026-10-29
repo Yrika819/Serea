@@ -3,6 +3,12 @@
          request isolated to this instrumentation target; debug and beta variants do not use it. -->
     <uses-permission android:name="app.serea.android.r25testime.permission.DIAGNOSTICS" />
     <application>
+        <activity
+            android:name=".FakeGoogleProcessDeathHarnessActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:permission="android.permission.DUMP"
+            android:launchMode="singleTask" />
         <receiver
             android:name=".ProcessDeathHarnessReceiver"
             android:exported="true"

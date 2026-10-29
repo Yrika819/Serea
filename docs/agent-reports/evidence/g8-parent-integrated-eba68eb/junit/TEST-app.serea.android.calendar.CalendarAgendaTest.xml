@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.calendar.CalendarAgendaTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:03:24.967Z" hostname="3b4a6afe349d" time="0.047">
+  <properties/>
+  <testcase name="rangeIsHalfOpenIncludesOverlapsSortsByInstantAndSkipsCancelled" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.024"/>
+  <testcase name="todayTomorrowUseInjectedDeviceTimezoneAndCalendarDays" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.003"/>
+  <testcase name="partialPageFailureTimeoutCancellationAndLimitsNeverReturnPartialAgenda" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.001"/>
+  <testcase name="pageAggregationDeduplicatesInstancesAndHandlesEmptyIntermediatePages" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.007"/>
+  <testcase name="malformedPageResponseIsRejectedAsIncomplete" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.003"/>
+  <testcase name="appShellDemoWorkUpcomingContainsPagedEventFiftyInSortedSecondPage" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.001"/>
+  <testcase name="dstFallBackDateWindowCanBeTwentyFiveHours" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.001"/>
+  <testcase name="localDateWindowsUseDstBoundariesInsteadOfTwentyFourHourAddition" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.004"/>
+  <testcase name="permissionAndEmptyAgendaAreExplicit" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.001"/>
+  <testcase name="nextUpcomingExcludesAllDayAndPastTimedEvents" classname="app.serea.android.calendar.CalendarAgendaTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

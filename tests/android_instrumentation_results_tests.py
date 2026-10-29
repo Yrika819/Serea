@@ -140,8 +140,8 @@ class InstrumentationResultTests(unittest.TestCase):
         self.assertEqual(103, len(required_tests))
         self.assertEqual(2, len(additional_tests))
         self.assertFalse(required_tests & additional_tests)
-        # Eight existing exploratory identities plus seven focused handoff UI cases.
-        self.assertEqual(15, len(non_required_tests))
+        # Explicit non-required diagnostics and focused UI cases stay outside the 105 formal tests.
+        self.assertEqual(21, len(non_required_tests))
         self.assertFalse(non_required_tests & (required_tests | additional_tests))
         required: dict[str, int] = {}
         for class_name, _ in required_tests:

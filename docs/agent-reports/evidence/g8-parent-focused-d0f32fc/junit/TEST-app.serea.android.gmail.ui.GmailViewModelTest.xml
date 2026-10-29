@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.gmail.ui.GmailViewModelTest" tests="30" skipped="0" failures="0" errors="0" timestamp="2026-10-29T00:43:01.778Z" hostname="3b4a6afe349d" time="0.114">
+  <properties/>
+  <testcase name="authorizationBoundariesCoverDeniedMissingScopeExpiredAndRevokedWithoutReadingMailbox" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.034"/>
+  <testcase name="searchSuccessAndNoResultsAreDistinctFromErrors" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="authorizedSessionAcceptsOnlyGoogleApiSourcedMessages" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="longBodyChunksPreserveAllTextAndNeverSplitSurrogatePairs" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.006"/>
+  <testcase name="htmlSafeTextFallbackAndMissingBodyHaveExplicitPresentation" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.0"/>
+  <testcase name="cursorLoopDetectionSurvivesOpeningAndLeavingMessageDetail" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.003"/>
+  <testcase name="providerCancellationStopsProgressAndDoesNotLogFixtureContent" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.003"/>
+  <testcase name="emptyPageWithContinuationCanAdvanceToLaterMessages" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="searchProviderFailureShowsSafeRecoverableError" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="threadMessagesAreOrderedAndSelectableInsideTheThread" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.004"/>
+  <testcase name="inboxLoadsFictionalMessagesAndRetainsGmailLineage" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="emptyInboxIsAStableEmptyState" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="conflictingDuplicateIdsAreRejectedAndExactDuplicatesCollapse" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="repeatedAndBlankPagingTokensBecomeSafeDataErrors" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="backFromSearchReloadsInboxInsteadOfShowingSearchRows" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="leavingSearchCancelsItAndLateResultsCannotReplaceInbox" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="searchAThenBDiscardsLateAResult" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="pageTokensArePassedThroughAndDuplicateIdsAcrossPagesAreCollapsed" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="legacySearchSavedStateIsClearedAndRestoresInboxWithoutTheQuery" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="retryAfterPagedFailureUsesTheSameOpaqueCursor" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="processRestorationReloadsInboxDetailsButNeverSavesSearchTextBodiesOrTokens" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="pageAndMessageLimitsStopPaginationWithAnExplicitError" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="returningFromMessageDetailKeepsUnsubmittedSearchInput" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="detailChecksRequestedIdAndKeepsPlainTextPriority" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="wrongThreadIdOrCrossThreadMemberIsADataError" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="permissionRateLimitTimeoutAndRetryUseStableSafeErrors" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="blankSearchDoesNotReachTheProvider" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <testcase name="restoredDetailInboxFailureIsShownAndRetryContinuesRestoration" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.002"/>
+  <testcase name="uiUsesOnlyInjectedFakeReadPortsAndCompiledUiHasNoTransportReferences" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.028"/>
+  <testcase name="openingInboxFromSearchResetsBackStackToTheRootList" classname="app.serea.android.gmail.ui.GmailViewModelTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

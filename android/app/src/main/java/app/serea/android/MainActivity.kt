@@ -859,6 +859,8 @@ internal fun ChatScreen(
     onOpenSettings: (() -> Unit)? = null,
     settingsDestination: Boolean = false,
     onSettingsClosed: (() -> Unit)? = null,
+    googleAuthorizationDemoViewModel: app.serea.android.googleauth.GoogleAuthorizationDemoViewModel? = null,
+    onOpenGoogleCalendarDemo: ((app.serea.android.calendar.CalendarProviderSession) -> Unit)? = null,
     focusClearRequest: Int = 0,
 ) {
     val state by chatViewModel.state.collectAsState()
@@ -1198,7 +1200,16 @@ internal fun ChatScreen(
                 Text("Freeプランの利用枠とモデル数には上限があります。通常会話のCloud送信はOwnerポリシー承認まで無効です。",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 HorizontalDivider()
-                app.serea.android.googleauth.GoogleAuthorizationDemoPanel()
+                if (googleAuthorizationDemoViewModel == null) {
+                    app.serea.android.googleauth.GoogleAuthorizationDemoPanel(
+                        onOpenCalendar = onOpenGoogleCalendarDemo,
+                    )
+                } else {
+                    app.serea.android.googleauth.GoogleAuthorizationDemoPanel(
+                        viewModel = googleAuthorizationDemoViewModel,
+                        onOpenCalendar = onOpenGoogleCalendarDemo,
+                    )
+                }
                 if (onSettingsClosed == null) {
                     Button(onClick = {
                         secretText = ""

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-29T00:43:19.204Z" hostname="3b4a6afe349d" time="0.359">
+  <properties/>
+  <testcase name="conversationSwitchRejectsHandoffBoundToPreviousDestination" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.143"/>
+  <testcase name="modifiedExpiredOrGoogleTaintedCloudRequestsStopBeforeUsageCredentialAndHttp" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.12"/>
+  <testcase name="sameApprovedSendIdCannotDispatchTwice" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.077"/>
+  <testcase name="calendarFirstTurnModelOutputInheritsCurrentBodyLineage" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.005"/>
+  <testcase name="providerBodyTaintSurvivesEditsButChangedDraftCannotDispatch" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.001"/>
+  <testcase name="boundedContextRetainsGoogleOriginOnModelSummaryAndDeniesCloud" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.002"/>
+  <testcase name="googleOriginLineageOnCurrentAssistantStopsCloudBeforeCredentialAndHttp" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.004"/>
+  <testcase name="viewModelStoreReuseRetainsProviderBodyTaintAndRejectsEditedDraft" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.003"/>
+  <testcase name="gmailFirstTurnModelOutputInheritsCurrentBodyLineage" classname="app.serea.android.CloudEgressBodyLineageAttackMatrixTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

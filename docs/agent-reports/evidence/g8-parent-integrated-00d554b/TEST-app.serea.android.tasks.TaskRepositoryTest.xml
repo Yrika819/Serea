@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.tasks.TaskRepositoryTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-29T01:16:13.101Z" hostname="3b4a6afe349d" time="0.02">
+  <properties/>
+  <testcase name="approvedMutationsConsumeDurableProposalReceiptsAcrossRepositoryRecreation" classname="app.serea.android.tasks.TaskRepositoryTest" time="0.008"/>
+  <testcase name="lostMutationOutcomeRemainsUnknownAndReceiptBlocksReplayAfterRecreation" classname="app.serea.android.tasks.TaskRepositoryTest" time="0.003"/>
+  <testcase name="durableBridgeStillRequiresApprovalMatchingDeleteTargetAndFreshReview" classname="app.serea.android.tasks.TaskRepositoryTest" time="0.002"/>
+  <testcase name="daoCancellationDuringUpdatePropagatesWithoutBecomingStorageFailure" classname="app.serea.android.tasks.TaskRepositoryTest" time="0.001"/>
+  <testcase name="listsSortsFiltersAndLateUpdateCannotResurrectDeletedTask" classname="app.serea.android.tasks.TaskRepositoryTest" time="0.003"/>
+  <testcase name="duplicateCreateIdRejectedAndConcurrentMutationIsConsistent" classname="app.serea.android.tasks.TaskRepositoryTest" time="0.001"/>
+  <testcase name="createReadUpdateCompleteReopenAndDelete" classname="app.serea.android.tasks.TaskRepositoryTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

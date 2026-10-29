@@ -210,7 +210,7 @@ jobs:
           "$ANDROID_HOME/emulator/emulator" -accel-check
 
       - name: Run exact product adapter and real x86_64 inference case
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0 # v2 (MIT/Apache-2.0)
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
         timeout-minutes: 90
         with:
           api-level: 35

@@ -137,3 +137,9 @@ PR #168 is OPEN/DRAFT, stacked directly on #162's exact head `6b7a741362b58b6bbc
 Agent B's local `:app:compileIsolatedAndroidTestKotlin` and diff check pass. Agent C **ACCEPTED static review** on this exact tree: test back-stack actions reflect detail→agenda→Settings, and event identity/date/calendar/session diagnostics are bounded while title and security assertions remain. The underlying Handoff `Design review` fixture timeout is still **unconfirmed**; the new test will diagnose it rather than suppress it. PR #168 Android run `40902585691` is queued without a runner; focused API26/35 tests on this new head are NOT_RUN. Fast CI `40902585494` passed exact PR #168 source.
 
 New PR #168 results are not credited with PR #162 API26/35 passes; those older source results remain 105/105 Required per API and UI 16/2 failures per API.
+
+## Native artifact guard review — 2026-10-29 15:38 UTC
+
+Agent A's separate ARM artifact fix is on branch `codex/serea-native-artifact-boundary`, source `5f9cc22c4140d061253537e908533e6b141d901d`, tree `b43e79c9f634fcdfacbad1d534a74bc4df9dae5b`, based on PR #166 exact source `8dde330…`. It changes only the Native workflow and allowlist contract test; the ARM upload paths are currently explicit and raw emulator/ADB outputs are removed before upload; sanitized JUnit is included.
+
+Agent C independently reviewed the patch and returned **CHANGES_REQUESTED**: the contract test rejects bare evidence-directory paths but still accepts wildcard variants such as `evidence/native-arm64-guest/*` and `${{ steps.arm64_native_e2e.outputs.evidence_dir }}/**`. Required exact-file validation/wildcard-negative fixtures are being added. This patch is not yet integrated into #166; Native runtime jobs remain queued/NOT_RUN.

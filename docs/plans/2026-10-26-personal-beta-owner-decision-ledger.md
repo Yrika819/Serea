@@ -41,3 +41,12 @@ This status refresh does not grant any approval and does not change O-01 through
 - No real OAuth/account data, Cloud credentials/billing, production signing, Pixel device use, main merge, or Beta distribution occurred. Google-origin Cloud egress remains unauthorized.
 
 Refresh the decision packet with terminal exact-source CI and PR #163 model evidence before the 2026-11-03/10 Owner checkpoints. Decisions remain Owner-controlled.
+
+### Android evidence update — 2026-10-29 15:29 UTC
+
+PR #162 `6b7a741362b58b6bbc7728e69de90d929391dcaf` / tree `e61db67fcdf0ce7c5c5ab7e93efaef3bac4c1b5d` now has inspectable API26/API35 artifacts. Each API independently passed Required **105/105**, Calendar 19/19, Chat 16/16, cursor 1/1, Process Death and Data Isolation. Each API's separate 16-test Google/Gmail UI stage failed the same two tests:
+
+- `GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt` — the account-A semantics tag was absent after returning from Calendar.
+- `GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` — timed out waiting for the `Design review` event; diagnostic handler did not catch `ComposeTimeoutException`.
+
+API26 artifact `12907539920`, digest `sha256:d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`; API35 artifact `12909203169`, digest `sha256:a265911ad3c8e6aa5d6f231d7fc2d88591e46fa4163f77f9b73cd79059bc2c77`. The UI failures remain unresolved; no gate was weakened. Personal Beta stays NO-GO. No Owner approvals changed.

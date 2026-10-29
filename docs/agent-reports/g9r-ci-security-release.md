@@ -421,3 +421,23 @@ Agent C's read-only #159 audit confirms G10 PARTIAL: O-01 package/coexistence, O
 - Personal Beta: NO-GO.
 
 No runner retry was triggered. Continue with existing jobs; once terminal, inspect exact artifacts/logs, classify the API26 failure, and refresh this checkpoint on a new commit without modifying the active test heads.
+
+## Follow-up checkpoint — 2026-10-29 15:29 UTC — Android artifacts retrieved
+
+The API26 and API35 evidence artifacts for PR #162 `6b7a741362b58b6bbc7728e69de90d929391dcaf` / tree `e61db67fcdf0ce7c5c5ab7e93efaef3bac4c1b5d` were downloaded via the GitHub artifact connector and their ZIP SHA-256 values match the Actions digests.
+
+| API | Required | Calendar / Chat / Cursor | Google/Gmail UI | Process Death / Data Isolation |
+|---|---|---|---|---|
+| 26 | 105/105 PASS, 0 failures/errors/skips | 19/19, 16/16, 1/1 PASS | 16 tests, 2 failures, 0 errors/skips | PASS / PASS |
+| 35 | 105/105 PASS, 0 failures/errors/skips | 19/19, 16/16, 1/1 PASS | 16 tests, 2 failures, 0 errors/skips | PASS / PASS |
+
+Artifacts: API26 `12907539920`, 769,248 bytes, `sha256:d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`; API35 `12909203169`, 3,479,526 bytes, `sha256:a265911ad3c8e6aa5d6f231d7fc2d88591e46fa4163f77f9b73cd79059bc2c77`.
+
+The same two UI identities fail on both APIs:
+
+1. `app.serea.android.GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt` — after returning from Calendar view, `performScrollTo()` cannot find `google_auth_demo_account_account_a`.
+2. `app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` — `ComposeTimeoutException` at line 66 while waiting for `Design review`; the test's `AssertionError` diagnostic handler does not catch this timeout type.
+
+These failures are additional Google/Gmail UI acceptance failures; neither API's 105 Required tests failed. They block the campaign acceptance verdict. Test-vs-product root cause is being investigated by Agent B; no assertion is being relaxed. API26/API35 Process Death artifacts record 10 successful lifecycle events each, and Data Isolation is PASS. Temporary-signing Identity Isolation was skipped; no package/signing identity isolation claim is made.
+
+The overall Android workflow remains queued behind the Pixel evidence bundle job. That is an automation queue, not physical Pixel acceptance. Native focused jobs on #166 remain queued and their inference status is NOT_RUN.

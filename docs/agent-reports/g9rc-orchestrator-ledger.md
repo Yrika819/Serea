@@ -75,3 +75,11 @@ PR #159 G10 packet is useful but PARTIAL and stale relative to later #162/#165/#
 3. If either test lane fails, record exact JUnit identity and cause, fix only the owning files, then test a new HEAD and repeat independent review.
 4. Refresh the owner/release ledger with #163 model matrix and the current CI facts after active jobs reach terminal.
 5. Keep G8 Evidence Closure, Android Recovery, Native Runtime, G9, and G10 PARTIAL until their specific evidence gates pass. Keep Personal Beta NO-GO pending all P0 evidence and Owner decision.
+
+## Subsequent checkpoint — 2026-10-29 15:24 UTC
+
+- Central ledger commit `4e36b8225be7f5f45a2104188750d4226af01df9` / tree `a4adb8e192827cf109e3c34a161fc35fac6e018a` is on `codex/serea-g9rc-orchestrator-ledger`.
+- PR #167 G10 documentation refresh is OPEN/DRAFT at head `110ceb583573acef54cb9ce21254da49eeb49f13`; tree `27a663e4931cdc35a678bf7744eca0ac5f511c3b`; based on PR #159 head. Agent C independently ACCEPTED the exact documentation diff. Documentation-only checks are pending; it is not Android product evidence.
+- PR #162 run `40889965195` remains in progress. API26 failed; API35 step remains active. No JUnit identity/count detail or API35 artifact is available yet.
+- PR #166 focused run `40899129986` remains queued; x86_64 Native job `123536283262` and ARM64 software guest `123536283414` have not started.
+- O-01 through O-10 are unchanged; Personal Beta remains NO-GO.

@@ -29,3 +29,15 @@ The 2026-11-10 checkpoint may decide to defer or keep a capability disabled; it 
 - Lane C PR #121's adversarial test changes remain independently reviewable; selected JVM tests are present on Lane A. Neither lane PR has been merged.
 - PR #117 Required evidence applies only to its frozen SHA. The functional integration candidate still needs its own formal Required and cross-platform runs after the Draft PR is opened.
 - Personal Beta remains NO-GO. Real service use, production signing/distribution, physical device acceptance, main merge and final GO stay Owner-controlled.
+
+## Recovery campaign checkpoint — 2026-10-29 15:19 UTC
+
+This status refresh does not grant any approval and does not change O-01 through O-10.
+
+- G8 Evidence Closure, Android Recovery, Native Runtime, G9, and G10 remain **PARTIAL**; Personal Beta remains **NO-GO**.
+- PR #162 is `6b7a741362b58b6bbc7728e69de90d929391dcaf` / tree `e61db67fcdf0ce7c5c5ab7e93efaef3bac4c1b5d`. Android build, lint, unit, integration, and security jobs passed exact source. API26 instrumentation step failed; artifact `12907539920`, SHA-256 `d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`. Failing identities remain unknown because artifact download returned 403 and job-log API 503 while the job remained active. API35 instrumentation is still running; no API26 evidence is reused for API35.
+- PR #163 model matrix source/tree: `2c109276bcbdd4e14fb2b6e9558962516f2df32c` / `b04164da95bf66f43fd08e5537e4d0e242d6a566`; static review only. Standard model remains UNDECIDED; runtime quality/performance and Pixel results remain NOT_RUN.
+- PR #165/#166 Native source/tree: `8dde33024b76efc3d32812e7d580f8a33db94c9f` / `4fca4c7fea82bd8c3bf59481fc8341d8165f9c54`. Static Native security review ACCEPTED; focused x86_64 and ARM64 software-emulated Android jobs are queued, with no new inference artifact. Ordinary Chat remains disconnected.
+- No real OAuth/account data, Cloud credentials/billing, production signing, Pixel device use, main merge, or Beta distribution occurred. Google-origin Cloud egress remains unauthorized.
+
+Refresh the decision packet with terminal exact-source CI and PR #163 model evidence before the 2026-11-03/10 Owner checkpoints. Decisions remain Owner-controlled.

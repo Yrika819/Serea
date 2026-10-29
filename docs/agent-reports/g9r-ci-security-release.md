@@ -373,3 +373,51 @@ PR #155 remains exact source `683854ba94cb3a1e1972b73d0f1f60392f2271d6` / tree `
 PR #157 remains exact source `4075ce2de11df3cee05b1b64d2aa6b8899376064` / tree `6fd63236729cf2ac1ba1e48b3a4cd97681f9577c`; Android run `40854847034` is queued. Change Scope `123387660362`, Security `123396856170`, Dependency Audit `123396856198`, and Unit `123396856211` PASS on runners `1000023952`, `1000023987`, `1000024026`, and `1000024022`. Integration `123396856232` and Build/Lint/Instrumentation Compile `123396856254` remain queued/unassigned; Documentation `123396859106` is skipped for docs-only scope. Artifacts: Dependency Audit `12892156354`, 99,117 bytes, digest `sha256:89315ca47de06931bdd0e1d2a54d8443b8afb7ab10be3c50d61d9a26ad8481f2`; Unit JUnit `12892001556`, 29,493 bytes, digest `sha256:0f6af0b83eb761ba5fc45e444cb4f5336358641fe092e6e78349b327ab4ab5e9`; Security JUnit `12891865632`, 1,836 bytes, digest `sha256:6605662b7d06d499cd7d0deb75ddceb73d5e82902e6082d6dbe275b16e0ec814`. No API26/35 Required, UI, or emulator JUnit has run on this head.
 
 **RESUME_POINT:** preserve the #158 timeout result and cleanup PASS against exact `848fe67…`; Native inference/usage remains unverified. Wait for Agent A's normal follow-up commit and review only that exact new source/tree. Keep #155/#157 API26/35 emulator acceptance NOT_RUN while their Integration and instrumentation-compile jobs are queued.
+
+## Checkpoint — 2026-10-29 15:19 UTC — G9R Recovery V3
+
+This checkpoint supplements the earlier 10:21/10:36 snapshot. It does not rewrite prior history or reuse evidence across SHAs. Latest exact campaign refs:
+
+| PR | Head / tree | Status |
+|---|---|---|
+| #162 Android recovery | `6b7a741362b58b6bbc7728e69de90d929391dcaf` / `e61db67fcdf0ce7c5c5ab7e93efaef3bac4c1b5d` | OPEN/DRAFT; Android run `40889965195` attempt 1 active |
+| #165 Native limits follow-up | `8dde33024b76efc3d32812e7d580f8a33db94c9f` / `4fca4c7fea82bd8c3bf59481fc8341d8165f9c54` | OPEN/DRAFT, based on #160; static security review ACCEPTED |
+| #166 Native integration candidate | same head/tree as #165; base G7 `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` | OPEN/DRAFT; same-source focused workflow registered |
+| #159 Release packet | `982c8271698c5ea323e7a4d19f4dd662087db2c5` / `11e3c0ca61577bb435e0f69b1fcd24313857ff1f` | OPEN/DRAFT; decision states unchanged |
+| #163 Model matrix | `2c109276bcbdd4e14fb2b6e9558962516f2df32c` / `b04164da95bf66f43fd08e5537e4d0e242d6a566` | OPEN/DRAFT; static metadata/license review ACCEPTED |
+
+### PR #162 exact-source Android update
+
+Android run `40889965195`, attempt 1, is bound to `6b7a741…` / `e61db67…`. Change Scope, Security, Build/Lint/Instrumentation Compile, Integration, Documentation, Dependency Audit, and Unit are SUCCESS. Fast `40889965202`, Full `40889964943`, and RustSec `40889965176` are SUCCESS. Git Hooks `40889964753`, SQLite `40889964716`, and Native platform `40889965376` remain queued/partial.
+
+Storage/Emulator job `123526283372` is active. API26 instrumentation step 12 failed (14:57:19–15:11:44 UTC); API35 instrumentation step 16 started at 15:11:46 UTC and remains IN_PROGRESS at this checkpoint. API26 artifact `12907539920` is 769,248 bytes, digest `sha256:d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`. The exact JUnit identities and failure count could not yet be inspected: artifact fetch returned HTTP 403 and a job-log request returned HTTP 503 while the job was still active. Root cause is UNKNOWN; do not infer from earlier PRs. API35 evidence is NOT_RUN until its step completes. No API result is copied across API levels.
+
+Other exact run artifacts: Unit `12907406561` (29,786 bytes; `sha256:4e26754de49c05b9016d4f9ba37c2252e03fae4a47863138bb2a49aa1604726e`), Integration `12907331313` (1,214 bytes; `sha256:2762381fbdfe6cdd82bc58dc83fdc36c6f3df094f34c5d671dce8d21cbe2a838`), debug APK candidate `12906433639` (33,174,181 bytes; `sha256:80edf95c7452ec2116084c31c75527fd95c9c5490b976186906d81a55020e13f`). APK internal SHA-256 and signer remain unverified because provenance artifact contents are unavailable.
+
+### Native limits follow-up and runtime evidence
+
+Agent C accepted PR #165 static review at exact `8dde330…` / `4fca4c7…`. Context default 512 matches the pinned JNI backend; `maxModelFileBytes` bounds model-file bytes, not RSS/PSS. PSS is observational; a complete-sample PASS requires load, both inference turns, and both release samples. Diagnostic JNI is default-off and isolated-build-only. Raw instrumentation/logcat are removed before successful artifact publication; uploaded paths are allowlisted. `LOCAL_MODEL_CHAT_ENABLED` is only a deferred proposal, default off, distinct from `LOCAL_NATIVE_RUNTIME_ENABLED`; ordinary Chat remains DEMO/disconnected.
+
+Agent-reported local focused checks on this code: 24 JVM tests; isolated AndroidTest Kotlin compile; variant-isolation and Beta-rejection checks; metrics parser 4/4; instrumentation parser 8/8; upload allowlist, JNI, preflight, cleanup, shell syntax, YAML and diff checks PASS. These are local results, not hosted exact-source Android inference.
+
+PR #166 was opened against G7 to satisfy the base-branch filter of the Native focused workflow without changing PR #160 or #165. Focused run `40899129986`, attempt 1, exact head `8dde330…`, tree `4fca4c7…`: x86_64/API35 job `123536283262` and ARM64 software-emulated guest job `123536283414` remain QUEUED at 15:19 UTC. No job steps, JUnit, native inference, model/hash validation, or artifacts have occurred on this head. The ARM64 experiment is explicitly `ARM64_GUEST_SOFTWARE_EMULATED`, not ARM hardware or Pixel acceptance.
+
+The deferred Product Chat proposal requires ARM64 runtime and independent security acceptance first; keeps `DEMO` as normal mode; proposes separate `LOCAL_MODEL_CHAT_ENABLED=false`; preserves Router/ModelChatPort, Egress/Usage, local consent and cancellation; and forbids Cloud fallback. No production wiring is present.
+
+### Model and G10 review refresh
+
+PR #163 remains a static model/license/format matrix with no weights or Serea quality claims. Standard model remains UNDECIDED. The current default model-file limit is 768 MiB (maximum 2 GiB): LFM3 Q4_K_M and Bonsai 2 4B Q2_0 exceed the default; Gemma 4 E2B GGUF exceeds the maximum; Qwen3.5 safetensors is incompatible with the GGUF adapter. Bonsai PTQ1_0/PQ2_0 are incompatible with the pinned backend; Q2_0 is NOT_RUN. These file-size facts are not RAM/PSS measurements.
+
+Agent C's read-only #159 audit confirms G10 PARTIAL: O-01 package/coexistence, O-02 OAuth/Calendar, O-03 provider eligibility, O-05 signing, O-07 main merge, O-09 Gmail Restricted, and O-10 model choice remain pending; O-04 Google-origin Cloud egress is NOT_APPROVED; O-06 Pixel is BLOCKED/NOT_RUN; O-08 remains NO-GO. No Owner key, OAuth, real account/data, Pixel, merge or distribution occurred. #159's previous CI snapshot predates #162/#165. The next release-packet refresh should link #163 exact source/tree and current #162/#166 evidence once terminal.
+
+### Current disposition
+
+- G8 Evidence Closure: PARTIAL.
+- Android Recovery / Google-Gmail UI: PARTIAL; API26 step failed but exact failed test identities are not yet available; API35 active.
+- Native Runtime: PARTIAL; previous #160 x86_64 inference PASS only applies to that exact old SHA. New #165/#166 runtime is queued/NOT_RUN.
+- ARM64 runtime: NOT_RUN; ARM64 software guest trial itself is queued.
+- G9 Functional Candidate: PARTIAL; no current-source API26/35 acceptance yet.
+- G10 Preflight: PARTIAL.
+- Personal Beta: NO-GO.
+
+No runner retry was triggered. Continue with existing jobs; once terminal, inspect exact artifacts/logs, classify the API26 failure, and refresh this checkpoint on a new commit without modifying the active test heads.

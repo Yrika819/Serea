@@ -690,3 +690,9 @@ Agent C has confirmed Run `40929532184` failed in Stable Windows x86_64 job `123
 - Agent C: Windows host timeout test and independent security/release lane. Windows cause is under investigation; no timeout increase or accounting contract change is allowed.
 
 Latest aggregate: G9 Android remains PARTIAL; #173 API26 Required/UI pass but its fake Google process-death host helper fails; API35 has one Required failure and Google UI NOT_RUN. #176 partition workflow fails in the `/bin/sh` launch path, with instrumentation NOT_RUN. Native x86_64 remains SUCCESS only on #177 exact source; ARM64 remains NOT_RUN while the accepted #178 loader-path fix is tested in PR #179. Windows host validation is PARTIAL due one unresolved timeout test. G10 PARTIAL; Product Chat disconnected/default OFF; model UNDECIDED; Personal Beta NO-GO.
+
+## Focused ARM trigger execution
+
+- PR #179 is a new OPEN/DRAFT trigger candidate with the already accepted #178 head `a7f5b407d400b611df2c5f9260eede9b62f41b59` / tree `9bb6f18000d841fc436b3caa6b20c92a329ed5ae`, based on configured G7 branch head `0560e1e7bcd13f0194eab8caca89d70ea5a2f142`. It exists because #178's base #177 did not satisfy the G8 Native workflow's pull-request base filter. No workflow trigger condition or permission was loosened.
+- Exact G8 focused run `40967241879` is IN_PROGRESS. ARM guest job `123774725655` is installing pinned API35 ARM64 guest packages; x86 job `123774726124` is at focused JVM contracts. No ARM host preflight/AVD boot/inference result is available at this snapshot. Keep the run source-bound to #178 SHA/tree; PR #179 is not a product integration candidate.
+- Agent C's Windows diagnosis on #178 run `40929532184` remains under investigation. Planned diagnostic adds child process exit status and bounded output byte counts without changing the timeout or policy behavior. The #173 API26/API35 JUnit artifacts and #176 `/usr/bin/sh` launch failure remain as recorded above.

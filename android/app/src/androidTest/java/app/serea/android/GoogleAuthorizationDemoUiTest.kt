@@ -148,6 +148,7 @@ class GoogleAuthorizationDemoUiTest {
         compose.onNodeWithTag("google_auth_demo_expire").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
             .assertTextContains("期限切れ（デモ）", substring = true)
+        compose.onNodeWithText("再接続して認可内容を確認").performScrollTo().assertIsDisplayed()
         assertNull(viewModel.calendarDemoSession.value)
         assertTrue(runCatching { runBlocking { expiredSession.listCalendars() } }.isFailure)
 

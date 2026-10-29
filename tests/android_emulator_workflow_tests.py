@@ -25,8 +25,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertLess(storage_job.index("Assert exact source checkout"), storage_job.index("Set shared API 26 and API 35 campaign deadline"))
         self.assertLess(storage_job.index("Set shared API 26 and API 35 campaign deadline"), storage_job.index("Install API 35 emulator image"))
         self.assertEqual(2, workflow.count("timeout-minutes: 75"))
-        self.assertEqual(2, workflow.count("SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180"))
-        self.assertIn("timeout --signal=INT --kill-after=60s \"${remaining}s\"", workflow)
+        self.assertNotIn("SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180", workflow)
+        self.assertIn("bash ../tools/run_android_campaign_with_deadline.sh 26", workflow)
+        self.assertIn("bash ../tools/run_android_campaign_with_deadline.sh 35", workflow)
+        wrapper = (ROOT / "tools/run_android_campaign_with_deadline.sh").read_text(encoding="utf-8")
+        self.assertIn("deadline - now - 180", wrapper)
+        self.assertIn('exec timeout --signal=INT --kill-after=60s', wrapper)
         self.assertIn("campaign_deadline_epoch=", campaign)
         self.assertIn("bounded_command_seconds", campaign)
         self.assertIn("local partition_cap=840", campaign)
@@ -574,11 +578,13 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
         scripts = re.findall(r"^[ \t]+script: (.+)$", workflow, flags=re.MULTILINE)
         self.assertEqual(
-            ["|", "|", "bash tools/test_personal_beta_identity.sh"],
+            [
+                "bash ../tools/run_android_campaign_with_deadline.sh 26",
+                "bash ../tools/run_android_campaign_with_deadline.sh 35",
+                "bash tools/test_personal_beta_identity.sh",
+            ],
             scripts,
         )
-        self.assertIn("bash ../tools/run_android_instrumentation_campaign.sh 26", workflow)
-        self.assertIn("bash ../tools/run_android_api35_campaign.sh", workflow)
         self.assertIn('build_checkout_commit=$(git rev-parse HEAD)', workflow)
         self.assertIn('build_checkout_commit=$provenance_checkout_sha', workflow)
         self.assertIn('provenance_source_sha', workflow)
@@ -605,6 +611,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             "test_android_update_compatibility_guard.sh",
             "test_personal_beta_identity.sh",
             "run_android_api35_campaign.sh",
+            "run_android_campaign_with_deadline.sh",
         ):
             subprocess.run(["bash", "-n", str(ROOT / "tools" / name)], check=True)
         self.assertIn("connectedIsolatedAndroidTest", script.read_text(encoding="utf-8"))
@@ -625,6 +632,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             workflow.index("Run API 26 Pixel emulator and all instrumentation tests"),
             workflow.index("Run API 35 Pixel emulator and all instrumentation tests"),
         )
+
         self.assertEqual(2, workflow.count("live='android/app/build/outputs/androidTest-results/api"))
         self.assertEqual(2, workflow.count("' \"$live\" >> \"$output\""))
         self.assertIn("Emulator detached after test step; captured instrumentation logcat is preserved above.", workflow)
@@ -648,6 +656,72 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         ):
             self.assertIn("SEREA_DISPOSABLE_CI_EMULATOR: '1'", workflow.split(step_name, 1)[1].split("\n      - name:", 1)[0])
 
+
+    def test_deadline_wrapper_propagates_environment_deadline_and_exit_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            timeout_log = root / "timeout-args.txt"
+            date = bin_dir / "date"
+            date.write_text("#!/bin/sh\nprintf '100\\n'\n", encoding="utf-8")
+            date.chmod(0o755)
+            timeout = bin_dir / "timeout"
+            timeout.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$@\" > \"$TIMEOUT_LOG\"\n"
+                "shift 3\n"
+                "exec \"$@\"\n",
+                encoding="utf-8",
+            )
+            timeout.chmod(0o755)
+            fake_bash = bin_dir / "bash"
+            fake_bash.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"${SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH:-MISSING}\" > \"$CAMPAIGN_ENV_LOG\"\n"
+                "printf '%s\\n' \"$@\" > \"$CAMPAIGN_ARGS_LOG\"\n"
+                "exit \"${FAKE_TIMEOUT_EXIT:-0}\"\n",
+                encoding="utf-8",
+            )
+            fake_bash.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{bin_dir}:{env['PATH']}",
+                    "SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH": "1000",
+                    "TIMEOUT_LOG": str(timeout_log),
+                    "CAMPAIGN_ENV_LOG": str(root / "campaign-env.txt"),
+                    "CAMPAIGN_ARGS_LOG": str(root / "campaign-args.txt"),
+                }
+            )
+            wrapper = ROOT / "tools/run_android_campaign_with_deadline.sh"
+            completed = subprocess.run(["/bin/bash", str(wrapper), "26"], env=env, check=False)
+            self.assertEqual(0, completed.returncode)
+            args = timeout_log.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                ["--signal=INT", "--kill-after=60s", "720s", "bash", "../tools/run_android_instrumentation_campaign.sh", "26"],
+                args,
+            )
+            self.assertEqual("1000\n", (root / "campaign-env.txt").read_text(encoding="utf-8"))
+            self.assertEqual(
+                ["../tools/run_android_instrumentation_campaign.sh", "26"],
+                (root / "campaign-args.txt").read_text(encoding="utf-8").splitlines(),
+            )
+
+            env["FAKE_TIMEOUT_EXIT"] = "23"
+            completed = subprocess.run(["/bin/bash", str(wrapper), "35"], env=env, check=False)
+            self.assertEqual(23, completed.returncode)
+            args = timeout_log.read_text(encoding="utf-8").splitlines()
+            self.assertEqual("bash", args[3])
+            self.assertEqual("../tools/run_android_api35_campaign.sh", args[4])
+            self.assertEqual("1000\n", (root / "campaign-env.txt").read_text(encoding="utf-8"))
+
+            timeout_log.unlink()
+            env["SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH"] = "200"
+            completed = subprocess.run(["/bin/bash", str(wrapper), "26"], env=env, check=False, capture_output=True, text=True)
+            self.assertEqual(1, completed.returncode)
+            self.assertIn("leaves no safe API 26 execution budget", completed.stderr)
+            self.assertFalse(timeout_log.exists())
 
     def test_direct_instrumentation_requires_fresh_isolated_campaign_before_tests(self) -> None:
         runner = (ROOT / "android/app/src/androidTest/java/app/serea/android/SereaIsolatedAndroidJUnitRunner.kt").read_text(encoding="utf-8")

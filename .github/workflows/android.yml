@@ -352,15 +352,7 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           working-directory: android
-          script: |
-            set -euo pipefail
-            remaining=$((SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180))
-            if (( remaining <= 0 )); then
-              echo 'FAIL: shared API 26/API 35 campaign deadline leaves no safe API 26 execution budget.' >&2
-              exit 1
-            fi
-            timeout --signal=INT --kill-after=60s "${remaining}s" \
-              bash ../tools/run_android_instrumentation_campaign.sh 26
+          script: bash ../tools/run_android_campaign_with_deadline.sh 26
       - name: Save API 26 failure semantics and safety logcat
         if: always() && !cancelled()
         run: |
@@ -428,15 +420,7 @@ jobs:
           emulator-boot-timeout: 900
           disable-linux-hw-accel: false
           working-directory: android
-          script: |
-            set -euo pipefail
-            remaining=$((SEREA_ANDROID_CAMPAIGN_DEADLINE_EPOCH - $(date +%s) - 180))
-            if (( remaining <= 0 )); then
-              echo 'FAIL: shared API 26/API 35 campaign deadline leaves no safe API 35 execution budget.' >&2
-              exit 1
-            fi
-            timeout --signal=INT --kill-after=60s "${remaining}s" \
-              bash ../tools/run_android_api35_campaign.sh
+          script: bash ../tools/run_android_campaign_with_deadline.sh 35
       - name: Save API 35 failure semantics and safety logcat
         if: always() && !cancelled()
         run: |

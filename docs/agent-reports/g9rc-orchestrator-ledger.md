@@ -98,3 +98,18 @@ On PR #162 exact source `6b7a741…` / tree `e61db67…`:
   - `app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` — timed out at line 66 waiting for `Design review` after entering the local-zone query date derived from fixture instant `2026-10-20T00:00:00Z`. The contextual catch did not catch `ComposeTimeoutException`, so the artifact omits the zone/query-date diagnostic; root cause not yet confirmed.
 
 The API26 aggregate campaign is FAIL because the separate Google/Gmail UI stage failed; this does not change Required's 105/105 pass. Agent B is analyzing both exact failures and preparing a focused successor based on #162 without modifying #162. API35 remains a separate active job.
+
+## API35 artifact inspection — 2026-10-29 15:29 UTC
+
+GitHub artifact `12909203169` is 3,479,526 bytes; the downloaded ZIP SHA-256 matches Actions digest `a265911ad3c8e6aa5d6f231d7fc2d88591e46fa4163f77f9b73cd79059bc2c77`.
+
+On the same PR #162 exact source `6b7a741…` / tree `e61db67…`:
+
+- Required manifest: **105/105 PASS**, 0 failures, 0 errors, 0 skips.
+- Calendar class: 19/19 PASS; Chat screen: 16/16 PASS; cursor diagnostic: 1/1 PASS.
+- Process Death: PASS with 10 observed PASS lifecycle events; Data Isolation: PASS.
+- Separate Google/Gmail UI: 16 tests, 2 failures, 0 errors, 0 skips. The same two JUnit identities fail as API26:
+  - `app.serea.android.GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt` — account-A test tag absent after return from Calendar view.
+  - `app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` — `Design review` fixture wait timed out at line 66; contextual diagnostics were bypassed by `ComposeTimeoutException`.
+
+Both APIs pass all 105 Required tests but fail the separate 16-test Google/Gmail UI stage on these same two identities. Root cause is under active Agent B analysis; do not call Android/G9 product acceptance SUCCESS. API35 package identity isolation is a separate temporary-signing job and was SKIPPED; do not infer it from these emulator results. The API Storage/Emulator job `123526283372` concluded FAILURE due the UI stage; the enclosing Android workflow remains queued behind a Pixel evidence bundle job, which is not Pixel physical acceptance.

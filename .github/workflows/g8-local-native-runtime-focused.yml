@@ -1,0 +1,286 @@
+name: G8 Local Native Runtime Focused (Non-Required)
+
+on:
+  pull_request:
+    branches:
+      - codex/serea-g7-calendar-readiness
+    paths:
+      - .github/workflows/g8-local-native-runtime-focused.yml
+      - android/app/build.gradle.kts
+      - android/app/src/main/cpp/**
+      - android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt
+      - android/app/src/main/java/app/serea/android/LocalModelNativeRuntime.kt
+      - android/app/src/main/java/app/serea/android/LocalModelSecurity.kt
+      - android/app/src/test/java/app/serea/android/LocalModelNativeRuntimeTest.kt
+      - android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt
+      - android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt
+      - docs/agent-reports/g8n-native-bonsai-evaluation.md
+      - tools/g8-local-model-native/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g8-local-native-runtime-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+  LLAMA_CPP_COMMIT: 276378515ceebee5d14bcc8536603dd5c87491a2
+  MODEL_REVISION: 1076b85d135017971845b19b8d07df1479155988
+  MODEL_SHA256: e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5
+  MODEL_SIZE_BYTES: '101016128'
+
+jobs:
+  native-runtime:
+    name: Product adapter on pinned API 35 x86_64 Emulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install pinned Android build and Emulator packages
+        run: >-
+          sdkmanager
+          'platforms;android-35'
+          'build-tools;35.0.0'
+          'ndk;28.2.13676358'
+          'cmake;3.31.6'
+          'emulator'
+          'system-images;android-35;google_apis;x86_64'
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ggml-org/llama.cpp
+          ref: 276378515ceebee5d14bcc8536603dd5c87491a2
+          path: llama.cpp
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify CMake rejects tracked and untracked source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/g8-local-model-native/verify-cmake-clean-checkout.sh "$ANDROID_HOME/cmake/3.31.6/bin/cmake"
+          python3 tools/g8-local-model-native/test-jni-contract.py
+          bash tools/g8-local-model-native/test-preflight.sh
+          bash tools/g8-local-model-native/test-cleanup.sh
+          bash tools/g8-local-model-native/test-instrumentation-gate.sh
+          python3 tools/g8-local-model-native/test-instrumentation-stream.py
+
+      - name: Record source identity and run focused JVM contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_evidence_dir="$GITHUB_WORKSPACE/evidence/g8-local-native"
+          mkdir -p "$build_evidence_dir/junit"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test "$(git -C llama.cpp rev-parse HEAD)" = "$LLAMA_CPP_COMMIT"
+          {
+            echo "source_sha=$(git rev-parse HEAD)"
+            echo "source_tree=$(git rev-parse 'HEAD^{tree}')"
+            echo "llama_cpp_sha=$(git -C llama.cpp rev-parse HEAD)"
+            echo 'ANDROID_BUILD=NOT_RUN'
+            echo 'ARM64_BUILD=NOT_RUN'
+            echo 'ARM64_RUNTIME=NOT_RUN'
+            echo 'PIXEL7A_PHYSICAL=NOT_RUN'
+          } > "$build_evidence_dir/source.txt"
+          cd android
+          jvm_log="$build_evidence_dir/gradle-jvm-focused-full.log"
+          set +e
+          ./gradlew --no-daemon --console=plain \
+            :app:testDebugUnitTest \
+            --tests 'app.serea.android.LocalModelChatAdapterTest' \
+            --tests 'app.serea.android.LocalModelNativeRuntimeTest' \
+            > "$jvm_log" 2>&1
+          gradle_status=$?
+          set -e
+          tail -c 262144 "$jvm_log" > "$build_evidence_dir/gradle-jvm-focused.log"
+          if [ "$gradle_status" -ne 0 ]; then
+            echo "Gradle focused JVM tests failed with exit $gradle_status; last 32 KiB follows." >&2
+            tail -c 32768 "$jvm_log" >&2
+            exit "$gradle_status"
+          fi
+          cp app/build/test-results/testDebugUnitTest/*.xml "$build_evidence_dir/junit/"
+
+      - name: Build opt-in product JNI APKs for both supported ABIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd android
+          build_evidence_dir="$GITHUB_WORKSPACE/evidence/g8-local-native"
+          gradle_log="$build_evidence_dir/gradle-native-build-full.log"
+          set +e
+          ./gradlew --no-daemon --console=plain \
+            -PsereaLocalNativeRuntime=true \
+            -PsereaNativeJniTestSeams=true \
+            -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
+            :app:assembleIsolated :app:assembleIsolatedAndroidTest \
+            > "$gradle_log" 2>&1
+          gradle_status=$?
+          set -e
+          # Keep uploaded and rendered diagnostics bounded even if Gradle emits an unusually
+          # large compiler report. The full file stays on the ephemeral runner only.
+          tail -c 262144 "$gradle_log" > "$build_evidence_dir/gradle-native-build.log"
+          if [ "$gradle_status" -ne 0 ]; then
+            echo "Gradle native APK build failed with exit $gradle_status; last 32 KiB follows." >&2
+            tail -c 32768 "$gradle_log" >&2
+            exit "$gradle_status"
+          fi
+          target='app/build/outputs/apk/isolated/app-isolated.apk'
+          test_apk='app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk'
+          test -s "$target"
+          test -s "$test_apk"
+          unzip -Z1 "$target" | sort > "$build_evidence_dir/target-apk-files.txt"
+          grep -Fx 'lib/arm64-v8a/libserea_local_llama.so' "$build_evidence_dir/target-apk-files.txt"
+          grep -Fx 'lib/x86_64/libserea_local_llama.so' "$build_evidence_dir/target-apk-files.txt"
+          sha256sum "$target" "$test_apk" > "$build_evidence_dir/apk-sha256.txt"
+          sed -i 's/^ANDROID_BUILD=NOT_RUN$/ANDROID_BUILD=PASS/' "$build_evidence_dir/source.txt"
+          sed -i 's/^ARM64_BUILD=NOT_RUN$/ARM64_BUILD=PASS (APK ABI compile and packaging only)/' "$build_evidence_dir/source.txt"
+
+      - name: Upload bounded JNI build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-g8-native-build-${{ github.event.pull_request.head.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            evidence/g8-local-native/source.txt
+            evidence/g8-local-native/gradle-native-build.log
+            evidence/g8-local-native/gradle-jvm-focused.log
+            evidence/g8-local-native/junit/
+
+      - name: Verify pinned model repository license metadata without weights
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from datetime import datetime, timezone
+          from hashlib import sha256
+          import json
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          repository = 'ggml-org/SmolLM2-135M-GGUF'
+          revision = '1076b85d135017971845b19b8d07df1479155988'
+          url = f'https://huggingface.co/api/models/{repository}/revision/{revision}'
+          request = Request(url, headers={'User-Agent': 'Serea-G8-native-metadata/1'})
+          with urlopen(request, timeout=30) as response:
+              payload = response.read(1_000_001)
+          if len(payload) > 1_000_000:
+              raise SystemExit('model metadata response exceeded 1 MB')
+          metadata = json.loads(payload)
+          card = metadata.get('cardData') or {}
+          if metadata.get('id') != repository or metadata.get('sha') != revision:
+              raise SystemExit('model repository/revision identity mismatch')
+          if card.get('license') != 'apache-2.0':
+              raise SystemExit('pinned model license metadata mismatch')
+          if 'HuggingFaceTB/SmolLM2-135M' not in (card.get('base_model') or []):
+              raise SystemExit('pinned model base-model metadata mismatch')
+          evidence = {
+              'source_url': url,
+              'retrieved_utc': datetime.now(timezone.utc).isoformat(),
+              'metadata_response_sha256': sha256(payload).hexdigest(),
+              'repository': repository,
+              'revision': revision,
+              'declared_license': card['license'],
+              'base_model': 'HuggingFaceTB/SmolLM2-135M',
+              'weights_downloaded': False,
+          }
+          Path('evidence/g8-local-native/model-license-metadata.json').write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print('model_license_metadata=PASS weights_downloaded=false')
+          PY
+
+      - name: Download and verify the bounded pinned test fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          size_limit = 101_016_128
+          expected = 'e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5'
+          url = ('https://huggingface.co/ggml-org/SmolLM2-135M-GGUF/resolve/'
+                 '1076b85d135017971845b19b8d07df1479155988/SmolLM2-135M-Q4_K_M.gguf')
+          destination = Path(os.environ['RUNNER_TEMP']) / 'serea-g8-smollm2.gguf'
+          digest = hashlib.sha256()
+          total = 0
+          with urlopen(Request(url, headers={'User-Agent': 'Serea-G8-native-diagnostic/1'}), timeout=120) as response:
+              with destination.open('wb') as output:
+                  while True:
+                      chunk = response.read(64 * 1024)
+                      if not chunk:
+                          break
+                      total += len(chunk)
+                      if total > size_limit:
+                          raise SystemExit('model transfer exceeded its byte limit')
+                      digest.update(chunk)
+                      output.write(chunk)
+          if total != size_limit or digest.hexdigest() != expected:
+              destination.unlink(missing_ok=True)
+              raise SystemExit('pinned model file size or SHA-256 mismatch')
+          print(f'model_fixture=PASS bytes={total} sha256={digest.hexdigest()} weights_uploaded=false')
+          PY
+
+      - name: Require KVM for the disposable API 35 Emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libpulse0
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+
+      - name: Run exact product adapter and real x86_64 inference case
+        id: native_e2e
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
+        timeout-minutes: 90
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+          SEREA_EXPECTED_ANDROID_API: '35'
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          force-avd-creation: true
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -wipe-data
+          script: bash tools/g8-local-model-native/run-e2e.sh
+
+      - name: Upload sanitized native runtime evidence (never model weights)
+        if: always() && steps.native_e2e.outputs.cleanup_verified == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-g8-local-native-${{ github.event.pull_request.head.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ steps.native_e2e.outputs.evidence_dir }}
+
+      - name: Remove temporary model fixture
+        if: always()
+        run: rm -f "$RUNNER_TEMP/serea-g8-smollm2.gguf"

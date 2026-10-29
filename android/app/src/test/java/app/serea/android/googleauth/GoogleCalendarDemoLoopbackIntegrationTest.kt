@@ -123,7 +123,7 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
         viewModel.requestConsent(GoogleFeature.CALENDAR)
         runCurrent()
         assertEquals(GoogleFeature.CALENDAR, viewModel.state.value.pendingFeature)
-        viewModel.grantPendingConsent()
+        viewModel.grantPendingConsent(checkNotNull(viewModel.state.value.pendingConsentPreview))
         runCurrent()
 
         val session = checkNotNull(viewModel.calendarDemoSession.value)
@@ -145,7 +145,7 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
             val beforeRecreation = firstProvider[GoogleAuthorizationDemoViewModel::class.java]
             beforeRecreation.requestConsent(GoogleFeature.CALENDAR)
             runCurrent()
-            beforeRecreation.grantPendingConsent()
+            beforeRecreation.grantPendingConsent(checkNotNull(beforeRecreation.state.value.pendingConsentPreview))
             runCurrent()
             val beforeRecreationSession = checkNotNull(beforeRecreation.calendarDemoSession.value)
 
@@ -188,7 +188,7 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
             assertTrue(factory.opened.isEmpty())
             assertEquals(0, server.requestCount)
 
-            viewModel.grantPendingConsent()
+            viewModel.grantPendingConsent(checkNotNull(viewModel.state.value.pendingConsentPreview))
             runCurrent()
             assertEquals(1, factory.opened.size)
             assertEquals(GoogleDemoAccount.ACCOUNT_A to 1, factory.opened.single().first)
@@ -245,7 +245,7 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
             // Reauthorize B, begin a delayed loopback request, and revoke while it is pending.
             viewModel.requestConsent(GoogleFeature.CALENDAR)
             runCurrent()
-            viewModel.grantPendingConsent()
+            viewModel.grantPendingConsent(checkNotNull(viewModel.state.value.pendingConsentPreview))
             runCurrent()
             assertEquals(2, factory.opened.size)
             val (accountBSession, _) = factory.opened.last().second

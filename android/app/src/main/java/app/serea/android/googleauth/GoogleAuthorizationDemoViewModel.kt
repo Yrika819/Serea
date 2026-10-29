@@ -26,17 +26,29 @@ internal enum class GoogleDemoAccount(val displayName: String) {
     ACCOUNT_B("架空アカウント B"),
 }
 
+/** Immutable identity for one rendered consent preview. UI callbacks must return this exact value. */
+internal data class GoogleDemoConsentPreview(
+    val id: Long,
+    val feature: GoogleFeature,
+    val requestedScopes: Set<GoogleScope>,
+    val consentScopes: Set<GoogleScope>,
+    val selectedAccount: GoogleDemoAccount,
+    val accountGeneration: Int,
+)
+
 internal data class GoogleAuthorizationDemoState(
     val gmail: GoogleDemoFeatureState = GoogleDemoFeatureState.DISCONNECTED,
     val calendar: GoogleDemoFeatureState = GoogleDemoFeatureState.DISCONNECTED,
     val disabledInAppFeatures: Set<GoogleFeature> = emptySet(),
     val inFlightFeature: GoogleFeature? = null,
-    val pendingFeature: GoogleFeature? = null,
-    val pendingScopes: Set<GoogleScope> = emptySet(),
+    val pendingConsentPreview: GoogleDemoConsentPreview? = null,
     val message: String = "この画面は架空の認可フローを表示します。実アカウントと通信しません。",
     val selectedAccount: GoogleDemoAccount = GoogleDemoAccount.ACCOUNT_A,
     val accountGeneration: Int = 1,
-)
+) {
+    val pendingFeature: GoogleFeature? get() = pendingConsentPreview?.feature
+    val pendingScopes: Set<GoogleScope> get() = pendingConsentPreview?.consentScopes.orEmpty()
+}
 
 /**
  * Drives a synthetic consent UI only. It owns a FakeGoogleAuthorizationGateway directly and has
@@ -53,6 +65,7 @@ internal class GoogleAuthorizationDemoViewModel(
     /** Exposed only after synthetic Calendar consent; every account/revoke/disconnect closes it. */
     val calendarDemoSession: StateFlow<CalendarProviderSession?> = mutableCalendarDemoSession.asStateFlow()
     private var requestGeneration = 0L
+    private var nextPreviewId = 0L
     private val explicitConfirmationRequired = mutableSetOf<GoogleFeature>()
 
     fun requestConsent(feature: GoogleFeature) {
@@ -70,41 +83,54 @@ internal class GoogleAuthorizationDemoViewModel(
             }
             requestGeneration++
             mutableState.value = current.withFeatureState(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED).copy(
-                pendingFeature = feature,
-                pendingScopes = feature.scopes,
+                pendingConsentPreview = newPreview(
+                    current,
+                    feature,
+                    feature.scopes,
+                    feature.scopes,
+                ),
                 message = "再接続のため、共有デモ権限をこの画面で確認してください。",
             )
             return
         }
-        runAuthorization(feature, allowPendingConsent = false) { gateway.authorize(feature.scopes) }
+        runAuthorization(feature, preview = null) { gateway.authorize(feature.scopes) }
     }
 
-    fun grantPendingConsent() {
-        val feature = mutableState.value.pendingFeature ?: return
-        runAuthorization(feature, allowPendingConsent = true) {
+    fun grantPendingConsent(preview: GoogleDemoConsentPreview) {
+        if (!isCurrentPreview(preview)) return
+        runAuthorization(preview.feature, preview) {
             gateway.setExpired(false)
-            gateway.grant(*feature.scopes.toTypedArray())
-            gateway.authorize(feature.scopes)
+            gateway.grant(*preview.consentScopes.toTypedArray())
+            gateway.authorize(preview.requestedScopes)
         }
     }
 
-    fun denyPendingConsent() {
-        val feature = mutableState.value.pendingFeature ?: return
-        runAuthorization(feature, allowPendingConsent = true) {
+    fun denyPendingConsent(preview: GoogleDemoConsentPreview) {
+        if (!isCurrentPreview(preview)) return
+        runAuthorization(preview.feature, preview) {
             gateway.denyNext(AuthorizationFailure.DENIED)
-            gateway.authorize(feature.scopes)
+            gateway.authorize(preview.requestedScopes)
         }
     }
 
-    fun cancelPendingConsent() {
+    fun cancelPendingConsent(preview: GoogleDemoConsentPreview) {
         val current = mutableState.value
-        val feature = current.pendingFeature ?: current.inFlightFeature
+        if (!isCurrentPreview(preview)) return
+        val feature = preview.feature
         requestGeneration++
-        val updated = feature?.let { current.withFeatureState(it, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) } ?: current
-        mutableState.value = updated.copy(
+        mutableState.value = current.withFeatureState(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED).copy(
+            pendingConsentPreview = null,
+            message = "デモ認可操作を取り消しました。許可範囲は追加されていません。",
+        )
+    }
+
+    /** Cancels an in-flight authorization; consent-preview actions use their captured identity. */
+    fun cancelAuthorization() {
+        val current = mutableState.value
+        val feature = current.inFlightFeature ?: return
+        requestGeneration++
+        mutableState.value = current.withFeatureState(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED).copy(
             inFlightFeature = null,
-            pendingFeature = null,
-            pendingScopes = emptySet(),
             message = "デモ認可操作を取り消しました。許可範囲は追加されていません。",
         )
     }
@@ -117,8 +143,7 @@ internal class GoogleAuthorizationDemoViewModel(
             gmail = GoogleDemoFeatureState.EXPIRED,
             calendar = GoogleDemoFeatureState.EXPIRED,
             inFlightFeature = null,
-            pendingFeature = null,
-            pendingScopes = emptySet(),
+            pendingConsentPreview = null,
             message = "架空の認可状態を期限切れにしました。読み取りは行われません。",
         )
     }
@@ -134,8 +159,7 @@ internal class GoogleAuthorizationDemoViewModel(
             gmail = if (current.gmail == GoogleDemoFeatureState.DISCONNECTED) current.gmail else GoogleDemoFeatureState.REVOKED,
             calendar = if (current.calendar == GoogleDemoFeatureState.DISCONNECTED) current.calendar else GoogleDemoFeatureState.REVOKED,
             inFlightFeature = null,
-            pendingFeature = null,
-            pendingScopes = emptySet(),
+            pendingConsentPreview = null,
             selectedAccount = account,
             accountGeneration = current.accountGeneration + 1,
             message = "${account.displayName}を選択しました。以前の承認結果は失効し、引き継がれていません。",
@@ -160,8 +184,7 @@ internal class GoogleAuthorizationDemoViewModel(
             state.copy(
                 disabledInAppFeatures = state.disabledInAppFeatures + feature,
                 inFlightFeature = state.inFlightFeature.takeUnless { it == feature },
-                pendingFeature = state.pendingFeature.takeUnless { it == feature },
-                pendingScopes = if (state.pendingFeature == feature) emptySet() else state.pendingScopes,
+                pendingConsentPreview = state.pendingConsentPreview.takeUnless { it?.feature == feature },
                 message = "${feature.label()}のアプリ内デモ接続を切りました。共有Grantの再利用はしていません。",
             )
         }
@@ -176,8 +199,7 @@ internal class GoogleAuthorizationDemoViewModel(
             state.copy(
                 disabledInAppFeatures = state.disabledInAppFeatures - feature,
                 inFlightFeature = state.inFlightFeature.takeUnless { it == feature },
-                pendingFeature = state.pendingFeature.takeUnless { it == feature },
-                pendingScopes = if (state.pendingFeature == feature) emptySet() else state.pendingScopes,
+                pendingConsentPreview = state.pendingConsentPreview.takeUnless { it?.feature == feature },
                 message = "${feature.label()}を再接続するにはデモ承認を要求してください。",
             )
         }
@@ -192,8 +214,7 @@ internal class GoogleAuthorizationDemoViewModel(
             gmail = GoogleDemoFeatureState.REVOKED,
             calendar = GoogleDemoFeatureState.REVOKED,
             inFlightFeature = null,
-            pendingFeature = null,
-            pendingScopes = emptySet(),
+            pendingConsentPreview = null,
             message = "架空の共有Grantを取り消しました。実Google権限には影響しません。",
         )
     }
@@ -207,8 +228,12 @@ internal class GoogleAuthorizationDemoViewModel(
             is AuthorizationOutcome.ConsentRequired -> {
                 updateFeature(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED) { state -> state.copy(
                     inFlightFeature = null,
-                    pendingFeature = feature,
-                    pendingScopes = outcome.missingScopes,
+                    pendingConsentPreview = newPreview(
+                        state,
+                        feature,
+                        requestedScopes = feature.scopes,
+                        consentScopes = outcome.missingScopes,
+                    ),
                     message = "要求された範囲を確認してからデモ承認を選んでください。",
                 ) }
             }
@@ -227,8 +252,7 @@ internal class GoogleAuthorizationDemoViewModel(
                         updateFeature(feature, GoogleDemoFeatureState.ERROR) { state ->
                             state.copy(
                                 inFlightFeature = null,
-                                pendingFeature = null,
-                                pendingScopes = emptySet(),
+                                pendingConsentPreview = null,
                                 message = "Calendarの架空セッションを作成できませんでした。読み取りは無効です。",
                             )
                         }
@@ -240,8 +264,7 @@ internal class GoogleAuthorizationDemoViewModel(
                 updateFeature(feature, GoogleDemoFeatureState.AUTHORIZED) { state ->
                     state.copy(
                         inFlightFeature = null,
-                        pendingFeature = null,
-                        pendingScopes = emptySet(),
+                        pendingConsentPreview = null,
                         message = "${feature.label()}の架空の読み取り専用デモ承認が有効です。実データは取得していません。",
                     )
                 }
@@ -251,8 +274,7 @@ internal class GoogleAuthorizationDemoViewModel(
                 updateFeature(feature, status) { state ->
                     state.copy(
                         inFlightFeature = null,
-                        pendingFeature = null,
-                        pendingScopes = emptySet(),
+                        pendingConsentPreview = null,
                         message = "デモ認可の状態: ${outcome.failure.name}。実Googleには接続していません。",
                     )
                 }
@@ -275,10 +297,10 @@ internal class GoogleAuthorizationDemoViewModel(
 
     private fun runAuthorization(
         feature: GoogleFeature,
-        allowPendingConsent: Boolean,
+        preview: GoogleDemoConsentPreview?,
         operation: suspend () -> AuthorizationOutcome,
     ) {
-        val generation = beginAuthorization(feature, allowPendingConsent) ?: return
+        val generation = beginAuthorization(feature, preview) ?: return
         viewModelScope.launch {
             try {
                 // A queued fake operation may be invalidated before this coroutine starts.
@@ -292,7 +314,7 @@ internal class GoogleAuthorizationDemoViewModel(
         }
     }
 
-    private fun beginAuthorization(feature: GoogleFeature, allowPendingConsent: Boolean): Long? {
+    private fun beginAuthorization(feature: GoogleFeature, preview: GoogleDemoConsentPreview?): Long? {
         val current = mutableState.value
         if (feature in current.disabledInAppFeatures) {
             mutableState.value = current.copy(
@@ -300,20 +322,22 @@ internal class GoogleAuthorizationDemoViewModel(
             )
             return null
         }
-        val canStart = current.inFlightFeature == null && if (allowPendingConsent) {
-            current.pendingFeature == feature
+        val previewMatches = if (preview == null) {
+            current.pendingConsentPreview == null
         } else {
-            current.pendingFeature == null
+            current.pendingConsentPreview === preview &&
+                preview.feature == feature &&
+                preview.selectedAccount == current.selectedAccount &&
+                preview.accountGeneration == current.accountGeneration
         }
+        val canStart = current.inFlightFeature == null && previewMatches
         if (!canStart) {
-            mutableState.value = current.copy(message = "先に表示中のデモ認可操作を完了または取り消してください。")
             return null
         }
         val generation = ++requestGeneration
         mutableState.value = current.withFeatureState(feature, GoogleDemoFeatureState.AUTHORIZING).copy(
             inFlightFeature = feature,
-            pendingFeature = if (allowPendingConsent) null else current.pendingFeature,
-            pendingScopes = if (allowPendingConsent) emptySet() else current.pendingScopes,
+            pendingConsentPreview = null,
         )
         return generation
     }
@@ -326,11 +350,33 @@ internal class GoogleAuthorizationDemoViewModel(
         val current = mutableState.value
         mutableState.value = current.withFeatureState(feature, GoogleDemoFeatureState.AUTHORIZATION_REQUIRED).copy(
             inFlightFeature = null,
-            pendingFeature = null,
-            pendingScopes = emptySet(),
+            pendingConsentPreview = null,
             message = "デモ認可操作は完了しませんでした。再試行するには承認を要求してください。",
         )
     }
+
+    private fun isCurrentPreview(preview: GoogleDemoConsentPreview): Boolean {
+        val current = mutableState.value
+        return current.pendingConsentPreview === preview &&
+            preview.selectedAccount == current.selectedAccount &&
+            preview.accountGeneration == current.accountGeneration &&
+            preview.feature.scopes == preview.requestedScopes &&
+            preview.requestedScopes.containsAll(preview.consentScopes)
+    }
+
+    private fun newPreview(
+        state: GoogleAuthorizationDemoState,
+        feature: GoogleFeature,
+        requestedScopes: Set<GoogleScope>,
+        consentScopes: Set<GoogleScope>,
+    ) = GoogleDemoConsentPreview(
+        id = ++nextPreviewId,
+        feature = feature,
+        requestedScopes = requestedScopes.toSet(),
+        consentScopes = consentScopes.toSet(),
+        selectedAccount = state.selectedAccount,
+        accountGeneration = state.accountGeneration,
+    )
 
     private fun failure(error: Throwable): AuthorizationOutcome {
         if (error is CancellationException) throw error

@@ -275,3 +275,20 @@ The exhausted agents' uncommitted work remains isolated and is not integrated:
 - UI branch/worktree `codex/serea-g9r-ui-followup`, based on #155 head `683854ba94cb3a1e1972b73d0f1f60392f2271d6`: changes are limited to test source. The tests use a test-process-only HTTPS MockWebServer client constrained to exact Calendar GET origin/path/query rules, disable redirects, and add agenda/focus diagnostics; production URL policy and manifest were not changed. Tests are uncommitted and not independently reviewed/accepted. Local Gradle could not start because configured `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64` is absent. Using available Java 21 JRE also failed toolchain detection because `javac` is unavailable. Thus JVM tests and AndroidTest compilation are BLOCKED/NOT_RUN in this environment.
 
 No PR was rewritten, no main merge occurred, and owner-only actions remain untouched. Protected main was not modified. Next: restore a JDK with compiler in the execution environment or use exact-head GitHub Android jobs; finish independent review and focused tests before committing the Native/UI source changes. Preserve the source-specific failures above and rerun formal CI on any newly frozen source.
+
+## Draft recovery successors — 2026-10-29
+
+Two isolated successors are now pushed as Draft PRs. Their exact-head evidence is pending; neither is accepted or integrated.
+
+| PR | Base SHA | Source SHA | Tree SHA | Scope |
+|---:|---|---|---|---|
+| #160 | #158 source `80e9990625b000e9d56a78743a7460ac120d4979` (base branch G7 readiness) | `447e151738cb4e98c5d97cddf47b96e0d1035656` | `8787bbe744c2b67fc2950f2e58930297b65c8447` | Native cancellation and cleanup diagnostics; product Chat remains disconnected. |
+| #161 | #155 source `683854ba94cb3a1e1972b73d0f1f60392f2271d6` (PR base G9 functional candidate) | `0941043a1e687ec3b4e4778ce387c7f2c4b70ba1` | `e64ddd7bafd7c03de3898f2c2503f6ff1aff8604` | Google/Gmail/Calendar UI test-only recovery and test-local HTTPS fixture. |
+
+#160 workflows are queued at exact source for Android `40882489925` (Change Scope job `123477424648`), Native focused `40882490072` (job `123477423229`), Full `40882489846`, Fast `40882490126`, Git Hooks `40882490004`, SQLite `40882489910`, Native platform `40882490092`, RustSec `40882489931`, and Mock Beta Contract `40882489912`. The focused runner has no assigned runner (`runnerName=null`).
+
+#161 workflows are queued at exact source for Android `40882542674` (Change Scope job `123477601597`), Full `40882542835`, Fast `40882542844`, Git Hooks `40882542975`, SQLite `40882542777`, Native platform `40882542765`, and RustSec `40882542951`. No exact-head Android UI runtime result is available.
+
+The UI diff touches tests and adds test-only helpers/report; it does not modify production files, manifests, Required identities, or the Required Gate. The Native diff touches the JNI implementation only for diagnostic test seams and cancellation witnesses, plus its test/harness; its Android/JNI compile is still NOT_RUN locally. `git diff --check` passed before both commits; the cleanup harness and shell syntax checks pass on #160. JVM tests and UI instrumentation compile remain blocked locally by missing JDK compiler. Both successors require independent review and exact-head CI before integration.
+
+Parent PR #155 current checkpoint source is `35d35542680d4438c7f6970176906b719cf1be79`, tree `227cfea352102e190de6fd4c5583a281628972b8`. Its current non-Android workflows are still partly queued/in progress (Full `40882305754`, Fast `40882305710`, Native platform `40882305768`, SQLite `40882305751`, RustSec `40882305759`, Git Hooks `40882305803`). No PR #155 CI result is transferred to #160/#161. Main remains `e0acb0254820c381dd97828824bef86a1db5176c`; Personal Beta remains NO-GO.

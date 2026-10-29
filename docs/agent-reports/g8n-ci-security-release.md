@@ -38,6 +38,12 @@ All listed runs point to `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66`. Runner name
 
 The queued macOS jobs had empty `runner_name` and no conclusion. This is runner wait, not a product failure or a pass. The Android emulator job had an assigned runner and was actively installing an image; API 26/35 tests had not started at this snapshot. No automatic rerun was requested.
 
+### Runner refresh at 03:08 UTC
+
+PR #146 remains pinned to the same source SHA above. Full CI has four passing jobs (Windows P7 Gate C runner `1000023175`, Linux stable runner `1000023194`, Linux MSRV runner `1000023177`, macOS ARM64 runner `1000023279`) and macOS Intel x86_64 queued without a runner. Native has 10/12 jobs completed successfully; Rust 1.85 macOS ARM64 is in progress on runner `1000023312`, and Rust 1.85 macOS x86_64 remains queued. SQLite has three successful producer/consumer jobs; the final Intel-database-on-ARM64 consumer remains queued. These queued jobs are infrastructure waits; no failures are recorded in this refresh.
+
+For successor PR #149 exact source `4500179bb32ea9696160e7bab115e19e45016da7`, Tree `f4dc2f738a1e84ba2683bc1b87891748f01f2a55`, the 03:08 UTC Actions API snapshot shows Android, Native, Fast, RustSec, SQLite, and Git Hooks jobs queued without runner assignment. Full CI has Windows P7 Gate C in progress on runner `1000023317`; its four Linux/macOS jobs remain queued. No PR #149 job had completed and no API 26/35, JUnit, Identity, Process Death, Data Isolation, Sentinel, APK, or artifact evidence exists at this snapshot. Do not rerun; keep the source bound and wait for scheduled jobs.
+
 ### Android JUnit and build artifacts
 
 The Android JUnit, debug APK, release security, and historical Native artifacts downloaded through the GitHub Actions artifact endpoint had ZIP SHA-256 values matching the Actions artifact digests.

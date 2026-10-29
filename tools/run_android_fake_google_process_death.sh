@@ -19,28 +19,77 @@ mkdir -p "$evidence"
 printf 'NOT_RUN\n' > "$evidence/status.txt"
 
 adb_cmd=(adb -s "$ANDROID_SERIAL")
-test -n "$("${adb_cmd[@]}" shell pm path "$package" | tr -d '\r')"
+if ! package_path="$("${adb_cmd[@]}" shell pm path "$package")"; then
+  printf 'FAIL\n' > "$evidence/status.txt"
+  echo 'Could not verify the isolated target package path.' >&2
+  exit 1
+fi
+package_path="${package_path//$'\r'/}"
+if [[ -z "$package_path" ]]; then
+  printf 'FAIL\n' > "$evidence/status.txt"
+  echo 'The isolated target package is not installed.' >&2
+  exit 1
+fi
+
+# Normalize pidof's documented no-match status to a sentinel on-device. The host still sees
+# nonzero for adb transport failures, pidof errors, malformed output, and other query failures.
+pid_query_script='
+pids=$(pidof "$1" 2>/dev/null)
+pidof_status=$?
+case "$pidof_status" in
+  0) [ -n "$pids" ] || exit 2; printf "%s\\n" "$pids" ;;
+  1) [ -z "$pids" ] || exit 2; printf "__SEREA_PID_ABSENT__\\n" ;;
+  *) exit 2 ;;
+esac
+'
+
+query_package_pid() {
+  local target_package="$1" query_result
+  if ! query_result="$("${adb_cmd[@]}" shell sh -c "$pid_query_script" serea-pid-query "$target_package")"; then
+    printf 'PID query failed for %s.\n' "$target_package" >&2
+    return 1
+  fi
+  query_result="${query_result//$'\r'/}"
+  if [[ "$query_result" == '__SEREA_PID_ABSENT__' ]]; then
+    return 0
+  fi
+  if [[ "$query_result" =~ ^[0-9]+([[:space:]]+[0-9]+)*$ ]]; then
+    printf '%s' "$query_result"
+    return 0
+  fi
+  printf 'PID query returned malformed output for %s.\n' "$target_package" >&2
+  return 1
+}
+
+fail_campaign() {
+  printf 'FAIL\n' > "$evidence/status.txt"
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
 
 # The app process also hosts the AndroidJUnitRunner in this variant. Refuse to stop it while a
 # test process remains; the host script is called only after Gradle/instrumentation has returned.
-test_pid="$("${adb_cmd[@]}" shell pidof "$test_package" 2>/dev/null | tr -d '\r' || true)"
+if ! test_pid="$(query_package_pid "$test_package")"; then
+  fail_campaign 'could not prove the isolated instrumentation process is absent.'
+fi
 if [[ -n "$test_pid" ]]; then
   printf 'FAIL: isolated instrumentation process is still present: %s\n' "$test_pid" | tee "$evidence/status.txt" >&2
   exit 1
 fi
+if ! initial_target_pid="$(query_package_pid "$package")"; then
+  fail_campaign 'could not query the isolated target process before force-stop.'
+fi
 {
-  printf 'api=%s\nserial=%s\ntarget_package=%s\ninstrumentation_package=%s\ninstrumentation_process_before=%s\ntoken=%s\n' \
-    "$EXPECTED_API_LEVEL" "$ANDROID_SERIAL" "$package" "$test_package" "${test_pid:-absent}" "$token"
+  printf 'api=%s\nserial=%s\ntarget_package=%s\ninstrumentation_package=%s\ninstrumentation_process_before=%s\ntarget_process_before=%s\ntoken=%s\n' \
+    "$EXPECTED_API_LEVEL" "$ANDROID_SERIAL" "$package" "$test_package" "${test_pid:-absent}" "${initial_target_pid:-absent}" "$token"
 } > "$evidence/host-guard.txt"
-
-pid_of_target() {
-  "${adb_cmd[@]}" shell pidof "$package" 2>/dev/null | tr -d '\r' || true
-}
 
 wait_target_stopped() {
   local observed
   for _ in $(seq 1 30); do
-    observed="$(pid_of_target)"
+    if ! observed="$(query_package_pid "$package")"; then
+      fail_campaign 'target PID query failed while verifying force-stop.'
+    fi
     if [[ -z "$observed" ]]; then
       return 0
     fi
@@ -75,9 +124,15 @@ printf 'Starting Fake consent seed in the isolated app process.\n'
 "${adb_cmd[@]}" shell am force-stop "$package"
 wait_target_stopped
 printf 'absent\n' > "$evidence/pre-seed-pid.txt"
-run_phase seed
-seed_pid="$(pid_of_target)"
-test -n "$seed_pid"
+if ! run_phase seed; then
+  fail_campaign 'Fake Calendar seed phase failed.'
+fi
+if ! seed_pid="$(query_package_pid "$package")"; then
+  fail_campaign 'target PID query failed after Fake Calendar seed.'
+fi
+if [[ -z "$seed_pid" ]]; then
+  fail_campaign 'target process is absent after the Fake Calendar seed phase.'
+fi
 printf '%s\n' "$seed_pid" > "$evidence/seed-pid.txt"
 
 printf 'Force-stopping only %s after instrumentation has exited.\n' "$package"
@@ -85,16 +140,23 @@ printf 'Force-stopping only %s after instrumentation has exited.\n' "$package"
 wait_target_stopped
 printf 'absent\n' > "$evidence/post-force-stop-pid.txt"
 
-test_pid="$("${adb_cmd[@]}" shell pidof "$test_package" 2>/dev/null | tr -d '\r' || true)"
+if ! test_pid="$(query_package_pid "$test_package")"; then
+  fail_campaign 'instrumentation PID query failed after target force-stop.'
+fi
 if [[ -n "$test_pid" ]]; then
-  printf 'FAIL: isolated instrumentation process appeared during target process-death check: %s\n' "$test_pid" | tee "$evidence/status.txt" >&2
-  exit 1
+  fail_campaign "isolated instrumentation process appeared during target process-death check: $test_pid"
 fi
 
 printf 'Relaunching a fresh Activity and checking in-memory auth/session state.\n'
-run_phase verify
-verify_pid="$(pid_of_target)"
-test -n "$verify_pid"
+if ! run_phase verify; then
+  fail_campaign 'fresh-state verification phase failed.'
+fi
+if ! verify_pid="$(query_package_pid "$package")"; then
+  fail_campaign 'target PID query failed after fresh-state verification.'
+fi
+if [[ -z "$verify_pid" ]]; then
+  fail_campaign 'target process is absent after fresh-state verification.'
+fi
 printf '%s\n' "$verify_pid" > "$evidence/verify-pid.txt"
 
 printf 'PASS\n' > "$evidence/status.txt"

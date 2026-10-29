@@ -228,7 +228,7 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
             repeat(2) {
                 val request = server.takeRequest()
                 assertEquals("GET", request.method)
-                assertEquals("www.googleapis.com", request.getHeader("Host"))
+                assertEquals("localhost", request.requestUrl!!.host)
                 assertTrue(request.requestLine.contains("/calendar/v3/"))
                 assertEquals("Bearer synthetic-loopback-token-mock-account_a-1", request.getHeader("Authorization"))
             }
@@ -260,7 +260,7 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
                 val delayedRequest = withContext(Dispatchers.IO) { server.takeRequest(5, TimeUnit.SECONDS) }
                 assertNotNull(delayedRequest)
                 assertEquals("GET", delayedRequest!!.method)
-                assertEquals("www.googleapis.com", delayedRequest.getHeader("Host"))
+                assertEquals("localhost", delayedRequest.requestUrl!!.host)
 
                 // Revoke only after MockWebServer has parsed the pending request, then observe the
                 // expected fail-closed result before leaving the supervised scope.

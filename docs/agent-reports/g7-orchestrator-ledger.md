@@ -184,3 +184,16 @@ Review findings were closed before the warning-only cleanup. Agent C accepted th
 The Calendar Mock E2E, Owner readiness materials, AI/Product/Usage acceptance contract, provider terms review, and CI efficiency trial are prepared. The 2026-11-10 G7 decision remains pending because the exact-head Android API 35 Required gate fails twice in the same existing Chat/composer UI test and Identity is consequently skipped. This campaign did not investigate or patch that out-of-scope Android/IME issue, and did not relax the G6 Security Gates.
 
 Owner decisions O-01 through O-03 remain pending on the 2026-11-03 and 2026-11-10 schedule. Calendar real OAuth and real AI acceptance remain `NOT_RUN` for the 2026-11-20 target; Gmail real read remains `NOT_RUN` for the 2026-11-30 target. No schedule date overrides the approval boundaries.
+
+
+## G7 closure update — 2026-10-29 exact SQLite retry completed
+
+G7 is now **SUCCESS — Evidence Closure**. The previously unassigned Intel→macOS ARM64 direction completed on exact final G7 SHA `00384eb6468214362435140c9a2d848fa2e0f12e`, tree `10d07a8ec57d7f67fc94663c489347938cccbd58`.
+
+- Run `40749231272`, attempt 3: SUCCESS. Exact source SHA is `00384eb…`.
+- Previously incomplete job `Open Intel DB on macOS arm64`: job `123182687879`, runner `1000022879`, SUCCESS; started `2026-10-29T00:46:46Z`, completed `2026-10-29T00:47:41Z`.
+- Test `closed_serea_database_can_be_produced_or_consumed_cross_architecture`: 1 passed, 0 failed/ignored/measured/filtered out.
+- Input Intel artifact ID `12843411146`; ARM64 validation output artifact ID `12843930249`. Both ZIP and contained database SHA-256 values, byte size, and read-only SQLite integrity results are in `docs/agent-reports/evidence/g7-sqlite-arm64-20261029.txt`.
+- The other three directions in this exact run attempt also passed: jobs `123182727042`, `123182743251`, and `123182690038`. The run is overall SUCCESS.
+
+This updates only the SQLite evidence ledger; all earlier `runner_id=0` cancellations remain preserved as history. No G6 result was reused, no Required gate changed, and no code behavior changed. Exact-final-G7 Android 105/105 API26/API35 and Identity passes, the retained earlier `acde94c` IME failures, and all other evidence stay unchanged. The later SQLite pass closes the sole listed G7 residual. PR #139 remains OPEN/DRAFT until Owner review; `main` remains unchanged. Personal Beta remains NO-GO.

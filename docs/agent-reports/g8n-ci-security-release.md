@@ -474,3 +474,7 @@ PR153_ANDROID_CI=QUEUED without runner at snapshot; all exact-head Android tests
 PR151_ANDROID_UI=NOT_RUN; PR151_FORMAL_ANDROID=PARTIAL / runner-queued
 MODEL_DEFAULT=UNDECIDED; PIXEL7A_ACCEPTANCE=NOT_RUN
 ```
+
+### PR #153 runner refresh — 2026-10-29 08:50:55 UTC
+
+The PR #153 snapshot has advanced slightly: Android run `40844961565` remains queued with its Android Change Scope job `123350084172` assigned no runner (`runner_id=0`); therefore every Android build/test/UI check remains NOT_RUN. Full CI `40844961537` has macOS Intel job `123350084681` in progress on runner `1000023630`; the other four jobs are queued with no runner. Native `40844961372` has Windows x86_64 Rust job `123350083671` in progress on runner `1000023634`; its other eleven jobs remain queued without assignment. SQLite `40844961545`, RustSec `40844961783`, Fast `40844961637`, and Git Hooks `40844961944` jobs remain queued without assignment. No job has failed or produced artifacts at this snapshot. The runner inventory endpoint `GET /repos/Yrika819/Serea/actions/runners` returned HTTP 403 `Resource not accessible by integration`, so Lane C cannot assess the available hosted or self-hosted pool beyond per-job assignment data. Do not infer overall capacity or rerun; this remains queue/in-progress, not product failure.

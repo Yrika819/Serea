@@ -752,3 +752,35 @@ G8 Evidence Closure **PARTIAL**; G9 Android Acceptance **PARTIAL**; Native x86_6
 3. Await the bounded #182 focused jobs; require stable emulator preflight, boot, ADB, ARM64 ABI, JNI, fixture hash, and inference separately. Stop at the first failed precondition and preserve its source-bound artifact.
 4. Obtain Windows x86_64 diagnostic output before assigning a timeout root cause; then make only an evidence-supported bounded change and rerun the focused test.
 5. Build an integration candidate only from independently accepted deltas; freeze exact HEAD/tree before Formal CI. Keep all unproven gates PARTIAL/NOT_RUN.
+
+## Focused recovery successors and independent reviews — 2026-10-29 22:50 UTC
+
+### PR #184 — Bash invocation recovery
+
+- OPEN/DRAFT, base #176 exact `d4232c9bfc64e0afd2927e9e66b3402ad55cfef7`.
+- Head `8e99ee05908ee3bcdedf81b75a6dc2acafd4d8e5`, tree `7e2082c514e72d68ffa9f8f4d69c9706b29afd3b`.
+- Changes: `.github/workflows/android.yml`, `tests/android_emulator_workflow_tests.py`, and new `tools/run_android_campaign_with_deadline.sh`. Emulator action now explicitly calls Bash on a bounded wrapper; deadline arithmetic (180-second reserve), INT/KILL timeout behavior, child environment, and exit status are preserved. No test identity, Required/Additional partition, security setting, or gate was changed.
+- Focused wrapper tests plus Android workflow and instrumentation-identity unit suites: 50/50 PASS; Bash syntax PASS; workflow YAML parse PASS; `git diff --check` PASS. The fake timeout execs a fake campaign child and verifies the deadline env reaches that child and nonzero child status propagates.
+- Agent C independent review: **ACCEPTED** for this exact source. These are local focused tests only. Hosted API26/35 Android acceptance on #184 is PENDING (`40968489932`); other PR workflows are QUEUED/PENDING.
+
+### PR #186 — Fake Google process-death host helper
+
+- OPEN/DRAFT, base PR #173 exact `540fd754e81c3788a76cc9452f754211e95d8378`.
+- Head `ade020097c9e88927f072180afc161f62cb72e45`, tree `3a8c7e5b18dc6a4b95a0b0d56c14ced6fa459ff6`.
+- Run `40916731468`, API26 aggregate artifact `12924493771` (16,189,094 bytes, SHA-256 `aa8474fb6ae5344df3f9c50f39f871bd85d43b174e4e6d105fd9e607447f940d`) logs the concrete cause: `sh: -c: requires an argument`, `/system/bin/sh: serea-pid-query: not found`, then the harness cannot prove the isolated instrumentation process absent. This is a host helper command-boundary/harness failure, not a product Process Death JUnit failure. The same run has separate API26 JUnit artifact `12923566730` (841,228 bytes, SHA-256 `a2eff7aae0cd7ea1539cc55be2fdf61fe0dfc8cd17681b8466f6820c97e92dfd`); API26 Required and Google Calendar/Gmail UI are both 105/105 and 16/16 PASS, respectively. Process Death and Data Isolation product tests PASS; the separate sentinel helper makes aggregate API26 fail.
+- Fix feeds the bounded PID query script on stdin to remote `sh`; only the two fixed isolated package IDs can be queried, and remote no-match is normalized to a sentinel while other failures stay fail-closed. Target APK hash/provenance and installed-test-package absence checks are unchanged.
+- Local focused checks: 2/2 targeted and 47/47 workflow/identity suite PASS; Bash syntax and `git diff --check` PASS. New-source hosted sentinel/process-absence proof is NOT_RUN. Agent C independently reviewed this exact source and returned CHANGES_REQUESTED because the fake ADB test inspects the script but returns canned process answers instead of executing the generated PID logic. The fix must add deterministic absent/present/malformed/pidof-error/transport cases and prove force-stop follows only verified absence. Android run `40968673413` and cross-workflows are QUEUED.
+
+### PR #185 — Native Chat consent wording
+
+- OPEN/DRAFT, docs-only successor to PR #175 exact head `b7e9a7a8a9c10905f0de2f2aaf1c1f41994bd985` / tree `09e6ce6731c085b1f9ea63cf67325f04472669aa`.
+- Head `4db504fc718d1c062c97a4418b005693aa670ad9`, tree `e00f5a8d042138e55cd00b4a620e03dd845591a0`.
+- Clarifies that after model eviction every subsequent local send requires a fresh, single-use, content-bound proof; a prior proof cannot authorize a later request. Docs validation (201 files) and diff check PASS. Agent C independent review: **ACCEPTED**. No product Chat wiring or flag change; remains disconnected/default OFF. Hosted tests are queued and do not provide runtime evidence.
+
+### Prior run clarification
+
+The API26 artifact set from #173 run `40916731468` includes two distinct artifacts: JUnit report `12923566730` and aggregate emulator evidence `12924493771`. Both are from the same exact source/run and their distinct purposes explain the different archive digests. This does not alter the API26 outcomes above. The docs checkpoint push run `40967993604` had zero jobs/logs and GitHub reported a workflow-file issue; classify it as workflow configuration failure before a job, not product Android test evidence.
+
+### Current updated decision
+
+G9 Android remains **PARTIAL** until API26 and API35 Required/UI, helper proof, Process Death, Data Isolation, IME and Identity all pass on one exact integration SHA. Existing #173 provides API26 Required/UI plus product Process Death/Data Isolation, but its sentinel/helper aggregate fails; API35 still has the one Required failure and Google/Gmail UI is NOT_RUN. PR #183, #184 and #186 have source changes accepted or pending review, but their hosted Android runs are queued. ARM64 Native remains **NOT_RUN**; x86_64 remains successful only at exact #177. Windows root cause remains **UNKNOWN** because the diagnostic Windows x86_64 job is QUEUED. G10 PARTIAL; model UNDECIDED; Personal Beta NO-GO.

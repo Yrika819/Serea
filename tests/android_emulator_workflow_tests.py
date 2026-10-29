@@ -19,6 +19,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         focused_workflow = (ROOT / ".github/workflows/android-functional-focused.yml").read_text(encoding="utf-8")
         android_classifier = android_workflow.split("name: Classify changed files", 1)[1].split("esac", 1)[0]
         self.assertIn("|tools/assert_exact_source_checkout.sh|", android_classifier)
+        for android_tool in (
+            "tools/android-instrumentation-http-loopback-tests.txt",
+            "tools/android_instrumentation_variant_filters.py",
+            "tools/prepare_android_instrumentation_variant_target.sh",
+            "tools/verify_android_http_test_apk_permissions.py",
+            "tools/verify_android_installed_apk_sha256.sh",
+            "tools/verify_android_instrumentation_partition_results.py",
+        ):
+            self.assertIn(f"|{android_tool}|", android_classifier)
         pull_request_paths = focused_workflow.split("  pull_request:", 1)[1].split("  push:", 1)[0]
         push_paths = focused_workflow.split("  push:", 1)[1].split("\npermissions:", 1)[0]
         helper_path = "      - 'tools/assert_exact_source_checkout.sh'"
@@ -635,7 +644,17 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('ProfileVerifierCacheMarker.isOnlyValidMarker(filesDirectory, packageLastUpdateTime)', runner)
         self.assertIn('Build.VERSION.SDK_INT >= 28 && Build.VERSION.SDK_INT != 30', runner)
         self.assertIn('filesDirEntries=${filesDirectoryEntries?.sorted()}', runner)
-        self.assertIn('testBuildType = "isolated"', (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8"))
+        self.assertIn('testBuildType = if (sereaHttpLoopbackTestVariant) "isolatedHttp" else "isolated"',
+                      (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8"))
+        gradle_config = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn("android-instrumentation-http-loopback-tests.txt", gradle_config)
+        self.assertIn("requestedHttpIdentities.size != 4", gradle_config)
+        self.assertIn("requestedHttpIdentities.toSet() != declaredHttpIdentities", gradle_config)
+        self.assertIn("connectedIsolatedHttpAndroidTest", gradle_config)
+        self.assertNotIn('"connectedIsolatedAndroidTest",', gradle_config)
+        campaign_for_variants = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        self.assertIn('variant_gradle_args=(-PsereaHttpLoopbackTestVariant=true)', campaign_for_variants)
+        self.assertIn('run_formal_partition http "$http_filter" connectedIsolatedHttpAndroidTest', campaign_for_variants)
         self.assertIn("assembleIsolatedAndroidTest", (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8"))
         self.assertIn('marker.renameTo(claimedMarker)', runner)
         for diagnostic in (
@@ -666,7 +685,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused')
         class_stage = campaign.index('run_diagnostic_stage calendar-class')
         chat_class_stage = campaign.index('run_diagnostic_stage chat-screen-class')
-        full_suite = campaign.index('timeout --signal=INT --kill-after=120s 40m ./gradlew')
+        full_suite = campaign.index('run_formal_partition offline "$offline_filter"')
         self.assertLess(focused_stage, class_stage)
         self.assertLess(class_stage, chat_class_stage)
         self.assertLess(chat_class_stage, full_suite)
@@ -1231,6 +1250,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 (evidence26 / "data-isolation-error.txt").read_text(encoding="utf-8"),
             )
 
+
             calls.write_text("", encoding="utf-8")
             environment["ANDROID_TEST_API"] = "35"
             environment["EXPECTED_API_LEVEL"] = "35"
@@ -1293,6 +1313,159 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "Unable to prove",
                 (evidence / "data-isolation-error.txt").read_text(encoding="utf-8"),
             )
+
+    def test_variant_target_provenance_fails_closed_on_digest_and_package_path_errors(self) -> None:
+        helper = ROOT / "tools/prepare_android_instrumentation_variant_target.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bindir = root / "bin"
+            bindir.mkdir()
+            apk = root / "target.apk"
+            apk.write_bytes(b"synthetic apk fixture")
+            digest = __import__("hashlib").sha256(apk.read_bytes()).hexdigest()
+            state = root / "installed"
+            fake_adb = bindir / "adb"
+            fake_adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -eu\n"
+                "if [[ \"$1 $2\" == 'shell pm' && \"$3\" == path ]]; then\n"
+                "  package=\"$4\"\n"
+                "  if [[ \"$package\" == app.serea.android.isolated.test ]]; then exit 0; fi\n"
+                "  if [[ -f \"$ADB_TEST_INSTALLED\" ]]; then\n"
+                "    case \"${ADB_PATH_MODE:-valid}\" in\n"
+                "      multi) printf 'package:/data/app/base.apk\\npackage:/data/app/split.apk\\n' ;;\n"
+                "      malformed) printf 'not-a-package-path\\n' ;;\n"
+                "      valid) printf 'package:/data/app/isolated/base.apk\\n' ;;\n"
+                "    esac\n"
+                "  fi\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [[ \"$1 $2\" == 'shell sha256sum' ]]; then\n"
+                "  [[ \"${ADB_DEVICE_SHA_FAIL:-0}\" != 1 ]] || exit 8\n"
+                f"  printf '%s /data/app/isolated/base.apk\\n' '{digest}'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [[ \"$1\" == uninstall ]]; then rm -f \"$ADB_TEST_INSTALLED\"; exit 0; fi\n"
+                "if [[ \"$1\" == install ]]; then touch \"$ADB_TEST_INSTALLED\"; exit 0; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_adb.chmod(0o755)
+            fake_sha = bindir / "sha256sum"
+            fake_sha.write_text(
+                "#!/usr/bin/env bash\n"
+                "[[ \"${HOST_SHA_FAIL:-0}\" != 1 ]] || exit 9\n"
+                "exec /usr/bin/sha256sum \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_sha.chmod(0o755)
+            seed = root / "prepare_isolated_instrumentation_target.sh"
+            seed.write_text("#!/usr/bin/env bash\nprintf seeded > \"$SEED_MARKER\"\n", encoding="utf-8")
+            seed.chmod(0o755)
+            env = os.environ.copy()
+            env.update({
+                "PATH": f"{bindir}{os.pathsep}{env['PATH']}",
+                "ADB_TEST_INSTALLED": str(state),
+                "SEED_MARKER": str(root / "seeded"),
+            })
+
+            for label, overrides, expected in (
+                ("host-sha-failure", {"HOST_SHA_FAIL": "1", "ADB_DEVICE_SHA_FAIL": "0", "ADB_PATH_MODE": "valid"}, "Host sha256sum failed"),
+                ("device-sha-failure", {"HOST_SHA_FAIL": "0", "ADB_DEVICE_SHA_FAIL": "1", "ADB_PATH_MODE": "valid"}, "Device sha256sum failed"),
+                ("multiple-paths", {"HOST_SHA_FAIL": "0", "ADB_DEVICE_SHA_FAIL": "0", "ADB_PATH_MODE": "multi"}, "exactly one well-formed target package path"),
+                ("malformed-path", {"HOST_SHA_FAIL": "0", "ADB_DEVICE_SHA_FAIL": "0", "ADB_PATH_MODE": "malformed"}, "exactly one well-formed target package path"),
+            ):
+                env.update(overrides)
+                evidence = root / f"{label}.txt"
+                result = subprocess.run(
+                    ["bash", str(helper), str(apk), "offline", "campaign-token", str(evidence), str(root), "26"],
+                    cwd=ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertIn(expected, result.stderr)
+                self.assertFalse(evidence.exists(), label)
+                self.assertFalse((root / f"{label}-seed.log").exists(), label)
+                self.assertFalse((root / "seeded").exists(), label)
+
+    def test_installed_test_apk_attestation_rejects_ambiguous_device_evidence(self) -> None:
+        helper = ROOT / "tools/verify_android_installed_apk_sha256.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bindir = root / "bin"
+            bindir.mkdir()
+            apk = root / "test.apk"
+            apk.write_bytes(b"instrumentation test APK")
+            digest = __import__("hashlib").sha256(apk.read_bytes()).hexdigest()
+            adb = bindir / "adb"
+            adb.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -eu\n"
+                "if [[ \"$1 $2\" == 'shell pm' ]]; then\n"
+                "  case \"${ADB_PATH_MODE:-valid}\" in\n"
+                "    multi) printf 'package:/data/app/test/base.apk\\npackage:/data/app/test/split.apk\\n' ;;\n"
+                "    malformed) printf 'unexpected path\\n' ;;\n"
+                "    valid) printf 'package:/data/app/test/base.apk\\n' ;;\n"
+                "  esac\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [[ \"$1 $2\" == 'shell sha256sum' ]]; then\n"
+                "  [[ \"${ADB_DEVICE_SHA_FAIL:-0}\" != 1 ]] || exit 8\n"
+                "  case \"${ADB_SHA_MODE:-valid}\" in\n"
+                f"    valid) printf '%s /data/app/test/base.apk\\n' '{digest}' ;;\n"
+                f"    wrong_path) printf '%s /data/app/other.apk\\n' '{digest}' ;;\n"
+                f"    extra_line) printf '%s /data/app/test/base.apk\\n%s /tmp/injected\\n' '{digest}' '{digest}' ;;\n"
+                f"    malformed_digest) printf '%s /data/app/test/base.apk\\n' '{digest[:-1]}' ;;\n"
+                "  esac\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            adb.chmod(0o755)
+            sha = bindir / "sha256sum"
+            sha.write_text("#!/usr/bin/env bash\nexec /usr/bin/sha256sum \"$@\"\n", encoding="utf-8")
+            sha.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+
+            good_evidence = root / "good.txt"
+            good = subprocess.run(
+                ["bash", str(helper), str(apk), "app.serea.android.isolated.test", str(good_evidence)],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, good.returncode, good.stdout + good.stderr)
+            self.assertIn(f"installed_sha256={digest}", good_evidence.read_text(encoding="utf-8"))
+
+            for label, overrides, expected in (
+                ("sha-failure", {"ADB_DEVICE_SHA_FAIL": "1", "ADB_PATH_MODE": "valid", "ADB_SHA_MODE": "valid"}, "Device sha256sum failed"),
+                ("multiple-paths", {"ADB_DEVICE_SHA_FAIL": "0", "ADB_PATH_MODE": "multi", "ADB_SHA_MODE": "valid"}, "exactly one well-formed installed package path"),
+                ("malformed-path", {"ADB_DEVICE_SHA_FAIL": "0", "ADB_PATH_MODE": "malformed", "ADB_SHA_MODE": "valid"}, "exactly one well-formed installed package path"),
+                ("wrong-device-path", {"ADB_DEVICE_SHA_FAIL": "0", "ADB_PATH_MODE": "valid", "ADB_SHA_MODE": "wrong_path"}, "Device sha256sum output is malformed"),
+                ("extra-device-line", {"ADB_DEVICE_SHA_FAIL": "0", "ADB_PATH_MODE": "valid", "ADB_SHA_MODE": "extra_line"}, "Device sha256sum returned multiple output lines"),
+                ("malformed-device-digest", {"ADB_DEVICE_SHA_FAIL": "0", "ADB_PATH_MODE": "valid", "ADB_SHA_MODE": "malformed_digest"}, "Device sha256sum output is malformed"),
+            ):
+                env.update(overrides)
+                evidence = root / f"{label}.txt"
+                result = subprocess.run(
+                    ["bash", str(helper), str(apk), "app.serea.android.isolated.test", str(evidence)],
+                    cwd=ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertIn(expected, result.stderr)
+                self.assertFalse(evidence.exists(), label)
+
 
     def test_sentinel_seeding_requires_a_fresh_complete_debug_data_namespace(self) -> None:
         receiver = (ROOT / "android/app/src/debug/java/app/serea/android/ProcessDeathHarnessReceiver.kt").read_text(

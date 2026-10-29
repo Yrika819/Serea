@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- This opt-in target is only for fake loopback HTTP instrumentation. The ordinary
+         isolated Native runtime variant keeps INTERNET removed in its own manifest. -->
+    <application />
+</manifest>

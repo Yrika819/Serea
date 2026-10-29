@@ -159,3 +159,9 @@ The current validator returned no errors, bypassing path declarations. Agent C c
 ### Native artifact guard parent fix — 2026-10-29 15:42 UTC
 
 Parent addressed the flow-mapping escape in isolated branch `codex/serea-native-artifact-inline-guard`, based on the reviewed A branch head `9e0be352ec73aebb2a754188cde9a54592da3f7e`. New exact head/tree: `24bf1ca463f12fe521de9d64d495ce6c8c4d7ae9` / `3956f4f444ed51014f7ab03c4ebcb65eb69ed604`. The one-file diff rejects flow-style `with: {}` on every `upload-artifact` step and adds the inline wildcard regression fixture. Artifact allowlist contract and `git diff --check` pass. C independent review is pending. No PR #166 change or Native run yet.
+
+## Native Artifact gate integrated — 2026-10-29 15:43 UTC
+
+Agent C **ACCEPTED** the final artifact-guard fix at `7c8bfb05db14e8fbab17db75f4027ae13fc3b87e` / tree `eb3559263d679facf5afaf8bcc16a8b7d6244520`. The guard validates every upload-artifact `with.path` declaration, requires safe block lists, exact allowed file paths and rejects globs/flow mappings, including `with : {…}`. Raw emulator/ADB diagnostics are ephemeral and removed; the sanitized Native JUnit XML is uploaded. Contract, YAML, shell, Python compile and diff checks pass. This accepts artifact-boundary code statically only.
+
+Parent integrated that accepted descendant by normal fast-forward into PR #166's branch `codex/serea-g9rc-native-accepted`; PR #160 and #165 remain unchanged. PR #166 is now OPEN/DRAFT at source `7c8bfb05db14e8fbab17db75f4027ae13fc3b87e`, tree `eb3559263d679facf5afaf8bcc16a8b7d6244520`, base G7. New focused run `40904857394`, attempt 1, source-bound to that exact SHA: x86_64/API35 Native job `123556718172` and ARM64 software-emulated guest job `123556718597` are QUEUED; no artifacts, boot, model hash, JNI load, inference, or JUnit result yet. Earlier #166 run `40899129986` at `8dde330…` is historical and not evidence for this updated head.

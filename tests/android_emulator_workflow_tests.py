@@ -1048,6 +1048,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             bindir = root / "bin"
             bindir.mkdir()
             fake_adb = bindir / "adb"
+            fake_pidof = bindir / "pidof"
             fake_sha256sum = bindir / "sha256sum"
             target_apk = root / "isolated.apk"
             target_apk.write_bytes(b"disposable isolated test target apk")
@@ -1112,19 +1113,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "    elif [[ \"$query_script\" == *\"pidof 'app.serea.android.isolated'\"* ]]; then target=app.serea.android.isolated;\n"
                 "    else exit 93; fi\n"
                 "    printf '%s\\n' \"$target\" >> \"$ADB_PID_QUERIES\"\n"
-                "    stopped=\"$(cat \"$ADB_FORCE_STOPPED\")\"\n"
-                "    if [[ \"$target\" == \"${PID_FAIL_PACKAGE:-}\" && ( -z \"${PID_FAIL_AFTER_FORCE_STOP:-}\" || \"$stopped\" == 1 ) ]]; then\n"
-                "      exit 41\n"
-                "    fi\n"
-                "    if [[ \"$target\" == app.serea.android.isolated.test || \"$stopped\" == 1 ]]; then\n"
-                "      printf '__SEREA_PID_ABSENT__\\n'\n"
-                "    elif [[ \"$(cat \"$ADB_CURRENT_PHASE\")\" == seed ]]; then\n"
-                "      printf '2101\\n'\n"
-                "    elif [[ \"$(cat \"$ADB_CURRENT_PHASE\")\" == verify ]]; then\n"
-                "      printf '2102\\n'\n"
-                "    else\n"
-                "      printf '2100\\n'\n"
-                "    fi\n"
+                "    [[ \"${ADB_SHELL_TRANSPORT_FAIL:-}\" != 1 ]] || exit 42\n"
+                "    if query_output=\"$(/bin/sh <<< \"$query_script\")\"; then printf '%s\\n' \"$query_output\"; else query_status=$?; printf '%s\\n' \"$query_output\"; exit \"$query_status\"; fi\n"
                 "    ;;\n"
                 "  am)\n"
                 "    action=\"$1\"; shift\n"
@@ -1152,6 +1142,31 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             fake_adb.chmod(0o755)
+            fake_pidof.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "target=\"${1:-}\"\n"
+                "stopped=\"$(cat \"$ADB_FORCE_STOPPED\")\"\n"
+                "if [[ \"${PID_FAIL_PACKAGE:-}\" == \"$target\" && ( -z \"${PID_FAIL_AFTER_FORCE_STOP:-}\" || \"$stopped\" == 1 ) ]]; then exit 2; fi\n"
+                "if [[ \"$target\" == app.serea.android.isolated.test ]]; then\n"
+                "  case \"${PIDOF_TEST_MODE:-absent}\" in\n"
+                "    absent) exit 1 ;;\n"
+                "    present) printf '3100\\n'; exit 0 ;;\n"
+                "    malformed) printf 'not-a-pid\\n'; exit 0 ;;\n"
+                "    error) exit 2 ;;\n"
+                "    *) exit 98 ;;\n"
+                "  esac\n"
+                "fi\n"
+                "[[ \"$target\" == app.serea.android.isolated ]] || exit 99\n"
+                "if [[ \"$stopped\" == 1 ]]; then exit 1; fi\n"
+                "case \"$(cat \"$ADB_CURRENT_PHASE\")\" in\n"
+                "  seed) printf '2101\\n' ;;\n"
+                "  verify) printf '2102\\n' ;;\n"
+                "  *) printf '2100\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_pidof.chmod(0o755)
             fake_sha256sum.write_text(
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
@@ -1170,6 +1185,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 *,
                 fail_package: str = "",
                 fail_after_force_stop: bool = False,
+                pidof_test_mode: str = "absent",
+                transport_fail: bool = False,
                 installed_sha_fail: bool = False,
                 installed_sha_mismatch: bool = False,
                 local_sha_fail: bool = False,
@@ -1202,6 +1219,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "ADB_CURRENT_TOKEN": str(case_dir / "token"),
                     "PID_FAIL_PACKAGE": fail_package,
                     "PID_FAIL_AFTER_FORCE_STOP": "1" if fail_after_force_stop else "",
+                    "PIDOF_TEST_MODE": pidof_test_mode,
+                    "ADB_SHELL_TRANSPORT_FAIL": "1" if transport_fail else "",
                     "INSTALLED_SHA_FAIL": "1" if installed_sha_fail else "",
                     "INSTALLED_SHA_MISMATCH": "1" if installed_sha_mismatch else "",
                     "LOCAL_SHA_FAIL": "1" if local_sha_fail else "",
@@ -1230,6 +1249,23 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 instrumentation_failure.stdout + instrumentation_failure.stderr,
             )
             self.assertNotIn("PASS:", instrumentation_failure.stdout + instrumentation_failure.stderr)
+
+            for query_mode in ("present", "malformed", "error"):
+                query_failure, query_case = run_case(f"instrumentation-{query_mode}", pidof_test_mode=query_mode)
+                self.assertNotEqual(0, query_failure.returncode)
+                self.assertEqual("0\n", (query_case / "force-stop-count").read_text(encoding="utf-8"))
+                status = (query_case / "evidence/status.txt").read_text(encoding="utf-8")
+                if query_mode == "present":
+                    self.assertIn("isolated instrumentation process is still present: 3100", status)
+                else:
+                    self.assertEqual("FAIL\n", status)
+                scripts = (query_case / "pid-query-scripts").read_text(encoding="utf-8")
+                self.assertIn("case \"$pidof_status\" in", scripts)
+
+            transport_failure, transport_case = run_case("instrumentation-transport-failure", transport_fail=True)
+            self.assertNotEqual(0, transport_failure.returncode)
+            self.assertEqual("0\n", (transport_case / "force-stop-count").read_text(encoding="utf-8"))
+            self.assertEqual("FAIL\n", (transport_case / "evidence/status.txt").read_text(encoding="utf-8"))
 
             target_failure, target_case = run_case("target-query-failure", fail_package=target_package)
             self.assertNotEqual(0, target_failure.returncode)

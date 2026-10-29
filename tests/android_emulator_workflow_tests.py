@@ -755,7 +755,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             fake_adb = bindir / "adb"
             fake_adb.write_text(
                 "#!/usr/bin/env bash\n"
-                "if [[ \"${FAKE_ADB_MODE:-}\" == fail ]]; then exit 73; fi\n"
+                "case \"${FAKE_ADB_MODE:-}\" in\n"
+                "  fail) echo 'adb: device offline' >&2; exit 73 ;;\n"
+                "  package_not_found) echo 'Error: package not found: app.serea.android.isolated'; exit \"${FAKE_ADB_NOT_FOUND_EXIT:-1}\" ;;\n"
+                "  other_pm_error) echo 'Error: transaction failed' >&2; exit 1 ;;\n"
+                "  malformed_output) echo 'Error: transaction failed'; exit 0 ;;\n"
+                "esac\n"
                 "printf '%s' \"${FAKE_ADB_PACKAGE_PATH:-}\"\n"
                 "exit 0\n",
                 encoding="utf-8",
@@ -779,7 +784,51 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 check=True,
             )
             self.assertEqual("status=2\n", failure.stdout)
+            self.assertIn("adb: device offline", failure.stderr)
+            env["FAKE_ADB_MODE"] = "other_pm_error"
+            unexpected = subprocess.run(
+                ["bash", "-c", command, "bash", str(helper)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual("status=2\n", unexpected.stdout)
+            self.assertIn("Error: transaction failed", unexpected.stderr)
+            env["FAKE_ADB_MODE"] = "package_not_found"
+            package_not_found = subprocess.run(
+                ["bash", "-c", command, "bash", str(helper)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual("status=0 path=\n", package_not_found.stdout)
+            env["FAKE_ADB_NOT_FOUND_EXIT"] = "0"
+            package_not_found_zero = subprocess.run(
+                ["bash", "-c", command, "bash", str(helper)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual("status=0 path=\n", package_not_found_zero.stdout)
+            env["FAKE_ADB_MODE"] = "malformed_output"
+            malformed = subprocess.run(
+                ["bash", "-c", command, "bash", str(helper)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual("status=2\n", malformed.stdout)
+            self.assertIn("unexpected output", malformed.stderr)
             env.pop("FAKE_ADB_MODE")
+            env.pop("FAKE_ADB_NOT_FOUND_EXIT")
             env["FAKE_ADB_PACKAGE_PATH"] = ""
             absent = subprocess.run(
                 ["bash", "-c", command, "bash", str(helper)],

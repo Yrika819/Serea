@@ -5,6 +5,7 @@ import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.calendar.CalendarProviderSession
 import app.serea.android.calendar.CalendarProviderSessions
 import app.serea.android.calendar.CalendarReadFailure
+import app.serea.android.calendar.CalendarMockWebServerTls
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
@@ -21,7 +22,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
@@ -57,7 +57,7 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
     }
 
     @get:Rule val mainDispatcher = MainDispatcherRule()
-    private val server = MockWebServer().apply { start() }
+    private val server = MockWebServer().apply { CalendarMockWebServerTls.start(this) }
 
     @After fun stopServer() = server.shutdown()
 
@@ -109,8 +109,7 @@ class GoogleCalendarDemoLoopbackIntegrationTest {
             val gateway = SyntheticAuthorizedCalendarGateway(account, accountGeneration)
             val session = sessions.openGoogleReadOnly(
                 gateway = gateway,
-                client = OkHttpClient(),
-                baseUrl = server.url("/calendar/v3/"),
+                client = CalendarMockWebServerTls.client(server),
             )
             opened += (account to accountGeneration) to (session to gateway)
             return session

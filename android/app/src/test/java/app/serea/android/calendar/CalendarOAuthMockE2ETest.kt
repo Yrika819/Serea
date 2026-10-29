@@ -11,7 +11,6 @@ import app.serea.android.googleauth.GoogleServiceState
 import app.serea.android.googleauth.ScopePermission
 import app.serea.android.googleauth.TokenSupplyResult
 import kotlinx.coroutines.runBlocking
-import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -22,11 +21,11 @@ import org.junit.Test
 import java.time.Instant
 
 /**
- * Calendar-first OAuth-to-read contract using synthetic authorization and loopback HTTP only.
+ * Calendar-first OAuth-to-read contract using synthetic authorization and pinned loopback HTTPS.
  * This test does not instantiate Play Services or authorize a real Google account.
  */
 class CalendarOAuthMockE2ETest {
-    private val server = MockWebServer().apply { start() }
+    private val server = MockWebServer().apply { CalendarMockWebServerTls.start(this) }
 
     @After fun close() = server.shutdown()
 
@@ -84,8 +83,7 @@ class CalendarOAuthMockE2ETest {
         val gateway = SyntheticCalendarAuthorization()
         val session = CalendarProviderSessions(googleHttpEnabledByOwner = true).openGoogleReadOnly(
             gateway = gateway,
-            client = OkHttpClient(),
-            baseUrl = server.url("/calendar/v3/"),
+            client = CalendarMockWebServerTls.client(server),
         )
         val calendarId = CalendarId("primary-fixture")
         val range = CalendarDateRange(

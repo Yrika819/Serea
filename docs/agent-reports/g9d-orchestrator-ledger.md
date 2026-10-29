@@ -704,3 +704,8 @@ Latest aggregate: G9 Android remains PARTIAL; #173 API26 Required/UI pass but it
 - Startup artifact `12939225225`, 337 bytes, exact head `a7f5b407d400b611df2c5f9260eede9b62f41b59`, digest `sha256:16ac75a9cd396bdae0a4a60d7bd824160fbe18ee7cf36a389182c59888a50e83`; directly downloaded and verified. It contains only `adb_state=NOT_AVAILABLE`, `emulator_log_state=NOT_AVAILABLE`, `raw_diagnostics_retained=false`.
 - x86 job `123774726124` in the same focused run remains IN_PROGRESS at source/JVM contracts. Do not call the run terminal until it completes.
 - Agent A is checking how `sdkmanager` resolved the emulator package and will pin/verify its actual version from package provenance; no blind version bump or retry of unchanged source.
+
+## Windows diagnostic checkpoint
+
+- Agent C opened Draft PR #181 from the exact #178 source. Current head `a2cd5bf863670aa22cff7b82f4eb0ad9e468150f`, tree `c86de2ed7454dbef7eeb86fa7bba8e11280145f8`, base #178 `a7f5b407d400b611df2c5f9260eede9b62f41b59`. It adds child ExitStatus/code and bounded stdout/stderr byte counts to the host timeout assertion; timeout duration and Host Policy/Usage semantics are unchanged. Linux focused compound test passed 1/1; Windows root cause remains UNKNOWN until a new diagnostic Windows run.
+- Exact #181 run set is queued: Native `40967593381`, Android `40967593082`, Full `40967593089`, Fast `40967593152`, SQLite `40967593097`, RustSec `40967593083`, Git Hooks `40967593404`. Agent B has been asked for independent review; result pending.

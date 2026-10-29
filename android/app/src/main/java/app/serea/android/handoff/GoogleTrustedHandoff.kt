@@ -22,7 +22,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import java.time.Instant
 import java.util.UUID
 import java.util.WeakHashMap
 
@@ -627,12 +626,11 @@ fun CalendarProviderSession.trustedHandoffSource(): GoogleTrustedHandoffSource =
     }
 }
 
-private fun gmailSelectedContent(message: GmailMessage): String = buildString {
-    append("件名: ").append(message.subject.orEmpty()).append('\n')
-    append("差出人: ").append(message.from.orEmpty()).append('\n')
-    append("日時: ").append(message.internalDateMillis?.let { Instant.ofEpochMilli(it).toString() }.orEmpty()).append('\n')
-    append("本文:\n").append(message.plainTextBody?.takeIf(String::isNotBlank) ?: message.snippet.orEmpty())
-}
+/** Only body text is handed to Chat. Message headers, identifiers and snippets remain local. */
+private fun gmailSelectedContent(message: GmailMessage): String =
+    message.plainTextBody?.takeIf(String::isNotBlank)
+        ?: message.htmlTextBody?.takeIf(String::isNotBlank)
+        ?: ""
 
 private fun calendarSelectedContent(event: CalendarEvent): String = buildString {
     append("予定: ").append(event.title.orEmpty()).append('\n')

@@ -41,11 +41,11 @@ class LocalModelNativeRuntimeE2ETest {
         assertEquals("diagnostic runner must execute x86_64 JNI", "x86_64", Build.SUPPORTED_ABIS.firstOrNull())
 
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        val modelFile = File(appContext.filesDir, "g8-smollm2-135m-q4_k_m.gguf")
-        assertTrue("model must be staged under app-private files", modelFile.isFile)
+        val modelFile = File(appContext.cacheDir, "g8-smollm2-135m-q4_k_m.gguf")
+        assertTrue("model must be staged under app-private cache", modelFile.isFile)
         assertEquals(MODEL_SIZE, modelFile.length())
         assertEquals(MODEL_SHA256, sha256(modelFile))
-        assertTrue(modelFile.canonicalPath.startsWith(appContext.filesDir.canonicalPath + File.separator))
+        assertTrue(modelFile.canonicalPath.startsWith(appContext.cacheDir.canonicalPath + File.separator))
 
         val artifact = LocalModelArtifact(
             modelId = MODEL_ID,
@@ -90,6 +90,22 @@ class LocalModelNativeRuntimeE2ETest {
             authorization,
             now,
         )
+
+        val failedLoadBackend = LlamaCppLocalModelInferenceBackend()
+        NativeJniFailureSeam().failNextLoadAfterModel()
+        val injectedFailure = runCatching {
+            failedLoadBackend.load(
+                modelFile.canonicalPath,
+                LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 32, workerThreads = 2),
+            )
+        }.exceptionOrNull()
+        assertTrue("C++ failure must become a Java IllegalStateException", injectedFailure is IllegalStateException)
+        failedLoadBackend.close()
+        assertTrue(
+            "failed load must release its lease and native model before retry",
+            failedLoadBackend.awaitReleased(30, TimeUnit.SECONDS),
+        )
+
         val firstRequest = request("Write one short greeting.", "native-e2e-turn-1")
         val pssBeforeKb = Debug.getPss()
         val firstStarted = SystemClock.elapsedRealtime()
@@ -224,4 +240,9 @@ class LocalModelNativeRuntimeE2ETest {
             it.state in setOf(UsageLedgerState.IN_FLIGHT.name, UsageLedgerState.OUTCOME_UNKNOWN.name, UsageLedgerState.USAGE_UNKNOWN.name)
         }.toLong()
     }
+}
+
+/** JNI failure injection exists only in the focused isolated native-runtime build. */
+class NativeJniFailureSeam {
+    external fun failNextLoadAfterModel()
 }

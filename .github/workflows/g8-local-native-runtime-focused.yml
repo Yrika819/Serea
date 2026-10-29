@@ -36,8 +36,6 @@ jobs:
     name: Product adapter on pinned API 35 x86_64 Emulator
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    env:
-      G8_EVIDENCE_DIR: ${{ github.workspace }}/evidence/g8-local-native
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,13 +73,19 @@ jobs:
 
       - name: Verify CMake rejects tracked and untracked source changes
         shell: bash
-        run: bash tools/g8-local-model-native/verify-cmake-clean-checkout.sh "$ANDROID_HOME/cmake/3.31.6/bin/cmake"
+        run: |
+          set -euo pipefail
+          bash tools/g8-local-model-native/verify-cmake-clean-checkout.sh "$ANDROID_HOME/cmake/3.31.6/bin/cmake"
+          python3 tools/g8-local-model-native/test-jni-contract.py
+          bash tools/g8-local-model-native/test-preflight.sh
+          bash tools/g8-local-model-native/test-cleanup.sh
 
       - name: Record source identity and run focused JVM contracts
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$G8_EVIDENCE_DIR/junit"
+          build_evidence_dir="$GITHUB_WORKSPACE/evidence/g8-local-native"
+          mkdir -p "$build_evidence_dir/junit"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
           test "$(git -C llama.cpp rev-parse HEAD)" = "$LLAMA_CPP_COMMIT"
           {
@@ -92,9 +96,9 @@ jobs:
             echo 'ARM64_BUILD=NOT_RUN'
             echo 'ARM64_RUNTIME=NOT_RUN'
             echo 'PIXEL7A_PHYSICAL=NOT_RUN'
-          } > "$G8_EVIDENCE_DIR/source.txt"
+          } > "$build_evidence_dir/source.txt"
           cd android
-          jvm_log="$G8_EVIDENCE_DIR/gradle-jvm-focused-full.log"
+          jvm_log="$build_evidence_dir/gradle-jvm-focused-full.log"
           set +e
           ./gradlew --no-daemon --console=plain \
             :app:testDebugUnitTest \
@@ -103,23 +107,25 @@ jobs:
             > "$jvm_log" 2>&1
           gradle_status=$?
           set -e
-          tail -c 262144 "$jvm_log" > "$G8_EVIDENCE_DIR/gradle-jvm-focused.log"
+          tail -c 262144 "$jvm_log" > "$build_evidence_dir/gradle-jvm-focused.log"
           if [ "$gradle_status" -ne 0 ]; then
             echo "Gradle focused JVM tests failed with exit $gradle_status; last 32 KiB follows." >&2
             tail -c 32768 "$jvm_log" >&2
             exit "$gradle_status"
           fi
-          cp app/build/test-results/testDebugUnitTest/*.xml "$G8_EVIDENCE_DIR/junit/"
+          cp app/build/test-results/testDebugUnitTest/*.xml "$build_evidence_dir/junit/"
 
       - name: Build opt-in product JNI APKs for both supported ABIs
         shell: bash
         run: |
           set -euo pipefail
           cd android
-          gradle_log="$G8_EVIDENCE_DIR/gradle-native-build-full.log"
+          build_evidence_dir="$GITHUB_WORKSPACE/evidence/g8-local-native"
+          gradle_log="$build_evidence_dir/gradle-native-build-full.log"
           set +e
           ./gradlew --no-daemon --console=plain \
             -PsereaLocalNativeRuntime=true \
+            -PsereaNativeJniTestSeams=true \
             -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
             :app:assembleIsolated :app:assembleIsolatedAndroidTest \
             > "$gradle_log" 2>&1
@@ -127,7 +133,7 @@ jobs:
           set -e
           # Keep uploaded and rendered diagnostics bounded even if Gradle emits an unusually
           # large compiler report. The full file stays on the ephemeral runner only.
-          tail -c 262144 "$gradle_log" > "$G8_EVIDENCE_DIR/gradle-native-build.log"
+          tail -c 262144 "$gradle_log" > "$build_evidence_dir/gradle-native-build.log"
           if [ "$gradle_status" -ne 0 ]; then
             echo "Gradle native APK build failed with exit $gradle_status; last 32 KiB follows." >&2
             tail -c 32768 "$gradle_log" >&2
@@ -137,12 +143,12 @@ jobs:
           test_apk='app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk'
           test -s "$target"
           test -s "$test_apk"
-          unzip -Z1 "$target" | sort > "$G8_EVIDENCE_DIR/target-apk-files.txt"
-          grep -Fx 'lib/arm64-v8a/libserea_local_llama.so' "$G8_EVIDENCE_DIR/target-apk-files.txt"
-          grep -Fx 'lib/x86_64/libserea_local_llama.so' "$G8_EVIDENCE_DIR/target-apk-files.txt"
-          sha256sum "$target" "$test_apk" > "$G8_EVIDENCE_DIR/apk-sha256.txt"
-          sed -i 's/^ANDROID_BUILD=NOT_RUN$/ANDROID_BUILD=PASS/' "$G8_EVIDENCE_DIR/source.txt"
-          sed -i 's/^ARM64_BUILD=NOT_RUN$/ARM64_BUILD=PASS (APK ABI compile and packaging only)/' "$G8_EVIDENCE_DIR/source.txt"
+          unzip -Z1 "$target" | sort > "$build_evidence_dir/target-apk-files.txt"
+          grep -Fx 'lib/arm64-v8a/libserea_local_llama.so' "$build_evidence_dir/target-apk-files.txt"
+          grep -Fx 'lib/x86_64/libserea_local_llama.so' "$build_evidence_dir/target-apk-files.txt"
+          sha256sum "$target" "$test_apk" > "$build_evidence_dir/apk-sha256.txt"
+          sed -i 's/^ANDROID_BUILD=NOT_RUN$/ANDROID_BUILD=PASS/' "$build_evidence_dir/source.txt"
+          sed -i 's/^ARM64_BUILD=NOT_RUN$/ARM64_BUILD=PASS (APK ABI compile and packaging only)/' "$build_evidence_dir/source.txt"
 
       - name: Upload bounded JNI build diagnostics
         if: always()
@@ -249,6 +255,9 @@ jobs:
         id: native_e2e
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
         timeout-minutes: 90
+        env:
+          SEREA_DISPOSABLE_CI_EMULATOR: '1'
+          SEREA_EXPECTED_ANDROID_API: '35'
         with:
           api-level: 35
           target: google_apis
@@ -268,7 +277,7 @@ jobs:
           name: serea-g8-local-native-${{ github.event.pull_request.head.sha }}
           if-no-files-found: warn
           retention-days: 14
-          path: evidence/g8-local-native/
+          path: ${{ steps.native_e2e.outputs.evidence_dir }}
 
       - name: Remove temporary model fixture
         if: always()

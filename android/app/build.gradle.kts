@@ -35,6 +35,10 @@ val updateTestSigningInputsReady = listOf(
 // separately reviewed diagnostic build may opt into the pinned llama.cpp JNI
 // library with -PsereaLocalNativeRuntime=true and -PsereaLlamaCppSource=<checkout>.
 val sereaLocalNativeRuntime = providers.gradleProperty("sereaLocalNativeRuntime").orNull == "true"
+val sereaNativeJniTestSeams = providers.gradleProperty("sereaNativeJniTestSeams").orNull == "true"
+if (sereaNativeJniTestSeams && !sereaLocalNativeRuntime) {
+    error("JNI failure injection is only available with the isolated native runtime diagnostic.")
+}
 val sereaLlamaCppSource = if (sereaLocalNativeRuntime) {
     providers.gradleProperty("sereaLlamaCppSource").orNull
         ?: providers.environmentVariable("SEREA_LLAMA_CPP_SOURCE").orNull
@@ -83,6 +87,9 @@ android {
                         "-DGGML_BACKEND_DL=OFF",
                         "-DGGML_CPU_KLEIDIAI=OFF",
                     )
+                    if (sereaNativeJniTestSeams) {
+                        arguments += "-DSEREA_NATIVE_JNI_TEST_SEAMS=ON"
+                    }
                 }
             }
         }

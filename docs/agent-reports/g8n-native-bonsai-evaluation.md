@@ -1,7 +1,7 @@
 # G8N — Native Runtime and Bonsai 2 Evaluation
 
 **Checkpoint:** 2026-10-29 UTC  
-**Status:** PARTIAL — exact-head Native inference remains unproven. The campaign branch contains a focused AndroidTest compile fix and bounded failure diagnostics; its new exact-head CI result is pending. Bonsai 2 is a technically plausible isolated experiment, not a product model selection.
+**Status:** PARTIAL — exact-head Native inference remains unproven. At prior head `49e14da2b5dc06579ff88d0adbc10d41f5040dd9`, JNI APK builds passed but the exact-head Emulator job rejected its own staged fixture/runner state before any test ran. The harness now keeps the model out of `filesDir`, seeds the existing one-use instrumentation marker, and enforces disposable-device/package/evidence-path preflight. JNI exception containment and partial-load rollback are implemented with a failure-injection test seam. New exact-head CI and independent re-review are pending. Bonsai 2 and the expanded shortlist remain evaluation candidates, not product model selections.
 
 ## Agent report
 
@@ -11,22 +11,22 @@ ACTIVE_PHASE: G8 closure / Native Runtime / Bonsai 2 evaluation
 GOAL_STATUS: PARTIAL
 BASE_SHA: 0560e1e7bcd13f0194eab8caca89d70ea5a2f142 (G7 PR #139 base)
 CODE_BASE_SHA: 07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59 (PR #144 exact source reviewed)
-CURRENT_HEAD: See campaign PR head and exact-head Actions artifact source.txt; work started from CODE_BASE_SHA on a separate branch
-TREE_SHA: See campaign PR head and exact-head Actions artifact source.txt
+CURRENT_HEAD: See latest PR #147 exact-head Actions source.txt; last failed harness run used 49e14da2b5dc06579ff88d0adbc10d41f5040dd9
+TREE_SHA: See latest PR #147 exact-head Actions source.txt; last failed harness run used bcc5ce1f837d2904f608c60db26569469340e695
 WORKTREE: /workspace/serea-agent-a
 BRANCH: codex/serea-g8n-native-runtime
-DRAFT_PR: Pending publication after focused source review
-COMPLETED_WORK: classified the historical native build failure from its artifact; separated it from the newer PR #144 failure whose build log artifact is missing; fixed the AndroidTest's concrete release-wait reference; added a 256 KiB always-upload diagnostic tail for JVM and JNI APK builds; audited official Bonsai 2 model revisions, formats, license, native runtime sources, and Android build documentation without downloading model weights
-CHANGED_FILES: .github/workflows/g8-local-native-runtime-focused.yml; android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt; docs/agent-reports/g8n-native-bonsai-evaluation.md
-TEST_COMMANDS: git diff --check; PyYAML parse of .github/workflows/g8-local-native-runtime-focused.yml; JAVA_HOME=/workspace/.tools/temurin17 ./gradlew --no-daemon --console=plain :app:compileIsolatedAndroidTestKotlin
-JUNIT_RESULT: Local compile BLOCKED before Kotlin compile because the environment could not fetch androidx.compose.ui:ui-test-manifest:1.7.8 from dl.google.com (socket/network unavailable). Historical run 40800987367 recorded 22/22 JVM tests passing on its separate source SHA.
-CI_RUN_IDS: PR #144 current run 40803623345 (failed at opt-in APK build step; no artifact); historical diagnostic run 40800987367 (failure root identified from artifact)
-ARTIFACT_IDS: historical diagnostic artifact 12867015936; ZIP SHA-256 d8d4ff9c94c387ad8ca9bcd9d4cc179bb95d1999ef109a16a0820780a55683a3
-SECURITY_IMPACT: test-only type visibility correction; no product composition, egress, model default, or network behavior changed. CI now publishes bounded build logs even when APK assembly fails; weights remain excluded.
-REVIEW_STATUS: Parent independent review pending
-KNOWN_ISSUES: no Android emulator binary/device or local model fixture; new branch Native build/inference CI not yet completed; Bonsai Japanese quality, tool calling, Android memory/latency, Vulkan kernels, ARM64 runtime, redistribution decision, and Pixel 7a operation NOT_RUN
-CURRENT_BLOCKERS: local Gradle dependency fetch unavailable; official PrismML runtime is a different backend and model format support has not been validated in Serea
-NEXT_ACTION: push campaign branch and Draft PR, inspect its always-upload build diagnostics, complete x86_64 SmolLM2 inference only if the exact-head workflow succeeds, and continue the isolated PrismML compatibility experiment without changing regular Chat
+DRAFT_PR: #147 (Draft) https://github.com/Yrika819/Serea/pull/147
+COMPLETED_WORK: classified historical JNI/APK evidence; fixed AndroidTest concrete release-wait reference; added bounded always-upload Gradle diagnostics; added all-JNI-export C++ exception boundaries and load rollback after partial allocation with an opt-in deterministic failure seam; constrained emulator execution to one disposable API35 x86_64 target with absent fixed package IDs and run-owned cleanup; moved the fixture into app cache so the fresh filesDir and one-use marker guards remain valid; screened Bonsai 2, LFM3-1.7B, Qwen3.5-2B, Gemma 4 E2B, and FunctionGemma-270M official metadata/licenses without downloading additional model weights
+CHANGED_FILES: .github/workflows/g8-local-native-runtime-focused.yml; android/app/build.gradle.kts; android/app/src/main/cpp/CMakeLists.txt; android/app/src/main/cpp/llama_jni.cpp; android/app/src/androidTest/java/app/serea/android/LocalModelNativeRuntimeE2ETest.kt; tools/g8-local-model-native/run-e2e.sh; tools/g8-local-model-native/preflight.sh; tools/g8-local-model-native/test-preflight.sh; tools/g8-local-model-native/test-cleanup.sh; tools/g8-local-model-native/test-jni-contract.py; docs/agent-reports/g8n-native-bonsai-evaluation.md
+TEST_COMMANDS: bash -n tools/g8-local-model-native/run-e2e.sh tools/g8-local-model-native/preflight.sh tools/g8-local-model-native/test-preflight.sh tools/g8-local-model-native/test-cleanup.sh; python3 tools/g8-local-model-native/test-jni-contract.py; bash tools/g8-local-model-native/test-preflight.sh; bash tools/g8-local-model-native/test-cleanup.sh; git diff --check; exact-head PR #147 focused JVM / APK / x86_64 workflow pending after revised head
+JUNIT_RESULT: Prior exact-head run 40808797590 built arm64-v8a and x86_64 APKs and passed focused JVM tests; Android instrumentation started 0 tests and failed in SereaIsolatedAndroidJUnitRunner.onStart before inference. The failure was the harness supplying its model in filesDir and omitting the required one-use campaign token. New failure-injection and retry checks are included in the next exact-head Emulator test, pending CI.
+CI_RUN_IDS: PR #144 current source run 40803623345 (opt-in APK step failed without diagnostic artifact); historical run 40800987367 (AndroidTest compile failure resolved from artifact); PR #147 run 40808797590 (APK/JVM/model fixture/KVM checks passed; pre-inference harness guard failure); new revised-head run pending
+ARTIFACT_IDS: 12867015936 (historical run 40800987367); 12869074919 (PR #147 JNI build run 40808797590); 12870076223 (PR #147 runtime diagnostics run 40808797590; artifact download was denied by storage endpoint in this review)
+SECURITY_IMPACT: all exported JNI entries now contain C++ exceptions, map bad_alloc to Java OutOfMemoryError and other C++ failures to Java IllegalStateException while preserving pending Java exceptions; failed nativeLoad frees partial sampler/context/model state and releases its owner lease; raw JNI UTF chars were removed. Emulator script checks an explicitly designated disposable target, requires fixed app/test package absence before install, uninstalls only successfully installed packages, and uses a fresh runner-temp evidence directory that it alone created. Model weights remain excluded from artifacts and repo.
+REVIEW_STATUS: CHANGES_REQUESTED from Agent C at 49e14da2b5dc06579ff88d0adbc10d41f5040dd9 / bcc5ce1f837d2904f608c60db26569469340e695; both blocking findings are addressed in this working tree; re-review pending new immutable source
+KNOWN_ISSUES: latest exact-head Native execution did not reach inference; new failure-injection/load-retry and lifecycle regression require Android x86_64 run; no local emulator/fixture; Bonsai and shortlist Japanese quality, safe tool calling, Android memory/latency, Vulkan kernels, ARM64 runtime, redistribution decision, and Pixel 7a operation remain NOT_RUN
+CURRENT_BLOCKERS: revised exact-head GitHub Actions and independent review not yet completed; official PrismML runtime is a separate backend and Serea model compatibility has not been executed
+NEXT_ACTION: commit and push the revised diagnostic/security fixes, inspect exact-head bounded artifacts/JUnit and runtime output, then ask Agent C to re-review the new pinned SHA; keep product model selection and default changes blocked
 OWNER_APPROVAL_REQUIRED: no owner action for this diagnostic. Owner decision remains required before model selection, default-model change, or redistribution.
 ```
 
@@ -45,6 +45,12 @@ The artifact's `gradle-native-build.log` shows both `configureCMakeRelease` and 
 The campaign branch now holds a concrete `LlamaCppLocalModelInferenceBackend` reference in the diagnostic test so it can wait for that implementation's asynchronous free after interface-level close. No production API was widened.
 
 The focused workflow previously uploaded its evidence only after a native Emulator cleanup output existed; an APK build failure therefore had no artifact. The campaign branch now renders only the last 32 KiB on failure and uploads 256 KiB tails for focused JVM/native build logs with the source identity and JUnit files, regardless of build success. Full Gradle logs remain on the ephemeral runner; model weights are not uploaded. This is diagnostic capture, not proof of a successful build.
+
+### Prior exact-head Emulator harness result
+
+PR #147 run **40808797590**, attempt 1, used exact source `49e14da2b5dc06579ff88d0adbc10d41f5040dd9`, tree `bcc5ce1f837d2904f608c60db26569469340e695`. Focused JVM tests, both isolated APK ABI builds, model metadata/hash verification, fixture hash, KVM check, and API 35 x86_64 Emulator startup passed. The instrumented task then reported **0 tests** and the target process exited in `SereaIsolatedAndroidJUnitRunner.onStart` with `filesEmpty=false`, `filesDirEntries=[g8-smollm2-135m-q4_k_m.gguf]`, `campaignTokenPresent=false`, and `markerMatches=false`. The confirmed class is **test harness setup/guard mismatch before product inference**: the script put the fixture in the same `filesDir` the fresh-namespace guard requires empty, and it did not call `prepare_isolated_instrumentation_target.sh` or pass the required one-use token. This run is not evidence of successful or failed model inference.
+
+The revised harness stages the fixture under the newly installed target app's cache directory, invokes the repository's existing one-use marker seeder, passes the matching token to Android Test Orchestrator, and pins ADB to the single emulator accepted by the repository disposable-device guard. Its next exact-head run also injects a C++ exception after model allocation, asserts Java failure translation and successful lease/resource recovery, then proceeds to two real SmolLM2 generation turns. These checks remain pending until that run completes.
 
 ## Bonsai 2 evidence
 
@@ -132,3 +138,42 @@ Native runtime sources:
 - [Current official llama.cpp snapshot](https://github.com/ggml-org/llama.cpp/tree/2e0d86bebc210947680e8f0d67daa79f3260c106), [Serea-pinned llama.cpp commit](https://github.com/ggml-org/llama.cpp/tree/276378515ceebee5d14bcc8536603dd5c87491a2)
 - [Bonsai demo and pinned backend guidance](https://github.com/PrismML-Eng/Bonsai-demo)
 - [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+
+## Expanded model shortlist requested by the parent
+
+This is a public-metadata and license screening only (2026-10-29). No additional model weights were downloaded or executed. The vendor/model-card claims below are not Serea measurements. This shortlist does not select a standard model; selection remains blocked until exact Android x86_64 evidence, Pixel 7a ARM64 evidence, Japanese/tool-use evaluation, security review, and redistribution review exist.
+
+| Candidate | Public source pinned for follow-up | Official format / listed weight footprint | License and terms screen | Serea status |
+|---|---|---|---|---|
+| LiquidAI LFM3-1.7B | `LiquidAI/LFM3-1.7B-GGUF`, revision `bad5729bba61d076fff20d2548e62526665af215`; base card revision `ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7` | Q4_K_M GGUF listed as 1,099,627,808 B (~1.10 GB); card lists 256K context and Japanese/tool-use support | LFM Open License v1.0 (`lfm1.0`), not Apache-2.0. Commercial use above the license's US$10M annual revenue threshold requires a separate license; redistribution must retain required license/notice terms. Recheck the current license text before any distribution. | NOT_RUN; official GGUF and advertised llama.cpp compatibility are not a Serea build/load result. |
+| Bonsai 2 4B | `prism-ml/Ternary-Bonsai-2-4B-gguf`, revision `8d6557168168f91ea6697a4a49ed2ef622b53adb` | PTQ1_0 949,549,920 B; PQ2_0 1,146,465,120 B; Q2_0 1,212,105,520 B; optional vision projector 366,894,624 B | Apache-2.0, with repository LICENSE/NOTICE. Preserve notices and confirm model redistribution terms at packaging review. | NOT_RUN on Android; Serea-pinned llama.cpp is source-incompatible with PTQ1_0/PQ2_0. Q2_0 requires an isolated load test. |
+| Qwen3.5-2B | `Qwen/Qwen3.5-2B`, revision `15852e8c16360a2fea060d615a32b45270f8a8fc` | Official repo at the pinned revision lists ~4,548,221,488 B of safetensors. No official GGUF artifact was identified in that repository snapshot. Card advertises 262K context, 201 languages, and tool-use support. | Apache-2.0. Retain upstream license and notices for any conversion/distribution; verify conversion output provenance independently. | NOT_RUN; available official artifact is not the GGUF consumed by current Serea JNI. A conversion/runtime route is unvalidated. |
+| Gemma 4 E2B | Instruction card revision `3e22461f65e89153144f8adb70e3b8c2cc9845a7`; official mobile QAT repo `google/gemma-4-E2B-it-qat-mobile-ct` revision `594b1c7919e98f8275aefdc844c306d709e61727`; official Q4_0 GGUF repo `google/gemma-4-E2B-it-qat-q4_0-gguf` revision `675cff42a74c774d6cb76f76d8eacb49b48c9b93` | Mobile QAT safetensors 2,671,733,574 B; official Q4_0 GGUF 3,349,516,256 B plus optional 986,833,664 B mmproj. Card advertises 128K context, native function calling, and 35+ languages. | Apache-2.0 per Google's Gemma 4 license page. Validate the exact artifact's license/NOTICE and packaging obligations before distribution. | NOT_RUN; an official GGUF exists, but the pinned Serea llama.cpp model-load path has not been tested. The mobile QAT artifact uses a separate format/runtime path. |
+| FunctionGemma-270M — future lightweight router only | `google/functiongemma-270m-it`, revision `39eccb091651513a5dfb56892d3714c1b5b8276c` | Gated official repo metadata lists 536,223,056 B safetensors. It also contains a 288,440,320 B `tiny_garden.litertlm` task-specific fine-tuned example; that is not the base model. The card positions the base as a function-specialization/fine-tuning model, not direct general-purpose dialogue. | `license:gemma` and Google Gemma Terms; repository access requires accepting the terms. Terms were not accepted for this evaluation. | NOT_RUN; future isolated router experiment only after terms review. Not a normal dialogue model or current Serea backend. |
+
+### Runtime compatibility screening
+
+These entries distinguish file/runtime compatibility screening from execution. No entry below is a performance result. The official LFM3 card advertises llama.cpp support from its documented revision; official Gemma4 provides a GGUF; neither fact proves the pinned Serea build can load or run it. Qwen3.5 and FunctionGemma official artifacts are safetensors/LiteRT formats rather than the GGUF file expected by the existing JNI adapter. No conversion is assumed.
+
+| Runtime / target | SmolLM2-135M | LFM3-1.7B | Bonsai 2 4B | Qwen3.5-2B | Gemma 4 E2B | FunctionGemma-270M |
+|---|---|---|---|---|---|---|
+| Serea pinned llama.cpp / existing GGUF adapter | NOT_RUN | NOT_RUN | INCOMPATIBLE (PTQ1_0/PQ2_0); Q2_0 NOT_RUN | INCOMPATIBLE (official pinned artifact is safetensors) | NOT_RUN (GGUF available; model support unverified) | INCOMPATIBLE (official files are safetensors/LiteRT) |
+| Current official llama.cpp snapshot | NOT_RUN | NOT_RUN (vendor card claims support; not reproduced here) | INCOMPATIBLE (PTQ1_0/PQ2_0); Q2_0 NOT_RUN | NOT_RUN (official artifact/conversion/runtime route unverified) | NOT_RUN (GGUF exists; runtime execution unverified) | INCOMPATIBLE (no official GGUF identified) |
+| PrismML llama.cpp fork | NOT_RUN | NOT_RUN | NOT_RUN (format source support only; no model load) | NOT_RUN | NOT_RUN | NOT_RUN |
+| Android x86_64 model execution | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+| Android ARM64 build / runtime | NOT_RUN / NOT_RUN | NOT_RUN / NOT_RUN | NOT_RUN / NOT_RUN | NOT_RUN / NOT_RUN | NOT_RUN / NOT_RUN | NOT_RUN / NOT_RUN |
+| Pixel 7a load / latency / memory | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN | NOT_RUN |
+
+### Vendor results versus Serea measurements
+
+- LFM3's model card reports publisher benchmarks on Ryzen AI Max+ 395, Apple M5 Max, and iPhone 17 Pro, including speedups against its named comparators. Its shown conditions include Q4_K_M GGUF, a 32K context, batch size 1, 100 generated tokens, and GPU offload. These are vendor conditions and are not directly comparable to Serea or Pixel 7a.
+- Qwen3.5 and Gemma 4 cards publish publisher-reported benchmark tables and capability claims. FunctionGemma's mobile example is a task-specific fine-tuned LiteRT model tested by its publisher on Samsung S25 Ultra CPU/XNNPACK with four threads. None is a Serea test.
+- Serea load time, time to first token, prefill/decode speed, peak RSS/PSS, memory after close, cancellation, crash recovery, offline enforcement, APK/model footprint after install, Japanese case results, and safe tool-call results are all **NOT_RUN** for these additional candidates.
+- Preserve `ModelChatPort` and Router/Egress/Usage backend neutrality. Any evaluation adapter must remain opt-in, local-only, and fail closed. No model default or regular Chat behavior changes before Pixel 7a evidence and independent review. FunctionGemma is a future lightweight router candidate only, separate from general dialogue. Any later synthetic router evaluation must validate schemas and args, active account/session binding, explicit approval, and dispatch-time checks; model-generated tool text is not authorization.
+
+### Additional official sources
+
+- LFM3 [GGUF model card](https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/tree/bad5729bba61d076fff20d2548e62526665af215), [base model card](https://huggingface.co/LiquidAI/LFM3-1.7B/tree/ac2586a34f1a1c03329dbdcdefabd8b6478ddaa7), [LFM Open License v1.0](https://www.liquid.ai/license), [publisher model page and benchmark notes](https://www.liquid.ai/lfm3)
+- Qwen3.5-2B [pinned official model card/files](https://huggingface.co/Qwen/Qwen3.5-2B/tree/15852e8c16360a2fea060d615a32b45270f8a8fc), [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- Gemma 4 [pinned instruction model card](https://huggingface.co/google/gemma-4-E2B-it/tree/3e22461f65e89153144f8adb70e3b8c2cc9845a7), [mobile QAT artifact](https://huggingface.co/google/gemma-4-E2B-it-qat-mobile-ct/tree/594b1c7919e98f8275aefdc844c306d709e61727), [official Q4_0 GGUF](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/tree/675cff42a74c774d6cb76f76d8eacb49b48c9b93), [Gemma 4 license](https://ai.google.dev/gemma/terms)
+- FunctionGemma [pinned gated model card/files](https://huggingface.co/google/functiongemma-270m-it/tree/39eccb091651513a5dfb56892d3714c1b5b8276c), [Google AI Edge LiteRT-LM source](https://github.com/google-ai-edge/LiteRT-LM/tree/2b2f377509bf63392091aa9e78189c4044291f02)

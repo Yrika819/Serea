@@ -6,13 +6,16 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <mutex>
 #include <new>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -36,6 +39,9 @@ struct RequestIdentityHash {
 std::unordered_set<RequestIdentity, RequestIdentityHash> cancelled_requests;
 std::unordered_map<RequestIdentity, std::pair<jint, jint>, RequestIdentityHash> request_usage_counts;
 std::once_flag backend_once;
+#if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+std::atomic<bool> fail_next_load_after_model{false};
+#endif
 llama_model * model = nullptr;
 llama_context * context = nullptr;
 llama_sampler * sampler = nullptr;
@@ -61,8 +67,10 @@ void throw_cancelled(JNIEnv * env) {
 class abort_callback_reset {
 public:
     explicit abort_callback_reset(llama_context * context) : context_(context) {}
-    ~abort_callback_reset() {
-        if (context_ != nullptr) llama_set_abort_callback(context_, nullptr, nullptr);
+    ~abort_callback_reset() noexcept {
+        try {
+            if (context_ != nullptr) llama_set_abort_callback(context_, nullptr, nullptr);
+        } catch (...) {}
     }
 private:
     llama_context * context_;
@@ -85,8 +93,9 @@ void forget_owner_cancellations(jlong engine_id) {
 }
 
 void clear_engine_owner(jlong engine_id) {
+    auto expected = engine_id;
+    active_engine_id.compare_exchange_strong(expected, 0, std::memory_order_acq_rel);
     std::lock_guard<std::mutex> lock(cancellation_mutex);
-    active_engine_id.store(0, std::memory_order_release);
     for (auto request = cancelled_requests.begin(); request != cancelled_requests.end();) {
         if (request->engine_id == engine_id) {
             request = cancelled_requests.erase(request);
@@ -96,9 +105,65 @@ void clear_engine_owner(jlong engine_id) {
     }
 }
 
+void clear_engine_owner_noexcept(jlong engine_id) noexcept {
+    auto expected = engine_id;
+    active_engine_id.compare_exchange_strong(expected, 0, std::memory_order_acq_rel);
+    try {
+        std::lock_guard<std::mutex> lock(cancellation_mutex);
+        for (auto request = cancelled_requests.begin(); request != cancelled_requests.end();) {
+            if (request->engine_id == engine_id) {
+                request = cancelled_requests.erase(request);
+            } else {
+                ++request;
+            }
+        }
+    } catch (...) {
+        // The atomic lease is already released; stale cancellation entries cannot own a model.
+    }
+}
+
 void throw_java(JNIEnv * env, const char * class_name, const char * message) {
     jclass klass = env->FindClass(class_name);
-    if (klass != nullptr) env->ThrowNew(klass, message);
+    if (klass != nullptr && !env->ExceptionCheck()) env->ThrowNew(klass, message);
+}
+
+template <typename Result, typename Body>
+Result jni_boundary(JNIEnv * env, Result fallback, Body && body) noexcept {
+    try {
+        return body();
+    } catch (const std::bad_alloc &) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/OutOfMemoryError", "Native runtime allocation failed");
+        }
+    } catch (const std::exception &) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/IllegalStateException", "Native runtime operation failed");
+        }
+    } catch (...) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/IllegalStateException", "Native runtime operation failed");
+        }
+    }
+    return fallback;
+}
+
+template <typename Body>
+void jni_boundary_void(JNIEnv * env, Body && body) noexcept {
+    try {
+        body();
+    } catch (const std::bad_alloc &) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/OutOfMemoryError", "Native runtime allocation failed");
+        }
+    } catch (const std::exception &) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/IllegalStateException", "Native runtime operation failed");
+        }
+    } catch (...) {
+        if (!env->ExceptionCheck()) {
+            throw_java(env, "java/lang/IllegalStateException", "Native runtime operation failed");
+        }
+    }
 }
 
 void append_utf8(std::string & output, uint32_t code_point) {
@@ -216,23 +281,39 @@ jstring utf8_to_java_string(JNIEnv * env, const std::string & value) {
     return env->NewString(utf16.empty() ? &empty : utf16.data(), static_cast<jsize>(utf16.size()));
 }
 
-void free_locked() {
-    if (sampler != nullptr) {
-        llama_sampler_free(sampler);
-        sampler = nullptr;
-    }
-    if (context != nullptr) {
-        llama_free(context);
-        context = nullptr;
-    }
-    if (model != nullptr) {
-        llama_model_free(model);
-        model = nullptr;
-    }
+void free_locked() noexcept {
+    llama_sampler * sampler_to_free = std::exchange(sampler, nullptr);
+    llama_context * context_to_free = std::exchange(context, nullptr);
+    llama_model * model_to_free = std::exchange(model, nullptr);
     vocab = nullptr;
     model_context_tokens = 0;
     request_usage_counts.clear();
+    try {
+        if (sampler_to_free != nullptr) llama_sampler_free(sampler_to_free);
+    } catch (...) {}
+    try {
+        if (context_to_free != nullptr) llama_free(context_to_free);
+    } catch (...) {}
+    try {
+        if (model_to_free != nullptr) llama_model_free(model_to_free);
+    } catch (...) {}
 }
+
+class load_rollback {
+public:
+    explicit load_rollback(jlong engine_id) noexcept : engine_id_(engine_id) {}
+    ~load_rollback() noexcept {
+        if (!committed_) {
+            free_locked();
+            clear_engine_owner_noexcept(engine_id_);
+        }
+    }
+    void commit() noexcept { committed_ = true; }
+
+private:
+    jlong engine_id_;
+    bool committed_ = false;
+};
 
 void free_batch_storage(llama_batch & batch, size_t initialized_seq_ids) {
     if (batch.seq_id != nullptr) {
@@ -247,6 +328,19 @@ void free_batch_storage(llama_batch & batch, size_t initialized_seq_ids) {
     std::free(batch.token);
     batch = {};
 }
+
+class scoped_batch_storage {
+public:
+    scoped_batch_storage(llama_batch & batch, size_t token_count) noexcept
+            : batch_(batch), token_count_(token_count) {}
+    ~scoped_batch_storage() noexcept { free_batch_storage(batch_, token_count_); }
+    scoped_batch_storage(const scoped_batch_storage &) = delete;
+    scoped_batch_storage & operator=(const scoped_batch_storage &) = delete;
+
+private:
+    llama_batch & batch_;
+    size_t token_count_;
+};
 
 bool make_batch(const std::vector<llama_token> & tokens, llama_pos start_position, llama_batch & batch) {
     batch = {};
@@ -288,66 +382,70 @@ bool make_batch(const std::vector<llama_token> & tokens, llama_pos start_positio
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeLoad(JNIEnv * env, jobject, jlong engine_id, jstring path, jint context_tokens, jint worker_threads) {
-    if (context_tokens < 128 || context_tokens > 512 || worker_threads < 1 || worker_threads > 2) {
-        throw_java(env, "java/lang/IllegalArgumentException", "Unsupported local runtime limits");
-        return JNI_FALSE;
-    }
-    const char * model_path = env->GetStringUTFChars(path, nullptr);
-    if (model_path == nullptr) return JNI_FALSE;
-    std::lock_guard<std::mutex> lock(engine_mutex);
-    const jlong owner = active_engine_id.load(std::memory_order_acquire);
-    if (owner != 0 && owner != engine_id) {
-        env->ReleaseStringUTFChars(path, model_path);
-        throw_java(env, "java/lang/IllegalStateException", "Another local llama.cpp backend owns the process-wide model lease");
-        return JNI_FALSE;
-    }
-    active_engine_id.store(engine_id, std::memory_order_release);
-    forget_owner_cancellations(engine_id);
-    free_locked();
-    std::call_once(backend_once, [] { llama_backend_init(); });
-    llama_model_params model_params = llama_model_default_params();
-    model = llama_model_load_from_file(model_path, model_params);
-    env->ReleaseStringUTFChars(path, model_path);
-    if (model == nullptr) {
-        clear_engine_owner(engine_id);
-        return JNI_FALSE;
-    }
+    return jni_boundary<jboolean>(env, JNI_FALSE, [&]() -> jboolean {
+        if (context_tokens < 128 || context_tokens > 512 || worker_threads < 1 || worker_threads > 2) {
+            throw_java(env, "java/lang/IllegalArgumentException", "Unsupported local runtime limits");
+            return JNI_FALSE;
+        }
+        const auto model_path = java_string_to_utf8(env, path);
+        if (!model_path.has_value()) {
+            if (!env->ExceptionCheck()) {
+                throw_java(env, "java/lang/IllegalArgumentException", "Model path is missing or invalid UTF-16");
+            }
+            return JNI_FALSE;
+        }
 
-    vocab = llama_model_get_vocab(model);
-    llama_context_params context_params = llama_context_default_params();
-    context_params.n_ctx = static_cast<uint32_t>(context_tokens);
-    context_params.n_batch = std::min<uint32_t>(context_params.n_ctx, 128U);
-    context_params.n_ubatch = context_params.n_batch;
-    context_params.n_threads = worker_threads;
-    context_params.n_threads_batch = worker_threads;
-    context_params.no_perf = true;
-    context = llama_init_from_model(model, context_params);
-    if (context == nullptr) {
+        std::lock_guard<std::mutex> lock(engine_mutex);
+        const jlong owner = active_engine_id.load(std::memory_order_acquire);
+        if (owner != 0 && owner != engine_id) {
+            throw_java(env, "java/lang/IllegalStateException", "Another local llama.cpp backend owns the process-wide model lease");
+            return JNI_FALSE;
+        }
+        active_engine_id.store(engine_id, std::memory_order_release);
+        load_rollback rollback(engine_id);
+        forget_owner_cancellations(engine_id);
         free_locked();
-        clear_engine_owner(engine_id);
-        return JNI_FALSE;
-    }
-    model_context_tokens = context_params.n_ctx;
-    auto params = llama_sampler_chain_default_params();
-    params.no_perf = true;
-    sampler = llama_sampler_chain_init(params);
-    if (sampler == nullptr) {
-        free_locked();
-        clear_engine_owner(engine_id);
-        return JNI_FALSE;
-    }
-    llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
-    return JNI_TRUE;
+        std::call_once(backend_once, [] { llama_backend_init(); });
+        llama_model_params model_params = llama_model_default_params();
+        model = llama_model_load_from_file(model_path->c_str(), model_params);
+        if (model == nullptr) return JNI_FALSE;
+#if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+        if (fail_next_load_after_model.exchange(false, std::memory_order_acq_rel)) {
+            throw std::runtime_error("Injected JNI load failure after model allocation");
+        }
+#endif
+
+        vocab = llama_model_get_vocab(model);
+        llama_context_params context_params = llama_context_default_params();
+        context_params.n_ctx = static_cast<uint32_t>(context_tokens);
+        context_params.n_batch = std::min<uint32_t>(context_params.n_ctx, 128U);
+        context_params.n_ubatch = context_params.n_batch;
+        context_params.n_threads = worker_threads;
+        context_params.n_threads_batch = worker_threads;
+        context_params.no_perf = true;
+        context = llama_init_from_model(model, context_params);
+        if (context == nullptr) return JNI_FALSE;
+        model_context_tokens = context_params.n_ctx;
+        auto params = llama_sampler_chain_default_params();
+        params.no_perf = true;
+        sampler = llama_sampler_chain_init(params);
+        if (sampler == nullptr) return JNI_FALSE;
+        llama_sampler * greedy = llama_sampler_init_greedy();
+        if (greedy == nullptr) return JNI_FALSE;
+        llama_sampler_chain_add(sampler, greedy);
+        rollback.commit();
+        return JNI_TRUE;
+    });
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeGenerate(
         JNIEnv * env, jobject, jlong engine_id, jstring prompt_value, jint max_tokens, jlong generation_id) {
-    if (max_tokens < 1 || max_tokens > 256) {
-        throw_java(env, "java/lang/IllegalArgumentException", "Output token limit is outside the native bound");
-        return nullptr;
-    }
-    try {
+    return jni_boundary<jstring>(env, nullptr, [&]() -> jstring {
+        if (max_tokens < 1 || max_tokens > 256) {
+            throw_java(env, "java/lang/IllegalArgumentException", "Output token limit is outside the native bound");
+            return nullptr;
+        }
         const auto prompt_value_utf8 = java_string_to_utf8(env, prompt_value);
         if (!prompt_value_utf8.has_value()) {
             if (!env->ExceptionCheck()) {
@@ -404,8 +502,8 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeGenerate(
             throw_java(env, "java/lang/OutOfMemoryError", "Unable to allocate prompt batch buffers");
             return nullptr;
         }
+        scoped_batch_storage prompt_batch_cleanup(prompt_batch, tokens.size());
         const int32_t prompt_result = llama_decode(context, prompt_batch);
-        free_batch_storage(prompt_batch, tokens.size());
         if (generation_cancelled(engine_id, generation_id) || prompt_result == 2) {
             throw_cancelled(env);
             return nullptr;
@@ -441,8 +539,8 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeGenerate(
                 throw_java(env, "java/lang/OutOfMemoryError", "Unable to allocate generation batch buffers");
                 return nullptr;
             }
+            scoped_batch_storage batch_cleanup(batch, next_token.size());
             const int32_t decode_result = llama_decode(context, batch);
-            free_batch_storage(batch, next_token.size());
             if (generation_cancelled(engine_id, generation_id) || decode_result == 2) {
                 throw_cancelled(env);
                 return nullptr;
@@ -454,54 +552,64 @@ Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeGenerate(
         }
         request_usage_counts.emplace(request, std::make_pair(static_cast<jint>(token_count), output_token_count));
         return utf8_to_java_string(env, result);
-    } catch (const std::bad_alloc &) {
-        if (!env->ExceptionCheck()) {
-            throw_java(env, "java/lang/OutOfMemoryError", "Native inference allocation failed");
-        }
-        return nullptr;
-    }
+    });
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeCancel(JNIEnv *, jobject, jlong engine_id, jlong generation_id) {
-    std::lock_guard<std::mutex> lock(cancellation_mutex);
-    if (active_engine_id.load(std::memory_order_acquire) != engine_id) return JNI_FALSE;
-    cancelled_requests.insert({engine_id, generation_id});
-    return JNI_TRUE;
+Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeCancel(JNIEnv * env, jobject, jlong engine_id, jlong generation_id) {
+    return jni_boundary<jboolean>(env, JNI_FALSE, [&]() -> jboolean {
+        std::lock_guard<std::mutex> lock(cancellation_mutex);
+        if (active_engine_id.load(std::memory_order_acquire) != engine_id) return JNI_FALSE;
+        cancelled_requests.insert({engine_id, generation_id});
+        return JNI_TRUE;
+    });
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeForgetCancellation(JNIEnv *, jobject, jlong engine_id, jlong generation_id) {
-    forget_cancellation(engine_id, generation_id);
+Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeForgetCancellation(JNIEnv * env, jobject, jlong engine_id, jlong generation_id) {
+    jni_boundary_void(env, [&] { forget_cancellation(engine_id, generation_id); });
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
 Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeUsageCounts(
         JNIEnv * env, jobject, jlong engine_id, jlong generation_id) {
-    std::lock_guard<std::mutex> lock(engine_mutex);
-    if (active_engine_id.load(std::memory_order_acquire) != engine_id) return nullptr;
-    const auto found = request_usage_counts.find({engine_id, generation_id});
-    if (found == request_usage_counts.end()) return nullptr;
-    jint values[2] = {found->second.first, found->second.second};
-    jintArray result = env->NewIntArray(2);
-    if (result == nullptr) return nullptr;
-    env->SetIntArrayRegion(result, 0, 2, values);
-    return env->ExceptionCheck() ? nullptr : result;
+    return jni_boundary<jintArray>(env, nullptr, [&]() -> jintArray {
+        std::lock_guard<std::mutex> lock(engine_mutex);
+        if (active_engine_id.load(std::memory_order_acquire) != engine_id) return nullptr;
+        const auto found = request_usage_counts.find({engine_id, generation_id});
+        if (found == request_usage_counts.end()) return nullptr;
+        jint values[2] = {found->second.first, found->second.second};
+        jintArray result = env->NewIntArray(2);
+        if (result == nullptr) return nullptr;
+        env->SetIntArrayRegion(result, 0, 2, values);
+        return env->ExceptionCheck() ? nullptr : result;
+    });
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeForgetUsage(JNIEnv *, jobject, jlong engine_id, jlong generation_id) {
-    std::lock_guard<std::mutex> lock(engine_mutex);
-    if (active_engine_id.load(std::memory_order_acquire) == engine_id) {
-        request_usage_counts.erase({engine_id, generation_id});
-    }
+Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeForgetUsage(JNIEnv * env, jobject, jlong engine_id, jlong generation_id) {
+    jni_boundary_void(env, [&] {
+        std::lock_guard<std::mutex> lock(engine_mutex);
+        if (active_engine_id.load(std::memory_order_acquire) == engine_id) {
+            request_usage_counts.erase({engine_id, generation_id});
+        }
+    });
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeFree(JNIEnv *, jobject, jlong engine_id) {
-    std::lock_guard<std::mutex> lock(engine_mutex);
-    if (active_engine_id.load(std::memory_order_acquire) != engine_id) return JNI_FALSE;
-    free_locked();
-    clear_engine_owner(engine_id);
-    return JNI_TRUE;
+Java_app_serea_android_LlamaCppLocalModelInferenceBackend_nativeFree(JNIEnv * env, jobject, jlong engine_id) {
+    return jni_boundary<jboolean>(env, JNI_FALSE, [&]() -> jboolean {
+        std::lock_guard<std::mutex> lock(engine_mutex);
+        if (active_engine_id.load(std::memory_order_acquire) != engine_id) return JNI_FALSE;
+        free_locked();
+        clear_engine_owner(engine_id);
+        return JNI_TRUE;
+    });
 }
+
+#if defined(SEREA_NATIVE_JNI_TEST_SEAMS)
+extern "C" JNIEXPORT void JNICALL
+Java_app_serea_android_NativeJniFailureSeam_failNextLoadAfterModel(JNIEnv * env, jobject) {
+    jni_boundary_void(env, [&] { fail_next_load_after_model.store(true, std::memory_order_release); });
+}
+#endif

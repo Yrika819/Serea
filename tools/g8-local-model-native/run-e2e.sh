@@ -3,11 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 ANDROID_DIR="$ROOT_DIR/android"
-EVIDENCE_DIR="${G8_EVIDENCE_DIR:-$ROOT_DIR/evidence/g8-local-native}"
 MODEL_HOST_PATH="${RUNNER_TEMP:?RUNNER_TEMP is required}/serea-g8-smollm2.gguf"
 APP_ID='app.serea.android.isolated'
 TEST_ID='app.serea.android.isolated.test'
-DEVICE_MODEL_RELATIVE='files/g8-smollm2-135m-q4_k_m.gguf'
+DEVICE_MODEL_RELATIVE='cache/g8-smollm2-135m-q4_k_m.gguf'
 DEVICE_MODEL_TEMP='/data/local/tmp/serea-g8-smollm2.gguf'
 TARGET_APK="$ANDROID_DIR/app/build/outputs/apk/isolated/app-isolated.apk"
 TEST_APK="$ANDROID_DIR/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk"
@@ -16,13 +15,24 @@ MODEL_SIZE_BYTES='101016128'
 LLAMA_COMMIT='276378515ceebee5d14bcc8536603dd5c87491a2'
 TEST_CLASS='app.serea.android.LocalModelNativeRuntimeE2ETest'
 TEST_METHOD='pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend'
+EVIDENCE_DIR=''
+CANONICAL_RUNNER_TEMP=''
+DEVICE_SERIAL=''
+EVIDENCE_DIR_CREATED=0
+APP_PACKAGE_OWNED=0
+TEST_PACKAGE_OWNED=0
+APP_PRIVATE_MODEL_OWNED=0
+DEVICE_TEMP_MODEL_OWNED=0
+HOST_MODEL_OWNED=0
 
-mkdir -p "$EVIDENCE_DIR/junit"
+adb_device() {
+    adb -s "$DEVICE_SERIAL" "$@"
+}
 
 package_state() {
     local package="$1"
     local packages
-    if ! packages="$(adb shell pm list packages "$package" 2>/dev/null)"; then
+    if ! packages="$(adb_device shell pm list packages "$package" 2>/dev/null)"; then
         return 2
     fi
     if printf '%s\n' "$packages" | tr -d '\r' | grep -Fxq "package:$package"; then
@@ -33,11 +43,31 @@ package_state() {
 
 uninstall_and_verify() {
     local package="$1"
-    local command_variable="$2"
-    local state_variable="$3"
+    local owned="$2"
+    local command_variable="$3"
+    local state_variable="$4"
     local before_state after_state command_status
     local -n command_result="$command_variable"
     local -n final_state="$state_variable"
+
+    if [[ "$owned" != 1 ]]; then
+        if package_state "$package"; then
+            command_result=NOT_TOUCHED_UNEXPECTED_PRESENT
+            final_state=NOT_VERIFIED
+            CLEANUP_FAILED=1
+        else
+            command_status=$?
+            if [[ "$command_status" == 1 ]]; then
+                command_result=NOT_NEEDED_NOT_OWNED
+                final_state=ABSENT_VERIFIED
+            else
+                command_result=NOT_VERIFIED_PACKAGE_QUERY_FAILED
+                final_state=NOT_VERIFIED
+                CLEANUP_FAILED=1
+            fi
+        fi
+        return
+    fi
 
     if package_state "$package"; then
         before_state=INSTALLED
@@ -50,7 +80,7 @@ uninstall_and_verify() {
     fi
 
     if [[ "$before_state" == INSTALLED ]]; then
-        if adb uninstall "$package" >/dev/null 2>&1; then
+        if adb_device uninstall "$package" >/dev/null 2>&1; then
             command_result=PASS
         else
             command_result=FAIL
@@ -95,68 +125,74 @@ cleanup() {
     trap - EXIT
     set +e
 
-    if package_state "$APP_ID"; then
-        if adb shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
-            app_private_remove_command=PASS
+    if [[ "$APP_PRIVATE_MODEL_OWNED" == 1 ]]; then
+        if [[ "$APP_PACKAGE_OWNED" == 1 ]] && package_state "$APP_ID"; then
+            if adb_device shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
+                app_private_remove_command=PASS
+            else
+                app_private_remove_command=FAIL
+                CLEANUP_FAILED=1
+            fi
+            if [[ "$app_private_remove_command" == PASS ]] && \
+                adb_device shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
+                app_private_state=ABSENT_VERIFIED
+            else
+                app_private_state=NOT_VERIFIED
+                CLEANUP_FAILED=1
+            fi
         else
-            app_private_remove_command=FAIL
-            CLEANUP_FAILED=1
-        fi
-        if [[ "$app_private_remove_command" == PASS ]] && \
-            adb shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
-            app_private_state=ABSENT_VERIFIED
-        else
+            app_private_remove_command=NOT_VERIFIED_OWNER_PACKAGE_ABSENT
             app_private_state=NOT_VERIFIED
             CLEANUP_FAILED=1
         fi
     else
-        package_status=$?
-        if [[ "$package_status" == 1 ]]; then
-            if package_state "$APP_ID"; then
-                app_private_state=NOT_VERIFIED_PACKAGE_PRESENT
-                CLEANUP_FAILED=1
+        if [[ "$APP_PACKAGE_OWNED" == 1 ]] && package_state "$APP_ID"; then
+            if adb_device shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
+                app_private_remove_command=NOT_NEEDED_NOT_STAGED
+                app_private_state=ABSENT_VERIFIED
             else
-                package_status=$?
-                if [[ "$package_status" == 1 ]]; then
-                    app_private_remove_command=NOT_NEEDED_PACKAGE_ABSENT
-                    app_private_state=NOT_APPLICABLE_PACKAGE_ABSENT
-                else
-                    app_private_remove_command=NOT_VERIFIED_PACKAGE_QUERY_FAILED
-                    app_private_state=NOT_VERIFIED
-                    CLEANUP_FAILED=1
-                fi
+                app_private_remove_command=NOT_VERIFIED_NOT_STAGED
+                app_private_state=NOT_VERIFIED
+                CLEANUP_FAILED=1
             fi
         else
-            app_private_remove_command=NOT_VERIFIED_PACKAGE_QUERY_FAILED
-            app_private_state=NOT_VERIFIED
-            CLEANUP_FAILED=1
+            app_private_remove_command=NOT_APPLICABLE
+            app_private_state=NOT_APPLICABLE
         fi
     fi
 
-    if adb shell rm -f "$DEVICE_MODEL_TEMP" >/dev/null 2>&1; then
-        temp_remove_command=PASS
+    if [[ "$DEVICE_TEMP_MODEL_OWNED" == 1 ]]; then
+        if adb_device shell rm -f "$DEVICE_MODEL_TEMP" >/dev/null 2>&1; then
+            temp_remove_command=PASS
+        else
+            temp_remove_command=FAIL
+            CLEANUP_FAILED=1
+        fi
     else
-        temp_remove_command=FAIL
-        CLEANUP_FAILED=1
+        temp_remove_command=NOT_NEEDED_NOT_STAGED
     fi
-    if [[ "$temp_remove_command" == PASS ]] && \
-        adb shell test '!' -e "$DEVICE_MODEL_TEMP" >/dev/null 2>&1; then
+    if [[ "$temp_remove_command" == PASS || "$temp_remove_command" == NOT_NEEDED_NOT_STAGED ]] && \
+        adb_device shell test '!' -e "$DEVICE_MODEL_TEMP" >/dev/null 2>&1; then
         temp_state=ABSENT_VERIFIED
     else
         temp_state=NOT_VERIFIED
         CLEANUP_FAILED=1
     fi
 
-    uninstall_and_verify "$TEST_ID" test_uninstall_command test_package_state
-    uninstall_and_verify "$APP_ID" app_uninstall_command app_package_state
+    uninstall_and_verify "$TEST_ID" "$TEST_PACKAGE_OWNED" test_uninstall_command test_package_state
+    uninstall_and_verify "$APP_ID" "$APP_PACKAGE_OWNED" app_uninstall_command app_package_state
 
-    if rm -f "$MODEL_HOST_PATH"; then
+    if [[ "$HOST_MODEL_OWNED" == 1 ]] && rm -f -- "$MODEL_HOST_PATH"; then
         host_remove_command=PASS
+    elif [[ "$HOST_MODEL_OWNED" != 1 ]]; then
+        host_remove_command=NOT_OWNED
     else
         host_remove_command=FAIL
         CLEANUP_FAILED=1
     fi
-    if [[ "$host_remove_command" == PASS && ! -e "$MODEL_HOST_PATH" ]]; then
+    if [[ "$host_remove_command" == NOT_OWNED ]]; then
+        host_absence=NOT_APPLICABLE
+    elif [[ "$host_remove_command" == PASS && ! -e "$MODEL_HOST_PATH" ]]; then
         host_absence=ABSENT_VERIFIED
     else
         host_absence=NOT_VERIFIED
@@ -215,7 +251,7 @@ cleanup() {
         if [[ -z "${GITHUB_OUTPUT:-}" ]]; then
             output_write_status=FAIL_NO_GITHUB_OUTPUT
             CLEANUP_FAILED=1
-        elif printf '%s\n' 'cleanup_verified=true' >> "$GITHUB_OUTPUT" && \
+        elif printf 'evidence_dir=%s\ncleanup_verified=true\n' "$EVIDENCE_DIR" >> "$GITHUB_OUTPUT" && \
             grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"; then
             output_write_status=PASS
         else
@@ -244,7 +280,9 @@ cleanup() {
             "original_exit_status=$original_status" >&2
         # The workflow uploader is configured with `always()`. Remove its
         # evidence source on cleanup failure so it cannot publish success evidence.
-        if ! rm -rf "$EVIDENCE_DIR" || [[ -e "$EVIDENCE_DIR" ]]; then
+        if [[ "$EVIDENCE_DIR_CREATED" != 1 || -L "$EVIDENCE_DIR" || \
+              "$(cd "$EVIDENCE_DIR/.." 2>/dev/null && pwd -P)" != "$CANONICAL_RUNNER_TEMP" ]] || \
+              ! rm -rf -- "$EVIDENCE_DIR" || [[ -e "$EVIDENCE_DIR" ]]; then
             echo 'cleanup_evidence_source_removal=NOT_VERIFIED' >&2
         else
             echo 'cleanup_evidence_source_removal=VERIFIED' >&2
@@ -257,10 +295,31 @@ cleanup() {
 
     exit "$original_status"
 }
-trap 'cleanup "$?"' EXIT
 
 if [[ "${SEREA_CLEANUP_TEST_MODE:-0}" == 1 ]]; then
+    test_marker="$RUNNER_TEMP/.serea-cleanup-test-root"
+    expected_adb="$RUNNER_TEMP/fakebin/adb"
+    expected_rm="$RUNNER_TEMP/fakebin/rm"
+    [[ -f "$test_marker" && "$(cat "$test_marker")" == 'serea-cleanup-test-v1' ]]
+    [[ "$(realpath "$(command -v adb)")" == "$(realpath "$expected_adb")" ]]
+    [[ "$(realpath "$(command -v rm)")" == "$(realpath "$expected_rm")" ]]
+    DEVICE_SERIAL='fake-test-target'
+    EVIDENCE_DIR="$RUNNER_TEMP/serea-g8-native-cleanup-test"
+    mkdir -p "$EVIDENCE_DIR/junit"
+    CANONICAL_RUNNER_TEMP="$(cd "$RUNNER_TEMP" && pwd -P)"
+    EVIDENCE_DIR_CREATED=1
+    APP_PACKAGE_OWNED=1
+    TEST_PACKAGE_OWNED=1
+    APP_PRIVATE_MODEL_OWNED=1
+    DEVICE_TEMP_MODEL_OWNED=1
+    HOST_MODEL_OWNED=1
+    trap 'cleanup "$?"' EXIT
     exit "${SEREA_CLEANUP_TEST_PRIMARY_STATUS:-0}"
+fi
+
+if [[ -n "${G8_EVIDENCE_DIR+x}" ]]; then
+    echo 'G8_EVIDENCE_DIR is not accepted; evidence must use a fresh runner-temporary directory.' >&2
+    exit 2
 fi
 
 [[ -s "$TARGET_APK" ]]
@@ -269,45 +328,79 @@ fi
 test "$(stat -c '%s' "$MODEL_HOST_PATH")" = "$MODEL_SIZE_BYTES"
 test "$(sha256sum "$MODEL_HOST_PATH" | awk '{print $1}')" = "$MODEL_SHA256"
 
-adb wait-for-device
-[[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == '1' ]]
-[[ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" == '35' ]]
-[[ "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" == 'x86_64' ]]
+preflight_output="$(bash "$ROOT_DIR/tools/g8-local-model-native/preflight.sh")"
+DEVICE_SERIAL="$(sed -n 's/^device_serial=//p' <<< "$preflight_output")"
+hardware="$(sed -n 's/^hardware=//p' <<< "$preflight_output")"
+fingerprint="$(sed -n 's/^fingerprint=//p' <<< "$preflight_output")"
+[[ "$DEVICE_SERIAL" =~ ^emulator-[0-9]+$ ]]
+ANDROID_SERIAL="$DEVICE_SERIAL"
+export ANDROID_SERIAL
+
+mkdir -p "$RUNNER_TEMP"
+CANONICAL_RUNNER_TEMP="$(cd "$RUNNER_TEMP" && pwd -P)"
+EVIDENCE_DIR="$(mktemp -d "$CANONICAL_RUNNER_TEMP/serea-g8-local-native.XXXXXX")"
+if [[ -L "$EVIDENCE_DIR" || "$(cd "$EVIDENCE_DIR/.." && pwd -P)" != "$CANONICAL_RUNNER_TEMP" ]]; then
+    echo 'Fresh evidence directory did not resolve directly under RUNNER_TEMP.' >&2
+    exit 4
+fi
+EVIDENCE_DIR_CREATED=1
+mkdir -p "$EVIDENCE_DIR/junit"
+HOST_MODEL_OWNED=1
+trap 'cleanup "$?"' EXIT
+printf '%s\n' "$preflight_output" > "$EVIDENCE_DIR/preflight.txt"
 {
     echo "source_sha=$(git -C "$ROOT_DIR" rev-parse HEAD)"
     echo "source_tree=$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
     echo "llama_cpp_sha=$LLAMA_COMMIT"
-    echo "emulator_api=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
-    echo "emulator_abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
-    echo "emulator_hardware=$(adb shell getprop ro.hardware | tr -d '\r')"
+    echo "emulator_serial=$DEVICE_SERIAL"
+    echo "emulator_api=$(adb_device shell getprop ro.build.version.sdk | tr -d '\r')"
+    echo "emulator_abi=$(adb_device shell getprop ro.product.cpu.abi | tr -d '\r')"
+    echo "emulator_hardware=$hardware"
+    echo "emulator_fingerprint=$fingerprint"
     echo "target_apk_sha256=$(sha256sum "$TARGET_APK" | awk '{print $1}')"
     echo "androidtest_apk_sha256=$(sha256sum "$TEST_APK" | awk '{print $1}')"
     echo "model_sha256=$MODEL_SHA256"
     echo "model_size_bytes=$MODEL_SIZE_BYTES"
 } > "$EVIDENCE_DIR/source-and-runtime.txt"
 
-adb install -r "$TARGET_APK" > "$EVIDENCE_DIR/adb-install-target.log" 2>&1
-adb install -r "$TEST_APK" > "$EVIDENCE_DIR/adb-install-test.log" 2>&1
-adb shell run-as "$APP_ID" mkdir -p files
-adb push "$MODEL_HOST_PATH" "$DEVICE_MODEL_TEMP" > "$EVIDENCE_DIR/adb-model-stage.log" 2>&1
-adb shell run-as "$APP_ID" cp "$DEVICE_MODEL_TEMP" "$DEVICE_MODEL_RELATIVE"
-adb shell run-as "$APP_ID" chmod 0400 "$DEVICE_MODEL_RELATIVE"
-device_data_dir="$(adb shell run-as "$APP_ID" pwd | tr -d '\r')"
+campaign_token="g8-native-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}"
+if adb_device install "$TARGET_APK" > "$EVIDENCE_DIR/adb-install-target.log" 2>&1; then
+    APP_PACKAGE_OWNED=1
+else
+    echo 'Target APK install failed; it will not be treated as an owned package.' >&2
+    exit 1
+fi
+if adb_device install "$TEST_APK" > "$EVIDENCE_DIR/adb-install-test.log" 2>&1; then
+    TEST_PACKAGE_OWNED=1
+else
+    echo 'AndroidTest APK install failed; it will not be treated as an owned package.' >&2
+    exit 1
+fi
+EXPECTED_API_LEVEL=35 bash "$ROOT_DIR/tools/prepare_isolated_instrumentation_target.sh" "$campaign_token" \
+    > "$EVIDENCE_DIR/isolated-target-seed.log" 2>&1
+device_data_dir="$(adb_device shell run-as "$APP_ID" pwd | tr -d '\r')"
 case "$device_data_dir" in
     "/data/user/0/$APP_ID"|"/data/data/$APP_ID") ;;
     *) echo 'Unexpected app-private data root' >&2; exit 1 ;;
 esac
-staged_hash="$(adb exec-out run-as "$APP_ID" cat "$DEVICE_MODEL_RELATIVE" | sha256sum | awk '{print $1}')"
+DEVICE_TEMP_MODEL_OWNED=1
+adb_device push "$MODEL_HOST_PATH" "$DEVICE_MODEL_TEMP" > "$EVIDENCE_DIR/adb-model-stage.log" 2>&1
+APP_PRIVATE_MODEL_OWNED=1
+adb_device shell run-as "$APP_ID" mkdir -p cache
+adb_device shell run-as "$APP_ID" cp "$DEVICE_MODEL_TEMP" "$DEVICE_MODEL_RELATIVE"
+adb_device shell run-as "$APP_ID" chmod 0400 "$DEVICE_MODEL_RELATIVE"
+staged_hash="$(adb_device exec-out run-as "$APP_ID" cat "$DEVICE_MODEL_RELATIVE" | sha256sum | awk '{print $1}')"
 [[ "$staged_hash" == "$MODEL_SHA256" ]]
 echo "app_private_model_sha256=$staged_hash" > "$EVIDENCE_DIR/model-stage.txt"
 
-rm -rf "$ANDROID_DIR/app/build/outputs/androidTest-results/connected"
 gradle_log="$EVIDENCE_DIR/gradle-instrumentation.log"
 if ! (
     cd "$ANDROID_DIR"
     ./gradlew --no-daemon --console=plain \
         -PsereaLocalNativeRuntime=true \
+        -PsereaNativeJniTestSeams=true \
         -PsereaLlamaCppSource="$ROOT_DIR/llama.cpp" \
+        "-Pandroid.testInstrumentationRunnerArguments.sereaCampaignToken=$campaign_token" \
         "-Pandroid.testInstrumentationRunnerArguments.class=$TEST_CLASS#$TEST_METHOD" \
         :app:connectedIsolatedAndroidTest
 ) > "$gradle_log" 2>&1; then
@@ -334,4 +427,4 @@ for key in ("failures", "errors", "skipped"):
 PY
 echo 'exact_junit=PASS tests=1 failures=0 errors=0 skipped=0' > "$EVIDENCE_DIR/junit-verification.txt"
 
-adb logcat -d -v threadtime -s SereaLocalNativeRuntime:I > "$EVIDENCE_DIR/native-runtime-metrics.log"
+adb_device logcat -d -v threadtime -s SereaLocalNativeRuntime:I > "$EVIDENCE_DIR/native-runtime-metrics.log"

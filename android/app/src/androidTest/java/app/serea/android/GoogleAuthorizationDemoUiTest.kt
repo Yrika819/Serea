@@ -9,10 +9,16 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.serea.android.calendar.CalendarProviderKind
 import app.serea.android.gmail.GmailProviderKind
+import app.serea.android.googleauth.GoogleAuthorizationDemoViewModel
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -128,5 +134,41 @@ class GoogleAuthorizationDemoUiTest {
         compose.onNodeWithTag("google_auth_demo_consent_grant").assertIsDisplayed().performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
             .assertTextContains("承認済み（デモのみ）", substring = true)
+    }
+
+    @Test
+    fun expiredCalendarReconnectShowsFreshPreviewAndWaitsForConfirm() {
+        openAuthorizationDemo()
+        val viewModel = ViewModelProvider(compose.activity)[GoogleAuthorizationDemoViewModel::class.java]
+
+        compose.onNodeWithTag("google_auth_demo_request_calendar").performScrollTo().performClick()
+        compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
+        val expiredSession = checkNotNull(viewModel.calendarDemoSession.value)
+
+        compose.onNodeWithTag("google_auth_demo_expire").performScrollTo().performClick()
+        compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
+            .assertTextContains("期限切れ（デモ）", substring = true)
+        compose.onNodeWithText("再接続して認可内容を確認").performScrollTo().assertIsDisplayed()
+        assertNull(viewModel.calendarDemoSession.value)
+        assertTrue(runCatching { runBlocking { expiredSession.listCalendars() } }.isFailure)
+
+        // The same account can recover through its normal consent action. Opening the preview
+        // does not restore the old session; only an explicit confirm creates a fresh Fake session.
+        compose.onNodeWithTag("google_auth_demo_request_calendar").performScrollTo().performClick()
+        compose.onNodeWithText("Calendarの認可プレビュー").assertIsDisplayed()
+        compose.onNodeWithText("選択中: 架空アカウント A").assertIsDisplayed()
+        compose.onNodeWithText("Calendar 予定読み取り専用: https://www.googleapis.com/auth/calendar.events.readonly")
+            .assertIsDisplayed()
+        assertNull(viewModel.calendarDemoSession.value)
+        compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
+            .assertTextContains("承認が必要（デモ）", substring = true)
+
+        compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
+        compose.waitForIdle()
+        val reauthorizedSession = checkNotNull(viewModel.calendarDemoSession.value)
+        assertNotSame(expiredSession, reauthorizedSession)
+        assertEquals(CalendarProviderKind.FAKE, reauthorizedSession.kind)
+        assertEquals("架空アカウント A", viewModel.state.value.selectedAccount.displayName)
+        assertEquals(1, viewModel.state.value.accountGeneration)
     }
 }

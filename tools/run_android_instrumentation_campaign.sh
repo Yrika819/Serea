@@ -680,7 +680,7 @@ printf '%s\n' "$death_result" > "$evidence/process-death-status.txt"
 google_demo_ui_result=NOT_RUN
 google_demo_ui_cleanup_result=NOT_RUN
 if [[ "$api_level" == 35 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS ]]; then
-  google_demo_ui_filter='app.serea.android.GoogleAuthorizationDemoUiTest,app.serea.android.GoogleCalendarDemoLoopbackUiTest,app.serea.android.GoogleAuthorizationAppIntegrationTest,app.serea.android.GmailHtmlInertUiSecurityTest'
+  google_demo_ui_filter='app.serea.android.GoogleAuthorizationDemoUiTest,app.serea.android.GoogleCalendarDemoLoopbackUiTest,app.serea.android.GoogleAuthorizationAppIntegrationTest,app.serea.android.GoogleCalendarHandoffRevocationUiTest,app.serea.android.GmailHtmlInertUiSecurityTest'
   google_demo_ui_tests=$(cat <<'TESTS'
 app.serea.android.GoogleAuthorizationDemoUiTest#selectedSyntheticAccountIsBoundToTheConsentPreviewAndRevokedOnSwitch
 app.serea.android.GoogleAuthorizationDemoUiTest#consentCanBeGrantedDeniedAndCancelledWithoutRealGoogleConnection
@@ -688,6 +688,8 @@ app.serea.android.GoogleAuthorizationDemoUiTest#accountSwitchExpiryAndSharedRevo
 app.serea.android.GoogleAuthorizationDemoUiTest#inAppDisconnectDoesNotRevokeTheSharedDemoGrant
 app.serea.android.GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt
 app.serea.android.GoogleAuthorizationAppIntegrationTest#settingsConsentOpensCalendarSessionAndActivityRecreationReturnsToConsentPanel
+app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch
+app.serea.android.GoogleAuthorizationDemoUiTest#expiredCalendarReconnectShowsFreshPreviewAndWaitsForConfirm
 app.serea.android.GmailHtmlInertUiSecurityTest#fakeGmailRendersAdversarialHtmlAsInertTextWithoutRemoteRequests
 TESTS
 )
@@ -721,12 +723,36 @@ TESTS
   done
 
   if [[ "$google_demo_ui_cleanup_result" -eq 0 ]]; then
-    run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 7 '' "$google_demo_ui_tests" \
+    run_diagnostic_stage google-calendar-and-gmail-ui "$google_demo_ui_filter" 1200 9 '' "$google_demo_ui_tests" \
       || google_demo_ui_stage_result=1
   else
     google_demo_ui_stage_result=1
     echo 'Focused OAuth UI was not run because the previous campaign package could not be removed.' \
       > "$evidence/stages/google-calendar-and-gmail-ui/result.txt"
+  fi
+
+  if [[ "$google_demo_ui_stage_result" -eq 0 ]]; then
+    fake_google_process_death_evidence="$evidence/stages/google-calendar-and-gmail-ui/fake-google-process-death"
+    mkdir -p "$fake_google_process_death_evidence"
+    if EXPECTED_API_LEVEL="$api_level" \
+      SEREA_ISOLATED_INSTRUMENTATION_FINISHED=1 \
+      SEREA_FAKE_GOOGLE_DEATH_TOKEN="serea-fake-google-api${api_level}-${GITHUB_RUN_ID:?GITHUB_RUN_ID required}-${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT required}" \
+      SEREA_FAKE_GOOGLE_DEATH_EVIDENCE_DIR="$fake_google_process_death_evidence" \
+      bash "$tool_dir/run_android_fake_google_process_death.sh" \
+      > "$fake_google_process_death_evidence/run.log" 2>&1; then
+      cat "$fake_google_process_death_evidence/run.log"
+    else
+      if [[ -f "$fake_google_process_death_evidence/run.log" ]]; then
+        cat "$fake_google_process_death_evidence/run.log" >&2
+      fi
+      google_demo_ui_stage_result=1
+    fi
+    fake_google_process_death_status="$(cat "$fake_google_process_death_evidence/status.txt" 2>/dev/null || printf 'FAIL')"
+    if [[ "$fake_google_process_death_status" != PASS ]]; then
+      printf 'FAIL: Fake Google process-death status was %s.\n' "$fake_google_process_death_status" \
+        | tee "$fake_google_process_death_evidence/status.txt" >&2
+      google_demo_ui_stage_result=1
+    fi
   fi
 
   # This campaign owns only the isolated CI target and test packages on a verified disposable

@@ -189,7 +189,11 @@ private fun FeatureActions(
                 onClick = { onRequest(feature) },
                 enabled = isEnabledInApp && !isAuthorizationBusy,
                 modifier = Modifier.weight(1f).testTag("google_auth_demo_request_${feature.name.lowercase()}"),
-            ) { Text("認可内容を確認") }
+            ) {
+                Text(
+                    if (status == GoogleDemoFeatureState.EXPIRED) "再接続して認可内容を確認" else "認可内容を確認",
+                )
+            }
             if (!isEnabledInApp) {
                 TextButton(
                     onClick = { onReconnect(feature) },

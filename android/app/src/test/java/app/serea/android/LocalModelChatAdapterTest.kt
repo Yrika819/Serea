@@ -28,6 +28,15 @@ class LocalModelChatAdapterTest {
         assertEquals(2, defaults.workerThreads)
     }
 
+    @Test fun runtimeLimitsRejectValuesOutsideCurrentNativeBackendCapabilities() {
+        assertTrue(runCatching { LocalModelRuntimeLimits(contextTokens = 513) }
+            .exceptionOrNull() is IllegalArgumentException)
+        assertTrue(runCatching { LocalModelRuntimeLimits(maxOutputTokens = 257) }
+            .exceptionOrNull() is IllegalArgumentException)
+        assertTrue(runCatching { LocalModelRuntimeLimits(workerThreads = 3) }
+            .exceptionOrNull() is IllegalArgumentException)
+    }
+
     @Test fun modelFileLimitRejectsOversizeBeforeHashingOrNativeLoad() = runBlocking {
         val file = File.createTempFile("serea-model-oversize", ".gguf")
         RandomAccessFile(file, "rw").use { it.setLength(64L * 1024 * 1024 + 1) }

@@ -9,7 +9,7 @@
 
 ## Changes
 
-- Default `LocalModelRuntimeLimits.contextTokens` is now 512, matching the current Kotlin/JNI backend bound. Unsupported explicit limits still fail closed before native allocation.
+- Default `LocalModelRuntimeLimits.contextTokens` is 512, matching the current Kotlin/JNI backend bound. The limits object rejects context above 512, output above 256, or more than two worker threads; the Native backend retains its own pre-allocation checks. Widening these values requires an explicit backend capability contract and focused tests.
 - `maxResidentMemoryBytes` is renamed `maxModelFileBytes`. The limit checks model-file length before hashing/loading. It is not RSS/PSS enforcement.
 - Optional diagnostics sample Android process PSS in KiB around model load, each of the first two inference turns, and release. Cancellation-to-release latency is retained. `pss_measurement_status=PASS` requires every load, two-turn, and both release samples; otherwise it is `NOT_AVAILABLE`. All samples are allowlisted integers and contain no model output.
 - Raw instrumentation and logcat files are removed before cleanup can publish success. The artifact upload now lists only the sanitized XML/status summaries, source/hash metadata, metrics summary, and cleanup boundary. The XML failure detail contains exception type only, with raw messages/stacks suppressed.
@@ -33,7 +33,7 @@ Thus the experiment uses the x86_64 runner to host the published x86_64 emulator
 
 ## Focused verification
 
-- `:app:testDebugUnitTest --tests app.serea.android.LocalModelChatAdapterTest --tests app.serea.android.LocalModelNativeRuntimeTest`: 24 tests, 0 failures/errors/skips.
+- `:app:testDebugUnitTest --tests app.serea.android.LocalModelChatAdapterTest --tests app.serea.android.LocalModelNativeRuntimeTest`: 25 tests, 0 failures/errors/skips (including an explicit context/output/thread capability boundary test).
 - `:app:compileIsolatedAndroidTestKotlin`: PASS.
 - `-PsereaLocalNativeRuntime=true ... :app:verifyLocalNativeRuntimeVariantIsolation`: PASS; only `isolated` remains enabled.
 - `-PsereaLocalNativeRuntime=true ... :app:assembleBeta`: rejected by the expected diagnostic-only guard.

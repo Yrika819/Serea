@@ -55,9 +55,11 @@ internal fun interface LocalModelInferenceBackendFactory {
 }
 
 /**
- * Limits passed to the backend; its implementation must reject unsupported values.
- * `maxModelFileBytes` bounds the immutable model file only. Runtime RSS/PSS is measured
- * separately in diagnostic runs and is not a hard memory-allocation cap.
+ * Limits supported by the currently wired llama.cpp JNI backend. Keep these bounds aligned
+ * with that backend's pre-allocation validation; a future backend with different capabilities
+ * must add an explicit capability contract before widening them. `maxModelFileBytes` bounds
+ * the immutable model file only. Runtime RSS/PSS is measured separately in diagnostic runs
+ * and is not a hard memory-allocation cap.
  */
 data class LocalModelRuntimeLimits(
     val maxModelFileBytes: Long = 768L * 1024 * 1024,
@@ -69,7 +71,7 @@ data class LocalModelRuntimeLimits(
 ) {
     init {
         require(maxModelFileBytes in (64L * 1024 * 1024)..(2L * 1024 * 1024 * 1024))
-        require(contextTokens in 128..32_768 && maxOutputTokens in 1..4_096 && workerThreads in 1..8)
+        require(contextTokens in 128..512 && maxOutputTokens in 1..256 && workerThreads in 1..2)
     }
 }
 

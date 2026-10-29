@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 ANDROID_DIR="$ROOT_DIR/android"
-EVIDENCE_DIR="$ROOT_DIR/evidence/g8-local-native"
+EVIDENCE_DIR="${G8_EVIDENCE_DIR:-$ROOT_DIR/evidence/g8-local-native}"
 MODEL_HOST_PATH="${RUNNER_TEMP:?RUNNER_TEMP is required}/serea-g8-smollm2.gguf"
 APP_ID='app.serea.android.isolated'
 TEST_ID='app.serea.android.isolated.test'
@@ -19,26 +19,216 @@ TEST_METHOD='pinnedModelRunsThroughLocalModelEgressUsageAndNativeBackend'
 
 mkdir -p "$EVIDENCE_DIR/junit"
 
+package_state() {
+    local package="$1"
+    local packages
+    if ! packages="$(adb shell pm list packages "$package" 2>/dev/null)"; then
+        return 2
+    fi
+    if printf '%s\n' "$packages" | tr -d '\r' | grep -Fxq "package:$package"; then
+        return 0
+    fi
+    return 1
+}
+
+uninstall_and_verify() {
+    local package="$1"
+    local command_variable="$2"
+    local state_variable="$3"
+    local before_state after_state command_status
+    local -n command_result="$command_variable"
+    local -n final_state="$state_variable"
+
+    if package_state "$package"; then
+        before_state=INSTALLED
+    else
+        command_status=$?
+        case "$command_status" in
+            1) before_state=ABSENT ;;
+            *) before_state=UNKNOWN ;;
+        esac
+    fi
+
+    if [[ "$before_state" == INSTALLED ]]; then
+        if adb uninstall "$package" >/dev/null 2>&1; then
+            command_result=PASS
+        else
+            command_result=FAIL
+            CLEANUP_FAILED=1
+        fi
+    elif [[ "$before_state" == ABSENT ]]; then
+        command_result=NOT_NEEDED_ALREADY_ABSENT
+    else
+        command_result=NOT_VERIFIED_PACKAGE_QUERY_FAILED
+        CLEANUP_FAILED=1
+    fi
+
+    if package_state "$package"; then
+        after_state=INSTALLED
+    else
+        command_status=$?
+        case "$command_status" in
+            1) after_state=ABSENT ;;
+            *) after_state=UNKNOWN ;;
+        esac
+    fi
+
+    if [[ "$after_state" == ABSENT && "$before_state" != UNKNOWN && "$command_result" != FAIL ]]; then
+        final_state=ABSENT_VERIFIED
+    else
+        final_state=NOT_VERIFIED
+        CLEANUP_FAILED=1
+    fi
+}
+
 cleanup() {
     local original_status="$1"
+    local package_status app_private_remove_command temp_remove_command
+    local host_remove_command host_absence
+    local app_private_state=NOT_VERIFIED temp_state=NOT_VERIFIED
+    local test_uninstall_command=NOT_ATTEMPTED test_package_state=NOT_VERIFIED
+    local app_uninstall_command=NOT_ATTEMPTED app_package_state=NOT_VERIFIED
+    local report_path report_write_status=PASS cleanup_result
+    local -a cleanup_report
+    CLEANUP_FAILED=0
+
+    trap - EXIT
     set +e
-    adb shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1
-    adb shell rm -f "$DEVICE_MODEL_TEMP" >/dev/null 2>&1
-    adb uninstall "$TEST_ID" >/dev/null 2>&1
-    adb uninstall "$APP_ID" >/dev/null 2>&1
-    if [[ -f "$MODEL_HOST_PATH" ]]; then
-        rm -f "$MODEL_HOST_PATH"
+
+    if package_state "$APP_ID"; then
+        if adb shell run-as "$APP_ID" rm -f "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
+            app_private_remove_command=PASS
+        else
+            app_private_remove_command=FAIL
+            CLEANUP_FAILED=1
+        fi
+        if [[ "$app_private_remove_command" == PASS ]] && \
+            adb shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE" >/dev/null 2>&1; then
+            app_private_state=ABSENT_VERIFIED
+        else
+            app_private_state=NOT_VERIFIED
+            CLEANUP_FAILED=1
+        fi
+    else
+        package_status=$?
+        if [[ "$package_status" == 1 ]]; then
+            if package_state "$APP_ID"; then
+                app_private_state=NOT_VERIFIED_PACKAGE_PRESENT
+                CLEANUP_FAILED=1
+            else
+                package_status=$?
+                if [[ "$package_status" == 1 ]]; then
+                    app_private_remove_command=NOT_NEEDED_PACKAGE_ABSENT
+                    app_private_state=NOT_APPLICABLE_PACKAGE_ABSENT
+                else
+                    app_private_remove_command=NOT_VERIFIED_PACKAGE_QUERY_FAILED
+                    app_private_state=NOT_VERIFIED
+                    CLEANUP_FAILED=1
+                fi
+            fi
+        else
+            app_private_remove_command=NOT_VERIFIED_PACKAGE_QUERY_FAILED
+            app_private_state=NOT_VERIFIED
+            CLEANUP_FAILED=1
+        fi
     fi
-    {
-        echo 'model_weights_uploaded=false'
-        echo 'host_model_file_removed=true'
-        echo 'app_and_test_packages_uninstalled=true'
-        echo "original_exit_status=$original_status"
-        echo 'runner_vm_and_disposable_avd=ephemeral'
-    } > "$EVIDENCE_DIR/cleanup-boundary.txt"
-    return 0
+
+    if adb shell rm -f "$DEVICE_MODEL_TEMP" >/dev/null 2>&1; then
+        temp_remove_command=PASS
+    else
+        temp_remove_command=FAIL
+        CLEANUP_FAILED=1
+    fi
+    if [[ "$temp_remove_command" == PASS ]] && \
+        adb shell test '!' -e "$DEVICE_MODEL_TEMP" >/dev/null 2>&1; then
+        temp_state=ABSENT_VERIFIED
+    else
+        temp_state=NOT_VERIFIED
+        CLEANUP_FAILED=1
+    fi
+
+    uninstall_and_verify "$TEST_ID" test_uninstall_command test_package_state
+    uninstall_and_verify "$APP_ID" app_uninstall_command app_package_state
+
+    if rm -f "$MODEL_HOST_PATH"; then
+        host_remove_command=PASS
+    else
+        host_remove_command=FAIL
+        CLEANUP_FAILED=1
+    fi
+    if [[ "$host_remove_command" == PASS && ! -e "$MODEL_HOST_PATH" ]]; then
+        host_absence=ABSENT_VERIFIED
+    else
+        host_absence=NOT_VERIFIED
+        CLEANUP_FAILED=1
+    fi
+
+    if ((CLEANUP_FAILED == 0)); then
+        cleanup_result=PASS
+    else
+        cleanup_result=FAIL
+    fi
+    report_path="$EVIDENCE_DIR/cleanup-boundary.txt"
+    cleanup_report=(
+        'model_weights_uploaded=false'
+        "host_model_rm_command=$host_remove_command"
+        "host_model_final_state=$host_absence"
+        "app_private_model_rm_command=$app_private_remove_command"
+        "app_private_model_final_state=$app_private_state"
+        "device_temp_model_rm_command=$temp_remove_command"
+        "device_temp_model_final_state=$temp_state"
+        "test_package_uninstall_command=$test_uninstall_command"
+        "test_package_final_state=$test_package_state"
+        "app_package_uninstall_command=$app_uninstall_command"
+        "app_package_final_state=$app_package_state"
+        "cleanup_outcome=$cleanup_result"
+        "original_exit_status=$original_status"
+        'runner_vm_and_disposable_avd=ephemeral'
+    )
+    if ! printf '%s\n' "${cleanup_report[@]}" > "$report_path"; then
+        report_write_status=FAIL
+    fi
+    if [[ "$report_write_status" != PASS ]]; then
+        cleanup_result=FAIL
+        CLEANUP_FAILED=1
+    fi
+
+    if ((CLEANUP_FAILED != 0)); then
+        echo 'Cleanup verification failed; no success evidence will be retained:' >&2
+        printf '%s\n' \
+            'model_weights_uploaded=false' \
+            "host_model_rm_command=$host_remove_command" \
+            "host_model_final_state=$host_absence" \
+            "app_private_model_rm_command=$app_private_remove_command" \
+            "app_private_model_final_state=$app_private_state" \
+            "device_temp_model_rm_command=$temp_remove_command" \
+            "device_temp_model_final_state=$temp_state" \
+            "test_package_uninstall_command=$test_uninstall_command" \
+            "test_package_final_state=$test_package_state" \
+            "app_package_uninstall_command=$app_uninstall_command" \
+            "app_package_final_state=$app_package_state" \
+            'cleanup_outcome=FAIL' \
+            "original_exit_status=$original_status" >&2
+        # The workflow uploader is configured with `always()`. Remove its
+        # evidence source on cleanup failure so it cannot publish success evidence.
+        if ! rm -rf "$EVIDENCE_DIR" || [[ -e "$EVIDENCE_DIR" ]]; then
+            echo 'cleanup_evidence_source_removal=NOT_VERIFIED' >&2
+        else
+            echo 'cleanup_evidence_source_removal=VERIFIED' >&2
+        fi
+        if ((original_status == 0)); then
+            exit 1
+        fi
+        exit "$original_status"
+    fi
+
+    exit "$original_status"
 }
 trap 'cleanup "$?"' EXIT
+
+if [[ "${SEREA_CLEANUP_TEST_MODE:-0}" == 1 ]]; then
+    exit "${SEREA_CLEANUP_TEST_PRIMARY_STATUS:-0}"
+fi
 
 [[ -s "$TARGET_APK" ]]
 [[ -s "$TEST_APK" ]]
@@ -111,15 +301,4 @@ for key in ("failures", "errors", "skipped"):
 PY
 echo 'exact_junit=PASS tests=1 failures=0 errors=0 skipped=0' > "$EVIDENCE_DIR/junit-verification.txt"
 
-if adb shell pm list packages "$APP_ID" | grep -Fx "package:$APP_ID" >/dev/null; then
-    if adb shell run-as "$APP_ID" test '!' -e "$DEVICE_MODEL_RELATIVE"; then
-        echo 'app_private_model_cleanup=verified_by_test_and_adb' > "$EVIDENCE_DIR/model-cleanup.txt"
-    else
-        echo 'app_private_model_cleanup=failed' > "$EVIDENCE_DIR/model-cleanup.txt"
-        exit 1
-    fi
-else
-    # The exact JUnit method passed before this check and asserts deletion in its finally block.
-    echo 'app_private_model_cleanup=instrumentation_asserted_package_uninstalled_by_runner' > "$EVIDENCE_DIR/model-cleanup.txt"
-fi
 adb logcat -d -v threadtime -s SereaLocalNativeRuntime:I > "$EVIDENCE_DIR/native-runtime-metrics.log"

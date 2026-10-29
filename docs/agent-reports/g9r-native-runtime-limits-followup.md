@@ -18,7 +18,49 @@
 
 ## Deferred Product Chat Integration Proposal
 
-No production wiring is included in this patch. Once ARM64 runtime evidence and independent security review are accepted, a follow-up may add an explicit local-model choice to the existing `ModelChatPort`/Model Router boundary behind a separate `LOCAL_MODEL_CHAT_ENABLED` product feature flag, default false and disallowed in Beta/release builds until acceptance. This product flag is separate from `LOCAL_NATIVE_RUNTIME_ENABLED`, which remains only the isolated diagnostic build flag. Until both gates pass, normal Chat remains on its existing DEMO route and the product flag must stay off. Any future route must preserve the existing Egress and Usage wrappers, require the local-model consent contract, retain cancellation and model identity checks, surface local-runtime errors, and fail closed with no silent Cloud fallback. Google-origin data remains blocked from Cloud Egress; Google connection/Handoff consent never implies local-model or Cloud consent. The proposal requires product UI and lifecycle tests before it can be considered for integration.
+This docs-only addendum is based on PR #166 exact source `7c8bfb05db14e8fbab17db75f4027ae13fc3b87e` / tree `eb3559263d679facf5afaf8bcc16a8b7d6244520`. At capture, PR #171 focused run `40915105551` remains queued for both x86_64 and ARM64 software-guest jobs; ARM64 guest inference is NOT_RUN. This proposal is implementation planning only, not runtime acceptance or product enablement.
+
+No production wiring is included in this patch. Ordinary Chat remains on its current DEMO route. `LOCAL_MODEL_CHAT_ENABLED` is a proposed product flag only: it must be defined false by default, remain false in Beta/release variants, and be rejected by build configuration until the gates below are accepted. It is separate from `LOCAL_NATIVE_RUNTIME_ENABLED`, which is only an isolated diagnostic build flag. No `ModelChatPort`, Router, or composition change is authorized by this proposal.
+
+### Proposed request path and authorization order
+
+For a later implementation, use the existing model-port boundary and this exact order:
+
+`RoutedModelChatPort → EgressCheckedModelChatPort(LOCAL_MODEL) → UsageControlledModelChatPort → LocalModelChatAdapter → LocalModelInferenceBackend`
+
+The Router selects the explicitly chosen local model and binds its identity to the request. Egress validates the current conversation, content/source lineage, destination, model identity, and single-use local-model consent before Usage reserves any budget. Usage reserves the request against the selected local model and records provider `local-device` with monetary cost `UNKNOWN`; no price or successful token count may be invented. The adapter then rechecks model identity/integrity and dispatches only to the local backend. A rejected/stale consent or Egress denial must produce zero Usage reservation and zero native dispatch. Cloud is a separate disabled mode and cannot be selected as an automatic recovery path.
+
+Google connection consent, Google-to-Chat handoff consent, local-model execution consent, and Cloud-egress consent remain independent. Google-origin content can reach this local route only through the existing validated handoff contract; Google-origin Cloud egress remains denied.
+
+### Proposed runtime lifecycle and memory policy
+
+An application-scoped local-runtime coordinator should own the selected adapter/backend and serialize load, inference, model changes, and release. A Chat ViewModel or Activity must not own a process-wide native model lease: Activity recreation must preserve request identity without creating overlapping model instances. The coordinator should expose explicit states such as `UNLOADED`, `LOADING`, `READY`, `GENERATING`, `EVICTING`, and `FAILED`, and reject a new dispatch while eviction or release is pending.
+
+- Load lazily only after the explicit local-model mode is selected, Egress and one-use consent pass, Usage reservation succeeds, and the model file passes its pinned size/hash checks. Never pre-load in DEMO mode.
+- On model switch or explicit mode exit, stop new requests, cancel active generation, close the backend, and verify release before loading another model. Do not allow overlapping model weights or silently switch models.
+- On Activity/background transition, stop new model loads. At `TRIM_MEMORY_UI_HIDDEN`, let an active user-requested inference finish, then unload; if no request is active, unload immediately. More severe `Application.onTrimMemory` low/critical signals should request eviction, stop new starts, cancel active inference under a bounded policy, and release the backend on its worker. The callback must not block the main thread. If release does not complete within the bounded deadline, keep local inference unavailable and show a recoverable error; do not create a second backend or fall back to Cloud.
+- After a successful memory-pressure eviction, remain `UNLOADED`. A later user-initiated local send may reload only after the coordinator confirms release completed, current local consent is valid, the selected model is unchanged, and the model file is revalidated. A new consent may be required by product policy; a prior one-use receipt must never be replayed.
+- After OS process death, no native lease or in-flight request is restored. An in-flight Usage reservation whose completion was not durably recorded must be reconciled as `OUTCOME_UNKNOWN`. The next process starts `UNLOADED`, revalidates the model identity, and requires a fresh user request and consent. Persisted conversation history is not evidence that inference completed.
+
+`maxModelFileBytes` is a storage/file-integrity bound, not a resident-memory cap. PSS samples are observational and cannot guarantee an allocation ceiling. Before enabling this route, collect exact-device load/generation/release and memory-pressure evidence, including Pixel 7a acceptance when Owner-authorized; define any admission thresholds from that evidence rather than treating emulator PSS as a device limit. Until then, available-memory checks and Android trim signals are conservative admission/eviction inputs only, and the route remains disabled when resource suitability is unknown.
+
+### Cancellation, failure, and user-visible recovery
+
+Cancellation before native generation starts must release the Usage reservation and report a pre-dispatch cancellation. Because model hash, ABI/library, limit, and model-load checks occur after the Usage wrapper reserves but before generation dispatch, each such pre-dispatch failure must release that reservation; if durable release cannot be confirmed, record `OUTCOME_UNKNOWN` rather than silently clearing or charging it as completed. After native dispatch starts, cancellation or timeout must cancel/close the backend, settle the ledger as `OUTCOME_UNKNOWN` where completion cannot be proven, and never retry through another model or provider automatically. A later user retry is a new request with a new send ID, Egress evaluation, consent receipt, and Usage reservation.
+
+Hash mismatch, ABI/library unavailability, unsupported limits, load failure, native exception, out-of-memory or memory-pressure eviction must fail closed, release native resources, and display a clear local-model error with an explicit retry/return-to-DEMO choice. Returning to DEMO requires a user action. There is no silent Cloud fallback, even when Cloud is configured for a different user-selected mode. Release/load failures must not leave a backend marked `READY`; retry is allowed only after the previous release completed and model integrity is rechecked.
+
+### Blocking acceptance gates
+
+Keep `LOCAL_MODEL_CHAT_ENABLED=false` until all applicable gates pass on the exact reviewed source:
+
+1. Independent architecture/security review accepts the Router → Egress → Usage → local adapter path, consent and source-lineage checks, no-Cloud-fallback behavior, cancellation/unknown-outcome accounting, resource ownership, and release/error handling.
+2. Existing API 26/API 35 Required identities remain unchanged and pass; focused local Chat tests cover mode selection, stale/used consent, Egress denial before reservation, Usage attribution, cancellation before/after dispatch, load/unload, repeated close, failed release, model switch, and no fallback.
+3. Android lifecycle tests prove Activity recreation and actual OS process death do not revive a native lease, stale consent, or in-flight completion. Memory-pressure tests prove the coordinator blocks new dispatch during eviction, synchronizes release with active inference, and reloads only after release and a fresh user action.
+4. Exact-source ARM64 Native build, runtime load, and two-turn inference pass with cleanup and provenance. An `ARM64_GUEST_SOFTWARE_EMULATED` pass is recorded as software-guest evidence only; it does not establish ARM hardware/NEON performance or Pixel acceptance. Product performance/resource acceptance and any Beta enablement additionally require the Owner-authorized Pixel 7a criteria and independent review.
+5. The selected model has accepted license/redistribution terms and pinned revision/hash. Cloud stays disabled by default, and Google-origin Cloud egress remains denied.
+
+No one of these gates enables the flag automatically. Until the Owner and reviewers accept the applicable integration and release gates, the product flag remains absent or false and ordinary Chat stays DEMO.
 
 ## ARM64 execution feasibility sources
 

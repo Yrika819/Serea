@@ -22,8 +22,18 @@ if [[ "$package_state" != 'install ok installed amd64' ]]; then
 fi
 
 dependencies="$(ldd "$qemu_binary" 2>&1)" || fail 'ldd could not inspect the QEMU binary'
-if grep -Fq 'not found' <<<"$dependencies"; then
-    fail 'QEMU has unresolved shared library dependencies'
+unresolved_libraries="$(awk '
+    $2 == "=>" && $3 == "not" && $4 == "found" {
+        name = $1
+        if (name ~ /^[A-Za-z0-9_.+-]+$/) print name
+    }
+' <<<"$dependencies" | sort -u)"
+if [[ -n "$unresolved_libraries" ]]; then
+    unresolved_count="$(wc -l <<<"$unresolved_libraries" | tr -d '[:space:]')"
+    unresolved_csv="$(paste -sd, <<<"$unresolved_libraries")"
+    # Emit only validated shared-library basenames. Never forward ldd output, which can
+    # contain paths, addresses, or other host-specific diagnostic data.
+    fail "QEMU has unresolved shared library dependencies unresolved_count=$unresolved_count unresolved_libraries=$unresolved_csv"
 fi
 
 pulse_path="$(awk '$1 == "libpulse.so.0" && $2 == "=>" && $3 ~ /^\// { print $3; exit }' \

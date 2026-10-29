@@ -23,6 +23,11 @@ case "${SEREA_TEST_LDD_MODE:-ok}" in
   missing)
     printf 'libpulse.so.0 => not found\n'
     ;;
+  multiple-missing)
+    printf 'libpulse.so.0 => not found\n'
+    printf 'libprivate-host.so.7 => not found\n'
+    printf 'host/path/should-not-appear 0xabcdef private-runtime-data\n'
+    ;;
   no-pulse)
     printf 'libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000000000000000)\n'
     ;;
@@ -60,6 +65,21 @@ for mode in missing no-pulse; do
     fi
 done
 
+diagnostic_output="$TEMP_ROOT/missing-dependencies.out"
+if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_LDD_MODE=multiple-missing \
+    SEREA_TEST_PULSE_PATH="$pulse" "$CHECKER" "$qemu" \
+    >"$diagnostic_output" 2>&1; then
+    echo 'emulator_host_library_contract=FAIL accepted unresolved dependency set' >&2
+    exit 1
+fi
+grep -Fxq \
+    'emulator_host_preflight=FAIL reason=QEMU has unresolved shared library dependencies unresolved_count=2 unresolved_libraries=libprivate-host.so.7,libpulse.so.0' \
+    "$diagnostic_output"
+if grep -Eq 'host/path|abcdef|private-runtime-data|=> not found' "$diagnostic_output"; then
+    echo 'emulator_host_library_contract=FAIL leaked raw ldd diagnostic data' >&2
+    exit 1
+fi
+
 if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_PACKAGE_MODE=missing \
     SEREA_TEST_PULSE_PATH="$pulse" "$CHECKER" "$qemu" >/dev/null 2>&1; then
     echo 'emulator_host_library_contract=FAIL accepted missing Ubuntu package' >&2
@@ -73,4 +93,4 @@ if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_PULSE_PATH="$pulse" \
     exit 1
 fi
 
-echo 'emulator_host_library_contract=PASS resolved_shared_libraries=REQUIRED libpulse_package=REQUIRED symlink_alias=REJECTED'
+echo 'emulator_host_library_contract=PASS resolved_shared_libraries=REQUIRED unresolved_names_sanitized=REQUIRED libpulse_package=REQUIRED symlink_alias=REJECTED'

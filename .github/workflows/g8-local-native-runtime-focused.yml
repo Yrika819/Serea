@@ -117,7 +117,10 @@ jobs:
             tail -c 32768 "$jvm_log" >&2
             exit "$gradle_status"
           fi
-          cp app/build/test-results/testDebugUnitTest/*.xml "$build_evidence_dir/junit/"
+          cp app/build/test-results/testDebugUnitTest/TEST-app.serea.android.LocalModelChatAdapterTest.xml \
+            "$build_evidence_dir/junit/"
+          cp app/build/test-results/testDebugUnitTest/TEST-app.serea.android.LocalModelNativeRuntimeTest.xml \
+            "$build_evidence_dir/junit/"
 
       - name: Build opt-in product JNI APKs for both supported ABIs
         shell: bash
@@ -193,7 +196,8 @@ jobs:
             evidence/g8-local-native/source.txt
             evidence/g8-local-native/gradle-native-build.log
             evidence/g8-local-native/gradle-jvm-focused.log
-            evidence/g8-local-native/junit/
+            evidence/g8-local-native/junit/TEST-app.serea.android.LocalModelChatAdapterTest.xml
+            evidence/g8-local-native/junit/TEST-app.serea.android.LocalModelNativeRuntimeTest.xml
 
       - name: Verify pinned model repository license metadata without weights
         shell: bash

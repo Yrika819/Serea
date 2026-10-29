@@ -14,6 +14,29 @@ RAW_DIAGNOSTIC_NAMES = (
     "adb-devices.txt",
 )
 
+SAFE_UPLOAD_PATHS = {
+    "evidence/g8-local-native/source.txt",
+    "evidence/g8-local-native/gradle-native-build.log",
+    "evidence/g8-local-native/gradle-jvm-focused.log",
+    "evidence/g8-local-native/junit/TEST-app.serea.android.LocalModelChatAdapterTest.xml",
+    "evidence/g8-local-native/junit/TEST-app.serea.android.LocalModelNativeRuntimeTest.xml",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/preflight.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/source-and-runtime.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/model-stage.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/junit-verification.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/instrumentation-command-status.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt",
+    "${{ steps.native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt",
+    "evidence/native-arm64-guest/host-and-image.txt",
+    "evidence/native-arm64-guest/startup-summary.txt",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/source-and-runtime.txt",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit-verification.txt",
+    "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/cleanup-boundary.txt",
+}
+
 
 def validate_workflow(workflow: str) -> list[str]:
     problems: list[str] = []
@@ -23,25 +46,13 @@ def validate_workflow(workflow: str) -> list[str]:
     uploaded_paths = "\n".join(path_blocks)
     if any(name in uploaded_paths for name in RAW_DIAGNOSTIC_NAMES):
         problems.append("workflow must not retain or upload raw runtime diagnostics")
-    # An artifact path that names a whole evidence directory bypasses the explicit
-    # per-file allowlist, even if a second artifact currently lists safe files.
-    directory_uploads = (
-        r"(?m)^[ \t]*(?:-\s*)?evidence/native-arm64-guest/?[ \t]*$",
-        r"(?m)^[ \t]*(?:-\s*)?\$\{\{\s*steps\.(?:native_e2e|arm64_native_e2e)\.outputs\.evidence_dir\s*\}\}[ \t]*$",
-    )
-    if any(re.search(pattern, uploaded_paths) for pattern in directory_uploads):
-        problems.append("artifact upload must use explicit evidence-file paths, not a directory")
-    if "path: ${{ steps.native_e2e.outputs.evidence_dir }}\n" in workflow:
-        problems.append("whole native evidence directory must not be uploaded")
-    required_safe_files = (
-        "${{ steps.native_e2e.outputs.evidence_dir }}/junit-verification.txt",
-        "${{ steps.native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt",
-        "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/native-runtime-metrics-summary.txt",
-        "${{ steps.arm64_native_e2e.outputs.evidence_dir }}/junit/native-runtime-instrumentation.xml",
-        "evidence/native-arm64-guest/host-and-image.txt",
-        "evidence/native-arm64-guest/startup-summary.txt",
-    )
-    missing = [name for name in required_safe_files if name not in workflow]
+    path_entries = {line.strip() for line in uploaded_paths.splitlines() if line.strip()}
+    unexpected_paths = path_entries - SAFE_UPLOAD_PATHS
+    if unexpected_paths:
+        problems.append("artifact upload contains paths outside the exact-file allowlist")
+    if any(re.search(r"[*?\[\]]", path) for path in path_entries):
+        problems.append("artifact upload must not use glob metacharacters")
+    missing = SAFE_UPLOAD_PATHS - path_entries
     if missing:
         problems.append("safe Native evidence upload allowlist is incomplete")
     return problems
@@ -57,8 +68,8 @@ def main() -> int:
         print("; ".join(problems), file=sys.stderr)
         return 1
 
-    # Prove that the guard rejects a raw diagnostic file, both evidence-directory
-    # wildcard spellings, and omission of the sanitized JUnit test report.
+    # Prove that the guard rejects raw diagnostics, guest/evidence directory globs,
+    # and omission of the sanitized JUnit test report.
     safe_arm_file = "            evidence/native-arm64-guest/host-and-image.txt\n"
     bad_fixtures = (
         workflow.replace(
@@ -69,6 +80,16 @@ def main() -> int:
         workflow.replace(
             safe_arm_file,
             "            evidence/native-arm64-guest/\n",
+            1,
+        ),
+        workflow.replace(
+            safe_arm_file,
+            "            evidence/native-arm64-guest/*\n",
+            1,
+        ),
+        workflow.replace(
+            safe_arm_file,
+            "            ${{ steps.arm64_native_e2e.outputs.evidence_dir }}/**\n",
             1,
         ),
         workflow.replace(

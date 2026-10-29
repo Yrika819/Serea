@@ -128,13 +128,22 @@ fi
 
 metachar_root="$TEMP_ROOT/sdk/[unsafe]/emulator"
 metachar_qemu_dir="$metachar_root/qemu/linux-x86_64"
-outside_lib64="$TEMP_ROOT/outside-lib64"
+outside_lib64="$TEMP_ROOT/sdk/u/emulator/lib64"
 mkdir -p "$metachar_qemu_dir" "$outside_lib64/qt/lib"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$metachar_qemu_dir/qemu-system-x86_64"
 chmod +x "$metachar_qemu_dir/qemu-system-x86_64"
 ln -s "$outside_lib64" "$metachar_root/lib64"
+if ! case "$outside_lib64/" in
+    $metachar_root/*) true ;;
+    *) false ;;
+esac; then
+    echo 'emulator_host_library_contract=FAIL glob-escape fixture does not match the vulnerable prefix' >&2
+    exit 1
+fi
 escape_output="$TEMP_ROOT/path-escape.out"
+metachar_expected_library_path="$metachar_root/lib64:$metachar_root/lib64/qt/lib:$metachar_qemu_dir"
 if PATH="$TEMP_ROOT/bin:$PATH" SEREA_TEST_PULSE_PATH="$pulse" \
+    SEREA_TEST_EXPECTED_LIBRARY_PATH="$metachar_expected_library_path" \
     "$CHECKER" "$metachar_qemu_dir/qemu-system-x86_64" \
     >"$escape_output" 2>&1; then
     echo 'emulator_host_library_contract=FAIL accepted SDK library path escaping a metacharacter root' >&2

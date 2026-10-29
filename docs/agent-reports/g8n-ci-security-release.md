@@ -194,7 +194,7 @@ CURRENT_HEAD: report branch head recorded by GitHub
 TREE_SHA: tree of the report branch head recorded by GitHub
 WORKTREE: /workspace/Serea-C
 BRANCH: codex/serea-g8n-security-release
-DRAFT_PR: report branch's Draft PR (recorded by GitHub)
+DRAFT_PR: https://github.com/Yrika819/Serea/pull/148
 COMPLETED_WORK: Exact PR #146 CI/API evidence snapshot; CI artifact hashing and JUnit counts; PR #144 current and historical native-build failure classification; Owner decision and release readiness packet.
 CHANGED_FILES: docs/agent-reports/g8n-ci-security-release.md
 TEST_COMMANDS: none (evidence/report lane; no code tests were requested or needed)
@@ -205,6 +205,6 @@ SECURITY_IMPACT: Documentation only; preserves Google-origin egress prohibition,
 REVIEW_STATUS: Pending parent review
 KNOWN_ISSUES: PR #146 API26/35 instrumentation did not start because the harness preflight package-state query failed; Process Death/Data Isolation/Sentinel passed separately. Identity was skipped. Full CI/Native/SQLite macOS jobs still queued. Current PR #144 native build failure lacks an uploaded diagnostic artifact and root cause is unknown.
 CURRENT_BLOCKERS: macOS runner availability; current-head PR #144 Native failure log; parent-owned Android package-query harness fix; Owner decisions on package/signing/OAuth/providers/age-region eligibility.
-NEXT_ACTION: Commit/push report checkpoint; monitor finite current Actions runs; independently review A/B implementation once available.
+NEXT_ACTION: Independently review the parent-owned Android emulator harness fix and Lane A/B implementation when ready; update evidence if the fixed candidate produces new exact-head results.
 OWNER_APPROVAL_REQUIRED: Package ID/coexistence, certificate/channel, OAuth scopes, provider/audience/region, model choice and device acceptance.
 ```

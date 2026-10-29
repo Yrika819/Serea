@@ -32,9 +32,22 @@ if [[ "${1:-}" == shell && "${2:-}" == getprop ]]; then
     exit 0
 fi
 if [[ "${1:-}" == shell && "${2:-}" == pm && "${3:-}" == list && "${4:-}" == packages ]]; then
-    package="${5:-}"
-    if [[ "${FAKE_ADB_MODE:-safe}" == reused && "$package" == app.serea.android.isolated ]]; then
+    if [[ "${FAKE_ADB_MODE:-safe}" == query-error ]]; then exit 9; fi
+    retained_query=false
+    if [[ "${5:-}" == -u ]]; then
+        retained_query=true
+        package="${6:-}"
+    else
+        package="${5:-}"
+    fi
+    if [[ "${FAKE_ADB_MODE:-safe}" == reused-installed && "$package" == app.serea.android.isolated ]]; then
         printf 'package:%s\n' "$package"
+    fi
+    if [[ "${FAKE_ADB_MODE:-safe}" == reused-retained && "$retained_query" == true && "$package" == app.serea.android.isolated ]]; then
+        printf 'package:%s\n' "$package"
+    fi
+    if [[ "${FAKE_ADB_MODE:-safe}" == query-malformed && "$package" == app.serea.android.isolated ]]; then
+        printf 'warning: package query incomplete\n'
     fi
     exit 0
 fi
@@ -63,11 +76,26 @@ if run_preflight multiple >"$TEST_ROOT/multiple.out" 2>"$TEST_ROOT/multiple.err"
     exit 1
 fi
 grep -Fq 'Expected exactly one connected Android device' "$TEST_ROOT/multiple.err"
-if run_preflight reused >"$TEST_ROOT/reused.out" 2>"$TEST_ROOT/reused.err"; then
-    echo 'reused package namespace unexpectedly passed preflight' >&2
+if run_preflight reused-installed >"$TEST_ROOT/reused-installed.out" 2>"$TEST_ROOT/reused-installed.err"; then
+    echo 'installed package namespace unexpectedly passed preflight' >&2
     exit 1
 fi
-grep -Fq 'Refusing pre-existing isolated package' "$TEST_ROOT/reused.err"
+grep -Fq 'Refusing pre-existing isolated package' "$TEST_ROOT/reused-installed.err"
+if run_preflight reused-retained >"$TEST_ROOT/reused-retained.out" 2>"$TEST_ROOT/reused-retained.err"; then
+    echo 'retained uninstalled package namespace unexpectedly passed preflight' >&2
+    exit 1
+fi
+grep -Fq 'Refusing pre-existing isolated package' "$TEST_ROOT/reused-retained.err"
+if run_preflight query-error >"$TEST_ROOT/query-error.out" 2>"$TEST_ROOT/query-error.err"; then
+    echo 'package query error unexpectedly passed preflight' >&2
+    exit 1
+fi
+grep -Fq 'Could not verify isolated package absence' "$TEST_ROOT/query-error.err"
+if run_preflight query-malformed >"$TEST_ROOT/query-malformed.out" 2>"$TEST_ROOT/query-malformed.err"; then
+    echo 'malformed package query unexpectedly passed preflight' >&2
+    exit 1
+fi
+grep -Fq 'Unexpected package query response' "$TEST_ROOT/query-malformed.err"
 
 sentinel="$TEST_ROOT/do-not-delete/sentinel"
 mkdir -p "$(dirname "$sentinel")"
@@ -82,4 +110,4 @@ grep -Fq 'G8_EVIDENCE_DIR is not accepted' "$TEST_ROOT/evidence-override.err"
 [[ "$(cat "$sentinel")" == owner-data ]]
 [[ "$(find "$TEST_ROOT" -maxdepth 2 -type f -name 'sentinel' | wc -l)" == 1 ]]
 
-echo 'native_preflight=PASS physical=rejected multiple=rejected reused_packages=rejected unsafe_evidence_override=rejected_no_mutation=true'
+echo 'native_preflight=PASS physical=rejected multiple=rejected installed_and_retained_packages=rejected package_query_error_and_malformed_output=closed unsafe_evidence_override=rejected_no_mutation=true'

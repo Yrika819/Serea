@@ -31,14 +31,22 @@ adb_device() {
 
 package_state() {
     local package="$1"
+    local include_uninstalled="${2:-0}"
     local packages
-    if ! packages="$(adb_device shell pm list packages "$package" 2>/dev/null)"; then
+    local -a query=(shell pm list packages)
+    if [[ "$include_uninstalled" == 1 ]]; then query+=(-u); fi
+    query+=("$package")
+    if ! packages="$(adb_device "${query[@]}" 2>/dev/null)"; then
         return 2
     fi
-    if printf '%s\n' "$packages" | tr -d '\r' | grep -Fxq "package:$package"; then
+    packages="$(printf '%s' "$packages" | tr -d '\r')"
+    if [[ "$packages" == "package:$package" ]]; then
         return 0
     fi
-    return 1
+    if [[ -z "$packages" ]]; then
+        return 1
+    fi
+    return 2
 }
 
 uninstall_and_verify() {
@@ -51,7 +59,7 @@ uninstall_and_verify() {
     local -n final_state="$state_variable"
 
     if [[ "$owned" != 1 ]]; then
-        if package_state "$package"; then
+        if package_state "$package" 1; then
             command_result=NOT_TOUCHED_UNEXPECTED_PRESENT
             final_state=NOT_VERIFIED
             CLEANUP_FAILED=1
@@ -69,7 +77,9 @@ uninstall_and_verify() {
         return
     fi
 
-    if package_state "$package"; then
+    # Use the installed-only view to decide whether `adb uninstall` is appropriate.
+    # The `-u` view is reserved for final verification of installed and retained records.
+    if package_state "$package" 0; then
         before_state=INSTALLED
     else
         command_status=$?
@@ -93,8 +103,8 @@ uninstall_and_verify() {
         CLEANUP_FAILED=1
     fi
 
-    if package_state "$package"; then
-        after_state=INSTALLED
+    if package_state "$package" 1; then
+        after_state=INSTALLED_OR_RETAINED
     else
         command_status=$?
         case "$command_status" in

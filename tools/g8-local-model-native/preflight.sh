@@ -21,12 +21,17 @@ fingerprint="$(getprop ro.build.fingerprint | tr '[:upper:]' '[:lower:]')"
    "$fingerprint" == */sdk_phone64_x86_64/emu64x:* ]]
 
 for package in "$APP_ID" "$TEST_ID"; do
-    if ! packages="$(adb -s "$DEVICE_SERIAL" shell pm list packages "$package")"; then
+    if ! packages="$(adb -s "$DEVICE_SERIAL" shell pm list packages -u "$package")"; then
         echo "Could not verify isolated package absence for $package; refusing installation." >&2
         exit 3
     fi
-    if printf '%s\n' "$packages" | tr -d '\r' | grep -Fxq "package:$package"; then
+    packages="$(printf '%s' "$packages" | tr -d '\r')"
+    if [[ "$packages" == "package:$package" ]]; then
         echo "Refusing pre-existing isolated package $package; no package data was changed." >&2
+        exit 3
+    fi
+    if [[ -n "$packages" ]]; then
+        echo "Unexpected package query response for $package; refusing installation." >&2
         exit 3
     fi
 done

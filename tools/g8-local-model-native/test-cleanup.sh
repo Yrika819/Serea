@@ -14,8 +14,22 @@ set -euo pipefail
 
 if [[ "${1:-}" == -s ]]; then shift 2; fi
 if [[ "${1:-}" == shell && "${2:-}" == pm && "${3:-}" == list && "${4:-}" == packages ]]; then
-    package="${5:-}"
+    include_uninstalled=false
+    if [[ "${5:-}" == -u ]]; then
+        include_uninstalled=true
+        package="${6:-}"
+    else
+        package="${5:-}"
+    fi
+    [[ "${FAIL_CLEANUP_QUERY:-0}" != 1 || "$include_uninstalled" != true ]] || exit 27
+    if [[ "${MALFORMED_CLEANUP_QUERY:-0}" == 1 && "$include_uninstalled" == true ]]; then
+        printf 'warning: package query incomplete\n'
+        exit 0
+    fi
     grep -Fx "package:$package" "$ADB_STATE/packages" || true
+    if [[ "$include_uninstalled" == true ]]; then
+        grep -Fx "package:$package" "$ADB_STATE/retained-packages" || true
+    fi
     exit 0
 fi
 if [[ "${1:-}" == shell && "${2:-}" == run-as && "${4:-}" == rm ]]; then
@@ -40,6 +54,9 @@ if [[ "${1:-}" == uninstall ]]; then
     package="${2:-}"
     if [[ "$package" == app.serea.android.isolated.test && "${FAIL_TEST_UNINSTALL:-0}" == 1 ]]; then exit 23; fi
     if [[ "$package" == app.serea.android.isolated && "${FAIL_APP_UNINSTALL:-0}" == 1 ]]; then exit 24; fi
+    if [[ "${RETAIN_AFTER_UNINSTALL:-0}" == 1 ]]; then
+        printf 'package:%s\n' "$package" >> "$ADB_STATE/retained-packages"
+    fi
     awk -v line="package:$package" '$0 != line' "$ADB_STATE/packages" > "$ADB_STATE/packages.next"
     mv "$ADB_STATE/packages.next" "$ADB_STATE/packages"
     exit 0
@@ -79,6 +96,7 @@ prepare_case() {
     : > "$GITHUB_OUTPUT"
     printf '%s\n' 'package:app.serea.android.isolated' \
         'package:app.serea.android.isolated.test' > "$ADB_STATE/packages"
+    : > "$ADB_STATE/retained-packages"
     : > "$ADB_STATE/app-private-model"
     : > "$ADB_STATE/device-temp-model"
     : > "$RUNNER_TEMP/serea-g8-smollm2.gguf"
@@ -128,6 +146,7 @@ grep -Fxq 'cleanup_verified=true' "$GITHUB_OUTPUT"
 [[ ! -e "$RUNNER_TEMP/serea-g8-smollm2.gguf" ]]
 [[ ! -e "$ADB_STATE/app-private-model" && ! -e "$ADB_STATE/device-temp-model" ]]
 [[ ! -s "$ADB_STATE/packages" ]]
+[[ ! -s "$ADB_STATE/retained-packages" ]]
 
 assert_cleanup_failure() {
     local case_name="$1"
@@ -161,6 +180,12 @@ assert_cleanup_failure app_package_uninstall FAIL_APP_UNINSTALL=1
 assert_cleanup_failure host_model_rm FAIL_HOST_MODEL_RM=1
 assert_cleanup_failure preserve_primary_status FAIL_TEST_UNINSTALL=1 42
 
+# `-u` must detect uninstalled records that retain app data, and failed `-u`
+# cleanup probes must never publish success evidence.
+assert_cleanup_failure retained_package_data RETAIN_AFTER_UNINSTALL=1
+assert_cleanup_failure retained_package_query_error FAIL_CLEANUP_QUERY=1
+assert_cleanup_failure malformed_retained_package_query MALFORMED_CLEANUP_QUERY=1
+
 # A failed removal of the evidence source must still fail closed at the
 # workflow boundary; a surviving directory is never enough to authorize upload.
 prepare_case evidence_source_rm_failure
@@ -182,4 +207,4 @@ status="$(run_case report_write_failure)"
 grep -Fq 'cleanup_report_write=FAIL' "$CASE_ROOT/stderr.log"
 [[ ! -e "$EVIDENCE_DIR" ]]
 
-echo 'cleanup_harness=PASS normal=verified output_gate=fail_closed report_write=fail_closed failures=nonzero primary_status=preserved'
+echo 'cleanup_harness=PASS normal=verified retained_and_malformed_package_states=fail_closed output_gate=fail_closed report_write=fail_closed failures=nonzero primary_status=preserved'

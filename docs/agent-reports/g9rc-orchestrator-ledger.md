@@ -83,3 +83,18 @@ PR #159 G10 packet is useful but PARTIAL and stale relative to later #162/#165/#
 - PR #162 run `40889965195` remains in progress. API26 failed; API35 step remains active. No JUnit identity/count detail or API35 artifact is available yet.
 - PR #166 focused run `40899129986` remains queued; x86_64 Native job `123536283262` and ARM64 software guest `123536283414` have not started.
 - O-01 through O-10 are unchanged; Personal Beta remains NO-GO.
+
+## API26 artifact inspection — 2026-10-29 15:28 UTC
+
+The GitHub artifact connector successfully retrieved API26 artifact `12907539920`; downloaded ZIP SHA-256 matches the Actions digest `d08313d38c2f211a9cfc092153c7d912cec4faa8832c287956fbd15eb013b2c8`.
+
+On PR #162 exact source `6b7a741…` / tree `e61db67…`:
+
+- Required manifest: **105/105 PASS**, 0 failures, 0 errors, 0 skips.
+- Calendar class: 19/19 PASS; Chat screen: 16/16 PASS; cursor diagnostic: 1/1 PASS.
+- Actual process-death lifecycle: PASS; artifact records 10 PASS events including seed, process-death, verify, and cleanup phases. Data Isolation: PASS.
+- Separate Google/Gmail UI: 16 tests, 2 failures, 0 errors, 0 skips. Failed identities:
+  - `app.serea.android.GoogleCalendarDemoLoopbackUiTest#consentUiOpensLoopbackAgendaAndAccountSwitchDisconnectsIt` — `performScrollTo()` could not find test tag `google_auth_demo_account_account_a` after returning from Calendar view. Classification (product vs test navigation state) not yet confirmed.
+  - `app.serea.android.GoogleCalendarHandoffRevocationUiTest#confirmedCalendarHandoffCannotSendAfterSyntheticAccountSwitch` — timed out at line 66 waiting for `Design review` after entering the local-zone query date derived from fixture instant `2026-10-20T00:00:00Z`. The contextual catch did not catch `ComposeTimeoutException`, so the artifact omits the zone/query-date diagnostic; root cause not yet confirmed.
+
+The API26 aggregate campaign is FAIL because the separate Google/Gmail UI stage failed; this does not change Required's 105/105 pass. Agent B is analyzing both exact failures and preparing a focused successor based on #162 without modifying #162. API35 remains a separate active job.

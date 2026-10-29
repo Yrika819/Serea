@@ -93,11 +93,21 @@ jobs:
             echo 'PIXEL7A_PHYSICAL=NOT_RUN'
           } > "$G8_EVIDENCE_DIR/source.txt"
           cd android
+          jvm_log="$G8_EVIDENCE_DIR/gradle-jvm-focused-full.log"
+          set +e
           ./gradlew --no-daemon --console=plain \
             :app:testDebugUnitTest \
             --tests 'app.serea.android.LocalModelChatAdapterTest' \
             --tests 'app.serea.android.LocalModelNativeRuntimeTest' \
-            > "$G8_EVIDENCE_DIR/gradle-jvm-focused.log" 2>&1
+            > "$jvm_log" 2>&1
+          gradle_status=$?
+          set -e
+          tail -c 262144 "$jvm_log" > "$G8_EVIDENCE_DIR/gradle-jvm-focused.log"
+          if [ "$gradle_status" -ne 0 ]; then
+            echo "Gradle focused JVM tests failed with exit $gradle_status; last 32 KiB follows." >&2
+            tail -c 32768 "$jvm_log" >&2
+            exit "$gradle_status"
+          fi
           cp app/build/test-results/testDebugUnitTest/*.xml "$G8_EVIDENCE_DIR/junit/"
 
       - name: Build opt-in product JNI APKs for both supported ABIs
@@ -105,11 +115,23 @@ jobs:
         run: |
           set -euo pipefail
           cd android
+          gradle_log="$G8_EVIDENCE_DIR/gradle-native-build-full.log"
+          set +e
           ./gradlew --no-daemon --console=plain \
             -PsereaLocalNativeRuntime=true \
             -PsereaLlamaCppSource="$GITHUB_WORKSPACE/llama.cpp" \
             :app:assembleIsolated :app:assembleIsolatedAndroidTest \
-            > "$G8_EVIDENCE_DIR/gradle-native-build.log" 2>&1
+            > "$gradle_log" 2>&1
+          gradle_status=$?
+          set -e
+          # Keep uploaded and rendered diagnostics bounded even if Gradle emits an unusually
+          # large compiler report. The full file stays on the ephemeral runner only.
+          tail -c 262144 "$gradle_log" > "$G8_EVIDENCE_DIR/gradle-native-build.log"
+          if [ "$gradle_status" -ne 0 ]; then
+            echo "Gradle native APK build failed with exit $gradle_status; last 32 KiB follows." >&2
+            tail -c 32768 "$gradle_log" >&2
+            exit "$gradle_status"
+          fi
           target='app/build/outputs/apk/isolated/app-isolated.apk'
           test_apk='app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk'
           test -s "$target"
@@ -120,6 +142,19 @@ jobs:
           sha256sum "$target" "$test_apk" > "$G8_EVIDENCE_DIR/apk-sha256.txt"
           sed -i 's/^ANDROID_BUILD=NOT_RUN$/ANDROID_BUILD=PASS/' "$G8_EVIDENCE_DIR/source.txt"
           sed -i 's/^ARM64_BUILD=NOT_RUN$/ARM64_BUILD=PASS (APK ABI compile and packaging only)/' "$G8_EVIDENCE_DIR/source.txt"
+
+      - name: Upload bounded JNI build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-g8-native-build-${{ github.event.pull_request.head.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            evidence/g8-local-native/source.txt
+            evidence/g8-local-native/gradle-native-build.log
+            evidence/g8-local-native/gradle-jvm-focused.log
+            evidence/g8-local-native/junit/
 
       - name: Verify pinned model repository license metadata without weights
         shell: bash

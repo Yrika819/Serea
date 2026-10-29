@@ -59,7 +59,9 @@ class LocalModelNativeRuntimeE2ETest {
             runtimeRevision = LLAMA_REVISION,
             supportedAbis = setOf("x86_64"),
         )
-        val backend = LlamaCppLocalModelInferenceBackendFactory(nativeRuntimeEnabled = true).create()
+        // Keep the concrete diagnostic handle so the test can await the backend's asynchronous
+        // native release after the product adapter performs its interface-level close().
+        val backend = LlamaCppLocalModelInferenceBackend()
         val adapter = LocalModelChatAdapter(
             artifact = artifact,
             modelFile = modelFile,

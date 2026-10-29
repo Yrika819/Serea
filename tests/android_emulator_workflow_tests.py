@@ -1046,6 +1046,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             bindir = root / "bin"
             bindir.mkdir()
             fake_adb = bindir / "adb"
+            fake_sha256sum = bindir / "sha256sum"
             target_apk = root / "isolated.apk"
             target_apk.write_bytes(b"disposable isolated test target apk")
             target_apk_sha256 = hashlib.sha256(target_apk.read_bytes()).hexdigest()
@@ -1065,9 +1066,22 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "  printf 'I/SereaFakeGoogleDeath: PASS:%s:%s:pid=2101\\n' \"$token\" \"$phase\"\n"
                 "  exit 0\n"
                 "fi\n"
+                "if [[ \"$command\" == install ]]; then\n"
+                "  [[ \"$1\" == \"$ADB_TARGET_APK\" ]] || exit 96\n"
+                "  [[ \"${INSTALL_FAIL:-}\" != 1 ]] || { printf 'install denied\\n' >&2; exit 97; }\n"
+                "  printf '1\\n' > \"$ADB_TARGET_INSTALLED\"\n"
+                "  printf 'Success\\n'\n"
+                "  exit 0\n"
+                "fi\n"
                 "[[ \"$command\" == shell ]] || exit 90\n"
                 "operation=\"$1\"; shift\n"
                 "case \"$operation\" in\n"
+                "  sha256sum)\n"
+                "    [[ \"${INSTALLED_SHA_FAIL:-}\" != 1 ]] || exit 74\n"
+                "    digest=\"$ADB_TARGET_APK_SHA\"\n"
+                "    [[ \"${INSTALLED_SHA_MISMATCH:-}\" != 1 ]] || digest=\"$(printf '%064d' 0)\"\n"
+                "    printf '%s  %s\\n' \"$digest\" \"$1\"\n"
+                "    ;;\n"
                 "  getprop)\n"
                 "    case \"$1\" in\n"
                 "      ro.build.version.sdk) printf '35\\n' ;;\n"
@@ -1079,7 +1093,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "    case \"$1\" in\n"
                 "      path)\n"
                 "        if [[ \"${2:-}\" == app.serea.android.isolated ]]; then\n"
-                "          printf 'package:/data/app/app.serea.android.isolated/base.apk\\n'\n"
+                "          if [[ \"$(cat \"$ADB_TARGET_INSTALLED\")\" == 1 ]]; then printf 'package:/data/app/app.serea.android.isolated/base.apk\\n'; else exit 1; fi\n"
                 "        else\n"
                 "          exit 1\n"
                 "        fi\n"
@@ -1088,7 +1102,6 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "      *) exit 92 ;;\n"
                 "    esac\n"
                 "    ;;\n"
-                "  sha256sum) printf '%s  %s\\n' \"$ADB_TARGET_APK_SHA\" \"$1\" ;;\n"
                 "  sh)\n"
                 "    [[ \"$1\" == -c ]] || exit 93\n"
                 "    target=\"${@: -1}\"\n"
@@ -1133,12 +1146,29 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             fake_adb.chmod(0o755)
+            fake_sha256sum.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [[ \"${LOCAL_SHA_FAIL:-}\" == 1 ]]; then exit 73; fi\n"
+                "exec /usr/bin/sha256sum \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_sha256sum.chmod(0o755)
 
             helper = ROOT / "tools/run_android_fake_google_process_death.sh"
             target_package = "app.serea.android.isolated"
             test_package = "app.serea.android.isolated.test"
 
-            def run_case(case_name: str, *, fail_package: str = "", fail_after_force_stop: bool = False):
+            def run_case(
+                case_name: str,
+                *,
+                fail_package: str = "",
+                fail_after_force_stop: bool = False,
+                installed_sha_fail: bool = False,
+                installed_sha_mismatch: bool = False,
+                local_sha_fail: bool = False,
+                install_fail: bool = False,
+            ):
                 case_dir = root / case_name
                 case_dir.mkdir()
                 environment = os.environ.copy()
@@ -1154,6 +1184,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "SEREA_FAKE_GOOGLE_DEATH_EVIDENCE_DIR": str(case_dir / "evidence"),
                     "SEREA_ISOLATED_TARGET_APK": str(target_apk),
                     "ADB_TARGET_APK_SHA": target_apk_sha256,
+                    "ADB_TARGET_APK": str(target_apk),
+                    "ADB_TARGET_INSTALLED": str(case_dir / "target-installed"),
                     "ADB_PID_QUERIES": str(case_dir / "pid-queries"),
                     "ADB_CALLS": str(case_dir / "adb-calls"),
                     "ADB_FORCE_STOP_COUNT": str(case_dir / "force-stop-count"),
@@ -1163,7 +1195,12 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "ADB_CURRENT_TOKEN": str(case_dir / "token"),
                     "PID_FAIL_PACKAGE": fail_package,
                     "PID_FAIL_AFTER_FORCE_STOP": "1" if fail_after_force_stop else "",
+                    "INSTALLED_SHA_FAIL": "1" if installed_sha_fail else "",
+                    "INSTALLED_SHA_MISMATCH": "1" if installed_sha_mismatch else "",
+                    "LOCAL_SHA_FAIL": "1" if local_sha_fail else "",
+                    "INSTALL_FAIL": "1" if install_fail else "",
                 })
+                (case_dir / "target-installed").write_text("0\n", encoding="utf-8")
                 (case_dir / "pid-queries").write_text("", encoding="utf-8")
                 (case_dir / "force-stop-count").write_text("0\n", encoding="utf-8")
                 initial_stopped = "0\n" if fail_after_force_stop else "1\n"
@@ -1208,10 +1245,43 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 successful_absence.stderr + "\nADB calls:\n" + (success_case / "adb-calls").read_text(encoding="utf-8"),
             )
             self.assertEqual("PASS\n", (success_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            success_calls = (success_case / "adb-calls").read_text(encoding="utf-8")
+            self.assertIn(f"install {target_apk}\n", success_calls)
+            self.assertEqual("1\n", (success_case / "target-installed").read_text(encoding="utf-8"))
+            provenance = (success_case / "evidence/target-apk-provenance.txt").read_text(encoding="utf-8")
+            self.assertIn(f"target_apk_sha256={target_apk_sha256}\n", provenance)
+            self.assertIn(f"installed_apk_sha256={target_apk_sha256}\n", provenance)
             self.assertEqual("2\n", (success_case / "force-stop-count").read_text(encoding="utf-8"))
             self.assertEqual("seed\nverify\n", (success_case / "phases").read_text(encoding="utf-8"))
             self.assertEqual("absent\n", (success_case / "evidence/post-force-stop-pid.txt").read_text(encoding="utf-8"))
             self.assertIn("PASS: Fake Google consent/session OS process-death boundary", successful_absence.stdout)
+
+            mismatch, mismatch_case = run_case("installed-apk-hash-mismatch", installed_sha_mismatch=True)
+            self.assertNotEqual(0, mismatch.returncode)
+            self.assertEqual("FAIL\n", (mismatch_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("PASS:", mismatch.stdout + mismatch.stderr)
+            self.assertFalse((mismatch_case / "evidence/target-apk-provenance.txt").exists())
+
+            installed_hash_failure, installed_hash_case = run_case(
+                "installed-apk-hash-command-failure", installed_sha_fail=True,
+            )
+            self.assertNotEqual(0, installed_hash_failure.returncode)
+            self.assertEqual("FAIL\n", (installed_hash_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("PASS:", installed_hash_failure.stdout + installed_hash_failure.stderr)
+
+            local_hash_failure, local_hash_case = run_case("local-apk-hash-command-failure", local_sha_fail=True)
+            self.assertNotEqual(0, local_hash_failure.returncode)
+            self.assertEqual("FAIL\n", (local_hash_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("PASS:", local_hash_failure.stdout + local_hash_failure.stderr)
+
+            install_failure, install_failure_case = run_case("target-apk-install-failure", install_fail=True)
+            self.assertNotEqual(0, install_failure.returncode)
+            self.assertEqual("FAIL\n", (install_failure_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            install_failure_calls = (install_failure_case / "adb-calls").read_text(encoding="utf-8")
+            self.assertIn(f"install {target_apk}\n", install_failure_calls)
+            self.assertEqual("0\n", (install_failure_case / "target-installed").read_text(encoding="utf-8"))
+            self.assertNotIn("PASS:", install_failure.stdout + install_failure.stderr)
+            self.assertFalse((install_failure_case / "evidence/target-apk-provenance.txt").exists())
 
     def test_personal_beta_campaign_seeds_and_claims_marker_before_single_use_consume(self) -> None:
         script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")

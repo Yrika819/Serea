@@ -1068,6 +1068,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "fi\n"
                 "if [[ \"$command\" == install ]]; then\n"
                 "  [[ \"$1\" == \"$ADB_TARGET_APK\" ]] || exit 96\n"
+                "  [[ \"${INSTALL_FAIL:-}\" != 1 ]] || { printf 'install denied\\n' >&2; exit 97; }\n"
                 "  printf '1\\n' > \"$ADB_TARGET_INSTALLED\"\n"
                 "  printf 'Success\\n'\n"
                 "  exit 0\n"
@@ -1166,6 +1167,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 installed_sha_fail: bool = False,
                 installed_sha_mismatch: bool = False,
                 local_sha_fail: bool = False,
+                install_fail: bool = False,
             ):
                 case_dir = root / case_name
                 case_dir.mkdir()
@@ -1196,6 +1198,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "INSTALLED_SHA_FAIL": "1" if installed_sha_fail else "",
                     "INSTALLED_SHA_MISMATCH": "1" if installed_sha_mismatch else "",
                     "LOCAL_SHA_FAIL": "1" if local_sha_fail else "",
+                    "INSTALL_FAIL": "1" if install_fail else "",
                 })
                 (case_dir / "target-installed").write_text("0\n", encoding="utf-8")
                 (case_dir / "pid-queries").write_text("", encoding="utf-8")
@@ -1270,6 +1273,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertNotEqual(0, local_hash_failure.returncode)
             self.assertEqual("FAIL\n", (local_hash_case / "evidence/status.txt").read_text(encoding="utf-8"))
             self.assertNotIn("PASS:", local_hash_failure.stdout + local_hash_failure.stderr)
+
+            install_failure, install_failure_case = run_case("target-apk-install-failure", install_fail=True)
+            self.assertNotEqual(0, install_failure.returncode)
+            self.assertEqual("FAIL\n", (install_failure_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            install_failure_calls = (install_failure_case / "adb-calls").read_text(encoding="utf-8")
+            self.assertIn(f"install {target_apk}\n", install_failure_calls)
+            self.assertEqual("0\n", (install_failure_case / "target-installed").read_text(encoding="utf-8"))
+            self.assertNotIn("PASS:", install_failure.stdout + install_failure.stderr)
+            self.assertFalse((install_failure_case / "evidence/target-apk-provenance.txt").exists())
 
     def test_personal_beta_campaign_seeds_and_claims_marker_before_single_use_consume(self) -> None:
         script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")

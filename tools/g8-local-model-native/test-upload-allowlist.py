@@ -40,9 +40,32 @@ SAFE_UPLOAD_PATHS = {
 
 def validate_workflow(workflow: str) -> list[str]:
     problems: list[str] = []
-    path_blocks = re.findall(
-        r"(?m)^[ \t]*path:[ \t]*\|[ \t]*\n((?:[ \t]+[^\n]*\n)+)", workflow
+    steps = re.findall(
+        r"(?ms)^([ \t]*-\s+(?:name|uses):[^\n]*\n.*?)(?=^[ \t]*-\s+(?:uses|name):|\Z)",
+        workflow,
     )
+    artifact_steps = [
+        step
+        for step in steps
+        if re.search(r"(?m)^[ \t]*-\s+uses:[ \t]*actions/upload-artifact@", step)
+        or re.search(r"(?m)^[ \t]*uses:[ \t]*actions/upload-artifact@", step)
+    ]
+    if not artifact_steps:
+        problems.append("no upload-artifact steps were found for allowlist validation")
+    path_declarations = [
+        value
+        for step in artifact_steps
+        for value in re.findall(r"(?m)^[ \t]*path:[ \t]*(.*)$", step)
+    ]
+    if not path_declarations or any(value.strip() != "|" for value in path_declarations):
+        problems.append("artifact path declarations must use the exact-file block allowlist")
+    path_blocks = [
+        block
+        for step in artifact_steps
+        for block in re.findall(
+            r"(?m)^[ \t]*path:[ \t]*\|[ \t]*\n((?:[ \t]+[^\n]*\n)+)", step
+        )
+    ]
     uploaded_paths = "\n".join(path_blocks)
     if any(name in uploaded_paths for name in RAW_DIAGNOSTIC_NAMES):
         problems.append("workflow must not retain or upload raw runtime diagnostics")
@@ -102,6 +125,11 @@ def main() -> int:
             "",
             1,
         ),
+        workflow
+        + "\n      - uses: actions/upload-artifact@v4\n"
+        + "        with:\n"
+        + "          name: injected\n"
+        + "          path: evidence/native-arm64-guest/*\n",
     )
     if any(not validate_workflow(fixture) for fixture in bad_fixtures):
         print("artifact guard accepted a raw path, directory wildcard, or missing JUnit report", file=sys.stderr)

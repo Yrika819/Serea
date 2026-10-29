@@ -189,3 +189,22 @@ The identity-safe candidate now exists on `codex/serea-g8-integration-candidate-
 On exact snapshot `fb47d50…`, parent reran 14 focused JVM test classes plus Android test-source compilation: **171 JVM tests PASS**, zero failures/errors/skips; `:app:compileIsolatedAndroidTestKotlin` PASS; Gradle BUILD SUCCESSFUL in 1m41s (55 tasks executed). The 14 JUnit XML files and hashes are saved under `docs/agent-reports/evidence/g8-parent-focused-fb47d50/`. No Android emulator UI or physical device test is represented by this run. The app source tree is unchanged from the previously locally linted `d0f32fc…` candidate; the replacement adds the same tested app/test/tooling files on the exact G7 base.
 
 This branch is the active parent candidate. It will be pushed normally and opened as a Draft PR after the exact commit-identity guard passes locally; PR #141 remains open and must not be merged. Runs `40794667213` through `40795297504` remain evidence only for the separate old SHA `d0f32fc…`; no result will be carried onto `fb47d50…`.
+
+
+## Active replacement Draft PR and CI handoff — 2026-10-29
+
+The identity-safe replacement branch is now pushed and opened as **Draft PR #146**: `https://github.com/Yrika819/Serea/pull/146`, base `codex/serea-g7-calendar-readiness`. At this checkpoint its exact head is `a1f22f2550afdfc55acea1a7af9bc520bd28ea09`, tree `3b68ab749827f860faa2167d4b55d2f66c3127a8`. Its two introduced commits (`fb47d50…` source snapshot and `a1f22f2…` evidence/checkpoint update) both use approved GitHub noreply author/committer identities; the local exact-range guard passed for two commits. The second commit only records checksummed JUnit evidence and this ledger status; no product/test/tooling file changed after the `fb47d50…` run.
+
+PR #141 was not closed, rebased, or force-pushed. Its title/body now mark it **SUPERSEDED / DO NOT MERGE** and point to #146. PR #141 remains OPEN/DRAFT at failed-identity head `d0f32fc…` for audit. G7 PR #139, G5 #134, G6 #138, and lane PRs #142–#145 remain open; none was closed or merged.
+
+### Exact checks for the active replacement
+
+For the preceding exact PR #146 head `a1f22f2…`, GitHub created Android `40796324758`, Native `40796324946`, Full `40796325050`, Git Hooks `40796324553`, RustSec `40796324505`, Fast `40796324508`, and SQLite `40796324477`. At last check all were QUEUED; no run had yet produced a job result. These are distinct from #141’s d0 runs and will be superseded by the latest exact-head workflows once this ledger update is pushed.
+
+The feature-branch-only Android Personal Beta workflow again appeared as push run `40796293362` on `a1f22f2…`, conclusion FAILURE with zero jobs/logs/artifacts. It was not manually dispatched. Its branch file remains `workflow_dispatch`-only with `if: github.ref == 'refs/heads/main'`; no Beta build/sign/distribution occurred. This is not release evidence.
+
+Release Security Focused `40795288341` and mock Personal Beta Contract Tests `40795297504` remain QUEUED on old exact SHA `d0f32fc…`; do not reuse those runs as evidence for #146. Dispatch or rerun them only on the final active PR head after the ledger commit, which contains no source-code change. G7 SQLite exact job `123182687879` remains QUEUED with runner ID 0.
+
+The #146 worktree and branch are the active continuation point. Its exact source snapshot `fb47d50…` has 171 JVM PASS plus isolated Android test-source compilation PASS, with JUnit XML under `g8-parent-focused-fb47d50/`. Local `assembleDebug`/`lintDebug`, 70 Gmail + 88 egress/consent/usage JVM tests, and mock release-security/SBOM work are recorded against the earlier identical app/test source tree `d0f32fc…`. Android UI execution, formal API26/35, process-death on the authorization session, Native runtime and ARM64 remain NOT_RUN until exact-source evidence arrives.
+
+No Owner-only action was performed. G8 and G9 remain PARTIAL; Personal Beta is NO-GO.

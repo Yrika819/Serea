@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.tasks.TaskDomainTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:39:52.223Z" hostname="runnervm48cm3" time="0.005">
+  <properties/>
+  <testcase name="rejectsInvalidTitleLengthIdTimezoneTimeAndDstTransitions" classname="app.serea.android.tasks.TaskDomainTest" time="0.004"/>
+  <testcase name="acceptsUnicodeAndNewlinesAndPreservesAllDaySemantics" classname="app.serea.android.tasks.TaskDomainTest" time="0.0"/>
+  <testcase name="overdueUsesInjectedInstantAndCompletedAtMustMatch" classname="app.serea.android.tasks.TaskDomainTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

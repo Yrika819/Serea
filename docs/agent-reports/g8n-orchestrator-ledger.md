@@ -1,6 +1,6 @@
 # G8 Closure → Native AI → G9 → G10 Campaign Ledger
 
-**Checkpoint:** 2026-10-29 UTC 02:42
+**Checkpoint:** initial snapshot 2026-10-29 UTC 02:42; latest addendum 03:00 UTC
 **Roadmap:** `Serea_Roadmap_v4.md`
 **Repository:** `Yrika819/Serea`
 **Campaign status:** G8 Evidence Closure **PARTIAL**; Native Runtime **PARTIAL**; Bonsai 2 Evaluation **PARTIAL**; G9 Functional Candidate **PARTIAL**; G10 Preflight **PARTIAL**; Personal Beta **NO-GO**.
@@ -28,7 +28,7 @@ Protected `main` matches the supplied authority. Existing campaign branch names 
 | Parent | Ledger, integration authority, final review/CI | `/workspace/serea-integration` — `codex/serea-g8n-integration-candidate` | `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66` | Shared composition, integration, release configuration, and this ledger |
 | A — Native AI / Bonsai 2 | PR #144 failure analysis, isolated runtime, model and compatibility evidence | `/workspace/serea-agent-a` — `codex/serea-g8n-native-runtime` | `07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59` | Native/adapter-only; no default-model switch or shared composition edits |
 | B — Android Product / Google / Gmail | Fake-only UI, Gmail safety, lifecycle and data minimization | `/workspace/Serea-gmail` — `codex/serea-g8n-google-gmail-ui` | `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66` | Gmail/Google feature and test files; no shared composition edits |
-| C — CI / Security / Release | Formal CI evidence recovery, policy/release packet, independent reviews | Worktree/branch report pending | `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` | Read-only evidence/reports; no product code |
+| C — CI / Security / Release | Formal CI evidence recovery, policy/release packet, independent reviews | `/workspace/Serea-C` — `codex/serea-g8n-security-release`, PR #148 Draft | `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` | Read-only evidence/reports; no product code |
 
 These are three actual child agents. No result is accepted solely from its author's report; source, tests, provenance, licensing and integration safety remain subject to independent review.
 
@@ -114,6 +114,60 @@ Run `40803623345` is the G8 Native Runtime Focused non-required workflow, separa
 ## Source-bound evidence rules
 
 For every new result retain source SHA + Tree SHA, exact command/config, run + attempt + job, JUnit test IDs and totals, failures/errors/skips, runner allocation, artifact IDs/digests, APK hash, native dependency identity, model revision/hash, reviewer decision and source/report branch. Required manifests and thresholds cannot be relaxed. Compile success does not equal execution; queue does not equal pass; a failed build without its Gradle log does not identify its root cause. Evidence from another SHA remains historical.
+
+## Campaign update — 2026-10-29 UTC 03:00
+
+This update supersedes the earlier Phase 0 job-state snapshot above. PR #144 and #146 remain unchanged. All run IDs below are attempt 1 and tied to the listed exact source.
+
+### PR #146 formal evidence closure
+
+Source remains `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66`, tree `25e2bb481a0b25bfed89d6ee25f1812316703b8e`.
+
+| Workflow | Current result | Evidence |
+|---|---|---|
+| Android `40804694025` | **FAILURE** | Build/Lint/Instrumentation Compile, Android Unit, Integration, Security, Docs and Dependency Audit passed. Android Unit artifact `12869510041` (`sha256:c727e3421dab84a7b82a26920b2a0502f1938d560777482852e78afabbd35487`) has 34 XMLs, 405/405 PASS, 0 failure/error/skip. Integration artifact `12869310588` (`sha256:62d700d4c25ac1ef0c9ddc3645586028a2347465c42370e16a3153ab108a0355`) has `OllamaCloudAdapterTest` 22/22 PASS. Security artifact `12868263908` (`sha256:6c757e8b54d382fc0e9734cd4fe6be6e892cd8d840a96fac0dd9f949fe9ef12`) has Security 10/10 and Gmail security 16/16 PASS. These suites overlap; do not add as unique cases. Android Storage job `123230615644` ran on runner `1000023241`; Required Gate job `123232881578` ran on `1000023247`. |
+| Android API 26/35 Required | **FAIL / instrumentation NOT_RUN** | Artifacts API26 `12869216935` (`sha256:d08309fde30db9fb67957bb1631ed5aba7c68f0f8d929f332da240a862c37afd`) and API35 `12868798855` (`sha256:06ed97683b5d292c2f87c0d47f1eebacddc175f7e4944530f751abe8d10134c3`) fail before install/instrumentation at `cursor-position-focused`. Each reports 0/105 JUnit tests started and no UI test result. `android_package_path()` treated `pm path`'s empty output/exit 1 for an absent isolated package as a query error. Exact response was suppressed by the workflow. AOSP Android 8.0 and Android 15 source confirms this is a normal absent-package response; the test harness, not product UI, caused the early stop. |
+| Identity | **SKIPPED** | Identity job `123232824352` was gated on successful emulator completion. This is not a pass. |
+| Process Death / Data Isolation / Sentinel | **PASS** | Both API artifacts show data isolation and sentinel PASS. Actual OS Process Death used host force-stop, recorded PID/relaunch and exit code 0, then verified fresh state. This does not imply UI instrumentation ran. |
+| Pixel 7a Reacceptance Bundle | **CI bundle only** | Job `123232823166`; artifact `12869770024`, SHA-256 `fa8426a3e202ad445d4b3a5b00c021e7c2c3888fe74b8d28e05dbbc4d2049fad`; API instrumentation NOT_RUN, zero JUnit. Not physical-device acceptance. |
+| Full CI `40804693907` | **PARTIAL / still running** | Windows P7 Gate C, stable Linux and Linux MSRV passed on assigned runners. macOS ARM64 is in progress on runner `1000023279`; macOS Intel x86_64 remains queued with `runner_id=0`. |
+| Native Rust matrix `40804693934` | **PARTIAL / still running** | Stable Linux x86_64/ARM64, stable Windows x86_64/ARM64, stable macOS ARM64, Linux MSRV x86_64 and Windows MSRV x86_64/ARM64 passed. Stable macOS x86_64 is in progress; MSRV macOS x86_64 and ARM64 remain queued with no runner. This Rust matrix is not Android JNI inference evidence. |
+| SQLite `40804693978` | **PARTIAL / cross-open NOT_RUN** | macOS ARM64 and Intel DB producers passed; ARM64 artifact `12869265751` (`sha256:a24f408ba84461818e3f4bb915977ad699900c54ac5dc18416009e3d305be039`) and Intel artifact `12869541631` (`sha256:f11760407eca7777e4685c0b72dc19fc14783c4251e2d11d92458a840ae14f7c`), each 36,954 bytes. Both cross-architecture open jobs remain queued with `runner_id=0`. |
+| RustSec `40804693889`, Fast `40804693992`, Git Hooks `40804693919` | **SUCCESS** | All supplied checks passed at exact source SHA. RustSec artifact `12867589033`, SHA-256 `0f360ef81a5ab03efc14fecf99197c758df0be54cd48cd058935caa11078bee7`. |
+| Release Security `40804722382` / Mock Beta `40804722157` | **SUCCESS** | CI-only APK/lockfile SBOM and mock signing contract passed; no production key, distribution or Beta package acceptance. Release artifact `12868174398`, SHA-256 `17ad843799fdde28e42a9ea099d1c9d571e8f6d093b958a1ee17a464037c40a7`. |
+
+Retained JUnit XMLs and their SHA-256 inventory are in `docs/agent-reports/evidence/g8n-pr146-d444e7c/`. The full individual XML test IDs and archive digests remain source-bound in that folder. No full APK or model weights were copied there.
+
+### Accepted Android package-absence harness correction
+
+The new parent candidate is branch `codex/serea-g8n-integration-candidate`, PR #149, stacked on PR #146. Its current source is `dd8c5b661c1f4be6c4a171c68246cbd1fb343d50`, tree `c049cfd8b2849e738932e4c4844219c815034740`. It changes only `tools/android_package_path.sh` and its Python workflow regression. A missing package now counts as absent only when `pm path` is empty/supported absent output and a second successful `pm list packages -u <package>` query returns exactly empty output; list errors, a listed package, malformed output, transport failures and unrelated PM errors fail closed.
+
+Focused command `PYTHONPATH=. python3 tests/android_emulator_workflow_tests.py` passed **34/34 tests**, 0 failures/errors/skips; `bash -n tools/android_package_path.sh` and `git diff --check` passed. Agent C independently reviewed exact SHA/tree and returned **ACCEPTED**. Formal CI has been triggered for this SHA: Android `40809303535` (pending, no jobs at last poll), Full `40809303532`, Native `40809303531`, Fast `40809303507`, Git Hooks `40809303450`, RustSec `40809303401`, SQLite `40809303281`; most required jobs were queued with no runner at last poll. No same-source formal CI pass is yet available. A separate branch-gated Personal Beta workflow run `40809296854` had zero jobs/logs and no artifact; it provides no Beta evidence.
+
+### Lane A — Native AI and model candidate update
+
+Draft PR #147 carries the isolated runtime candidate on top of the exact G7 base `0560e1e7bcd13f0194eab8caca89d70ea5a2f142`. Current head is `49e14da2b5dc06579ff88d0adbc10d41f5040dd9`, tree `bcc5ce1f837d2904f608c60db26569469340e695`. Native focused run `40808797590` passed workflow setup, clean-tree CMake checks, the source identity/JVM contract step, both opt-in JNI APK ABI builds, bounded diagnostics upload, official model license metadata verification, fixture digest verification and KVM availability. Its real Android x86_64 inference step is currently IN_PROGRESS on API 35; JUnit counts and inference result are not yet collected. No Native Runtime success is accepted until its final JUnit/artifact is source-bound and inspected. The older PR #144 latest build failure remains unclassified because its Gradle log was not retained. Historical run `40800987367` at source `082d223...` failed AndroidTest Kotlin compilation at `awaitReleased`; that does not establish the later PR #144 failure cause.
+
+The model-selection addendum keeps the default model **undecided** and does not suspend SmolLM2 Native work. Candidate metadata research now includes LFM3-1.7B, Bonsai 2 4B, Qwen3.5 2B, Gemma 4 E2B and future FunctionGemma 270M, alongside SmolLM2. Report vendor benchmarks separately from Serea measurements. ModelChatPort and Model Router remain the exchange boundary for llama.cpp, future LiteRT-LM or another backend. No model weights are committed or downloaded in this parent lane; Pixel 7a measurement and independent review remain required before a standard model decision.
+
+### Lane B — Gmail product safety
+
+Lane B PR #150 is OPEN/DRAFT, stacked on PR #146. Current HEAD `31efa59eed6a7da7f058b7d17be31c7944190ab5`, tree `0168cd5d100383a564f5a2609fe369a423ff9c94`; the latest commit changes only report links from the already-reviewed product/test source at `4e4b8f9d0aad80f330d1c93364b3cbfda5369bcd`, tree `b19a6c52a8e8d4ff1c8365d435c047d0aceb300b`. Focused JVM command `:app:testDebugUnitTest --tests app.serea.android.handoff.GoogleTrustedHandoffTest` on Temurin 17 produced **22/22 PASS**, 0 failure/error/skip at the exact product/test tree. `:app:compileIsolatedAndroidTestKotlin` on source `4e4b8f9...` succeeded (26 tasks UP-TO-DATE); this is compilation, not connected UI execution. Agent A independently accepted the source/test scope after requesting and receiving negative metadata sentinels and inert HTML-only fallback assertions. Gmail UI/API26/35 JUnit and full G9 E2E remain NOT_RUN. PR #150 checks on its latest head `31efa59...` are queued/pending: Android `40809490077`, Full `40809490143`, Native `40809490124`, SQLite `40809490101`, Fast `40809490137`, Git Hooks `40809490130`, RustSec `40809490200`. A newer push to C's docs branch `893d2b3...` has also created queued reports-only workflows; these do not change product acceptance.
+
+### Lane C — CI / Security / Release
+
+PR #148 remains OPEN/DRAFT; latest checkpoint head `893d2b303f8557d1f6bc6b6a4aeeb5c0f6e7b276`, tree `257343ebd177c996cf619e173701000daa23f351`, based on exact G7 SHA `0560e1e7bcd13f0194eab8caca89d70ea5a2f142`. Its report refresh records the same #146 source-bound Android failure, current Full/Native/SQLite runner assignments, and C's **ACCEPTED** independent review of the parent PR #149 package-absence helper. It is documentation only; PR #148's CI result does not close product gates. C is reviewing exact PR #147 Native and PR #150 Gmail sources independently.
+
+### Current gates and next actions
+
+- **G8 Evidence Closure: PARTIAL.** The same-HEAD Android emulator gate failed in its precheck; formal successor CI and remaining queued cross-platform jobs are still required.
+- **Native Runtime: PARTIAL.** SmolLM2 product JNI build/inference is still running through the focused workflow; no inference/lifecycle/performance result is accepted yet.
+- **Bonsai/model comparison: PARTIAL.** Public metadata research only; all model runtime, performance, Japanese/tool-use and Pixel 7a measurements are NOT_RUN; standard model is undecided.
+- **G9 Functional Candidate: PARTIAL.** Fake Gmail handoff body-minimization is source-reviewed and locally tested; API 26/35 UI and lifecycle/process-death Google E2E remain unproven.
+- **G10 Preflight: PARTIAL.** CI-only debug package/SBOM evidence exists; native complete SBOM, signed update/migration, rollback, OAuth/Gmail scope activation runbooks and Pixel acceptance remain open.
+- **Personal Beta: NO-GO.** Owner package/certificate, Google OAuth/scopes, model/provider, production signing and real Pixel decisions remain open.
+
+Next: monitor existing CI runs by job and runner assignment without replay loops; collect exact PR #147 evidence and independent review; capture PR #150 Android source-compile/run status; commit this checkpoint and PR #146 JUnit evidence to #149; update with same-source CI results and final Owner decision matrix.
 
 ## Resume point
 

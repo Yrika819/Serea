@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" tests="20" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:39:49.020Z" hostname="runnervm48cm3" time="2.368">
+  <properties/>
+  <testcase name="malformedOrOversizedJsonIsRejected" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.012"/>
+  <testcase name="apiFailuresAreMappedWithoutLeakingResponseBody" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.016"/>
+  <testcase name="agendaServiceRejectsRepeatedPageTokensAndEnforcesAggregateLimits" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.088"/>
+  <testcase name="getCalendarAndEventUseReadOnlyResources" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.008"/>
+  <testcase name="missingTokenAndInvalidAuthorizationAreRejectedBeforeNetwork" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.003"/>
+  <testcase name="getEventUsesCalendarListTimezoneOnlyWhenThatScopeIsAlreadyGranted" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.046"/>
+  <testcase name="missingScopeDoesNotRequestToken" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.002"/>
+  <testcase name="coroutineCancellationCancelsHttpCall" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="2.003"/>
+  <testcase name="accountSwitchDuringTokenLeaseAcquisitionRejectsBeforeHttpDispatch" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.002"/>
+  <testcase name="quota403IsRateLimitedAndNoAutomaticRetryOccurs" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.002"/>
+  <testcase name="injectedClientCannotForwardBearerTokenThroughRedirect" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.002"/>
+  <testcase name="getEventUsesPayloadTimezoneForAllDayFallback" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.003"/>
+  <testcase name="calendarListResponseWithoutTimezoneIsNotSilentlyTreatedAsUtc" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.004"/>
+  <testcase name="listCalendarsPaginatesEncodesTokensAndParsesMultipleTimezones" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.045"/>
+  <testcase name="getEventWithUnknownAllDayTimezoneFailsWithoutRequestingAnUnapprovedScope" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.004"/>
+  <testcase name="boundedChunkReaderAcceptsExactLimitAndRejectsOneByteOver" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.013"/>
+  <testcase name="boundedChunkReaderMapsMidstreamIoFailure" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.001"/>
+  <testcase name="eventUrlsUseEncodedPathAndHalfOpenSingleExpandedRange" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.006"/>
+  <testcase name="timeoutMapsToTimeout" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.103"/>
+  <testcase name="listEventsUsesSafePageSizeAndResponseTimezone" classname="app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Oct 29, 2026 2:39:51 AM okhttp3.mockwebserver.MockWebServer$SocketHandler handle
+WARNING: MockWebServer[36901] connection from /127.0.0.1 didn't make a request
+]]></system-err>
+</testsuite>

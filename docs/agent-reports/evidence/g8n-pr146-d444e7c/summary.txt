@@ -1,0 +1,30 @@
+PR #146 evidence snapshot — exact source
+
+Source SHA: d444e7cc04c8f1c4c6d12b1412cfe3a76258af66
+Source tree: 25e2bb481a0b25bfed89d6ee25f1812316703b8e
+Android workflow: run 40804694025, attempt 1
+
+Completed JVM job artifacts:
+- Android Unit job 123227924170; artifact 12869510041; archive digest sha256:c727e3421dab84a7b82a26920b2a0502f1938d560777482852e78afabbd35487; 34 JUnit files; 405 tests, 0 failures, 0 errors, 0 skipped.
+- Android Integration job 123227924157; artifact 12869310588; archive digest sha256:62d700d4c25ac1ef0c9ddc3645586028a2347465c42370e16a3153ab108a0355; `OllamaCloudAdapterTest` 22/22, 0 failures/errors/skips.
+- Android Security job 123227924099; artifact 12868263908; archive digest sha256:6c757e8b54d382fc0e9734cd4fe6be6e892cd8d840a96fac0dd9f949fe9ef12; `SecurityPortsTest` 10/10 and `GmailSecurityPortsTest` 16/16, 0 failures/errors/skips.
+
+Do not add those three totals together as unique identities: Integration and Security tests also appear in the Android Unit artifact.
+
+Android Storage and Emulator job 123230615644 completed FAILURE at 02:47:31 UTC. Android Emulator Required Gate job 123232881578 also failed; temporary-key Identity job 123232824352 was SKIPPED because it depends on a successful emulator job. Pixel 7a Reacceptance Bundle job 123232823166 passed as a CI artifact build only.
+
+API 26 artifact 12869216935 (archive digest sha256:d08309fde30db9fb67957bb1631ed5aba7c68f0f8d929f332da240a862c37afd) and API 35 artifact 12868798855 (archive digest sha256:06ed97683b5d292c2f87c0d47f1eebacddc175f7e4944530f751abe8d10134c3) record the same harness result:
+- Both API results FAIL at bounded `cursor-position-focused` diagnostic precheck.
+- Instrumentation NOT_RUN on both APIs; 0/105 tests started, no JUnit files, no product UI test result.
+- The precheck aborted inside `android_package_path()` before Gradle because it treated a non-zero Package Manager query for a not-installed isolated package as an ADB query failure. Error output was suppressed, so the exact response is not retained. The emulators remained usable for subsequent independent checks.
+- Demo data isolation and Data Isolation Sentinel PASS on both APIs.
+- Actual isolated target OS Process Death/relaunch PASS on both APIs; host force-stop checks exited 0 and fresh-process verification was logged.
+- Fake Google UI status NOT_RUN because instrumentation did not run.
+
+This is a test-harness defect, not a product test failure. The parent successor branch is fixing the package-absence classification and adding a regression for exact Package Manager not-found responses while keeping transport/other errors fail-closed. A new exact-source workflow run is required to close the gate.
+
+Combined Pixel 7a CI evidence artifact `12869770024` has archive digest sha256:fa8426a3e202ad445d4b3a5b00c021e7c2c3888fe74b8d28e05dbbc4d2049fad. Its bundle records source/build SHA `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66`, API 26/35 instrumentation NOT_RUN, 0 JUnit cases, Process Death/Data Isolation PASS. The CI APK SHA-256 is `784b8d86f0af195c682cbcda92a672403f06e438d7d4a841c02db6bfc19431c6`, signed with a CI debug certificate whose SHA-256 is `d1c37ae27479389c38bf7a713f4883c30e6a62e596925a5c6e17c59c32371f20`. This is not Owner production signing or a real Pixel 7a acceptance result.
+
+Mock Release Security run 40804722382, attempt 1, is source-bound to `d444e7cc04c8f1c4c6d12b1412cfe3a76258af66`. Artifact 12868174398 has archive digest sha256:17ad843799fdde28e42a9ea099d1c9d571e8f6d093b958a1ee17a464037c40a7. Its CI-only debug APK has package `app.serea.android.demo`, versionCode 1, versionName `0.1.0-demo`, APK SHA-256 `76c28aea15ffe7f0955d1c08e59597f344ee0f53f95a41e4c79928e84f195bb3`, and artifact-bound lockfile SBOM SHA-256 `45b32b00ffb8368cdd81ba4b01fb7e3d7f115e40897663bc606b736bbb18c39b`. It is not a Beta artifact; dependency edges, native/model inventory and reproducible APK-to-source provenance are not established by this evidence.
+
+See adjacent `junit/SHA256SUMS` for the digests of the retained XML files. Full APKs and model weights are not copied into this evidence directory.

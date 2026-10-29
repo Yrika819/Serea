@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.AdaptiveModelRouterTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:39:46.974Z" hostname="runnervm48cm3" time="0.086">
+  <properties/>
+  <testcase name="emptyCatalogDoesNotInventOrChooseDefaultModel" classname="app.serea.android.AdaptiveModelRouterTest" time="0.038"/>
+  <testcase name="manualUnavailableDoesNotFallback" classname="app.serea.android.AdaptiveModelRouterTest" time="0.019"/>
+  <testcase name="capabilityContextAvailabilityAuthorizationAndBudgetAreHardConstraints" classname="app.serea.android.AdaptiveModelRouterTest" time="0.002"/>
+  <testcase name="autoSimpleAndComplexChooseOnlyVerifiedRequiredCapabilities" classname="app.serea.android.AdaptiveModelRouterTest" time="0.012"/>
+  <testcase name="taskClassificationSeparatesComplexityFromCapabilities" classname="app.serea.android.AdaptiveModelRouterTest" time="0.0"/>
+  <testcase name="unverifiedAndStaleCatalogEntriesAreDenied" classname="app.serea.android.AdaptiveModelRouterTest" time="0.002"/>
+  <testcase name="providerOutsideExplicitSelectionAllowlistIsExcluded" classname="app.serea.android.AdaptiveModelRouterTest" time="0.002"/>
+  <testcase name="costPriorityDoesNotCompareCurrenciesAndQualityHasNoInventedRanking" classname="app.serea.android.AdaptiveModelRouterTest" time="0.001"/>
+  <testcase name="urlShapedIdsAndModelsWithoutSourceVerificationCannotBeSelected" classname="app.serea.android.AdaptiveModelRouterTest" time="0.002"/>
+  <testcase name="selectionIsDeterministicAndCostPolicyRequiresVerifiedPrices" classname="app.serea.android.AdaptiveModelRouterTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

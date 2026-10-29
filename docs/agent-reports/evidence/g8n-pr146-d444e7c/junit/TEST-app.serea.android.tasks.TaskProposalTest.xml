@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.tasks.TaskProposalTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:39:52.229Z" hostname="runnervm48cm3" time="0.004">
+  <properties/>
+  <testcase name="creatingAndValidatingProposalNeverWrites" classname="app.serea.android.tasks.TaskProposalTest" time="0.001"/>
+  <testcase name="invalidProposalAndDuplicateConfirmationAreRejected" classname="app.serea.android.tasks.TaskProposalTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

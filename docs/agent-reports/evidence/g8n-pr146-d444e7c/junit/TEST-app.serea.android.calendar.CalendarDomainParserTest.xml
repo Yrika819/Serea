@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.calendar.CalendarDomainParserTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-29T02:39:48.825Z" hostname="runnervm48cm3" time="0.024">
+  <properties/>
+  <testcase name="pageParserKeepsNextTokenAndIgnoresUnknownFields" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.001"/>
+  <testcase name="recurrenceIdentitySurvivesReschedulingAndCancellationIsRetainedByParser" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.002"/>
+  <testcase name="allDayEventWithoutKnownCalendarTimezoneIsExplicitlyIncomplete" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.0"/>
+  <testcase name="timezoneValidationHandlesNewYorkLondonUtcAndDateLine" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.009"/>
+  <testcase name="cancelledEventMayOmitTimesAndUnknownStatusIsSafe" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.0"/>
+  <testcase name="oversizedPayloadIsRejected" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.009"/>
+  <testcase name="allDayEndIsExclusiveAndMultiDayKeepsDateCount" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.0"/>
+  <testcase name="eventIdIsScopedToCalendarAndTitlesMayBeMissing" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.001"/>
+  <testcase name="malformedInputAndOffsetZoneConflictAreRejected" classname="app.serea.android.calendar.CalendarDomainParserTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

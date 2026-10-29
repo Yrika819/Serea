@@ -21,6 +21,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollTo
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.espresso.Espresso
@@ -644,6 +646,18 @@ class ChatScreenTest {
         dailyRequests.performScrollTo()
         dailyRequests.performTextClearance()
         val error = compose.onNodeWithText("日次requests はLong範囲内の整数で入力してください。")
+        // API 35 keeps the numeric IME over the bottom of the scroll viewport. Dismiss it
+        // explicitly so this assertion checks the validation message in the visible content
+        // area, rather than treating keyboard occlusion as missing Compose content.
+        Espresso.closeSoftKeyboard()
+        compose.waitUntil(5_000) {
+            var imeHidden = false
+            compose.activityRule.scenario.onActivity { activity ->
+                imeHidden = ViewCompat.getRootWindowInsets(activity.window.decorView)
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) != true
+            }
+            imeHidden
+        }
         error.performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("ソフト上限を保存").performScrollTo().assertIsNotEnabled()
     }

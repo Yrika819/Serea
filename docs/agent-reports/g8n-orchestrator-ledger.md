@@ -1,6 +1,6 @@
 # G8 Closure → Native AI → G9 → G10 Campaign Ledger
 
-**Checkpoint:** 2026-10-29 UTC 02:40
+**Checkpoint:** 2026-10-29 UTC 02:41
 **Roadmap:** `Serea_Roadmap_v4.md`
 **Repository:** `Yrika819/Serea`
 **Campaign status:** G8 Evidence Closure **PARTIAL**; Native Runtime **PARTIAL**; Bonsai 2 Evaluation **PARTIAL**; G9 Functional Candidate **PARTIAL**; G10 Preflight **PARTIAL**; Personal Beta **NO-GO**.
@@ -50,11 +50,15 @@ All supplied PR #146 runs are attempt 1 and resolve to exact HEAD `d444e7cc04c8f
 
 Pending jobs above had no assigned runner where stated; they are infrastructure queue delays, not product failures. No workflow was rerun at this checkpoint. There is no same-HEAD Android API 26/35 Required result, Identity result, Process Death/Data Isolation/Sentinel result or instrumented Gmail/Calendar UI result yet.
 
+**Android update at 02:41 UTC:** `Android Build, Lint, and Instrumentation Compile`, `Android Unit`, Integration and Security all completed SUCCESS. Integration artifact `12869310588` contains `OllamaCloudAdapterTest` 22/22 (0 failures, errors, skips). Security artifact `12868263908` contains `SecurityPortsTest` 10/10 and `GmailSecurityPortsTest` 16/16 (0 failures, errors, skips). `Android Storage and Emulator` is now running on assigned runner `GitHub Actions 1000023241`; API 26/35 Required, Identity, Process Death, Data Isolation and Sentinel evidence are pending. The Full/Native/SQLite workflow runs remain uncompleted; queued jobs without `runner_name` have not been classified as source failures.
+
 ## PR #144 native failure analysis
 
 Latest exact-head PR checks include Native focused run `40803623345`, attempt 1, on `07ea5c6b460cea2eb1ccccc49ccd4f74dc65bb59`. The job failed at `Build opt-in product JNI APKs for both supported ABIs` while invoking `:app:assembleIsolated :app:assembleIsolatedAndroidTest`; the build step returned exit 1. It expected pinned llama.cpp `276378515ceebee5d14bcc8536603dd5c87491a2`, model revision `1076b85d135017971845b19b8d07df1479155988`, SHA-256 `e3131339bf4e8065265593d4fd8f7bb7ff2d3abff1edb5618aa1197b89cad9f5`, size 101,016,128 bytes.
 
 The workflow redirected Gradle output to `evidence/g8-local-native/gradle-native-build.log`, but no artifact was uploaded for the failed run. Therefore the observable category is a **native APK assembly/build failure**; JNI compiler, CMake, NDK/ABI, llama.cpp API, link, packaging and test-harness subcause is **UNCONFIRMED**. The output recovery path is a harness/evidence gap. Do not call this a proven JNI or CMake defect. Lane A is adding recoverable failure diagnostics and will use a new source SHA for any subsequent CI evidence.
+
+Historical failure `40800987367` is separate: source `082d223d9975492b5dab3c70349f0d6e9fc504de` completed CMake Release configuration/build and assembled the isolated target APK for arm64-v8a and x86_64, then failed compiling `LocalModelNativeRuntimeE2ETest.kt:126` because the test referenced `awaitReleased` through an interface where that method was unavailable (it exists only on the concrete backend). Lane A found this in the historical log. This is a **Test Harness compile failure at the older source**, not evidence of the cause at current PR #144 HEAD.
 
 Run `40803623345` is the G8 Native Runtime Focused non-required workflow, separate from Rust `40804693934`. No x86_64 inference evidence can be inferred from either run's name or build failure.
 
@@ -62,7 +66,7 @@ Run `40803623345` is the G8 Native Runtime Focused non-required workflow, separa
 
 | Milestone | Status | Evidence / remaining gates |
 |---|---|---|
-| G8 Evidence Closure | PARTIAL | PR #146 exact source verified; 5 auxiliary runs already successful, Android/Full/Native/SQLite still in progress at checkpoint; required Android emulator identities and UI E2E not yet evidenced. |
+| G8 Evidence Closure | PARTIAL | PR #146 exact source verified; 5 auxiliary runs passed. Android build, unit, integration and security jobs passed; `Android Storage and Emulator` has started, but API 26/35 Required and lifecycle evidence is pending. Full/Native/SQLite still have pending runner work. |
 | Native Runtime | PARTIAL | PR #144 adapter/build candidate exists but latest native APK build failed; log artifact is absent; new JNI inference, two-turn generation, lifecycle, cancellation, memory release and x86_64/ARM64 execution remain unproven. |
 | Bonsai 2 Evaluation | PARTIAL | Prior source reports cover SmolLM2 metadata/license baseline only. Bonsai 2 2B/4B/9B formats, quantization, compatible backend, Android runtime, performance and Japanese/tool quality still require verified public-source and measured evidence. |
 | G9 Functional Candidate | PARTIAL | Existing PR #146 Fake Calendar and consent foundation is under CI. Lane B has identified and is repairing the Gmail handoff metadata-minimization path; Android UI tests and lifecycle/process-death evidence remain incomplete. |

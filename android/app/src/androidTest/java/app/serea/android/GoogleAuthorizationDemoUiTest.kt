@@ -105,7 +105,9 @@ class GoogleAuthorizationDemoUiTest {
         compose.onNodeWithTag("google_auth_demo_consent_grant").performClick()
 
         compose.onNodeWithTag("google_auth_demo_switch_account").performScrollTo().performClick()
-        compose.onNodeWithText("架空アカウント B", substring = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("google_auth_demo_account_account_b").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("google_auth_demo_message").performScrollTo()
+            .assertTextContains("架空アカウント Bを選択しました", substring = true)
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
             .assertTextContains("失効（デモ）", substring = true)
 
@@ -148,7 +150,7 @@ class GoogleAuthorizationDemoUiTest {
         compose.onNodeWithTag("google_auth_demo_expire").performScrollTo().performClick()
         compose.onNodeWithTag("google_auth_demo_status").performScrollTo()
             .assertTextContains("期限切れ（デモ）", substring = true)
-        compose.onNodeWithText("再接続して認可内容を確認").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("google_auth_demo_request_calendar").performScrollTo().assertIsDisplayed()
         assertNull(viewModel.calendarDemoSession.value)
         assertTrue(runCatching { runBlocking { expiredSession.listCalendars() } }.isFailure)
 

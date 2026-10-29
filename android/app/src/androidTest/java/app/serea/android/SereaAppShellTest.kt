@@ -204,6 +204,28 @@ class SereaAppShellTest {
         assertTrue("Chat Composer Activity did not acquire Android window focus: $snapshot", focused)
     }
 
+    private fun awaitComposerActivityReadyForIme(stage: String) {
+        var snapshot = "MainActivity unavailable"
+        var ready = false
+        val activityReady = runCatching {
+            compose.waitUntil(10_000) {
+                compose.activityRule.scenario.onActivity { activity ->
+                    val decor = activity.window.decorView
+                    ready = activity.lifecycle.currentState == androidx.lifecycle.Lifecycle.State.RESUMED &&
+                        decor.isAttachedToWindow && decor.isShown && decor.hasWindowFocus()
+                    snapshot = "stage=$stage activity=${activity.javaClass.simpleName}@${System.identityHashCode(activity)} " +
+                        "lifecycle=${activity.lifecycle.currentState} attached=${decor.isAttachedToWindow} " +
+                        "visible=${decor.isShown} windowFocus=${decor.hasWindowFocus()}"
+                }
+                ready
+            }
+        }.isSuccess
+        Log.i(COMPOSER_IME_DIAGNOSTICS_TAG,
+            "ACTIVITY_IME_READY uptimeNanos=${SystemClock.elapsedRealtimeNanos()} $snapshot")
+        assertTrue("Recreated Chat Activity was not resumed, attached, visible, and window-focused before IME input: $snapshot",
+            activityReady)
+    }
+
     /** Bring a resumed but unfocused target task to the foreground before sending a real touch. */
     private fun ensureChatWindowFocus(stage: String) {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
@@ -1619,6 +1641,7 @@ class SereaAppShellTest {
                 compose.activity.chatViewModel.state.value.input == "draft!? survives navigation" &&
                     runCatching { compose.onNodeWithTag("chat-composer").assertIsDisplayed() }.isSuccess
             }
+            awaitComposerActivityReadyForIme("R4-activity-recreation")
             val recreatedComposer = compose.onNodeWithTag("chat-composer")
             recreatedComposer.assertIsNotFocused()
             assertEquals("Activity recreation must preserve the composer selection.", TextRange(8, 8),

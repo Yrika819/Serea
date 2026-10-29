@@ -13,6 +13,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -117,18 +118,25 @@ class LocalModelNativeRuntimeE2ETest {
 
         val failedLoadBackend = LlamaCppLocalModelInferenceBackend()
         jniSeam.failNextLoadAfterModel()
-        val injectedFailure = runCatching {
-            failedLoadBackend.load(
-                modelFile.canonicalPath,
-                LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 32, workerThreads = 2),
+        Log.i("SereaLocalNativeRuntime", "stage=failed_model_load_started timeout_ms=60000")
+        val injectedFailure = try {
+            runCatching {
+                withTimeout(60_000) {
+                    failedLoadBackend.load(
+                        modelFile.canonicalPath,
+                        LocalModelRuntimeLimits(contextTokens = 512, maxOutputTokens = 32, workerThreads = 2),
+                    )
+                }
+            }.exceptionOrNull()
+        } finally {
+            failedLoadBackend.close()
+            assertTrue(
+                "failed or timed-out load must release its lease and native model",
+                failedLoadBackend.awaitReleased(30, TimeUnit.SECONDS),
             )
-        }.exceptionOrNull()
+        }
+        Log.i("SereaLocalNativeRuntime", "stage=failed_model_load_completed cause=${injectedFailure?.javaClass?.simpleName}")
         assertTrue("C++ failure must become a Java IllegalStateException", injectedFailure is IllegalStateException)
-        failedLoadBackend.close()
-        assertTrue(
-            "failed load must release its lease and native model before retry",
-            failedLoadBackend.awaitReleased(30, TimeUnit.SECONDS),
-        )
         Log.i("SereaLocalNativeRuntime", "stage=failed_load_cleanup_pass")
 
         val firstRequest = request("Write one short greeting.", "native-e2e-turn-1")

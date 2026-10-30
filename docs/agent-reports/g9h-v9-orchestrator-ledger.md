@@ -89,3 +89,11 @@ PR #193 Android run `41033438179` now has Change Scope, Build/Lint/Instrumentati
 PR #195 remains unchanged at `dc4f966f...`; Fast and all Git Hook jobs SUCCESS; Full has Linux MSRV and Windows synthetic success with remaining jobs queued; Native is partial (Linux ARM64 MSRV success; Windows jobs in progress/queued); SQLite has a successful ARM64 producer with other jobs queued; RustSec SUCCESS; Android `41035643095` remains queued at Change Scope with no JUnit. The added test-only composition sits separately in #196 and has its own exact-head CI, all queued at creation.
 
 V9 Ledger Draft PR will be based on V8 Ledger PR #194 exact head `18530e5d6bed0ce18987c76668ad9b02975348c0`. No V9 source result is attributed to a different SHA. Protected main remains the recorded exact SHA.
+
+## Saved V9 Draft checkpoint
+
+V9 Ledger PR #197 is open/Draft, based on exact V8 Ledger PR #194 head `18530e5d6bed0ce18987c76668ad9b02975348c0`. Its initial source is `b1cc91f9f0ad7d9d2512fa5a98b56c7dd7c2bb72` and tree is recorded in GitHub metadata. Files are this ledger and `docs/agent-reports/g10-v9-pixel7a-readiness-plan.md`. CI/document validation must bind to the exact PR #197 head and must not be treated as G9 product-gate evidence.
+
+Parent also directly compared JUnit testcase identities to the exact PR #189 source manifests. On API26 and API35, the 105 JUnit `(classname,method)` identities have 0 missing and 0 unexpected identities against the disjoint 103 Required + 2 Additional manifests; failures/errors/skips are all zero. The Google/Gmail UI suite is separate (16 unique cases) and remains outside Required 105. This supplements the source-run JUnit verifier output; it does not close the outstanding aggregate Android jobs.
+
+The current `gh api` job list for #189 run `41027562072` contains ten jobs: the eight completed/success-or-documentation-skipped Android jobs, plus Identity Isolation and Reacceptance Bundle queued. It does not yet list a terminal `Android Emulator Required Gate` job. Do not infer a missing/implicit pass: when queued dependencies finish, recheck whether the aggregate gate job is created and require a success conclusion. Current run conclusion remains blank/queued.

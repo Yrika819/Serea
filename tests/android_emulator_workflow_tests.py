@@ -1015,6 +1015,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("SEREA_ISOLATED_INSTRUMENTATION_FINISHED", harness)
         self.assertIn('test_package="app.serea.android.isolated.test"', harness)
         self.assertIn('package="app.serea.android.isolated"', harness)
+        self.assertIn('activity="$package/app.serea.android.FakeGoogleProcessDeathHarnessActivity"', harness)
+        self.assertIn("grep -Fxq 'Status: ok'", harness)
+        self.assertIn('grep -Fq "Activity: $activity"', harness)
         self.assertIn('android_package_path "$package"', harness)
         self.assertIn('"${adb_cmd[@]}" install "$target_apk"', harness)
         self.assertIn('installed_apk_sha256" != "$target_apk_sha256"', harness)
@@ -1125,12 +1128,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "      exit 0\n"
                 "    fi\n"
                 "    [[ \"$action\" == start ]] || exit 94\n"
+                "    requested_activity=\"\"\n"
                 "    while [[ $# -gt 0 ]]; do\n"
                 "      if [[ \"$1\" == --es && \"${2:-}\" == phase ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_PHASE\"; printf '%s\\n' \"$3\" >> \"$ADB_PHASES\"; shift 3;\n"
                 "      elif [[ \"$1\" == --es && \"${2:-}\" == token ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_TOKEN\"; shift 3;\n"
+                "      elif [[ \"$1\" == -n ]]; then requested_activity=\"$2\"; shift 2;\n"
                 "      else shift; fi\n"
                 "    done\n"
                 "    printf '0\\n' > \"$ADB_FORCE_STOPPED\"\n"
+                "    if [[ \"${ADB_START_STATUS:-ok}\" == ok ]]; then printf 'Status: ok\\nActivity: %s\\n' \"$requested_activity\"; else printf 'Status: error\\nError: Activity class does not exist\\n'; fi\n"
                 "    ;;\n"
                 "  logcat)\n"
                 "    phase=\"$(cat \"$ADB_CURRENT_PHASE\")\"\n"
@@ -1187,6 +1193,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 fail_after_force_stop: bool = False,
                 pidof_test_mode: str = "absent",
                 transport_fail: bool = False,
+                am_start_status: str = "ok",
                 installed_sha_fail: bool = False,
                 installed_sha_mismatch: bool = False,
                 local_sha_fail: bool = False,
@@ -1221,6 +1228,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "PID_FAIL_AFTER_FORCE_STOP": "1" if fail_after_force_stop else "",
                     "PIDOF_TEST_MODE": pidof_test_mode,
                     "ADB_SHELL_TRANSPORT_FAIL": "1" if transport_fail else "",
+                    "ADB_START_STATUS": am_start_status,
                     "INSTALLED_SHA_FAIL": "1" if installed_sha_fail else "",
                     "INSTALLED_SHA_MISMATCH": "1" if installed_sha_mismatch else "",
                     "LOCAL_SHA_FAIL": "1" if local_sha_fail else "",
@@ -1298,6 +1306,16 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertEqual("seed\nverify\n", (success_case / "phases").read_text(encoding="utf-8"))
             self.assertEqual("absent\n", (success_case / "evidence/post-force-stop-pid.txt").read_text(encoding="utf-8"))
             self.assertIn("PASS: Fake Google consent/session OS process-death boundary", successful_absence.stdout)
+
+            activity_launch_failure, activity_failure_case = run_case(
+                "activity-launch-failure", am_start_status="error",
+            )
+            self.assertNotEqual(0, activity_launch_failure.returncode)
+            self.assertEqual("FAIL\n", (activity_failure_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("logcat", (activity_failure_case / "adb-calls").read_text(encoding="utf-8"))
+            self.assertIn("Status: error", activity_launch_failure.stderr)
+            self.assertIn("Activity class does not exist", activity_launch_failure.stderr)
+            self.assertNotIn("Timed out waiting for phase seed", activity_launch_failure.stderr)
 
             mismatch, mismatch_case = run_case("installed-apk-hash-mismatch", installed_sha_mismatch=True)
             self.assertNotEqual(0, mismatch.returncode)

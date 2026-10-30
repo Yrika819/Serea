@@ -49,6 +49,8 @@ android {
         targetSdk = 35
         versionCode = updateTestVersionCode ?: 1
         versionName = "0.1.0-demo"
+        // Ordinary Chat stays on the deterministic Demo route until a separately reviewed release.
+        buildConfigField("boolean", "LOCAL_MODEL_CHAT_ENABLED", "false")
         testInstrumentationRunner = "app.serea.android.SereaIsolatedAndroidJUnitRunner"
     }
 
@@ -118,6 +120,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    buildFeatures { buildConfig = true }
     lint { abortOnError = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }

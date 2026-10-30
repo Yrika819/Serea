@@ -660,6 +660,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('app.serea.android.SereaAppShellTest 900 19', campaign)
         self.assertIn('chat-screen-class', campaign)
         self.assertIn('app.serea.android.ChatScreenTest 900 16', campaign)
+        self.assertIn('run_diagnostic_stage local-model-memory-lifecycle', campaign)
+        self.assertIn('app.serea.android.LocalModelMemoryLifecycleAndroidTest#registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse', campaign)
         self.assertNotIn('runner-smoke', campaign)
         self.assertNotIn('chat-http-e2e', campaign)
         self.assertNotIn('activity-recreation', campaign)
@@ -667,10 +669,13 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused')
         class_stage = campaign.index('run_diagnostic_stage calendar-class')
         chat_class_stage = campaign.index('run_diagnostic_stage chat-screen-class')
+        memory_lifecycle_stage = campaign.index('run_diagnostic_stage local-model-memory-lifecycle')
         full_suite = campaign.index('timeout --signal=INT --kill-after=120s 40m ./gradlew')
         self.assertLess(focused_stage, class_stage)
         self.assertLess(class_stage, chat_class_stage)
         self.assertLess(chat_class_stage, full_suite)
+        self.assertGreater(memory_lifecycle_stage, campaign.index('if [[ "$test_ime_installed" == true ]]'))
+        self.assertNotIn('local_model_memory_test', campaign.split('if [[ "$sdk_ok" == true && "$gradle_result"', 1)[1].split('then', 1)[0])
         self.assertIn('--require-test', campaign)
         self.assertIn('--exact-count', campaign)
         self.assertIn('SereaCalendarStage', campaign)
@@ -1004,6 +1009,30 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('marker.renameTo(authorization)', promote)
         self.assertIn("phase='process-death-seed'", target_helper)
         self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
+
+    def test_local_model_memory_lifecycle_status_report_is_separate_and_non_gating(self) -> None:
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        helper = campaign.split("record_local_model_memory_lifecycle_status() {", 1)[1].split("\n}\n", 1)[0]
+        shell_function = "record_local_model_memory_lifecycle_status() {" + helper + "\n}\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for result in ("PASS", "FAIL", "NOT_RUN"):
+                evidence = root / result
+                evidence.mkdir()
+                summary = evidence / "summary.txt"
+                status = evidence / "local-model-memory-lifecycle-status.txt"
+                env = os.environ.copy()
+                env.update({"evidence": str(evidence), "api_level": "26", "GITHUB_STEP_SUMMARY": str(summary)})
+                completed = subprocess.run(
+                    ["bash", "-c", shell_function + f'record_local_model_memory_lifecycle_status "{result}"'],
+                    env=env, capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                self.assertEqual(result + "\n", status.read_text(encoding="utf-8"))
+                self.assertIn(f"local-model-memory-lifecycle={result}", summary.read_text(encoding="utf-8"))
+
+        result_condition = campaign.split('if [[ "$sdk_ok" == true && "$gradle_result"', 1)[1].split('then', 1)[0]
+        self.assertNotIn("local_model_memory_test", result_condition)
 
     def test_fake_google_process_death_harness_is_host_driven_and_isolated(self) -> None:
         harness = (ROOT / "tools/run_android_fake_google_process_death.sh").read_text(encoding="utf-8")

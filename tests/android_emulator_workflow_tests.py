@@ -1034,6 +1034,34 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         result_condition = campaign.split('if [[ "$sdk_ok" == true && "$gradle_result"', 1)[1].split('then', 1)[0]
         self.assertNotIn("local_model_memory_test", result_condition)
 
+        vm_stage = "local-chat-viewmodel-integration"
+        vm_status_helper = campaign.split("record_local_chat_viewmodel_integration_status() {", 1)[1].split("\n}\n", 1)[0]
+        vm_shell_function = "record_local_chat_viewmodel_integration_status() {" + vm_status_helper + "\n}\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for result in ("PASS", "FAIL", "NOT_RUN"):
+                evidence = root / result
+                evidence.mkdir()
+                summary = evidence / "summary.txt"
+                status = evidence / "local-chat-viewmodel-integration-status.txt"
+                env = os.environ.copy()
+                env.update({"evidence": str(evidence), "api_level": "35", "GITHUB_STEP_SUMMARY": str(summary)})
+                completed = subprocess.run(
+                    ["bash", "-c", vm_shell_function + f'record_local_chat_viewmodel_integration_status "{result}"'],
+                    env=env, capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                self.assertEqual(result + "\n", status.read_text(encoding="utf-8"))
+                self.assertIn(f"local-chat-viewmodel-integration={result}", summary.read_text(encoding="utf-8"))
+
+        identities = (ROOT / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt").read_text(encoding="utf-8")
+        self.assertIn("app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#selectedAndConsentedLocalRequestUsesAdapterSettlesUsageAndRejectsProofReplay", identities)
+        self.assertIn('run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 4', campaign)
+        self.assertIn('local-chat-viewmodel-integration=$result', campaign)
+        self.assertNotIn("local_chat_viewmodel_test", result_condition)
+        self.assertGreater(campaign.index('run_diagnostic_stage local-chat-viewmodel-integration'),
+                           campaign.index('if [[ "$test_ime_installed" == true ]]'))
+
     def test_fake_google_process_death_harness_is_host_driven_and_isolated(self) -> None:
         harness = (ROOT / "tools/run_android_fake_google_process_death.sh").read_text(encoding="utf-8")
         activity = (ROOT / "android/app/src/isolated/java/app/serea/android/FakeGoogleProcessDeathHarnessActivity.kt").read_text(

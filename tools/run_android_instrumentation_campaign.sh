@@ -40,6 +40,7 @@ printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/process-death-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/google-demo-ui-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/local-model-memory-lifecycle-status.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/history-db-v4-migration-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/local-chat-viewmodel-integration-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/device-api-level.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/api-result.txt" || exit 1
@@ -300,6 +301,15 @@ record_local_chat_viewmodel_integration_status() {
   esac
   printf '%s\n' "$result" > "$evidence/local-chat-viewmodel-integration-status.txt"
   echo "### Android API $api_level: local-chat-viewmodel-integration=$result" >> "$GITHUB_STEP_SUMMARY"
+}
+record_history_db_v4_migration_status() {
+  local result="${1:-FAIL}"
+  case "$result" in
+    PASS|FAIL|NOT_RUN) ;;
+    *) result=FAIL ;;
+  esac
+  printf '%s\n' "$result" > "$evidence/history-db-v4-migration-status.txt"
+  echo "### Android API $api_level: history-db-v4-migration=$result" >> "$GITHUB_STEP_SUMMARY"
 }
 
 cleanup_failed() {
@@ -855,6 +865,20 @@ TESTS
   record_local_chat_viewmodel_integration_status "$local_chat_viewmodel_test"
 else
   record_local_chat_viewmodel_integration_status NOT_RUN
+fi
+
+if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$google_demo_ui_result" == PASS && "$google_demo_ui_cleanup_result" -eq 0 ]]; then
+  history_db_v4_migration_test=FAIL
+  history_db_v4_migration_identity='app.serea.android.LegacyHistoryV4MigrationDiagnosticTest#v4HistoryDatabaseMigratesToLatestPreservingSyntheticEncryptedHistoryAndUsageMetadata'
+  if run_diagnostic_stage history-db-v4-migration \
+    "$history_db_v4_migration_identity" 900 1 "$history_db_v4_migration_identity"; then
+    history_db_v4_migration_test=PASS
+  else
+    history_db_v4_migration_test="$(cat "$evidence/stages/history-db-v4-migration/status.txt" 2>/dev/null || printf 'FAIL')"
+  fi
+  record_history_db_v4_migration_status "$history_db_v4_migration_test"
+else
+  record_history_db_v4_migration_status NOT_RUN
 fi
 
 if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS && "$google_demo_ui_result" == PASS ]]; then

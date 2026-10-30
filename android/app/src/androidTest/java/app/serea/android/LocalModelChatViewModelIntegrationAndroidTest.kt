@@ -9,10 +9,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -43,7 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class LocalModelChatViewModelIntegrationAndroidTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun testOnlyComposeHostInvalidatesConsentOnModelSwitchAndRendersLocalUsageResult() = runBlocking {
+    @Test fun testOnlyComposeHostInvalidatesConsentOnModelSwitchRendersLocalResponseAndSettlesUsage() = runBlocking {
         val fixture = fixture(blockUntilCancelled = false)
         try {
             assertFalse("product Chat route remains disabled", BuildConfig.LOCAL_MODEL_CHAT_ENABLED)
@@ -70,7 +68,6 @@ class LocalModelChatViewModelIntegrationAndroidTest {
                 fixture.viewModel.state.value.conversation.messages.any { it.role == MessageRole.ASSISTANT }
             }
             compose.onNodeWithText("fake local answer").assertExists()
-            compose.onNodeWithTag("local_usage_status").assertExists()
             val user = fixture.viewModel.state.value.conversation.messages.last { it.role == MessageRole.USER }
             assertEquals(UsageLedgerState.SETTLED.name, fixture.usageDao.reservation(user.id)?.state)
             assertEquals(1, fixture.backend.generateCalls.get())
@@ -200,7 +197,6 @@ class LocalModelChatViewModelIntegrationAndroidTest {
             Button(onClick = fixture.viewModel::sendMessage, enabled = !state.isLoading) { Text("Send local request") }
             if (state.errorMessage != null) Text(state.errorMessage.orEmpty())
             state.conversation.messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.let { Text(it.text) }
-            Text("Usage tracking attached", modifier = Modifier.testTag("local_usage_status"))
         }
     }
 

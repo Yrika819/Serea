@@ -1056,7 +1056,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
 
         identities = (ROOT / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt").read_text(encoding="utf-8")
         self.assertIn("app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#selectedAndConsentedLocalRequestUsesAdapterSettlesUsageAndRejectsProofReplay", identities)
-        self.assertIn("app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#testOnlyComposeHostInvalidatesConsentOnModelSwitchAndRendersLocalUsageResult", identities)
+        self.assertIn("app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#testOnlyComposeHostInvalidatesConsentOnModelSwitchRendersLocalResponseAndSettlesUsage", identities)
         self.assertIn('run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 5', campaign)
         self.assertIn('local-chat-viewmodel-integration=$result', campaign)
         self.assertNotIn("local_chat_viewmodel_test", result_condition)

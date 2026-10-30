@@ -2,7 +2,6 @@ package app.serea.android
 
 import android.app.Application
 import android.os.ParcelFileDescriptor
-import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
@@ -29,6 +28,7 @@ class LocalModelMemoryLifecycleAndroidTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val application = context.applicationContext as Application
+        assertEquals("callback registration must target the app under test", context.packageName, application.packageName)
         val modelFile = File.createTempFile("serea-memory-lifecycle-", ".gguf", context.cacheDir)
             .apply { writeBytes(byteArrayOf(1, 4, 1, 4, 2, 1)) }
         val modelId = "serea-local/component-callback-test"
@@ -100,10 +100,13 @@ class LocalModelMemoryLifecycleAndroidTest {
             assertEquals(1, backend.generateCalls.get())
 
             instrumentation.runOnMainSync { application.registerComponentCallbacks(callback) }
-            val command = "am send-trim-memory ${Process.myPid()} RUNNING_LOW"
+            val targetProcess = application.applicationInfo.processName ?: context.packageName
+            val command = "am send-trim-memory $targetProcess RUNNING_LOW"
             val shellOutput = instrumentation.uiAutomation.executeShellCommand(command)
             val output = ParcelFileDescriptor.AutoCloseInputStream(shellOutput).bufferedReader().use { it.readText() }
 
+            assertFalse("ActivityManager rejected trim request for target process $targetProcess; output=$output",
+                output.contains("Error", ignoreCase = true))
             assertTrue("Android should deliver RUNNING_LOW to the registered callback within 10s; output=$output",
                 backend.closed.await(10, TimeUnit.SECONDS))
             assertEquals("trim closes the loaded backend once", 1, backend.closeCalls.get())

@@ -79,3 +79,15 @@ Their final Source SHA, Tree SHA, worktree, changed files, test evidence and rev
 ## Prohibitions maintained
 
 No protected-main merge; real Google OAuth/account/data; Cloud API key or billing; production signing or Beta distribution; Pixel 7a operation; personal-data deletion; Required gate weakening; existing PR rewrite; Native Chat production enablement; unsupported ARM64 SUCCESS claim; or Personal Beta GO declaration.
+
+## V6 Fake Google recovery checkpoint — 2026-10-30
+
+Agent B confirmed root cause against `:app:processIsolatedManifest` and the built isolated APK. Manifest and DEX both contain `app.serea.android.FakeGoogleProcessDeathHarnessActivity`; the APK’s package ID is `app.serea.android.isolated`. The old host component shorthand expanded under the application ID and targeted nonexistent `app.serea.android.isolated.FakeGoogleProcessDeathHarnessActivity`. The fix explicitly invokes `app.serea.android.isolated/app.serea.android.FakeGoogleProcessDeathHarnessActivity`; it checks `am start -W` exit/status and exact Activity before waiting for the phase marker. This addresses the `Error type 3` hidden by a zero shell exit status and does not extend timeouts.
+
+- PR #189: OPEN/DRAFT, base exact PR #187 head `68dd17e687b80bdad0134099077a886fca4de836`.
+- PR #189 head: `df790b15e4d48da948564f12ceee7320d3423344`; tree `895ebeb92286828475fbefac2837f36e3f124004`.
+- Changed files: `tools/run_android_fake_google_process_death.sh`, `tests/android_emulator_workflow_tests.py`.
+- Agent C independent review: **ACCEPTED** at exact head. No Required IDs/gates, consent/session logic, network, or production composition changed.
+- Focused Fake Google regressions: 2/2 PASS. Independent Android workflow + Identity suite: 47/47 PASS. Bash syntax and diff check PASS.
+- Local isolated variant `:app:processIsolatedManifest :app:compileIsolatedKotlin :app:assembleIsolated`: BUILD SUCCESSFUL (39 tasks). Built APK SHA-256 `e276db3b694e6f036be0b15c52fba54fae581e3c49977886b9a4b629b5c5587c`; `aapt dump xmltree` and DEX inspection verify declared class and class bytecode. This is not emulator execution.
+- Exact-source hosted runs: Android `41027562072`, Full CI `41027562035`, Native platform `41027562017`, Fast `41027562092`, RustSec `41027562207`, Git Hooks `41027562103`, and SQLite `41027562107` were QUEUED at last inspection. API26/35 Fake Google rerun and full Android artifacts remain pending; G9 stays PARTIAL.

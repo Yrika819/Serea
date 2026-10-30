@@ -1056,9 +1056,14 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
 
         identities = (ROOT / "android/app/src/androidTest/assets/serea-non-required-test-identities.txt").read_text(encoding="utf-8")
         self.assertIn("app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#selectedAndConsentedLocalRequestUsesAdapterSettlesUsageAndRejectsProofReplay", identities)
-        self.assertIn('run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 4', campaign)
+        self.assertIn("app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#testOnlyComposeHostInvalidatesConsentOnModelSwitchAndRendersLocalUsageResult", identities)
+        self.assertIn('run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 5', campaign)
         self.assertIn('local-chat-viewmodel-integration=$result', campaign)
         self.assertNotIn("local_chat_viewmodel_test", result_condition)
+        memory_test = (ROOT / "android/app/src/androidTest/java/app/serea/android/LocalModelMemoryLifecycleAndroidTest.kt").read_text(encoding="utf-8")
+        self.assertIn('deviceAbi = "x86_64"', memory_test)
+        self.assertIn('android.os.Build.VERSION.SDK_INT == 26', memory_test)
+        self.assertIn('"x86" in android.os.Build.SUPPORTED_ABIS', memory_test)
         self.assertGreater(campaign.index('run_diagnostic_stage local-chat-viewmodel-integration'),
                            campaign.index('if [[ "$test_ime_installed" == true ]]'))
 

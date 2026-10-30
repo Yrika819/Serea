@@ -1,5 +1,21 @@
 package app.serea.android
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -7,11 +23,13 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -23,6 +41,45 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Test-only ViewModel composition. It never wires Local Model Chat into product Chat. */
 @RunWith(AndroidJUnit4::class)
 class LocalModelChatViewModelIntegrationAndroidTest {
+    @get:Rule val compose = createComposeRule()
+
+    @Test fun testOnlyComposeHostInvalidatesConsentOnModelSwitchAndRendersLocalUsageResult() = runBlocking {
+        val fixture = fixture(blockUntilCancelled = false)
+        try {
+            assertFalse("product Chat route remains disabled", BuildConfig.LOCAL_MODEL_CHAT_ENABLED)
+            compose.setContent { TestOnlyLocalModelChatHost(fixture) }
+
+            compose.onNodeWithText("Select local model").performClick()
+            compose.onNodeWithText("Confirm local consent").performClick()
+            compose.onNodeWithText("Select unavailable model").performClick()
+            compose.onNodeWithText("Select local model").performClick()
+            compose.onNodeWithText("Local prompt").performTextInput("answer using the fake provider")
+            compose.onNodeWithText("Send local request").performClick()
+
+            compose.waitUntil(5_000) { fixture.viewModel.state.value.errorMessage != null }
+            assertTrue(fixture.viewModel.state.value.errorMessage.orEmpty().contains("consent", ignoreCase = true))
+            assertTrue("switching away and back invalidates the earlier consent", fixture.usageDao.reservations.isEmpty())
+            assertEquals(0, fixture.backend.loadCalls.get())
+            assertEquals(0, fixture.backend.generateCalls.get())
+            assertEquals(0, fixture.demo.calls.get())
+
+            compose.onNodeWithText("Confirm local consent").performClick()
+            compose.onNodeWithText("Local prompt").performTextInput("answer using the fake provider")
+            compose.onNodeWithText("Send local request").performClick()
+            compose.waitUntil(5_000) {
+                fixture.viewModel.state.value.conversation.messages.any { it.role == MessageRole.ASSISTANT }
+            }
+            compose.onNodeWithText("fake local answer").assertExists()
+            compose.onNodeWithTag("local_usage_status").assertExists()
+            val user = fixture.viewModel.state.value.conversation.messages.last { it.role == MessageRole.USER }
+            assertEquals(UsageLedgerState.SETTLED.name, fixture.usageDao.reservation(user.id)?.state)
+            assertEquals(1, fixture.backend.generateCalls.get())
+            assertEquals(0, fixture.demo.calls.get())
+        } finally {
+            fixture.close()
+        }
+    }
+
     @Test fun selectedAndConsentedLocalRequestUsesAdapterSettlesUsageAndRejectsProofReplay() = runBlocking {
         val fixture = fixture(blockUntilCancelled = false)
         try {
@@ -127,6 +184,29 @@ class LocalModelChatViewModelIntegrationAndroidTest {
         }
     }
 
+    @Composable
+    private fun TestOnlyLocalModelChatHost(fixture: Fixture) {
+        val state by fixture.viewModel.state.collectAsState()
+        Column {
+            Button(onClick = fixture.intent::selectLocalModel) { Text("Select local model") }
+            Button(onClick = fixture.intent::selectUnavailableModel) { Text("Select unavailable model") }
+            Button(onClick = fixture.intent::confirmLocalConsent) { Text("Confirm local consent") }
+            OutlinedTextField(
+                value = state.input,
+                onValueChange = fixture.viewModel::updateInput,
+                label = { Text("Local prompt") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(onClick = fixture.viewModel::sendMessage, enabled = !state.isLoading) { Text("Send local request") }
+            if (state.errorMessage != null) Text(state.errorMessage.orEmpty())
+            state.conversation.messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.let { Text(it.text) }
+            Text(
+                "usage:${state.conversation.messages.lastOrNull { it.role == MessageRole.USER }?.let { fixture.usageDao.reservation(it.id)?.state } ?: "none"}",
+                modifier = Modifier.testTag("local_usage_status"),
+            )
+        }
+    }
+
     private fun fixture(blockUntilCancelled: Boolean): Fixture {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val modelFile = File.createTempFile("serea-viewmodel-local-fake-", ".gguf", context.cacheDir)
@@ -148,7 +228,8 @@ class LocalModelChatViewModelIntegrationAndroidTest {
             artifact = artifact,
             modelFile = modelFile,
             backendFactory = LocalModelInferenceBackendFactory { backend },
-            deviceAbi = android.os.Build.SUPPORTED_ABIS.first { it in artifact.supportedAbis },
+            // The Fake backend uses this deterministic adapter fixture selector; it does not load JNI.
+            deviceAbi = "x86_64",
         )
         val wallClock = 1_800_000_000_000L
         val dao = ViewModelIntegrationUsageDao()
@@ -222,16 +303,20 @@ class LocalModelChatViewModelIntegrationAndroidTest {
     private class TestOnlyLocalModelIntent {
         @Volatile var selectedModelId: String? = null
             private set
-        @Volatile private var localConsentConfirmed = false
+        @Volatile private var consentedModelId: String? = null
 
-        fun selectLocalModel() { selectedModelId = TEST_MODEL_ID }
-        fun confirmLocalConsent() { check(selectedModelId == TEST_MODEL_ID); localConsentConfirmed = true }
+        fun selectLocalModel() { selectModel(TEST_MODEL_ID) }
+        fun selectUnavailableModel() { selectModel("serea-local/unavailable-test-model") }
+        private fun selectModel(modelId: String) {
+            if (selectedModelId != modelId) consentedModelId = null
+            selectedModelId = modelId
+        }
+        fun confirmLocalConsent() { check(selectedModelId == TEST_MODEL_ID); consentedModelId = TEST_MODEL_ID }
         fun selectAndConfirmLocalModel() { selectLocalModel(); confirmLocalConsent() }
         fun consumeConsentFor(modelId: String?): Boolean = synchronized(this) {
-            if (modelId == TEST_MODEL_ID && selectedModelId == modelId && localConsentConfirmed) {
-                localConsentConfirmed = false
-                true
-            } else false
+            val approved = modelId == TEST_MODEL_ID && selectedModelId == modelId && consentedModelId == modelId
+            consentedModelId = null
+            approved
         }
     }
 

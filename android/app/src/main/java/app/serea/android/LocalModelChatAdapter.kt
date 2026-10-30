@@ -54,16 +54,23 @@ internal fun interface LocalModelInferenceBackendFactory {
     fun create(): LocalModelInferenceBackend
 }
 
-/** Limits passed to the native backend; its implementation must reject unsupported values. */
+/**
+ * Bounds validated by the isolated llama.cpp JNI candidate. Keep them aligned with backend
+ * pre-allocation validation; another backend must provide an explicit capability contract
+ * before widening them. `maxModelFileBytes` bounds the model file only. RSS/PSS is measured
+ * separately and is not a hard memory-allocation cap.
+ */
 data class LocalModelRuntimeLimits(
-    val maxResidentMemoryBytes: Long = 768L * 1024 * 1024,
-    val contextTokens: Int = 2_048,
+    val maxModelFileBytes: Long = 768L * 1024 * 1024,
+    // Keep the default compatible with the currently implemented llama.cpp JNI profile.
+    // Backends with a larger context must declare and validate their own capability first.
+    val contextTokens: Int = 512,
     val maxOutputTokens: Int = 256,
     val workerThreads: Int = 2,
 ) {
     init {
-        require(maxResidentMemoryBytes in (64L * 1024 * 1024)..(2L * 1024 * 1024 * 1024))
-        require(contextTokens in 128..32_768 && maxOutputTokens in 1..4_096 && workerThreads in 1..8)
+        require(maxModelFileBytes in (64L * 1024 * 1024)..(2L * 1024 * 1024 * 1024))
+        require(contextTokens in 128..512 && maxOutputTokens in 1..256 && workerThreads in 1..2)
     }
 }
 
@@ -240,7 +247,10 @@ internal class LocalModelChatAdapter(
     }
 
     private fun verifyModelFile() {
-        if (!modelFile.isFile || !modelFile.canRead() || modelFile.length() != artifact.expectedSizeBytes) {
+        if (!modelFile.isFile || !modelFile.canRead() ||
+            modelFile.length() > runtimeLimits.maxModelFileBytes ||
+            modelFile.length() != artifact.expectedSizeBytes
+        ) {
             throw PreDispatchModelChatFailure("The verified local model file is unavailable.")
         }
         val digest = MessageDigest.getInstance("SHA-256")

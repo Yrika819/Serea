@@ -165,7 +165,7 @@ run_phase() {
   # Reject any non-success status before waiting for an app marker, so a bad
   # component cannot masquerade as a seed/ViewModel timeout.
   if ! grep -Fxq 'Status: ok' "$evidence/$phase-am-start.txt" ||
-    ! grep -Fq "Activity: $activity" "$evidence/$phase-am-start.txt"; then
+    ! grep -Fxq "Activity: $activity" "$evidence/$phase-am-start.txt"; then
     cat "$evidence/$phase-am-start.txt" >&2
     return 1
   fi

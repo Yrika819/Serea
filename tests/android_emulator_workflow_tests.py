@@ -1046,7 +1046,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('package="app.serea.android.isolated"', harness)
         self.assertIn('activity="$package/app.serea.android.FakeGoogleProcessDeathHarnessActivity"', harness)
         self.assertIn("grep -Fxq 'Status: ok'", harness)
-        self.assertIn('grep -Fq "Activity: $activity"', harness)
+        self.assertIn('grep -Fxq "Activity: $activity"', harness)
         self.assertIn('android_package_path "$package"', harness)
         self.assertIn('"${adb_cmd[@]}" install "$target_apk"', harness)
         self.assertIn('installed_apk_sha256" != "$target_apk_sha256"', harness)
@@ -1165,7 +1165,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "      else shift; fi\n"
                 "    done\n"
                 "    printf '0\\n' > \"$ADB_FORCE_STOPPED\"\n"
-                "    if [[ \"${ADB_START_STATUS:-ok}\" == ok ]]; then printf 'Status: ok\\nActivity: %s\\n' \"$requested_activity\"; else printf 'Status: error\\nError: Activity class does not exist\\n'; fi\n"
+                "    if [[ \"${ADB_START_STATUS:-ok}\" == ok ]]; then printf 'Status: ok\\nActivity: %s%s\\n' \"$requested_activity\" \"${ADB_START_ACTIVITY_SUFFIX:-}\"; else printf 'Status: error\\nError: Activity class does not exist\\n'; fi\n"
                 "    ;;\n"
                 "  logcat)\n"
                 "    phase=\"$(cat \"$ADB_CURRENT_PHASE\")\"\n"
@@ -1223,6 +1223,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 pidof_test_mode: str = "absent",
                 transport_fail: bool = False,
                 am_start_status: str = "ok",
+                am_start_activity_suffix: str = "",
                 installed_sha_fail: bool = False,
                 installed_sha_mismatch: bool = False,
                 local_sha_fail: bool = False,
@@ -1258,6 +1259,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "PIDOF_TEST_MODE": pidof_test_mode,
                     "ADB_SHELL_TRANSPORT_FAIL": "1" if transport_fail else "",
                     "ADB_START_STATUS": am_start_status,
+                    "ADB_START_ACTIVITY_SUFFIX": am_start_activity_suffix,
                     "INSTALLED_SHA_FAIL": "1" if installed_sha_fail else "",
                     "INSTALLED_SHA_MISMATCH": "1" if installed_sha_mismatch else "",
                     "LOCAL_SHA_FAIL": "1" if local_sha_fail else "",
@@ -1345,6 +1347,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertIn("Status: error", activity_launch_failure.stderr)
             self.assertIn("Activity class does not exist", activity_launch_failure.stderr)
             self.assertNotIn("Timed out waiting for phase seed", activity_launch_failure.stderr)
+
+            activity_component_mismatch, component_mismatch_case = run_case(
+                "activity-component-mismatch", am_start_activity_suffix=" unexpected",
+            )
+            self.assertNotEqual(0, activity_component_mismatch.returncode)
+            self.assertEqual("FAIL\n", (component_mismatch_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertIn("Activity: app.serea.android.isolated/app.serea.android.FakeGoogleProcessDeathHarnessActivity unexpected",
+                          activity_component_mismatch.stderr)
+            self.assertNotIn("Timed out waiting for phase seed", activity_component_mismatch.stderr)
 
             mismatch, mismatch_case = run_case("installed-apk-hash-mismatch", installed_sha_mismatch=True)
             self.assertNotEqual(0, mismatch.returncode)

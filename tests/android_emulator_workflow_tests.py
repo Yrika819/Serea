@@ -660,6 +660,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('app.serea.android.SereaAppShellTest 900 19', campaign)
         self.assertIn('chat-screen-class', campaign)
         self.assertIn('app.serea.android.ChatScreenTest 900 16', campaign)
+        self.assertIn('run_diagnostic_stage local-model-memory-lifecycle', campaign)
+        self.assertIn('app.serea.android.LocalModelMemoryLifecycleAndroidTest#registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse', campaign)
         self.assertNotIn('runner-smoke', campaign)
         self.assertNotIn('chat-http-e2e', campaign)
         self.assertNotIn('activity-recreation', campaign)
@@ -667,10 +669,13 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         focused_stage = campaign.index('run_diagnostic_stage cursor-position-focused')
         class_stage = campaign.index('run_diagnostic_stage calendar-class')
         chat_class_stage = campaign.index('run_diagnostic_stage chat-screen-class')
+        memory_lifecycle_stage = campaign.index('run_diagnostic_stage local-model-memory-lifecycle')
         full_suite = campaign.index('timeout --signal=INT --kill-after=120s 40m ./gradlew')
         self.assertLess(focused_stage, class_stage)
         self.assertLess(class_stage, chat_class_stage)
         self.assertLess(chat_class_stage, full_suite)
+        self.assertGreater(memory_lifecycle_stage, campaign.index('if [[ "$test_ime_installed" == true ]]'))
+        self.assertNotIn('local_model_memory_test', campaign.split('if [[ "$sdk_ok" == true && "$gradle_result"', 1)[1].split('then', 1)[0])
         self.assertIn('--require-test', campaign)
         self.assertIn('--exact-count', campaign)
         self.assertIn('SereaCalendarStage', campaign)
@@ -1005,6 +1010,30 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("phase='process-death-seed'", target_helper)
         self.assertIn('Missing or mismatched fresh Process Death marker', receiver)
 
+    def test_local_model_memory_lifecycle_status_report_is_separate_and_non_gating(self) -> None:
+        campaign = (ROOT / "tools/run_android_instrumentation_campaign.sh").read_text(encoding="utf-8")
+        helper = campaign.split("record_local_model_memory_lifecycle_status() {", 1)[1].split("\n}\n", 1)[0]
+        shell_function = "record_local_model_memory_lifecycle_status() {" + helper + "\n}\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for result in ("PASS", "FAIL", "NOT_RUN"):
+                evidence = root / result
+                evidence.mkdir()
+                summary = evidence / "summary.txt"
+                status = evidence / "local-model-memory-lifecycle-status.txt"
+                env = os.environ.copy()
+                env.update({"evidence": str(evidence), "api_level": "26", "GITHUB_STEP_SUMMARY": str(summary)})
+                completed = subprocess.run(
+                    ["bash", "-c", shell_function + f'record_local_model_memory_lifecycle_status "{result}"'],
+                    env=env, capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                self.assertEqual(result + "\n", status.read_text(encoding="utf-8"))
+                self.assertIn(f"local-model-memory-lifecycle={result}", summary.read_text(encoding="utf-8"))
+
+        result_condition = campaign.split('if [[ "$sdk_ok" == true && "$gradle_result"', 1)[1].split('then', 1)[0]
+        self.assertNotIn("local_model_memory_test", result_condition)
+
     def test_fake_google_process_death_harness_is_host_driven_and_isolated(self) -> None:
         harness = (ROOT / "tools/run_android_fake_google_process_death.sh").read_text(encoding="utf-8")
         activity = (ROOT / "android/app/src/isolated/java/app/serea/android/FakeGoogleProcessDeathHarnessActivity.kt").read_text(
@@ -1015,6 +1044,9 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn("SEREA_ISOLATED_INSTRUMENTATION_FINISHED", harness)
         self.assertIn('test_package="app.serea.android.isolated.test"', harness)
         self.assertIn('package="app.serea.android.isolated"', harness)
+        self.assertIn('activity="$package/app.serea.android.FakeGoogleProcessDeathHarnessActivity"', harness)
+        self.assertIn("grep -Fxq 'Status: ok'", harness)
+        self.assertIn('grep -Fxq "Activity: $activity"', harness)
         self.assertIn('android_package_path "$package"', harness)
         self.assertIn('"${adb_cmd[@]}" install "$target_apk"', harness)
         self.assertIn('installed_apk_sha256" != "$target_apk_sha256"', harness)
@@ -1125,12 +1157,15 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 "      exit 0\n"
                 "    fi\n"
                 "    [[ \"$action\" == start ]] || exit 94\n"
+                "    requested_activity=\"\"\n"
                 "    while [[ $# -gt 0 ]]; do\n"
                 "      if [[ \"$1\" == --es && \"${2:-}\" == phase ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_PHASE\"; printf '%s\\n' \"$3\" >> \"$ADB_PHASES\"; shift 3;\n"
                 "      elif [[ \"$1\" == --es && \"${2:-}\" == token ]]; then printf '%s\\n' \"$3\" > \"$ADB_CURRENT_TOKEN\"; shift 3;\n"
+                "      elif [[ \"$1\" == -n ]]; then requested_activity=\"$2\"; shift 2;\n"
                 "      else shift; fi\n"
                 "    done\n"
                 "    printf '0\\n' > \"$ADB_FORCE_STOPPED\"\n"
+                "    if [[ \"${ADB_START_STATUS:-ok}\" == ok ]]; then printf 'Status: ok\\nActivity: %s%s\\n' \"$requested_activity\" \"${ADB_START_ACTIVITY_SUFFIX:-}\"; else printf 'Status: error\\nError: Activity class does not exist\\n'; fi\n"
                 "    ;;\n"
                 "  logcat)\n"
                 "    phase=\"$(cat \"$ADB_CURRENT_PHASE\")\"\n"
@@ -1187,6 +1222,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                 fail_after_force_stop: bool = False,
                 pidof_test_mode: str = "absent",
                 transport_fail: bool = False,
+                am_start_status: str = "ok",
+                am_start_activity_suffix: str = "",
                 installed_sha_fail: bool = False,
                 installed_sha_mismatch: bool = False,
                 local_sha_fail: bool = False,
@@ -1221,6 +1258,8 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
                     "PID_FAIL_AFTER_FORCE_STOP": "1" if fail_after_force_stop else "",
                     "PIDOF_TEST_MODE": pidof_test_mode,
                     "ADB_SHELL_TRANSPORT_FAIL": "1" if transport_fail else "",
+                    "ADB_START_STATUS": am_start_status,
+                    "ADB_START_ACTIVITY_SUFFIX": am_start_activity_suffix,
                     "INSTALLED_SHA_FAIL": "1" if installed_sha_fail else "",
                     "INSTALLED_SHA_MISMATCH": "1" if installed_sha_mismatch else "",
                     "LOCAL_SHA_FAIL": "1" if local_sha_fail else "",
@@ -1298,6 +1337,25 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             self.assertEqual("seed\nverify\n", (success_case / "phases").read_text(encoding="utf-8"))
             self.assertEqual("absent\n", (success_case / "evidence/post-force-stop-pid.txt").read_text(encoding="utf-8"))
             self.assertIn("PASS: Fake Google consent/session OS process-death boundary", successful_absence.stdout)
+
+            activity_launch_failure, activity_failure_case = run_case(
+                "activity-launch-failure", am_start_status="error",
+            )
+            self.assertNotEqual(0, activity_launch_failure.returncode)
+            self.assertEqual("FAIL\n", (activity_failure_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertNotIn("logcat", (activity_failure_case / "adb-calls").read_text(encoding="utf-8"))
+            self.assertIn("Status: error", activity_launch_failure.stderr)
+            self.assertIn("Activity class does not exist", activity_launch_failure.stderr)
+            self.assertNotIn("Timed out waiting for phase seed", activity_launch_failure.stderr)
+
+            activity_component_mismatch, component_mismatch_case = run_case(
+                "activity-component-mismatch", am_start_activity_suffix=" unexpected",
+            )
+            self.assertNotEqual(0, activity_component_mismatch.returncode)
+            self.assertEqual("FAIL\n", (component_mismatch_case / "evidence/status.txt").read_text(encoding="utf-8"))
+            self.assertIn("Activity: app.serea.android.isolated/app.serea.android.FakeGoogleProcessDeathHarnessActivity unexpected",
+                          activity_component_mismatch.stderr)
+            self.assertNotIn("Timed out waiting for phase seed", activity_component_mismatch.stderr)
 
             mismatch, mismatch_case = run_case("installed-apk-hash-mismatch", installed_sha_mismatch=True)
             self.assertNotEqual(0, mismatch.returncode)

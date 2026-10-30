@@ -39,6 +39,7 @@ PY
 printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/process-death-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/google-demo-ui-status.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/local-model-memory-lifecycle-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/device-api-level.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/api-result.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/data-isolation-status.txt" || exit 1
@@ -279,6 +280,16 @@ run_diagnostic_stage() {
     printf 'FAIL\n' > "$stage_dir/status.txt"
   fi
   return 1
+}
+
+record_local_model_memory_lifecycle_status() {
+  local result="${1:-FAIL}"
+  case "$result" in
+    PASS|FAIL|NOT_RUN) ;;
+    *) result=FAIL ;;
+  esac
+  printf '%s\n' "$result" > "$evidence/local-model-memory-lifecycle-status.txt"
+  echo "### Android API $api_level: local-model-memory-lifecycle=$result" >> "$GITHUB_STEP_SUMMARY"
 }
 
 cleanup_failed() {
@@ -801,6 +812,20 @@ printf '%s\n' "$google_demo_ui_result" > "$evidence/google-demo-ui-status.txt"
 printf '%s\n' "$google_demo_ui_cleanup_result" > "$evidence/google-demo-ui-cleanup-status.txt"
 
 if [[ "$test_ime_installed" == true ]]; then cleanup_test_ime; fi
+
+if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$google_demo_ui_result" == PASS && "$google_demo_ui_cleanup_result" -eq 0 ]]; then
+  local_model_memory_test=FAIL
+  if run_diagnostic_stage local-model-memory-lifecycle \
+    app.serea.android.LocalModelMemoryLifecycleAndroidTest#registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse \
+    900 1 app.serea.android.LocalModelMemoryLifecycleAndroidTest#registeredApplicationMemoryTrimEvictsTheFakeBackendAfterAuthorizedUse; then
+    local_model_memory_test=PASS
+  else
+    local_model_memory_test="$(cat "$evidence/stages/local-model-memory-lifecycle/status.txt" 2>/dev/null || printf 'FAIL')"
+  fi
+  record_local_model_memory_lifecycle_status "$local_model_memory_test"
+else
+  record_local_model_memory_lifecycle_status NOT_RUN
+fi
 
 if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS && "$google_demo_ui_result" == PASS ]]; then
   result=PASS

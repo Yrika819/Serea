@@ -59,3 +59,15 @@ After the normal fast-forward update to PR #191, its Fast run `41033109843` and 
 ## PR #192 initial saved checkpoint
 
 PR #192 was opened as a Draft against exact PR #188 base. Its initial checkpoint source is `e4557671a4f7331690eca1f2cc7f3a1ab7a8609c` / tree `bff992f7c6d9e0226dcfb9bba00144a8f5e251eb`; follow-up checkpoint commit `338dddbbc73505e6a9ff46d8a1985f429111d4e8` has tree `6c6d92965e9f0f3eaf16d6bad5648b2f7ff46f26`. It changes only this ledger file. This append-only section records why #193 is the current Native Chat evidence lane.
+
+## Latest bounded poll — 2026-10-30 UTC
+
+PR #192 latest known source before this append: `4dbdc10745e471d91cf84b6b2b6f67bf193503f5` / tree `389acbe7033dd70a2dbc05fd7584519b4e0e1a45`; Agent C independently ACCEPTED this docs-only checkpoint after verifying the O-01..O-10 matrix, exact-source statuses, and corrected initial/current PR lineage.
+
+PR #189 Android run `41027562072` remains IN_PROGRESS at `Run API 26 Pixel emulator and all instrumentation tests`. API26 evidence save/upload, the API35 campaign, and all per-API JUnit/lifecycle/provenance artifacts are still pending. Active logs returned BlobNotFound while the job runs. No API26/API35 assertion, marker, process restart, identity, isolation, IME, sentinel, or APK provenance result is yet credited; G9 remains BLOCKED on formal evidence.
+
+PR #193 run `41033438074` Fast CI is SUCCESS, including the required Commit identity guard. Its Android run `41033438179` Change Scope is SUCCESS and Android build, unit, integration, security, and dependency jobs are queued. Full CI `41033437885` and Native platform `41033437897` have some jobs IN_PROGRESS while others remain queued; SQLite `41033437881`, RustSec `41033437924`, Personal Beta Contract `41033437826`, and Git Hooks `41033438023` are queued. No terminal #193 Android artifacts are available yet. All evidence remains exact to #193 head `518b2328f8815fde042c26dc5593958052933a40` / tree `0c58ebdb5772c752b5153f9316a5c9ceb6b46b51`.
+
+PR #191 Fast `41033109843` and Linux Full job in `41033109849` failed at the mandatory Commit identity guard on `31bbab2`; this was not a source-test failure. No history rewrite was performed. PR #193 is the guard-compliant replacement, with Agent C ACCEPTED exact-source review. Other in-progress #191 results are not credited to #193.
+
+Updated worktree inventory: baseline `/workspace/Serea` is clean at protected-main SHA; `/workspace/Serea-native-lifecycle` contains the #191 branch commit `31bbab2` (preserved, no rewrite); `/workspace/Serea-native-lifecycle-clean` contains #193 source `518b232` on exact #187 base; `/workspace/Serea-v7-ledger` contains the #192 documentation branch. No main mutation, merge, force push, or rebase occurred.

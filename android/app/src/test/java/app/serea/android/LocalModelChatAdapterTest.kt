@@ -710,17 +710,35 @@ class LocalModelChatAdapterTest {
         )
         val registry = registry { now }
         val dao = CountingUsageDao()
+        val proofRequest = request("router test", sendId = "send-router")
+        val explicitConsent = registry.approve(proofRequest, modelId)
         val usage = UsageControlledModelChatPort(
             adapter, UsageRepository(dao) { now },
             attributionResolver = LocalModelUsageAttributionResolver(artifact(file)),
         )
         val egress = EgressCheckedModelChatPort(usage, { now }, EgressTarget.LOCAL_MODEL, registry, { now })
+        var demoCalls = 0
+        val demo = object : ModelChatPort {
+            override suspend fun send(request: ModelChatRequest): ModelChatResponse {
+                demoCalls++
+                return ModelChatResponse("demo", ProviderUsage(null, null))
+            }
+        }
+        // Test-only explicit injection; product BuildConfig remains false for every variant.
+        assertFalse(BuildConfig.LOCAL_MODEL_CHAT_ENABLED)
+        val featureRouter = LocalModelChatFeatureRouter(
+            demoModelId = DemoChatComposition.DEMO_MODEL_ID,
+            localModelId = modelId,
+            demo = demo,
+            local = egress,
+            localModelChatEnabled = true,
+        )
         val routed = RoutedModelChatPort(
-            delegate = egress,
+            delegate = featureRouter,
             router = AdaptiveModelRouter(catalog),
             contractFactory = { original, selected ->
-                val proof = registry.approve(original, selected.id)
-                localContract(original, proof)
+                assertEquals(modelId, selected.id)
+                localContract(original, explicitConsent)
             },
             policy = {
                 ModelRoutingPolicy(
@@ -730,13 +748,18 @@ class LocalModelChatAdapterTest {
             },
         )
         try {
-            val request = request("router test", sendId = "send-router")
-            val response = routed.send(request)
+            val response = routed.send(proofRequest)
             assertEquals("local answer", response.text)
+            assertEquals(0, demoCalls)
             assertEquals(1, backend.generateCalls)
             assertEquals(1, dao.insertedReservationCount)
             assertEquals(1, dao.reservationCount)
-            assertEquals(UsageLedgerState.SETTLED.name, dao.reservationState(request.sendId))
+            assertEquals(UsageLedgerState.SETTLED.name, dao.reservationState(proofRequest.sendId))
+
+            assertTrue("the same route proof cannot dispatch twice", runCatching { routed.send(proofRequest) }.isFailure)
+            assertEquals(1, dao.insertedReservationCount)
+            assertEquals(1, backend.generateCalls)
+            assertEquals(0, demoCalls)
         } finally { adapter.close(); file.delete() }
     }
 

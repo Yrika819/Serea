@@ -16,7 +16,7 @@ TREE_SHA: G9 #189 `895ebeb92286828475fbefac2837f36e3f124004`; Native Chat #191 `
 
 BASE_SHA: G9 #189 is based on exact PR #187 HEAD `68dd17e687b80bdad0134099077a886fca4de836`; Native Chat #191 is based on the same exact #187 HEAD. Ledger checkpoint is based on PR #188 HEAD `1eadc83583567d3e79cdf695b961c1f02b388508`, itself a docs-only successor.
 
-DRAFT_PR: This V7 ledger is prepared on a separate branch based on PR #188 and will be saved as a new Draft PR. Native Chat changes remain in existing Draft PR #191. No code from #189 or #191 is combined into the ledger PR.
+DRAFT_PR: V7 ledger is saved in open Draft PR #192, head `e4557671a4f7331690eca1f2cc7f3a1ab7a8609c`, tree `bff992f7c6d9e0226dcfb9bba00144a8f5e251eb`, based on PR #188 exact head `1eadc83583567d3e79cdf695b961c1f02b388508`. Native Chat changes remain in existing Draft PR #191. No code from #189 or #191 is combined into #192.
 
 CHANGED_FILES: V7 checkpoint PR: `docs/agent-reports/g9f-v7-orchestrator-ledger.md`. Native Chat #191 update from `ca8a2bbdc068b30bc7e20021194ccd649ea029c0` to `31bbab289c52802ca0f2be142c8dcebd97767737`: `android/app/src/main/java/app/serea/android/LocalModelChatAdapter.kt`, `android/app/src/test/java/app/serea/android/LocalModelChatAdapterTest.kt`. G9 #189 candidate changes remain its two reviewed files: `tools/run_android_fake_google_process_death.sh`, `tests/android_emulator_workflow_tests.py`.
 
@@ -51,3 +51,7 @@ NEXT_ACTION: Continue polling only existing exact-source #189 run `41027562072` 
 ## Dependency and worktree record
 
 Protected `main` was confirmed at `e0acb0254820c381dd97828824bef86a1db5176c`; remote `git ls-remote` and local main worktree agree. Local main worktree was clean. Current isolated worktrees: main baseline `/workspace/Serea`; Native Chat `/workspace/Serea-native-lifecycle` (branch `codex/serea-v7-native-lifecycle`, updated commit `31bbab2` pushed fast-forward to existing PR #191 branch); ledger `/workspace/Serea-v7-ledger` (branch based on PR #188). No main changes, merge, force push, or rebase occurred. PR #187 -> #189 G9 correction and #191 Native Chat are independent Drafts; PR #190 G10 is a separate Owner packet. No ARM64 retry was started. Personal Beta remains NO-GO.
+
+## PR #192 initial saved checkpoint
+
+PR #192 was opened as a Draft against exact PR #188 base. Its initial checkpoint source is `e4557671a4f7331690eca1f2cc7f3a1ab7a8609c` / tree `bff992f7c6d9e0226dcfb9bba00144a8f5e251eb`. It changes only this ledger file. This append-only follow-up records the PR metadata; its own commit/tree will be recorded by GitHub as a new exact-source checkpoint.

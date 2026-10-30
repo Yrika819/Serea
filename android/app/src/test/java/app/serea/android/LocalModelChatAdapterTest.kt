@@ -1,6 +1,7 @@
 package app.serea.android
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -10,14 +11,57 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class LocalModelChatAdapterTest {
     private val now = 1_800_000_000_000L
     private val modelId = "serea-local/SmolLM2-135M-Q4_K_M"
+
+    @Test fun defaultRuntimeLimitsMatchCurrentNativeBackendAndNameFileBoundAccurately() {
+        val defaults = LocalModelRuntimeLimits()
+        assertEquals(512, defaults.contextTokens)
+        assertEquals(768L * 1024 * 1024, defaults.maxModelFileBytes)
+        assertEquals(256, defaults.maxOutputTokens)
+        assertEquals(2, defaults.workerThreads)
+    }
+
+    @Test fun runtimeLimitsRejectValuesOutsideCurrentNativeBackendCapabilities() {
+        assertTrue(runCatching { LocalModelRuntimeLimits(contextTokens = 513) }
+            .exceptionOrNull() is IllegalArgumentException)
+        assertTrue(runCatching { LocalModelRuntimeLimits(maxOutputTokens = 257) }
+            .exceptionOrNull() is IllegalArgumentException)
+        assertTrue(runCatching { LocalModelRuntimeLimits(workerThreads = 3) }
+            .exceptionOrNull() is IllegalArgumentException)
+    }
+
+    @Test fun modelFileLimitRejectsOversizeBeforeHashingOrNativeLoad() = runBlocking {
+        val file = File.createTempFile("serea-model-oversize", ".gguf")
+        RandomAccessFile(file, "rw").use { it.setLength(64L * 1024 * 1024 + 1) }
+        val backend = FakeBackend()
+        val artifact = artifact(file, sha256 = "0".repeat(64))
+        val adapter = LocalModelChatAdapter(
+            artifact = artifact,
+            modelFile = file,
+            backendFactory = LocalModelInferenceBackendFactory { backend },
+            deviceAbi = "x86_64",
+            runtimeLimits = LocalModelRuntimeLimits(maxModelFileBytes = 64L * 1024 * 1024),
+        )
+        try {
+            val request = request("too large", sendId = "send-file-limit")
+            assertTrue(runCatching {
+                gated(adapter, registry { now }, request).send(request)
+            }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals("Oversized model must not enter backend loading", 0, backend.loadCalls)
+        } finally {
+            adapter.close()
+            file.delete()
+        }
+    }
 
     @Test fun adapterMatchesModelChatPortAndCarriesMeasuredUsageAcrossTurns() = runBlocking {
         val file = tempModel(byteArrayOf(1, 2, 3, 4))
@@ -30,6 +74,8 @@ class LocalModelChatAdapterTest {
             assertEquals("local answer", response.text)
             assertEquals(ProviderUsage(4, 2), response.usage)
             assertTrue(backend.loaded)
+            assertEquals("default context must fit the current JNI backend", 512, backend.lastLimits?.contextTokens)
+            assertEquals(768L * 1024 * 1024, backend.lastLimits?.maxModelFileBytes)
             assertEquals(1, backend.generateCalls)
 
             val context = listOf(ContextMessage(
@@ -48,6 +94,73 @@ class LocalModelChatAdapterTest {
             file.delete()
         }
         assertTrue(backend.closed)
+    }
+
+    @Test fun memoryPressureEvictionUnloadsBackendAndNextSendReloadsVerifiedModel() = runBlocking {
+        val file = tempModel(byteArrayOf(4, 3, 2, 1))
+        val firstBackend = FakeBackend()
+        val secondBackend = FakeBackend()
+        val backends = ArrayDeque(listOf(firstBackend, secondBackend))
+        val adapter = LocalModelChatAdapter(
+            artifact(file), file, LocalModelInferenceBackendFactory { backends.removeFirst() }, "x86_64",
+        )
+        try {
+            val first = request("before eviction", sendId = "send-before-eviction")
+            assertEquals("local answer", gated(adapter, registry { now }, first).send(first).text)
+            assertTrue(firstBackend.loaded)
+
+            adapter.evictModel()
+            assertTrue("Eviction closes native state", firstBackend.closed)
+
+            val second = request("after eviction", sendId = "send-after-eviction")
+            assertEquals("local answer", gated(adapter, registry { now }, second).send(second).text)
+            assertEquals(1, firstBackend.generateCalls)
+            assertEquals(1, secondBackend.loadCalls)
+            assertEquals(1, secondBackend.generateCalls)
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun evictionWaitsForInferenceAndCloseRaceReleasesNativeStateOnlyOnce() = runBlocking {
+        val file = tempModel(byteArrayOf(7, 7, 3, 3))
+        val backend = FakeBackend(blockGeneration = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        try {
+            val request = request("inference under memory pressure", sendId = "send-eviction-in-flight")
+            val sending = async(Dispatchers.Default) { gated(adapter, registry { now }, request).send(request) }
+            backend.generationStarted.await()
+
+            val eviction = async(start = CoroutineStart.UNDISPATCHED) { adapter.evictModel() }
+            assertFalse("Eviction waits for active inference", backend.closed)
+            adapter.close()
+            assertTrue(runCatching { sending.await() }.isFailure)
+            eviction.await()
+
+            assertTrue(backend.cancelled)
+            assertTrue(backend.closed)
+            assertFalse("Native state must not be freed while generate is active", backend.closedDuringGeneration)
+            assertEquals("Concurrent close and eviction must release the backend once", 1, backend.closeCalls)
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun concurrentRequestsAreSerializedAcrossNativeBackend() = runBlocking {
+        val file = tempModel(byteArrayOf(4, 4, 2, 2))
+        val backend = FakeBackend(blockGeneration = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        try {
+            val first = request("first concurrent send", sendId = "send-concurrent-1")
+            val second = request("second concurrent send", sendId = "send-concurrent-2")
+            val firstSend = async(Dispatchers.Default) { gated(adapter, registry { now }, first).send(first) }
+            backend.generationStarted.await()
+            val secondSend = async(start = CoroutineStart.UNDISPATCHED) {
+                gated(adapter, registry { now }, second).send(second)
+            }
+            assertEquals("A second request must wait while native inference is active", 1, backend.generateCalls)
+            backend.finishGeneration()
+            assertEquals("local answer", firstSend.await().text)
+            assertEquals("local answer", secondSend.await().text)
+            assertEquals(2, backend.generateCalls)
+            assertEquals(1, backend.maxConcurrentGenerations)
+        } finally { adapter.close(); file.delete() }
     }
 
     @Test fun modelHashMismatchFailsBeforeNativeLoad() = runBlocking {
@@ -767,8 +880,14 @@ class LocalModelChatAdapterTest {
         var loaded = false
         var closed = false
         var cancelled = false
+        var closeCalls = 0
+        var closedDuringGeneration = false
         var generateCalls = 0
         var loadCalls = 0
+        private val activeGenerations = AtomicInteger()
+        private val maxConcurrentGenerationsSeen = AtomicInteger()
+        val maxConcurrentGenerations get() = maxConcurrentGenerationsSeen.get()
+        var lastLimits: LocalModelRuntimeLimits? = null
         var lastPrompt: String? = null
         val generateEntry = CompletableDeferred<Unit>()
         val generationStarted = CompletableDeferred<Unit>()
@@ -781,6 +900,7 @@ class LocalModelChatAdapterTest {
             loadStarted.complete(Unit)
             if (blockLoad) releaseLoad.await()
             if (cancelled) throw LocalModelBackendStartDeniedException()
+            lastLimits = limits
             loadCalls++
             if (failLoad) error("synthetic native load failure")
             loaded = true
@@ -790,11 +910,15 @@ class LocalModelChatAdapterTest {
             if (blockGenerationStart) releaseGenerationStart.await()
             if (cancelled) throw LocalModelBackendStartDeniedException()
             generateCalls++
-            lastPrompt = prompt
-            generationStarted.complete(Unit)
-            if (blockGeneration) releaseGeneration.await()
-            if (failGeneration) error("synthetic native inference failure")
-            return LocalModelInferenceResult("local answer", 4, 2)
+            val active = activeGenerations.incrementAndGet()
+            maxConcurrentGenerationsSeen.accumulateAndGet(active) { previous, observed -> maxOf(previous, observed) }
+            try {
+                lastPrompt = prompt
+                generationStarted.complete(Unit)
+                if (blockGeneration) releaseGeneration.await()
+                if (failGeneration) error("synthetic native inference failure")
+                return LocalModelInferenceResult("local answer", 4, 2)
+            } finally { activeGenerations.decrementAndGet() }
         }
         override fun cancelActive() {
             cancelled = true
@@ -802,7 +926,12 @@ class LocalModelChatAdapterTest {
             releaseLoad.complete(Unit)
             releaseGenerationStart.complete(Unit)
         }
-        override fun close() { closed = true }
+        fun finishGeneration() { releaseGeneration.complete(Unit) }
+        override fun close() {
+            closeCalls++
+            closedDuringGeneration = activeGenerations.get() > 0
+            closed = true
+        }
     }
 
     private class CountingUsageDao : UsageDao {

@@ -200,10 +200,7 @@ class LocalModelChatViewModelIntegrationAndroidTest {
             Button(onClick = fixture.viewModel::sendMessage, enabled = !state.isLoading) { Text("Send local request") }
             if (state.errorMessage != null) Text(state.errorMessage.orEmpty())
             state.conversation.messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.let { Text(it.text) }
-            Text(
-                "usage:${state.conversation.messages.lastOrNull { it.role == MessageRole.USER }?.let { fixture.usageDao.reservation(it.id)?.state } ?: "none"}",
-                modifier = Modifier.testTag("local_usage_status"),
-            )
+            Text("Usage tracking attached", modifier = Modifier.testTag("local_usage_status"))
         }
     }
 

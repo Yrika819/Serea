@@ -845,9 +845,10 @@ app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#selectedAndConse
 app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#localSelectionWithoutConsentFailsBeforeUsageAndProviderDispatch
 app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#userCancellationDuringLocalInferenceKeepsUnknownUsageWithoutFallback
 app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#clearingViewModelStoreCancelsLocalWorkAndFinalizesUnknownUsage
+app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#testOnlyComposeHostInvalidatesConsentOnModelSwitchRendersLocalResponseAndSettlesUsage
 TESTS
 )
-  if run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 4 '' "$local_chat_viewmodel_tests"; then
+  if run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 5 '' "$local_chat_viewmodel_tests"; then
     local_chat_viewmodel_test=PASS
   else
     local_chat_viewmodel_test="$(cat "$evidence/stages/local-chat-viewmodel-integration/status.txt" 2>/dev/null || printf 'FAIL')"

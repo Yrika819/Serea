@@ -45,7 +45,16 @@ class LocalModelMemoryLifecycleAndroidTest {
             runtimeRevision = "2763785",
             supportedAbis = setOf("arm64-v8a", "x86_64"),
         )
-        val deviceAbi = android.os.Build.SUPPORTED_ABIS.first { it in artifact.supportedAbis }
+        assertTrue(
+            "this callback diagnostic must also execute on the API 26 x86 emulator",
+            android.os.Build.SUPPORTED_ABIS.any { it in setOf("x86", "x86_64") },
+        )
+        if (android.os.Build.VERSION.SDK_INT == 26) {
+            assertTrue("API 26 workflow is expected to use its x86 emulator image", "x86" in android.os.Build.SUPPORTED_ABIS)
+        }
+        // Synthetic selector for the adapter Fake profile; no JNI or native ABI is exercised here.
+        val deviceAbi = "x86_64"
+        assertTrue(deviceAbi in artifact.supportedAbis)
         val adapter = LocalModelChatAdapter(
             artifact = artifact,
             modelFile = modelFile,

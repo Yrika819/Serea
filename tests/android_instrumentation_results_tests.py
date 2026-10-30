@@ -141,7 +141,7 @@ class InstrumentationResultTests(unittest.TestCase):
         self.assertEqual(2, len(additional_tests))
         self.assertFalse(required_tests & additional_tests)
         # Explicit non-required diagnostics and focused UI cases stay outside the 105 formal tests.
-        self.assertEqual(22, len(non_required_tests))
+        self.assertEqual(26, len(non_required_tests))
         self.assertFalse(non_required_tests & (required_tests | additional_tests))
         required: dict[str, int] = {}
         for class_name, _ in required_tests:

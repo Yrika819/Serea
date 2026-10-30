@@ -40,6 +40,7 @@ printf 'NOT_RUN\n' > "$evidence/instrumentation-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/process-death-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/google-demo-ui-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/local-model-memory-lifecycle-status.txt" || exit 1
+printf 'NOT_RUN\n' > "$evidence/local-chat-viewmodel-integration-status.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/device-api-level.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/api-result.txt" || exit 1
 printf 'NOT_RUN\n' > "$evidence/data-isolation-status.txt" || exit 1
@@ -290,6 +291,15 @@ record_local_model_memory_lifecycle_status() {
   esac
   printf '%s\n' "$result" > "$evidence/local-model-memory-lifecycle-status.txt"
   echo "### Android API $api_level: local-model-memory-lifecycle=$result" >> "$GITHUB_STEP_SUMMARY"
+}
+record_local_chat_viewmodel_integration_status() {
+  local result="${1:-FAIL}"
+  case "$result" in
+    PASS|FAIL|NOT_RUN) ;;
+    *) result=FAIL ;;
+  esac
+  printf '%s\n' "$result" > "$evidence/local-chat-viewmodel-integration-status.txt"
+  echo "### Android API $api_level: local-chat-viewmodel-integration=$result" >> "$GITHUB_STEP_SUMMARY"
 }
 
 cleanup_failed() {
@@ -825,6 +835,26 @@ if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && 
   record_local_model_memory_lifecycle_status "$local_model_memory_test"
 else
   record_local_model_memory_lifecycle_status NOT_RUN
+fi
+
+if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$google_demo_ui_result" == PASS && "$google_demo_ui_cleanup_result" -eq 0 ]]; then
+  local_chat_viewmodel_test=FAIL
+  local_chat_viewmodel_filter='app.serea.android.LocalModelChatViewModelIntegrationAndroidTest'
+  local_chat_viewmodel_tests=$(cat <<'TESTS'
+app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#selectedAndConsentedLocalRequestUsesAdapterSettlesUsageAndRejectsProofReplay
+app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#localSelectionWithoutConsentFailsBeforeUsageAndProviderDispatch
+app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#userCancellationDuringLocalInferenceKeepsUnknownUsageWithoutFallback
+app.serea.android.LocalModelChatViewModelIntegrationAndroidTest#clearingViewModelStoreCancelsLocalWorkAndFinalizesUnknownUsage
+TESTS
+)
+  if run_diagnostic_stage local-chat-viewmodel-integration "$local_chat_viewmodel_filter" 900 4 '' "$local_chat_viewmodel_tests"; then
+    local_chat_viewmodel_test=PASS
+  else
+    local_chat_viewmodel_test="$(cat "$evidence/stages/local-chat-viewmodel-integration/status.txt" 2>/dev/null || printf 'FAIL')"
+  fi
+  record_local_chat_viewmodel_integration_status "$local_chat_viewmodel_test"
+else
+  record_local_chat_viewmodel_integration_status NOT_RUN
 fi
 
 if [[ "$sdk_ok" == true && "$gradle_result" -eq 0 && "$junit_result" == PASS && "$death_result" == PASS && "$data_isolation_result" == PASS && "$test_ime_cleanup_result" == PASS && "$google_demo_ui_result" == PASS ]]; then

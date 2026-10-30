@@ -1,6 +1,7 @@
 package app.serea.android
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -15,6 +16,7 @@ import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class LocalModelChatAdapterTest {
     private val now = 1_800_000_000_000L
@@ -92,6 +94,73 @@ class LocalModelChatAdapterTest {
             file.delete()
         }
         assertTrue(backend.closed)
+    }
+
+    @Test fun memoryPressureEvictionUnloadsBackendAndNextSendReloadsVerifiedModel() = runBlocking {
+        val file = tempModel(byteArrayOf(4, 3, 2, 1))
+        val firstBackend = FakeBackend()
+        val secondBackend = FakeBackend()
+        val backends = ArrayDeque(listOf(firstBackend, secondBackend))
+        val adapter = LocalModelChatAdapter(
+            artifact(file), file, LocalModelInferenceBackendFactory { backends.removeFirst() }, "x86_64",
+        )
+        try {
+            val first = request("before eviction", sendId = "send-before-eviction")
+            assertEquals("local answer", gated(adapter, registry { now }, first).send(first).text)
+            assertTrue(firstBackend.loaded)
+
+            adapter.evictModel()
+            assertTrue("Eviction closes native state", firstBackend.closed)
+
+            val second = request("after eviction", sendId = "send-after-eviction")
+            assertEquals("local answer", gated(adapter, registry { now }, second).send(second).text)
+            assertEquals(1, firstBackend.generateCalls)
+            assertEquals(1, secondBackend.loadCalls)
+            assertEquals(1, secondBackend.generateCalls)
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun evictionWaitsForInferenceAndCloseRaceReleasesNativeStateOnlyOnce() = runBlocking {
+        val file = tempModel(byteArrayOf(7, 7, 3, 3))
+        val backend = FakeBackend(blockGeneration = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        try {
+            val request = request("inference under memory pressure", sendId = "send-eviction-in-flight")
+            val sending = async(Dispatchers.Default) { gated(adapter, registry { now }, request).send(request) }
+            backend.generationStarted.await()
+
+            val eviction = async(start = CoroutineStart.UNDISPATCHED) { adapter.evictModel() }
+            assertFalse("Eviction waits for active inference", backend.closed)
+            adapter.close()
+            assertTrue(runCatching { sending.await() }.isFailure)
+            eviction.await()
+
+            assertTrue(backend.cancelled)
+            assertTrue(backend.closed)
+            assertFalse("Native state must not be freed while generate is active", backend.closedDuringGeneration)
+            assertEquals("Concurrent close and eviction must release the backend once", 1, backend.closeCalls)
+        } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun concurrentRequestsAreSerializedAcrossNativeBackend() = runBlocking {
+        val file = tempModel(byteArrayOf(4, 4, 2, 2))
+        val backend = FakeBackend(blockGeneration = true)
+        val adapter = createAdapter(artifact(file), file, backend)
+        try {
+            val first = request("first concurrent send", sendId = "send-concurrent-1")
+            val second = request("second concurrent send", sendId = "send-concurrent-2")
+            val firstSend = async(Dispatchers.Default) { gated(adapter, registry { now }, first).send(first) }
+            backend.generationStarted.await()
+            val secondSend = async(start = CoroutineStart.UNDISPATCHED) {
+                gated(adapter, registry { now }, second).send(second)
+            }
+            assertEquals("A second request must wait while native inference is active", 1, backend.generateCalls)
+            backend.finishGeneration()
+            assertEquals("local answer", firstSend.await().text)
+            assertEquals("local answer", secondSend.await().text)
+            assertEquals(2, backend.generateCalls)
+            assertEquals(1, backend.maxConcurrentGenerations)
+        } finally { adapter.close(); file.delete() }
     }
 
     @Test fun modelHashMismatchFailsBeforeNativeLoad() = runBlocking {
@@ -811,8 +880,13 @@ class LocalModelChatAdapterTest {
         var loaded = false
         var closed = false
         var cancelled = false
+        var closeCalls = 0
+        var closedDuringGeneration = false
         var generateCalls = 0
         var loadCalls = 0
+        private val activeGenerations = AtomicInteger()
+        private val maxConcurrentGenerationsSeen = AtomicInteger()
+        val maxConcurrentGenerations get() = maxConcurrentGenerationsSeen.get()
         var lastLimits: LocalModelRuntimeLimits? = null
         var lastPrompt: String? = null
         val generateEntry = CompletableDeferred<Unit>()
@@ -836,11 +910,15 @@ class LocalModelChatAdapterTest {
             if (blockGenerationStart) releaseGenerationStart.await()
             if (cancelled) throw LocalModelBackendStartDeniedException()
             generateCalls++
-            lastPrompt = prompt
-            generationStarted.complete(Unit)
-            if (blockGeneration) releaseGeneration.await()
-            if (failGeneration) error("synthetic native inference failure")
-            return LocalModelInferenceResult("local answer", 4, 2)
+            val active = activeGenerations.incrementAndGet()
+            maxConcurrentGenerationsSeen.accumulateAndGet(active) { previous, observed -> maxOf(previous, observed) }
+            try {
+                lastPrompt = prompt
+                generationStarted.complete(Unit)
+                if (blockGeneration) releaseGeneration.await()
+                if (failGeneration) error("synthetic native inference failure")
+                return LocalModelInferenceResult("local answer", 4, 2)
+            } finally { activeGenerations.decrementAndGet() }
         }
         override fun cancelActive() {
             cancelled = true
@@ -848,7 +926,12 @@ class LocalModelChatAdapterTest {
             releaseLoad.complete(Unit)
             releaseGenerationStart.complete(Unit)
         }
-        override fun close() { closed = true }
+        fun finishGeneration() { releaseGeneration.complete(Unit) }
+        override fun close() {
+            closeCalls++
+            closedDuringGeneration = activeGenerations.get() > 0
+            closed = true
+        }
     }
 
     private class CountingUsageDao : UsageDao {

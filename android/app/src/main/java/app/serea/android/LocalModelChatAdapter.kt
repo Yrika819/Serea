@@ -239,6 +239,15 @@ internal class LocalModelChatAdapter(
         }
     }
 
+    /**
+     * Releases the resident model after memory pressure without permanently disabling the route.
+     * A running request finishes first because the same mutex serializes inference and eviction.
+     * The next authorized request must recheck the model file and load a fresh backend.
+     */
+    internal suspend fun evictModel() {
+        mutex.withLock { releaseBackendLocked() }
+    }
+
     private fun releaseBackendLocked() {
         val toRelease = backend
         backend = null

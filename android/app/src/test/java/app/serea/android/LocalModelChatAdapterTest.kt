@@ -2,12 +2,19 @@ package app.serea.android
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -730,6 +737,99 @@ class LocalModelChatAdapterTest {
             assertEquals(1, dao.reservationCount)
             assertEquals(UsageLedgerState.SETTLED.name, dao.reservationState(request.sendId))
         } finally { adapter.close(); file.delete() }
+    }
+
+    @Test fun memoryTrimSerializesEvictionReloadsVerifiedModelAndDropsProcessLocalConsent() = runTest {
+        val file = tempModel(byteArrayOf(11, 12, 13))
+        val firstBackend = FakeBackend(blockGeneration = true)
+        val secondBackend = FakeBackend()
+        val backends = ArrayDeque(listOf(firstBackend, secondBackend))
+        var factoryCalls = 0
+        val expectedArtifact = artifact(file)
+        val adapter = LocalModelChatAdapter(
+            expectedArtifact,
+            file,
+            LocalModelInferenceBackendFactory { factoryCalls++; backends.removeFirst() },
+            deviceAbi = "x86_64",
+        )
+        val liveRegistry = registry { now }
+        val usageDao = CountingUsageDao()
+        val egress = composed(adapter, liveRegistry, usageDao) { now }
+        val lifecycleScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+        val lifecycle = LocalModelMemoryLifecycle(adapter, lifecycleScope, StandardTestDispatcher(testScheduler))
+        try {
+            val first = request("in-flight before trim", sendId = "send-trim-in-flight")
+            val firstProof = liveRegistry.approve(first, modelId)
+            val firstApproved = first.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(first, firstProof),
+            )
+            val firstSend = async { egress.send(firstApproved) }
+            runCurrent()
+            firstBackend.generationStarted.await()
+
+            lifecycle.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+            runCurrent()
+            lifecycle.onLowMemory()
+            runCurrent()
+            assertEquals("trim must wait for in-flight inference to leave the adapter mutex", 0, firstBackend.closeCalls)
+            assertTrue(firstBackend.loaded)
+
+            firstBackend.finishGeneration()
+            advanceUntilIdle()
+            assertEquals("local answer", firstSend.await().text)
+            assertEquals(UsageLedgerState.SETTLED.name, usageDao.reservationState(first.sendId))
+            assertEquals("backend closes only after generation unwinds", 1, firstBackend.closeCalls)
+            assertFalse(firstBackend.closedDuringGeneration)
+
+            // Eviction retained no consent and the next valid single-use proof must re-hash and load.
+            val second = request("reload after trim", sendId = "send-trim-reload")
+            val secondProof = liveRegistry.approve(second, modelId)
+            val secondApproved = second.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(second, secondProof),
+            )
+            assertEquals("local answer", egress.send(secondApproved).text)
+            assertEquals(2, factoryCalls)
+            assertEquals(1, secondBackend.loadCalls)
+            assertEquals(UsageLedgerState.SETTLED.name, usageDao.reservationState(second.sendId))
+
+            assertTrue(runCatching { egress.send(secondApproved) }.isFailure)
+            assertEquals("consent replay is rejected before another usage reservation", 2, usageDao.insertedReservationCount)
+            assertEquals(1, secondBackend.generateCalls)
+
+            // A reconstructed process-local registry has no pending capability from the old process.
+            val pending = request("old process consent", sendId = "send-old-process-consent")
+            val oldProcessProof = liveRegistry.approve(pending, modelId)
+            val restartedRegistry = registry { now }
+            val restartedEgress = composed(adapter, restartedRegistry, usageDao) { now }
+            val staleAfterRestart = pending.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(pending, oldProcessProof),
+            )
+            assertTrue(runCatching { restartedEgress.send(staleAfterRestart) }.isFailure)
+            assertEquals("a process-local proof cannot be consumed after registry reconstruction", 2, usageDao.insertedReservationCount)
+
+            // Evict once more, then prove a changed file cannot pass integrity verification on reload.
+            lifecycle.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+            advanceUntilIdle()
+            assertEquals(1, secondBackend.closeCalls)
+            file.writeBytes(byteArrayOf(21, 22, 23))
+            val tampered = request("tampered model", sendId = "send-tampered-model")
+            val tamperedProof = restartedRegistry.approve(tampered, modelId)
+            val tamperedApproved = tampered.copy(
+                selectedModelId = modelId,
+                egressContract = localContract(tampered, tamperedProof),
+            )
+            assertTrue(runCatching { restartedEgress.send(tamperedApproved) }.exceptionOrNull() is PreDispatchModelChatFailure)
+            assertEquals("integrity failure is pre-inference", 0, backends.size)
+            assertEquals(2, factoryCalls)
+            assertNull("known pre-inference integrity failure releases usage", usageDao.reservationState(tampered.sendId))
+        } finally {
+            lifecycleScope.cancel()
+            adapter.close()
+            file.delete()
+        }
     }
 
     private fun gated(adapter: ModelChatPort, registry: LocalModelAuthorizationRegistry, request: ModelChatRequest) =

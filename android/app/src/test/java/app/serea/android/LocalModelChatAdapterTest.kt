@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
@@ -830,6 +831,30 @@ class LocalModelChatAdapterTest {
             adapter.close()
             file.delete()
         }
+    }
+
+    @Test fun staleTrimCompletionCannotClearNewPendingEvictionTicket() = runTest {
+        val coalescer = LocalModelEvictionCoalescer()
+        val firstTicket = checkNotNull(coalescer.begin())
+        coalescer.complete(firstTicket)
+
+        val secondTicket = checkNotNull(coalescer.begin())
+        val releaseStaleCompletion = CompletableDeferred<Unit>()
+        val staleCompletion = launch(StandardTestDispatcher(testScheduler)) {
+            releaseStaleCompletion.await()
+            coalescer.complete(firstTicket)
+        }
+        runCurrent()
+
+        // Deliver the prior job's completion after a newer eviction is pending.
+        releaseStaleCompletion.complete(Unit)
+        runCurrent()
+        assertTrue(staleCompletion.isCompleted)
+        assertNull("third trim notification remains coalesced under the second ticket", coalescer.begin())
+
+        coalescer.complete(secondTicket)
+        val laterTicket = checkNotNull(coalescer.begin())
+        coalescer.complete(laterTicket)
     }
 
     private fun gated(adapter: ModelChatPort, registry: LocalModelAuthorizationRegistry, request: ModelChatRequest) =

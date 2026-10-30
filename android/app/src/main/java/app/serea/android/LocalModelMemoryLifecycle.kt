@@ -6,7 +6,23 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+
+/** Ticketed guard: a delayed completion can only release the trim event that acquired it. */
+internal class LocalModelEvictionCoalescer {
+    private val nextTicket = AtomicLong(0)
+    private val activeTicket = AtomicLong(0)
+
+    fun begin(): Long? {
+        if (activeTicket.get() != 0L) return null
+        val ticket = nextTicket.incrementAndGet()
+        return if (activeTicket.compareAndSet(0, ticket)) ticket else null
+    }
+
+    fun complete(ticket: Long) {
+        activeTicket.compareAndSet(ticket, 0)
+    }
+}
 
 /**
  * Optional memory-pressure bridge for an owner that explicitly registers it with Android.
@@ -18,22 +34,16 @@ internal class LocalModelMemoryLifecycle(
     private val scope: CoroutineScope,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ComponentCallbacks2 {
-    private val evictionPending = AtomicBoolean(false)
+    private val evictions = LocalModelEvictionCoalescer()
 
     override fun onTrimMemory(level: Int) {
-        if (level < ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
-            !evictionPending.compareAndSet(false, true)) return
+        if (level < ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) return
+        val ticket = evictions.begin() ?: return
 
-        val eviction = scope.launch(dispatcher) {
-            try {
-                // Adapter's lifecycle mutex lets an active inference finish before releasing JNI.
-                adapter.evictModel()
-            } finally {
-                evictionPending.set(false)
-            }
-        }
-        // Also clear the coalescing guard if its parent scope cancels before the coroutine starts.
-        eviction.invokeOnCompletion { evictionPending.set(false) }
+        // Adapter's lifecycle mutex lets an active inference finish before releasing JNI.
+        // Completion owns the guard release; an older completion cannot clear a newer ticket.
+        scope.launch(dispatcher) { adapter.evictModel() }
+            .invokeOnCompletion { evictions.complete(ticket) }
     }
 
     override fun onLowMemory() = onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE)

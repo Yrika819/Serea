@@ -73,3 +73,14 @@ The 2026-11-10 O-02 checkpoint may decide the project, audience/test-user plan, 
 - Actual OAuth, Calendar/Gmail reads, Cloud provider eligibility/connection and billing, Owner signing, main merge, Beta distribution, and physical Pixel 7a acceptance remain NOT_RUN.
 - Native product Chat integration, ARM64 hardware/runtime, Pixel performance/thermals, Japanese/tool-calling evaluation, standard model selection, signed APK provenance, complete packaged SBOM/native notices, and Owner-signed migration/update/rollback remain NOT_RUN or open.
 - Overall G8/G9/G10 remain PARTIAL and Personal Beta remains NO-GO. No evidence in this refresh is transferred across source SHAs.
+
+## G9E V6 evidence update — 2026-10-30
+
+This update records technical evidence only; the O-01 through O-10 decision states above are unchanged.
+
+- PR #187 exact source `68dd17e687b80bdad0134099077a886fca4de836` / tree `c262ea25c1241e6c1b9ecd885383143886236fb6`, Android run `40970247739` attempt 1: API26 and API35 each passed Required 105/105, Google/Gmail UI 16/16, OS Process Death and Data Isolation. Separate Fake Google process-death harness failed both APIs because the Activity launch component resolved under the suffixed application ID; artifacts and SHA-256 digests are recorded in `docs/agent-reports/g9r-ci-security-release.md`.
+- PR #189 correction at `df790b15e4d48da948564f12ceee7320d3423344` / tree `895ebeb92286828475fbefac2837f36e3f124004` is independently code-reviewed ACCEPTED. Its Android run `41027562072` was QUEUED at capture; no exact-source API26/35 process-death result is credited yet.
+- PR #182 exact-source ARM64 focused run `40967790559` failed the bounded ARM64 guest startup/inference attempt; x86_64 inference passed separately. Android ARM64 inference remains NOT_RUN.
+- The Windows timeout diagnostic rerun `40967593381` passed its Stable Windows x86_64 job, but the earlier timeout from `40929532184` did not reproduce and its root cause remains unresolved.
+
+These results do not grant OAuth, production signing, device, distribution, merge, Cloud, or model-selection approval. G9/G10 remain PARTIAL; standard local model remains UNDECIDED; Personal Beta remains NO-GO.

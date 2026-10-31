@@ -2,6 +2,15 @@ name: Fast CI
 
 on:
   workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Exact base commit SHA for the identity check
+        required: true
+        type: string
+      head_sha:
+        description: Exact checked-out head commit SHA for the identity check
+        required: true
+        type: string
   pull_request:
   push:
     branches: [main, 'p3/**']
@@ -14,7 +23,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pr-head-identity:
+    name: PR HEAD commit identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SEREA_EVENT_NAME: ${{ github.event_name }}
+      SEREA_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      SEREA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      SEREA_PUSH_BEFORE_SHA: ${{ github.event.before }}
+      SEREA_PUSH_AFTER_SHA: ${{ github.sha }}
+      SEREA_PUSH_CREATED: ${{ github.event.created }}
+      SEREA_PUSH_DELETED: ${{ github.event.deleted }}
+      SEREA_DISPATCH_BASE_SHA: ${{ inputs.base_sha }}
+      SEREA_DISPATCH_HEAD_SHA: ${{ inputs.head_sha }}
+      SEREA_DISPATCH_REF_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout exact event HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+      - name: Verify exact event HEAD
+        shell: bash
+        run: |
+          expected="$SEREA_PR_HEAD_SHA"
+          if [ "$SEREA_EVENT_NAME" = workflow_dispatch ]; then expected="$SEREA_DISPATCH_HEAD_SHA"; fi
+          if [ "$SEREA_EVENT_NAME" = push ]; then expected="$SEREA_PUSH_AFTER_SHA"; fi
+          test -n "$expected"
+          test "$(git rev-parse --verify 'HEAD^{commit}')" = "$expected"
+      - name: Commit identity guard
+        run: python3 tools/check_commit_identity.py
+
   fast:
+    needs: pr-head-identity
+    if: ${{ always() }}
     name: Linux fast checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -24,6 +68,21 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Require successful PR HEAD identity check
+        if: ${{ always() }}
+        run: test '${{ needs.pr-head-identity.result }}' = success
+
+      - name: Verify current PR merge-result
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          SEREA_EVENT_NAME: ${{ github.event_name }}
+          SEREA_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SEREA_PR_NUMBER: ${{ github.event.pull_request.number }}
+          SEREA_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SEREA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}
+        run: python3 tools/verify_pr_merge_result.py
 
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
@@ -42,11 +101,11 @@ jobs:
       - name: Workspace smoke regression tests
         run: python3 -m unittest discover -s tests -p workspace_smoke_tests.py
 
-      - name: Commit identity guard
-        run: python3 tools/check_commit_identity.py
-
       - name: Commit identity guard tests
         run: python3 -m unittest discover -s tests -p commit_identity_tests.py
+
+      - name: PR merge-result verifier tests
+        run: python3 -m unittest discover -s tests -p merge_result_tests.py
 
       - name: Git preflight regression tests
         run: python3 -m unittest discover -s tests -p git_preflight_tests.py

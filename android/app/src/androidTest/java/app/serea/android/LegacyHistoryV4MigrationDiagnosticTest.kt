@@ -190,7 +190,7 @@ class LegacyHistoryV4MigrationDiagnosticTest {
         raw.execSQL("CREATE INDEX index_model_usage_ledger_monthKey_providerId_modelId ON model_usage_ledger(monthKey, providerId, modelId)")
         raw.execSQL(
             "INSERT INTO conversations VALUES (?, ?, ?, ?, ?, NULL)",
-            arrayOf(conversationId, encryptedTitle, 1793232000000L, 1793232003000L, "synthetic-v4-model"),
+            arrayOf<Any?>(conversationId, encryptedTitle, 1793232000000L, 1793232003000L, "synthetic-v4-model"),
         )
         raw.execSQL(
             "INSERT INTO messages (id, conversationId, role, encryptedBody, classification, createdAt, status, origin) VALUES (?, ?, 'USER', ?, 'PRIVATE', 1793232001000, 'COMPLETED', 'USER_AUTHORED')",
@@ -200,15 +200,15 @@ class LegacyHistoryV4MigrationDiagnosticTest {
             "INSERT INTO messages (id, conversationId, role, encryptedBody, classification, createdAt, status, origin) VALUES (?, ?, 'ASSISTANT', ?, 'PUBLIC', 1793232002000, 'COMPLETED', 'MODEL_OUTPUT')",
             arrayOf(assistantMessageId, conversationId, encryptedAssistantBody),
         )
-        raw.execSQL("INSERT INTO usage_settings VALUES (?, ?, ?, ?, ?, ?)", arrayOf(settings.id, settings.dailyRequests, settings.dailyTokens, settings.monthlyRequests, settings.monthlyTokens, settings.lastObservedAt))
-        raw.execSQL("INSERT INTO usage_windows VALUES (?, ?, ?, ?)", arrayOf(window.windowKey, window.requests, window.inputTokens, window.outputTokens))
+        raw.execSQL("INSERT INTO usage_settings VALUES (?, ?, ?, ?, ?, ?)", arrayOf<Any?>(settings.id, settings.dailyRequests, settings.dailyTokens, settings.monthlyRequests, settings.monthlyTokens, settings.lastObservedAt))
+        raw.execSQL("INSERT INTO usage_windows VALUES (?, ?, ?, ?)", arrayOf<Any?>(window.windowKey, window.requests, window.inputTokens, window.outputTokens))
         reservations.forEach { row ->
-            raw.execSQL("INSERT INTO usage_reservations VALUES (?, ?, ?, ?, ?, ?)", arrayOf(row.requestId, row.dayKey, row.monthKey, row.inputTokens, row.outputTokens, row.state))
+            raw.execSQL("INSERT INTO usage_reservations VALUES (?, ?, ?, ?, ?, ?)", arrayOf<Any?>(row.requestId, row.dayKey, row.monthKey, row.inputTokens, row.outputTokens, row.state))
         }
         ledgers.forEach { row ->
             raw.execSQL(
                 "INSERT INTO model_usage_ledger VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                arrayOf(row.requestId, row.modelId, row.providerId, row.createdAt, row.dayKey, row.monthKey,
+                arrayOf<Any?>(row.requestId, row.modelId, row.providerId, row.createdAt, row.dayKey, row.monthKey,
                     row.estimatedInputTokens, row.reservedOutputTokens, row.providerInputTokens, row.providerOutputTokens,
                     row.usageStatus, row.costStatus, row.estimatedCost, row.currency, row.pricingSource,
                     row.pricingVerifiedAt, row.inputPricePerMillion, row.outputPricePerMillion,

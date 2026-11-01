@@ -185,6 +185,30 @@ The Calendar Mock E2E, Owner readiness materials, AI/Product/Usage acceptance co
 
 Owner decisions O-01 through O-03 remain pending on the 2026-11-03 and 2026-11-10 schedule. Calendar real OAuth and real AI acceptance remain `NOT_RUN` for the 2026-11-20 target; Gmail real read remains `NOT_RUN` for the 2026-11-30 target. No schedule date overrides the approval boundaries.
 
+## G7 latest-main integration recovery — 2026-11-01
+
+PR #139 was integrated locally with a normal merge commit and retargeted to `main`. The current candidate is PR HEAD `f648d10133ab7d7db4d43283464e5a14f7ca70ed`, parent `5fe8a17bbc354c7112409a88673b42d23594ef06`; the merge commit `5fe8a17` has parents old G7 HEAD `0560e1e7bcd13f0194eab8caca89d70ea5a2f142` and main `e79d9f92072e6f4ac78829418ea8b85f3955ad06`. GitHub reports current PR merge-result `52de0dfe33110d4319481694ce31e9d7a1a45060`, with first parent main `e79d9f9…` and second parent candidate HEAD `f648d10…`. The PR remains OPEN / Draft. The main-to-PR diff is limited to the four G7 files listed above.
+
+The only workflow change after the merge is the PR base branch filter for the non-required G7 focused workflow, changed from the old G6 integration branch to `main`, so the check can run for this retargeted PR. The workflow remains `contents: read`, checks out the exact PR HEAD with `persist-credentials: false`, uses no secrets, and runs PR-controlled Gradle without privileged credentials. Independent security review D accepted the merge and this trigger edit. Review scope is limited to these changes and does not establish OAuth protocol coverage.
+
+Local validation on the final source commit: commit identity passed for 11 introduced commits; YAML parse, docs validation (196 Markdown files), and `git diff --check` passed; focused Python regressions passed 71/71. The Calendar Mock Gradle test is **NOT_RUN locally**: dependency resolution stalled at `:app:checkDebugAarMetadata` after an earlier attempt failed with Java PKIX certificate-chain validation from `dl.google.com`; no Kotlin compilation or test execution was reached. The local candidate is not evidence of a Gradle test pass.
+
+The following runs were created at `2026-11-01T22:24:35Z`, before PR #139 was retargeted from G6 to main at `22:24:48Z`; they are **pre-retarget evidence and cannot satisfy current-main validation**: Fast `41356981889`, Full `41356981876`, Android `41356981916`, Git hooks `41356981902`, SQLite `41356981957`, Rust Security `41356981890`, Native `41356982024`. Fast failed closed because its event payload contained old base `9133a565f28a25b26fee052221dab9e2cdfb3e0f` and old expected merge `90f748b9dcfbc8e8061f68e1f7191d4525141877`, while the PR merge ref changed after retargeting. This is a stale-event failure, not a verifier defect. Fresh PR-event runs against base `e79d9f9…`, HEAD `f648d10…`, and merge-result `52de0dfe…` are required. The initial Android Required failure in main run `41325455702` remains a separate P0 blocker: API35 Formal Required did not run after its prediagnostic failure; it is not repaired or cleared by this G7 work.
+
+### OAuth and release-scope evidence classification
+
+| Contract | Current evidence/status |
+|---|---|
+| Synthetic fixture consent, Calendar-only read, account-switch block/no subsequent dispatch | G7 local test source plus prior GitHub focused run on an older SHA; current candidate's exact-head focused workflow result pending |
+| Authorization `state`, redirect/callback integrity, PKCE | **NOT_IMPLEMENTED / NOT_RUN** in the Play Services gateway abstraction and this synthetic HTTP test |
+| Real Play Services account selection/consent | **NOT_RUN** |
+| Token expiry, revocation, cancellation, stale-session and replay rejection | Existing unit/provider tests cover selected mock contracts; not exercised by the single G7 focused E2E; no real OAuth run |
+| OAuth callback/process-death restoration | **NOT_IMPLEMENTED / NOT_RUN**; G6 general Android Process Death evidence is not OAuth callback evidence |
+| Real Google account, Calendar data, OAuth endpoints, production credentials | **NOT_RUN** |
+| G6 handoff / local-model / Cloud Egress adversarial suites at this exact G7 candidate | Awaiting fresh exact-head GitHub CI; not inferred from this focused test |
+
+Do not label PR #139 main-merge-ready until fresh checks validate the current Base/Head/merge-result, the outstanding main API35 Required failure is resolved, and required Android/API26/API35 and Identity outcomes are successful. Personal Beta remains NO-GO.
+
 
 ## G7 closure update — 2026-10-29 exact SQLite retry completed
 

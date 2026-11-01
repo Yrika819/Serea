@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
+      - main
       - codex/serea-g4-final-integration-candidate-20261027
     paths:
       - .github/workflows/android-api35-real-ime-independent-bc.yml
@@ -33,6 +34,7 @@ env:
   TEST_APK: android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk
   IME_APK: android/r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk
   DIAGNOSTIC_BASE_SHA: b06c1acd5f3ddb4f59f0cad6ae1a1d291b086671
+  CURRENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
 
 jobs:
   build-diagnostic-apks:
@@ -43,6 +45,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
@@ -70,52 +73,68 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git cat-file -e "${CURRENT_BASE_SHA}^{commit}"
+          git merge-base --is-ancestor "$CURRENT_BASE_SHA" HEAD
           git merge-base --is-ancestor "$DIAGNOSTIC_BASE_SHA" HEAD
-          unexpected="$(git diff --name-only "$DIAGNOSTIC_BASE_SHA" HEAD | awk '
-            $0 != ".github/workflows/android-api35-real-ime-independent-bc.yml" &&
-            $0 !~ /^tools\/run_serea_phase_r3_single_ime_case\.sh$/ &&
-            $0 !~ /^tools\/serea_real_ime_avd_guards\.sh$/ &&
-            $0 !~ /^tools\/test_serea_real_ime_avd_guards\.sh$/ &&
-            $0 !~ /^docs\/verification\/api35-real-ime-independent-bc\.md$/ &&
-            $0 != "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt" &&
-            $0 != "android/app/src/debug/AndroidManifest.xml" &&
-            $0 != "android/app/src/isolated/AndroidManifest.xml" &&
-            $0 != "android/app/build.gradle.kts" &&
-            $0 != "tools/verify_serea_real_ime_manifest_scope.py" &&
-            $0 != "android/app/src/main/java/app/serea/android/MainActivity.kt" &&
-            $0 != "android/app/src/test/java/app/serea/android/CloudEgressBodyLineageAttackMatrixTest.kt" &&
-            $0 != "docs/agent-reports/g5-orchestrator-ledger.md" &&
-            $0 != "docs/agent-reports/g5-cloud-egress.md" &&
-            $0 !~ /^docs\/agent-reports\/evidence\/g5-cloud-egress-20261028\// &&
-            $0 != "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt" &&
-            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java" &&
-            $0 != "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java" &&
-            $0 != "android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt" &&
-            $0 != "android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt" &&
-            $0 != "docs/agent-reports/g2-google-policy-readiness-2026-10-28.md" &&
-            $0 != "docs/agent-reports/g2-p0-backend-acceptance-review.md" &&
-            $0 != "docs/agent-reports/g4-orchestrator-ledger.md" &&
-            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/gradle-summary.txt" &&
-            $0 != "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/sha256sums.txt" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle.log" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle-exact-head-dfc139c.log" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/summary.txt" &&
-            $0 != "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/sha256sums.txt" { print }
-          ')"
-          if [[ -n "$unexpected" ]]; then
-            printf 'Unexpected changes since diagnostic base:\n%s\n' "$unexpected" >&2
+          paths_file="$(mktemp)"
+          trap 'rm -f "$paths_file"' EXIT
+          git diff --name-only --no-renames -z "$DIAGNOSTIC_BASE_SHA" HEAD > "$paths_file"
+          unexpected=()
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              ".github/workflows/android-api35-real-ime-independent-bc.yml"|\
+              "tools/run_serea_phase_r3_single_ime_case.sh"|\
+              "tools/serea_real_ime_avd_guards.sh"|\
+              "tools/test_serea_real_ime_avd_guards.sh"|\
+              "docs/verification/api35-real-ime-independent-bc.md"|\
+              "android/app/src/androidTest/java/app/serea/android/diagnostics/IndependentImeCompositionTest.kt"|\
+              "android/app/src/debug/AndroidManifest.xml"|\
+              "android/app/src/isolated/AndroidManifest.xml"|\
+              "android/app/build.gradle.kts"|\
+              "tools/verify_serea_real_ime_manifest_scope.py"|\
+              "android/app/src/main/java/app/serea/android/MainActivity.kt"|\
+              "android/app/src/test/java/app/serea/android/CloudEgressBodyLineageAttackMatrixTest.kt"|\
+              "docs/agent-reports/g5-orchestrator-ledger.md"|\
+              "docs/agent-reports/g5-cloud-egress.md"|\
+              "docs/agent-reports/evidence/g5-cloud-egress-20261028/"*|\
+              "android/app/src/androidTest/java/app/serea/android/SereaAppShellTest.kt"|\
+              "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeDiagnosticsProvider.java"|\
+              "android/r25-ime-test/src/main/java/app/serea/android/diagnostics/RealImeService.java"|\
+              "android/app/src/test/java/app/serea/android/calendar/CalendarProviderSessionsTest.kt"|\
+              "android/app/src/test/java/app/serea/android/googleauth/GoogleAuthorizationTest.kt"|\
+              "docs/agent-reports/g2-google-policy-readiness-2026-10-28.md"|\
+              "docs/agent-reports/g2-p0-backend-acceptance-review.md"|\
+              "docs/agent-reports/g4-orchestrator-ledger.md"|\
+              "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml"|\
+              "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml"|\
+              "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml"|\
+              "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml"|\
+              "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml"|\
+              "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml"|\
+              "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/gradle-summary.txt"|\
+              "docs/agent-reports/evidence/g2-google-lifecycle-races-23da0e6/sha256sums.txt"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.CalendarProviderSessionsTest.xml"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest.xml"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.GmailProviderSessionsTest.xml"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.gmail.transport.GmailHttpReadPortTest.xml"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationLifecycleTest.xml"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/TEST-app.serea.android.googleauth.GoogleAuthorizationTest.xml"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle.log"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/gradle-exact-head-dfc139c.log"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/summary.txt"|\
+              "docs/agent-reports/evidence/g4-google-lifecycle-focused-5e947d2/sha256sums.txt"|\
+              "tests/android_emulator_workflow_tests.py")
+                continue
+                ;;
+            esac
+            if git --literal-pathspecs diff --quiet "$CURRENT_BASE_SHA" HEAD -- "$path"; then
+              continue
+            fi
+            unexpected+=("$path")
+          done < "$paths_file"
+          if ((${#unexpected[@]})); then
+            printf 'Unexpected changes since diagnostic base:\n' >&2
+            printf '  %q\n' "${unexpected[@]}" >&2
             exit 1
           fi
       - name: Run real-IME AVD and cleanup guard regressions
@@ -238,6 +257,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:

@@ -33,6 +33,8 @@ VENDORS = {
         "source_tree_sha256": "7f54a47ca7755e119619c878e839401cce716634baae42db61484700a0c8d57a",
     },
 }
+EXPECTED_CARGO_AUDIT_VERSION = "0.22.2"
+EXPECTED_CARGO_AUDIT_OUTPUT = f"cargo-audit-audit {EXPECTED_CARGO_AUDIT_VERSION}"
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -52,8 +54,15 @@ def vendor_inventory() -> tuple[list[dict], list[str]]:
         if not manifest.is_file() or not vcs.is_file():
             errors.append(f"vendor provenance missing: {rel}")
             continue
-        text = manifest.read_text(encoding="utf-8")
-        metadata = json.loads(vcs.read_text(encoding="utf-8"))
+        try:
+            text = manifest.read_text(encoding="utf-8")
+            metadata = json.loads(vcs.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            errors.append(f"vendor provenance is unreadable or invalid: {rel}: {exc}")
+            continue
+        if not isinstance(metadata, dict):
+            errors.append(f"vendor provenance must be a JSON object: {rel}")
+            continue
         package = metadata.get("git", {}).get("sha1")
         if f'version = "{expected["version"]}"' not in text:
             errors.append(f"unexpected package version in {rel}/Cargo.toml")
@@ -95,14 +104,74 @@ def db_metadata() -> dict:
     return {"commit": rev.stdout.strip(), "last_updated": stamp.stdout.strip()}
 
 
+def checked_scanner_version() -> tuple[str | None, str | None]:
+    """Return the executable's verified version and an error, if any."""
+    declared = os.environ.get("CARGO_AUDIT_VERSION")
+    if declared != EXPECTED_CARGO_AUDIT_VERSION:
+        return None, f"expected cargo-audit version must be {EXPECTED_CARGO_AUDIT_VERSION}"
+    proc = run(["cargo", "audit", "--version"])
+    if proc.returncode:
+        return None, f"cargo-audit version check failed (exit {proc.returncode})"
+    output = (proc.stdout + "\n" + proc.stderr).strip()
+    expected = EXPECTED_CARGO_AUDIT_OUTPUT
+    if output != expected:
+        return output or None, f"unexpected cargo-audit version output: {output or '<empty>'}"
+    return EXPECTED_CARGO_AUDIT_VERSION, None
+
+
+def checked_checkout_sha() -> tuple[str | None, str | None]:
+    """Ensure the revision GitHub reports is the revision being scanned."""
+    proc = run(["git", "rev-parse", "--verify", "HEAD^{commit}"])
+    if proc.returncode:
+        return None, "could not resolve checked-out commit"
+    actual = proc.stdout.strip()
+    expected = os.environ.get("GITHUB_SHA")
+    if not expected or len(expected) != 40 or any(c not in "0123456789abcdef" for c in expected.lower()):
+        return actual, "GITHUB_SHA is missing or malformed"
+    if actual.lower() != expected.lower():
+        return actual, f"checked-out commit {actual} does not match GITHUB_SHA {expected}"
+    dirty = run(["git", "diff", "--quiet", "HEAD", "--"])
+    if dirty.returncode:
+        return actual, "tracked checkout differs from HEAD; refusing to scan a different tree"
+    return actual, None
+
+
+def checked_tree_sha() -> tuple[str | None, str | None]:
+    proc = run(["git", "rev-parse", "--verify", "HEAD^{tree}"])
+    if proc.returncode:
+        return None, "could not resolve checked-out tree"
+    tree = proc.stdout.strip()
+    if len(tree) != 40 or any(c not in "0123456789abcdef" for c in tree.lower()):
+        return tree or None, "checked-out tree SHA is missing or malformed"
+    return tree.lower(), None
+
+
+def load_exceptions(path: Path) -> tuple[list, list[str]]:
+    """Exceptions stay disabled until an externally verifiable approval exists."""
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return [], []
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return [], [f"exception file is unreadable or invalid: {exc}"]
+    if not isinstance(parsed, list):
+        return [], ["exception file must contain a JSON array"]
+    if parsed:
+        return [], ["RustSec exceptions are disabled until Owner approval is externally verifiable"]
+    return [], []
+
+
 def main() -> int:
     OUT.mkdir(exist_ok=True)
+    checkout_sha, checkout_error = checked_checkout_sha()
+    tree_sha, tree_error = checked_tree_sha()
+    scanner_version, scanner_error = checked_scanner_version()
     result = {
         "schema_version": 1,
         "status": "scan_failed",
-        "commit_sha": os.environ.get("GITHUB_SHA") or run(["git", "rev-parse", "HEAD"]).stdout.strip(),
-        "tree_sha": run(["git", "rev-parse", "HEAD^{tree}"]).stdout.strip(),
-        "scanner": {"name": "cargo-audit", "version": os.environ.get("CARGO_AUDIT_VERSION")},
+        "commit_sha": checkout_sha,
+        "tree_sha": tree_sha,
+        "scanner": {"name": "cargo-audit", "version": scanner_version},
         "toolchain": {
             "rustc": run(["rustc", "--version"]).stdout.strip() or None,
             "cargo": run(["cargo", "--version"]).stdout.strip() or None,
@@ -114,8 +183,12 @@ def main() -> int:
         "errors": [],
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
-    if not result["scanner"]["version"]:
-        result["errors"].append("scanner version was not provided")
+    if checkout_error:
+        result["errors"].append(checkout_error)
+    if tree_error:
+        result["errors"].append(tree_error)
+    if scanner_error:
+        result["errors"].append(scanner_error)
     scan_lockfiles = list(LOCKFILES)
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and os.environ.get("FULL_SCAN", "false").lower() != "true":
         scan_lockfiles = ["Cargo.lock"]
@@ -133,6 +206,9 @@ def main() -> int:
                     if any(path == rel or path.startswith(vendor_root + "/") for path in paths):
                         scan_lockfiles.append(rel)
     for rel in scan_lockfiles:
+        if checkout_error or tree_error or scanner_error:
+            result["lockfiles"].append({"path": rel, "exit_code": None, "findings": [], "status": "scan_failed"})
+            continue
         if not (ROOT / rel).is_file():
             result["errors"].append(f"required lockfile missing: {rel}")
             continue
@@ -161,6 +237,7 @@ def main() -> int:
         except (json.JSONDecodeError, AttributeError, TypeError) as exc:
             entry["stderr"] = proc.stderr[-4000:]
             entry["parse_error"] = str(exc)
+            result["errors"].append(f"cargo-audit JSON could not be parsed for {rel}")
         if proc.returncode and not entry["findings"]:
             entry["stderr"] = proc.stderr[-4000:]
         if proc.returncode not in (0, 1):
@@ -182,27 +259,9 @@ def main() -> int:
     # Any unexcepted advisory fails closed. Exceptions require an explicit
     # time-limited record; an owner approval cannot waive scan/result failures.
     exceptions_path = ROOT / "security" / "rust-audit-exceptions.json"
-    exceptions = json.loads(exceptions_path.read_text(encoding="utf-8")) if exceptions_path.exists() else []
-    today = dt.date.today()
+    exceptions, exception_errors = load_exceptions(exceptions_path)
+    result["errors"].extend(exception_errors)
     active = set()
-    for e in exceptions:
-        required = {"advisory_id", "package", "rationale", "expires", "owner_approval"}
-        if not required.issubset(e) or not e.get("rationale"):
-            result["errors"].append("malformed vulnerability exception")
-            continue
-        approval = e["owner_approval"]
-        if not approval.get("approved_by") or not approval.get("approved_at") or not approval.get("approval_ref"):
-            result["errors"].append(f"exception lacks verifiable Owner approval: {e['advisory_id']}")
-            continue
-        try:
-            expiry = dt.date.fromisoformat(e["expires"])
-        except (TypeError, ValueError):
-            result["errors"].append(f"exception has invalid expiry: {e['advisory_id']}")
-            continue
-        if expiry < today:
-            result["errors"].append(f"exception expired: {e['advisory_id']}")
-            continue
-        active.add((e["advisory_id"], e["package"]))
     unexcepted = []
     for lock in result["lockfiles"]:
         for item in lock["findings"]:

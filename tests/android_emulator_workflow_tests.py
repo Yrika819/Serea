@@ -9,12 +9,56 @@ import unittest
 from pathlib import Path
 
 from tools.summarize_android_test_lifecycle import summarize
+from tools.classify_android_changes import classify
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class AndroidEmulatorWorkflowTests(unittest.TestCase):
+    def test_g6_exact_source_focused_workflow_keeps_main_merge_result_gate(self) -> None:
+        focused = (ROOT / ".github/workflows/android-functional-focused.yml").read_text(encoding="utf-8")
+        pull_request = focused.split("  pull_request:", 1)[1].split("  push:", 1)[0]
+        self.assertIn("      - main\n", pull_request)
+        self.assertIn("      - 'tools/assert_exact_source_checkout.sh'", pull_request)
+        self.assertIn("ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}", focused)
+        self.assertIn("EXPECTED_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}", focused)
+        checkout_starts = list(re.finditer(r"(?m)^      - uses: actions/checkout@[^\n]*", focused))
+        self.assertEqual(3, len(checkout_starts))
+        for checkout in checkout_starts:
+            next_step = re.search(r"(?m)^      - ", focused[checkout.end():])
+            stop = checkout.end() + next_step.start() if next_step else len(focused)
+            self.assertIn("persist-credentials: false", focused[checkout.start():stop])
+        self.assertEqual((True, False), classify(["tools/assert_exact_source_checkout.sh"]))
+
+        required = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        self.assertIn("ref: ${{ github.sha }}", required)
+        self.assertNotIn("ref: ${{ github.event.pull_request.head.sha", required)
+        self.assertEqual(2, required.count("python3 tools/verify_pr_merge_result.py"))
+        self.assertEqual(2, required.count("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}"))
+        self.assertIn("SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", required)
+        self.assertIn("BUILD_CHECKOUT_SHA: ${{ github.sha }}", required)
+        self.assertIn('provenance_source_sha" != "$SOURCE_SHA"', required)
+        self.assertIn('provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA"', required)
+
+    def test_android_scope_job_verifies_pr_merge_result_before_classifying(self) -> None:
+        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        match = re.search(
+            r"(?ms)^  android-changes:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            workflow,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        self.assertIn("name: Android Change Scope", body)
+        self.assertIn("ref: ${{ github.sha }}", body)
+        verifier = body.index("name: Verify PR merge-result before Android scope checks")
+        classifier = body.index("name: Classify changed files")
+        self.assertLess(verifier, classifier)
+        verification = body[verifier:classifier]
+        self.assertIn("if: ${{ github.event_name == 'pull_request' }}", verification)
+        self.assertIn("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}", verification)
+        self.assertIn("run: python3 tools/verify_pr_merge_result.py", verification)
+
     def test_real_ime_diagnostic_checkout_is_read_only_and_targets_main(self) -> None:
         workflow = (ROOT / ".github/workflows/android-api35-real-ime-independent-bc.yml").read_text(
             encoding="utf-8"
@@ -728,7 +772,7 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             scripts,
         )
         self.assertIn('build_checkout_commit=$(git rev-parse HEAD)', workflow)
-        self.assertIn('build_checkout_commit=$GITHUB_SHA', workflow)
+        self.assertIn('echo \"build_checkout_commit=$build_checkout_sha\"', workflow)
         self.assertIn('base_commit=$BASE_SHA', workflow)
         self.assertIn('github_run_attempt=$GITHUB_RUN_ATTEMPT', workflow)
         self.assertIn(
@@ -758,7 +802,10 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertEqual(2, workflow.count("python3 tools/verify_pr_merge_result.py"))
         self.assertEqual(2, workflow.count("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}"))
         self.assertNotIn("ref: ${{ github.event.pull_request.head.sha", workflow)
-        self.assertEqual(3, workflow.count("SOURCE_SHA: ${{ github.sha }}"))
+        self.assertIn("SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", workflow)
+        self.assertEqual(1, workflow.count("SOURCE_SHA: ${{ github.sha }}"))
+        self.assertEqual(2, workflow.count("BUILD_CHECKOUT_SHA: ${{ github.sha }}"))
+        self.assertIn('provenance_checkout_sha" != "$GITHUB_SHA"', workflow)
         scope_helper = (ROOT / "tools/classify_android_changes.py").read_text(encoding="utf-8")
         self.assertIn('"tools/"', scope_helper)
         self.assertIn('".github/"', scope_helper)

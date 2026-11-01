@@ -63,6 +63,7 @@ internal object DemoChatComposition {
                     selectedModelId = selected.id,
                     target = EgressTarget.LOCAL_DEMO,
                     plannedBodySourceLineage = request.bodySourceLineage.toSet(),
+                    localDemoGoogleHandoffAuthorization = request.localDemoGoogleHandoffAuthorization,
                 )
             },
         )

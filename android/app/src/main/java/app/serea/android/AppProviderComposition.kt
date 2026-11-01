@@ -6,6 +6,8 @@ import app.serea.android.calendar.FakeCalendarProvider
 import app.serea.android.gmail.FakeGmailProvider
 import app.serea.android.gmail.GmailProviderSession
 import app.serea.android.gmail.GmailProviderSessions
+import app.serea.android.handoff.GoogleTrustedHandoffCoordinator
+import app.serea.android.handoff.trustedHandoffSource
 import androidx.lifecycle.ViewModel
 import java.time.Clock
 import java.util.concurrent.atomic.AtomicBoolean
@@ -17,6 +19,9 @@ internal class AppProviderComposition private constructor(
     val calendarClock: Clock,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
+    /** Session-scoped, in-memory capabilities; previews are not saved across Activity recreation. */
+    val gmailHandoff = GoogleTrustedHandoffCoordinator(gmail.trustedHandoffSource())
+    val calendarHandoff = GoogleTrustedHandoffCoordinator(calendar.trustedHandoffSource())
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

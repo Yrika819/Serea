@@ -98,16 +98,19 @@ jobs:
       - name: Record Pixel 7a reacceptance APK provenance
         env:
           BUILD_TOOLS_VERSION: 35.0.0
-          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BUILD_CHECKOUT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           apk='android/app/build/outputs/apk/debug/app-debug.apk'
           bundle='android/app/build/outputs/pixel7a-reacceptance'
           mkdir -p "$bundle"
           cp "$apk" "$bundle/serea-debug.apk"
+          build_checkout_sha="$(git rev-parse --verify 'HEAD^{commit}')"
+          test "$build_checkout_sha" = "$BUILD_CHECKOUT_SHA"
           {
             echo "source_commit=$SOURCE_SHA"
-            echo "build_checkout_commit=$(git rev-parse HEAD)"
+            echo "build_checkout_commit=$build_checkout_sha"
             echo "github_run_id=${GITHUB_RUN_ID}"
             echo "github_run_attempt=${GITHUB_RUN_ATTEMPT}"
             echo "workflow=${GITHUB_WORKFLOW}"
@@ -692,7 +695,8 @@ jobs:
           path: ${{ runner.temp }}/serea-security
       - name: Assemble CI result manifest and reacceptance bundle
         env:
-          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BUILD_CHECKOUT_SHA: ${{ github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           RUN_ID: ${{ github.run_id }}
           BUILD_RESULT: ${{ needs.android-build.result }}
@@ -704,6 +708,18 @@ jobs:
           INSTRUMENTATION_RESULT: ${{ needs.android-storage-emulator.outputs.instrumentation }}
         run: |
           set -euo pipefail
+          provenance_path="$(find "$RUNNER_TEMP/serea-candidate" -type f -name provenance.txt -print -quit)"
+          test -n "$provenance_path" && test -s "$provenance_path"
+          provenance_source_sha="$(sed -n 's/^source_commit=//p' "$provenance_path")"
+          provenance_checkout_sha="$(sed -n 's/^build_checkout_commit=//p' "$provenance_path")"
+          if [[ "$provenance_source_sha" != "$SOURCE_SHA" || \
+                "$provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA" || \
+                "$provenance_checkout_sha" != "$GITHUB_SHA" ]]; then
+            echo "APK provenance does not match the PR source and tested merge-result." >&2
+            echo "Expected source=$SOURCE_SHA checkout=$BUILD_CHECKOUT_SHA" >&2
+            echo "Artifact source=$provenance_source_sha checkout=$provenance_checkout_sha" >&2
+            exit 1
+          fi
           bundle="$RUNNER_TEMP/serea-pixel7a-final-bundle"
           mkdir -p "$bundle/build" "$bundle/android-ci" "$bundle/api-tests-and-process-death"
           cp -R "$RUNNER_TEMP/serea-candidate/." "$bundle/build/"
@@ -717,7 +733,7 @@ jobs:
           done
           {
             echo "source_commit=$SOURCE_SHA"
-            echo "build_checkout_commit=$GITHUB_SHA"
+            echo "build_checkout_commit=$provenance_checkout_sha"
             echo "base_commit=$BASE_SHA"
             echo "github_run_id=$RUN_ID"
             echo "github_run_attempt=$GITHUB_RUN_ATTEMPT"

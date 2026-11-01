@@ -495,6 +495,12 @@ internal class UsageControlledModelChatPort(
                 usage.outcomeUnknown(request.sendId, "A downstream local rejection could not safely release its reservation.")
             }
             throw rejected
+        } catch (cancelled: PreDispatchModelChatCancellation) {
+            val released = withContext(NonCancellable) { usage.releaseBeforeDispatch(request.sendId) }
+            if (!released) withContext(NonCancellable) {
+                usage.outcomeUnknown(request.sendId, "A pre-dispatch cancellation could not safely release its reservation.")
+            }
+            throw cancelled
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) { usage.outcomeUnknown(request.sendId, "Request was cancelled after reservation; remote outcome may be unknown.") }
             throw cancelled

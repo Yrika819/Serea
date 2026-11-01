@@ -116,6 +116,22 @@ class MergeResultTests(unittest.TestCase):
                 with self.assertRaises(verifier.VerificationError):
                     verifier.verify(env)
 
+    def test_full_linux_stable_checks_the_merge_result_it_tests(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / ".github" / "workflows" / "full-ci.yml").read_text()
+        match = re.search(
+            r"(?ms)^  linux-stable:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            source,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        expected = "${{ github.event_name == 'pull_request' && github.sha || github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}"
+        checkout = body.split("      - name: Checkout exact validation target", 1)[1].split("      - name:", 1)[0]
+        self.assertIn(f"ref: {expected}", checkout)
+        self.assertIn(f"EXPECTED_SOURCE_SHA: {expected}", body)
+        self.assertIn("name: Verify current PR merge-result", body)
+        self.assertIn("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}", body)
+
     def test_fast_and_full_workflows_end_with_success_gated_pr_recheck(self):
         root = Path(__file__).resolve().parents[1]
         for workflow, job, last_check in (

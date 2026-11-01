@@ -9,7 +9,9 @@ root workspace lockfile and each checked-in vendored or standalone lockfile:
 - `vendor/jsonschema-value/regression-tests/Cargo.lock`
 
 The scanner is pinned to cargo-audit 0.22.2 and runs under the current stable
-Rust toolchain. The product build remains on its declared MSRV, Rust 1.85.0;
+Rust toolchain. Installation errors fail the workflow, the workflow checks the
+installed version, and the scanner independently verifies the executable
+version before scanning. The product build remains on its declared MSRV, Rust 1.85.0;
 the scanner does not compile or alter the product. CI has `contents: read`, no
 secrets, and checkout credentials are disabled.
 
@@ -42,15 +44,17 @@ performs semantic source analysis.
 
 ## Exceptions and release policy
 
-Exceptions live in `security/rust-audit-exceptions.json`. Each item must name
-the RustSec advisory ID and affected package, give a specific rationale, set
-an ISO date expiry, and include verifiable Owner approval (`approved_by`,
-`approved_at`, `approval_ref`). The gate rejects malformed, expired, or
-unapproved exceptions. Exceptions only apply to that exact advisory/package
-pair; they cannot waive missing evidence or scanner failures. There are no
-standing or permanent allowances. Reassess and remove the entry before its
-expiry; an extension requires a new explicit Owner approval and expiry.
+`security/rust-audit-exceptions.json` is empty and exceptions are disabled. The
+current `owner_approval` fields are plain repository data; non-empty names,
+timestamps, or references do not prove that an Owner approved them. The scanner
+therefore fails closed on any non-empty exception list until an external,
+verifiable approval mechanism is implemented and independently reviewed. No
+exception can waive missing evidence, scanner failures, or vulnerability
+findings in the current gate.
 
-Normal pull requests run the lockfile and vendor checks. Main pushes, version
-and release-candidate tags, and manual dispatches run the same complete scan
+Before scanning, the scanner verifies that `GITHUB_SHA` equals the checked-out
+commit; checkout explicitly uses that SHA. Normal pull requests run the root
+lockfile and any changed vendored/standalone lockfiles, plus vendor source
+integrity checks. Main pushes, version and release-candidate tags, and manual
+dispatches run the same complete scan
 against the exact checked-out revision. The artifact is retained for 90 days.

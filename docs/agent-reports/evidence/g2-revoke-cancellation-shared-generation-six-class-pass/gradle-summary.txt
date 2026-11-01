@@ -1,0 +1,20 @@
+G2 revoke cancellation with shared revoke-generation six-class JVM suite
+Source code SHA: a097e023f07041b12b857dd805a12519693efafa
+Source tree: 4f467f8eddd0e7996a0e46eff7ed4be42b4e8d47
+Branch: codex/serea-g2-revoke-cancellation
+Gradle command (from android/):
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --console=plain --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+Execution: local Gradle tool session 67648; Gradle 8.14.6; Temurin JDK 21 at /workspace/jdk21.
+JVM result: BUILD SUCCESSFUL, exit 0.
+- GoogleAuthorizationLifecycleTest: 7 tests, 0 failures, 0 errors, 0 skipped
+- GoogleAuthorizationTest: 29 tests, 0 failures, 0 errors, 0 skipped
+- GmailProviderSessionsTest: 13 tests, 0 failures, 0 errors, 0 skipped
+- GmailHttpReadPortTest: 11 tests, 0 failures, 0 errors, 0 skipped
+- CalendarProviderSessionsTest: 12 tests, 0 failures, 0 errors, 0 skipped
+- GoogleCalendarHttpReadPortTest: 20 tests, 0 failures, 0 errors, 0 skipped
+- TOTAL: 92 tests, 0 failures, 0 errors, 0 skipped
+Full JVM Gradle output: gradle-run.log (tool session 67648).
+Isolated AndroidTest source compile: ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin --rerun-tasks --console=plain; BUILD SUCCESSFUL, 26 tasks executed, local Gradle tool session 38059.
+Full isolated compile output: isolated-android-test-compile.log.
+The two shared-generation regressions also passed individually (1/1 each; combined Gradle tool session 63717): GmailProviderSessionsTest#sharedGrantGenerationRejectsGmailResultBeforeObserverNotification and CalendarProviderSessionsTest#sharedGrantGenerationRejectsCalendarResultBeforeObserverNotification.
+No emulator/formal campaign, CI run, live account, OAuth UI, Google API endpoint, token, or secret was used.

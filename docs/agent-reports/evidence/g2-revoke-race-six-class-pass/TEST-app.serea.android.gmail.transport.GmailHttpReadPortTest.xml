@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.gmail.transport.GmailHttpReadPortTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-27T12:34:54.756Z" hostname="b49fd8b02ed6" time="0.265">
+  <properties/>
+  <testcase name="messageLookupRejectsAResponseForAnotherId" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.01"/>
+  <testcase name="httpErrorsAreTypedAndNeverExposeProviderBody" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.017"/>
+  <testcase name="accountSwitchDuringTokenLeaseAcquisitionRejectsBeforeHttpDispatch" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.004"/>
+  <testcase name="mockGoogleAuthorizationCannotAuthorizeTheHttpAdapter" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.001"/>
+  <testcase name="oversizedAndMalformedResponsesFailWithStableError" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.017"/>
+  <testcase name="searchQueryIsEncodedAndThreadFetchVerifiesMessageOwnership" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.054"/>
+  <testcase name="googleBridgeRequestsOnlyGmailReadOnlyAndRejectsLeasesWithoutIt" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.004"/>
+  <testcase name="invalidatedTokenLeaseDoesNotReachTheServer" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.001"/>
+  <testcase name="communicationFailureTimeoutAndCancellationAreBounded" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.106"/>
+  <testcase name="deniedMissingAndExpiredAuthorizationFailBeforeTokensOrHttp" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.003"/>
+  <testcase name="inboxListsPageAndFetchesOnlyReadOnlyFullMessages" classname="app.serea.android.gmail.transport.GmailHttpReadPortTest" time="0.045"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[Oct 27, 2026 12:34:54 PM okhttp3.mockwebserver.MockWebServer$SocketHandler handle
+WARNING: MockWebServer[44953] connection from /127.0.0.1 didn't make a request
+]]></system-err>
+</testsuite>

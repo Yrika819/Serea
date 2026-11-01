@@ -1251,19 +1251,25 @@ fn f25_two_integration_test_binaries_get_distinct_temp_paths() {
         binary_identity()
     );
 
-    // Two genuinely distinct executables in two distinct processes. The second
-    // is a byte-for-byte copy of this test binary under another file name, so
-    // its `current_exe()` really differs.
+    // Two genuinely distinct executables in two distinct processes. This test
+    // process is the first probe; the second is a byte-for-byte copy of this
+    // test binary under another file name, so its `current_exe()` really differs.
     let copy = own.dir.join("serea_p2h_second_integration_binary");
     fs::copy(std::env::current_exe().unwrap(), &copy).unwrap();
     let report = own.dir.join("probe.txt");
-    let first = spawn(
-        PROBE,
-        &[(ROLE, "probe"), (TARGET, report.to_str().unwrap())],
-        &std::env::temp_dir(),
-    );
-    let first = wait_with_output_bounded(first, "F25 first binary identity probe");
-    assert!(first.status.success(), "{}", describe(&first));
+    fs::write(
+        &report,
+        format!(
+            "{}|{}\n",
+            std::env::current_exe()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
+            own.dir.display()
+        ),
+    )
+    .unwrap();
     let second = Command::new(&copy)
         .args(["--exact", PROBE, "--nocapture", "--test-threads=1"])
         .env(ROLE, "probe")

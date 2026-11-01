@@ -84,7 +84,17 @@ impl Store {
         .map_err(|_| StoreError::Open)?;
         conn.busy_timeout(Duration::from_millis(5000))?;
         // Revalidate on the actual connection before changing journal mode.
-        migrate::inspect(&conn, catalog, fresh)?;
+        migrate::inspect(&conn, catalog, fresh).map_err(|error| {
+            // Two first openers can both observe an absent/empty path. If the
+            // other opener has created the SQLite file but not committed its
+            // catalog yet, SQLite can report NotADatabase for this transient
+            // bootstrap state. Let the caller retry after that opener finishes;
+            // subsequent opens still validate and reject a persistent foreign file.
+            match (fresh, error) {
+                (true, StoreError::NotSereaStore) => StoreError::Busy,
+                (_, other) => other,
+            }
+        })?;
         migrate::page_check(&conn, "PRAGMA quick_check")?;
         if fresh {
             // Do not publish a nonempty WAL header with no committed migration

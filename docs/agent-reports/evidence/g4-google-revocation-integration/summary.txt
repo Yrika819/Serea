@@ -1,0 +1,20 @@
+G4 integrated Google lifecycle verification (local, no Emulator)
+Source inputs: G4 working tree at parent commit 80f20aa5257cff6bb18a087d6518d62b4001e41f plus the G1-accepted G2 patch from commit 69c9bcb3118343fbcbc4d7595125525420744a7b, and the separately reviewed ADB lifecycle helper.
+Focused command from android/: ./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+Result: PASS; TOTAL 84 tests, 0 failures, 0 errors, 0 skipped.
+Compile command from android/: ./gradlew --no-daemon :app:compileIsolatedAndroidTestKotlin --rerun-tasks
+Compile result: PASS; BUILD SUCCESSFUL; 26 tasks executed, including :app:compileIsolatedAndroidTestKotlin.
+Raw Gradle logs are preserved losslessly as gzip files to avoid trailing-space noise in review: `gradle-six-class.log.gz` (raw SHA-256 `a90b55d0b09b62bf71656ba31b27a9dddfbdb7ddba7994ef747af684d644dc3b`) and `gradle-androidtest-compile.log.gz` (raw SHA-256 `1f490fa9e36e9b6b691e29db4472e3894da08e5e59ce2d9a2ef842bc4a73954a`).
+No Emulator or real Google account/OAuth was used.
+
+Identity harness helper recheck (2026-10-27, local worktree):
+`python3 -m unittest tests.android_emulator_workflow_tests -v` — PASS, 29/29, 0 failures/errors/skips; captured output is `identity-harness-unittest.txt`.
+`bash -n tools/test_personal_beta_identity.sh tools/android_emulator_lifecycle.sh` and `git diff --check` — PASS.
+
+Per-class JUnit totals:
+app.serea.android.calendar.CalendarProviderSessionsTest: 9 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest: 20 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.gmail.GmailProviderSessionsTest: 10 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.gmail.transport.GmailHttpReadPortTest: 11 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.googleauth.GoogleAuthorizationLifecycleTest: 7 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.googleauth.GoogleAuthorizationTest: 27 tests, 0 failures, 0 errors, 0 skipped

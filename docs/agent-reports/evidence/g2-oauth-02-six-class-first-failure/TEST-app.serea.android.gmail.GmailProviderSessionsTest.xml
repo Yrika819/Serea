@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.gmail.GmailProviderSessionsTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-27T13:03:44.949Z" hostname="b49fd8b02ed6" time="1.104">
+  <properties/>
+  <testcase name="delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.021"/>
+  <testcase name="delayedGmailResponseIsDeniedAfterAppLocalDisable" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="1.006"/>
+  <testcase name="accountSwitchDuringTokenLeaseAcquisitionCannotDispatchAGmailRequest" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.003"/>
+  <testcase name="callerCancellationStillCancelsItsOwnGmailRead" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.007"/>
+  <testcase name="ownerEnabledSessionUsesTheProductionAdapterAndReplacementInvalidatesIt" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.05"/>
+  <testcase name="unknownAccountBindingAndExpiredAuthorizationFailBeforeNetwork" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.003"/>
+  <testcase name="responseAlreadyProducedByOldSessionIsDeniedWhenAccountSwitchWinsBeforeDelivery" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.002"/>
+  <testcase name="replacingSessionImmediatelyAfterLeaseAcquisitionPreventsHttpDispatch" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.003"/>
+  <testcase name="defaultAndMockAuthorizationStayOnClearlyFakeProvider" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.003"/>
+  <testcase name="replacingSessionCancelsConcurrentReadsWithoutCancellingTheirParentOrSiblingCommunication" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

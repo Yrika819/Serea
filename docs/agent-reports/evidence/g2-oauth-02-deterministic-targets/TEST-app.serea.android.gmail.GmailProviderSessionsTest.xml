@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.gmail.GmailProviderSessionsTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-27T13:06:47.195Z" hostname="b49fd8b02ed6" time="0.012">
+  <properties/>
+  <testcase name="delayedGmailResponseIsDeniedAfterAppLocalDisable" classname="app.serea.android.gmail.GmailProviderSessionsTest" time="0.012"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

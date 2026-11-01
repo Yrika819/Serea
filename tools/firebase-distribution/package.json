@@ -1,0 +1,10 @@
+{
+  "name": "serea-rel-c-firebase-cli",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Locked Firebase CLI used by the REL-C release workflow",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "firebase-tools": "15.34.1"
+  }
+}

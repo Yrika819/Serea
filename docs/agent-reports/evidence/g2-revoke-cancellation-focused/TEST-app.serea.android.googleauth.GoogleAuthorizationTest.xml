@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.serea.android.googleauth.GoogleAuthorizationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-27T12:47:58.669Z" hostname="b49fd8b02ed6" time="0.003">
+  <properties/>
+  <testcase name="cancelledRevokeCallerKeepsAuthorizationBlockedUntilRemoteTaskIsTerminal" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.002"/>
+  <testcase name="cancelledAuthorizationWaitsForIdentityTaskBeforeReleasingSharedGate" classname="app.serea.android.googleauth.GoogleAuthorizationTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

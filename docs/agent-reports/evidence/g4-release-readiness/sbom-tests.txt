@@ -1,0 +1,14 @@
+test_checked_in_lockfile_generates_complete_deterministic_coordinate_inventory (android_lockfile_sbom_tests.AndroidLockfileSbomTests.test_checked_in_lockfile_generates_complete_deterministic_coordinate_inventory) ... ok
+test_cli_refuses_to_overwrite_source_lockfile (android_lockfile_sbom_tests.AndroidLockfileSbomTests.test_cli_refuses_to_overwrite_source_lockfile) ... SBOM generation failed: SBOM output must not overwrite the Gradle lockfile.
+ok
+test_cli_writes_json_bom_without_touching_repository_lockfile (android_lockfile_sbom_tests.AndroidLockfileSbomTests.test_cli_writes_json_bom_without_touching_repository_lockfile) ... ok
+test_dynamic_versions_are_rejected (android_lockfile_sbom_tests.AndroidLockfileSbomTests.test_dynamic_versions_are_rejected) ... ok
+test_empty_configuration_marker_is_not_emitted_as_a_library (android_lockfile_sbom_tests.AndroidLockfileSbomTests.test_empty_configuration_marker_is_not_emitted_as_a_library) ... ok
+test_invalid_source_sha_is_rejected (android_lockfile_sbom_tests.AndroidLockfileSbomTests.test_invalid_source_sha_is_rejected) ... ok
+test_malformed_and_duplicate_lockfile_entries_are_rejected (android_lockfile_sbom_tests.AndroidLockfileSbomTests.test_malformed_and_duplicate_lockfile_entries_are_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.007s
+
+OK
+Generated 325 locked components at /tmp/tmp32n7k_kq/evidence/android.cdx.json

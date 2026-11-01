@@ -1,0 +1,428 @@
+name: Serea Phase R3 Real IME Diagnostic (Non-Required)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/serea-phase-r3-api35-ime]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: serea-r3-ime-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '17'
+  TARGET_APK: android/app/build/outputs/apk/isolated/app-isolated.apk
+  TEST_APK: android/app/build/outputs/apk/androidTest/isolated/app-isolated-androidTest.apk
+  IME_APK: android/r25-ime-test/build/outputs/apk/debug/r25-ime-test-debug.apk
+
+jobs:
+  build-diagnostic-apks:
+    name: Build isolated diagnostic APKs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install API 26/35 compile packages
+        run: sdkmanager 'platforms;android-26' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build target, instrumentation, and separately packaged Test IME once
+        working-directory: android
+        run: ./gradlew --no-daemon :app:assembleIsolated :app:assembleIsolatedAndroidTest :r25-ime-test:assembleDebug
+      - name: Record source and APK provenance
+        run: |
+          mkdir -p evidence/apks
+          cp "$TARGET_APK" "$TEST_APK" "$IME_APK" evidence/apks/
+          {
+            echo "source_commit=$(git rev-parse HEAD)"
+            echo "source_tree=$(git rev-parse 'HEAD^{tree}')"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            sha256sum evidence/apks/*.apk
+          } | tee evidence/apks/provenance.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-phase-r3-diagnostic-apks
+          path: evidence/apks/
+          if-no-files-found: error
+          retention-days: 30
+
+  api35-startup-baseline:
+    name: API 35 baseline without Test IME
+    needs: build-diagnostic-apks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    outputs:
+      kvm: ${{ steps.accel.outputs.kvm }}
+      methods: ${{ steps.gate.outputs.methods }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install API 35 image and emulator
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-phase-r3-diagnostic-apks
+          path: ${{ runner.temp }}/serea-r3-apks
+      - id: host
+        name: Record runner resources and initial KVM state
+        run: |
+          mkdir -p evidence/host
+          {
+            uname -a
+            id; id -nG
+            echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"
+            echo "vcpus=$(nproc)"
+            lscpu
+            grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+            echo 'cpu_cgroup:'; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
+            echo 'memory_cgroup:'; cat /sys/fs/cgroup/memory.max 2>/dev/null || true
+            free -h
+            echo 'cpu_pressure:'; cat /proc/pressure/cpu 2>/dev/null || true
+            echo 'memory_pressure:'; cat /proc/pressure/memory 2>/dev/null || true
+            ls -l /dev/kvm 2>&1 || true
+            stat -Lc 'kvm_owner=%U kvm_group=%G kvm_mode=%a' /dev/kvm 2>&1 || true
+            "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true
+            "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
+          } | tee evidence/host/runner.txt
+      - id: accel
+        name: Apply disposable-runner KVM permissions and verify acceleration
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+          sudo usermod -a -G kvm "$(id -un)"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          getent group kvm | tee evidence/host/kvm-group-after.txt
+          if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+            stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
+            echo 'kvm=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'kvm=false' >> "$GITHUB_OUTPUT"
+            echo 'KVM absent or unusable after the repository runner permission procedure; API 35 is BLOCKED, without TCG fallback.' | tee evidence/host/kvm-blocked.txt
+            ls -l /dev/kvm >> evidence/host/kvm-blocked.txt 2>&1 || true
+          fi
+      - id: smoke
+        name: API 35 Test IME-absent instrumentation startup
+        if: steps.accel.outputs.kvm == 'true'
+        continue-on-error: true
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect
+          script: |
+            mkdir -p "$SEREA_R3_OUT"
+            emulator -list-avds > "$SEREA_R3_OUT/avds.txt" 2>&1 || true
+            find "$HOME/.android/avd" -maxdepth 2 -type f -name config.ini -print -exec cat {} \; > "$SEREA_R3_OUT/avd-config.txt" 2>&1 || true
+            adb shell getprop sys.boot_completed > "$SEREA_R3_OUT/boot-completed.txt"
+            adb shell getprop ro.build.fingerprint > "$SEREA_R3_OUT/fingerprint.txt"
+            bash tools/run_serea_phase_r3_ci_case.sh
+        env:
+          SEREA_R3_CASE: case0-no-ime-installed
+          SEREA_R3_OUT: ${{ runner.temp }}/serea-r3-case0
+          SEREA_R3_APKS: ${{ runner.temp }}/serea-r3-apks
+      - id: gate
+        name: Export startup smoke result for dependent jobs
+        if: always() && !cancelled()
+        run: |
+          methods=0
+          if [[ "${{ steps.accel.outputs.kvm }}" == "true" ]] && grep -Fq 'startup_smoke=PASS' "$RUNNER_TEMP/serea-r3-case0/case.txt"; then
+            methods=1
+          fi
+          echo "methods=$methods" >> "$GITHUB_OUTPUT"
+          echo "API 35 baseline startup smoke methods=$methods" >> "$GITHUB_STEP_SUMMARY"
+      - name: Write blocked marker if KVM is unavailable
+        if: steps.accel.outputs.kvm != 'true'
+        run: mkdir -p evidence/api35-case0 && echo NOT_RUN_KVM_UNAVAILABLE > evidence/api35-case0/status.txt
+      - name: Preserve startup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: serea-phase-r3-api35-case0
+          path: |
+            ${{ runner.temp }}/serea-r3-case0/
+            evidence/host/
+            evidence/api35-case0/
+          if-no-files-found: warn
+          retention-days: 30
+
+  api35-ime-state-matrix:
+    name: API 35 startup IME state ${{ matrix.label }}
+    needs: build-diagnostic-apks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - label: installed-disabled
+            case: case1-ime-installed-disabled
+          - label: enabled-not-selected
+            case: case2-ime-enabled-not-selected
+          - label: selected
+            case: case3-ime-selected
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install API 35 image and emulator
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-phase-r3-diagnostic-apks
+          path: ${{ runner.temp }}/serea-r3-apks
+      - id: host
+        name: Record runner resources and initial KVM state
+        run: |
+          mkdir -p evidence/host
+          {
+            uname -a; id; id -nG; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH"; echo "vcpus=$(nproc)"; lscpu; grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+            echo 'cpu_cgroup:'; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
+            echo 'memory_cgroup:'; cat /sys/fs/cgroup/memory.max 2>/dev/null || true
+            free -h; cat /proc/pressure/cpu 2>/dev/null || true; cat /proc/pressure/memory 2>/dev/null || true
+            ls -l /dev/kvm 2>&1 || true; stat -Lc 'kvm_owner=%U kvm_group=%G kvm_mode=%a' /dev/kvm 2>&1 || true
+            "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true; "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
+          } | tee evidence/host/runner.txt
+      - id: accel
+        name: Apply disposable-runner KVM permissions and verify acceleration
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+          sudo usermod -a -G kvm "$(id -un)"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          getent group kvm | tee evidence/host/kvm-group-after.txt
+          if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+            stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
+            echo 'kvm=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'kvm=false' >> "$GITHUB_OUTPUT"
+            echo 'KVM absent or unusable after the repository runner permission procedure; API 35 is BLOCKED, without TCG fallback.' | tee evidence/host/kvm-blocked.txt
+            ls -l /dev/kvm >> evidence/host/kvm-blocked.txt 2>&1 || true
+          fi
+      - name: Run API 35 startup case
+        if: steps.accel.outputs.kvm == 'true'
+        continue-on-error: true
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect
+          script: |
+            mkdir -p "${{ runner.temp }}/${{ matrix.case }}"
+            export SEREA_R3_CASE='${{ matrix.case }}'
+            export SEREA_R3_OUT='${{ runner.temp }}/${{ matrix.case }}'
+            export SEREA_R3_APKS='${{ runner.temp }}/serea-r3-apks'
+            emulator -list-avds > "$SEREA_R3_OUT/avds.txt" 2>&1 || true
+            find "$HOME/.android/avd" -maxdepth 2 -type f -name config.ini -print -exec cat {} \; > "$SEREA_R3_OUT/avd-config.txt" 2>&1 || true
+            bash tools/run_serea_phase_r3_ci_case.sh
+        env:
+          SEREA_R3_CASE: ${{ matrix.case }}
+          SEREA_R3_OUT: ${{ runner.temp }}/${{ matrix.case }}
+          SEREA_R3_APKS: ${{ runner.temp }}/serea-r3-apks
+      - name: Record KVM block
+        if: steps.accel.outputs.kvm != 'true'
+        run: mkdir -p evidence/case && echo NOT_RUN_KVM_UNAVAILABLE > evidence/case/status.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: serea-phase-r3-api35-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.case }}/
+            evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
+  api35-real-ime-bc:
+    name: API 35 real IME B/C
+    # Do not launch the composition probe while the fresh-AVD startup matrix
+    # is exercising other emulators; this avoids concurrent emulator load on
+    # the hosted runner fleet and keeps foreground recovery diagnostic clean.
+    needs: [build-diagnostic-apks, api35-startup-baseline, api35-ime-state-matrix]
+    if: needs.api35-startup-baseline.outputs.kvm == 'true' && needs.api35-startup-baseline.outputs.methods == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      kvm: ${{ steps.accel.outputs.kvm }}
+      bc: ${{ steps.result.outputs.bc }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install API 35 image and emulator
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-phase-r3-diagnostic-apks
+          path: ${{ runner.temp }}/serea-r3-apks
+      - id: host
+        name: Record runner resources and initial KVM state
+        run: |
+          mkdir -p evidence/host
+          {
+            uname -a; id; id -nG; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH vcpus=$(nproc)"; lscpu; grep -m1 -E '(^flags|^Features)' /proc/cpuinfo
+            cat /sys/fs/cgroup/cpu.max 2>/dev/null || true; cat /sys/fs/cgroup/memory.max 2>/dev/null || true
+            free -h; cat /proc/pressure/cpu 2>/dev/null || true; cat /proc/pressure/memory 2>/dev/null || true
+            ls -l /dev/kvm 2>&1 || true; stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1 || true
+            "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true
+            "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true
+          } | tee evidence/host/runner.txt
+      - id: accel
+        name: Apply disposable-runner KVM permissions and verify acceleration
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+          sudo usermod -a -G kvm "$(id -un)"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          getent group kvm | tee evidence/host/kvm-group-after.txt
+          if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+            stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
+            echo 'kvm=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'kvm=false' >> "$GITHUB_OUTPUT"
+            echo BLOCKED_KVM_UNAVAILABLE > evidence/host/status.txt
+          fi
+      - name: Run real IME B/C on the same built APKs
+        if: steps.accel.outputs.kvm == 'true'
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect
+          script: bash tools/run_serea_phase_r3_real_ime.sh
+        env:
+          SEREA_R3_OUT: ${{ runner.temp }}/serea-r3-api35-real-ime
+          SEREA_R3_APKS: ${{ runner.temp }}/serea-r3-apks
+          SEREA_R3_API: '35'
+          SEREA_R3_RUN_NAV: 'true'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: serea-phase-r3-api35-real-ime-bcd
+          path: |
+            ${{ runner.temp }}/serea-r3-api35-real-ime/
+            evidence/host/
+          if-no-files-found: warn
+          retention-days: 30
+      - id: result
+        name: Gate follow-up navigation on successful independent B/C
+        if: always()
+        run: |
+          if grep -Fxq 'real_ime_BC=PASS' '${{ runner.temp }}/serea-r3-api35-real-ime/metadata.txt'; then
+            echo 'bc=1' >> "$GITHUB_OUTPUT"
+          else
+            echo 'bc=0' >> "$GITHUB_OUTPUT"
+          fi
+
+  api26-final-same-apks:
+    name: API 26 B/C using Phase R3 APK artifacts
+    needs: [build-diagnostic-apks, api35-startup-baseline, api35-real-ime-bc]
+    if: always() && needs.api35-startup-baseline.outputs.methods == '1' && needs.api35-startup-baseline.outputs.kvm == 'true' && needs.api35-real-ime-bc.outputs.kvm == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - name: Install API 26 image and emulator
+        run: sdkmanager 'platforms;android-26' 'build-tools;35.0.0' 'emulator' 'system-images;android-26;google_apis;x86_64'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: serea-phase-r3-diagnostic-apks
+          path: ${{ runner.temp }}/serea-r3-apks
+      - id: host
+        name: Record runner resources and initial KVM state
+        run: |
+          mkdir -p evidence/host
+          { uname -a; id; id -nG; echo "runner_os=$RUNNER_OS runner_arch=$RUNNER_ARCH vcpus=$(nproc)"; lscpu; grep -m1 -E '(^flags|^Features)' /proc/cpuinfo; cat /sys/fs/cgroup/cpu.max 2>/dev/null || true; cat /sys/fs/cgroup/memory.max 2>/dev/null || true; free -h; cat /proc/pressure/cpu 2>/dev/null || true; cat /proc/pressure/memory 2>/dev/null || true; ls -l /dev/kvm 2>&1 || true; stat -Lc 'owner=%U group=%G mode=%a' /dev/kvm 2>&1 || true; "$ANDROID_HOME/emulator/emulator" -version 2>&1 || true; "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 || true; } | tee evidence/host/runner.txt
+      - id: accel
+        name: Apply disposable-runner KVM permissions and verify acceleration
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0
+          sudo usermod -a -G kvm "$(id -un)"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          getent group kvm | tee evidence/host/kvm-group-after.txt
+          if test -e /dev/kvm && test -r /dev/kvm && test -w /dev/kvm && "$ANDROID_HOME/emulator/emulator" -accel-check > evidence/host/accel-check.txt 2>&1; then
+            stat -Lc 'post_rule_kvm=%n owner=%U group=%G mode=%a' /dev/kvm | tee evidence/host/kvm-after-permissions.txt
+            echo 'kvm=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'kvm=false' >> "$GITHUB_OUTPUT"
+            echo BLOCKED_KVM_UNAVAILABLE > evidence/host/status.txt
+          fi
+      - name: Run API 26 real IME B/C with same APK hashes as API 35
+        if: steps.accel.outputs.kvm == 'true'
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2 (MIT/Apache-2.0)
+        with:
+          api-level: 26
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-boot-timeout: 900
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect
+          script: bash tools/run_serea_phase_r3_real_ime.sh
+        env:
+          SEREA_R3_OUT: ${{ runner.temp }}/serea-r3-api26-real-ime
+          SEREA_R3_APKS: ${{ runner.temp }}/serea-r3-apks
+          SEREA_R3_API: '26'
+          SEREA_R3_RUN_NAV: ${{ needs.api35-real-ime-bc.outputs.bc == '1' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: serea-phase-r3-api26-same-apks-bcd
+          path: |
+            ${{ runner.temp }}/serea-r3-api26-real-ime/
+            evidence/host/
+          if-no-files-found: warn
+          retention-days: 30

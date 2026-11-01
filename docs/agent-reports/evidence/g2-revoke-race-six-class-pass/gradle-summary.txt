@@ -1,0 +1,8 @@
+Command: `./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'`
+Runtime: temporary Temurin JDK 21.0.13+9 outside the repository.
+Result: exit 0; 81 tests completed, 0 failures, 0 errors, 0 skipped.
+Class counts: GoogleAuthorizationLifecycleTest 7; GoogleAuthorizationTest 24; GmailProviderSessionsTest 10; GmailHttpReadPortTest 11; CalendarProviderSessionsTest 9; GoogleCalendarHttpReadPortTest 20.
+New delayed revoke tests:
+- GmailProviderSessionsTest#delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome
+- CalendarProviderSessionsTest#delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome
+The six XML files are retained in this directory. No repository Gradle/JDK configuration was changed. Tests use synthetic fixtures and local MockWebServer only.

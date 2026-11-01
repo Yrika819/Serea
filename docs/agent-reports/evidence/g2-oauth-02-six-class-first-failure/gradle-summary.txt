@@ -1,0 +1,15 @@
+Forced six-class JVM suite: FAILURE
+Gradle session: 49888
+Exit code: 1 (84 tests completed, 1 failed)
+Source includes the G2-OAUTH-02 cancellation-failure regression.
+Command (run from android/):
+./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.googleauth.GoogleAuthorizationLifecycleTest' --tests 'app.serea.android.googleauth.GoogleAuthorizationTest' --tests 'app.serea.android.gmail.GmailProviderSessionsTest' --tests 'app.serea.android.gmail.transport.GmailHttpReadPortTest' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest' --tests 'app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest'
+JDK: temporary Temurin JDK 21.0.13+9 outside the repository; repository dependencies/configuration unchanged.
+
+Per-class totals and failure details:
+app.serea.android.googleauth.GoogleAuthorizationLifecycleTest: 7 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.googleauth.GoogleAuthorizationTest: 27 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.gmail.GmailProviderSessionsTest: 10 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.gmail.transport.GmailHttpReadPortTest: 11 tests, 0 failures, 0 errors, 0 skipped
+app.serea.android.calendar.CalendarProviderSessionsTest: 9 tests, 1 failures, 0 errors, 0 skipped
+app.serea.android.calendar.transport.GoogleCalendarHttpReadPortTest: 20 tests, 0 failures, 0 errors, 0 skipped

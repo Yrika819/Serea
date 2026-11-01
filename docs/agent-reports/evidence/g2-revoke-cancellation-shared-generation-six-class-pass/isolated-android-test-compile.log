@@ -1,0 +1,57 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.6/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preIsolatedBuild UP-TO-DATE
+> Task :app:checkIsolatedAarMetadata
+> Task :app:generateIsolatedResValues
+> Task :app:mapIsolatedSourceSetPaths
+> Task :app:generateIsolatedResources
+> Task :app:createIsolatedCompatibleScreenManifests
+> Task :app:extractDeepLinksIsolated
+> Task :app:mergeIsolatedResources
+> Task :app:processIsolatedMainManifest
+> Task :app:packageIsolatedResources
+> Task :app:processIsolatedManifest
+> Task :app:processIsolatedManifestForPackage
+> Task :app:parseIsolatedLocalResources
+> Task :app:javaPreCompileIsolated
+> Task :app:preIsolatedAndroidTestBuild SKIPPED
+> Task :app:checkIsolatedAndroidTestAarMetadata
+> Task :app:generateIsolatedAndroidTestResValues
+> Task :app:mapIsolatedAndroidTestSourceSetPaths
+> Task :app:generateIsolatedAndroidTestResources
+> Task :app:processIsolatedAndroidTestManifest
+> Task :app:processIsolatedResources
+> Task :app:mergeIsolatedAndroidTestResources
+> Task :app:processIsolatedAndroidTestResources
+> Task :app:kspIsolatedKotlin
+
+> Task :app:compileIsolatedKotlin
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/main/java/app/serea/android/CloudProvider.kt:159:52 The corresponding parameter in the supertype 'Callback' is named 'e'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:190:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:197:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:202:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/main/java/app/serea/android/MainActivity.kt:786:17 Cast is redundant.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/main/java/app/serea/android/calendar/CalendarReadPort.kt:90:62 Cast is redundant.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/main/java/app/serea/android/gmail/GmailMimeParser.kt:74:17 Unnecessary safe call on a non-null receiver of type 'JsonObject'.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt:197:48 The corresponding parameter in the supertype 'Callback' is named 'e'. This may cause problems when calling this function with named arguments.
+
+> Task :app:compileIsolatedJavaWithJavac NO-SOURCE
+> Task :app:bundleIsolatedClassesToCompileJar
+> Task :app:kspIsolatedAndroidTestKotlin
+
+> Task :app:compileIsolatedAndroidTestKotlin
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:39:59 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SereaHistoryDatabase'.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:40:56 Unnecessary non-null assertion (!!) on a non-null receiver of type 'TasksDatabase'.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:61:39 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SereaHistoryDatabase'.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:63:34 Unnecessary non-null assertion (!!) on a non-null receiver of type 'TasksDatabase'.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:70:22 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SereaHistoryDatabase'.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:71:20 Unnecessary non-null assertion (!!) on a non-null receiver of type 'TasksDatabase'.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:75:67 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SereaHistoryDatabase'.
+w: file:///workspace/Serea-g2-revoke-cancellation/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:76:64 Unnecessary non-null assertion (!!) on a non-null receiver of type 'TasksDatabase'.
+
+[Incubating] Problems report is available at: file:///workspace/Serea-g2-revoke-cancellation/android/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 43s
+26 actionable tasks: 26 executed

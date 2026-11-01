@@ -1,0 +1,7 @@
+Command: `./gradlew --no-daemon :app:testDebugUnitTest --rerun-tasks --tests 'app.serea.android.gmail.GmailProviderSessionsTest.delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome' --tests 'app.serea.android.calendar.CalendarProviderSessionsTest.delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome'`
+Runtime: temporary Temurin JDK 21.0.13+9 outside the repository.
+Result: exit 0; 2 tests completed, 0 failures, 0 errors, 0 skipped.
+Exact IDs:
+- app.serea.android.gmail.GmailProviderSessionsTest#delayedGmailResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome
+- app.serea.android.calendar.CalendarProviderSessionsTest#delayedCalendarResponseIsDeniedWhileRevocationIsPendingAndAfterEveryOutcome
+Evidence: MockWebServer Dispatcher signals request arrival and blocks the response; the shared production GoogleGrantLeaseState revokes locally, old lease becomes invalid, then the test releases the HTTP response while remote revoke remains gated. Both provider reads are denied; post-body callback records invalidated generation. Each case then exercises remote success, failure, and cancellation with no grant restoration. All network is local MockWebServer and all credentials/data are synthetic.

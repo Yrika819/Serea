@@ -124,7 +124,8 @@ class SecurityPortsTest {
             expiry: Long? = now + 30_000,
             context: List<ContextMessage> = emptyList(),
         ) = EgressContract("c", "m", origin, classification, "https://ollama.com/api/chat", "planned text",
-            context, PayloadPreparation.RAW, intent, expiry)
+            context, PayloadPreparation.RAW, intent, expiry,
+            plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED))
 
         assertEquals(EgressContractDecision.APPROVED, ChatEgressGate.evaluate(contract(), now).decision)
         assertEquals(EgressContractDecision.CLASSIFICATION_DENIED,
@@ -141,6 +142,16 @@ class SecurityPortsTest {
         assertEquals(EgressContractDecision.CONTENT_MISMATCH, ChatEgressGate.evaluate(contract(context = listOf(
             ContextMessage(MessageRole.USER, "partial", DataClassification.PUBLIC, "source", DataOrigin.USER_AUTHORED, "PENDING"),
         )), now).decision)
+        listOf(
+            emptySet(),
+            setOf(DataOrigin.UNKNOWN),
+            setOf(DataOrigin.USER_AUTHORED, DataOrigin.UNKNOWN),
+            setOf(DataOrigin.USER_AUTHORED, DataOrigin.GMAIL),
+            setOf(DataOrigin.USER_AUTHORED, DataOrigin.CALENDAR),
+        ).forEach { lineage ->
+            assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED,
+                ChatEgressGate.evaluate(contract().copy(plannedBodySourceLineage = lineage), now).decision)
+        }
     }
 
     @Test fun localDemoContractIsExplicitLocalOnlyAndNeedsNoCloudIntent() {

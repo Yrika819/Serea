@@ -4,6 +4,7 @@ import re
 import os
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -14,6 +15,207 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AndroidEmulatorWorkflowTests(unittest.TestCase):
+    def test_real_ime_diagnostic_checkout_is_read_only_and_targets_main(self) -> None:
+        workflow = (ROOT / ".github/workflows/android-api35-real-ime-independent-bc.yml").read_text(
+            encoding="utf-8"
+        )
+        pull_request = workflow.split("  pull_request:", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("      - main\n", pull_request)
+        self.assertIn("      - codex/serea-g4-final-integration-candidate-20261027\n", pull_request)
+        self.assertIn("  workflow_dispatch:\n", workflow)
+        self.assertIn("permissions:\n  contents: read\n", workflow)
+        self.assertNotIn("pull_request_target:", workflow)
+        self.assertIn("DIAGNOSTIC_BASE_SHA: b06c1acd5f3ddb4f59f0cad6ae1a1d291b086671", workflow)
+        self.assertIn("CURRENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}", workflow)
+        self.assertIn('git merge-base --is-ancestor "$CURRENT_BASE_SHA" HEAD', workflow)
+        self.assertIn('git diff --name-only --no-renames -z "$DIAGNOSTIC_BASE_SHA" HEAD', workflow)
+        self.assertIn("while IFS= read -r -d '' path", workflow)
+        self.assertIn('git diff --name-only --no-renames -z "$DIAGNOSTIC_BASE_SHA" HEAD > "$paths_file"', workflow)
+        self.assertNotIn("done < <(git diff", workflow)
+        self.assertIn('git --literal-pathspecs diff --quiet "$CURRENT_BASE_SHA" HEAD -- "$path"', workflow)
+
+        checkout_starts = list(re.finditer(r"(?m)^      - uses: actions/checkout@[^\n]*", workflow))
+        self.assertEqual(len(checkout_starts), 2)
+        for checkout in checkout_starts:
+            next_step = re.search(r"(?m)^      - ", workflow[checkout.end():])
+            stop = checkout.end() + next_step.start() if next_step else len(workflow)
+            self.assertIn("persist-credentials: false", workflow[checkout.start():stop])
+
+    def test_real_ime_scope_check_detects_rename_source_hidden_by_allowlisted_destination(self) -> None:
+        workflow = (ROOT / ".github/workflows/android-api35-real-ime-independent-bc.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('git diff --name-only --no-renames -z "$DIAGNOSTIC_BASE_SHA" HEAD', workflow)
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+
+            def git(*args: str) -> str:
+                result = subprocess.run(
+                    ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+                )
+                return result.stdout.strip()
+
+            git("init", "-q")
+            git("config", "user.name", "Test")
+            git("config", "user.email", "test@example.invalid")
+            (repo / "out-of-scope.txt").write_text("rename payload from source\n", encoding="utf-8")
+            destination = repo / ".github/workflows/android-api35-real-ime-independent-bc.yml"
+            git("add", "out-of-scope.txt")
+            git("commit", "-qm", "diagnostic baseline")
+            diagnostic_base = git("rev-parse", "HEAD")
+
+            destination.parent.mkdir(parents=True)
+            destination.write_text("rename payload from source\n", encoding="utf-8")
+            git("add", "out-of-scope.txt", ".github/workflows/android-api35-real-ime-independent-bc.yml")
+            git("commit", "-qm", "current base updates destination")
+            current_base = git("rev-parse", "HEAD")
+
+            (repo / "out-of-scope.txt").unlink()
+            git("add", "-A")
+            git("commit", "-qm", "candidate deletes out-of-scope source")
+
+            renamed = git("diff", "--name-only", "--find-renames", diagnostic_base, "HEAD").splitlines()
+            self.assertNotIn("out-of-scope.txt", renamed)
+            self.assertIn(".github/workflows/android-api35-real-ime-independent-bc.yml", renamed)
+
+            paths = git("diff", "--name-only", "--no-renames", diagnostic_base, "HEAD").splitlines()
+            self.assertIn("out-of-scope.txt", paths)
+            changed_from_current_base = git(
+                "diff", "--name-only", current_base, "HEAD", "--", "out-of-scope.txt"
+            )
+            self.assertEqual(changed_from_current_base, "out-of-scope.txt")
+
+    def test_real_ime_scope_guard_rejects_newline_path_that_mimics_allowlisted_path(self) -> None:
+        workflow = (ROOT / ".github/workflows/android-api35-real-ime-independent-bc.yml").read_text(
+            encoding="utf-8"
+        )
+        marker = "      - name: Verify source scope is limited to this diagnostic harness\n        shell: bash\n        run: |\n"
+        self.assertIn(marker, workflow)
+        block = workflow.split(marker, 1)[1].split("\n      - name:", 1)[0]
+        script = textwrap.dedent("\n".join(line[10:] for line in block.splitlines()))
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "--allow-empty", "-qm", "baseline"], cwd=repo, check=True)
+            baseline = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            malicious = repo / ".github/workflows/android-api35-real-ime-independent-bc.yml\n"
+            malicious.parent.mkdir(parents=True)
+            malicious.write_text("unexpected\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "newline path"], cwd=repo, check=True)
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            result = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", script],
+                cwd=repo,
+                env={
+                    **os.environ,
+                    "EXPECTED_SOURCE_SHA": head,
+                    "CURRENT_BASE_SHA": baseline,
+                    "DIAGNOSTIC_BASE_SHA": baseline,
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unexpected changes since diagnostic base", result.stderr)
+        self.assertIn("\\n", result.stderr)
+
+    def test_real_ime_scope_guard_fails_closed_when_git_diff_fails(self) -> None:
+        workflow = (ROOT / ".github/workflows/android-api35-real-ime-independent-bc.yml").read_text(
+            encoding="utf-8"
+        )
+        marker = "      - name: Verify source scope is limited to this diagnostic harness\n        shell: bash\n        run: |\n"
+        block = workflow.split(marker, 1)[1].split("\n      - name:", 1)[0]
+        script = textwrap.dedent("\n".join(line[10:] for line in block.splitlines()))
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            fake_bin = root / "bin"
+            repo.mkdir()
+            fake_bin.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "--allow-empty", "-qm", "baseline"], cwd=repo, check=True)
+            baseline = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            git_path = subprocess.check_output(["which", "git"], text=True).strip()
+            fake_git = fake_bin / "git"
+            fake_git.write_text(
+                f"#!/bin/sh\nif [ \"${{1:-}}\" = diff ]; then exit 42; fi\nexec {git_path} \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o755)
+            result = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", script],
+                cwd=repo,
+                env={
+                    **os.environ,
+                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "EXPECTED_SOURCE_SHA": baseline,
+                    "CURRENT_BASE_SHA": baseline,
+                    "DIAGNOSTIC_BASE_SHA": baseline,
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Unexpected changes since diagnostic base", result.stderr)
+
+    def test_real_ime_scope_guard_treats_pathspec_magic_as_literal_filename(self) -> None:
+        workflow = (ROOT / ".github/workflows/android-api35-real-ime-independent-bc.yml").read_text(
+            encoding="utf-8"
+        )
+        marker = "      - name: Verify source scope is limited to this diagnostic harness\n        shell: bash\n        run: |\n"
+        block = workflow.split(marker, 1)[1].split("\n      - name:", 1)[0]
+        script = textwrap.dedent("\n".join(line[10:] for line in block.splitlines()))
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "--allow-empty", "-qm", "baseline"], cwd=repo, check=True)
+            baseline = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            (repo / ":(exclude)*").write_text("unexpected\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "pathspec magic path"], cwd=repo, check=True)
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            result = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", script],
+                cwd=repo,
+                env={
+                    **os.environ,
+                    "EXPECTED_SOURCE_SHA": head,
+                    "CURRENT_BASE_SHA": baseline,
+                    "DIAGNOSTIC_BASE_SHA": baseline,
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unexpected changes since diagnostic base", result.stderr)
+
     def test_personal_beta_identity_preflight_waits_for_stable_disposable_emulator(self) -> None:
         script = (ROOT / "tools/test_personal_beta_identity.sh").read_text(encoding="utf-8")
         self.assertIn('discovery_deadline=$((SECONDS + 60))', script)

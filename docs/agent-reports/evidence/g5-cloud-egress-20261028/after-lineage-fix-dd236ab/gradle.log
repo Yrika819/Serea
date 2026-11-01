@@ -1,0 +1,209 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.6/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResValues
+> Task :app:checkDebugAarMetadata
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:mergeDebugResources
+> Task :app:processDebugMainManifest
+> Task :app:packageDebugResources
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugManifest
+> Task :app:processDebugManifestForPackage
+> Task :app:javaPreCompileDebug
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:processDebugUnitTestManifest
+> Task :app:preIsolatedBuild UP-TO-DATE
+> Task :app:generateIsolatedResValues
+> Task :app:processDebugResources
+> Task :app:extractDeepLinksIsolated
+> Task :app:packageDebugUnitTestForUnitTest
+> Task :app:generateDebugUnitTestConfig
+> Task :app:processIsolatedMainManifest
+> Task :app:preBetaBuild UP-TO-DATE
+> Task :app:generateBetaResValues
+> Task :app:extractDeepLinksBeta
+> Task :app:processBetaMainManifest
+> Task :app:mergeIsolatedNativeDebugMetadata NO-SOURCE
+> Task :app:checkIsolatedAarMetadata
+> Task :app:mapIsolatedSourceSetPaths
+> Task :app:generateIsolatedResources
+> Task :app:mergeIsolatedResources
+> Task :app:packageIsolatedResources
+> Task :app:parseIsolatedLocalResources
+> Task :app:createIsolatedCompatibleScreenManifests
+> Task :app:processIsolatedManifest
+> Task :app:processIsolatedManifestForPackage
+> Task :app:processIsolatedResources
+> Task :app:kspDebugKotlin
+> Task :app:kspIsolatedKotlin
+> Task :app:compileDebugKotlin
+> Task :app:compileIsolatedKotlin
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/CloudProvider.kt:162:52 The corresponding parameter in the supertype 'Callback' is named 'e'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:194:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:201:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:206:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:214:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/MainActivity.kt:831:17 Cast is redundant.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/calendar/CalendarReadPort.kt:90:62 Cast is redundant.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/gmail/GmailMimeParser.kt:74:17 Unnecessary safe call on a non-null receiver of type 'JsonObject'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt:197:48 The corresponding parameter in the supertype 'Callback' is named 'e'. This may cause problems when calling this function with named arguments.
+
+> Task :app:compileDebugKotlin
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/CloudProvider.kt:162:52 The corresponding parameter in the supertype 'Callback' is named 'e'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:194:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:201:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:206:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/EncryptedStorage.kt:214:34 The corresponding parameter in the supertype 'Migration' is named 'db'. This may cause problems when calling this function with named arguments.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/MainActivity.kt:831:17 Cast is redundant.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/calendar/CalendarReadPort.kt:90:62 Cast is redundant.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/gmail/GmailMimeParser.kt:74:17 Unnecessary safe call on a non-null receiver of type 'JsonObject'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/main/java/app/serea/android/gmail/transport/GmailHttpReadPort.kt:197:48 The corresponding parameter in the supertype 'Callback' is named 'e'. This may cause problems when calling this function with named arguments.
+
+> Task :app:javaPreCompileIsolated
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:processDebugJavaRes
+> Task :app:compileIsolatedJavaWithJavac NO-SOURCE
+> Task :app:mergeIsolatedShaders
+> Task :app:compileIsolatedShaders NO-SOURCE
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:kspDebugUnitTestKotlin
+> Task :app:checkIsolatedDuplicateClasses
+> Task :app:desugarIsolatedFileDependencies
+> Task :app:mergeExtDexIsolated
+> Task :app:mergeIsolatedArtProfile
+
+> Task :app:compileDebugUnitTestKotlin
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/test/java/app/serea/android/assistant/taskproposal/TaskProposalTest.kt:88:13 Expression is unused.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/test/java/app/serea/android/calendar/CalendarAgendaTest.kt:35:82 Cast is redundant.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt:113:52 Unnecessary non-null assertion (!!) on a non-null receiver of type 'String'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/test/java/app/serea/android/calendar/transport/GoogleCalendarHttpReadPortTest.kt:294:52 Unnecessary non-null assertion (!!) on a non-null receiver of type 'String'.
+
+> Task :app:dexBuilderIsolated
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+> Task :app:mergeIsolatedGlobalSynthetics
+> Task :app:mergeLibDexIsolated
+> Task :app:generateIsolatedAssets UP-TO-DATE
+> Task :app:processIsolatedJavaRes
+> Task :app:mergeProjectDexIsolated
+> Task :app:mergeIsolatedJavaResource
+> Task :app:mergeIsolatedJniLibFolders
+> Task :app:compileIsolatedArtProfile
+> Task :app:mergeIsolatedNativeLibs
+> Task :app:copyIsolatedBaselineProfileAssets
+> Task :app:mergeIsolatedAssets
+> Task :app:compressIsolatedAssets
+
+> Task :app:stripIsolatedDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so. Run with --info option to learn more.
+
+> Task :app:validateSigningIsolated
+> Task :app:writeIsolatedAppMetadata
+> Task :app:writeIsolatedSigningConfigVersions
+> Task :app:bundleIsolatedClassesToCompileJar
+> Task :app:preIsolatedAndroidTestBuild SKIPPED
+> Task :app:checkIsolatedAndroidTestAarMetadata
+> Task :app:generateIsolatedAndroidTestResValues
+> Task :app:mapIsolatedAndroidTestSourceSetPaths
+> Task :app:generateIsolatedAndroidTestResources
+> Task :app:mergeIsolatedAndroidTestResources
+> Task :app:processIsolatedAndroidTestManifest
+> Task :app:processIsolatedAndroidTestResources
+> Task :app:kspIsolatedAndroidTestKotlin
+> Task :app:packageIsolated
+> Task :app:createIsolatedApkListingFileRedirect
+> Task :app:assembleIsolated
+> Task :app:javaPreCompileIsolatedAndroidTest
+> Task :app:mergeIsolatedAndroidTestShaders
+> Task :app:compileIsolatedAndroidTestShaders NO-SOURCE
+> Task :app:generateIsolatedAndroidTestAssets UP-TO-DATE
+> Task :app:mergeIsolatedAndroidTestAssets
+> Task :app:compressIsolatedAndroidTestAssets
+> Task :app:checkIsolatedAndroidTestDuplicateClasses
+> Task :app:desugarIsolatedAndroidTestFileDependencies
+> Task :app:mergeExtDexIsolatedAndroidTest
+> Task :app:mergeLibDexIsolatedAndroidTest
+> Task :app:mergeIsolatedAndroidTestJniLibFolders
+> Task :app:mergeIsolatedAndroidTestNativeLibs NO-SOURCE
+> Task :app:stripIsolatedAndroidTestDebugSymbols NO-SOURCE
+> Task :app:validateSigningIsolatedAndroidTest
+> Task :app:writeIsolatedAndroidTestSigningConfigVersions
+> Task :r25-ime-test:preBuild UP-TO-DATE
+> Task :r25-ime-test:preDebugBuild UP-TO-DATE
+> Task :r25-ime-test:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :r25-ime-test:javaPreCompileDebug
+> Task :r25-ime-test:checkDebugAarMetadata
+> Task :r25-ime-test:generateDebugResValues
+> Task :r25-ime-test:mapDebugSourceSetPaths
+> Task :r25-ime-test:generateDebugResources
+> Task :r25-ime-test:mergeDebugResources
+> Task :r25-ime-test:packageDebugResources
+> Task :r25-ime-test:parseDebugLocalResources
+> Task :r25-ime-test:createDebugCompatibleScreenManifests
+> Task :r25-ime-test:extractDeepLinksDebug
+> Task :r25-ime-test:processDebugMainManifest
+> Task :r25-ime-test:processDebugManifest
+> Task :r25-ime-test:processDebugManifestForPackage
+> Task :r25-ime-test:processDebugResources
+> Task :r25-ime-test:compileDebugJavaWithJavac
+> Task :r25-ime-test:mergeDebugShaders
+> Task :r25-ime-test:compileDebugShaders NO-SOURCE
+> Task :r25-ime-test:generateDebugAssets UP-TO-DATE
+> Task :r25-ime-test:mergeDebugAssets
+> Task :r25-ime-test:compressDebugAssets
+> Task :r25-ime-test:desugarDebugFileDependencies
+> Task :r25-ime-test:dexBuilderDebug
+> Task :r25-ime-test:mergeDebugGlobalSynthetics
+> Task :r25-ime-test:processDebugJavaRes NO-SOURCE
+> Task :r25-ime-test:mergeDebugJavaResource
+> Task :r25-ime-test:checkDebugDuplicateClasses
+> Task :r25-ime-test:mergeExtDexDebug
+> Task :r25-ime-test:mergeLibDexDebug
+> Task :r25-ime-test:mergeProjectDexDebug
+> Task :r25-ime-test:mergeDebugJniLibFolders
+> Task :r25-ime-test:mergeDebugNativeLibs NO-SOURCE
+> Task :r25-ime-test:stripDebugDebugSymbols NO-SOURCE
+> Task :r25-ime-test:validateSigningDebug
+> Task :r25-ime-test:writeDebugAppMetadata
+> Task :r25-ime-test:writeDebugSigningConfigVersions
+> Task :r25-ime-test:packageDebug
+> Task :r25-ime-test:createDebugApkListingFileRedirect
+> Task :r25-ime-test:assembleDebug
+
+> Task :app:compileIsolatedAndroidTestKotlin
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:39:59 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SereaHistoryDatabase'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:40:56 Unnecessary non-null assertion (!!) on a non-null receiver of type 'TasksDatabase'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:61:39 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SereaHistoryDatabase'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:63:34 Unnecessary non-null assertion (!!) on a non-null receiver of type 'TasksDatabase'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:70:22 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SereaHistoryDatabase'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:71:20 Unnecessary non-null assertion (!!) on a non-null receiver of type 'TasksDatabase'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:75:67 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SereaHistoryDatabase'.
+w: file:///workspace/Serea-g5-evidence-closure/android/app/src/androidTest/java/app/serea/android/ChatTasksDatabaseIntegrationTest.kt:76:64 Unnecessary non-null assertion (!!) on a non-null receiver of type 'TasksDatabase'.
+
+> Task :app:compileIsolatedAndroidTestJavaWithJavac NO-SOURCE
+> Task :app:dexBuilderIsolatedAndroidTest
+> Task :app:mergeIsolatedAndroidTestGlobalSynthetics
+> Task :app:processIsolatedAndroidTestJavaRes
+> Task :app:mergeIsolatedAndroidTestJavaResource
+> Task :app:mergeProjectDexIsolatedAndroidTest
+> Task :app:packageIsolatedAndroidTest
+> Task :app:createIsolatedAndroidTestApkListingFileRedirect
+> Task :app:assembleIsolatedAndroidTest
+
+[Incubating] Problems report is available at: file:///workspace/Serea-g5-evidence-closure/android/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 1m 40s
+131 actionable tasks: 131 executed

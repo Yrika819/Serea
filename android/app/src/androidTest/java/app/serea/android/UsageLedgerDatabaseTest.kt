@@ -350,6 +350,7 @@ class UsageLedgerDatabaseTest {
                 preparation = PayloadPreparation.RAW,
                 explicitSendIntentAtMillis = now.toEpochMilli(),
                 expiresAtMillis = now.plusSeconds(30).toEpochMilli(),
+                plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             )
             return ModelChatRequest(
                 conversationId = "conversation-fixture",
@@ -358,6 +359,7 @@ class UsageLedgerDatabaseTest {
                 classification = DataClassification.PUBLIC,
                 context = context,
                 egressContract = contract,
+                bodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
             )
         }
 
@@ -561,6 +563,7 @@ class UsageLedgerDatabaseTest {
                     preparation = PayloadPreparation.RAW,
                     explicitSendIntentAtMillis = now,
                     expiresAtMillis = now + 30_000,
+                    plannedBodySourceLineage = setOf(DataOrigin.USER_AUTHORED),
                 )
                 assertEquals(EgressContractDecision.SOURCE_LINEAGE_DENIED,
                     ChatEgressGate.evaluate(legacyContract, now).decision)

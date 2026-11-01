@@ -102,7 +102,7 @@ android {
         // application ID and therefore a separate app-private DB/Preferences area.
         getByName("isolated") {
             java.srcDir("src/debug/java")
-            manifest.srcFile("src/debug/AndroidManifest.xml")
+            manifest.srcFile("src/isolated/AndroidManifest.xml")
         }
         if (betaValidationHarness) {
             // Only the disposable-emulator verifier opts into the debug-only

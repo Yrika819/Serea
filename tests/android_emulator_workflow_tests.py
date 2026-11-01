@@ -41,6 +41,24 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
         self.assertIn('provenance_source_sha" != "$SOURCE_SHA"', required)
         self.assertIn('provenance_checkout_sha" != "$BUILD_CHECKOUT_SHA"', required)
 
+    def test_android_scope_job_verifies_pr_merge_result_before_classifying(self) -> None:
+        workflow = (ROOT / ".github/workflows/android.yml").read_text(encoding="utf-8")
+        match = re.search(
+            r"(?ms)^  android-changes:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            workflow,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        self.assertIn("name: Android Change Scope", body)
+        self.assertIn("ref: ${{ github.sha }}", body)
+        verifier = body.index("name: Verify PR merge-result before Android scope checks")
+        classifier = body.index("name: Classify changed files")
+        self.assertLess(verifier, classifier)
+        verification = body[verifier:classifier]
+        self.assertIn("if: ${{ github.event_name == 'pull_request' }}", verification)
+        self.assertIn("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}", verification)
+        self.assertIn("run: python3 tools/verify_pr_merge_result.py", verification)
+
     def test_real_ime_diagnostic_checkout_is_read_only_and_targets_main(self) -> None:
         workflow = (ROOT / ".github/workflows/android-api35-real-ime-independent-bc.yml").read_text(
             encoding="utf-8"

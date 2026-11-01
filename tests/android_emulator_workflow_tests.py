@@ -550,11 +550,16 @@ class AndroidEmulatorWorkflowTests(unittest.TestCase):
             subprocess.run(["bash", "-n", str(ROOT / "tools" / name)], check=True)
         self.assertIn("connectedIsolatedAndroidTest", script.read_text(encoding="utf-8"))
         self.assertNotIn("connectedDebugAndroidTest", script.read_text(encoding="utf-8"))
-        self.assertRegex(
-            workflow,
-            r"android/\*\|[^\n]*tools/run_android_process_death_harness\.sh[^\n]*android_changed=true",
-        )
-        self.assertIn("tools/prepare_isolated_instrumentation_target.sh", workflow)
+        self.assertIn("python3 tools/classify_android_changes.py", workflow)
+        self.assertIn('git diff --no-renames --name-only -z "$PR_BASE_SHA...$PR_HEAD_SHA"', workflow)
+        self.assertEqual(workflow.count("uses: actions/checkout@"), workflow.count("name: Verify exact checkout commit"))
+        self.assertEqual(2, workflow.count("python3 tools/verify_pr_merge_result.py"))
+        self.assertEqual(2, workflow.count("SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}"))
+        self.assertNotIn("ref: ${{ github.event.pull_request.head.sha", workflow)
+        self.assertEqual(3, workflow.count("SOURCE_SHA: ${{ github.sha }}"))
+        scope_helper = (ROOT / "tools/classify_android_changes.py").read_text(encoding="utf-8")
+        self.assertIn('"tools/"', scope_helper)
+        self.assertIn('".github/"', scope_helper)
         self.assertIn("Test Android update emulator guard with Mock ADB", workflow)
         self.assertIn("tools/test_android_update_compatibility_guard.sh", workflow)
         api35_campaign = (ROOT / "tools/run_android_api35_campaign.sh").read_text(encoding="utf-8")

@@ -25,7 +25,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
+      - name: Verify PR merge-result before Android scope checks
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          SEREA_EVENT_NAME: ${{ github.event_name }}
+          SEREA_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SEREA_PR_NUMBER: ${{ github.event.pull_request.number }}
+          SEREA_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SEREA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}
+        run: python3 tools/verify_pr_merge_result.py
       - id: scope
         name: Classify changed files
         env:
@@ -36,28 +50,17 @@ jobs:
           PUSH_AFTER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          changed_paths="$RUNNER_TEMP/android-changed-paths.nul"
+          : > "$changed_paths"
           if [ "$EVENT_NAME" = pull_request ]; then
             git fetch --no-tags origin "$PR_BASE_SHA" "$PR_HEAD_SHA"
-            changed=$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")
+            git diff --no-renames --name-only -z "$PR_BASE_SHA...$PR_HEAD_SHA" > "$changed_paths"
           elif [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
-            git diff --quiet "$PUSH_BEFORE_SHA" "$PUSH_AFTER_SHA" -- && changed="" || changed=$(git diff --name-only "$PUSH_BEFORE_SHA" "$PUSH_AFTER_SHA")
+            git diff --no-renames --name-only -z "$PUSH_BEFORE_SHA" "$PUSH_AFTER_SHA" > "$changed_paths"
           else
-            changed=$(git show --pretty=format: --name-only "$PUSH_AFTER_SHA")
+            git show --pretty=format: --name-only -z "$PUSH_AFTER_SHA" > "$changed_paths"
           fi
-          printf '%s\n' "$changed"
-          android_changed=false
-          while IFS= read -r path; do
-            case "$path" in
-              android/README.md|docs/*) ;;
-              android/*|.github/workflows/android.yml|.github/workflows/android-personal-beta.yml|.github/workflows/android-personal-beta-contract-tests.yml|tools/verify_android_instrumentation.py|tools/android-instrumentation-required-tests.txt|tools/android-instrumentation-additional-tests.txt|tools/summarize_android_test_lifecycle.py|tools/verify_android_unit_junit.py|tools/run_android_instrumentation_campaign.sh|tools/run_android_api35_campaign.sh|tools/run_android_process_death_harness.sh|tools/run_android_data_sentinel.sh|tools/prepare_isolated_instrumentation_target.sh|tools/assert_disposable_android_emulator.sh|tools/test_android_update_compatibility.sh|tools/test_android_update_compatibility_guard.sh|tools/test_personal_beta_identity.sh|tools/verify_personal_beta_apk.sh|tools/android_firebase_distribution.py|tests/android_instrumentation_results_tests.py|tests/android_unit_junit_results_tests.py|tests/android_emulator_workflow_tests.py|tests/android_firebase_distribution_tests.py) android_changed=true ;;
-            esac
-          done <<< "$changed"
-          echo "android=$android_changed" >> "$GITHUB_OUTPUT"
-          if printf '%s\n' "$changed" | grep -Eq '^(docs/|android/README\.md$)'; then
-            echo 'docs=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'docs=false' >> "$GITHUB_OUTPUT"
-          fi
+          python3 tools/classify_android_changes.py < "$changed_paths" >> "$GITHUB_OUTPUT"
 
   android-build:
     name: Android Build, Lint, and Instrumentation Compile
@@ -67,6 +70,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - name: Test Android update emulator guard with Mock ADB
         run: bash tools/test_android_update_compatibility_guard.sh
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
@@ -88,7 +98,7 @@ jobs:
       - name: Record Pixel 7a reacceptance APK provenance
         env:
           BUILD_TOOLS_VERSION: 35.0.0
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           apk='android/app/build/outputs/apk/debug/app-debug.apk'
@@ -131,6 +141,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -163,6 +180,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -189,6 +213,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -218,7 +249,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -441,7 +476,7 @@ jobs:
         if: always() && needs.android-build.result == 'success'
         env:
           JOB_RESULT: ${{ job.status }}
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          SOURCE_SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
         run: |
@@ -560,6 +595,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - name: Validate documentation and links
         run: python3 tools/validate_docs.py docs
 
@@ -571,6 +613,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -643,7 +692,7 @@ jobs:
           path: ${{ runner.temp }}/serea-security
       - name: Assemble CI result manifest and reacceptance bundle
         env:
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          SOURCE_SHA: ${{ github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           RUN_ID: ${{ github.run_id }}
           BUILD_RESULT: ${{ needs.android-build.result }}
@@ -702,8 +751,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -765,6 +817,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify exact checkout commit
+        shell: bash
+        run: test "$(git rev-parse --verify 'HEAD^{commit}')" = "$GITHUB_SHA"
       - name: Require Android checks and executed instrumentation results
         env:
           CHANGE_RESULT: ${{ needs.android-changes.result }}
@@ -809,3 +869,13 @@ jobs:
             exit 1
           fi
           echo 'PASS: API 26 and API 35 each passed Original Required Set 103/103 and Additional Tests 2/2 with zero failures, errors, or skips; Process Death and demo sentinel data isolation passed on both disposable emulators.'
+      - name: Verify final PR merge-result freshness
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          SEREA_EVENT_NAME: ${{ github.event_name }}
+          SEREA_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SEREA_PR_NUMBER: ${{ github.event.pull_request.number }}
+          SEREA_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SEREA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}
+        run: python3 tools/verify_pr_merge_result.py

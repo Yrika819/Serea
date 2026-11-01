@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -64,6 +65,9 @@ class MergeResultTests(unittest.TestCase):
             verifier.verify(self.env)
 
     def test_rejects_advanced_tracking_base(self):
+        # Model a test run that passed its start gate, then observe Base moving
+        # before the final gate.
+        self.assertEqual(verifier.verify(self.env), (self.base, self.head, self.merge))
         self.git("checkout", "-q", "--detach", self.base)
         newer_base = self.commit("new base")
         self.git("update-ref", "refs/heads/main", newer_base)
@@ -72,8 +76,23 @@ class MergeResultTests(unittest.TestCase):
             verifier.verify(self.env)
 
     def test_rejects_merge_ref_updated_after_checkout(self):
+        # The first gate sees the original merge result; the final gate must
+        # reject a merge-ref that changed while tests were running.
+        self.assertEqual(verifier.verify(self.env), (self.base, self.head, self.merge))
         self.git("update-ref", "refs/pull/1/merge", self.head)
         with self.assertRaisesRegex(verifier.VerificationError, "merge ref changed"):
+            verifier.verify(self.env)
+
+    def test_rejects_base_fetch_failure_at_final_gate(self):
+        self.assertEqual(verifier.verify(self.env), (self.base, self.head, self.merge))
+        self.git("remote", "set-url", "origin", str(self.repo / "missing-origin"))
+        with self.assertRaisesRegex(verifier.VerificationError, "git fetch failed"):
+            verifier.verify(self.env)
+
+    def test_rejects_merge_ref_fetch_failure_at_final_gate(self):
+        self.assertEqual(verifier.verify(self.env), (self.base, self.head, self.merge))
+        self.git("update-ref", "-d", "refs/pull/1/merge")
+        with self.assertRaisesRegex(verifier.VerificationError, "git fetch failed"):
             verifier.verify(self.env)
 
     def test_rejects_missing_malformed_or_unavailable_shas(self):
@@ -96,6 +115,33 @@ class MergeResultTests(unittest.TestCase):
                 env[key] = value
                 with self.assertRaises(verifier.VerificationError):
                     verifier.verify(env)
+
+    def test_fast_and_full_workflows_end_with_success_gated_pr_recheck(self):
+        root = Path(__file__).resolve().parents[1]
+        for workflow, job, last_check in (
+            ("ci.yml", "fast", "Check workspace"),
+            ("full-ci.yml", "linux-stable", "Prove release fault-seam exclusion"),
+        ):
+            with self.subTest(workflow=workflow):
+                source = (root / ".github" / "workflows" / workflow).read_text()
+                match = re.search(
+                    rf"(?ms)^  {re.escape(job)}:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+                    source,
+                )
+                self.assertIsNotNone(match, f"missing {job} job")
+                body = match.group("body")
+                names = re.findall(r"^      - name: (.+)$", body, re.M)
+                self.assertEqual(names[-1], "Final PR merge-result freshness verification")
+                self.assertEqual(names[-2], last_check)
+                final_step = body[body.rfind("      - name: Final PR merge-result freshness verification"):]
+                self.assertIn("if: ${{ github.event_name == 'pull_request' }}", final_step)
+                self.assertIn("run: python3 tools/verify_pr_merge_result.py", final_step)
+                self.assertNotIn("always()", final_step)
+                self.assertNotIn("continue-on-error", final_step)
+                # GitHub applies success() implicitly to a step-level if.
+                # Without continue-on-error, an earlier failed required step
+                # keeps the job failed and skips this final verification.
+                self.assertNotIn("continue-on-error:", body)
 
 
 if __name__ == "__main__":

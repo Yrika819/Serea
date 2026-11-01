@@ -124,3 +124,14 @@ jobs:
 
       - name: Check workspace
         run: cargo +stable check --workspace --all-targets --all-features --offline
+
+      - name: Final PR merge-result freshness verification
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          SEREA_EVENT_NAME: ${{ github.event_name }}
+          SEREA_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SEREA_PR_NUMBER: ${{ github.event.pull_request.number }}
+          SEREA_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SEREA_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SEREA_EXPECTED_MERGE_SHA: ${{ github.sha }}
+        run: python3 tools/verify_pr_merge_result.py
